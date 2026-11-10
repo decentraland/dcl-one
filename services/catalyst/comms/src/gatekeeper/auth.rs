@@ -510,28 +510,11 @@ pub trait SchemaValidate {
     fn schema_validate(value: &Value) -> Result<(), String>;
 }
 
-fn is_json_content_type(value: Option<&str>) -> bool {
-    let Some(value) = value else { return false };
-    let media = value
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .to_ascii_lowercase();
-    if media == "application/json" {
-        return true;
-    }
-    if let Some((prefix, suffix)) = media.rsplit_once('+') {
-        return suffix == "json" && prefix.contains('/') && !prefix.starts_with('/');
-    }
-    false
-}
-
 pub fn validate_body<T>(content_type: Option<&str>, bytes: &[u8]) -> Result<T, ApiError>
 where
     T: DeserializeOwned + SchemaValidate,
 {
-    if !is_json_content_type(content_type) {
+    if !crate::content::validation::is_json_content_type(content_type) {
         return Err(ApiError::http(415, "Content-Type must be application/json"));
     }
     let value: Value =

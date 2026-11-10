@@ -11,17 +11,14 @@ use super::profiles::NameColor;
 
 /// A UTC time as production writes it (`Date.toJSON`: milliseconds, then
 /// `Z`; `2025-08-20T19:31:24.575Z`, `.000` on a whole second), the
-/// microseconds cut as `pg` does when it reads the column into a `Date`.
+/// microseconds cut as `pg` does when it reads the column into a `Date`:
+/// [`as_of::wire`](crate::shared::as_of::wire)'s form, as a `with` adapter.
 pub mod iso_ms {
     use chrono::NaiveDateTime;
     use serde::Serializer;
 
     pub fn serialize<S: Serializer>(t: &NaiveDateTime, s: S) -> Result<S::Ok, S::Error> {
-        s.collect_str(&format(t))
-    }
-
-    pub fn format(t: &NaiveDateTime) -> impl std::fmt::Display + '_ {
-        t.format("%Y-%m-%dT%H:%M:%S%.3fZ")
+        s.serialize_str(&crate::shared::as_of::wire(t.and_utc()))
     }
 }
 
@@ -67,29 +64,23 @@ pub struct CommunityListItem {
     pub owner_address: String,
     pub privacy: String,
     pub active: bool,
-    #[serde(skip)]
-    #[cfg_attr(feature = "ts", ts(skip))]
-    pub unlisted: bool,
     #[serde(rename = "membersCount")]
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub members_count: i64,
     #[serde(skip)]
-    #[cfg_attr(feature = "ts", ts(skip))]
-    pub created_at: NaiveDateTime,
-    #[serde(rename = "isLive")]
     pub is_live: bool,
     #[serde(rename = "voiceChatStatus")]
-    pub voice_chat_status: VoiceChatStatus,
+    pub voice_chat_status: Option<VoiceChatStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub visibility: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub role: Option<String>,
-    #[serde(rename = "isBanned", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub is_banned: Option<bool>,
-    #[serde(rename = "thumbnailUrl", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub thumbnail_url: Option<String>,
     #[serde(rename = "ownerName", skip_serializing_if = "Option::is_none")]
@@ -118,37 +109,33 @@ pub struct CommunityDetail {
     pub owner_address: String,
     pub privacy: String,
     pub active: bool,
-    #[serde(skip)]
-    #[cfg_attr(feature = "ts", ts(skip))]
-    pub unlisted: bool,
     #[serde(rename = "membersCount")]
     #[cfg_attr(feature = "ts", ts(type = "number"))]
     pub members_count: i64,
     #[serde(skip)]
-    #[cfg_attr(feature = "ts", ts(skip))]
-    pub created_at: NaiveDateTime,
-    #[serde(skip)]
-    #[cfg_attr(feature = "ts", ts(skip))]
-    pub updated_at: NaiveDateTime,
-    #[serde(rename = "isLive")]
     pub is_live: bool,
     #[serde(rename = "voiceChatStatus")]
-    pub voice_chat_status: VoiceChatStatus,
+    pub voice_chat_status: Option<VoiceChatStatus>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub visibility: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub role: Option<String>,
-    #[serde(rename = "isBanned", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub is_banned: Option<bool>,
-    #[serde(rename = "thumbnailUrl", skip_serializing_if = "Option::is_none")]
+    #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub thumbnail_url: Option<String>,
     #[serde(rename = "ownerName", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub owner_name: Option<String>,
+    /// A signed read only (upstream `getCommunity`): the community hosts an
+    /// event that is live now.
+    #[serde(rename = "isHostingLiveEvent", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub is_hosting_live_event: Option<bool>,
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub has_thumbnail: bool,
@@ -161,9 +148,6 @@ pub struct MemberCommunity {
     #[serde(rename = "ownerAddress")]
     pub owner_address: String,
     pub role: String,
-    /// Not on the wire: production's row has no join time and nothing here reads one.
-    #[serde(skip)]
-    pub joined_at: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize)]
@@ -214,6 +198,15 @@ pub struct CommunityMemberWire {
     pub name_color: Option<NameColor>,
     #[serde(rename = "friendshipStatus")]
     pub friendship_status: i32,
+    #[serde(
+        rename = "lastFriendshipAction",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub last_friendship_action: Option<Option<String>>,
+    #[serde(rename = "actingUser", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub acting_user: Option<Option<String>>,
 }
 
 /// The v2 row: address only, the client resolves profiles itself.
@@ -240,9 +233,9 @@ pub struct CommunityRequest {
     pub status: String,
     #[serde(rename = "type")]
     pub kind: String,
-    #[serde(rename = "createdAt")]
+    #[serde(skip)]
     pub created_at: NaiveDateTime,
-    #[serde(rename = "updatedAt")]
+    #[serde(skip)]
     pub updated_at: NaiveDateTime,
 }
 
@@ -260,17 +253,14 @@ pub struct CommunityPost {
     pub likes_count: i64,
     #[serde(rename = "isLikedByUser")]
     pub liked_by_me: bool,
-    /// Not on the wire: production's post has no `type` and nothing here reads one.
-    #[serde(skip)]
-    pub kind: &'static str,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CommunityPlace {
     pub id: String,
-    #[serde(rename = "addedBy")]
+    #[serde(skip)]
     pub added_by: String,
-    #[serde(rename = "addedAt")]
+    #[serde(skip)]
     pub added_at: NaiveDateTime,
 }
 
@@ -280,10 +270,11 @@ pub struct CommunityBan {
     pub community_id: Uuid,
     #[serde(rename = "memberAddress")]
     pub banned_address: String,
-    #[serde(rename = "bannedBy")]
+    #[serde(skip)]
     pub banned_by: String,
-    #[serde(rename = "bannedAt")]
+    #[serde(rename = "bannedAt", with = "iso_ms")]
     pub banned_at: NaiveDateTime,
+    #[serde(skip)]
     pub reason: Option<String>,
 }
 
@@ -293,18 +284,22 @@ pub struct CommunityInvite {
     pub name: String,
 }
 
+/// A row of `GET /v1/moderation/communities` as upstream's
+/// `getAllCommunitiesForModeration` selects it (`communities-db.ts` at
+/// `fb3dcb8`), its `createdAt` as `Date.toJSON` writes it.
 #[derive(Debug, Serialize)]
 pub struct CommunityForModeration {
     pub id: Uuid,
     pub name: String,
+    pub description: String,
     #[serde(rename = "ownerAddress")]
     pub owner_address: String,
+    pub privacy: String,
     pub active: bool,
-    pub unlisted: bool,
-    #[serde(rename = "createdAt")]
-    pub created_at: NaiveDateTime,
     #[serde(rename = "membersCount")]
-    pub members_count: i64,
+    pub members_count: i32,
+    #[serde(rename = "createdAt", with = "iso_ms")]
+    pub created_at: NaiveDateTime,
 }
 
 #[derive(Debug, Serialize)]
@@ -319,7 +314,7 @@ pub struct ActiveCommunityVoiceChat {
     pub community_id: Uuid,
     #[serde(rename = "communityName")]
     pub community_name: String,
-    #[serde(rename = "communityImage")]
+    #[serde(rename = "communityImage", skip_serializing_if = "Option::is_none")]
     pub community_image: Option<String>,
     #[serde(rename = "isMember")]
     pub is_member: bool,
@@ -382,7 +377,6 @@ mod tests {
             created_at: day(),
             likes_count: 3,
             liked_by_me: true,
-            kind: "POST",
         };
         let v = serde_json::to_value(p).unwrap();
         let m = v.as_object().unwrap();
@@ -447,6 +441,8 @@ mod tests {
             has_claimed_name: true,
             name_color: Some(nc),
             friendship_status: 3,
+            last_friendship_action: None,
+            acting_user: None,
         })
         .unwrap();
         assert_eq!(legacy, wire);
@@ -459,6 +455,8 @@ mod tests {
             has_claimed_name: false,
             name_color: None,
             friendship_status: 7,
+            last_friendship_action: None,
+            acting_user: None,
         })
         .unwrap();
         assert_eq!(legacy, wire);

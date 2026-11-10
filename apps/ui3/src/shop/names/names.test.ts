@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { erc20Abi } from "../land/evm";
+import { erc20Abi, rpcReader } from "../land/evm";
 import { fakeWallet, pollCountedWait, stubClient } from "../land/testkit";
-import { CHAIN } from "../model/chain";
-import { manaUsdRate, usdCents } from "../model/money";
-import { parseNameLabel } from "../model/asset";
-import { presentPayment } from "../payment/present";
-import { RATE, web2, web3, SIGNED_OUT, BOOK } from "../payment/fixtures";
-import { LAND_NETWORKS } from "../land/contracts";
+import { CHAIN } from "@shop/model/chain";
+import { manaUsdRate, usdCents } from "@shop/model/money";
+import { parseNameLabel } from "@shop/model/asset";
+import { presentPayment } from "@shop/payment/present";
+import { RATE, web2, web3, SIGNED_OUT, BOOK } from "@shop/payment/fixtures";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import {
   buildNameUseCreditsArgs,
   checkNameAvailability,
@@ -32,8 +32,10 @@ import {
   NAME_PRICE_WEI,
 } from "./names";
 import { interimNameOffer, NameAlreadyRegisteredError, serverNameOffer } from "./offer";
-import { encodePurchaseOffer } from "../model/wire";
-import { nameRegistration } from "../payment/fixtures";
+import { fetchBannedNames } from "@shop/names/api";
+import { listsTransport } from "./reads";
+import { encodePurchaseOffer } from "@shop/model/wire";
+import { nameRegistration } from "@shop/payment/fixtures";
 
 const MAINNET = LAND_NETWORKS[CHAIN.ETHEREUM]!;
 const BUYER = "0x0000000000000000000000000000000000000b0b";
@@ -307,5 +309,35 @@ describe("the offer seam", () => {
     expect(asked[0]).toMatchObject({ listing: { name: "Nacho" }, asset: { chainId: 1, contract: MAINNET.nameRegistrar, token: { kind: "token", tokenId: nameTokenIdOf("Nacho") } } });
     const taken = seamNameOffer(async (queries) => ({ [queries[0]!.key]: null }), 1)!;
     await expect(taken(label, web3(), new AbortController().signal)).rejects.toBeInstanceOf(NameAlreadyRegisteredError);
+  });
+});
+
+describe("an error answer from a read", () => {
+  // A body whose release is seen: an unread one would hold its connection.
+  const errorAnswer = (status: number) => {
+    const released = { value: false };
+    const body = new ReadableStream({ cancel: () => void (released.value = true) });
+    return { released, answer: async () => new Response(body, { status }) };
+  };
+
+  it("releases the banned-names list's body before failing", async () => {
+    const { released, answer } = errorAnswer(503);
+    await expect(fetchBannedNames({ base: "https://peer.example", transport: listsTransport(answer) })).rejects.toThrow("503");
+    expect(released.value).toBe(true);
+  });
+
+  it("keeps the status as the error when the body's stream already failed", async () => {
+    // An errored stream refuses its release: that refusal mustn't replace the answer's status.
+    const broken = async () => new Response(new ReadableStream({ start: (c) => c.error(new Error("stream broke")) }), { status: 503 });
+    await expect(fetchBannedNames({ base: "https://peer.example", transport: listsTransport(broken) })).rejects.toThrow("503");
+    const reader = rpcReader(CHAIN.SEPOLIA, { base: "https://peer.example", fetchImpl: broken });
+    await expect(reader.call("0x0000000000000000000000000000000000000001", "0x")).rejects.toThrow("503");
+  });
+
+  it("releases the chain reader's body before failing", async () => {
+    const { released, answer } = errorAnswer(502);
+    const reader = rpcReader(CHAIN.SEPOLIA, { base: "https://peer.example", fetchImpl: answer });
+    await expect(reader.call("0x0000000000000000000000000000000000000001", "0x")).rejects.toThrow("502");
+    expect(released.value).toBe(true);
   });
 });

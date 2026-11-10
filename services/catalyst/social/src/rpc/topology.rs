@@ -54,6 +54,7 @@ where
     Fut: std::future::Future<Output = (ConnectivityCursor, bool)>,
 {
     let mut changes = topology.changes();
+    let mut retry = std::time::Duration::from_millis(250);
     // May have reached a subset of recipients before supersession/error. Remember it
     // conservatively until an offline fan-out completes; never lose an owed offline.
     let mut announced = BTreeSet::<String>::new();
@@ -133,8 +134,13 @@ where
             // one watch slot, and effective predicates still expire independently.
             tokio::select! {
                 _ = changes.changed() => {}
-                _ = tokio::time::sleep(std::time::Duration::from_millis(250)) => {}
+                _ = tokio::time::sleep(retry) => {}
             }
+            retry = retry
+                .saturating_mul(2)
+                .min(std::time::Duration::from_secs(5));
+        } else {
+            retry = std::time::Duration::from_millis(250);
         }
     }
 }
@@ -202,13 +208,17 @@ mod tests {
                 .await;
             })
         };
-        topology.receive(&frame(&[wallet.clone()])).unwrap();
+        topology
+            .receive(&frame(std::slice::from_ref(&wallet)))
+            .unwrap();
         settle().await;
         assert_eq!(*recipients.lock().unwrap(), [true, true]);
         topology.receive(&[]).unwrap();
         partial.notified().await;
         assert_eq!(*recipients.lock().unwrap(), [false, true]);
-        topology.receive(&frame(&[wallet.clone()])).unwrap();
+        topology
+            .receive(&frame(std::slice::from_ref(&wallet)))
+            .unwrap();
         resume.notify_one();
         settle().await;
         tokio::time::advance(std::time::Duration::from_millis(250)).await;
@@ -272,9 +282,13 @@ mod tests {
                 .await;
             })
         };
-        topology.receive(&frame(&[wallet.clone()])).unwrap();
+        topology
+            .receive(&frame(std::slice::from_ref(&wallet)))
+            .unwrap();
         settle().await;
-        topology.receive(&frame(&[wallet.clone()])).unwrap();
+        topology
+            .receive(&frame(std::slice::from_ref(&wallet)))
+            .unwrap();
         settle().await;
         assert_eq!(events.lock().unwrap().len(), 1);
         topology.receive(&[]).unwrap();

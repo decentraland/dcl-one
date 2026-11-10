@@ -1,11 +1,11 @@
 // from: shop@2d3bf62:app/src/components/FilterBar/FilterBar.tsx (+ FilterBar.styles.ts),
 //       app/src/components/Dropdown/Dropdown.tsx (+ Dropdown.styles.ts), app/src/components/Chevron
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { t } from "../intl";
-import type { ShopSort } from "../api";
-import { RARITIES } from "../lib/rarity";
+import { t } from "@shop/discovery/intl";
+import type { ShopSort } from "@shop/discovery/api";
+import { RARITIES } from "@shop/discovery/lib/rarity";
 import Icon from "./Icon";
 import "./filterbar.css";
 
@@ -36,6 +36,7 @@ export default function FilterBar({
   onOpenFilters,
   chips,
   onClearChips,
+  search,
 }: {
   sort: string;
   onSort: (key: string) => void;
@@ -46,6 +47,8 @@ export default function FilterBar({
   onOpenFilters?: () => void;
   chips?: FilterChip[];
   onClearChips?: () => void;
+  /** A page-scoped search field beside Sort By (upstream: count on the left, search then SORT BY on the right). */
+  search?: ReactNode;
 }) {
   return (
     <div className="shop-filterbar" data-testid="browse-toolbar">
@@ -75,11 +78,12 @@ export default function FilterBar({
         </div>
       ) : null}
       <div className="shop-filterbar__right">
+        {search ? <div className="shop-filterbar__search">{search}</div> : null}
         <SortDropdown value={sort} options={sortOptions} onChange={onSort} />
         {onOpenFilters ? (
           <button type="button" className="shop-filterbar__pill" data-testid="open-filters" onClick={onOpenFilters}>
             {t("filterBar.filters")}
-            <Icon name="filter" size={16} />
+            <Icon name="filter" size={20} className="shop-filterbar__pillicon" />
           </button>
         ) : null}
       </div>
@@ -115,7 +119,6 @@ export function SortDropdown({ value, options, onChange }: { value: string; opti
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={t("filterBar.sortBy")}
-        data-testid="sort-trigger"
         onClick={() => setOpen((o) => !o)}
       >
         <span>{t("filterBar.sortBy")}</span>

@@ -120,7 +120,7 @@ struct ParcelGrassFlat(bool);
 
 /// Huge plane that covers a huge area
 #[derive(Component)]
-struct Ground;
+pub(super) struct Ground;
 
 #[derive(Clone, Asset, TypePath, AsBindGroup)]
 pub struct ShellTexture {
@@ -550,13 +550,12 @@ fn refresh_parcel_grass_meshes(
 
 fn parcel_grass_lod_replaced(trigger: Trigger<OnReplace, ParcelGrassLod>, mut commands: Commands) {
     let entity = trigger.target();
-    commands.entity(entity).queue_handled(
-        |mut entity: EntityWorldMut| {
+    // Fails when the entity is being despawned; nothing to do then.
+    commands
+        .entity(entity)
+        .queue_silenced(|mut entity: EntityWorldMut| {
             entity.despawn_related::<Children>();
-        },
-        // This might happen on despawn, and if it is the case, just leave it be
-        bevy::ecs::error::ignore,
-    );
+        });
 }
 
 fn parcel_grass_without_lod(

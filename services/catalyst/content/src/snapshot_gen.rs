@@ -17,18 +17,20 @@
 //! against the old generator's output.
 //!
 //! One pass, per window: an existing row for exactly that window is reused
-//! when no active deployment in the window landed after its generation time
-//! and the stored bytes still hash to its name (re-read once per process;
-//! a mismatch re-keys the file and the row, the 2026-05 bulk-import repair);
-//! otherwise the window is generated and, in ONE transaction, every row it
-//! contains is deleted and the new row inserted with their hashes as
+//! when no active deployment in the window landed after its generation time,
+//! the row is younger than a month or still counts as many active
+//! deployments as it lists (upstream's inactive-entities check), and the
+//! stored bytes still hash to its name (re-read once per process; a mismatch
+//! re-keys the file and the row, the 2026-05 bulk-import repair); otherwise
+//! the window is generated and, in ONE transaction, every row it contains is
+//! deleted and the new row inserted with their hashes as
 //! `replacedSnapshotHashes`. Rows that match no window are pruned. The
 //! derived rows come from `content.deployments` (source), are fresh to
 //! within one interval (freshness), and are rebuilt whole, no window reused,
-//! by `POST /admin/api/content/snapshots/regenerate` (rebuild): the path
-//! for what the outdated probe cannot see, an entity overwritten after its
-//! window was written, which the window keeps listing until then (as the
-//! old generator did).
+//! by `POST /admin/api/content/snapshots/regenerate` (rebuild). An entity
+//! overwritten after its window was written stays listed until the window's
+//! row is a month old (`time_range::MS_PER_MONTH`, four weeks), as upstream;
+//! the rebuild drops it at once.
 //!
 //! Deviations from the old generator, each a fix:
 //! * The replaced rows and the new one change in one transaction, after the
@@ -51,6 +53,10 @@
 //!   that also passed `PartiallySynced`: a file written while profiles are
 //!   still bootstrapping would be marked processed by a peer and replaced
 //!   later, and the replacement is skipped as already covered.
+//!
+//! A window the deleter repair superseded rows in carries `outdated = true`
+//! (its generation time is left as it was, so `/snapshots` keeps publishing
+//! the real one) and is regenerated at the job's next tick.
 //!
 //! A node without a sync worker holds only what its database holds and has
 //! nothing to wait for; it generates as the old node did.
@@ -209,8 +215,8 @@ impl SnapshotGenerator {
     /// The console's regenerate: at its next wake (within the tick), once the
     /// gate is open, the job rebuilds every window from the current rows
     /// instead of reusing any. This is the rebuild path of the derived rows:
-    /// it also refreshes a window whose entity was overwritten, which the
-    /// outdated probe (active rows landed after the generation) cannot see.
+    /// it also refreshes a window whose entity was overwritten, which a pass
+    /// leaves until the window's row is a month old.
     /// A window whose lines did not change keeps its CID.
     pub fn request_regeneration(&self) -> GeneratorReport {
         self.requested.store(true, Ordering::SeqCst);
@@ -252,8 +258,13 @@ impl SnapshotGenerator {
             return Ok(());
         }
         let forced = self.requested.swap(false, Ordering::SeqCst);
+        // A window the deleter repair marked is regenerated at the next tick, not the next
+        // interval; a failed pass keeps its backoff.
         if !forced && !self.due() {
-            return Ok(());
+            let succeeded = self.last.lock().succeeded;
+            if !succeeded || !any_marked_window(&self.content.pool).await? {
+                return Ok(());
+            }
         }
         let end_ms = chrono::Utc::now().timestamp_millis();
         match self.run_pass(end_ms, forced, Some(&ctx.cancel)).await {
@@ -372,13 +383,24 @@ impl SnapshotGenerator {
                 return Err(GenerationError::Cancelled);
             }
             if let Some(candidate) = saved.iter().find(|s| !rebuild && s.time_range == *interval) {
-                let outdated = snapshot_is_outdated(pool, interval, candidate.generation_timestamp)
-                    .await
-                    .unwrap_or_else(|e| {
-                        warn!(error = %e, "outdated probe failed; regenerating the window");
-                        true
-                    });
-                if !outdated {
+                let outdated = candidate.outdated
+                    || snapshot_is_outdated(pool, interval, candidate.generation_timestamp)
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!(error = %e, "outdated probe failed; regenerating the window");
+                            true
+                        });
+                // A failed count keeps the window: rebuilding every month-old
+                // window while the database struggles is the heaviest work at
+                // the worst time, and the next pass counts again.
+                let inactive = !outdated
+                    && has_inactive_entities(pool, candidate, end_ms)
+                        .await
+                        .unwrap_or_else(|e| {
+                            warn!(error = %e, "inactive-entities count failed; keeping the window until the next pass");
+                            false
+                        });
+                if !outdated && !inactive {
                     match self.reusable(candidate).await {
                         Reuse::Verified => {
                             summary.reused += 1;
@@ -485,6 +507,9 @@ struct SavedRow {
     hash: Option<String>,
     time_range: TimeRange,
     generation_timestamp: Timestamp,
+    number_of_entities: i64,
+    /// The deleter repair's mark: regenerate whatever the probe says.
+    outdated: bool,
 }
 
 struct Written {
@@ -513,6 +538,20 @@ struct WindowRow {
     entity_timestamp: i64,
 }
 
+/// The population of a snapshot window `[$1, $2]` over `content.deployments
+/// d`: its active deployments, tombstoned local scenes left out. Shared by
+/// [`WINDOW_SQL`] and [`has_inactive_entities`]'s count, which must agree
+/// or a month-old window regenerates at every pass (or never).
+macro_rules! window_population {
+    () => {
+        "d.deleter_deployment IS NULL
+      AND d.entity_timestamp BETWEEN $1 AND $2
+      AND NOT EXISTS (
+          SELECT 1 FROM content.local_entities le
+          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)"
+    };
+}
+
 /// The window's active deployments, inclusive at both ends, in file order.
 /// The ORDER BY names the table's columns (`d.`): the bare name would bind
 /// to the millisecond output column of the same name, a sort no index can
@@ -521,27 +560,28 @@ struct WindowRow {
 /// (`entity_timestamp DESC, entity_id DESC`, this order without a sort),
 /// a year window whatever its row count makes cheapest
 /// (`METRICS.md`, "Snapshot generator").
-const WINDOW_SQL: &str = r#"
+const WINDOW_SQL: &str = concat!(
+    r#"
     SELECT d.entity_id,
            d.entity_type,
            d.entity_pointers AS pointers,
            d.auth_chain,
            (date_part('epoch', d.entity_timestamp) * 1000)::bigint AS entity_timestamp
     FROM content.deployments d
-    WHERE d.deleter_deployment IS NULL
-      AND d.entity_timestamp BETWEEN $1 AND $2
-      AND NOT EXISTS (
-          SELECT 1 FROM content.local_entities le
-          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)
+    WHERE "#,
+    window_population!(),
+    r#"
     ORDER BY d.entity_timestamp, d.entity_id
-"#;
+"#
+);
 
 /// Whether an active deployment in the window landed after `generation_ms`
 /// (the old `snapshot_is_outdated`, inclusive window, strict `>`), or a
 /// local unpublish since then touched it: a scene tombstoned after the
 /// generation shares a pointer with a deployment of the window (the scene
-/// itself, which the windows leave out once tombstoned, and the older
-/// scenes the unpublish restored, whose `local_timestamp` is old). The
+/// itself, which the windows leave out once tombstoned), or the row is
+/// stamped at the epoch (the deleter repair's mark before the `outdated`
+/// column; a pass checks that column before calling this). The
 /// second leg reads the tombstones since the generation
 /// (`local_entities_tombstoned_idx`, a handful) and the GIN pointer index. Planned
 /// per call (`persistent(false)`): with the values, the planner walks
@@ -555,6 +595,10 @@ pub async fn snapshot_is_outdated(
     window: &TimeRange,
     generation_ms: Timestamp,
 ) -> Result<bool, GenerationError> {
+    // Rows the deleter repair marked before `content.snapshots.outdated` existed.
+    if generation_ms == 0 {
+        return Ok(true);
+    }
     Ok(sqlx::query_scalar(
         "SELECT EXISTS (
              SELECT 1 FROM content.deployments
@@ -574,6 +618,36 @@ pub async fn snapshot_is_outdated(
     .bind(naive(generation_ms)?)
     .fetch_one(pool)
     .await?)
+}
+
+/// Upstream's inactive-entities check (`snapshotHasInactiveEntities`): a row
+/// generated more than a month (`MS_PER_MONTH`, four weeks) before `now_ms`
+/// whose window now holds fewer active deployments than it lists, so an
+/// entity it lists was overwritten since. The count is the file's own
+/// population (`WINDOW_SQL`'s filter, tombstoned local scenes left out), so
+/// a window that left those out is not rebuilt at every pass. Served by the
+/// partial `deployments_active_entity_timestamp_idx`, an index-only range
+/// scan of the window's active rows; without it a year window is a scan of
+/// the whole table (`METRICS.md`, "Snapshot inactive-entities count").
+/// Planned per call (`persistent(false)`), like the window read.
+async fn has_inactive_entities(
+    pool: &PgPool,
+    row: &SavedRow,
+    now_ms: Timestamp,
+) -> Result<bool, GenerationError> {
+    if row.generation_timestamp >= now_ms - time_range::MS_PER_MONTH {
+        return Ok(false);
+    }
+    let active: i64 = sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM content.deployments d WHERE ",
+        window_population!()
+    ))
+    .persistent(false)
+    .bind(naive(row.time_range.init_timestamp)?)
+    .bind(naive(row.time_range.end_timestamp)?)
+    .fetch_one(pool)
+    .await?;
+    Ok(active < row.number_of_entities)
 }
 
 /// The instant a window read is complete as of: the start of the oldest
@@ -598,6 +672,37 @@ async fn read_horizon_ms(pool: &PgPool) -> Result<Timestamp, GenerationError> {
     Ok(ms - 1)
 }
 
+/// Whether the deleter repair marked a window (`outdated`, or the epoch an
+/// older binary still writes during a rolling deploy) that no pass has
+/// regenerated yet. A scan of a few dozen rows.
+async fn any_marked_window(pool: &PgPool) -> Result<bool, GenerationError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM content.snapshots
+                        WHERE outdated OR generation_time = 'epoch'::timestamp)",
+    )
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Advisory lock key the generator takes shared while it writes a window's row
+/// and the deleter repair takes exclusive while it marks windows outdated.
+pub const SNAPSHOT_ROWS_LOCK: i64 = 0x636f_6e74_656e_7473;
+
+/// The `content.system_properties` key counting deleter repairs that superseded rows.
+pub const DELETER_REPAIR_RUNS_KEY: &str = "deleter_repair_runs";
+
+/// The deleter repair count, read before a window read and again under the row lock.
+async fn deleter_repair_runs<'e>(
+    conn: impl sqlx::PgExecutor<'e>,
+) -> Result<Option<String>, GenerationError> {
+    Ok(
+        sqlx::query_scalar("SELECT value FROM content.system_properties WHERE key = $1")
+            .bind(DELETER_REPAIR_RUNS_KEY)
+            .fetch_optional(conn)
+            .await?,
+    )
+}
+
 async fn generate_window(
     pool: &PgPool,
     storage: &crate::storage::Storage,
@@ -605,6 +710,7 @@ async fn generate_window(
     cancel: Option<&CancellationToken>,
 ) -> Result<Written, GenerationError> {
     let started = Instant::now();
+    let repairs_before = deleter_repair_runs(pool).await?;
     let generation_ms = read_horizon_ms(pool).await?;
     let (bytes, entities) = read_window(pool, &window, cancel).await?;
     let number_of_entities = i32::try_from(entities).map_err(|_| {
@@ -620,6 +726,12 @@ async fn generate_window(
     storage.store(&hash, Bytes::from(bytes)).await?;
 
     let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(SNAPSHOT_ROWS_LOCK)
+        .execute(&mut *tx)
+        .await?;
+    // A repair that committed since the read may have superseded rows the file lists: keep its mark.
+    let outdated = deleter_repair_runs(&mut *tx).await? != repairs_before;
     let gone: Vec<Option<String>> = sqlx::query_scalar(
         "WITH gone AS (
              DELETE FROM content.snapshots
@@ -634,8 +746,8 @@ async fn generate_window(
     let replaced: Vec<String> = gone.into_iter().flatten().filter(|h| *h != hash).collect();
     sqlx::query(
         "INSERT INTO content.snapshots
-             (hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time)
-         VALUES ($1, $2, $3, $4, $5, $6)",
+             (hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time, outdated)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)",
     )
     .bind(&hash)
     .bind(naive(window.init_timestamp)?)
@@ -643,6 +755,7 @@ async fn generate_window(
     .bind(&replaced)
     .bind(number_of_entities)
     .bind(naive(generation_ms)?)
+    .bind(outdated)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -709,58 +822,40 @@ pub fn write_line(buf: &mut Vec<u8>, line: &SnapshotLine<'_>) -> Result<(), Gene
 }
 
 async fn saved_rows(pool: &PgPool) -> Result<Vec<SavedRow>, GenerationError> {
-    let rows: Vec<(Option<String>, NaiveDateTime, NaiveDateTime, NaiveDateTime)> = sqlx::query_as(
-        "SELECT hash, init_timestamp, end_timestamp, generation_time FROM content.snapshots",
-    )
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(hash, init, end, generated)| SavedRow {
-            hash,
-            time_range: TimeRange {
-                init_timestamp: init.and_utc().timestamp_millis(),
-                end_timestamp: end.and_utc().timestamp_millis(),
-            },
-            generation_timestamp: generated.and_utc().timestamp_millis(),
-        })
-        .collect())
-}
-
-/// hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time.
-type SnapshotRow = (
-    Option<String>,
-    NaiveDateTime,
-    NaiveDateTime,
-    Vec<String>,
-    i32,
-    NaiveDateTime,
-);
-
-/// Every row, oldest window first, in the wire shape `/snapshots` serves.
-pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, GenerationError> {
-    let rows: Vec<SnapshotRow> = sqlx::query_as(
-        "SELECT hash, init_timestamp, end_timestamp, replaced_hashes, number_of_entities, generation_time
-         FROM content.snapshots
-         ORDER BY init_timestamp, end_timestamp",
+    let rows: Vec<(
+        Option<String>,
+        NaiveDateTime,
+        NaiveDateTime,
+        NaiveDateTime,
+        i32,
+        bool,
+    )> = sqlx::query_as(
+        "SELECT hash, init_timestamp, end_timestamp, generation_time, number_of_entities, outdated
+         FROM content.snapshots",
     )
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
         .map(
-            |(hash, init, end, replaced, entities, generated)| SnapshotMetadata {
-                hash: hash.unwrap_or_default(),
+            |(hash, init, end, generated, entities, outdated)| SavedRow {
+                hash,
                 time_range: TimeRange {
                     init_timestamp: init.and_utc().timestamp_millis(),
                     end_timestamp: end.and_utc().timestamp_millis(),
                 },
-                number_of_entities: entities.max(0) as u64,
-                replaced_snapshot_hashes: Some(replaced),
                 generation_timestamp: generated.and_utc().timestamp_millis(),
+                number_of_entities: i64::from(entities),
+                outdated,
             },
         )
         .collect())
+}
+
+/// Every stored snapshot, oldest window first, as `/snapshots` serves them
+/// ([`crate::queries::all_snapshots`]: a row without a hash is left out).
+pub async fn all_snapshots(pool: &PgPool) -> Result<Vec<SnapshotMetadata>, GenerationError> {
+    Ok(crate::queries::all_snapshots(pool).await?)
 }
 
 /// Pinned to the old hash as well as the window, so two repairs racing for

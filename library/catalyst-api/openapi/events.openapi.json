@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "catalyrst-events",
-    "description": "Rust port of decentraland/events (REST API for events.decentraland.org), HTTP-snapshot federation per docs/federation/events.md",
+    "description": "Rust port of decentraland/events (REST API for events.decentraland.org), HTTP-snapshot federation per docs/federation/events.md. Unknown routes under /api answer `{\"ok\":false,\"error\":\"NotFound\",\"code\":\"not_found\"}` (404), as do known paths with another method.",
     "license": {
       "name": ""
     },
@@ -37,8 +37,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string",
+              "format": "uint"
             }
           },
           {
@@ -46,8 +46,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string",
+              "format": "uint"
             }
           },
           {
@@ -202,6 +202,21 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "description": "Admin-bearer only: include soft-deleted events (`true`/`1`) or exclude them (`false`/`0`, the default).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
           }
         ],
         "responses": {
@@ -216,7 +231,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body`",
             "content": {
               "application/json": {
                 "schema": {
@@ -226,7 +241,7 @@
             }
           },
           "401": {
-            "description": "",
+            "description": "The admin bearer does not match (\"Unauthorized\"), or the filter requires authentication",
             "content": {
               "application/json": {
                 "schema": {
@@ -244,8 +259,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "The query is validated against the old events service's schema (additionalProperties: false; `positions`, `world_names` and `places_ids` as arrays); unknown params answer 400. `recurrent`, `with_recurrent_dates` and `allow_deleted` are served on /v1/events only."
       },
       "post": {
         "tags": [
@@ -263,8 +289,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created. The answer is the record the route built (`createEvent.ts:235-270`): it carries no `updated_at`; later reads do.",
             "content": {
               "application/json": {
                 "schema": {
@@ -293,6 +319,16 @@
               }
             }
           },
+          "404": {
+            "description": "No profile for the signer: `Not found profile for \"<user>\"`",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "500": {
             "description": "",
             "content": {
@@ -302,8 +338,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Writes disabled, or an image was sent while this node has no blob store",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A signed fetch by a wallet whose profile this node holds; the admin bearer is not honoured (401). The body follows CreateEventBody; the created event is pending approval and the answer is the owner's view (contact and details present). Behind DATA_WRITES_ENABLED (503)."
       }
     },
     "/api/events/attending": {
@@ -343,7 +390,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Every event that has not finished, is not rejected and not deleted (pending events of other creators included), each with the signer's `attending` flag; signed fetch only (the bearer is not honoured)."
       }
     },
     "/api/events/categories": {
@@ -455,8 +503,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string",
+              "format": "uint"
             }
           },
           {
@@ -464,8 +512,8 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "integer",
-              "format": "int64"
+              "type": "string",
+              "format": "uint"
             }
           },
           {
@@ -491,6 +539,21 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "deleted",
+            "in": "query",
+            "required": false,
+            "description": "Admin-bearer only: include soft-deleted events (`true`/`1`) or exclude them (`false`/`0`, the default).",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
           }
         ],
         "requestBody": {
@@ -504,8 +567,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -515,7 +578,7 @@
             }
           },
           "400": {
-            "description": "",
+            "description": "Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body`",
             "content": {
               "application/json": {
                 "schema": {
@@ -525,7 +588,7 @@
             }
           },
           "401": {
-            "description": "",
+            "description": "The admin bearer does not match (\"Unauthorized\"), or the filter requires authentication",
             "content": {
               "application/json": {
                 "schema": {
@@ -543,8 +606,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "The query is validated against the old events service's schema (additionalProperties: false; `positions`, `world_names` and `places_ids` as arrays); unknown params answer 400. `recurrent`, `with_recurrent_dates` and `allow_deleted` are served on /v1/events only."
       }
     },
     "/api/events/{event_id}": {
@@ -574,6 +648,26 @@
               }
             }
           },
+          "400": {
+            "description": "`event_id` is not a UUID (ajv `format: uuid`)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "The admin bearer does not match (\"Unauthorized\"), or the filter requires authentication",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "404": {
             "description": "",
             "content": {
@@ -586,6 +680,16 @@
           },
           "500": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured",
             "content": {
               "application/json": {
                 "schema": {
@@ -632,6 +736,16 @@
               }
             }
           },
+          "400": {
+            "description": "A non-UUID id, or an invalid reason or actor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "",
             "content": {
@@ -662,6 +776,16 @@
               }
             }
           },
+          "409": {
+            "description": "A replayed signed nonce, or a mirrored event deleted by its owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "500": {
             "description": "",
             "content": {
@@ -671,8 +795,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "The owner (deleted_by_user, the body ignored) or an edit_any_event grant (deleted_by_admin with the body's reason) by signed fetch; the admin bearer (deleted_by_admin, deleted_by the body's actor or `admin`). An already deleted event is answered unchanged. 403 `You don't have permission to delete this event` otherwise."
       },
       "patch": {
         "tags": [
@@ -700,8 +835,8 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -750,6 +885,16 @@
               }
             }
           },
+          "409": {
+            "description": "A replayed signed nonce, or a mirrored event (edit it at the node it mirrors)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "500": {
             "description": "",
             "content": {
@@ -759,7 +904,21 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
+        },
+        "description": "A signed chain wins over the bearer. Signed wallets: UpdateEventBody (unknown fields ignored); 404 for an event the wallet cannot read (pending or rejected events of others), 403 `You don't have permission to edit this event` unless the owner, a moderator or an edit_any_event grant; an owner's change of moderated content (name, description, images, location, categories, world, featured_item) sends an approved event back to pending unless the owner may approve. The admin bearer: AdminEventPatch; its answers carry contact and details and attending false. Non-owner wallet edits are operator writes (OPS_WRITES_ENABLED). A plain signed fetch needs no x-identity-metadata; a signed body_sha256 must match (400) and a signed nonce refuses its replay (409).",
+        "x-bearer-request-schema": {
+          "$ref": "#/components/schemas/AdminEventPatch"
         }
       }
     },
@@ -790,6 +949,26 @@
               }
             }
           },
+          "400": {
+            "description": "event_id must match format \"uuid\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "500": {
             "description": "",
             "content": {
@@ -800,7 +979,8 @@
               }
             }
           }
-        }
+        },
+        "description": "The event is read as GET /api/events/{event_id} does (400 for a non-UUID, 404 when hidden); a `Bearer` header is anonymous here."
       },
       "post": {
         "tags": [
@@ -818,12 +998,22 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiOk_Vec_EventAttendeeRecord"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "event_id must match format \"uuid\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
                 }
               }
             }
@@ -857,8 +1047,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Writes disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A signed fetch by a wallet whose profile this node holds (404 `Not found profile for \"<user>\"`), whose name is the row's user_name; the event must be readable by the signer. Behind DATA_WRITES_ENABLED."
       },
       "delete": {
         "tags": [
@@ -886,8 +1087,28 @@
               }
             }
           },
+          "400": {
+            "description": "event_id must match format \"uuid\"",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
           "401": {
             "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found event",
             "content": {
               "application/json": {
                 "schema": {
@@ -905,8 +1126,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Writes disabled",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A signed fetch; the event must be readable by the signer (404 otherwise). Behind DATA_WRITES_ENABLED."
       }
     },
     "/api/poster": {
@@ -931,11 +1163,13 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_PosterUpload"
+                }
               }
             }
           },
@@ -978,8 +1212,19 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A signed fetch (multipart field `poster`) by a wallet whose profile this node holds; 400 `Poster param is required` / `Multiple files are not allowed` / `Empty files are not allowed` / `Invalid file content; expected one of ...`; 413 `File size limit has been reached`; 404 `Not found profile for \"<user>\"`; 503 `Service unavailable` without a blob store."
       }
     },
     "/api/poster-vertical": {
@@ -1004,11 +1249,13 @@
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_PosterUpload"
+                }
               }
             }
           },
@@ -1051,8 +1298,19 @@
                 }
               }
             }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A signed fetch (multipart field `poster`) by a wallet whose profile this node holds; 400 `Poster param is required` / `Multiple files are not allowed` / `Empty files are not allowed` / `Invalid file content; expected one of ...`; 413 `File size limit has been reached` (max 500 KB); 404 `Not found profile for \"<user>\"`; 503 `Service unavailable` without a blob store."
       }
     },
     "/api/profiles/me/settings": {
@@ -1066,7 +1324,9 @@
             "description": "",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_ProfileSettingsSession"
+                }
               }
             }
           },
@@ -1100,17 +1360,21 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateMyProfileSettingsBody"
+              }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_ProfileSettings"
+                }
               }
             }
           },
@@ -1153,8 +1417,19 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "The signer's own fields (UpdateMyProfileSettingsBody) or a ProfileSettingsUpdate envelope for the signer. 400 `Invalid data was sent to the server`."
       }
     },
     "/api/profiles/settings": {
@@ -1168,7 +1443,61 @@
             "description": "",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_Vec_ProfileSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "description": "The rows holding permissions (ProfileSettingsModel.list), for a moderator or an edit_any_profile grant (403 `Forbidden`)."
+      }
+    },
+    "/api/profiles/subscriptions": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "operationId": "get_profile_subscription",
+        "description": "The signer's web-push subscriptions (ProfileSubscription/routes.ts:37-40); nothing sends pushes.",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_Vec_ProfileSubscription"
+                }
               }
             }
           },
@@ -1193,16 +1522,35 @@
             }
           }
         }
-      }
-    },
-    "/api/profiles/subscriptions": {
-      "get": {
+      },
+      "post": {
         "tags": [
           "profiles"
         ],
-        "operationId": "get_profile_subscription",
+        "operationId": "create_profile_subscription",
+        "description": "Stores the browser's subscription and turns the signer's notify_by_browser on (ProfileSubscription/routes.ts:45-62).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProfileSubscriptionBody"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
-          "410": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_bool"
+                }
+              }
+            }
+          },
+          "400": {
             "description": "",
             "content": {
               "application/json": {
@@ -1211,16 +1559,28 @@
                 }
               }
             }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "profiles"
-        ],
-        "operationId": "create_profile_subscription",
-        "responses": {
-          "410": {
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -1237,8 +1597,39 @@
           "profiles"
         ],
         "operationId": "delete_profile_subscription",
+        "description": "Removes the signer's subscriptions and turns notify_by_browser off (ProfileSubscription/routes.ts:65-73).",
         "responses": {
-          "410": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_bool"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
             "description": "",
             "content": {
               "application/json": {
@@ -1272,7 +1663,9 @@
             "description": "",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_Option_ProfileSettings"
+                }
               }
             }
           },
@@ -1295,8 +1688,29 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "The stored row or `data: null`, for a moderator or an edit_any_profile grant (403 `Forbidden`); a non-address is 404 `Not found \"<id>\" profile: invalid address`."
       },
       "patch": {
         "tags": [
@@ -1316,17 +1730,21 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/UpdateProfileSettingsBody"
+              }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/ApiOk_ProfileSettings"
+                }
               }
             }
           },
@@ -1359,8 +1777,39 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "The target's permissions (UpdateProfileSettingsBody), by a moderator or an edit_any_profile grant; a ProfileSettingsUpdate envelope stays a moderator's. A changed set queues the Slack moderation notice."
       }
     },
     "/api/schedules": {
@@ -1401,15 +1850,22 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScheduleUpsertEnvelope"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/CreateScheduleBody"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ScheduleUpsertEnvelope"
+                  }
+                ]
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
                 "schema": {
@@ -1447,8 +1903,29 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A plain signed body (CreateScheduleBody) or a ScheduleUpsert envelope; validation (400 `Invalid data was sent to the server`) runs before the permission check (403 `Forbidden`: a moderator or an edit_any_schedule grant)."
       }
     },
     "/api/schedules/{schedule_id}": {
@@ -1519,19 +1996,33 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ScheduleUpsertEnvelope"
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/UpdateScheduleBody"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ScheduleUpsertEnvelope"
+                  }
+                ]
               }
             }
           },
           "required": true
         },
         "responses": {
-          "200": {
-            "description": "",
+          "201": {
+            "description": "HTTP response for Created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ApiOk_ScheduleRecord"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/ApiOk_ScheduleFields"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ApiOk_ScheduleRecord"
+                    }
+                  ]
                 }
               }
             }
@@ -1565,8 +2056,39 @@
                 }
               }
             }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
           }
-        }
+        },
+        "description": "A plain signed body (UpdateScheduleBody) answers only the merged eight keys; the ScheduleUpsert envelope answers the whole record. 404 `Schedule \"<id>\" not found`."
       }
     },
     "/events/sitemap.events.xml": {
@@ -2004,6 +2526,21 @@
             }
           },
           {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
+          },
+          {
             "name": "world_names",
             "in": "query",
             "required": false,
@@ -2090,6 +2627,16 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
             }
           },
           {
@@ -2212,32 +2759,142 @@
           }
         }
       }
+    },
+    "/api/profile/{user}/face.png": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "operationId": "get_profile_face",
+        "description": "302 to `avatar.snapshots.face256 || face` of the profile this node holds, else `https://decentraland.org/images/male.png` (also for a non-address); `Cache-Control: max-age=86400` (decentraland-gatsby Profile/routes.js).",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile/{user}/body.png": {
+      "get": {
+        "tags": [
+          "profiles"
+        ],
+        "operationId": "get_profile_body",
+        "description": "302 to `avatar.snapshots.body` of the profile this node holds, else `https://decentraland.org/images/male.png` (also for a non-address); `Cache-Control: max-age=86400` (decentraland-gatsby Profile/routes.js).",
+        "parameters": [
+          {
+            "name": "user",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "302": {
+            "description": "",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string",
+                  "format": "uri"
+                }
+              },
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
       "ApiErrorBody": {
         "type": "object",
+        "description": "The old services' error envelope (decentraland-gatsby RequestError.toJSON): `error` is the message, `code` the snake-cased status (bad_request, unauthorized, forbidden, not_found, payload_too_large, service_unavailable, internal_server_error) and `data` carries detail when the refusal has it, such as a validation failure's ajv `errors`, their `messages` and the validated `body`. Never a `stack`.",
         "required": [
           "ok",
           "error",
-          "message"
+          "code"
         ],
         "properties": {
+          "code": {
+            "type": "string"
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
+          },
           "error": {
             "type": "string"
           },
-          "federation_adr": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "message": {
-            "type": "string"
-          },
           "ok": {
-            "type": "boolean"
+            "type": "boolean",
+            "enum": [
+              false
+            ]
           }
         }
       },
@@ -3281,6 +3938,7 @@
       },
       "CreateEventBody": {
         "type": "object",
+        "description": "`newEventSchema` (events `Event/schemas.ts:518-675`): the body of POST /api/events after the service's defaults (a falsy image, image_vertical, server or featured_item is null; a falsy url is the generated jump-in link `https://decentraland.org/jump/events?position=x%2Cy[&realm=<server>]`). Unknown fields are refused (`Invalid data was sent to the server`, `data.errors`). The signer needs a profile this node holds (404 `Not found profile for \"<user>\"`). `schedules` are always stored as `[]`; any signer may set `url` (a public http(s) link). A missing `categories` is stored as `[]`.",
         "required": [
           "name",
           "start_at",
@@ -3288,23 +3946,158 @@
           "x",
           "y"
         ],
+        "additionalProperties": false,
         "properties": {
-          "all_day": {
+          "name": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "description": {
             "type": [
-              "boolean",
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          },
+          "approved": {
+            "type": "boolean",
+            "description": "Accepted and ignored: a created event is pending."
+          },
+          "rejected": {
+            "type": "boolean",
+            "description": "Accepted and ignored."
+          },
+          "rejection_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500,
+            "description": "Accepted and ignored."
+          },
+          "deleted_by_user": {
+            "type": "boolean",
+            "description": "Accepted and ignored."
+          },
+          "deleted_by_admin": {
+            "type": "boolean",
+            "description": "Accepted and ignored."
+          },
+          "deleted_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500,
+            "description": "Accepted and ignored."
+          },
+          "highlighted": {
+            "type": "boolean",
+            "description": "Accepted and ignored."
+          },
+          "trending": {
+            "type": "boolean",
+            "description": "Accepted and ignored."
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503. Default: the parcel or estate map image for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event."
+          },
+          "image_vertical": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503."
+          },
+          "start_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Milliseconds; at most 24 hours (`Maximum allowed duration 24Hrs`)."
+          },
+          "all_day": {
+            "type": "boolean"
+          },
+          "recurrent": {
+            "type": "boolean"
+          },
+          "recurrent_frequency": {
+            "enum": [
+              "YEARLY",
+              "MONTHLY",
+              "WEEKLY",
+              "DAILY",
+              "HOURLY",
+              null
+            ]
+          },
+          "recurrent_setpos": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -1
+          },
+          "recurrent_monthday": {
+            "type": [
+              "integer",
               "null"
             ]
           },
-          "categories": {
+          "recurrent_weekday_mask": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recurrent_month_mask": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recurrent_interval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "recurrent_count": {
             "type": [
-              "array",
+              "integer",
               "null"
             ],
-            "items": {
-              "type": "string"
-            }
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "May be combined with recurrent_until; the earlier bound ends the series. A rule whose expansion from start_at to now exceeds 50 000 steps is refused."
           },
-          "community_id": {
+          "recurrent_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "x": {
+            "type": "number",
+            "minimum": -170,
+            "maximum": 170,
+            "description": "Also checked against the world limits (400 `Event is outside the world limits`), world events included."
+          },
+          "y": {
+            "type": "number",
+            "minimum": -170,
+            "maximum": 170
+          },
+          "server": {
             "type": [
               "string",
               "null"
@@ -3314,104 +4107,32 @@
             "type": [
               "string",
               "null"
-            ]
-          },
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ]
+            ],
+            "maxLength": 100
           },
           "details": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 5000
           },
-          "duration": {
-            "type": "integer",
-            "format": "int64"
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "A public http(s) link (400 `Invalid event url <url>; only public HTTP(S) URLs are allowed`)."
           },
-          "featured_item": {
+          "categories": {
             "type": [
-              "string",
-              "null"
-            ]
-          },
-          "image": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "image_vertical": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "type": "string"
-          },
-          "recurrent": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "recurrent_count": {
-            "type": [
-              "integer",
+              "array",
               "null"
             ],
-            "format": "int64"
-          },
-          "recurrent_frequency": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrent_interval": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_month_mask": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_monthday": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_setpos": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_until": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrent_weekday_mask": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
+            "items": {
+              "type": "string"
+            },
+            "description": "Known category names (400 `Invalid category tag supplied`)."
           },
           "schedules": {
             "type": [
@@ -3419,55 +4140,48 @@
               "null"
             ],
             "items": {
-              "type": "string"
-            }
-          },
-          "server": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "start_at": {
-            "type": "string"
-          },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ]
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Validated as UUIDs, then ignored: a created event has no schedules."
           },
           "world": {
+            "type": "boolean"
+          },
+          "community_id": {
             "type": [
-              "boolean",
+              "string",
               "null"
-            ]
+            ],
+            "format": "uuid",
+            "description": "A community the signer owns or moderates (400 `Failed to validate community ownership: Community \"<id>\" not found or you don't have access to it`)."
           },
-          "x": {
-            "type": "integer",
-            "format": "int32"
-          },
-          "y": {
-            "type": "integer",
-            "format": "int32"
+          "featured_item": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160,
+            "pattern": "^urn:decentraland:(matic|ethereum|amoy|sepolia):collections-v2:0x[a-fA-F0-9]{40}(:\\d+)?$"
           }
-        },
-        "additionalProperties": false
+        }
       },
       "DeleteEventBody": {
         "type": "object",
         "properties": {
-          "actor": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
           "reason": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 500,
+            "description": "Admin bearer and edit_any_event deletes: stored as deleted_reason, blank as null (400 `deleted_reason must be a string`, `deleted_reason must be 500 characters or less`). Ignored for the owner's own delete."
+          },
+          "actor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 42,
+            "description": "Admin bearer only: deleted_by; defaults to `admin`."
           }
         }
       },
@@ -3616,13 +4330,11 @@
             ]
           },
           "connected_addresses": {
-            "type": [
-              "array",
-              "null"
-            ],
+            "type": "array",
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Present on every item when `with_connected_users` is set; an empty array when the room is unknown."
           },
           "coordinates": {
             "type": "array",
@@ -3711,7 +4423,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Public event image. Generated default posters are absolute URLs under the configured events base URL, including any mount prefix."
           },
           "image_vertical": {
             "type": [
@@ -3762,7 +4475,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Only on the `/v1` routes; the `/api` routes answer the old events service's record without it."
           },
           "recurrent": {
             "type": "boolean"
@@ -3779,7 +4493,8 @@
             "items": {
               "type": "string",
               "format": "date-time"
-            }
+            },
+            "description": "The next occurrences that have not ended, at most 10 (`MAX_EVENT_RECURRENT`); `/v1/events?with_recurrent_dates=true` answers the stored window."
           },
           "recurrent_frequency": {
             "type": [
@@ -3890,7 +4605,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "The creator's profile name; `Decentraland Foundation` for the wallets the `events-decentraland-foundation-addresses` feature flag lists."
           },
           "world": {
             "type": "boolean"
@@ -3902,6 +4618,20 @@
           "y": {
             "type": "integer",
             "format": "int32"
+          },
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only in the owner's view and in the admin bearer's GET, PATCH and DELETE answers."
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Present only in the owner's view and in the admin bearer's GET, PATCH and DELETE answers."
           }
         }
       },
@@ -4089,29 +4819,142 @@
       },
       "UpdateEventBody": {
         "type": "object",
+        "description": "Signed-wallet PATCH body (`updateEvent.ts:183-236`). Unknown fields are ignored. The owner may set image, image_vertical, rejected, name, description, start_at, duration, all_day, x, y, server, recurrent*, categories, world, featured_item, contact, details and community_id (and approved, with the approve_own_event grant); an edit_any_event grant (or a moderator) may also set highlighted, trending, schedules and url; an approve_any_event grant may set approved and rejection_reason. Fields outside the caller's sets are ignored, never refused. The merged event is validated against `newEventSchema` (400 `Invalid data was sent to the server`).",
         "properties": {
-          "all_day": {
-            "type": [
-              "boolean",
-              "null"
-            ]
+          "name": {
+            "type": "string",
+            "maxLength": 150
           },
-          "approved": {
+          "description": {
             "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "categories": {
-            "type": [
-              "array",
+              "string",
               "null"
             ],
-            "items": {
-              "type": "string"
-            }
+            "maxLength": 5000
           },
-          "community_id": {
+          "approved": {
+            "type": "boolean",
+            "description": "Honoured for the owner with approve_own_event and for approve_any_event grants; a rejected event stays unapproved unless rejected is also set false."
+          },
+          "rejected": {
+            "type": "boolean",
+            "description": "The owner (or an edit_any_event grant) may reject the event; a rejection clears approved, highlighted and trending."
+          },
+          "rejection_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500,
+            "description": "approve_any_event grants only: a non-empty string of at most 500 characters, or null to clear (400 `rejection_reason cannot be empty`, `rejection_reason must be 500 characters or less`, `rejection_reason must be a string`)."
+          },
+          "highlighted": {
+            "type": "boolean",
+            "description": "edit_any_event grants only."
+          },
+          "trending": {
+            "type": "boolean",
+            "description": "edit_any_event grants only."
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503. Default: the parcel or estate map image for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event."
+          },
+          "image_vertical": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503."
+          },
+          "start_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Milliseconds; at most 24 hours (`Maximum allowed duration 24Hrs`)."
+          },
+          "all_day": {
+            "type": "boolean"
+          },
+          "recurrent": {
+            "type": "boolean"
+          },
+          "recurrent_frequency": {
+            "enum": [
+              "YEARLY",
+              "MONTHLY",
+              "WEEKLY",
+              "DAILY",
+              "HOURLY",
+              null
+            ]
+          },
+          "recurrent_setpos": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -1
+          },
+          "recurrent_monthday": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recurrent_weekday_mask": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recurrent_month_mask": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recurrent_interval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "recurrent_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "May be combined with recurrent_until; the earlier bound ends the series. A rule whose expansion from start_at to now exceeds 50 000 steps is refused."
+          },
+          "recurrent_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "x": {
+            "type": "number",
+            "minimum": -170,
+            "maximum": 170,
+            "description": "Also checked against the world limits (400 `Event is outside the world limits`), world events included."
+          },
+          "y": {
+            "type": "number",
+            "minimum": -170,
+            "maximum": 170
+          },
+          "server": {
             "type": [
               "string",
               "null"
@@ -4121,128 +4964,32 @@
             "type": [
               "string",
               "null"
-            ]
-          },
-          "description": {
-            "type": [
-              "string",
-              "null"
-            ]
+            ],
+            "maxLength": 100
           },
           "details": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "maxLength": 5000
           },
-          "duration": {
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "edit_any_event grants only. An empty or `https://decentraland.org/jump`-prefixed url is regenerated from the location."
+          },
+          "categories": {
             "type": [
-              "integer",
+              "array",
               "null"
             ],
-            "format": "int64"
-          },
-          "featured_item": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "highlighted": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "image": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "image_vertical": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "name": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrent": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "recurrent_count": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_frequency": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrent_interval": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_month_mask": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_monthday": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_setpos": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "recurrent_until": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "recurrent_weekday_mask": {
-            "type": [
-              "integer",
-              "null"
-            ],
-            "format": "int64"
-          },
-          "rejected": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "rejection_reason": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "items": {
+              "type": "string"
+            },
+            "description": "Known category names (400 `Invalid category tag supplied`)."
           },
           "schedules": {
             "type": [
@@ -4250,55 +4997,32 @@
               "null"
             ],
             "items": {
-              "type": "string"
-            }
-          },
-          "server": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "start_at": {
-            "type": [
-              "string",
-              "null"
-            ]
-          },
-          "trending": {
-            "type": [
-              "boolean",
-              "null"
-            ]
-          },
-          "url": {
-            "type": [
-              "string",
-              "null"
-            ]
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "edit_any_event grants only; deduplicated; unknown ids answer 400 `Schedule not found: <ids>`."
           },
           "world": {
-            "type": [
-              "boolean",
-              "null"
-            ]
+            "type": "boolean"
           },
-          "x": {
+          "community_id": {
             "type": [
-              "integer",
+              "string",
               "null"
             ],
-            "format": "int32"
+            "format": "uuid",
+            "description": "A community the signer owns or moderates (400 `Failed to validate community ownership: Community \"<id>\" not found or you don't have access to it`)."
           },
-          "y": {
+          "featured_item": {
             "type": [
-              "integer",
+              "string",
               "null"
             ],
-            "format": "int32"
+            "maxLength": 160,
+            "pattern": "^urn:decentraland:(matic|ethereum|amoy|sepolia):collections-v2:0x[a-fA-F0-9]{40}(:\\d+)?$"
           }
         },
-        "additionalProperties": false
+        "additionalProperties": true
       },
       "V1EventRecord": {
         "allOf": [
@@ -4323,6 +5047,796 @@
             }
           }
         ]
+      },
+      "AdminEventPatch": {
+        "type": "object",
+        "description": "Admin bearer PATCH body (`admin.ts:253-387`). Either a state body whose keys are a subset of actor, approved, rejected and reason (approved and rejected booleans, never both: `approved and rejected cannot be set in the same request`; `rejected: true` needs a non-empty reason of at most 500 characters; an already-approved or already-rejected-for-the-same-reason event is answered unchanged; a rejection clears highlighted and trending), or a content body of the editable attributes (the signed body's fields minus rejected and rejection_reason, plus highlighted, trending, schedules, url and contact, details, community_id) with an optional actor. Any other key answers 400 `Unsupported admin event fields: <keys>`; an empty body `At least one admin event field is required`; a body with only actor `approved or rejected field is required`.",
+        "properties": {
+          "actor": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 42,
+            "description": "The audit actor (approved_by, rejected_by, deleted_by); defaults to `admin`. 400 `actor must be a string`, `actor cannot be empty`, `actor must be 42 characters or less`."
+          },
+          "approved": {
+            "type": "boolean"
+          },
+          "rejected": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Required with `rejected: true` (400 `rejection reason is required`, `rejection reason cannot be empty`, `rejection reason must be 500 characters or less`, `rejection reason must be a string`)."
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 150
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          },
+          "highlighted": {
+            "type": "boolean",
+            "description": "edit_any_event grants only."
+          },
+          "trending": {
+            "type": "boolean",
+            "description": "edit_any_event grants only."
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503. Default: the parcel or estate map image for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event."
+          },
+          "image_vertical": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503."
+          },
+          "start_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "duration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Milliseconds; at most 24 hours (`Maximum allowed duration 24Hrs`)."
+          },
+          "all_day": {
+            "type": "boolean"
+          },
+          "recurrent": {
+            "type": "boolean"
+          },
+          "recurrent_frequency": {
+            "enum": [
+              "YEARLY",
+              "MONTHLY",
+              "WEEKLY",
+              "DAILY",
+              "HOURLY",
+              null
+            ]
+          },
+          "recurrent_setpos": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": -1
+          },
+          "recurrent_monthday": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "recurrent_weekday_mask": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recurrent_month_mask": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "recurrent_interval": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "recurrent_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0,
+            "maximum": 1000,
+            "description": "May be combined with recurrent_until; the earlier bound ends the series. A rule whose expansion from start_at to now exceeds 50 000 steps is refused."
+          },
+          "recurrent_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "x": {
+            "type": "number",
+            "minimum": -170,
+            "maximum": 170,
+            "description": "Also checked against the world limits (400 `Event is outside the world limits`), world events included."
+          },
+          "y": {
+            "type": "number",
+            "minimum": -170,
+            "maximum": 170
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 100
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 5000
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "maxLength": 2048,
+            "pattern": "^https?://",
+            "description": "edit_any_event grants only. An empty or `https://decentraland.org/jump`-prefixed url is regenerated from the location."
+          },
+          "categories": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "description": "Known category names (400 `Invalid category tag supplied`)."
+          },
+          "schedules": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "edit_any_event grants only; deduplicated; unknown ids answer 400 `Schedule not found: <ids>`."
+          },
+          "world": {
+            "type": "boolean"
+          },
+          "community_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "A community the signer owns or moderates (400 `Failed to validate community ownership: Community \"<id>\" not found or you don't have access to it`)."
+          },
+          "featured_item": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 160,
+            "pattern": "^urn:decentraland:(matic|ethereum|amoy|sepolia):collections-v2:0x[a-fA-F0-9]{40}(:\\d+)?$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PosterUpload": {
+        "type": "object",
+        "description": "The old events service's PosterAttributes (Poster/routes.ts:132-137): filename is `poster/<file>` or `poster-vertical/<file>` (the file named by its content hash), url the absolute location on this node's `/events` mount (PUBLIC_URL/events/<filename>).",
+        "required": [
+          "filename",
+          "url",
+          "size",
+          "type"
+        ],
+        "properties": {
+          "filename": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "size": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "image/jpeg",
+              "image/png",
+              "image/gif",
+              "image/webp"
+            ]
+          }
+        }
+      },
+      "ApiOk_PosterUpload": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "$ref": "#/components/schemas/PosterUpload"
+          }
+        }
+      },
+      "ProfilePermission": {
+        "type": "string",
+        "enum": [
+          "approve_own_event",
+          "approve_any_event",
+          "edit_any_event",
+          "edit_any_schedule",
+          "edit_any_profile"
+        ]
+      },
+      "ProfileSettings": {
+        "type": "object",
+        "description": "The old ProfileSettingsAttributes (ProfileSettings/types.ts:1-13); a wallet without a row answers the defaults with epoch timestamps. A moderator's permissions are the whole set.",
+        "required": [
+          "user",
+          "email",
+          "email_verified",
+          "email_verified_at",
+          "email_updated_at",
+          "use_local_time",
+          "notify_by_email",
+          "notify_by_browser",
+          "permissions",
+          "created_at",
+          "updated_at"
+        ],
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "email_verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "email_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "use_local_time": {
+            "type": "boolean"
+          },
+          "notify_by_email": {
+            "type": "boolean"
+          },
+          "notify_by_browser": {
+            "type": "boolean"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfilePermission"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ProfileSettingsSession": {
+        "type": "object",
+        "description": "The signer's own settings with its web-push subscription endpoints (ProfileSettings/routes/getAuthProfileSettings.ts).",
+        "required": [
+          "user",
+          "email",
+          "email_verified",
+          "email_verified_at",
+          "email_updated_at",
+          "use_local_time",
+          "notify_by_email",
+          "notify_by_browser",
+          "permissions",
+          "created_at",
+          "updated_at",
+          "subscriptions"
+        ],
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "email_verified_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "email_updated_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "use_local_time": {
+            "type": "boolean"
+          },
+          "notify_by_email": {
+            "type": "boolean"
+          },
+          "notify_by_browser": {
+            "type": "boolean"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfilePermission"
+            }
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "subscriptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ApiOk_ProfileSettings": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProfileSettings"
+          }
+        }
+      },
+      "ApiOk_ProfileSettingsSession": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProfileSettingsSession"
+          }
+        }
+      },
+      "ApiOk_Vec_ProfileSettings": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSettings"
+            }
+          }
+        }
+      },
+      "ApiOk_Option_ProfileSettings": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ProfileSettings"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "UpdateMyProfileSettingsBody": {
+        "type": "object",
+        "description": "updateMyProfileSettingsSchema (ProfileSettings/types.ts:79-101); unknown keys are 400. `email_verified: true` is ignored; a changed email is stored unverified with notify_by_email off.",
+        "additionalProperties": false,
+        "properties": {
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "email_verified": {
+            "type": "boolean"
+          },
+          "use_local_time": {
+            "type": "boolean"
+          },
+          "notify_by_email": {
+            "type": "boolean"
+          },
+          "notify_by_browser": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UpdateProfileSettingsBody": {
+        "type": "object",
+        "description": "updateProfileSettingsSchema (ProfileSettings/types.ts:59-77): the target's permissions, by a moderator or an edit_any_profile grant.",
+        "additionalProperties": false,
+        "properties": {
+          "permissions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfilePermission"
+            }
+          }
+        }
+      },
+      "ProfileSubscription": {
+        "type": "object",
+        "required": [
+          "user",
+          "endpoint",
+          "p256dh",
+          "auth"
+        ],
+        "properties": {
+          "user": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "p256dh": {
+            "type": "string"
+          },
+          "auth": {
+            "type": "string"
+          }
+        }
+      },
+      "ProfileSubscriptionBody": {
+        "type": "object",
+        "description": "profileSubscriptionSchema (ProfileSubscription/types.ts:10-25).",
+        "additionalProperties": false,
+        "required": [
+          "endpoint",
+          "p256dh",
+          "auth"
+        ],
+        "properties": {
+          "endpoint": {
+            "type": "string"
+          },
+          "p256dh": {
+            "type": "string"
+          },
+          "auth": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiOk_Vec_ProfileSubscription": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProfileSubscription"
+            }
+          }
+        }
+      },
+      "ApiOk_bool": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CreateScheduleBody": {
+        "type": "object",
+        "description": "createScheduleSchema (Schedule/schema.ts:86-142): a plain signed-fetch body; unknown keys are ignored; theme is validated and stored as null on create.",
+        "required": [
+          "name",
+          "active_since",
+          "active_until"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "theme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "mvmf_2022",
+              "mvfw_2023",
+              "pride_2023"
+            ]
+          },
+          "background": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "active_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "active_until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "UpdateScheduleBody": {
+        "type": "object",
+        "description": "updateScheduleSchema (Schedule/schema.ts:144-147): any subset of the eight keys.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "theme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "mvmf_2022",
+              "mvfw_2023",
+              "pride_2023"
+            ]
+          },
+          "background": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "active_since": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "active_until": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ScheduleFields": {
+        "type": "object",
+        "description": "The merged eight keys a PATCH answers (Schedule/routes.ts:90-96): no id, created_at or updated_at.",
+        "required": [
+          "name",
+          "description",
+          "image",
+          "theme",
+          "background",
+          "active",
+          "active_since",
+          "active_until"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 50
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 255
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uri"
+          },
+          "theme": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              null,
+              "mvmf_2022",
+              "mvfw_2023",
+              "pride_2023"
+            ]
+          },
+          "background": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 255
+            }
+          },
+          "active": {
+            "type": "boolean"
+          },
+          "active_since": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "active_until": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "ApiOk_ScheduleFields": {
+        "type": "object",
+        "required": [
+          "ok",
+          "data"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ScheduleFields"
+          }
+        }
       }
     }
   }

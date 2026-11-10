@@ -67,13 +67,22 @@ pub const KIND_SIGNATURE_CANCELLED: &str = "signature_cancelled";
 pub const KIND_SIGNER_INDEX: &str = "signer_index_increased";
 pub const KIND_CONTRACT_INDEX: &str = "contract_index_increased";
 
-/// The off-chain marketplace deployments of a network, oldest first, with
-/// the block each was deployed in (`eth_getCode` bisection on
-/// rpc.decentraland.org, 2026-09-25); V1 is the squid's
-/// `OffChainMarketplace`, still holding the most mirrored trades.
+/// The off-chain marketplace deployments of a network's mainnet chain
+/// ([`deployments`] of `net.chain_id()`).
 pub fn marketplaces(net: ChainNet) -> &'static [(&'static str, u64, bool)] {
-    match net {
-        ChainNet::Matic => &[
+    deployments(net.chain_id())
+}
+
+/// The off-chain marketplace deployments of a chain, oldest first, with the
+/// block each was deployed in and whether it cancels by digest (V3).
+/// Mainnet blocks: `eth_getCode` bisection on rpc.decentraland.org,
+/// 2026-09-25; V1 is the squid's `OffChainMarketplace`, still holding the
+/// most mirrored trades. Testnet blocks (Amoy, Sepolia, the addresses of
+/// `listings::offchain_marketplaces` and the dApps' `OffChainMarketplace`):
+/// the same bisection, 2026-11-02. Sepolia has no V1. Empty for any other chain.
+pub fn deployments(chain_id: i64) -> &'static [(&'static str, u64, bool)] {
+    match chain_id {
+        137 => &[
             (
                 "0x540fb08edb56aae562864b390542c97f562825ba",
                 62_349_044,
@@ -90,7 +99,7 @@ pub fn marketplaces(net: ChainNet) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
-        ChainNet::Ethereum => &[
+        1 => &[
             (
                 "0x2d6b3508f9aca32d2550f92b2addba932e73c1ff",
                 20_843_699,
@@ -107,14 +116,44 @@ pub fn marketplaces(net: ChainNet) -> &'static [(&'static str, u64, bool)] {
                 true,
             ),
         ],
+        80002 => &[
+            (
+                "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
+                12_490_079,
+                false,
+            ),
+            (
+                "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
+                27_973_439,
+                false,
+            ),
+            (
+                "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
+                44_057_476,
+                true,
+            ),
+        ],
+        11155111 => &[
+            (
+                "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
+                9_455_328,
+                false,
+            ),
+            (
+                "0x257db44ac97789c16ab277eae87dcde0c246cc9f",
+                11_419_771,
+                true,
+            ),
+        ],
+        _ => &[],
     }
 }
 
 /// The deployment `address` names on `net`, as the EIP-712 domain the
 /// signature was made against (`listings::offchain_marketplaces`), for the
 /// V3 digest.
-fn domain_of(net: ChainNet, address: &str) -> Option<OffChainMarketplace> {
-    listings::offchain_marketplaces(net.chain_id())
+fn domain_of(chain_id: i64, address: &str) -> Option<OffChainMarketplace> {
+    listings::offchain_marketplaces(chain_id)
         .into_iter()
         .find(|m| m.address.eq_ignore_ascii_case(address))
 }
@@ -385,8 +424,8 @@ const DIGEST_BATCH: i64 = 2_000;
 /// trade against its marketplace's domain. A trade whose row cannot be
 /// rebuilt gets a NULL digest and is logged (its V3 cancellation cannot be
 /// matched; the other legs still apply).
-async fn fill_v3_digests(pool: &PgPool, net: ChainNet) -> anyhow::Result<usize> {
-    let v3: Vec<String> = marketplaces(net)
+async fn fill_v3_digests(pool: &PgPool, net: ChainNet, chain_id: i64) -> anyhow::Result<usize> {
+    let v3: Vec<String> = deployments(chain_id)
         .iter()
         .filter(|(_, _, v3)| *v3)
         .map(|(a, _, _)| a.to_string())
@@ -404,7 +443,10 @@ async fn fill_v3_digests(pool: &PgPool, net: ChainNet) -> anyhow::Result<usize> 
     .await?;
     let mut rows: (Vec<uuid::Uuid>, Vec<Option<String>>) = (Vec::new(), Vec::new());
     for (id, contract) in &ids {
-        let digest = match (domain_of(net, contract), trade_creation(pool, *id).await) {
+        let digest = match (
+            domain_of(chain_id, contract),
+            trade_creation(pool, *id).await,
+        ) {
             (Some(domain), Ok(trade)) => listings::signing_hash(&trade, &domain)
                 .map(|h| format!("{h:#x}"))
                 .map_err(|e| anyhow::anyhow!("{e}")),
@@ -516,10 +558,11 @@ ON CONFLICT (trade_id) DO UPDATE SET
 pub async fn fold(
     pool: &PgPool,
     net: ChainNet,
+    chain_id: i64,
     since: Option<i64>,
     upto: i64,
 ) -> anyhow::Result<u64> {
-    while fill_v3_digests(pool, net).await? as i64 >= DIGEST_BATCH {}
+    while fill_v3_digests(pool, net, chain_id).await? as i64 >= DIGEST_BATCH {}
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '1800s'")
         .execute(&mut *tx)
@@ -536,9 +579,21 @@ pub async fn fold(
     Ok(written)
 }
 
-/// One network's side of the walk.
+/// One network's side of the walk, on the chain its RPC serves: the
+/// network's mainnet, or its testnet (`MARKETPLACE_INDEX_CHAIN_ID_*`).
 pub struct TradeEventsIndex {
     pub net: ChainNet,
+    pub chain_id: i64,
+}
+
+impl TradeEventsIndex {
+    /// The walk of `net` on its mainnet.
+    pub fn mainnet(net: ChainNet) -> Self {
+        Self {
+            net,
+            chain_id: net.chain_id(),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -552,7 +607,7 @@ impl ChainIndex for TradeEventsIndex {
     }
 
     fn start_block(&self) -> u64 {
-        marketplaces(self.net)
+        deployments(self.chain_id)
             .iter()
             .map(|(_, b, _)| *b)
             .min()
@@ -567,7 +622,7 @@ impl ChainIndex for TradeEventsIndex {
         _anchor: (u64, i64),
     ) -> anyhow::Result<Vec<LogGroup>> {
         Ok(vec![LogGroup {
-            addresses: marketplaces(self.net)
+            addresses: deployments(self.chain_id)
                 .iter()
                 .map(|(a, _, _)| a.to_string())
                 .collect(),
@@ -607,7 +662,7 @@ impl ChainIndex for TradeEventsIndex {
     }
 
     async fn fold(&self, pool: &PgPool, since: Option<i64>, upto: i64) -> anyhow::Result<bool> {
-        fold(pool, self.net, since, upto).await?;
+        fold(pool, self.net, self.chain_id, since, upto).await?;
         Ok(true)
     }
 }
@@ -651,15 +706,15 @@ pub fn chain_status_sql(t: &str, now_p: &str) -> String {
 
 /// What the notification needs of one asset.
 #[derive(Clone, Debug, Default)]
-struct AssetMeta {
-    image: String,
-    seller: String,
-    category: String,
-    rarity: Option<String>,
-    name: Option<String>,
-    contract_address: String,
-    token_id: Option<String>,
-    item_id: Option<String>,
+pub(crate) struct AssetMeta {
+    pub(crate) image: String,
+    pub(crate) seller: String,
+    pub(crate) category: String,
+    pub(crate) rarity: Option<String>,
+    pub(crate) name: Option<String>,
+    pub(crate) contract_address: String,
+    pub(crate) token_id: Option<String>,
+    pub(crate) item_id: Option<String>,
 }
 
 impl AssetMeta {
@@ -707,7 +762,7 @@ fn format_ether(wei: &str) -> String {
     )
 }
 
-fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
+pub(crate) fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Value {
     let price = trade.sent_amount.clone().unwrap_or_default();
     let mut m = serde_json::Map::new();
     m.insert("address".into(), json!(trade.signer));
@@ -731,7 +786,86 @@ fn bid_accepted_event(trade: &StoredTrade, asset: &AssetMeta, base: &str) -> Val
     json!({ "type": "blockchain", "subType": "bid-accepted", "key": format!("bid-accepted-{}", trade.id), "timestamp": 0, "metadata": Value::Object(m) })
 }
 
-fn item_sold_event(trade: &StoredTrade, asset: &AssetMeta, caller: &str, base: &str) -> Value {
+const BID_NOTIFICATION_NS: uuid::Uuid =
+    uuid::Uuid::from_u128(0x61a4_0d93_c2e7_4b18_9f35_7e0b_a8c6_14d2);
+
+/// The asset a bid is on, as the indexes describe it; `None` when none does.
+pub(super) async fn bid_asset(
+    pool: &PgPool,
+    land_image_base: &str,
+    network: &str,
+    bid: &listings::TradeCreation,
+) -> Result<Option<AssetMeta>, sqlx::Error> {
+    let Some(asset) = bid.received.first() else {
+        return Ok(None);
+    };
+    let net = network.to_ascii_lowercase();
+    let contract = asset.contract_address.to_ascii_lowercase();
+    Ok(match (asset.asset_type, &asset.token_id, &asset.item_id) {
+        (listings::ASSET_TYPE_ERC721, Some(token), _) => {
+            nft_meta(pool, land_image_base, &net, &contract, token).await?
+        }
+        (listings::ASSET_TYPE_COLLECTION_ITEM, _, Some(item)) => {
+            item_meta(pool, &net, &contract, item).await?
+        }
+        _ => None,
+    })
+}
+
+/// marketplace-server's BID_RECEIVED event of a local bid as the old parser
+/// stored it, for the asset's seller (item creator or nft owner); `None`
+/// without a price or when the bidder is the seller.
+pub(super) fn bid_received_notification(
+    meta: &AssetMeta,
+    marketplace_base: &str,
+    trade_id: &str,
+    network: &str,
+    bid: &listings::TradeCreation,
+) -> Option<catalyst_social::notifications::NewNotification> {
+    let price = bid.sent.first().and_then(|a| a.amount.as_ref())?;
+    if meta.seller.eq_ignore_ascii_case(&bid.signer) {
+        return None;
+    }
+    let recipient = catalyst_social::Address::parse(&meta.seller).ok()?;
+    let mut m = serde_json::Map::new();
+    m.insert("image".into(), json!(meta.image));
+    m.insert("seller".into(), json!(meta.seller));
+    m.insert("category".into(), json!(meta.category));
+    insert_opt(&mut m, "rarity", &meta.rarity);
+    m.insert(
+        "link".into(),
+        json!(format!("{marketplace_base}/account?section=bids")),
+    );
+    insert_opt(&mut m, "nftName", &meta.name);
+    m.insert("price".into(), json!(price));
+    m.insert("title".into(), json!("Bid Received"));
+    m.insert(
+        "description".into(),
+        json!(format!(
+            "You received a bid of {} MANA for this {}.",
+            format_ether(price),
+            meta.name.as_deref().unwrap_or_default()
+        )),
+    );
+    m.insert("network".into(), json!(network));
+    let mut n = catalyst_social::notifications::NewNotification::now(
+        recipient,
+        "bid_received",
+        Value::Object(m),
+    );
+    n.id = uuid::Uuid::new_v5(
+        &BID_NOTIFICATION_NS,
+        format!("bid-created:{trade_id}").as_bytes(),
+    );
+    Some(n)
+}
+
+pub(crate) fn item_sold_event(
+    trade: &StoredTrade,
+    asset: &AssetMeta,
+    caller: &str,
+    base: &str,
+) -> Value {
     let mut m = serde_json::Map::new();
     m.insert("address".into(), json!(trade.signer));
     m.insert("image".into(), json!(asset.image));
@@ -754,16 +888,16 @@ fn item_sold_event(trade: &StoredTrade, asset: &AssetMeta, caller: &str, base: &
     json!({ "type": "blockchain", "subType": "item-sold", "key": format!("item-sold-{}", trade.id), "timestamp": 0, "metadata": Value::Object(m) })
 }
 
-struct StoredTrade {
-    id: String,
-    network: String,
-    signer: String,
-    trade_type: String,
-    contract: String,
+pub(crate) struct StoredTrade {
+    pub(crate) id: String,
+    pub(crate) network: String,
+    pub(crate) signer: String,
+    pub(crate) trade_type: String,
+    pub(crate) contract: String,
     /// The first sent erc20 amount (a bid's price).
-    sent_amount: Option<String>,
+    pub(crate) sent_amount: Option<String>,
     /// (asset_type, contract, token or item id) of every sent then received asset.
-    assets: Vec<(i32, String, Option<String>, Option<String>)>,
+    pub(crate) assets: Vec<(i32, String, Option<String>, Option<String>)>,
 }
 
 async fn stored_trade(
@@ -822,7 +956,7 @@ fn category_of_item_type(item_type: &str) -> &'static str {
 }
 
 /// An item asset from the items mirror: the creator is the seller.
-async fn item_meta(
+pub(crate) async fn item_meta(
     pool: &PgPool,
     network: &str,
     contract: &str,
@@ -846,9 +980,75 @@ async fn item_meta(
     }))
 }
 
+/// [`item_meta`] of many `(contract, item_id)` at once, keyed as asked.
+pub(crate) async fn item_metas(
+    pool: &PgPool,
+    network: &str,
+    keys: &[(String, String)],
+) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
+    let (contracts, items): (Vec<String>, Vec<String>) = keys
+        .iter()
+        .filter(|(_, i)| !i.is_empty() && i.bytes().all(|b| b.is_ascii_digit()))
+        .cloned()
+        .unzip();
+    let rows = sqlx::query(
+        "SELECT u.contract, u.item, i.image, i.creator, i.rarity, i.name, i.item_type \
+         FROM UNNEST($2::text[], $3::text[]) AS u(contract, item) \
+         JOIN shop.items i ON i.network = $1 AND i.contract_address = u.contract AND i.item_id = u.item::numeric",
+    )
+    .bind(network)
+    .bind(&contracts)
+    .bind(&items)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| {
+            let (contract, item): (String, String) = (r.get("contract"), r.get("item"));
+            let meta = AssetMeta {
+                image: r.get::<Option<String>, _>("image").unwrap_or_default(),
+                seller: r.get("creator"),
+                category: category_of_item_type(&r.get::<String, _>("item_type")).to_string(),
+                rarity: r.get("rarity"),
+                name: r.get("name"),
+                contract_address: contract.clone(),
+                token_id: None,
+                item_id: Some(item.clone()),
+            };
+            ((contract, item), meta)
+        })
+        .collect())
+}
+
+/// [`nft_meta`] of many `(contract, token_id)` at once, keyed as asked.
+pub(crate) async fn nft_metas(
+    pool: &PgPool,
+    land_image_base: &str,
+    network: &str,
+    keys: &[(String, String)],
+) -> Result<HashMap<(String, String), AssetMeta>, sqlx::Error> {
+    let found = super::nft_reads::asset_metas(pool, land_image_base, network, keys).await?;
+    Ok(found
+        .into_iter()
+        .map(|((contract, token), n)| {
+            let meta = AssetMeta {
+                image: n.image,
+                seller: n.owner,
+                category: n.category,
+                rarity: n.rarity,
+                name: n.name,
+                contract_address: contract.clone(),
+                token_id: Some(token.clone()),
+                item_id: None,
+            };
+            ((contract, token), meta)
+        })
+        .collect())
+}
+
 /// An nft asset from the nft index (collections and names) or the LAND
 /// index: its current owner is the seller, as the old squid read had it.
-async fn nft_meta(
+pub(crate) async fn nft_meta(
     pool: &PgPool,
     land_image_base: &str,
     network: &str,
@@ -1072,17 +1272,44 @@ pub(crate) mod tests {
 
     #[test]
     fn every_marketplace_the_listings_verify_against_is_walked() {
-        for net in ChainNet::ALL {
-            for m in listings::offchain_marketplaces(net.chain_id()) {
+        for chain_id in [1, 137, 11_155_111, 80_002] {
+            let walked = deployments(chain_id);
+            for m in listings::offchain_marketplaces(chain_id) {
                 assert!(
-                    marketplaces(net).iter().any(|(a, _, _)| *a == m.address),
-                    "{} missing on {}",
+                    walked.iter().any(|(a, _, _)| *a == m.address),
+                    "{} missing on {chain_id}",
                     m.address,
-                    net.db_name()
                 );
-                assert!(domain_of(net, m.address).is_some());
+                assert!(domain_of(chain_id, m.address).is_some());
+                // V3 is the deployment that cancels by digest, on every chain.
+                let (_, _, v3) = walked.iter().find(|(a, _, _)| *a == m.address).unwrap();
+                assert_eq!(*v3, m.cancels_by_digest, "{} on {chain_id}", m.address);
             }
         }
+    }
+
+    #[test]
+    fn a_network_walks_its_mainnet_unless_told_its_testnet() {
+        assert_eq!(marketplaces(ChainNet::Matic), deployments(137));
+        assert_eq!(marketplaces(ChainNet::Ethereum), deployments(1));
+        let mainnet = TradeEventsIndex::mainnet(ChainNet::Matic);
+        assert_eq!(mainnet.chain_id, 137);
+        assert_eq!(mainnet.start_block(), 62_349_044);
+        let amoy = TradeEventsIndex {
+            net: ChainNet::Matic,
+            chain_id: 80_002,
+        };
+        assert_eq!(amoy.start_block(), 12_490_079);
+        let sepolia = TradeEventsIndex {
+            net: ChainNet::Ethereum,
+            chain_id: 11_155_111,
+        };
+        assert_eq!(sepolia.start_block(), 9_455_328);
+        // No mainnet address is walked on a testnet, and an unknown chain walks nothing.
+        for (a, _, _) in deployments(80_002) {
+            assert!(!deployments(137).iter().any(|(m, _, _)| m == a), "{a}");
+        }
+        assert!(deployments(10).is_empty());
     }
 
     pub(crate) fn topic_of(addr: &str) -> String {

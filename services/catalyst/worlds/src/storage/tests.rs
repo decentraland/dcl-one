@@ -3602,6 +3602,42 @@ async fn genesis_logs_permissions_follow_the_active_pointer() {
     fixture.close().await;
 }
 
+/// A parcel inside an estate whose own update-operator leg was cleared on
+/// chain (stored as the zero address, which lamb2's `/operators` answers)
+/// still names the estate's update operator in the LAND document storage
+/// management and the comms protected set read, never the zero address.
+#[tokio::test]
+async fn land_document_keeps_the_estate_update_operator_over_a_cleared_leg() {
+    let Some(fixture) = CollaboratorLandFixture::new().await else {
+        return;
+    };
+    let settings = crate::land_authz::Settings::for_tests();
+    let (estate_owner, estate_updater) = (address(), address());
+    let zero = "0x0000000000000000000000000000000000000000";
+    sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, operator, update_operator, updated_block, updated_log) VALUES ($1, 7 * 340282366920938463463374607431768211456::numeric + 9, 7, 9, $2, NULL, $3, 1, 0), ($2, 900, NULL, NULL, $4, NULL, $5, 1, 1)")
+        .bind(&settings.land_registry).bind(&settings.estate_registry).bind(zero)
+        .bind(estate_owner.as_str()).bind(estate_updater.as_str())
+        .execute(&fixture.pool).await.unwrap();
+    sqlx::query("INSERT INTO land_authz.estate_land VALUES (7 * 340282366920938463463374607431768211456::numeric + 9, 900, 1, 2)")
+        .execute(&fixture.pool).await.unwrap();
+
+    let state = fixture.state();
+    let document = state
+        .policy
+        .land_document(Parcel::parse("7,9").unwrap())
+        .await
+        .unwrap()
+        .expect("the land-authz index answers");
+    let document = document.as_ref().as_ref().expect("an indexed parcel");
+    assert_eq!(document.owner, estate_owner.as_str());
+    assert_eq!(
+        document.update_operator.as_deref(),
+        Some(estate_updater.as_str())
+    );
+    assert!(document.addresses().all(|a| a != zero));
+    fixture.close().await;
+}
+
 #[tokio::test]
 async fn collaborator_lists_exactly_the_signers_active_scenes() {
     let Some(fixture) = CollaboratorLandFixture::new().await else {
@@ -3975,7 +4011,14 @@ async fn genesis_collaboration_requires_redeployment_after_any_parcel_ownership_
     let owner_key = random_key();
     let owner = address_of(&owner_key);
     let collab = address_of(&key);
-    let pointers = vec![genesis_parcel(), genesis_parcel()];
+    let first = genesis_parcel();
+    let second = loop {
+        let parcel = genesis_parcel();
+        if parcel != first {
+            break parcel;
+        }
+    };
+    let pointers = vec![first, second];
     fixture.parcel(&pointers[0], &owner, 1).await;
     fixture.parcel(&pointers[1], &owner, 2).await;
     let old = format!("bafyCollabEpoch{}", Uuid::new_v4().simple());
@@ -4172,14 +4215,15 @@ async fn malformed_logs_permissions_grant_nothing() {
     }
 }
 
-/// Resolve export fixtures through the same deployment as the request. The
-/// optional conversion also supports the per-scene identity migration (#90).
+/// Resolve export fixtures through the same deployment as the request.
 async fn export_namespace(pool: &PgPool, world: &WorldName) -> SceneNamespace {
     let deployment = crate::rooms::world_scene_at(pool, world, Parcel::parse(PARCEL).unwrap())
         .await
         .unwrap()
         .unwrap();
-    Option::<SceneNamespace>::from(deployment.namespace).expect("fixture has a storage identity")
+    deployment
+        .namespace
+        .expect("fixture has a storage identity")
 }
 
 fn export_state(
@@ -4779,9 +4823,7 @@ async fn exports_bound_database_resources_and_keep_one_snapshot() {
         settings,
     )
     .await;
-    let error = result
-        .err()
-        .expect("exhausted pool must refuse export setup");
+    let error = result.expect_err("exhausted pool must refuse export setup");
     assert!(matches!(error, super::errors::ApiError::Unavailable(_)));
     let response = error.into_response();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);

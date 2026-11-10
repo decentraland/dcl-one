@@ -11,11 +11,14 @@ use bevy::{
         render_resource::{AsBindGroup, ShaderRef},
     },
 };
+use bevy_console::ConsoleCommand;
 use common::{sets::PostUpdateSets, structs::PrimaryUser};
+use console::DoAddConsoleCommand;
 use scene_runner::{
     initialize_scene::{PointerResult, ScenePointers},
     vec3_to_parcel,
 };
+use serde_json::json;
 
 use crate::{
     solids::Solid,
@@ -38,6 +41,8 @@ const SINK: f32 = 0.06;
 const MAX_SLOPE: f32 = 0.85;
 /// Sway padding for the visibility bounds.
 const WIND_PADDING: f32 = 0.4;
+/// The wind's bend and flutter (`tree_wind.wgsl`'s `wind_settings`).
+const WIND: Vec4 = Vec4::new(0.18, 0.018, 0.0, 0.0);
 
 pub(crate) struct TreesPlugin;
 
@@ -49,7 +54,10 @@ impl Plugin for TreesPlugin {
             MaterialPlugin::<TreeMaterial>::default(),
             MaterialPlugin::<SoftShadowMaterial>::default(),
         ))
+        .init_resource::<TreeWind>()
+        .add_console_command::<TreeWindCommand, _>(tree_wind_command)
         .add_systems(Startup, setup)
+        .add_systems(Update, apply_tree_wind)
         .add_systems(
             PostUpdate,
             update_trees
@@ -59,15 +67,56 @@ impl Plugin for TreesPlugin {
     }
 }
 
-pub(crate) type TreeMaterial = ExtendedMaterial<TreeWind>;
+/// Whether the trees and bushes sway. Still, they stand in their rest pose, so two frames of them
+/// agree whenever they were taken (the end-to-end suite's visual references need that).
+#[derive(Resource)]
+pub(crate) struct TreeWind(pub(crate) bool);
+
+impl Default for TreeWind {
+    fn default() -> Self {
+        Self(true)
+    }
+}
+
+/// Read or set whether the landscape's trees and bushes sway in the wind.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/tree_wind")]
+struct TreeWindCommand {
+    enabled: Option<bool>,
+}
+
+fn tree_wind_command(mut cmd: ConsoleCommand<TreeWindCommand>, mut wind: ResMut<TreeWind>) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    if let Some(enabled) = args.enabled {
+        wind.0 = enabled;
+    }
+    cmd.reply_ok(json!({ "enabled": wind.0 }).to_string());
+}
+
+/// The wind's strength in the shared tree material: the configured wind, or none.
+fn apply_tree_wind(
+    wind: Res<TreeWind>,
+    assets: Option<Res<TreeAssets>>,
+    mut materials: ResMut<Assets<TreeMaterial>>,
+) {
+    let Some(assets) = assets else { return };
+    if !wind.is_changed() && !assets.is_added() {
+        return;
+    }
+    if let Some(material) = materials.get_mut(&assets.material) {
+        material.extension.settings = if wind.0 { WIND } else { Vec4::ZERO };
+    }
+}
+
+pub(crate) type TreeMaterial = ExtendedMaterial<TreeWindSettings>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-pub(crate) struct TreeWind {
+pub(crate) struct TreeWindSettings {
     #[uniform(100)]
     settings: Vec4,
 }
 
-impl MaterialExtension for TreeWind {
+impl MaterialExtension for TreeWindSettings {
     type Base = StandardMaterial;
 
     fn vertex_shader() -> ShaderRef {
@@ -134,9 +183,7 @@ fn setup(
             reflectance: 0.12,
             ..default()
         },
-        extension: TreeWind {
-            settings: Vec4::new(0.18, 0.018, 0.0, 0.0),
-        },
+        extension: TreeWindSettings { settings: WIND },
     });
     commands.insert_resource(TreeAssets {
         bounds: models
@@ -149,7 +196,7 @@ fn setup(
 }
 
 #[derive(Component)]
-struct Tree {
+pub(super) struct Tree {
     parcel: IVec2,
 }
 

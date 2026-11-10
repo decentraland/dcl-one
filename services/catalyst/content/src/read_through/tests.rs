@@ -226,7 +226,12 @@ impl Node {
         attach: bool,
         entity_types: Option<&[&str]>,
     ) -> Option<Self> {
-        Self::with_sources(tag, fake, wait, attach, entity_types, Vec::new()).await
+        Self::with_sources(tag, fake, wait, attach, entity_types, Vec::new(), false).await
+    }
+
+    /// As [`Self::new`], with the content validator judging what is copied.
+    async fn validated(tag: &str, fake: &Fake, wait: Duration, attach: bool) -> Option<Self> {
+        Self::with_sources(tag, fake, wait, attach, None, Vec::new(), true).await
     }
 
     async fn with_sources(
@@ -236,23 +241,38 @@ impl Node {
         attach: bool,
         entity_types: Option<&[&str]>,
         file_sources: Vec<String>,
+        validated: bool,
     ) -> Option<Self> {
         let pool = test_pool(8).await?;
         let (storage, tmp) = temp_storage(tag).await;
+        let validation = if validated {
+            SyncValidation::Content(Arc::new(crate::validator::Sources::new(
+                pool.clone(),
+                storage.clone(),
+                crate::http::Outbound::for_tests(),
+                None,
+                crate::validator::Settings::default(),
+            )))
+        } else {
+            SyncValidation::AuthChainOnly
+        };
         let state = Arc::new(ContentState::new(
             pool.clone(),
             Settings::for_tests(),
             storage.clone(),
         ));
-        let read_through = Arc::new(ReadThrough::new(
-            pool.clone(),
-            storage.clone(),
-            reqwest::Client::new(),
-            vec![fake.source.clone()],
-            entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
-            Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
-        )
-        .with_file_sources(file_sources));
+        let read_through = Arc::new(
+            ReadThrough::new(
+                pool.clone(),
+                storage.clone(),
+                reqwest::Client::new(),
+                vec![fake.source.clone()],
+                entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
+                Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
+                validation,
+            )
+            .with_file_sources(file_sources),
+        );
         if attach {
             assert!(state.attach_read_through(read_through.clone()));
         }
@@ -406,6 +426,20 @@ async fn a_profile_past_the_sync_age_limit_is_reachable_through_the_profile_look
     assert_eq!(docs.len(), 1);
     assert_eq!(docs[0].id, profile.id);
     assert_eq!(node.deployments(&profile.id).await, 1);
+
+    // A listed entity is left out of the answer, and its pointer counts as
+    // answered: hidden, never asked of the sources again.
+    let calls = fake.active_calls();
+    node.storage
+        .denylist()
+        .set_remote("https://registry.example/denylist", [profile.id.clone()]);
+    let docs = node
+        .read_through
+        .active_docs(false, std::slice::from_ref(&address))
+        .await
+        .unwrap();
+    assert!(docs.is_empty(), "{docs:?}");
+    assert_eq!(fake.active_calls(), calls);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -478,6 +512,168 @@ async fn an_entity_whose_signature_does_not_verify_is_refused_and_nothing_is_sto
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_entity_the_content_validator_refuses_is_not_copied_and_nothing_is_stored() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::validated("invalid", &fake, HANG_GUARD, true).await);
+    // Correctly signed, but a wearable with no thumbnail on an off-chain pointer.
+    let fx = Fixture::new("wearable", &pointer(), now_ms());
+    fake.publish(&fx, &signed_chain(&fx.id).await);
+
+    assert!(node.active(json!({"ids": [fx.id]})).await.is_empty());
+    assert_eq!(fake.active_calls(), 1);
+    assert_eq!(node.deployments(&fx.id).await, 0);
+    assert!(!node.holds(&fx.id).await);
+    assert!(!node.holds(&fx.file_hash).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_entity_refused_once_its_content_is_in_leaves_no_entity_file() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::validated("refused-late", &fake, HANG_GUARD, true).await);
+    // Valid until its 1.1 MB file is downloaded: outfits allow 1 MB.
+    let file = vec![b'x'; 1_100_000];
+    let file_hash = hash_bytes_v1(&file);
+    let entity = json!({
+        "version": "v3", "type": "outfits",
+        "pointers": ["0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266:outfits"],
+        "timestamp": now_ms(),
+        "content": [{"file": "big.png", "hash": file_hash}],
+        "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
+    });
+    let bytes = serde_json::to_vec(&entity).unwrap();
+    let id = hash_bytes_v1(&bytes);
+    let mut doc = entity;
+    doc["id"] = json!(id);
+    let fx = Fixture {
+        id: id.clone(),
+        bytes,
+        doc,
+        pointer: "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266:outfits".into(),
+        file_hash,
+        file,
+    };
+    fake.publish(&fx, &signed_chain(&fx.id).await);
+
+    assert!(node.active(json!({"ids": [fx.id]})).await.is_empty());
+    assert_eq!(fake.active_calls(), 1);
+    assert_eq!(node.deployments(&fx.id).await, 0);
+    assert!(
+        node.holds(&fx.file_hash).await,
+        "refused only after its content was in"
+    );
+    assert!(
+        !node.holds(&fx.id).await,
+        "the refused entity file is removed"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_refused_entity_file_stays_while_a_row_or_a_sync_buffer_refers_to_it() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("refused-kept", &fake, HANG_GUARD, true).await);
+    let deployed = Fixture::new("wearable", &pointer(), now_ms());
+    fake.publish(&deployed, &signed_chain(&deployed.id).await);
+    assert_eq!(node.active(json!({"ids": [deployed.id]})).await.len(), 1);
+    assert_eq!(node.deployments(&deployed.id).await, 1);
+    node.read_through.upstream.evict_refused(&deployed.id).await;
+    assert!(
+        node.holds(&deployed.id).await,
+        "a deployment row refers to it"
+    );
+
+    let buffered = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&buffered.id, buffered.bytes.clone().into())
+        .await
+        .unwrap();
+    let held = crate::sync_deployer::hold_buffered(&buffered.id);
+    node.read_through.upstream.evict_refused(&buffered.id).await;
+    assert!(node.holds(&buffered.id).await, "sync holds it");
+    drop(held);
+    node.read_through.upstream.evict_refused(&buffered.id).await;
+    assert!(!node.holds(&buffered.id).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_sync_hold_taken_during_the_deployment_lookup_keeps_the_refused_file() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("refused-race", &fake, HANG_GUARD, true).await);
+    let fx = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&fx.id, fx.bytes.clone().into())
+        .await
+        .unwrap();
+    // Every connection taken, so the eviction parks in its deployment lookup.
+    let mut taken = Vec::new();
+    for _ in 0..node.pool.options().get_max_connections() {
+        taken.push(node.pool.acquire().await.unwrap());
+    }
+    let upstream = node.read_through.upstream.clone();
+    let id = fx.id.clone();
+    let evict = upstream.evict_refused(&id);
+    tokio::pin!(evict);
+    assert!(futures::poll!(&mut evict).is_pending());
+    let held = crate::sync_deployer::hold_buffered(&fx.id);
+    drop(taken);
+    evict.await;
+    assert!(node.holds(&fx.id).await, "sync took it during the lookup");
+    drop(held);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_entity_undecided_once_its_content_is_in_is_recorded_and_its_file_removed() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("undecided-late", &fake, HANG_GUARD, true).await);
+    let fx = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&fx.id, fx.bytes.clone().into())
+        .await
+        .unwrap();
+    let chain = signed_chain(&fx.id).await;
+    node.read_through
+        .upstream
+        .settle_unvalidated(
+            &fx.id,
+            "wearable",
+            &chain,
+            &SyncError::ValidationUndecided("no RPC".into()),
+        )
+        .await;
+
+    assert!(
+        !node.holds(&fx.id).await,
+        "no unvalidated entity file is served"
+    );
+    let (reason, retry_count): (String, i32) = sqlx::query_as(
+        "SELECT reason, retry_count FROM content.failed_deployments WHERE entity_id = $1",
+    )
+    .bind(&fx.id)
+    .fetch_one(&node.pool)
+    .await
+    .expect("the retry worker owns it");
+    assert_eq!((reason.as_str(), retry_count), ("Validation undecided", 0));
+
+    let other = Fixture::new("wearable", &pointer(), now_ms());
+    node.storage
+        .store(&other.id, other.bytes.clone().into())
+        .await
+        .unwrap();
+    node.read_through
+        .upstream
+        .settle_unvalidated(
+            &other.id,
+            "wearable",
+            &chain,
+            &SyncError::Other("peer down".into()),
+        )
+        .await;
+    assert!(
+        node.holds(&other.id).await,
+        "a verified file kept for the next read"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_content_file_that_does_not_hash_to_its_name_is_refused() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("forged-file", &fake, HANG_GUARD, true).await);
@@ -534,7 +730,8 @@ async fn a_file_the_peers_lack_is_read_from_a_file_source_which_is_never_asked_f
             HANG_GUARD,
             true,
             None,
-            vec![worlds.source.clone()]
+            vec![worlds.source.clone()],
+            false
         )
         .await
     );
@@ -575,8 +772,10 @@ async fn a_file_the_peers_lack_is_read_from_a_file_source_which_is_never_asked_f
     assert_eq!((worlds.active_calls(), worlds.audit_calls()), (0, 0));
 }
 
+/// A profile's avatar render is stored like any other content file, and one a node is missing
+/// (a blob lost, or a node that once synced without renders) is fetched on its first read.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn a_profile_render_sync_skips_stays_a_miss_for_the_content_route() {
+async fn a_profile_render_is_stored_and_a_missing_one_is_filled_on_read() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("render", &fake, HANG_GUARD, true).await);
     let address = format!("0x{}{}", unique(), &unique()[..8]);
@@ -589,17 +788,20 @@ async fn a_profile_render_sync_skips_stays_a_miss_for_the_content_route() {
         .unwrap();
     assert_eq!(docs.len(), 1);
     assert!(
-        !node.holds(&profile.file_hash).await,
-        "sync skips the render"
+        node.holds(&profile.file_hash).await,
+        "the render is stored with its entity"
     );
 
+    node.storage.delete(&profile.file_hash).await.unwrap();
+    assert!(!node.holds(&profile.file_hash).await);
     let content_calls = fake.content_calls();
-    let (status, _) = node
+    let (status, body) = node
         .get(&format!("/content/contents/{}", profile.file_hash))
         .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(fake.content_calls(), content_calls);
-    assert!(!node.holds(&profile.file_hash).await);
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(hash_bytes_v1(&body), profile.file_hash);
+    assert_eq!(fake.content_calls(), content_calls + 1);
+    assert!(node.holds(&profile.file_hash).await);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -800,6 +1002,13 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
             pool.clone(),
             storage.clone(),
             reqwest::Client::new(),
+            Arc::new(crate::validator::Sources::new(
+                pool.clone(),
+                storage.clone(),
+                crate::http::Outbound::for_tests(),
+                None,
+                crate::validator::Settings::default(),
+            )),
         )
     };
 
@@ -834,17 +1043,35 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
         ]
     );
     assert!(on.upstream.file_sources.is_empty());
-    let peer = ["--read-through-enabled", "true", "--sync-source", "https://peer.example/content"];
+    let peer = [
+        "--read-through-enabled",
+        "true",
+        "--sync-source",
+        "https://peer.example/content",
+    ];
     let with_worlds = |worlds: &str| {
         let mut args = peer.to_vec();
         args.extend(["--worlds-content-mirror-source", worlds]);
         build(&args)
     };
     let on = with_worlds("https://worlds.example/").unwrap().expect("on");
-    assert_eq!(on.upstream.file_sources, vec!["https://worlds.example".to_string()]);
+    assert_eq!(
+        on.upstream.file_sources,
+        vec!["https://worlds.example".to_string()]
+    );
     assert!(
         with_worlds("https://this.node.example").is_err(),
         "a worlds source naming this node is refused"
     );
     let _ = std::fs::remove_dir_all(tmp);
+}
+
+#[test]
+fn a_long_key_enters_the_negative_cache_as_its_digest() {
+    assert_eq!(negative_key("bafkreiabc"), "bafkreiabc");
+    let long = "a".repeat(10_000);
+    let key = negative_key(&long);
+    assert!(key.starts_with("sha256:") && key.len() == 71, "{key}");
+    assert_eq!(key, negative_key(&long));
+    assert_ne!(key, negative_key(&"b".repeat(10_000)));
 }

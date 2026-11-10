@@ -102,7 +102,7 @@ fn assert_refused(status: StatusCode, body: &Value, switch: &str) {
 async fn every_console_route_is_403_without_a_session_and_502_without_its_module() {
     let admin = PrivateKeySigner::random();
     let app = app(lazy_pool(), true, Domains::default(), &wallet(&admin)).await;
-    assert_eq!(CONSOLE_ROUTES.len(), 91);
+    assert_eq!(CONSOLE_ROUTES.len(), 81);
     for path in CONSOLE_ROUTES {
         let (status, _, body) = send(&app, "POST", path, &[], Some(json!({}))).await;
         assert_eq!(
@@ -126,7 +126,7 @@ async fn every_console_route_is_403_without_a_session_and_502_without_its_module
     let full = json!({
         "address": random_address(), "wallet": random_address(), "id": "x", "badge_id": "b", "world_name": "w.dcl.eth",
         "scene": "s", "name": "s", "image_id": "i", "collection_id": "c", "item_id": "i", "entity_id": "e", "network": "n",
-        "token": "mana", "vs": "usd", "fingerprint": "f", "sql": "select 1", "position": "1,1", "enabled": "true",
+        "token": "mana", "vs": "usd", "position": "1,1", "enabled": "true",
         "place_id": "p", "world_id": "w", "event_id": "e", "highlighted": "true", "content_rating": "T"
     });
     let create =
@@ -141,186 +141,6 @@ async fn every_console_route_is_403_without_a_session_and_502_without_its_module
         assert_eq!(status, StatusCode::BAD_GATEWAY, "{path}: {body}");
         assert_eq!(body["body"]["error"], "not-configured", "{path}: {body}");
     }
-}
-
-#[tokio::test]
-async fn telemetry_calls_run_the_modules_handlers_behind_the_ops_switch() {
-    let _telemetry_tables = crate::ops::telemetry::tests::LOCK.lock().await;
-    let Some(pool) = crate::db::scratch::pool(4).await else {
-        return;
-    };
-    let telemetry = |writes: bool, token: Option<&str>| {
-        let pool = pool.clone();
-        let token = token.map(str::to_string);
-        async move {
-            let settings = crate::ops::telemetry::Settings {
-                writes_enabled: writes,
-                admin_token: token,
-                ..crate::ops::telemetry::Settings::for_tests()
-            };
-            Arc::new(
-                crate::ops::telemetry::State::new(pool, Outbound::for_tests(), settings)
-                    .await
-                    .unwrap(),
-            )
-        }
-    };
-    let fingerprint = format!("console-{}", uuid::Uuid::new_v4().simple());
-
-    let (app, actor, cookie) = console(
-        &pool,
-        false,
-        Domains {
-            telemetry: Some(telemetry(false, Some(TOKEN)).await),
-            ..Default::default()
-        },
-    )
-    .await;
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/telemetry/issue-state",
-        json!({ "fingerprint": fingerprint, "status": "resolve" }),
-    )
-    .await;
-    assert_refused(status, &body, "OPS_WRITES_ENABLED");
-    assert!(
-        console_rows(&pool, &actor).await.is_empty(),
-        "a refused write is not an operator action"
-    );
-    // The SQL console is a read: the gate lets it through, the module answers
-    // its own 503 without a reader role, and the call is recorded.
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/telemetry/sql",
-        json!({ "sql": "select 1" }),
-    )
-    .await;
-    assert!(
-        status == StatusCode::OK || status == StatusCode::SERVICE_UNAVAILABLE,
-        "the module's answer (503 without a reader role): {body}"
-    );
-    let result = if status == StatusCode::OK {
-        "ok"
-    } else {
-        "error"
-    };
-    assert_eq!(
-        console_rows(&pool, &actor).await,
-        vec![(
-            "telemetry".into(),
-            "telemetry.sql".into(),
-            None,
-            result.into()
-        )]
-    );
-    cleanup(&pool, &actor).await;
-
-    let (app, _, cookie) = console(
-        &pool,
-        true,
-        Domains {
-            telemetry: Some(telemetry(true, None).await),
-            ..Default::default()
-        },
-    )
-    .await;
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/telemetry/issue-state",
-        json!({ "fingerprint": fingerprint }),
-    )
-    .await;
-    assert_eq!(
-        (status, body["body"]["error"].as_str()),
-        (
-            StatusCode::FORBIDDEN,
-            Some("telemetry-admin-token-not-configured")
-        ),
-        "{body}"
-    );
-
-    let (app, actor, cookie) = console(
-        &pool,
-        true,
-        Domains {
-            telemetry: Some(telemetry(true, Some(TOKEN)).await),
-            ..Default::default()
-        },
-    )
-    .await;
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/telemetry/issue-state",
-        json!({ "fingerprint": fingerprint, "status": "resolve", "note": "" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(
-        (body["ok"].as_bool(), body["body"]["status"].as_str()),
-        (Some(true), Some("resolved")),
-        "the old form's verb maps to the stored state"
-    );
-    let stored: String =
-        sqlx::query_scalar("SELECT status FROM telemetry.issue_state WHERE fingerprint = $1")
-            .bind(&fingerprint)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(stored, "resolved");
-    assert_eq!(
-        console_rows(&pool, &actor).await,
-        vec![(
-            "telemetry".into(),
-            "telemetry.issue-state".into(),
-            Some(fingerprint.clone()),
-            "ok".into()
-        )]
-    );
-    let own: i64 = sqlx::query_scalar("SELECT count(*) FROM ops.admin_audit WHERE domain = 'telemetry' AND action = 'issue.state' AND target = $1")
-        .bind(&fingerprint)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        own, 1,
-        "the module's own row, in the statement that wrote the state"
-    );
-
-    let (status, body) = post(
-        &app,
-        &cookie,
-        "/admin/api/telemetry/audit",
-        json!({ "fingerprint": fingerprint, "limit": "5" }),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    let (status, body) = post(&app, &cookie, "/admin/api/telemetry/ingest", json!({})).await;
-    assert_eq!(status, StatusCode::OK, "the ingest report: {body}");
-    let rows = console_rows(&pool, &actor).await;
-    assert_eq!(
-        rows.iter().map(|r| r.1.as_str()).collect::<Vec<_>>(),
-        vec![
-            "telemetry.ingest",
-            "telemetry.audit",
-            "telemetry.issue-state"
-        ]
-    );
-
-    sqlx::query("DELETE FROM telemetry.issue_state WHERE fingerprint = $1")
-        .bind(&fingerprint)
-        .execute(&pool)
-        .await
-        .unwrap();
-    sqlx::query("DELETE FROM ops.admin_audit WHERE domain = 'telemetry' AND target = $1")
-        .bind(&fingerprint)
-        .execute(&pool)
-        .await
-        .unwrap();
-    cleanup(&pool, &actor).await;
 }
 
 #[tokio::test]
@@ -659,11 +479,7 @@ async fn social_domains(pool: &PgPool, writes: bool, token: Option<&str>) -> Dom
         communities,
         None,
         &Outbound::for_tests(),
-        Arc::new(crate::explore::ExploreState::new(
-            pool.clone(),
-            crate::explore::Settings::for_tests(),
-            None,
-        )),
+        crate::social::communities::State::explore_for_tests(pool),
     ));
     let notifications = crate::social::notifications::Settings {
         admin_token: token.clone(),
@@ -1922,12 +1738,13 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
         None,
     ));
     let tag = uuid::Uuid::new_v4().simple().to_string();
+    let world_name = format!("console{}.dcl.eth", &tag[..10]);
+    // A world catalogue row is keyed by its name (`World/model.ts:333`).
     let (place, world, event) = (
         format!("console-place-{tag}"),
-        format!("console-world-{tag}"),
+        world_name.clone(),
         format!("console-event-{tag}"),
     );
-    let world_name = format!("console{}.dcl.eth", &tag[..10]);
     let mirrored = |id: &str, raw: Value| crate::explore::places::mirror::MirrorRow {
         id: id.to_string(),
         base_position: "3,4".into(),
@@ -2000,6 +1817,18 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
     let (status, body) = post(
         &app,
         &cookie,
+        "/admin/api/places/place-rating",
+        json!({ "place_id": place, "rating": "A" }),
+    )
+    .await;
+    assert_eq!(
+        (status, body["body"]["data"]["content_rating"].as_str()),
+        (StatusCode::OK, Some("A")),
+        "{body}"
+    );
+    let (status, body) = post(
+        &app,
+        &cookie,
         "/admin/api/places/place-disable",
         json!({ "place_id": place, "reason": "spam" }),
     )
@@ -2013,13 +1842,13 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
         &app,
         &cookie,
         "/admin/api/places/place-rating",
-        json!({ "place_id": place, "rating": "A" }),
+        json!({ "place_id": place, "rating": "T" }),
     )
     .await;
     assert_eq!(
         (status, body["body"]["data"]["content_rating"].as_str()),
         (StatusCode::OK, Some("A")),
-        "{body}"
+        "a disabled place takes no rating, as the old update matched none: {body}"
     );
     let (status, body) = post(
         &app,
@@ -2171,6 +2000,7 @@ async fn place_world_and_event_moderation_record_the_operator_and_survive_the_mi
             ("places.world.highlight", "ok"),
             ("places.place.rating", "ok"),
             ("places.place.disable", "ok"),
+            ("places.place.rating", "ok"),
         ]
     );
     for sql in [

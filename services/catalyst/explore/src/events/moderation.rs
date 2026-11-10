@@ -14,6 +14,11 @@
 //! upstream's, so a patch that sets them answers 409 naming the upstream. A
 //! soft-deleted event answers not found, as before.
 //!
+//! The HTTP admin bearer's `PATCH /api/events/{id}` state changes follow
+//! upstream's `admin.ts` instead (`AdminState`, [`apply_admin_state_change`]):
+//! approve/unapprove/reject/unreject with their no-ops, the required
+//! rejection reason and the flag reset; `events::writes` parses that body.
+//!
 //! An operator's event creation (the console's `events/create`, the old
 //! admin `POST /api/events`): the old body (unknown fields refused), its
 //! validation (name <= 150, description <= 5000, safe url and images, the
@@ -28,12 +33,12 @@
 use chrono::{DateTime, Duration, Utc};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 
 use crate::shared::errors::ApiError;
 
 /// The old admin patch body.
-#[derive(Debug, Default, Deserialize, serde::Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, serde::Serialize)]
 pub struct AdminPatch {
     #[serde(default)]
     pub action: Option<String>,
@@ -50,10 +55,95 @@ pub struct AdminPatch {
     #[serde(default)]
     pub description: Option<String>,
     #[serde(default)]
+    #[serde(alias = "rejection_reason")]
     pub reason: Option<String>,
     /// The old HTTP admin path's audit actor (the console passes its wallet instead).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<String>,
+}
+
+/// Both HTTP and console moderation accept the historical reason spelling.
+/// An explicit `reason` key takes precedence, including an explicit null.
+pub fn parse_admin_patch(mut value: Value) -> Result<AdminPatch, ApiError> {
+    if let Some(fields) = value.as_object_mut() {
+        normalize_admin_reason(fields);
+    }
+    serde_json::from_value(value)
+        .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))
+}
+
+pub(crate) fn normalize_admin_reason(fields: &mut Map<String, Value>) {
+    if fields.contains_key("reason") {
+        fields.remove("rejection_reason");
+    }
+}
+
+impl AdminPatch {
+    /// Resolve actions once for both moderation-only and content edits.
+    /// Explicit approval follows the action, then rejection, then feature flags.
+    pub(crate) fn resolved(&self) -> Result<Self, ApiError> {
+        if self
+            .reason
+            .as_ref()
+            .is_some_and(|reason| reason.chars().count() > 500)
+        {
+            return Err(ApiError::bad_request("reason too long"));
+        }
+        if self.name.as_ref().is_some_and(|n| n.chars().count() > 150) {
+            return Err(ApiError::bad_request("name must be at most 150 characters"));
+        }
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|d| d.chars().count() > MAX_EVENT_DESCRIPTION_CHARS)
+        {
+            return Err(ApiError::bad_request("description too long"));
+        }
+        let mut resolved = Self {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            reason: self.reason.clone(),
+            actor: self.actor.clone(),
+            ..Self::default()
+        };
+        match self.action.as_deref() {
+            Some("approve") => {
+                resolved.approved = Some(true);
+                resolved.rejected = Some(false);
+            }
+            Some("reject" | "archive") => {
+                resolved.approved = Some(false);
+                resolved.rejected = Some(true);
+            }
+            Some("feature") => resolved.highlighted = Some(true),
+            Some("unfeature") => resolved.highlighted = Some(false),
+            Some(other) => {
+                return Err(ApiError::bad_request(format!(
+                    "unknown action \"{other}\" (expected approve|reject|feature|unfeature|archive)"
+                )));
+            }
+            None => {}
+        }
+        if let Some(approved) = self.approved {
+            resolved.approved = Some(approved);
+            if approved {
+                resolved.rejected = Some(false);
+            }
+        }
+        if let Some(rejected) = self.rejected {
+            resolved.rejected = Some(rejected);
+            if rejected {
+                resolved.approved = Some(false);
+            }
+        }
+        if self.highlighted.is_some() {
+            resolved.highlighted = self.highlighted;
+        }
+        if self.trending.is_some() {
+            resolved.trending = self.trending;
+        }
+        Ok(resolved)
+    }
 }
 
 fn set_approved(raw: &mut Map<String, Value>, actor: &str) {
@@ -65,10 +155,10 @@ fn set_approved(raw: &mut Map<String, Value>, actor: &str) {
 }
 
 fn set_rejected(raw: &mut Map<String, Value>, actor: &str, reason: Option<String>) {
+    raw.insert("rejected_by".into(), json!(actor));
     raw.insert("approved".into(), json!(false));
     raw.insert("approved_by".into(), Value::Null);
     raw.insert("rejected".into(), json!(true));
-    raw.insert("rejected_by".into(), json!(actor));
     raw.insert(
         "rejection_reason".into(),
         reason.map(Value::from).unwrap_or(Value::Null),
@@ -82,43 +172,15 @@ pub fn apply_admin_state(
     body: &AdminPatch,
     actor: &str,
 ) -> Result<(), ApiError> {
-    if body
-        .reason
-        .as_ref()
-        .is_some_and(|r| r.chars().count() > 500)
-    {
-        return Err(ApiError::bad_request("reason too long"));
-    }
+    let resolved = body.resolved()?;
+    let body = &resolved;
     let mut handled = false;
-    match body.action.as_deref() {
-        Some("approve") => {
-            set_approved(raw, actor);
-            handled = true;
-        }
-        Some("reject") | Some("archive") => {
-            set_rejected(raw, actor, body.reason.clone());
-            handled = true;
-        }
-        Some("feature") => {
-            raw.insert("highlighted".into(), json!(true));
-            handled = true;
-        }
-        Some("unfeature") => {
-            raw.insert("highlighted".into(), json!(false));
-            handled = true;
-        }
-        Some(other) => {
-            return Err(ApiError::bad_request(format!(
-                "unknown action \"{other}\" (expected approve|reject|feature|unfeature|archive)"
-            )));
-        }
-        None => {}
-    }
     if let Some(v) = body.approved {
         if v {
             set_approved(raw, actor);
         } else {
             raw.insert("approved".into(), json!(false));
+            raw.insert("approved_by".into(), Value::Null);
         }
         handled = true;
     }
@@ -128,6 +190,7 @@ pub fn apply_admin_state(
         } else {
             raw.insert("rejected".into(), json!(false));
             raw.insert("rejected_by".into(), Value::Null);
+            raw.insert("rejection_reason".into(), Value::Null);
         }
         handled = true;
     }
@@ -145,6 +208,12 @@ pub fn apply_admin_state(
     }
     if let Some(description) = &body.description {
         raw.insert("description".into(), json!(description));
+        handled = true;
+    }
+    // Editing an existing rejection's explanation is independent of deciding
+    // the verdict again, so retain its original actor and feature decisions.
+    if body.reason.is_some() && flag(raw, "rejected") {
+        raw.insert("rejection_reason".into(), json!(body.reason));
         handled = true;
     }
     if !handled {
@@ -181,15 +250,140 @@ pub(crate) async fn mirrored_event(pool: &PgPool, event_id: &str) -> ApiError {
     ))
 }
 
-/// Applies `body` to the event as `actor`. `Ok(false)` when there is no such
-/// event (or it was deleted): the old route's 404; a patch of a mirrored
-/// event's own fields answers [`mirrored_event`].
+/// Applies `body` to the event as `actor` (the console's vocabulary).
+/// `Ok(false)` when there is no such event (or it was deleted): the old
+/// route's 404; a patch of a mirrored event's own fields answers
+/// [`mirrored_event`].
 pub async fn moderate(
     pool: &PgPool,
     event_id: &str,
     body: &AdminPatch,
     actor: &str,
+    settings: &crate::Settings,
 ) -> Result<bool, ApiError> {
+    moderate_with(pool, event_id, body, actor, settings, false, |raw| {
+        apply_admin_state(raw, body, actor).map(|()| true)
+    })
+    .await
+}
+
+/// `admin.ts:253-308` (`applyStateChange`): the admin bearer's state body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdminState {
+    Approve,
+    Unapprove,
+    Reject(String),
+    Unreject,
+}
+
+impl AdminState {
+    /// The console-shaped decision the mirrored overlay records for it.
+    fn as_patch(&self) -> AdminPatch {
+        match self {
+            AdminState::Approve => AdminPatch {
+                approved: Some(true),
+                ..Default::default()
+            },
+            AdminState::Unapprove => AdminPatch {
+                approved: Some(false),
+                ..Default::default()
+            },
+            AdminState::Reject(reason) => AdminPatch {
+                rejected: Some(true),
+                reason: Some(reason.clone()),
+                highlighted: Some(false),
+                trending: Some(false),
+                ..Default::default()
+            },
+            AdminState::Unreject => AdminPatch {
+                rejected: Some(false),
+                ..Default::default()
+            },
+        }
+    }
+}
+
+/// `admin.ts:131-228`: the changes a bearer state change makes, `false`
+/// when upstream answered the event unchanged (no write, no notification).
+pub fn apply_admin_state_change(
+    raw: &mut Map<String, Value>,
+    state: &AdminState,
+    actor: &str,
+) -> bool {
+    match state {
+        AdminState::Approve => {
+            // buildApprovalChanges (:131-146)
+            if flag(raw, "approved")
+                && !flag(raw, "rejected")
+                && text(raw, "rejection_reason").is_none()
+            {
+                return false;
+            }
+            set_approved(raw, actor);
+        }
+        AdminState::Unapprove => {
+            // unapproveEventByActor (:184-195)
+            if !flag(raw, "approved") && text(raw, "approved_by").is_none() {
+                return false;
+            }
+            raw.insert("approved".into(), json!(false));
+            raw.insert("approved_by".into(), Value::Null);
+        }
+        AdminState::Reject(reason) => {
+            // buildRejectionChanges (:148-166): the reason compared as sent.
+            if flag(raw, "rejected") && text(raw, "rejection_reason").as_deref() == Some(reason) {
+                return false;
+            }
+            set_rejected(raw, actor, Some(reason.clone()));
+            raw.insert("highlighted".into(), json!(false));
+            raw.insert("trending".into(), json!(false));
+        }
+        AdminState::Unreject => {
+            // unrejectEventByActor (:216-228)
+            if !flag(raw, "rejected")
+                && text(raw, "rejected_by").is_none()
+                && text(raw, "rejection_reason").is_none()
+            {
+                return false;
+            }
+            raw.insert("rejected".into(), json!(false));
+            raw.insert("rejected_by".into(), Value::Null);
+            raw.insert("rejection_reason".into(), Value::Null);
+        }
+    }
+    true
+}
+
+/// The admin bearer's state change (`patchEventAdmin`, `admin.ts:367-373`):
+/// a soft-deleted event is still patched (`getAdminEvent` has no deletion
+/// filter, fixture `events.admin_patch.soft_deleted_still_patchable`).
+/// `Ok(false)` when there is no such event.
+pub async fn moderate_state(
+    pool: &PgPool,
+    event_id: &str,
+    state: &AdminState,
+    actor: &str,
+    settings: &crate::Settings,
+) -> Result<bool, ApiError> {
+    let body = state.as_patch();
+    moderate_with(pool, event_id, &body, actor, settings, true, |raw| {
+        Ok(apply_admin_state_change(raw, state, actor))
+    })
+    .await
+}
+
+async fn moderate_with<F>(
+    pool: &PgPool,
+    event_id: &str,
+    body: &AdminPatch,
+    actor: &str,
+    settings: &crate::Settings,
+    allow_deleted: bool,
+    apply: F,
+) -> Result<bool, ApiError>
+where
+    F: FnOnce(&mut Map<String, Value>) -> Result<bool, ApiError>,
+{
     super::mirror::reclaim_local(pool).await?;
     let mut tx = pool.begin().await?;
     let row: Option<(Value, String, String)> =
@@ -200,11 +394,12 @@ pub async fn moderate(
     let Some((raw, current_name, origin)) = row else {
         return Ok(false);
     };
+    let before = raw.clone();
     let mut raw = match raw {
         Value::Object(m) => m,
         _ => Map::new(),
     };
-    if is_soft_deleted(&raw) {
+    if is_soft_deleted(&raw) && !allow_deleted {
         return Ok(false);
     }
     let mirrored = origin != LOCAL;
@@ -212,7 +407,33 @@ pub async fn moderate(
         drop(tx);
         return Err(mirrored_event(pool, event_id).await);
     }
-    apply_admin_state(&mut raw, body, actor)?;
+    if !apply(&mut raw)? {
+        tx.rollback().await?;
+        return Ok(true);
+    }
+    if !mirrored {
+        begin_metric_approval(&mut tx, before.as_object().unwrap_or(&Map::new()), &mut raw).await?;
+    }
+    if mirrored && body.reason.is_some() && flag(&raw, "rejected") {
+        let resolved = body.resolved()?;
+        if resolved.rejected != Some(true) {
+            // Keep the ownership check and local moderation update in the
+            // same row-locked transaction. A feature-only overlay does not
+            // grant authority over the upstream's rejection decision.
+            let locally_rejected: bool = sqlx::query_scalar(
+                "SELECT COALESCE(rejected, false) FROM explore.event_moderation WHERE event_id=$1",
+            )
+            .bind(event_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or(false);
+            if !locally_rejected {
+                return Err(ApiError::conflict(
+                    "This rejection belongs to the upstream; make an explicit local rejection decision before editing its reason",
+                ));
+            }
+        }
+    }
     let decision = mirrored.then(|| Decision::of(body, &raw));
     raw.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
     let name = raw
@@ -229,6 +450,15 @@ pub async fn moderate(
         flag(&raw, "highlighted"),
         flag(&raw, "trending"),
     );
+    super::notifications::record_transition(
+        &mut tx,
+        event_id,
+        Some(&before),
+        &Value::Object(raw.clone()),
+        !mirrored,
+        settings,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET raw = $2, name = $3, description = $4, approved = $5, highlighted = $6, trending = $7 \
          WHERE id = $1",
@@ -295,8 +525,15 @@ impl Decision {
             || body.approved == Some(true)
             || body.rejected == Some(true);
         let pick = |touched: bool, key: &str| touched.then(|| flag(raw, key));
-        let approved = pick(verdict || body.approved.is_some(), "approved");
-        let rejected = pick(verdict || body.rejected.is_some(), "rejected");
+        let reason_edit = body.reason.is_some() && flag(raw, "rejected");
+        let approved = pick(
+            verdict || body.approved.is_some() || reason_edit,
+            "approved",
+        );
+        let rejected = pick(
+            verdict || body.rejected.is_some() || reason_edit,
+            "rejected",
+        );
         let with = |decided: Option<bool>, key: &str| {
             decided.unwrap_or(false).then(|| text(raw, key)).flatten()
         };
@@ -364,11 +601,13 @@ impl Decision {
 /// An operator's delete of a mirrored event: `raw` (the soft-delete keys
 /// set) projected onto the row and `hidden` recorded, which keeps it from
 /// every public read across passes; the console still sees it.
-pub async fn hide_mirrored(
-    pool: &PgPool,
+pub(super) async fn hide_mirrored_locked(
+    tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     let decision = Decision {
         hidden: Some(true),
@@ -376,14 +615,21 @@ pub async fn hide_mirrored(
         deleted_reason: text(&raw, "deleted_reason"),
         ..Default::default()
     };
-    let mut tx = pool.begin().await?;
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &Value::Object(raw.clone()),
+        false,
+        settings,
+    )
+    .await?;
     sqlx::query("UPDATE explore.event SET raw = $2 WHERE id = $1")
         .bind(event_id)
         .bind(Value::Object(raw))
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
-    decision.record(&mut tx, event_id, actor).await?;
-    tx.commit().await?;
+    decision.record(tx, event_id, actor).await?;
     tracing::info!(event = %event_id, actor, "mirrored event hidden");
     Ok(())
 }
@@ -395,6 +641,8 @@ pub(crate) const LOCAL: &str = "local";
 /// The creator the old admin path wrote (`ADMIN_SIGNER`); the operator's
 /// wallet is the overlay's signer and the audit row's actor.
 pub const ADMIN_CREATOR: &str = "admin";
+pub(crate) const MAX_EVENT_DESCRIPTION_CHARS: usize = 5000;
+pub(crate) const MAX_EVENT_CONTACT_CHARS: usize = 100;
 pub(crate) const MAX_EVENT_DURATION_MS: i64 = 1000 * 60 * 60 * 24;
 pub(crate) const PAST_FINISH_AT_MESSAGE: &str = "The event end date is already in the past";
 pub(crate) const PAST_RECURRENT_UNTIL_MESSAGE: &str =
@@ -403,7 +651,7 @@ const MAX_FEATURED_ITEM_LEN: usize = 160;
 const FEATURED_ITEM_CHAINS: [&str; 4] = ["matic", "ethereum", "amoy", "sepolia"];
 
 /// The old admin create body.
-#[derive(Debug, Deserialize, serde::Serialize)]
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateEvent {
     pub name: String,
@@ -519,23 +767,74 @@ pub(crate) fn series_may_have_future_dates(
     normalized_series(recurrent, frequency, count, until) && until.is_none_or(|u| u > now)
 }
 
-/// The old `validate_create`: the start instant, or the 400.
+/// `validateEventUrl` (`Event/utils.ts:826-835`).
+pub(super) fn validate_event_url(url: &str) -> Result<(), ApiError> {
+    crate::sanitize::validate_event_url(url)
+        .map(|_| ())
+        .map_err(|_| {
+            ApiError::bad_request(format!(
+                "Invalid event url {url}; only public HTTP(S) URLs are allowed"
+            ))
+        })
+}
+
+/// `validateImageUrl` (`Event/utils.ts:837-870`) as this node applies it:
+/// the poster must be one this node serves (`posters::resolve`); the refusal
+/// is upstream's text. Fixtures `events.create.image_wrong_origin`,
+/// `.image_vertical_wrong_origin`, `events.patch.image_wrong_origin`.
+pub(super) fn invalid_image(url: &str) -> ApiError {
+    ApiError::bad_request(format!(
+        "Invalid image url {url}, please upload the image through the upload poster endpoint (POST /poster)"
+    ))
+}
+
+/// `isInsideWorldLimits(x, y)` for every event, world events included
+/// (`createEvent.ts:95-103`, `updateEvent.ts:349-357`).
+pub(super) fn check_world_limits(x: i32, y: i32, body: &Value) -> Result<(), ApiError> {
+    if super::handlers::is_inside_world_limits(x, y) {
+        Ok(())
+    } else {
+        Err(ApiError::with_data(
+            400,
+            "Event is outside the world limits",
+            json!({ "body": body }),
+        ))
+    }
+}
+
+/// The old `validate_create` with upstream's refusals (`createEvent.ts:81-163`):
+/// the start instant, or the 400 echoing the body.
 pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTime<Utc>, ApiError> {
+    let echo = serde_json::to_value(body).unwrap_or(Value::Null);
+    let refuse = |message: &str| ApiError::with_data(400, message, json!({ "body": echo }));
     if body.name.chars().count() > 150 {
         return Err(ApiError::bad_request("name must be at most 150 characters"));
     }
     if body
         .description
         .as_ref()
-        .is_some_and(|d| d.chars().count() > 5000)
+        .is_some_and(|d| d.chars().count() > MAX_EVENT_DESCRIPTION_CHARS)
     {
         return Err(ApiError::bad_request("description too long"));
     }
-    if let Some(u) = &body.url {
-        crate::sanitize::validate_event_url(u).map_err(ApiError::bad_request)?;
+    if body
+        .details
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > MAX_EVENT_DESCRIPTION_CHARS)
+        || body
+            .contact
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > MAX_EVENT_CONTACT_CHARS)
+    {
+        return Err(ApiError::bad_request(
+            "organizer text exceeds the maximum length",
+        ));
+    }
+    if let Some(u) = body.url.as_deref().filter(|u| !u.is_empty()) {
+        validate_event_url(u)?;
     }
     for img in [&body.image, &body.image_vertical].into_iter().flatten() {
-        crate::sanitize::sanitize_asset_url(img).map_err(ApiError::bad_request)?;
+        crate::sanitize::sanitize_asset_url(img).map_err(|_| invalid_image(img))?;
     }
     if let Some(urn) = body.featured_item.as_deref().filter(|v| !v.is_empty()) {
         validate_featured_item(urn).map_err(ApiError::bad_request)?;
@@ -548,34 +847,31 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
     if !(-170..=170).contains(&body.x) || !(-170..=170).contains(&body.y) {
         return Err(ApiError::bad_request("coordinates out of range"));
     }
-    let world = body.world.unwrap_or(false);
-    if !world && !super::handlers::is_inside_world_limits(body.x, body.y) {
-        return Err(ApiError::bad_request("coordinates outside world limits"));
-    }
+    check_world_limits(body.x, body.y, &echo)?;
     let recurrent = body.recurrent.unwrap_or(false);
     let frequency = body.recurrent_frequency.as_deref();
     let until = body.recurrent_until.as_deref().and_then(parse_rfc3339);
+    // `createEvent.ts:105-125`: the past-iteration cap before any expansion.
+    if let Some(rule) = echo.as_object()
+        && super::recurrence::estimate_past_iterations(rule, now)
+            > super::recurrence::MAX_RECURRENT_PAST_ITERATIONS
+    {
+        return Err(refuse(super::recurrence::TOO_MANY_PAST_ITERATIONS_MESSAGE));
+    }
     if !series_may_have_future_dates(recurrent, frequency, body.recurrent_count, until, now)
         && finish_at_of(start_at, body.duration).is_some_and(|finish_at| finish_at <= now)
     {
-        return Err(ApiError::bad_request(PAST_FINISH_AT_MESSAGE));
+        return Err(refuse(PAST_FINISH_AT_MESSAGE));
     }
     if normalized_series(recurrent, frequency, body.recurrent_count, until)
         && until.is_some_and(|u| u <= now)
     {
-        return Err(ApiError::bad_request(PAST_RECURRENT_UNTIL_MESSAGE));
+        return Err(refuse(PAST_RECURRENT_UNTIL_MESSAGE));
     }
     if body.duration > MAX_EVENT_DURATION_MS {
-        return Err(ApiError::bad_request(max_duration_message()));
+        return Err(refuse(&max_duration_message()));
     }
     Ok(start_at)
-}
-
-fn jump_in_url(world: bool, server: Option<&str>, x: i32, y: i32) -> String {
-    match server {
-        Some(s) if world && !s.is_empty() => format!("https://decentraland.org/play/?realm={s}"),
-        _ => format!("https://decentraland.org/play/?position={x}%2C{y}"),
-    }
 }
 
 /// The old `build_create_raw`: the event document a create stores, pending
@@ -599,7 +895,7 @@ pub fn build_create_raw(
         .url
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| jump_in_url(world, body.server.as_deref(), body.x, body.y));
+        .unwrap_or_else(|| super::metadata::jump_in_url(body.server.as_deref(), body.x, body.y));
     let mut seen = std::collections::HashSet::new();
     let schedules: Vec<String> = body
         .schedules
@@ -679,45 +975,134 @@ pub fn build_create_raw(
             doc.extend(m);
         }
     }
-    let doc = Value::Object(doc);
-    Ok(doc)
+    super::recurrence::recompute(&mut doc, now)?;
+    Ok(Value::Object(doc))
 }
 
-/// The old `generate_id`: a uuid-shaped sha256 of the name and the instant.
-pub(crate) fn generate_id(seed: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(seed.as_bytes());
-    hasher.update(Utc::now().timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
-    let h = hex::encode(hasher.finalize());
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+fn metric_starts(raw: &Map<String, Value>) -> Vec<(String, DateTime<Utc>)> {
+    let values: Vec<&str> = match raw.get("recurrent_dates").and_then(Value::as_array) {
+        Some(dates) if !dates.is_empty() => dates.iter().filter_map(Value::as_str).collect(),
+        _ => raw
+            .get("start_at")
+            .and_then(Value::as_str)
+            .into_iter()
+            .collect(),
+    };
+    values
+        .into_iter()
+        .filter_map(|value| {
+            DateTime::parse_from_rfc3339(value)
+                .ok()
+                .map(|date| (value.to_owned(), date.with_timezone(&Utc)))
+        })
+        .collect()
+}
+
+/// Start a create/approval window without importing already-ended occurrences.
+/// A first occurrence already in progress remains eligible when it later ends.
+fn begin_metric_window(
+    raw: &mut Map<String, Value>,
+    at: DateTime<Utc>,
+    already_eligible: Option<&std::collections::BTreeSet<DateTime<Utc>>>,
+) {
+    let duration =
+        chrono::Duration::milliseconds(raw.get("duration").and_then(Value::as_i64).unwrap_or(0));
+    let preserved: Map<String, Value> = metric_starts(raw)
+        .into_iter()
+        .filter(|(_, start)| {
+            *start < at
+                && already_eligible.is_none_or(|eligible| eligible.contains(start))
+                && start
+                    .checked_add_signed(duration)
+                    .is_some_and(|end| end > at)
+        })
+        .map(|(key, _)| (key, Value::Bool(true)))
+        .collect();
+    raw.insert("_metrics_schedule_after".into(), json!(at.to_rfc3339()));
+    raw.insert("_metrics_preserved_starts".into(), Value::Object(preserved));
+}
+
+async fn begin_metric_approval(
+    tx: &mut Transaction<'_, Postgres>,
+    before: &Map<String, Value>,
+    raw: &mut Map<String, Value>,
+) -> Result<(), sqlx::Error> {
+    if !flag(before, "approved")
+        && flag(raw, "approved")
+        && !flag(raw, "rejected")
+        && !is_soft_deleted(raw)
+    {
+        let at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut **tx)
+            .await?;
+        let eligible = eligible_metric_starts(raw);
+        begin_metric_window(raw, at, Some(&eligible));
+    }
+    Ok(())
+}
+
+fn eligible_metric_starts(raw: &Map<String, Value>) -> std::collections::BTreeSet<DateTime<Utc>> {
+    let old_cutoff = raw
+        .get("_metrics_schedule_after")
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok());
+    let old_preserved = raw
+        .get("_metrics_preserved_starts")
+        .and_then(Value::as_object);
+    metric_starts(raw)
+        .into_iter()
+        .filter(|(key, date)| {
+            old_cutoff.is_none_or(|at| *date >= at)
+                || old_preserved.is_some_and(|old| old.contains_key(key))
+        })
+        .map(|(_, date)| date)
+        .collect()
+}
+
+/// Preserve eligible occurrence identities shared by the old and new schedules.
+/// The private lookup is bounded by the current materialized schedule; it never
+/// accumulates removed dates across edits or grants eligibility to new past dates.
+pub(super) fn preserve_metric_starts(
+    before: &Map<String, Value>,
+    after: &mut Map<String, Value>,
+    cutoff: DateTime<Utc>,
+) {
+    let eligible = eligible_metric_starts(before);
+    let preserved: Map<String, Value> = metric_starts(after)
+        .into_iter()
+        .filter(|(_, date)| *date < cutoff && eligible.contains(date))
+        .map(|(key, _)| (key, Value::Bool(true)))
+        .collect();
+    after.insert("_metrics_schedule_after".into(), json!(cutoff.to_rfc3339()));
+    after.insert("_metrics_preserved_starts".into(), Value::Object(preserved));
+}
+
+/// Event identifiers stay unique even when concurrent creates share a clock tick.
+fn generate_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// The old `resolve_location` as a query: a world event names its world by
 /// `server` (the world's name, lowercased, when the catalogue knows it); a
 /// parcel event takes the enabled place whose positions hold the parcel
 /// (`place_positions_path_gin`), the newest deployment first.
-pub(crate) async fn resolve_location(
-    pool: &PgPool,
+pub(crate) async fn resolve_location<'e, E>(
+    executor: E,
     world: bool,
     server: Option<&str>,
     x: i32,
     y: i32,
-) -> Result<(Option<String>, bool), ApiError> {
+) -> Result<(Option<String>, bool), ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     match server.filter(|s| world && !s.is_empty()) {
         Some(name) => {
             let found: Option<(String,)> = sqlx::query_as(
                 "SELECT lower(world_name) FROM explore.place_indexed WHERE world IS TRUE AND lower(world_name) = lower($1) LIMIT 1",
             )
             .bind(name)
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?;
             Ok((found.map(|(n,)| n), true))
         }
@@ -727,17 +1112,159 @@ pub(crate) async fn resolve_location(
                  ORDER BY deployed_at DESC NULLS LAST, id LIMIT 1",
             )
             .bind(json!([format!("{x},{y}")]))
-            .fetch_optional(pool)
+            .fetch_optional(executor)
             .await?;
             Ok((found.map(|(id,)| id), false))
         }
     }
 }
 
+/// `createEvent.ts:178-202`, `updateEvent.ts:493-534`: the community
+/// failures are 400 `Failed to validate community ownership: Community
+/// "<id>" not found or you don't have <access> it`, `access` being `access
+/// to` on create, `permission to access` or `permission to detach this
+/// event from` on update. Fixtures `events.create.community_not_member`,
+/// `events.patch.community_not_member`, `.community_detach_not_member`.
+pub(super) fn community_failure(id: &str, access: &str, body: &Value) -> ApiError {
+    ApiError::with_data(
+        400,
+        format!(
+            "Failed to validate community ownership: Community \"{id}\" not found or you don't have {access} it"
+        ),
+        json!({ "body": body }),
+    )
+}
+
+/// A community event may only be linked by an owner or moderator of that
+/// active community (upstream asked the Communities API for the signer's
+/// communities). This uses the shared membership authority, not a claim
+/// supplied by the event form; the failure is [`community_failure`].
+pub(super) async fn validate_community<'e, E>(
+    executor: E,
+    id: &str,
+    signer: &str,
+    access: &str,
+    body: &Value,
+) -> Result<(), ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    let Ok(id) = uuid::Uuid::parse_str(id) else {
+        return Err(community_failure(id, access, body));
+    };
+    let managed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM social.communities c \
+         LEFT JOIN social.community_members m ON m.community_id = c.id AND m.member_address = $2 \
+         WHERE c.id = $1 AND c.active AND NOT c.suspended \
+           AND (c.owner_address = $2 OR m.role IN ('owner', 'moderator')))",
+    )
+    .bind(id)
+    .bind(signer.to_ascii_lowercase())
+    .fetch_one(executor)
+    .await?;
+    if !managed {
+        return Err(community_failure(&id.to_string(), access, body));
+    }
+    Ok(())
+}
+
+/// The document a validation 400 echoes as `data.body`: without this node's
+/// private authoring keys (`_image_source`, `_metrics_*`).
+pub(super) fn public_body(raw: &Map<String, Value>) -> Value {
+    Value::Object(
+        raw.iter()
+            .filter(|(k, _)| !k.starts_with('_'))
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect(),
+    )
+}
+
+/// Validate catalogue references before committing an event. Arrays are
+/// bounded at the boundary, and the schedule check is one set query.
+pub(super) async fn validate_references<'e, E>(
+    executor: E,
+    raw: &Map<String, Value>,
+) -> Result<(), ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
+    // `createEvent.ts:165-176`, `updateEvent.ts:362-373`.
+    if let Some(categories) = raw.get("categories").and_then(Value::as_array) {
+        let known = super::categories::list();
+        if categories.len() > 25
+            || categories.iter().any(|category| {
+                !known
+                    .iter()
+                    .any(|known| category.as_str() == Some(&known.name))
+            })
+        {
+            return Err(ApiError::with_data(
+                400,
+                "Invalid category tag supplied",
+                json!({ "body": public_body(raw) }),
+            ));
+        }
+    }
+    // `updateEvent.ts:302-323`: `Schedule not found: <missing ids>`.
+    if let Some(schedules) = raw.get("schedules").and_then(Value::as_array) {
+        if schedules.len() > 100 {
+            return Err(ApiError::bad_request("too many schedules"));
+        }
+        let schedules: Vec<String> = schedules
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect();
+        if !schedules.is_empty() {
+            let found: Vec<String> =
+                sqlx::query_scalar("SELECT id FROM explore.schedules_local WHERE id = ANY($1)")
+                    .bind(&schedules)
+                    .fetch_all(executor)
+                    .await?;
+            let missing: Vec<&str> = schedules
+                .iter()
+                .filter(|id| !found.contains(id))
+                .map(String::as_str)
+                .collect();
+            if !missing.is_empty() {
+                return Err(ApiError::with_data(
+                    400,
+                    format!("Schedule not found: {}", missing.join(", ")),
+                    json!({ "body": public_body(raw) }),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `posters::resolve` with upstream's refusal text (`validateImageUrl`);
+/// a node without a blob store cannot hold the poster: 503, as upstream
+/// answered without its bucket (`utils.ts:838-843`).
+pub(super) async fn resolve_poster<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    image: &str,
+    settings: &crate::Settings,
+    kind: &str,
+) -> Result<String, ApiError> {
+    super::posters::resolve(executor, image, settings, kind)
+        .await
+        .map_err(|error| match error {
+            ApiError::Http { status: 400, .. } => invalid_image(image),
+            other => other,
+        })
+}
+
 /// Creates the event as the old admin path did, the operator as the
 /// overlay's signer; answers its id.
-pub async fn create(pool: &PgPool, body: &CreateEvent, operator: &str) -> Result<String, ApiError> {
-    create_as(pool, body, ADMIN_CREATOR, operator).await
+pub async fn create(
+    pool: &PgPool,
+    body: &CreateEvent,
+    operator: &str,
+    settings: &crate::Settings,
+    places: Option<&crate::places::PlacesComponent>,
+) -> Result<String, ApiError> {
+    create_as(pool, body, ADMIN_CREATOR, operator, settings, places).await
 }
 
 /// Creates the event with `creator` as its `user` and `signer` as its
@@ -747,7 +1274,25 @@ pub async fn create_as(
     body: &CreateEvent,
     creator: &str,
     signer: &str,
+    settings: &crate::Settings,
+    places: Option<&crate::places::PlacesComponent>,
 ) -> Result<String, ApiError> {
+    let mut body = body.clone();
+    // `createEvent.ts:83-93`: the custom url, then the images.
+    if let Some(u) = body.url.as_deref().filter(|u| !u.is_empty()) {
+        validate_event_url(u)?;
+    }
+    for (image, kind) in [
+        (&mut body.image, "poster"),
+        (&mut body.image_vertical, "poster-vertical"),
+    ] {
+        if let Some(value) = image.as_deref().filter(|v| !v.is_empty()) {
+            *image = Some(resolve_poster(pool, value, settings, kind).await?);
+        } else {
+            *image = None;
+        }
+    }
+    let body = &body;
     let operator = signer;
     let now = Utc::now();
     let start_at = validate_create(body, now)?;
@@ -759,12 +1304,41 @@ pub async fn create_as(
         body.y,
     )
     .await?;
-    let id = generate_id(&body.name);
+    let id = generate_id();
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
+    if let Some(raw) = doc.as_object() {
+        validate_references(pool, raw).await?;
+    }
+    if creator != ADMIN_CREATOR
+        && let Some(community) = body.community_id.as_deref()
+    {
+        let echo = serde_json::to_value(body).unwrap_or(Value::Null);
+        validate_community(pool, community, creator, "access to", &echo).await?;
+    }
+    if let Some(raw) = doc.as_object_mut() {
+        let mut conn = pool.acquire().await?;
+        super::metadata::enrich(
+            &mut conn,
+            raw,
+            None,
+            true,
+            &settings.events_base_url,
+            places,
+        )
+        .await?;
+    }
+    let mut tx = pool.begin().await?;
+    let created_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *tx)
+        .await?;
+    if let Some(raw) = doc.as_object_mut() {
+        begin_metric_window(raw, created_at, None);
+    }
+    doc["created_at"] = json!(created_at.to_rfc3339());
+    doc["updated_at"] = json!(created_at.to_rfc3339());
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO explore.event (id, name, start_at, finish_at, next_start_at, next_finish_at, duration_ms, recurrent, \
              highlighted, trending, approved, attending, community_id, user_creator, coordinates_x, coordinates_y, description, raw, origin) \
@@ -799,26 +1373,38 @@ pub async fn create_as(
     .bind(json!({ "create": body }))
     .execute(&mut *tx)
     .await?;
+    super::notifications::record_transition(&mut tx, &id, None, &doc, true, settings).await?;
     tx.commit().await?;
     tracing::info!(event = %id, signer = operator, creator, "event created");
     Ok(id)
 }
 
-/// Writes `raw` as the event's document and its projected columns, with
-/// `signer`'s overlay (`payload` as received), in one transaction: an edit,
-/// a delete or a moderation of a stored event.
-pub async fn store(
-    pool: &PgPool,
+/// Store an edit/delete using the caller's already locked row and transaction.
+/// `before` is that locked snapshot, not a document read outside the lock.
+pub(super) async fn store_locked(
+    tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
-    raw: Map<String, Value>,
+    before: &Map<String, Value>,
+    mut raw: Map<String, Value>,
     signer: &str,
     payload: Value,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
+    begin_metric_approval(tx, before, &mut raw).await?;
     let mut doc = Value::Object(raw);
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let mut tx = pool.begin().await?;
+    // The caller loaded and locked this local event before applying edits.
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &doc,
+        true,
+        settings,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET name = $2, start_at = $3::timestamptz AT TIME ZONE 'UTC', finish_at = $4::timestamptz AT TIME ZONE 'UTC',
              next_start_at = $5::timestamptz AT TIME ZONE 'UTC', next_finish_at = $6::timestamptz AT TIME ZONE 'UTC', duration_ms = $7,
@@ -843,7 +1429,7 @@ pub async fn store(
     .bind(f.y)
     .bind(f.description)
     .bind(&doc)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
     sqlx::query(
         "INSERT INTO explore.events_local (id, signer, signed_payload) VALUES ($1, $2, $3) \
@@ -853,9 +1439,8 @@ pub async fn store(
     .bind(event_id)
     .bind(signer)
     .bind(payload)
-    .execute(&mut *tx)
+    .execute(&mut **tx)
     .await?;
-    tx.commit().await?;
     Ok(())
 }
 
@@ -868,6 +1453,52 @@ mod tests {
             .as_object()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn an_admin_patch_refuses_text_over_the_create_bounds() {
+        let long_name = AdminPatch {
+            name: Some("n".repeat(151)),
+            ..AdminPatch::default()
+        };
+        assert_eq!(
+            long_name.resolved().unwrap_err().to_string(),
+            "name must be at most 150 characters"
+        );
+        let long_description = AdminPatch {
+            description: Some("d".repeat(MAX_EVENT_DESCRIPTION_CHARS + 1)),
+            ..AdminPatch::default()
+        };
+        assert_eq!(
+            long_description.resolved().unwrap_err().to_string(),
+            "description too long"
+        );
+        let at_the_bound = AdminPatch {
+            name: Some("n".repeat(150)),
+            description: Some("d".repeat(MAX_EVENT_DESCRIPTION_CHARS)),
+            ..AdminPatch::default()
+        };
+        assert!(at_the_bound.resolved().is_ok());
+    }
+
+    #[test]
+    fn shared_admin_parser_gives_reason_precedence_including_null() {
+        for (reason, expected) in [(json!("primary"), Some("primary")), (Value::Null, None)] {
+            let parsed = parse_admin_patch(
+                json!({"action":"reject","reason":reason,"rejection_reason":"alias"}),
+            )
+            .unwrap();
+            assert_eq!(parsed.reason.as_deref(), expected);
+            let mut raw = json!({"rejected":true,"rejection_reason":"old"})
+                .as_object()
+                .unwrap()
+                .clone();
+            apply_admin_state(&mut raw, &parsed, "operator").unwrap();
+            assert_eq!(raw["rejection_reason"], json!(expected));
+        }
+        let parsed =
+            parse_admin_patch(json!({"action":"reject","rejection_reason":"alias"})).unwrap();
+        assert_eq!(parsed.reason.as_deref(), Some("alias"));
     }
 
     #[test]
@@ -993,7 +1624,15 @@ mod tests {
             highlighted: Some(true),
             ..Default::default()
         };
-        match moderate(&pool, &mirrored, &rename, actor).await {
+        match moderate(
+            &pool,
+            &mirrored,
+            &rename,
+            actor,
+            &crate::Settings::for_tests(),
+        )
+        .await
+        {
             Err(ApiError::Http { status, message }) => {
                 assert_eq!(status, 409);
                 assert!(message.contains("mirrored from"), "{message}");
@@ -1025,7 +1664,17 @@ mod tests {
         };
         assert_eq!(overlay().await, None, "a refused patch records nothing");
 
-        assert!(moderate(&pool, &mirrored, &body, actor).await.unwrap());
+        assert!(
+            moderate(
+                &pool,
+                &mirrored,
+                &body,
+                actor,
+                &crate::Settings::for_tests()
+            )
+            .await
+            .unwrap()
+        );
         assert_eq!(
             overlay().await,
             Some((Some(false), Some(true), Some(true), None, actor.to_string()))
@@ -1063,14 +1712,28 @@ mod tests {
             action: Some("approve".into()),
             ..Default::default()
         };
-        assert!(moderate(&pool, &mirrored, &approve, actor).await.unwrap());
+        assert!(
+            moderate(
+                &pool,
+                &mirrored,
+                &approve,
+                actor,
+                &crate::Settings::for_tests()
+            )
+            .await
+            .unwrap()
+        );
         assert_eq!(
             overlay().await,
             Some((Some(true), Some(false), Some(true), None, actor.to_string())),
             "a later decision merges into the earlier one"
         );
 
-        assert!(moderate(&pool, &id, &body, actor).await.unwrap());
+        assert!(
+            moderate(&pool, &id, &body, actor, &crate::Settings::for_tests())
+                .await
+                .unwrap()
+        );
         let (approved, highlighted, raw): (bool, bool, Value) =
             sqlx::query_as("SELECT approved, highlighted, raw FROM explore.event WHERE id = $1")
                 .bind(&id)
@@ -1097,9 +1760,15 @@ mod tests {
             (actor, Some("reject"))
         );
         assert!(
-            !moderate(&pool, "no-such-event", &body, actor)
-                .await
-                .unwrap()
+            !moderate(
+                &pool,
+                "no-such-event",
+                &body,
+                actor,
+                &crate::Settings::for_tests()
+            )
+            .await
+            .unwrap()
         );
 
         sqlx::query(
@@ -1110,7 +1779,9 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            !moderate(&pool, &id, &body, actor).await.unwrap(),
+            !moderate(&pool, &id, &body, actor, &crate::Settings::for_tests())
+                .await
+                .unwrap(),
             "a deleted event is not found"
         );
         sqlx::query("DELETE FROM explore.events_local WHERE id = $1")
@@ -1179,7 +1850,11 @@ mod tests {
             reason: Some("spam".into()),
             ..Default::default()
         };
-        assert!(moderate(&pool, &id, &reject, actor).await.unwrap());
+        assert!(
+            moderate(&pool, &id, &reject, actor, &crate::Settings::for_tests())
+                .await
+                .unwrap()
+        );
         pass().await;
         assert_eq!(
             shown().await,
@@ -1190,7 +1865,11 @@ mod tests {
             action: Some("approve".into()),
             ..Default::default()
         };
-        assert!(moderate(&pool, &id, &approve, actor).await.unwrap());
+        assert!(
+            moderate(&pool, &id, &approve, actor, &crate::Settings::for_tests())
+                .await
+                .unwrap()
+        );
         pass().await;
         assert_eq!(
             shown().await,
@@ -1269,8 +1948,8 @@ mod tests {
                 },
                 now
             )
-            .is_ok(),
-            "a world event is not bound to Genesis"
+            .is_err(),
+            "a world event is bound to the world limits too (createEvent.ts:95-103)"
         );
         assert!(
             validate_create(
@@ -1310,10 +1989,38 @@ mod tests {
             (
                 json!(false),
                 json!("admin"),
-                json!("https://decentraland.org/play/?position=10%2C20")
+                json!("https://decentraland.org/jump/events?position=10%2C20")
             )
         );
-        assert_eq!(generate_id("n").len(), 36);
+    }
+
+    #[test]
+    fn concurrent_event_creates_get_unique_canonical_uuid_ids() {
+        let barrier = std::sync::Barrier::new(8);
+        let ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        (0..1000).map(|_| generate_id()).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            let parsed = uuid::Uuid::parse_str(&id).unwrap();
+            assert_eq!(parsed.get_version_num(), 4);
+            assert_eq!(parsed.to_string(), id);
+            assert!(
+                seen.insert(id),
+                "concurrent creates must not share an event ID"
+            );
+        }
     }
 
     #[tokio::test]
@@ -1335,7 +2042,9 @@ mod tests {
             ..body(start)
         };
         let operator = "0x00000000000000000000000000000000000000e2";
-        let id = create(&pool, &b, operator).await.unwrap();
+        let id = create(&pool, &b, operator, &crate::Settings::for_tests(), None)
+            .await
+            .unwrap();
         let (approved, user, raw, origin): (bool, Option<String>, Value, String) = sqlx::query_as(
             "SELECT approved, user_creator, raw, origin FROM explore.event WHERE id = $1",
         )
@@ -1363,7 +2072,8 @@ mod tests {
                     action: Some("approve".into()),
                     ..Default::default()
                 },
-                operator
+                operator,
+                &crate::Settings::for_tests()
             )
             .await
             .unwrap()
@@ -1383,5 +2093,90 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+    }
+    #[tokio::test]
+    async fn rejecting_does_not_pin_upstream_feature_flags_after_approval() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let id = format!("mirror-features-{}", uuid::Uuid::new_v4());
+        let upstream = |featured: bool| json!({"id":id,"name":"Mirror","approved":true,"highlighted":featured,"trending":featured,"start_at":"2099-06-01T18:00:00Z","duration":3600000});
+        super::super::mirror::upsert_event(&pool, &upstream(false))
+            .await
+            .unwrap();
+        moderate(
+            &pool,
+            &id,
+            &AdminPatch {
+                action: Some("reject".into()),
+                ..Default::default()
+            },
+            "operator",
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
+        super::super::mirror::upsert_event(&pool, &upstream(true))
+            .await
+            .unwrap();
+        moderate(
+            &pool,
+            &id,
+            &AdminPatch {
+                action: Some("approve".into()),
+                ..Default::default()
+            },
+            "operator",
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
+        super::super::mirror::upsert_event(&pool, &upstream(true))
+            .await
+            .unwrap();
+        let flags: (bool, bool) =
+            sqlx::query_as("SELECT highlighted,trending FROM explore.event WHERE id=$1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(flags, (true, true));
+        moderate(
+            &pool,
+            &id,
+            &AdminPatch {
+                action: Some("unfeature".into()),
+                ..Default::default()
+            },
+            "operator",
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
+        moderate(
+            &pool,
+            &id,
+            &AdminPatch {
+                action: Some("approve".into()),
+                ..Default::default()
+            },
+            "operator",
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
+        super::super::mirror::upsert_event(&pool, &upstream(true))
+            .await
+            .unwrap();
+        let highlighted: bool =
+            sqlx::query_scalar("SELECT highlighted FROM explore.event WHERE id=$1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(
+            !highlighted,
+            "an intentional operator unfeature survives approval and mirror refresh"
+        );
     }
 }

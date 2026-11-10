@@ -818,7 +818,16 @@ mod receive_policy {
                 host.socket().local_addr().unwrap(),
             )
             .unwrap();
-        let event = host.service().unwrap().map(Event::no_ref);
+        // Loopback delivery is asynchronous on macOS: the datagram is not always readable on
+        // the first non-blocking poll after send_to, so poll until the host reports it.
+        let started = std::time::Instant::now();
+        let mut event = None;
+        while event.is_none() && started.elapsed() < core::time::Duration::from_secs(5) {
+            event = host.service().unwrap().map(Event::no_ref);
+            if event.is_none() {
+                std::thread::sleep(core::time::Duration::from_millis(1));
+            }
+        }
         assert_eq!(
             enet_test_allocation_peak(false),
             0,

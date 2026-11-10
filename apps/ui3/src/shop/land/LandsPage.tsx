@@ -11,9 +11,9 @@ import { useNavigate, useSearchParams } from "react-router";
 import Button from "../../atoms/Button";
 import ManaMark from "../../atoms/ManaMark";
 import EmptyState from "../../components/EmptyState";
-import type { ShopClient } from "../api/shop";
-import { chainLabel, gasTokenSymbol } from "../model/chain";
-import { reasonText } from "../payment/copy";
+import type { ShopClient } from "@shop/api/shop";
+import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
+import { reasonText } from "@shop/payment/copy";
 import { useShopWallet } from "../wallet/context";
 import {
   fetchLandNfts,
@@ -30,7 +30,7 @@ import {
   type LandFilters,
   type LandStatusFilter,
 } from "./api";
-import { landChainId } from "./contracts";
+import { landChainId } from "./chain";
 import LandCard from "./LandCard";
 import LandMap from "./LandMap";
 import LandPriceChart from "./LandPriceChart";
@@ -80,11 +80,11 @@ export function LandWalletNotice() {
   );
 }
 
-export const landsListingKey = (listKey: string) => ["land-nfts", listKey] as const;
+const landsListingKey = (listKey: string) => ["land-nfts", listKey] as const;
 
-export const landsListKey = (filters: LandFilters, owner: string | null) => `${landFiltersToSearch({ ...filters, page: 1 })}|${owner ?? ""}`;
+const landsListKey = (filters: LandFilters, owner: string | null) => `${landFiltersToSearch({ ...filters, page: 1 })}|${owner ?? ""}`;
 
-export function landsFiltersFromParams(params: URLSearchParams): LandFilters {
+function landsFiltersFromParams(params: URLSearchParams): LandFilters {
   const q = new URLSearchParams(params);
   if (q.get("onlyOnRent") !== "true") {
     if (q.get("onlyOnSale") === "true") q.delete("onlyOnSale");
@@ -170,7 +170,7 @@ function ViewToggle({ isMap, onChange }: { isMap: boolean; onChange(isMap: boole
 
 const MAX_PAGE = 50;
 
-export function landsListingFilters(f: LandFilters, owner: string | null, page = 1): LandFilters {
+function landsListingFilters(f: LandFilters, owner: string | null, page = 1): LandFilters {
   return { ...f, owner, page, minEstateSize: f.minEstateSize || (f.category === "parcel" ? "" : "1") };
 }
 

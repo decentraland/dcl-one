@@ -4,8 +4,16 @@
 use std::sync::LazyLock;
 
 use super::content_quality::build_content_quality_condition;
-use super::rows::{PlaceListFilters, PlaceOrderBy};
+use super::rows::{ActiveRows, PlaceListFilters, PlaceOrderBy};
 use crate::sanitize::MAX_SANITIZE_PASSES;
+
+/// A literal for a `LIKE ... ESCAPE E'\\'` pattern: `\`, `%` and `_` escaped.
+pub(super) fn like_escape(literal: &str) -> String {
+    literal
+        .replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
+}
 
 /// The read-side mirror of the `description_plain` generated column
 /// (schemas/10_explore.sql): as many strip passes as the sanitizer, then every
@@ -49,6 +57,51 @@ pub(super) const SHOW_IN_PLACES_CLAUSE: &str = "(world IS FALSE OR COALESCE(NULL
 pub(crate) const EXCLUDE_FROM_RANKING_SQL: &str =
     "COALESCE(NULLIF(raw->'exclude_from_ranking', 'null'::jsonb) = 'true'::jsonb, false)";
 
+/// A row of upstream's `worlds` table: the catalogue keys a world by its
+/// lowercased name (places `World/model.ts:466-469`, `derive.rs`
+/// `UPSERT_LOCAL_WORLDS`); a world scene of the `places` table keeps its own
+/// id. `PlaceRow::is_world_catalogue_row` is the same test in Rust.
+pub(super) const WORLD_CATALOGUE_SQL: &str = "(world IS TRUE AND id = lower(world_name))";
+
+/// Upstream's `textsearch` column (`shared/entityInteractions.ts:71-84`:
+/// title and world name at weight A, description at B, owner at C), computed
+/// over the same columns here; `search` matches and ranks against it
+/// (`Place/model.ts:171,323-328`). The `createSearchableMatches` tokens
+/// upstream adds at weight B are not reproduced.
+pub(super) fn textsearch_sql() -> &'static str {
+    static SQL: LazyLock<String> = LazyLock::new(|| {
+        format!(
+            "(setweight(to_tsvector('english', coalesce(title, '')), 'A') \
+             || setweight(to_tsvector('english', coalesce(world_name, '')), 'A') \
+             || setweight(to_tsvector('english', ({plain})), 'B') \
+             || setweight(to_tsvector('english', coalesce(LOWER(COALESCE(raw->>'owner', creator_address)), '')), 'C'))",
+            plain = description_plain_sql()
+        )
+    });
+    &SQL
+}
+
+/// The `textsearch` field of a place row: the mirrored serialization when
+/// upstream sent one, else the vector computed here.
+/// The wire `textsearch`: upstream's own string when the row carries one,
+/// else the stored vector.
+pub(super) fn textsearch_column_sql() -> &'static str {
+    "COALESCE(CASE WHEN jsonb_typeof(raw->'textsearch') = 'string' THEN raw->>'textsearch' END, textsearch::text)"
+}
+
+/// `toPrefixTsQuery` (discovery server `adapters/places-filters.ts:29-36`):
+/// each run of letters and digits is a prefix term and the terms are joined
+/// with `&`; every other character separates terms. Empty input yields an
+/// empty string, which the SQL turns into a NULL query (no NOTICE, no match).
+pub(super) fn tsquery(search: &str) -> String {
+    static WORD: LazyLock<regex::Regex> =
+        LazyLock::new(|| regex::Regex::new(r"[\p{L}\p{N}]+").unwrap());
+    WORD.find_iter(search)
+        .map(|word| format!("{}:*", word.as_str()))
+        .collect::<Vec<_>>()
+        .join(" & ")
+}
+
 /// Bound magnitude, never precision: float8 errors both above 1.7976931348623157e308
 /// and below the smallest subnormal, so every alternative here must keep the value
 /// it admits inside both ends -- a digit run that can reach either is an abort, and a
@@ -64,10 +117,46 @@ pub(super) const RAW_FLOAT_IS_CASTABLE_RE: &str = concat!(
 
 pub(super) const RAW_INT_IS_CASTABLE_RE: &str = r"^-?[0-9]{1,10}$";
 
-/// Year zero is not a timestamptz and Postgres caps a timezone displacement at
-/// +/-15:59:59, so neither year run may reach 0000 and the offset hours must stop
-/// at 15 -- both abort the statement at the cast, not just the row.
-pub(super) const RAW_TIMESTAMP_IS_CASTABLE_RE: &str = concat!(
+/// The `x,y` pointers the LAND index holds for `owner` (parcels it owns,
+/// parcels it is the update operator of, parcels of the estates it owns) that
+/// some catalogue place covers: the operator leg of the owner filter
+/// (`places-repository/component.ts:91-100`, `positions && $operated`). The
+/// catalogue probe (`place_positions_path_gin`) bounds the answer by the
+/// catalogue, not by the owner's holdings, so a large holding neither loads
+/// its parcels into memory nor reaches the list's `@> ANY` clause.
+pub async fn operated_positions_in_catalogue(
+    pool: &sqlx::PgPool,
+    land_registry: &str,
+    estate_registry: &str,
+    owner: &str,
+) -> Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar(
+        "SELECT DISTINCT format('%s,%s', p.x, p.y) \
+         FROM (SELECT tr.x, tr.y FROM land_authz.token_right tr \
+                WHERE tr.token_address = $1 AND tr.x IS NOT NULL \
+                  AND (tr.owner = lower($2) OR tr.update_operator = lower($2)) \
+               UNION \
+               SELECT pt.x, pt.y FROM land_authz.token_right et \
+                 JOIN land_authz.estate_land el ON el.estate_token_id = et.token_id \
+                 JOIN land_authz.token_right pt ON pt.token_address = $1 AND pt.token_id = el.land_token_id \
+                WHERE et.token_address = $3 AND et.owner = lower($2) AND pt.x IS NOT NULL) p \
+         WHERE EXISTS (SELECT 1 FROM explore.place c \
+                        WHERE c.raw->'positions' @> jsonb_build_array(format('%s,%s', p.x, p.y))) \
+         ORDER BY 1",
+    )
+    .bind(land_registry)
+    .bind(owner)
+    .bind(estate_registry)
+    .fetch_all(pool)
+    .await
+}
+
+/// The guard of the schema's `utc_timestamp` function (schema_functions.rs;
+/// the test pins it). Year zero is not a timestamp and Postgres caps a timezone
+/// displacement at +/-15:59:59, so neither year run may reach 0000 and the
+/// offset hours must stop at 15 -- both abort the statement at the cast, not
+/// just the row.
+pub(crate) const RAW_TIMESTAMP_IS_CASTABLE_RE: &str = concat!(
     r"^((000[1-9]|00[1-9][0-9]|0[1-9][0-9]{2}|[1-9][0-9]{3})-",
     r"((0[13578]|1[02])-(0[1-9]|[12][0-9]|3[01])",
     r"|(0[469]|11)-(0[1-9]|[12][0-9]|30)",
@@ -108,8 +197,44 @@ pub(super) fn raw_int_sql(key: &str) -> String {
     )
 }
 
-pub(super) fn raw_timestamptz_sql(key: &str) -> String {
-    raw_cast_sql(key, "'string'", RAW_TIMESTAMP_IS_CASTABLE_RE, "timestamptz")
+/// The schema's `utc_timestamp` function (schema_functions.rs) holds the
+/// RAW_TIMESTAMP_IS_CASTABLE_RE guard.
+pub(super) fn utc_timestamp_sql(key: &str) -> String {
+    format!(
+        "{}(raw->>'{key}')",
+        crate::schema_functions::UTC_TIMESTAMP.name
+    )
+}
+
+/// The stored reads of `raw` (schemas/10_explore.sql, both catalogue legs),
+/// computed for a row that is not a table row: the typed columns a canonical
+/// world scene carries into `scene_catalogue`. The schema generates each
+/// column from the same expression (tests pin them).
+pub(super) fn typed_columns_sql() -> &'static str {
+    static SQL: LazyLock<String> = LazyLock::new(|| {
+        typed_columns()
+            .iter()
+            .map(|(name, expr)| format!(", {expr} AS {name}"))
+            .collect()
+    });
+    &SQL
+}
+
+/// `(column, expression)` of every stored read, in the view's order.
+pub(super) fn typed_columns() -> Vec<(&'static str, String)> {
+    vec![
+        ("like_score_num", raw_float8_sql("like_score")),
+        ("like_rate_num", raw_float8_sql("like_rate")),
+        ("ranking_num", raw_float8_sql("ranking")),
+        ("skybox_time_num", raw_float8_sql("skybox_time")),
+        ("user_count_num", raw_int_sql("user_count")),
+        ("user_visits_num", raw_int_sql("user_visits")),
+        ("settings_version_num", raw_int_sql("settings_version")),
+        ("created_at_ts", utc_timestamp_sql("created_at")),
+        ("updated_at_ts", utc_timestamp_sql("updated_at")),
+        ("disabled_at_ts", utc_timestamp_sql("disabled_at")),
+        ("textsearch", textsearch_sql().to_string()),
+    ]
 }
 
 #[derive(Debug)]
@@ -159,14 +284,29 @@ pub(super) fn build_where_from(
             None => clauses.push("FALSE".to_string()),
         }
     }
+    // Which upstream table the route reads (a canonical world scene is a
+    // places-table row of this node's own): the worlds catalogue, genesis
+    // places, the whole places table, or the destinations union of genesis
+    // places and catalogue worlds (`Destination/model.ts:234-304`).
+    let scene = if scene_projection {
+        " OR canonical_scene"
+    } else {
+        ""
+    };
     if f.only_worlds {
-        clauses.push("world IS TRUE".to_string());
+        clauses.push(WORLD_CATALOGUE_SQL.to_string());
     } else if f.only_places {
         clauses.push(if scene_projection {
             "(world IS FALSE OR canonical_scene)".to_string()
         } else {
             "world IS FALSE".to_string()
         });
+    } else if f.places_table {
+        clauses.push(format!(
+            "(world IS FALSE OR id <> lower(world_name){scene})"
+        ));
+    } else if f.destinations_mode {
+        clauses.push(format!("(world IS FALSE OR id = lower(world_name){scene})"));
     }
     clauses.push(SHOW_IN_PLACES_CLAUSE.to_string());
     if f.only_categorized {
@@ -178,8 +318,9 @@ pub(super) fn build_where_from(
     if f.only_excluded_from_ranking {
         clauses.push(format!("{EXCLUDE_FROM_RANKING_SQL} IS TRUE"));
     }
-    let mut positions: Vec<String> = f.positions.clone();
-    positions.extend(f.operated_positions.iter().cloned());
+    // An explicit pointer narrows a lookup independently of ownership. Operator
+    // parcels are an alternative to the owner leg, never alternative pointers.
+    let positions = f.positions.clone();
     let mut positions_clause = None;
     if !positions.is_empty() {
         positions_clause = Some(format!("raw->'positions' @> ANY(${idx}::jsonb[])"));
@@ -190,8 +331,6 @@ pub(super) fn build_where_from(
                 .collect(),
         ));
         idx += 1;
-    } else if f.owner_filtered {
-        clauses.push("FALSE".to_string());
     }
     let mut names_clause = None;
     if !f.names.is_empty() {
@@ -201,11 +340,68 @@ pub(super) fn build_where_from(
         ));
         idx += 1;
     }
+    if !f.partial_names.is_empty() {
+        let clause = format!(
+            "EXISTS (SELECT 1 FROM unnest(${idx}::text[]) AS names(pattern) WHERE lower(world_name) LIKE names.pattern ESCAPE E'\\\\')"
+        );
+        binds.push(Bind::TextArray(
+            f.partial_names
+                .iter()
+                .map(|name| format!("%{}%", like_escape(&name.to_lowercase())))
+                .collect(),
+        ));
+        idx += 1;
+        names_clause = Some(match names_clause {
+            Some(exact) => format!("({exact} AND {clause})"),
+            None => clause,
+        });
+    }
+    if !f.exact_world_names.is_empty() {
+        let clause = format!("world_name = ANY(${idx})");
+        binds.push(Bind::TextArray(f.exact_world_names.clone()));
+        idx += 1;
+        names_clause = Some(match names_clause {
+            Some(other) => format!("({other} AND {clause})"),
+            None => clause,
+        });
+    }
+    // The destinations union and `/api/map/places` answer either selector
+    // (`Place/model.ts:1332-1341`); `/api/places` narrows by both
+    // (`:172-175`: `positions && ...` AND `world_id IN ...`).
+    let either = f.destinations_mode || !f.exact_world_names.is_empty();
     match (positions_clause, names_clause) {
-        (Some(p), Some(n)) => clauses.push(format!("({p} OR {n})")),
+        (Some(p), Some(n)) if either => clauses.push(format!("({p} OR {n})")),
+        (Some(p), Some(n)) => {
+            clauses.push(p);
+            clauses.push(n);
+        }
         (Some(p), None) => clauses.push(p),
         (None, Some(n)) => clauses.push(n),
         (None, None) => {}
+    }
+    // `places-repository/component.ts:91-100`: the row's own owner, or a
+    // parcel the owner holds or operates on chain (the LAND index, bounded
+    // to the catalogue by `operated_positions_in_catalogue`; empty while the
+    // index is absent).
+    if let Some(owner) = &f.owner {
+        // The served `owner` (rows.rs): the document's, else the deployer's.
+        let mut owner_clause = format!("LOWER(COALESCE(raw->>'owner', creator_address)) = ${idx}");
+        binds.push(Bind::Text(owner.to_lowercase()));
+        idx += 1;
+        if !f.operated_positions.is_empty() {
+            owner_clause = format!("({owner_clause} OR raw->'positions' @> ANY(${idx}::jsonb[]))");
+            binds.push(Bind::JsonbArray(
+                f.operated_positions
+                    .iter()
+                    .map(|p| serde_json::json!([p]))
+                    .collect(),
+            ));
+            idx += 1;
+        }
+        clauses.push(owner_clause);
+    } else if f.owner_filtered {
+        // The caller requested an owner but supplied no usable identity.
+        clauses.push("FALSE".to_string());
     }
     if !f.categories.is_empty() {
         clauses.push(format!("categories && ${idx}"));
@@ -223,6 +419,8 @@ pub(super) fn build_where_from(
         } else {
             ""
         };
+        // `places-repository/component.ts:103-105`: the major is a LIKE
+        // prefix as given.
         clauses.push(format!(
             "(raw->>'sdk' = ${0} OR raw->>'sdk' LIKE ${1}{2})",
             idx,
@@ -233,17 +431,14 @@ pub(super) fn build_where_from(
         binds.push(Bind::Text(format!("{sdk}.%")));
         idx += 2;
     }
+    // `Place/model.ts:171,323-328`: `rank > 0`, which is a match of the
+    // prefix tsquery against `textsearch`; one bind, the query string.
     if let Some(s) = &f.search {
         clauses.push(format!(
-            "(to_tsvector('english', coalesce(title,'') || ' ' || ({plain})) @@ plainto_tsquery('english', ${0}) \
-             OR title ILIKE ${1} OR ({plain}) ILIKE ${1} OR world_name ILIKE ${1})",
-            idx,
-            idx + 1,
-            plain = description_plain_sql(),
+            "textsearch @@ to_tsquery('english', NULLIF(${idx}, ''))"
         ));
-        binds.push(Bind::Text(s.clone()));
-        binds.push(Bind::Text(format!("%{s}%")));
-        idx += 2;
+        binds.push(Bind::Text(tsquery(s)));
+        idx += 1;
     }
     if let Some((clause, gate_binds)) = build_content_quality_condition(f, road_positions, idx) {
         clauses.push(clause);
@@ -295,6 +490,24 @@ pub(super) fn build_live_user_count_order(
     (expr, binds)
 }
 
+/// `Place/model.ts:291-303,630`: under `most_active` the places with players
+/// (`is_most_active_place`) lead the cut and the rest follow in the list's
+/// order; `idx` binds the live positions. Without a presence snapshot the
+/// mirrored headcount leads instead. Empty unless the route set `active`.
+pub(super) fn build_active_lead(f: &PlaceListFilters, idx: usize) -> (String, Vec<Bind>) {
+    match &f.active {
+        ActiveRows::All => (String::new(), Vec::new()),
+        ActiveRows::Live(positions) => (
+            format!("(base_position = ANY(${idx}))::int DESC, "),
+            vec![Bind::TextArray(positions.clone())],
+        ),
+        ActiveRows::Mirrored => (
+            format!("{} DESC, ", PlaceOrderBy::MostActive.column()),
+            Vec::new(),
+        ),
+    }
+}
+
 pub(super) fn destinations_highlighted_prefix(f: &PlaceListFilters) -> &'static str {
     if f.destinations_mode {
         "highlighted DESC, "
@@ -317,9 +530,11 @@ pub(super) fn destinations_lead_prefix(f: &PlaceListFilters, live_prefix: &str) 
 }
 
 pub(super) fn destinations_ranking_prefix(f: &PlaceListFilters) -> &'static str {
-    static SQL: LazyLock<String> =
-        LazyLock::new(|| format!("COALESCE({}, 0) DESC, ", raw_float8_sql("ranking")));
-    if f.destinations_mode { &SQL } else { "" }
+    if f.destinations_mode {
+        "COALESCE(ranking_num, 0) DESC, "
+    } else {
+        ""
+    }
 }
 
 pub(super) const PLACES_ORDER_TAIL: &str = "deployed_at DESC, id ASC";
@@ -331,17 +546,33 @@ pub(super) const PLACES_ORDER_TAIL: &str = "deployed_at DESC, id ASC";
 /// carries, so the tail must fall back to the deployment time rather than
 /// collapse that whole population onto the identifier.
 pub(super) fn order_tail(f: &PlaceListFilters) -> &'static str {
-    static WORLDS_TAIL: LazyLock<String> = LazyLock::new(|| {
-        format!(
-            "COALESCE({}, deployed_at) DESC, id ASC",
-            raw_timestamptz_sql("updated_at")
-        )
-    });
     if f.only_worlds || (f.destinations_mode && !f.only_places) {
-        &WORLDS_TAIL
+        "COALESCE(updated_at_ts, deployed_at) DESC, id ASC"
     } else {
         PLACES_ORDER_TAIL
     }
+}
+
+/// The like score a row answers (`rows::place_columns`): this node's recount
+/// when one exists or the import covered the entity, else the mirrored
+/// value. A like-score order sorts on it,
+/// read from the `recount` alias `like_score_recount_join` puts beside the
+/// row, so the order agrees with the answer where a local vote moved the
+/// score; the mirrored column alone would list 0.2 above 0.2065 and split a
+/// page on a value the page does not show.
+pub(super) const LIKE_SCORE_ORDER_SQL: &str = "CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END";
+
+/// The recounts beside each row of `row` (the relation name the `ON` can
+/// qualify) for `LIKE_SCORE_ORDER_SQL`: one hash join over the few entities
+/// with a local score or an import, three columns so no other column of the
+/// counts table can shadow one of the row's. Empty for every other order.
+pub(super) fn like_score_recount_join(order_by: PlaceOrderBy, row: &str) -> String {
+    if !matches!(order_by, PlaceOrderBy::LikeScore) {
+        return String::new();
+    }
+    format!(
+        " LEFT JOIN (SELECT entity_id, like_score, imported FROM explore.place_interaction_counts WHERE like_score IS NOT NULL OR imported > 0) recount ON recount.entity_id = {row}.id"
+    )
 }
 
 pub(super) fn build_order_by(
@@ -389,24 +620,49 @@ mod tests {
         assert!(sql.ends_with("'[<>]', '', 'g') END"), "{sql}");
     }
 
+    /// Each leg generates description_plain from the expression, and its
+    /// textsearch column inlines it (a generated column reads no other).
     #[test]
     fn description_plain_sql_is_mirrored_by_both_generated_columns() {
         let schema = squeezed(SCHEMA);
         let expr = squeezed(description_plain_sql());
         assert_eq!(
             schema.matches(expr.as_str()).count(),
-            2,
+            4,
             "schemas/10_explore.sql must generate place and place_world_local with {expr}"
         );
     }
 
+    /// Both catalogue legs generate every typed column from the expression
+    /// the scene rows compute (the place leg inlines its generated
+    /// world_name), the timestamp function holds the Rust guard, and the
+    /// view carries the columns.
     #[test]
-    fn the_like_score_indexes_carry_the_exact_order_column() {
-        let expr = PlaceOrderBy::LikeScore.column();
+    fn both_legs_generate_the_typed_columns_from_the_guarded_reads() {
+        let schema = squeezed(SCHEMA);
+        for (name, expr) in typed_columns() {
+            let expected = if name == "textsearch" {
+                vec![
+                    expr.clone(),
+                    expr.replace(
+                        "coalesce(world_name, '')",
+                        "coalesce(NULLIF(btrim(raw->>'world_name'), ''), '')",
+                    ),
+                ]
+            } else {
+                vec![expr.clone(), expr]
+            };
+            for expr in expected {
+                let column = squeezed(&format!("GENERATED ALWAYS AS ({expr}) STORED"));
+                assert!(schema.contains(&column), "{name}: {column}");
+            }
+        }
+        assert!(SCHEMA.contains(RAW_TIMESTAMP_IS_CASTABLE_RE));
+        let names: Vec<&str> = typed_columns().into_iter().map(|(n, _)| n).collect();
         assert_eq!(
-            SCHEMA.matches(expr).count(),
+            schema.matches(names.join(", ").as_str()).count(),
             2,
-            "one partial index per leg must index {expr} byte for byte"
+            "explore.place_indexed lists the typed columns of both legs"
         );
     }
 
@@ -420,15 +676,11 @@ mod tests {
             ..Default::default()
         };
         let (clause, binds) = build_where(&f, true);
-        assert_eq!(
-            binds.len(),
-            7,
-            "search takes $1/$2, the gate $3..$7: {clause}"
-        );
-        assert!(clause.contains("LIKE ANY ($3::text[])"), "{clause}");
-        assert!(clause.contains("title !~ $4"), "{clause}");
-        assert!(clause.contains("<> ALL ($6::text[])"), "{clause}");
-        assert!(clause.contains("<> $7)"), "{clause}");
+        assert_eq!(binds.len(), 6, "search takes $1, the gate $2..$6: {clause}");
+        assert!(clause.contains("LIKE ANY ($2::text[])"), "{clause}");
+        assert!(clause.contains("title !~ $3"), "{clause}");
+        assert!(clause.contains("<> ALL ($5::text[])"), "{clause}");
+        assert!(clause.contains("<> $6)"), "{clause}");
         assert!(
             clause.contains("FROM explore.road_positions rp"),
             "{clause}"
@@ -599,13 +851,11 @@ mod tests {
             destinations_mode: true,
             ..Default::default()
         };
-        let columns = assert_generated_casts_are_guarded(
-            "place_columns",
-            super::super::rows::place_columns(),
-        );
+        assert_generated_casts_are_guarded("place_columns", super::super::rows::place_columns());
+        let columns = assert_generated_casts_are_guarded("typed_columns", typed_columns_sql());
         assert!(
-            columns >= 9,
-            "the scanner must see every cast place_columns emits: {columns}"
+            columns >= 7,
+            "the scanner must see every cast the typed columns emit: {columns}"
         );
         assert_generated_casts_are_guarded(
             "destinations_ranking_prefix",
@@ -624,6 +874,7 @@ mod tests {
             PlaceOrderBy::MostActive,
         ] {
             assert_generated_casts_are_guarded("PlaceOrderBy::column", order_by.column());
+            assert_generated_casts_are_guarded("PlaceOrderBy::order_expr", order_by.order_expr());
         }
         let place_ddl = SCHEMA.split("-- ── events").next().unwrap();
         assert_generated_casts_are_guarded("schemas/10_explore.sql (places)", place_ddl);
@@ -696,8 +947,8 @@ mod tests {
 
     #[test]
     fn every_raw_cast_column_carries_its_own_guard() {
-        let columns = super::super::rows::place_columns();
-        assert!(!columns.contains("NULLIF(raw->>"), "{columns}");
+        assert!(!super::super::rows::place_columns().contains("NULLIF(raw->>"));
+        let columns = typed_columns_sql();
         for key in [
             "ranking",
             "skybox_time",
@@ -705,12 +956,16 @@ mod tests {
             "like_score",
             "user_count",
             "user_visits",
-            "disabled_at",
-            "created_at",
-            "updated_at",
+            "settings_version",
         ] {
             assert!(
                 columns.contains(&format!("jsonb_typeof(raw->'{key}')")),
+                "{key} must be guarded"
+            );
+        }
+        for key in ["disabled_at", "created_at", "updated_at"] {
+            assert!(
+                columns.contains(&utc_timestamp_sql(key)),
                 "{key} must be guarded"
             );
         }
@@ -730,26 +985,150 @@ mod tests {
         );
         assert!(user_count.contains(&format!("~ '{RAW_INT_IS_CASTABLE_RE}' THEN")));
         assert!(user_count.contains("BETWEEN -2147483648 AND 2147483647"));
-        let created = raw_timestamptz_sql("created_at");
-        assert!(created.contains("jsonb_typeof(raw->'created_at') IN ('string')"));
-        assert!(created.contains(RAW_TIMESTAMP_IS_CASTABLE_RE));
+        let created = utc_timestamp_sql("created_at");
+        assert!(created.starts_with("explore.utc_timestamp_"), "{created}");
+        assert!(created.ends_with("(raw->>'created_at')"), "{created}");
     }
 
+    /// `Place/model.ts:171,323-328`: the search matches the weighted
+    /// `textsearch` vector with a prefix tsquery, nothing wider.
     #[test]
-    fn both_search_legs_read_the_stripped_text() {
-        let (clause, _) = build_where(
+    fn search_matches_the_textsearch_vector_with_a_prefix_query() {
+        let (clause, binds) = build_where(
             &PlaceListFilters {
                 search: Some("garden".to_string()),
                 ..Default::default()
             },
             false,
         );
-        assert_eq!(
-            clause.matches(description_plain_sql()).count(),
-            2,
+        assert!(
+            clause.contains("textsearch @@ to_tsquery('english', NULLIF($1, ''))"),
             "{clause}"
         );
-        assert!(!clause.contains("|| coalesce(description,'')"), "{clause}");
+        assert!(!clause.contains("ILIKE"), "{clause}");
+        assert!(!clause.contains("plainto_tsquery"), "{clause}");
+        match binds.as_slice() {
+            [Bind::Text(q)] => assert_eq!(q, "garden:*"),
+            other => panic!("one tsquery bind: {other:?}"),
+        }
+        assert!(
+            textsearch_sql()
+                .contains("setweight(to_tsvector('english', coalesce(title, '')), 'A')")
+        );
+        assert!(textsearch_sql().contains("'C'"));
+        assert!(
+            textsearch_column_sql()
+                .starts_with("COALESCE(CASE WHEN jsonb_typeof(raw->'textsearch') = 'string'")
+        );
+    }
+
+    /// `toPrefixTsQuery` (`adapters/places-filters.ts:29-36`): words are
+    /// prefix terms joined with `&`; every other character separates words.
+    #[test]
+    fn the_tsquery_follows_the_discovery_server() {
+        assert_eq!(tsquery("plaza"), "plaza:*");
+        assert_eq!(tsquery("Harness Plaza"), "Harness:* & Plaza:*");
+        assert_eq!(tsquery("art | music"), "art:* & music:*");
+        assert_eq!(tsquery("art,music"), "art:* & music:*");
+        assert_eq!(tsquery("art -casino"), "art:* & casino:*");
+        assert_eq!(
+            tsquery("\"wonder mine\" games"),
+            "wonder:* & mine:* & games:*"
+        );
+        assert_eq!(tsquery("Franky's"), "Franky:* & s:*");
+        assert_eq!(tsquery("a:*&b"), "a:* & b:*");
+        assert_eq!(tsquery("  ) ( "), "");
+        assert_eq!(tsquery("back\\slash"), "back:* & slash:*");
+        assert_eq!(tsquery("niño 2"), "niño:* & 2:*");
+    }
+
+    #[test]
+    fn the_route_decides_which_upstream_table_a_listing_reads() {
+        let clause = |f: PlaceListFilters| build_where(&f, false).0;
+        assert!(
+            clause(PlaceListFilters {
+                only_worlds: true,
+                ..Default::default()
+            })
+            .contains(WORLD_CATALOGUE_SQL)
+        );
+        assert!(
+            clause(PlaceListFilters {
+                only_places: true,
+                ..Default::default()
+            })
+            .contains(" AND world IS FALSE AND ")
+        );
+        let places_table = clause(PlaceListFilters {
+            places_table: true,
+            ..Default::default()
+        });
+        assert!(
+            places_table.contains("(world IS FALSE OR id <> lower(world_name))"),
+            "{places_table}"
+        );
+        let union = clause(PlaceListFilters {
+            destinations_mode: true,
+            ..Default::default()
+        });
+        assert!(
+            union.contains("(world IS FALSE OR id = lower(world_name))"),
+            "{union}"
+        );
+        let any = clause(PlaceListFilters::default());
+        assert!(
+            !any.contains("lower(world_name))") && !any.contains(" world IS FALSE AND "),
+            "{any}"
+        );
+        let (scene, _) = build_where_from(
+            &PlaceListFilters {
+                places_table: true,
+                ..Default::default()
+            },
+            false,
+            1,
+            true,
+        );
+        assert!(
+            scene.contains("(world IS FALSE OR id <> lower(world_name) OR canonical_scene)"),
+            "{scene}"
+        );
+    }
+
+    /// `/api/places` ANDs `positions` with `names` (`Place/model.ts:172-175`);
+    /// `/api/map/places` ORs them (`:1332-1341`), names verbatim.
+    #[test]
+    fn positions_and_names_combine_per_route() {
+        let (clause, _) = build_where(
+            &PlaceListFilters {
+                positions: vec!["1,1".into()],
+                names: vec!["Foo.dcl.eth".into()],
+                places_table: true,
+                ..Default::default()
+            },
+            false,
+        );
+        assert!(
+            clause.contains("raw->'positions' @> ANY($1::jsonb[]) AND lower(world_name) = ANY($2)"),
+            "{clause}"
+        );
+        let (clause, binds) = build_where(
+            &PlaceListFilters {
+                positions: vec!["1,1".into()],
+                exact_world_names: vec!["Foo.dcl.eth".into()],
+                places_table: true,
+                ..Default::default()
+            },
+            false,
+        );
+        assert!(
+            clause.contains("(raw->'positions' @> ANY($1::jsonb[]) OR world_name = ANY($2))"),
+            "{clause}"
+        );
+        match &binds[1] {
+            Bind::TextArray(v) => assert_eq!(v, &vec!["Foo.dcl.eth".to_string()], "verbatim"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]
@@ -767,10 +1146,17 @@ mod tests {
 
         let f = PlaceListFilters {
             operated_positions: vec!["10,20".to_string()],
+            owner: Some("0xabc".to_string()),
             ..Default::default()
         };
         let (where_clause, binds) = build_where(&f, false);
-        assert!(where_clause.contains("raw->'positions' @> ANY($1::jsonb[])"));
+        // The operator leg carries only pointers the catalogue holds
+        // (`operated_positions_in_catalogue`), never the owner's whole holding.
+        assert!(
+            where_clause
+                .contains("(LOWER(COALESCE(raw->>'owner', creator_address)) = $1 OR raw->'positions' @> ANY($2::jsonb[]))"),
+            "{where_clause}"
+        );
         match binds.last().unwrap() {
             Bind::JsonbArray(v) => assert_eq!(v, &vec![serde_json::json!(["10,20"])]),
             _ => panic!("expected positions jsonb array bind"),
@@ -802,7 +1188,17 @@ mod tests {
             ..Default::default()
         };
         assert!(build_where(&f6, false).0.contains("raw->>'sdk' IS NULL"));
-
+        // `places-repository/component.ts:103-105`: the prefix is the LIKE pattern as given.
+        let wild = PlaceListFilters {
+            sdk: Some("%_\\".to_string()),
+            ..Default::default()
+        };
+        let (where_clause, binds) = build_where(&wild, false);
+        assert!(where_clause.contains("LIKE $2)"), "{where_clause}");
+        assert!(
+            matches!(&binds[1], Bind::Text(p) if p == "%_\\.%"),
+            "{binds:?}"
+        );
         let f = PlaceListFilters {
             creator_address: Some("0xABC".to_string()),
             ..Default::default()
@@ -813,6 +1209,34 @@ mod tests {
             Bind::Text(s) => assert_eq!(s, "0xabc"),
             _ => panic!("expected creator text bind"),
         }
+    }
+
+    /// `Place/model.ts:630`: the places with players lead the `most_active`
+    /// cut and never narrow it.
+    #[test]
+    fn the_active_places_lead_the_order_and_never_narrow_the_where() {
+        let live = PlaceListFilters {
+            active: ActiveRows::Live(vec!["10,10".to_string()]),
+            ..Default::default()
+        };
+        let (where_clause, binds) = build_where(&live, false);
+        assert!(
+            !where_clause.contains("base_position = ANY"),
+            "{where_clause}"
+        );
+        assert!(binds.is_empty());
+        let (lead, binds) = build_active_lead(&live, 3);
+        assert_eq!(lead, "(base_position = ANY($3))::int DESC, ");
+        assert!(matches!(&binds[0], Bind::TextArray(p) if p == &["10,10".to_string()]));
+        let mirrored = PlaceListFilters {
+            active: ActiveRows::Mirrored,
+            ..Default::default()
+        };
+        assert!(!build_where(&mirrored, false).0.contains("user_count_num"));
+        let (lead, binds) = build_active_lead(&mirrored, 1);
+        assert_eq!(lead, "COALESCE(user_count_num, 0) DESC, ");
+        assert!(binds.is_empty());
+        assert_eq!(build_active_lead(&PlaceListFilters::default(), 1).0, "");
     }
 
     #[test]
@@ -846,10 +1270,8 @@ mod tests {
         };
         let (prefix, binds) = build_live_user_count_order(&f, 1);
         assert!(prefix.is_empty() && binds.is_empty());
-        assert_eq!(
-            f.order_by.column(),
-            format!("COALESCE({}, 0)", raw_int_sql("user_count"))
-        );
+        assert_eq!(f.order_by.column(), "COALESCE(user_count_num, 0)");
+        assert_eq!(f.order_by.order_expr(), f.order_by.column());
 
         for ob in [
             PlaceOrderBy::LikeScore,
@@ -876,7 +1298,7 @@ mod tests {
         assert_eq!(destinations_highlighted_prefix(&f), "highlighted DESC, ");
         assert_eq!(
             destinations_ranking_prefix(&f),
-            format!("COALESCE({}, 0) DESC, ", raw_float8_sql("ranking"))
+            "COALESCE(ranking_num, 0) DESC, "
         );
         assert_eq!(
             destinations_highlighted_prefix(&PlaceListFilters::default()),
@@ -891,7 +1313,7 @@ mod tests {
             &destinations_lead_prefix(&f, "(CASE WHEN true THEN 1 ELSE 0 END)::int DESC, "),
             destinations_ranking_prefix(&f),
             "ts_rank_cd(x, y, 32) DESC, ",
-            PlaceOrderBy::LikeScore.column(),
+            PlaceOrderBy::LikeScore.order_expr(),
             "DESC",
             order_tail(&f),
         );
@@ -910,18 +1332,50 @@ mod tests {
             "",
             "",
             "",
-            PlaceOrderBy::LikeScore.column(),
+            PlaceOrderBy::LikeScore.order_expr(),
             "DESC",
             order_tail(&PlaceListFilters::default()),
         );
         assert!(
             plain.starts_with(&format!(
                 "{} DESC NULLS LAST",
-                PlaceOrderBy::LikeScore.column()
+                PlaceOrderBy::LikeScore.order_expr()
             )),
             "{plain}"
         );
         assert!(plain.ends_with("deployed_at DESC, id ASC"), "{plain}");
+    }
+
+    /// The like-score order reads the two values the served column reads
+    /// (`rows::place_columns`), the recount first, so a page never splits on
+    /// a score it does not show; the other orders stay on the stored column.
+    #[test]
+    fn like_score_orders_on_the_served_score() {
+        assert_eq!(
+            PlaceOrderBy::LikeScore.order_expr(),
+            "CASE WHEN recount.imported > 0 THEN recount.like_score ELSE COALESCE(recount.like_score, like_score_num) END"
+        );
+        assert_eq!(PlaceOrderBy::LikeScore.column(), "like_score_num");
+        let served = squeezed(super::super::rows::place_columns());
+        assert!(
+            served.contains(
+                "COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.like_score ELSE COALESCE(ic.like_score, like_score_num) END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), CASE WHEN EXISTS (SELECT 1 FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id AND ic.imported > 0) THEN NULL ELSE like_score_num END) AS like_score"
+            ),
+            "{served}"
+        );
+        assert_eq!(
+            like_score_recount_join(PlaceOrderBy::LikeScore, "place"),
+            " LEFT JOIN (SELECT entity_id, like_score, imported FROM explore.place_interaction_counts WHERE like_score IS NOT NULL OR imported > 0) recount ON recount.entity_id = place.id"
+        );
+        for ob in [
+            PlaceOrderBy::UpdatedAt,
+            PlaceOrderBy::CreatedAt,
+            PlaceOrderBy::UserVisits,
+            PlaceOrderBy::MostActive,
+        ] {
+            assert_eq!(ob.order_expr(), ob.column(), "{ob:?}");
+            assert_eq!(like_score_recount_join(ob, "place"), "", "{ob:?}");
+        }
     }
 
     #[test]
@@ -963,10 +1417,7 @@ mod tests {
 
     #[test]
     fn each_branch_ends_on_the_tail_of_the_upstream_branch_it_mirrors() {
-        let updated_at = format!(
-            "COALESCE({}, deployed_at) DESC, id ASC",
-            raw_timestamptz_sql("updated_at")
-        );
+        let updated_at = "COALESCE(updated_at_ts, deployed_at) DESC, id ASC";
         let destinations = || PlaceListFilters {
             destinations_mode: true,
             ..Default::default()

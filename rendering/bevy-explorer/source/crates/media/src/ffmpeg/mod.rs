@@ -6,7 +6,7 @@ mod video_context;
 use std::path::Path;
 
 use bevy::log::debug;
-use common::{structs::AudioDecoderError, util::ReportErr};
+use common::structs::AudioDecoderError;
 use dcl_component::proto_components::sdk::components::VideoState;
 use ffmpeg_next::format::input_with_interrupt;
 use ipfs::IpfsIo;
@@ -58,15 +58,13 @@ pub fn ffmpeg_worker(
     disposed: WeakUnboundedSender<AVCommand>,
     video: Option<tokio::sync::mpsc::Sender<VideoData>>,
     audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
+    state_sender: tokio::sync::watch::Sender<VideoState>,
     audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
     mut path: String,
     hash: String,
 ) -> Result<(), anyhow::Error> {
-    if let Some(ref video) = video {
-        video
-            .blocking_send(VideoData::State(VideoState::VsLoading))
-            .report();
-    }
+    state_sender.send_replace(VideoState::VsLoading);
+
     debug!("av thread spawned for {path} ...");
     // `None` when the player was disposed first: the blocking fetch cannot be interrupted, so
     // it is not started for a player nobody is waiting on
@@ -164,11 +162,23 @@ pub fn ffmpeg_worker(
         (None, None) => Ok(()),
         (None, Some(mut ac)) => {
             debug!("Processing stream with audio only");
-            process_streams(input_context, &mut [&mut ac], commands, audio_output)
+            process_streams(
+                input_context,
+                &mut [&mut ac],
+                commands,
+                audio_output,
+                state_sender,
+            )
         }
         (Some(mut vc), None) => {
             debug!("Processing stream with video only");
-            process_streams(input_context, &mut [&mut vc], commands, audio_output)
+            process_streams(
+                input_context,
+                &mut [&mut vc],
+                commands,
+                audio_output,
+                state_sender,
+            )
         }
         (Some(mut vc), Some(mut ac)) => {
             debug!("Processing stream");
@@ -177,6 +187,7 @@ pub fn ffmpeg_worker(
                 &mut [&mut vc, &mut ac],
                 commands,
                 audio_output,
+                state_sender,
             )
         }
     }

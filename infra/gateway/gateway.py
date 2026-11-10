@@ -8,6 +8,37 @@ from pathlib import Path
 import re
 import subprocess
 
+# The worlds service's wire caps (worlds `MAX_UPLOAD_WIRE_SIZE_BYTES`,
+# `MAX_SETTINGS_UPLOAD_WIRE_BYTES`); a worlds test pins them.
+WORLDS_DEPLOY_CAP = "360m"
+WORLDS_SETTINGS_CAP = "12m"
+# The content server's `POST /entities` route limit at the default field
+# count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
+# multipart framing), rounded up, so its own 413 is the one a client meets.
+CONTENT_DEPLOY_CAP = "248m"
+# Uploads one address may have in flight on a deploy route: nginx buffers each
+# body before proxying it, and the app's limits only answer after that. Above
+# upstream catalyst's 4 per source, so it stays a coarse guard.
+DEPLOY_CONNECTIONS_PER_ADDRESS = 10
+# The gateway's own answers on a worlds deploy: named location, status,
+# Retry-After seconds (0 for none) and the worlds service's {error, message} body.
+WORLDS_DEPLOY_ERRORS = [
+    ("@worlds_deploy_too_large", 413, 0,
+     {"error": "Payload Too Large", "message": "The multipart request is too large."}),
+    ("@worlds_deploy_rate", 429, 1,
+     {"error": "Too Many Requests",
+      "message": "Too many deploy requests from this client, please retry shortly."}),
+    ("@worlds_deploy_busy", 429, 5,
+     {"error": "Too Many Requests",
+      "message": "Too many uploads in progress from this client, please retry shortly."}),
+]
+# Segment delivers each webhook event as its own POST from a few egress
+# addresses, and the HMAC in the app is the gate: this guard sits above the
+# sink's sizing (DATABASE.md, about 280 inserts/s) so a delivery is never
+# answered 429 and retried.
+WEBHOOK_RATE = 300
+WEBHOOK_BURST = 600
+
 
 def words(value):
     return [word for word in re.split(r"[\s,]+", value.strip()) if word]
@@ -72,14 +103,26 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     storage = env.get("GATEWAY_STORAGE_ROOT", "")
     if storage and not re.fullmatch(r"/[a-zA-Z0-9_./-]+", storage):
         raise ValueError("GATEWAY_STORAGE_ROOT must be an absolute path without whitespace")
+    trusted = networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", ""))
+    storage_trusted = networks(env.get("GATEWAY_STORAGE_TRUSTED_CIDRS", ""))
+    if any(ipaddress.ip_network(proxy).overlaps(ipaddress.ip_network(caller))
+           for proxy in trusted for caller in storage_trusted
+           if ipaddress.ip_network(proxy).version == ipaddress.ip_network(caller).version):
+        raise ValueError("GATEWAY_STORAGE_TRUSTED_CIDRS must not overlap GATEWAY_TRUSTED_PROXY_CIDRS")
     return {
         "domain": domain, "hosts": aliases, "resolvers": " ".join(resolvers),
         "apis": [upstream(value) for value in words(env.get("GATEWAY_APIS_UPSTREAMS", "apis:5210"))],
         "sites": [upstream(value) for value in words(env.get("GATEWAY_SITES_UPSTREAMS", "sites:5212"))],
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
-        "trusted": networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", "")),
+        "trusted": trusted,
+        "storage_trusted": storage_trusted,
+        "sync_peers": networks(env.get("GATEWAY_TRUSTED_SYNC_PEER_IPS", "")),
         "storage": storage.rstrip("/"),
     }
+
+
+# First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
+BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
 
 
 def render(table, cfg, mime):
@@ -95,6 +138,11 @@ def render(table, cfg, mime):
                     "asset-bundle-registry-abgen": "/asset-bundle-registry",
                     "rpc-social-service-ea": "/social-rpc", "market": "/shop",
                     "storage": "/world-storage", "comms-gatekeeper-local": "/comms-gatekeeper"}
+    # A host whose path already carries its prefix is not prefixed again, except
+    # badges.: upstream's own paths start with /badges (/badges/<id>/tiers), so
+    # only a second segment the badges router mounts counts as prefixed. No
+    # catalog badge id equals one (/badges/status is the mount, not a badge).
+    badges_mounts = "|".join(BADGES_MOUNTS)
     alias_moves, settled = [], []
     for name, target in host_aliases.items():
         alias_moves.extend([f'"~^gateway:/{name}/?$" "{target}/";',
@@ -105,6 +153,8 @@ def render(table, cfg, mime):
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
+    sync_peer_geo = " ".join(f"{net} 1;" for net in cfg["sync_peers"])
+    storage_geo = " ".join(f"{net} 1;" for net in cfg["storage_trusted"])
     real_ip = "\n".join(f"set_real_ip_from {net};" for net in cfg["trusted"])
     blocked = "|".join(re.escape(path.lstrip("/")) for path in table["internal"])
     upstreams = ""
@@ -120,9 +170,9 @@ def render(table, cfg, mime):
         # list in a location, which would discard that trusted set.
         return f"proxy_pass http://{target};\n{extra}"
 
-    def pair(path, target, final=False):
-        return (location("= " + path, proxy(target))
-                + location(("^~ " if final else "") + path + "/", proxy(target)))
+    def pair(path, target, final=False, extra=""):
+        return (location("= " + path, proxy(target, extra))
+                + location(("^~ " if final else "") + path + "/", proxy(target, extra)))
 
     security_headers = ('add_header X-Content-Type-Options nosniff always;\n'
                         'add_header Referrer-Policy strict-origin-when-cross-origin always;\n'
@@ -133,16 +183,63 @@ def render(table, cfg, mime):
     for path in ("/admin", "/server"):
         locations += pair(path, "sites" if path in prefixes else "apis", True)
     for row in table["node"]:
-        locations += pair(row["path"], "apis", True)
+        # The query-based places social cards own only their exact endpoints;
+        # /places/place/<position> and /places/world/<name> are Sites pages.
+        # A webhook route (Segment's deliveries) takes its own rate zone.
+        extra = f"limit_req zone=webhook burst={WEBHOOK_BURST} nodelay;" if row.get("webhook") else ""
+        locations += (location("= " + row["path"], proxy("apis", extra))
+                      + location("= " + row["path"] + "/", proxy("apis", extra))
+                      if row.get("exact") else pair(row["path"], "apis", True, extra))
     for row in table["aliases"]:
         rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
         # These aliases belong to APIs. Re-selecting a location after the
         # rewrite could send /social/... to the Sites /social page instead.
         locations += location(row["key"], f"rewrite {rewrite} break;\n" + proxy("apis"))
-    # Worlds deploys reach this match already rewritten under their host prefix.
-    deploy = "|".join(re.escape(path) for path in [*table["deploy"], "/worlds-content-server/entities"])
-    locations += location(f'~ "^({deploy})/*$"', proxy("apis",
-        "client_max_body_size 200m; client_body_timeout 300s; limit_req zone=deploy burst=4 nodelay;"))
+    # Worlds deploys reach these matches already rewritten under their host prefix.
+    # The content deploy zone is only a coarse abuse guard: 200 at once, then
+    # 5 r/s per address, above the content server's own per-client burst limit
+    # (upstream's 200 per 60 s, answered as JSON with Retry-After), so a
+    # client within that limit never meets nginx's HTML 429. Concurrent
+    # uploads per address are capped on both deploy routes, since each body
+    # is buffered in the gateway's temp space before the app sees it.
+    deploy = "|".join(re.escape(path) for path in table["deploy"])
+    uploads = f"limit_conn deploy_uploads {DEPLOY_CONNECTIONS_PER_ADDRESS};"
+    # Case-insensitive, as nginx would otherwise pass /content/Entities to the
+    # /content/ location and its looser limits.
+    locations += location(f'~* "^({deploy})/*$"', proxy("apis",
+        f"client_max_body_size {CONTENT_DEPLOY_CAP}; client_body_timeout 300s; "
+        f"limit_req zone=deploy burst=200 nodelay; {uploads}"))
+    # Upstream caps the POST /entities/active body at 10 MiB and answers its
+    # own 413 (MAX_ACTIVE_ENTITIES_BODY_SIZE); the server-wide 1m would answer
+    # nginx's HTML 413 first. The content server's case rewrite routes any
+    # spelling, so the match ignores case too.
+    locations += location('~* "^(/content)?/entities/active/*$"', proxy("apis",
+        "client_max_body_size 10m; limit_req zone=content burst=1000 nodelay;"))
+    # The gateway's own refusals on a worlds deploy answer the worlds service's JSON
+    # envelope instead of nginx's HTML pages; the app's own errors pass through, as the
+    # proxy does not intercept them. Both request limits answer 429, but error_page
+    # keys on the status alone, so limit_conn is raised here as an internal 503 that
+    # only its named location catches and turns back into 429 with its own text (the
+    # app's own 503 shed answer is not intercepted). A body that stalls for
+    # client_body_timeout gets no answer: nginx logs 408 and closes the connection
+    # without a response, which error_page cannot replace.
+    locations += location('~ "^/worlds-content-server/entities/*$"', proxy("apis",
+        f"client_max_body_size {WORLDS_DEPLOY_CAP}; client_body_timeout 300s; "
+        f"limit_req zone=deploy burst=4 nodelay; {uploads} limit_conn_status 503;\n"
+        "error_page 413 = @worlds_deploy_too_large; error_page 429 = @worlds_deploy_rate;\n"
+        "error_page 503 = @worlds_deploy_busy;"))
+    # axum's Json, which the app's deploy answers use, sends application/json without
+    # a charset, and nginx adds none to it.
+    json_error = ("default_type application/json;\n" + security_headers + "\n"
+                  "add_header Access-Control-Allow-Origin $cors_fallback always;\n")
+    for name, status, retry, body in WORLDS_DEPLOY_ERRORS:
+        retry_after = f"add_header Retry-After {retry} always;\n" if retry else ""
+        text = json.dumps(body, separators=(",", ":"))
+        locations += location(name, json_error + retry_after + f"return {status} '{text}';")
+    locations += location('~ "^(/worlds-content-server)?/world/[^/]+/settings/*$"', proxy("apis",
+        f"client_max_body_size {WORLDS_SETTINGS_CAP};"))
+    locations += location("~ ^/worlds-content-server/(contents|ipfs)/", proxy("apis",
+        "limit_req zone=content burst=1000 nodelay;"))
     locations += location("~ ^/comms-gatekeeper/reports/players/[^/]+/evidence/", proxy("apis",
         "client_max_body_size 11m;"))
     locations += location("~ ^(/builder-api)?/v1/(projects/[^/]+/(blobs/[^/]+|manifest|files)|items/[^/]+/files)/*$",
@@ -160,6 +257,12 @@ def render(table, cfg, mime):
     for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
+    # Matched after host rewrites, so every storage host form shares this budget.
+    storage_limits = ("limit_req zone=storage burst=400 nodelay; "
+                      "limit_req zone=storage_write burst=60 nodelay; "
+                      "limit_req zone=storage_trusted burst=1000 nodelay;")
+    locations += location("= /world-storage", proxy("apis", storage_limits))
+    locations += location("^~ /world-storage/", proxy("apis", storage_limits))
     storage = 'return 404;'
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
@@ -228,6 +331,8 @@ http {{
         {" ".join(alias_moves)}
         "~^gateway:" "";
         {" ".join(settled)}
+        "~^badges:/badges/({badges_mounts})(/|$)" "";
+        "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
@@ -241,6 +346,8 @@ http {{
         default 0;
         "~*^/({blocked})(/|\\\\.|$)" 1;
     }}
+    # The telemetry dash entries guard the old serve's routes: they leave with the
+    # gateway redeploy once no old serve runs (DATABASE.md, the sink's rollout).
     map $uri $operator_path {{
         volatile;
         default 0;
@@ -250,10 +357,34 @@ http {{
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
+    # Listed sync peers (the API's TRUSTED_SYNC_PEER_IPS) get an empty key on
+    # GET and HEAD /contents/{{hash}}, which nginx does not count: upstream exempts
+    # a peer that syncs from it on that route only.
+    geo $sync_peer {{ default 0; {sync_peer_geo} }}
+    map "$sync_peer:$request_method:$uri" $content_limit_key {{
+        default $binary_remote_addr;
+        "~^1:(GET|HEAD):(/content)?/contents/[^/]+/*$" "";
+    }}
+    geo $storage_trusted {{ default 0; {storage_geo} }}
+    map $storage_trusted $storage_limit_key {{ 1 ""; default $binary_remote_addr; }}
+    map "$storage_trusted:$request_method" $storage_write_key {{
+        default $binary_remote_addr;
+        "~^1:" "";
+        "0:GET" "";
+        "0:HEAD" "";
+        "0:OPTIONS" "";
+    }}
+    map $storage_trusted $storage_trusted_key {{ 1 $binary_remote_addr; default ""; }}
+    limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
+    limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
-    limit_req_zone $binary_remote_addr zone=content:10m rate=100r/s;
-    limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;
+    limit_req_zone $binary_remote_addr zone=webhook:10m rate={WEBHOOK_RATE}r/s;
+    limit_req_zone $content_limit_key zone=content:10m rate=100r/s;
+    limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
+    limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
+    limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    limit_conn_status 429;
     proxy_http_version 1.1;
     proxy_read_timeout 600s;
     proxy_buffering off;

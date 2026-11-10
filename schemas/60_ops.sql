@@ -1,13 +1,11 @@
--- Catalyst v2: the operator plane and the remaining services: telemetry (the
--- Sentry/Segment sinks and the issues/flags/experiments console), credits
--- (the Marketplace Credits ledger, Stripe purchases, carts, checkouts and
+-- Catalyst v2: the operator plane and the remaining services: credits (the
+-- Marketplace Credits ledger, Stripe purchases, carts, checkouts and
 -- authorizations) and ops (the ONE operator audit).
 --
--- Designed from the workload, not copied: the old crates' four databases
--- (`catalyrst` search_path=telemetry, `credits`) collapse into two schemas
--- of `catalyst`. Sources: catalyrst/crates/catalyrst-telemetry/
--- migrations 0001..0011, catalyrst-credits/migrations 0001..0021,
--- the old server's admin_audit (catalyrst-server/src/admin/audit.rs).
+-- Designed from the workload, not copied: the old crates' databases
+-- (`credits`, the server's own) collapse into two schemas of `catalyst`.
+-- Sources: catalyrst-credits/migrations 0001..0021, the old server's
+-- admin_audit (catalyrst-server/src/admin/audit.rs).
 --
 -- Conventions, as in the other files: wallet addresses are lowercase 0x + 40
 -- hex text where this node writes them (CHECKed); every timestamp is
@@ -19,257 +17,18 @@
 -- names an `ops.admin_audit` row and `credits.fulfillment_outbox.external_ref`
 -- an economy broker purchase, reconciled on read.
 --
--- Authority: telemetry.events is an INGEST SINK (not user authority; its own
--- TELEMETRY_INGEST_ENABLED switch plus the operator toggle in
--- telemetry.ingest_settings); the credits ledger, checkouts, authorizations,
--- the telemetry console writes and the operator audit are
--- LOCAL authority behind OPS_WRITES_ENABLED (default false; 503 envelope like
--- src/social/writes.rs).
+-- Authority: the credits ledger, checkouts, authorizations and the operator
+-- audit are LOCAL authority behind OPS_WRITES_ENABLED (default false; 503
+-- envelope like src/social/writes.rs). The former `telemetry` schema (the
+-- Sentry/Segment sink and its console) is retired: a database stamped before
+-- the removal drops it through schemas/releases/telemetry-retired.sql;
+-- client telemetry goes to Segment.
 --
 -- Domain agents append ONLY inside the `-- ==== section: ... ====` blocks at
 -- the end, after re-reading this file.
 
-CREATE SCHEMA telemetry;
 CREATE SCHEMA credits;
 CREATE SCHEMA ops;
-
--- ══════════════════════════════════════════════════════════════════════════
--- telemetry
--- ══════════════════════════════════════════════════════════════════════════
-
--- One row per Sentry envelope item / store event / Segment call, appended by
--- the bounded ingest writer (256-row UNNEST inserts, a 10,000-row queue, a
--- per-project daily quota); never updated; deleted only by the retention
--- job and the operator's purge/bulk-delete. `body` is the payload as sent
--- (the sinks reserialize nothing they are asked to keep; a decoded request
--- is at most 2 MiB, the route body cap, and the no-item envelope fallback
--- keeps a 4 KiB prefix, so no row is wider than that). `fingerprint` is
--- the issues grouping key: the first line of the title expression with
--- markup, timestamps, URLs and numbers normalised, STORED so the issues view
--- groups on a column and issue_state / issue_merges key on the same value
--- (migration 0002/0003 of the old service; the expression inside left() is
--- duplicated in the dashboard's TITLE1 and must stay identical). It is cut
--- at 512 characters (at most 2,048 bytes) so events_fingerprint_received_idx
--- can always hold it: an event whose first title line ran past the btree's
--- 8,191-byte entry limit was refused by the insert (and lost) before the
--- cut; TITLE1 stays uncut for display, the drill-down compares the column.
--- `invalid_reason` is the ingest-side contract verdict for a Segment event
--- whose shape defeats telemetry-contract.json: stored, never rejected.
-CREATE TABLE telemetry.events (
-    id bigint GENERATED ALWAYS AS IDENTITY,
-    received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    source text NOT NULL,
-    project text NOT NULL DEFAULT '',
-    event_kind text NOT NULL DEFAULT '',
-    body jsonb NOT NULL,
-    invalid_reason text,
-    fingerprint text GENERATED ALWAYS AS (
-        left(regexp_replace(
-          regexp_replace(
-            regexp_replace(
-              regexp_replace(
-                split_part(
-                  COALESCE(
-                    NULLIF(body->>'message',''),
-                    NULLIF(body#>>'{logentry,message}',''),
-                    NULLIF(body#>>'{exception,values,0,type}','')
-                      || COALESCE(': ' || (body#>>'{exception,values,0,value}'), ''),
-                    NULLIF(body->>'transaction',''),
-                    NULLIF(body->>'event',''),
-                    CASE WHEN event_kind = 'session'
-                         THEN 'session (' || COALESCE(NULLIF(body->>'status',''),
-                                CASE WHEN (body->>'init')::boolean THEN 'started' ELSE 'update' END) || ')'
-                    END,
-                    CASE WHEN body->>'userId' IS NOT NULL
-                         THEN 'identify ' || (body->>'userId')
-                    END,
-                    '(' || event_kind || ')'),
-                  E'\n', 1),
-                '<[^>]*>', '', 'g'),
-              '^[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+ - ', ''),
-            'https?://[^ ]+', 'URL', 'g'),
-          '-?[0-9]+', 'N', 'g'), 512)
-    ) STORED,
-    CONSTRAINT events_pkey PRIMARY KEY (id),
-    CONSTRAINT events_source_check CHECK (source IN ('sentry', 'segment'))
-);
-
--- The window every console read starts from (received_at > $now - $hours,
--- newest first), the export's ORDER BY, the bulk `before` filter and the
--- retention job's `received_at < $cutoff ORDER BY received_at LIMIT $batch`.
-CREATE INDEX events_received_at_idx ON telemetry.events (received_at DESC);
--- The source facet (prefix), the sessions health view (source = 'sentry' AND
--- event_kind = 'session'), the client_error retention rule (source =
--- 'segment' AND event_kind = 'track' AND body->>'event' = 'client_error')
--- and the per-source stats rollup, each inside the window.
-CREATE INDEX events_source_kind_received_idx ON telemetry.events (source, event_kind, received_at DESC);
--- The issue drill-down (fingerprint = $fp within the window), stats?fingerprint=
--- and the bulk delete/export by fingerprint. The issues GROUP BY fingerprint
--- over a window is a hash aggregate over the window scan, not this index.
-CREATE INDEX events_fingerprint_received_idx ON telemetry.events (fingerprint, received_at DESC);
--- The level facet (body->>'level' = $level) and the by_level rollup.
-CREATE INDEX events_level_received_idx ON telemetry.events ((body->>'level'), received_at DESC);
--- GET /dash/experiments (LIST_SQL): the aggregate over every Segment event
--- carrying properties.exp_key, grouped by (exp_key, variant, event); the
--- predicate is the query's verbatim so the bitmap scan visits only the pages
--- holding qualifying rows (old node, 2026-09-17: 85k of 933k rows, 9k of
--- 32k heap pages, 144 ms -> memoised + indexed).
-CREATE INDEX events_experiments_idx ON telemetry.events (
-    source,
-    (body->'properties'->>'exp_key'),
-    (body->'properties'->>'variant'),
-    (body->>'event')
-) WHERE source = 'segment' AND body->'properties'->>'exp_key' IS NOT NULL;
--- The creator hub's scene-error feed (sites/packages/data/.../scene-errors.server.ts
--- reads this table directly): Scene Error events of one Genesis base parcel
--- or one world, newest first.
-CREATE INDEX events_scene_errors_genesis_idx ON telemetry.events ((body->'properties'->>'scene_base'), received_at DESC)
-    WHERE source = 'segment' AND body->>'event' = 'Scene Error';
-CREATE INDEX events_scene_errors_world_idx ON telemetry.events ((lower(body->'properties'->>'scene_world')), received_at DESC)
-    WHERE source = 'segment' AND body->>'event' = 'Scene Error';
-
--- Per-issue workflow state keyed by the grouping fingerprint; an absent row
--- is 'unresolved'. A resolved issue whose newest event is later than
--- updated_at reads as regressed (unresolved) in the issues view, Sentry's
--- auto-reopen; the row itself is only changed by the console.
-CREATE TABLE telemetry.issue_state (
-    fingerprint text NOT NULL,
-    status text NOT NULL DEFAULT 'unresolved',
-    assignee text,
-    note text,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT issue_state_pkey PRIMARY KEY (fingerprint),
-    CONSTRAINT issue_state_status_check CHECK (status IN ('unresolved', 'resolved', 'ignored'))
-);
-
--- Regroup: a source fingerprint folded into a canonical one; the console's
--- issues view resolves through it, the merge is also an ops.admin_audit row.
-CREATE TABLE telemetry.issue_merges (
-    source_fingerprint text NOT NULL,
-    canonical_fingerprint text NOT NULL,
-    merged_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT issue_merges_pkey PRIMARY KEY (source_fingerprint),
-    CONSTRAINT issue_merges_not_self_check CHECK (source_fingerprint <> canonical_fingerprint)
-);
--- The reverse lookup (every source folded into one canonical): the
--- `fingerprint=` filter of the console's events page, issues aggregate and
--- facet stats (`src/ops/telemetry/dashboard/mod.rs`, `merged_into`); the
--- aggregate's fold itself probes the PK per event row.
-CREATE INDEX issue_merges_canonical_idx ON telemetry.issue_merges (canonical_fingerprint);
-
--- Operator lifecycle state of a release string.
-CREATE TABLE telemetry.release_state (
-    release text NOT NULL,
-    state text NOT NULL DEFAULT 'active',
-    note text,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT release_state_pkey PRIMARY KEY (release),
-    CONSTRAINT release_state_state_check CHECK (state IN ('active', 'archived', 'broken'))
-);
-
--- The operator's runtime ingest kill switch (the old admin_settings
--- key/value row 'ingest_enabled', now one typed row). Read once at boot and
--- on every toggle into an in-memory atomic; the hot insert path never reads
--- it. TELEMETRY_INGEST_ENABLED (deploy posture) gates the routes with a 503
--- in front of this; with it on and this row false the sinks answer success
--- and store nothing, as the old service did.
-CREATE TABLE telemetry.ingest_settings (
-    id integer NOT NULL,
-    enabled boolean NOT NULL DEFAULT true,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT ingest_settings_pkey PRIMARY KEY (id),
-    CONSTRAINT ingest_settings_singleton_check CHECK (id = 1)
-);
-INSERT INTO telemetry.ingest_settings (id, enabled) VALUES (1, true);
-
--- Per-project (write key / Sentry project) daily accept limit. A project
--- with no row takes the `*` row, else TELEMETRY_DEFAULT_DAILY_LIMIT (50,000;
--- the old "no row means unlimited" is gone: the project is the client's
--- URL segment or write key). Enforced O(1) per event against in-memory
--- per-UTC-day counters seeded from this table; the counters are process
--- state (a restart resets the day's count, accepted as the old service
--- did). The process-wide rows and bytes ceilings (TELEMETRY_MAX_ROWS_PER_
--- MINUTE, TELEMETRY_MAX_BYTES_PER_MINUTE) sit behind the quota and are not
--- a table.
-CREATE TABLE telemetry.project_quotas (
-    project text NOT NULL,
-    daily_limit bigint NOT NULL,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT project_quotas_pkey PRIMARY KEY (project),
-    CONSTRAINT project_quotas_limit_check CHECK (daily_limit >= 0)
-);
-
--- The sites A/B layer's per-experiment operator overrides (kill switch,
--- forced variant, free flags), read by GET /dash/experiments?key=.
-CREATE TABLE telemetry.experiment_overrides (
-    exp_key text NOT NULL,
-    killed boolean NOT NULL DEFAULT false,
-    forced_variant text,
-    flags jsonb NOT NULL DEFAULT '{}'::jsonb,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT experiment_overrides_pkey PRIMARY KEY (exp_key)
-);
-
--- Feature-flag overrides merged over the upstream flags document by
--- /dash/flags and the public /flags page: on / off / forced (+ variant).
-CREATE TABLE telemetry.flag_overrides (
-    flag text NOT NULL,
-    state text NOT NULL DEFAULT 'on',
-    forced_variant text,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT flag_overrides_pkey PRIMARY KEY (flag),
-    CONSTRAINT flag_overrides_state_check CHECK (state IN ('on', 'off', 'forced'))
-);
-
--- Audience groups: an explicit member list or a deterministic percentage
--- rollout (FNV-1a of "<group>:<user_key>", computed in Rust). A matching
--- group target beats the global override, which beats the upstream config;
--- priority (highest wins, then name) breaks ties between groups.
-CREATE TABLE telemetry.flag_groups (
-    name text NOT NULL,
-    description text NOT NULL DEFAULT '',
-    members text[] NOT NULL DEFAULT '{}',
-    rollout_pct integer NOT NULL DEFAULT 0,
-    priority integer NOT NULL DEFAULT 0,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT flag_groups_pkey PRIMARY KEY (name),
-    CONSTRAINT flag_groups_rollout_check CHECK (rollout_pct BETWEEN 0 AND 100)
-);
-
-CREATE TABLE telemetry.flag_group_targets (
-    flag text NOT NULL,
-    group_name text NOT NULL,
-    state text NOT NULL DEFAULT 'on',
-    forced_variant text,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT flag_group_targets_pkey PRIMARY KEY (flag, group_name),
-    CONSTRAINT flag_group_targets_group_fkey FOREIGN KEY (group_name)
-        REFERENCES telemetry.flag_groups (name) ON DELETE CASCADE,
-    CONSTRAINT flag_group_targets_state_check CHECK (state IN ('on', 'off', 'forced'))
-);
-
-CREATE TABLE telemetry.experiment_group_targets (
-    exp_key text NOT NULL,
-    group_name text NOT NULL,
-    killed boolean NOT NULL DEFAULT false,
-    forced_variant text,
-    flags jsonb NOT NULL DEFAULT '{}'::jsonb,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT experiment_group_targets_pkey PRIMARY KEY (exp_key, group_name),
-    CONSTRAINT experiment_group_targets_group_fkey FOREIGN KEY (group_name)
-        REFERENCES telemetry.flag_groups (name) ON DELETE CASCADE
-);
-
--- A display tag: which product area a flag or experiment is filed under,
--- apart from the override tables so filing never overrides.
-CREATE TABLE telemetry.product_areas (
-    kind text NOT NULL,
-    name text NOT NULL,
-    area text NOT NULL,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    CONSTRAINT product_areas_pkey PRIMARY KEY (kind, name),
-    CONSTRAINT product_areas_kind_check CHECK (kind IN ('flag', 'experiment'))
-);
 
 -- ══════════════════════════════════════════════════════════════════════════
 -- credits
@@ -297,6 +56,25 @@ CREATE TABLE credits.wallets (
     CONSTRAINT wallets_address_check CHECK (address ~ '^0x[0-9a-f]{40}$'),
     CONSTRAINT wallets_available_check CHECK (available >= 0),
     CONSTRAINT wallets_earned_bound_check CHECK (earned_available >= 0 AND earned_available <= available)
+);
+
+-- The multi-accounting flag notified on the `credits.wallet_flags` channel
+-- (`{action: "flag", addresses, source, ip}`, the shape the events-notifier
+-- posted to the credits server's `/flag`) or posted through the admin's
+-- `POST /credits/admin/flags` (the same body): one row per
+-- flagged wallet with the source that raised it, the IP it reported and the
+-- wallets it was linked with. The claim reads it as part of its block
+-- (shop/src/credits/store.rs `is_blocked_for_claiming`): a flagged wallet
+-- claims no credits and keeps spending the ones it holds. Rows never expire;
+-- the admin's unflag and the operator's unblock delete them.
+CREATE TABLE credits.wallet_flags (
+    address text NOT NULL,
+    source text NOT NULL,
+    ip text,
+    linked_addresses text[] NOT NULL DEFAULT '{}',
+    flagged_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT wallet_flags_pkey PRIMARY KEY (address),
+    CONSTRAINT wallet_flags_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
 );
 
 -- The append-only money fact: every movement of a wallet's balance, tagged
@@ -589,6 +367,9 @@ CREATE TABLE credits.authorizations (
     submitted_at timestamp without time zone,
     retired_at timestamp without time zone,
     consumed_at timestamp without time zone,
+    -- A request that names its purchase (operationId) keeps what it asked for, so the same
+    -- operation with other lines is refused (src/credits/handlers/authorize.rs).
+    request_digest text,
     CONSTRAINT authorizations_pkey PRIMARY KEY (id),
     CONSTRAINT authorizations_address_check CHECK (address ~ '^0x[0-9a-f]{40}$'),
     CONSTRAINT authorizations_status_check CHECK (status IN ('authorized', 'retired', 'released', 'consumed', 'expired')),
@@ -730,17 +511,17 @@ CREATE INDEX captcha_challenges_expires_idx ON credits.captcha_challenges (expir
 
 -- The ONE operator audit: every mutation an operator makes through the
 -- console or the admin bearers (sync pause/resume/force, cache flush,
--- telemetry purge/quota/regroup/release/issue state/flags, credits
--- grant/revoke/refund/block/packs, rpc method and upstream edits, ...),
--- append-only: the application only ever INSERTs, in the same transaction
+-- credits grant/revoke/refund/block/packs, rpc method and upstream edits,
+-- ...), append-only: the application only ever INSERTs, in the same transaction
 -- as the write it records where the write is SQL. `actor` is the
 -- authenticated identity (a console wallet, `token:<name>` for a bearer,
 -- `loopback`); `domain` + `action` the verb (`content.sync.pause`,
--- `telemetry.purge`, `credits.grant`), `target` the row or key acted on
--- (an issue fingerprint, a wallet, a checkout id), `detail` the request as
--- received (never a secret), `result` the outcome. The old per-service
--- audit tables (telemetry admin_audit, credits admin_audit, the server's
--- content admin_audit) were the same fact under three shapes.
+-- `credits.grant`), `target` the row or key acted on (a wallet, a checkout
+-- id, an rpc method), `detail` the request as received (never a secret),
+-- `result` the outcome. The old per-service audit tables (telemetry
+-- admin_audit, credits admin_audit, the server's content admin_audit) were
+-- the same fact under three shapes; the CHECK keeps the `telemetry` domain
+-- for the rows the retired sink console wrote.
 CREATE TABLE ops.admin_audit (
     id bigint GENERATED ALWAYS AS IDENTITY,
     at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
@@ -763,22 +544,6 @@ CREATE INDEX admin_audit_domain_action_idx ON ops.admin_audit (domain, action, a
 CREATE INDEX admin_audit_target_idx ON ops.admin_audit (target, at DESC) WHERE target IS NOT NULL;
 -- ?actor= (what one operator did).
 CREATE INDEX admin_audit_actor_idx ON ops.admin_audit (actor, at DESC);
-
--- ==== section: telemetry ====
--- The retention job's client_error rule (source = 'segment' AND event_kind =
--- 'track' AND body->>'event' = 'client_error' AND received_at < $cutoff
--- ORDER BY received_at LIMIT $batch): without it each 5,000-row batch was a
--- bitmap scan of every segment/track row older than the cutoff filtered on
--- the body (514k rows removed by filter, 38k heap pages, 236 ms per batch at
--- 10^6 rows, metrics/telemetry-console.md); on the 2% of rows it covers the
--- batch is an index scan of exactly the rows it deletes.
-CREATE INDEX events_client_error_received_idx ON telemetry.events (received_at)
-    WHERE source = 'segment' AND event_kind = 'track' AND body->>'event' = 'client_error';
--- Still open here: monthly range partitions (purge = DROP PARTITION, the PK
--- widened to (received_at, id)) if the events table passes 10^7 rows or a
--- purge pass outlasts the ingest interval; the read-only role grant the
--- sites SSR needs on telemetry.events (deploy/nix/postgresql.nix).
--- ==== end section: telemetry ====
 
 -- ==== section: credits ====
 -- The CreditUsed usage index (src/credits/usage.rs): the CreditsManager contract's

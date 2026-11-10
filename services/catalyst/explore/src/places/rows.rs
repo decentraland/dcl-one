@@ -1,7 +1,8 @@
 //! The place/world wire rows and the SQL that projects `explore.place_indexed`
 //! onto them. Every raw jsonb key a third party wrote is read through a
-//! `jsonb_typeof` guard (query.rs): one malformed value must cost one field,
-//! never the whole listing.
+//! `jsonb_typeof` guard, at write time into the stored `*_num`, `*_ts` and
+//! `textsearch` columns (schemas/10_explore.sql) or here (query.rs): one
+//! malformed value must cost one field, never the whole listing.
 
 use std::sync::LazyLock;
 
@@ -11,27 +12,17 @@ use sqlx::Row;
 
 use super::query::{
     EXCLUDE_FROM_RANKING_SQL, IS_PRIVATE_SQL, SHOW_IN_PLACES_SQL, SINGLE_PLAYER_SQL,
-    USER_DISLIKE_SQL, USER_FAVORITE_SQL, USER_LIKE_SQL, raw_float8_sql, raw_int_sql,
-    raw_timestamptz_sql,
+    USER_DISLIKE_SQL, USER_FAVORITE_SQL, USER_LIKE_SQL, textsearch_column_sql,
 };
 use crate::sanitize::{ContentOrigin, sanitize_image_url, sanitize_place_description};
 
 pub(super) fn place_columns() -> &'static str {
     static SQL: LazyLock<String> = LazyLock::new(|| {
-        let disabled_at = raw_timestamptz_sql("disabled_at");
-        let created_at = raw_timestamptz_sql("created_at");
-        let updated_at = raw_timestamptz_sql("updated_at");
-        let ranking = raw_float8_sql("ranking");
-        let skybox_time = raw_float8_sql("skybox_time");
-        let user_count = raw_int_sql("user_count");
-        let user_visits = raw_int_sql("user_visits");
-        let settings_version = raw_int_sql("settings_version");
-        let like_rate = raw_float8_sql("like_rate");
-        let like_score = raw_float8_sql("like_score");
+        let textsearch = textsearch_column_sql();
         format!(
             r#"
     id, title, description, raw->>'image' AS image,
-    creator_address AS owner,
+    LOWER(COALESCE(raw->>'owner', creator_address)) AS owner,
     creator_address,
     COALESCE((SELECT array_agg(p::text) FROM jsonb_array_elements_text(raw->'positions') p), ARRAY[]::text[]) AS positions,
     base_position,
@@ -39,17 +30,17 @@ pub(super) fn place_columns() -> &'static str {
     raw->>'contact_email' AS contact_email,
     content_rating,
     disabled,
-    {disabled_at} AS disabled_at,
+    disabled_at_ts AS disabled_at,
     raw->>'disabled_reason' AS disabled_reason,
-    {created_at} AS created_at,
-    {updated_at} AS updated_at,
+    created_at_ts AS created_at,
+    updated_at_ts AS updated_at,
     favorites + COALESCE((SELECT ic.favorites FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), 0) AS favorites,
-    likes + COALESCE((SELECT ic.likes FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), 0) AS likes,
-    dislikes + COALESCE((SELECT ic.dislikes FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), 0) AS dislikes,
+    COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.likes ELSE place_indexed.likes + ic.likes END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), likes) AS likes,
+    COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.dislikes ELSE place_indexed.dislikes + ic.dislikes END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), dislikes) AS dislikes,
     categories,
     highlighted,
     raw->>'highlighted_image' AS highlighted_image,
-    {ranking} AS ranking,
+    ranking_num AS ranking,
     {EXCLUDE_FROM_RANKING_SQL} AS exclude_from_ranking,
     raw->>'sdk' AS sdk,
     deployed_at,
@@ -60,15 +51,16 @@ pub(super) fn place_columns() -> &'static str {
     {IS_PRIVATE_SQL} AS is_private,
     {SHOW_IN_PLACES_SQL} AS show_in_places,
     {SINGLE_PLAYER_SQL} AS single_player,
-    {skybox_time} AS skybox_time,
+    skybox_time_num AS skybox_time,
     {USER_FAVORITE_SQL} AS user_favorite,
     {USER_LIKE_SQL} AS user_like,
     {USER_DISLIKE_SQL} AS user_dislike,
-    {user_count} AS user_count,
-    COALESCE({user_visits}, 0) AS user_visits,
-    {settings_version} AS settings_version,
-    {like_rate} AS like_rate,
-    {like_score} AS like_score
+    user_count_num AS user_count,
+    COALESCE(user_visits_num, 0) AS user_visits,
+    settings_version_num AS settings_version,
+    COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.like_rate ELSE COALESCE(ic.like_rate, like_rate_num) END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), CASE WHEN EXISTS (SELECT 1 FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id AND ic.imported > 0) THEN NULL ELSE like_rate_num END) AS like_rate,
+    COALESCE((SELECT CASE WHEN ic.imported > 0 THEN ic.like_score ELSE COALESCE(ic.like_score, like_score_num) END FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id), CASE WHEN EXISTS (SELECT 1 FROM explore.place_interaction_counts ic WHERE ic.entity_id = place_indexed.id AND ic.imported > 0) THEN NULL ELSE like_score_num END) AS like_score,
+    {textsearch} AS textsearch
 "#
         )
     });
@@ -93,11 +85,14 @@ pub struct PlaceRow {
     pub content_rating: Option<String>,
     pub disabled: bool,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub disabled_at: Option<DateTime<Utc>>,
     pub disabled_reason: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub created_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub updated_at: Option<DateTime<Utc>>,
     pub favorites: i32,
     pub likes: i32,
@@ -114,6 +109,7 @@ pub struct PlaceRow {
     /// Null for legacy rows awaiting reconciliation (upstream places #856).
     pub deployment_id: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub deployed_at: Option<DateTime<Utc>>,
     pub world: bool,
     pub world_name: Option<String>,
@@ -136,6 +132,15 @@ pub struct PlaceRow {
     pub user_visits: i32,
     pub like_rate: Option<f64>,
     pub like_score: Option<f64>,
+    /// The serialized `textsearch` tsvector of upstream's places table (`p.*`,
+    /// places `Place/types.ts:64`): the mirrored value when upstream sent one,
+    /// otherwise the same vector computed here (`query::textsearch_sql`).
+    pub textsearch: Option<String>,
+    /// `ts_rank_cd(textsearch, query)`, selected only when `search` is set
+    /// (places `Place/model.ts:305,323-328`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub rank: Option<f32>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
@@ -190,15 +195,19 @@ pub struct WorldRow {
     pub like_rate: Option<f64>,
     pub like_score: Option<f64>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub created_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub updated_at: Option<DateTime<Utc>>,
     pub disabled: bool,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub disabled_at: Option<DateTime<Utc>>,
     pub base_position: String,
     pub contact_name: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
+    #[serde(serialize_with = "crate::json_date::serialize_opt")]
     pub deployed_at: Option<DateTime<Utc>>,
     pub highlighted: bool,
     pub highlighted_image: Option<String>,
@@ -215,10 +224,39 @@ pub struct WorldRow {
     pub user_favorite: bool,
     pub user_count: Option<i32>,
     pub user_visits: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub rank: Option<f32>,
+}
+
+impl PlaceRow {
+    /// A row of upstream's `worlds` table rather than of its `places` table:
+    /// the catalogue keys a world by its lowercased name (places
+    /// `World/model.ts:466-469`; `derive.rs` `UPSERT_LOCAL_WORLDS`), while a
+    /// world scene keeps its own id and names its world in `world_name`.
+    pub fn is_world_catalogue_row(&self) -> bool {
+        self.world
+            && !self.scene_place
+            && self
+                .world_name
+                .as_deref()
+                .is_some_and(|name| name.to_lowercase() == self.id)
+    }
+
+    /// The constants upstream selects for a world row in place of the places
+    /// columns it lacks (`World/model.ts:207-215`, `Destination/model.ts:39-49`):
+    /// `'0,0' as base_position`, `'{}' as positions`.
+    pub fn synthesize_world_fields(&mut self) {
+        if self.is_world_catalogue_row() {
+            self.base_position = "0,0".to_string();
+            self.positions.clear();
+        }
+    }
 }
 
 impl From<PlaceRow> for WorldRow {
-    fn from(p: PlaceRow) -> Self {
+    fn from(mut p: PlaceRow) -> Self {
+        p.synthesize_world_fields();
         Self {
             id: p.id,
             title: p.title,
@@ -255,8 +293,20 @@ impl From<PlaceRow> for WorldRow {
             user_favorite: p.user_favorite,
             user_count: p.user_count,
             user_visits: p.user_visits,
+            rank: p.rank,
         }
     }
+}
+
+/// The rows that lead `order_by=most_active`: on `GET /api/places` the base
+/// positions with players (`Place/model.ts:291-303,630`); without a presence
+/// snapshot, there and on the destinations, the mirrored headcount.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ActiveRows {
+    #[default]
+    All,
+    Live(Vec<String>),
+    Mirrored,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -264,7 +314,14 @@ pub struct PlaceListFilters {
     pub limit: i64,
     pub offset: i64,
     pub positions: Vec<String>,
+    /// World names matched exactly after lowercasing (`/api/places?names=`,
+    /// `/api/worlds?names=`, `/api/destinations?world_names=`).
     pub names: Vec<String>,
+    /// `/api/destinations?names=` matches a substring (`World/model.ts:121-130`).
+    pub partial_names: Vec<String>,
+    /// `/api/map/places?names=`: `world_name IN (...)` verbatim, case-sensitive
+    /// (`Place/model.ts:1348-1351`).
+    pub exact_world_names: Vec<String>,
     pub categories: Vec<String>,
     pub only_highlighted: bool,
     pub only_excluded_from_ranking: bool,
@@ -274,13 +331,22 @@ pub struct PlaceListFilters {
     pub order_by: PlaceOrderBy,
     pub order_desc: bool,
     pub ids: Vec<String>,
+    /// Upstream's `worlds` table rows only (`PlaceRow::is_world_catalogue_row`).
     pub only_worlds: bool,
+    /// Genesis places only (`world is false`).
     pub only_places: bool,
+    /// Upstream's `places` table: genesis places and world scenes, never a
+    /// world catalogue row (`/api/places` once `names`, `ids` or
+    /// `only_highlighted` lift `world is false`, `Place/model.ts:150-156`;
+    /// `/api/map/places`, `:1331-1354`).
+    pub places_table: bool,
     /// `/api/map` lists categorized places only (upstream's
     /// `array_length(p.categories, 1) > 0`, applied to the count as well).
     pub only_categorized: bool,
     pub operated_positions: Vec<String>,
     pub owner_filtered: bool,
+    pub owner: Option<String>,
+    pub active: ActiveRows,
     pub destinations_mode: bool,
     pub require_content_places: bool,
     pub require_content_worlds: bool,
@@ -320,20 +386,39 @@ impl PlaceOrderBy {
             _ => Self::LikeScore,
         }
     }
+
+    /// Upstream's `oneOf(options.order_by, [...]) ?? default` (`World/model.ts:351-355`,
+    /// `Place/model.ts:1150-1156,1319-1325`, `Destination/model.ts:189-195`):
+    /// a value outside the route's own list is the route default, never a
+    /// column another route knows.
+    pub fn parse_allowed(s: Option<&str>, allowed: &[&str], default: Self) -> Self {
+        match s {
+            Some(value) if allowed.contains(&value) => Self::parse(Some(value)),
+            _ => default,
+        }
+    }
+    /// The stored read of the raw key (schemas/10_explore.sql, both legs):
+    /// the `most_active` filter and the order of every value but the like
+    /// score, which `order_expr` renders.
     pub(super) fn column(self) -> &'static str {
-        static UPDATED_AT: LazyLock<String> = LazyLock::new(|| raw_timestamptz_sql("updated_at"));
-        static CREATED_AT: LazyLock<String> = LazyLock::new(|| raw_timestamptz_sql("created_at"));
-        static USER_VISITS: LazyLock<String> =
-            LazyLock::new(|| format!("COALESCE({}, 0)", raw_int_sql("user_visits")));
-        static MOST_ACTIVE: LazyLock<String> =
-            LazyLock::new(|| format!("COALESCE({}, 0)", raw_int_sql("user_count")));
-        static LIKE_SCORE: LazyLock<String> = LazyLock::new(|| raw_float8_sql("like_score"));
         match self {
-            Self::LikeScore => &LIKE_SCORE,
-            Self::UpdatedAt => &UPDATED_AT,
-            Self::CreatedAt => &CREATED_AT,
-            Self::UserVisits => &USER_VISITS,
-            Self::MostActive => &MOST_ACTIVE,
+            Self::LikeScore => "like_score_num",
+            Self::UpdatedAt => "updated_at_ts",
+            Self::CreatedAt => "created_at_ts",
+            Self::UserVisits => "COALESCE(user_visits_num, 0)",
+            Self::MostActive => "COALESCE(user_count_num, 0)",
+        }
+    }
+
+    /// What a list orders on: the value the row answers. The like score is
+    /// `query::LIKE_SCORE_ORDER_SQL` (this node's recount, else the mirrored
+    /// value, as `place_columns` serves it), read from the `recount` alias
+    /// `query::like_score_recount_join` puts beside the row; the rest is the
+    /// stored column.
+    pub(super) fn order_expr(self) -> &'static str {
+        match self {
+            Self::LikeScore => super::query::LIKE_SCORE_ORDER_SQL,
+            other => other.column(),
         }
     }
 }
@@ -359,6 +444,7 @@ impl CategoryTarget {
 pub struct PlaceStatusRow {
     pub id: String,
     pub disabled: bool,
+    pub disabled_reason: Option<String>,
     pub world: bool,
     pub world_name: Option<String>,
     pub base_position: String,
@@ -465,6 +551,8 @@ pub(super) fn row_to_place(
         user_visits: r.try_get::<i32, _>("user_visits").unwrap_or(0),
         like_rate: r.try_get::<Option<f64>, _>("like_rate").unwrap_or(None),
         like_score: r.try_get::<Option<f64>, _>("like_score").unwrap_or(None),
+        textsearch: r.try_get::<Option<String>, _>("textsearch").unwrap_or(None),
+        rank: r.try_get::<Option<f32>, _>("rank").unwrap_or(None),
         live: None,
         live_event_name: None,
         connected_addresses: None,
@@ -518,6 +606,8 @@ pub(crate) fn sample_row() -> PlaceRow {
         user_visits: 0,
         like_rate: None,
         like_score: None,
+        textsearch: None,
+        rank: None,
         live: None,
         live_event_name: None,
         connected_addresses: None,

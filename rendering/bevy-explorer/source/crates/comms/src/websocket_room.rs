@@ -68,7 +68,8 @@ pub fn start_ws_room(
         info!("starting ws-room protocol");
         let (sender, receiver) = tokio::sync::mpsc::channel(1000);
 
-        let Some(current_profile) = current_profile.profile.as_ref() else {
+        // never announce an edit still deploying
+        let Some(current_profile) = current_profile.peer_profile() else {
             return;
         };
 
@@ -315,6 +316,7 @@ async fn websocket_room_handler_inner(
                     from_alias,
                     body,
                     unreliable: next.unreliable,
+                    recipients: Vec::new(),
                 })),
             };
             let mut buf = Vec::default();

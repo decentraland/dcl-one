@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "POST",
+    "path": "/profiles/metadata",
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": {
+      "ids": [
+        "0x0000000000000000000000000000000000000b00"
+      ]
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": [
+      {
+        "pointer": "0x0000000000000000000000000000000000000b00",
+        "hasClaimedName": false,
+        "name": "profile-name-1",
+        "thumbnailUrl": "https://profile-images.decentraland.org/entities/<profile-entity-1>/face.png"
+      }
+    ]
+  },
+  "note": "Profile names, the profile entity ids inside thumbnailUrl and the addresses are replaced by placeholders."
+}

@@ -38,6 +38,16 @@ pub enum ParsedRange {
     Unsatisfiable,
 }
 
+/// A `Range` position as upstream's `^bytes=(\d*)-(\d*)$` and `parseInt` read
+/// it: ASCII digits only (no sign), and a number past `u64` saturates, as a
+/// JavaScript number past 2^53 stays larger than any file.
+fn range_number(digits: &str) -> Option<u64> {
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    Some(digits.parse().unwrap_or(u64::MAX))
+}
+
 pub fn parse_range_header(
     range_header: Option<&str>,
     total_size: Option<u64>,
@@ -47,7 +57,7 @@ pub fn parse_range_header(
 
     if let Some(rest) = header.strip_prefix("bytes=") {
         if let Some(suffix) = rest.strip_prefix('-') {
-            let suffix_len: u64 = suffix.parse().ok()?;
+            let suffix_len = range_number(suffix)?;
             if suffix_len == 0 || total == 0 {
                 return Some(ParsedRange::Unsatisfiable);
             }
@@ -60,20 +70,21 @@ pub fn parse_range_header(
 
         let parts: Vec<&str> = rest.splitn(2, '-').collect();
         if parts.len() == 2 {
-            let start: u64 = parts[0].parse().ok()?;
-            let end: u64 = if parts[1].is_empty() {
-                total - 1
+            let start = range_number(parts[0])?;
+            let end: Option<u64> = if parts[1].is_empty() {
+                None
             } else {
-                parts[1].parse().ok()?
+                Some(range_number(parts[1])?)
             };
 
-            if start > end || start >= total {
+            // `start >= total` also covers an empty file.
+            if start >= total || end.is_some_and(|end| start > end) {
                 return Some(ParsedRange::Unsatisfiable);
             }
 
             return Some(ParsedRange::Range {
                 start,
-                end: end.min(total - 1),
+                end: end.map_or(total - 1, |end| end.min(total - 1)),
             });
         }
     }
@@ -118,54 +129,45 @@ impl EntityField {
     }
 }
 
-pub fn mask_entity(
-    entity: &serde_json::Value,
-    fields: Option<&[EntityField]>,
-) -> serde_json::Value {
-    let Some(obj) = entity.as_object() else {
-        return entity.clone();
+/// An entity as `GET /entities/{type}` answers it: upstream's `maskEntity`
+/// builds `{ version, id, type, timestamp, pointers, content, metadata }`, and
+/// a struct serializes its fields in that order where a `Map` would sort them.
+#[derive(Debug, serde::Serialize)]
+pub struct MaskedEntity {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub id: Option<serde_json::Value>,
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    pub entity_type: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<serde_json::Value>,
+    pub pointers: serde_json::Value,
+    pub content: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<serde_json::Value>,
+}
+
+pub fn mask_entity(entity: &serde_json::Value, fields: Option<&[EntityField]>) -> MaskedEntity {
+    let field = |key: &str| entity.get(key).cloned();
+    let include = |f: EntityField| fields.is_none_or(|fields| fields.contains(&f));
+    let array_or_empty = |f: EntityField, key: &str| {
+        include(f)
+            .then(|| field(key))
+            .flatten()
+            .unwrap_or(serde_json::Value::Array(vec![]))
     };
-
-    let mut result = serde_json::Map::new();
-
-    for key in &["version", "id", "type", "timestamp"] {
-        if let Some(v) = obj.get(*key) {
-            result.insert(key.to_string(), v.clone());
-        }
+    MaskedEntity {
+        version: field("version"),
+        id: field("id"),
+        entity_type: field("type"),
+        timestamp: field("timestamp"),
+        pointers: array_or_empty(EntityField::Pointers, "pointers"),
+        content: array_or_empty(EntityField::Content, "content"),
+        metadata: include(EntityField::Metadata)
+            .then(|| field("metadata"))
+            .flatten(),
     }
-
-    let include_all = fields.is_none();
-    let fields = fields.unwrap_or(&[]);
-
-    if include_all || fields.contains(&EntityField::Pointers) {
-        result.insert(
-            "pointers".to_string(),
-            obj.get("pointers")
-                .cloned()
-                .unwrap_or(serde_json::Value::Array(vec![])),
-        );
-    } else {
-        result.insert("pointers".to_string(), serde_json::Value::Array(vec![]));
-    }
-
-    if include_all || fields.contains(&EntityField::Content) {
-        result.insert(
-            "content".to_string(),
-            obj.get("content")
-                .cloned()
-                .unwrap_or(serde_json::Value::Array(vec![])),
-        );
-    } else {
-        result.insert("content".to_string(), serde_json::Value::Array(vec![]));
-    }
-
-    if (include_all || fields.contains(&EntityField::Metadata))
-        && let Some(m) = obj.get("metadata")
-    {
-        result.insert("metadata".to_string(), m.clone());
-    }
-
-    serde_json::Value::Object(result)
 }
 
 #[cfg(test)]
@@ -187,6 +189,52 @@ mod tests {
             }
             _ => panic!("Expected Range"),
         }
+    }
+
+    #[test]
+    fn parse_range_on_empty_file_is_unsatisfiable() {
+        for header in ["bytes=0-", "bytes=0-0", "bytes=-1"] {
+            assert!(matches!(
+                parse_range_header(Some(header), Some(0)),
+                Some(ParsedRange::Unsatisfiable)
+            ));
+        }
+    }
+
+    #[test]
+    fn parse_range_on_empty_file_ignores_a_malformed_header() {
+        for header in ["bytes=abc", "bytes=0-1,2-3", "bytes=-1,2", "items=0-1"] {
+            assert!(
+                parse_range_header(Some(header), Some(0)).is_none(),
+                "{header}"
+            );
+        }
+    }
+
+    /// `^bytes=(\d*)-(\d*)$` then `parseInt` (worlds-content-server
+    /// `content-file-handler.ts` `parseRangeHeader`): a sign is not a digit, and an
+    /// overflowing start is past the end while an overflowing end is clamped.
+    #[test]
+    fn parse_range_reads_digits_only_and_saturates() {
+        for header in ["bytes=+5-", "bytes=5-+9", "bytes=-+5", "bytes= 5-9"] {
+            assert!(
+                parse_range_header(Some(header), Some(100)).is_none(),
+                "{header}"
+            );
+        }
+        let huge = "99999999999999999999999";
+        assert!(matches!(
+            parse_range_header(Some(&format!("bytes={huge}-")), Some(100)),
+            Some(ParsedRange::Unsatisfiable)
+        ));
+        assert!(matches!(
+            parse_range_header(Some(&format!("bytes=10-{huge}")), Some(100)),
+            Some(ParsedRange::Range { start: 10, end: 99 })
+        ));
+        assert!(matches!(
+            parse_range_header(Some(&format!("bytes=-{huge}")), Some(100)),
+            Some(ParsedRange::Range { start: 0, end: 99 })
+        ));
     }
 
     #[test]
@@ -213,10 +261,29 @@ mod tests {
             "version": "v3", "id": "bafy", "type": "scene", "timestamp": 1,
             "pointers": ["0,0"], "content": [{"file": "a", "hash": "b"}], "metadata": {"k": 1}
         });
-        let masked = mask_entity(&entity, Some(&[EntityField::Metadata]));
+        let masked =
+            serde_json::to_value(mask_entity(&entity, Some(&[EntityField::Metadata]))).unwrap();
         assert_eq!(masked["pointers"], serde_json::json!([]));
         assert_eq!(masked["content"], serde_json::json!([]));
         assert_eq!(masked["metadata"], serde_json::json!({"k": 1}));
-        assert_eq!(mask_entity(&entity, None), entity);
+        assert_eq!(
+            serde_json::to_value(mask_entity(&entity, None)).unwrap(),
+            entity
+        );
+    }
+
+    #[test]
+    fn masked_keys_follow_upstream_mask_entity_order() {
+        // decentraland/catalyst:src/controllers/handlers/get-entities-handler.ts:94; captured
+        // in conformance/content-lambdas/captures/content-reads/CR-16-trailing-slash-entities.json.
+        let entity = serde_json::json!({
+            "content": [], "id": "bafy", "metadata": {"k": 1}, "pointers": ["0,0"],
+            "timestamp": 1, "type": "scene", "version": "v3"
+        });
+        let bytes = serde_json::to_string(&mask_entity(&entity, None)).unwrap();
+        assert_eq!(
+            bytes,
+            r#"{"version":"v3","id":"bafy","type":"scene","timestamp":1,"pointers":["0,0"],"content":[],"metadata":{"k":1}}"#
+        );
     }
 }

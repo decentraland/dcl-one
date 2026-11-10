@@ -1,5 +1,7 @@
 use clap::Args;
 
+use crate::posture::Posture::Mirror;
+
 pub use crate::{
     content::{AboutCommsConfig, ContentConfig, ValidatorConfig},
     create::CreateConfig,
@@ -22,6 +24,20 @@ pub const DEFAULT_MANA_PRICE_MAX_STALENESS_SECS: i64 = 900;
 /// The legacy `secondary`/`auto` values fulfilled a credits debit from resale
 /// listings; they run as `primary` and say so at startup.
 pub const DEFAULT_CHECKOUT_FULFILLMENT_MODE: &str = "primary";
+
+/// The L1 and L2 RPCs a node reads unless the operator names others
+/// (`L1_HTTP_PROVIDER_URL` and `L2_HTTP_PROVIDER_URL` in the reference): mainnet
+/// with polygon on mainnet, sepolia with amoy on any other `ETH_NETWORK`.
+pub fn default_rpc_urls(eth_network: &str) -> (String, String) {
+    let (l1, l2) = if eth_network.trim() == "mainnet" {
+        ("mainnet", "polygon")
+    } else {
+        ("sepolia", "amoy")
+    };
+    let url =
+        |chain: &str| format!("https://rpc.decentraland.org/{chain}?project=catalyst-content");
+    (url(l1), url(l2))
+}
 
 /// See [`Config::map_urls`].
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,8 +119,42 @@ impl Config {
             Self::refuse_plain_signing_key(name, slot.as_deref(), from_file)?;
             Self::read_secret_file(name, slot)?;
         }
+        self.default_rpc_urls();
         self.derive_trade_rpc_urls();
         crate::posture::refuse_remote_secrets(self)
+    }
+
+    /// `ETH_RPC_URL` and `RPC_ENDPOINT_POLYGON` left unset or empty read
+    /// Decentraland's public RPCs for `ETH_NETWORK`, as the reference catalyst
+    /// does ([`default_rpc_urls`]). Under island and journey, which dial no
+    /// outside host, they stay unset. Runs once the secret files are read, so
+    /// a `_FILE` still wins; an empty one fails startup instead of defaulting.
+    pub fn default_rpc_urls(&mut self) {
+        let posture = self
+            .node
+            .node_posture
+            .as_deref()
+            .filter(|p| !p.trim().is_empty());
+        if posture.is_some_and(|p| crate::posture::Posture::parse(p).ok() != Some(Mirror)) {
+            return;
+        }
+        let (l1, l2) = default_rpc_urls(&self.node.eth_network);
+        for (name, slot, url) in [
+            ("ETH_RPC_URL", &mut self.content.eth_rpc_url, l1),
+            (
+                "RPC_ENDPOINT_POLYGON",
+                &mut self.economy.rpc_endpoint_polygon,
+                l2,
+            ),
+        ] {
+            if Self::non_empty(slot).is_none() {
+                tracing::info!(
+                    "{name} unset: reading Decentraland's public RPC for ETH_NETWORK={}",
+                    self.node.eth_network.trim()
+                );
+                *slot = Some(url);
+            }
+        }
     }
 
     /// A mirror's `TRADE_RPC_URLS` is this node's own two endpoints,
@@ -167,14 +217,25 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 61] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 78] {
         [
+            ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
+            ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
                 &mut self.writes.catalyrst_content_admin_token,
             ),
             ("LIVEKIT_API_KEY", &mut self.social.livekit_api_key),
             ("LIVEKIT_API_SECRET", &mut self.social.livekit_api_secret),
+            ("SLACK_BOT_TOKEN", &mut self.social.referral_slack_token),
+            (
+                "ANALYTICS_API_TOKEN",
+                &mut self.social.social_analytics_api_token,
+            ),
+            (
+                "OPEN_AI_API_KEY",
+                &mut self.social.community_compliance_api_key,
+            ),
             (
                 "COMMUNITIES_ADMIN_TOKEN",
                 &mut self.social.communities_admin_token,
@@ -182,6 +243,10 @@ impl Config {
             (
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
+            ),
+            (
+                "WKC_METRICS_BEARER_TOKEN",
+                &mut self.social.wkc_metrics_bearer_token,
             ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
@@ -197,9 +262,59 @@ impl Config {
                 &mut self.social.catalyrst_badges_admin_token,
             ),
             ("SENDGRID_API_KEY", &mut self.social.sendgrid_api_key),
+            ("SIGNING_KEY", &mut self.social.signing_key),
+            ("SLACK_WEBHOOK", &mut self.explore.events_slack_webhook),
+            (
+                "PLACES_MODERATION_WEBHOOK",
+                &mut self.explore.places_moderation_webhook,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+                &mut self.social.rewards_api_key_by_referral_invited_users_5,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+                &mut self.social.rewards_api_key_by_referral_invited_users_10,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+                &mut self.social.rewards_api_key_by_referral_invited_users_20,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+                &mut self.social.rewards_api_key_by_referral_invited_users_25,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+                &mut self.social.rewards_api_key_by_referral_invited_users_30,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+                &mut self.social.rewards_api_key_by_referral_invited_users_50,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+                &mut self.social.rewards_api_key_by_referral_invited_users_60,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+                &mut self.social.rewards_api_key_by_referral_invited_users_75,
+            ),
             (
                 "TURNSTILE_SECRET_KEY",
                 &mut self.social.turnstile_secret_key,
+            ),
+            (
+                "NOTIFICATION_SERVICE_TOKEN",
+                &mut self.social.notification_service_token,
+            ),
+            (
+                "NOTIFICATIONS_GOVERNANCE_TOKEN",
+                &mut self.social.notifications_governance_token,
+            ),
+            (
+                "NOTIFICATIONS_REWARDS_TOKEN",
+                &mut self.social.notifications_rewards_token,
             ),
             (
                 "CATALYRST_EVENTS_ADMIN_TOKEN",
@@ -267,14 +382,6 @@ impl Config {
             ),
             ("TRADE_RPC_URLS", &mut self.marketplace.trade_rpc_urls),
             (
-                "CATALYRST_TELEMETRY_ADMIN_TOKEN",
-                &mut self.ops.catalyrst_telemetry_admin_token,
-            ),
-            (
-                "TELEMETRY_SQL_DATABASE_URL",
-                &mut self.ops.telemetry_sql_database_url,
-            ),
-            (
                 "CATALYRST_CREDITS_ADMIN_TOKEN",
                 &mut self.shop.catalyrst_credits_admin_token,
             ),
@@ -325,10 +432,6 @@ impl Config {
                 "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
                 &mut self.validator.third_party_registry_l2_subgraph_url,
             ),
-            (
-                "BLOCKS_L2_SUBGRAPH_URL",
-                &mut self.validator.blocks_l2_subgraph_url,
-            ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
             (
                 "PLACES_ADMIN_AUTH_TOKEN",
@@ -353,17 +456,36 @@ impl Config {
         "RELAYER_PRIVATE_KEY",
     ];
 
+    /// Secrets that fall back to a network default when unset
+    /// ([`Config::default_rpc_urls`]), so an empty `_FILE` is refused.
+    pub const NETWORK_DEFAULTED_SECRETS: [&'static str; 2] =
+        ["ETH_RPC_URL", "RPC_ENDPOINT_POLYGON"];
+
     fn read_secret_file(name: &str, slot: &mut Option<String>) -> anyhow::Result<()> {
         let file_var = format!("{name}_FILE");
         let Some(path) = std::env::var_os(&file_var).filter(|p| !p.is_empty()) else {
             return Ok(());
         };
+        Self::read_secret_from(name, std::path::Path::new(&path), slot)
+    }
+
+    fn read_secret_from(
+        name: &str,
+        path: &std::path::Path,
+        slot: &mut Option<String>,
+    ) -> anyhow::Result<()> {
+        let file_var = format!("{name}_FILE");
         if slot.as_deref().is_some_and(|v| !v.trim().is_empty()) {
             anyhow::bail!("{name} and {file_var} are both set; keep one");
         }
-        let contents = std::fs::read_to_string(&path)
+        let contents = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("{file_var}: cannot read the file: {e}"))?;
         let value = contents.trim().to_string();
+        if value.is_empty() && Self::NETWORK_DEFAULTED_SECRETS.contains(&name) {
+            anyhow::bail!(
+                "{file_var} names an empty file; fill it or unset {file_var} to read the network's default RPC"
+            );
+        }
         *slot = if value.is_empty() { None } else { Some(value) };
         Ok(())
     }
@@ -462,6 +584,13 @@ impl Config {
             ),
             land_image_base: or_own(&self.node.land_image_base_url, "/api"),
         }
+    }
+
+    /// The commit `/about` and the `/status` routes report: `COMMIT_HASH` when
+    /// set and not blank, else the build's `CATALYST_COMMIT_HASH`.
+    pub fn commit_hash(&self) -> Option<String> {
+        Self::non_empty(&self.node.commit_hash)
+            .or_else(|| option_env!("CATALYST_COMMIT_HASH").map(str::to_string))
     }
 
     /// An optional secret or token as the old binaries read them: blank is unset.
@@ -601,6 +730,49 @@ mod tests {
     /// slot (read from `<NAME>_FILE`, refused on argv). `DATABASE_URL` is the
     /// one hidden non-slot: a required peer-auth DSN `schema apply` and the
     /// tests pass on the command line.
+    #[test]
+    fn analytics_token_file_resolves_without_exposing_the_secret() {
+        const CHILD: &str = "CATALYST_TEST_ANALYTICS_FILE_CHILD";
+        if std::env::var_os(CHILD).is_some() {
+            let mut config = parse(&["catalyst", "--database-url", "postgres://x/y"]).unwrap();
+            config.resolve_secret_files().unwrap();
+            assert_eq!(
+                config.social.social_analytics_api_token.as_deref(),
+                Some("analytics-fixture-secret")
+            );
+            assert!(!format!("{config:?}").contains("analytics-fixture-secret"));
+            config.social.social_analytics_api_token = Some("inline".into());
+            let error = config.resolve_secret_files().unwrap_err().to_string();
+            assert!(
+                error.contains("ANALYTICS_API_TOKEN")
+                    && error.contains("both set")
+                    && !error.contains("analytics-fixture-secret")
+            );
+            return;
+        }
+        let file =
+            std::env::temp_dir().join(format!("catalyst-analytics-token-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&file, "  analytics-fixture-secret\n").unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "config::tests::analytics_token_file_resolves_without_exposing_the_secret",
+                "--nocapture",
+            ])
+            .env_clear()
+            .env(CHILD, "1")
+            .env("ANALYTICS_API_TOKEN_FILE", &file)
+            .output()
+            .unwrap();
+        std::fs::remove_file(file).unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        assert!(String::from_utf8_lossy(&result.stdout).contains("1 passed"));
+    }
+
     #[test]
     fn every_hidden_value_is_a_secret_slot_and_every_slot_hides_its_value() {
         let (mut config, _) =
@@ -780,13 +952,37 @@ mod tests {
             "true",
             "--first-wear-enabled",
             "true",
+            "--badges-presence-enabled",
+            "true",
         ])
         .unwrap();
         assert!(
             cli.writes.social_writes_enabled
                 && cli.social.livekit_allow_dev_creds
                 && cli.social.first_wear_enabled
+                && cli.social.badges_presence_enabled
         );
+        assert!(
+            !parse(&["x", "--database-url", "postgres:///catalyst"])
+                .unwrap()
+                .social
+                .badges_presence_enabled
+        );
+    }
+
+    #[test]
+    fn the_badge_processor_runs_only_when_enabled() {
+        let off = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert!(!off.social.badges_processor_enabled);
+        let on = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--badges-processor-enabled",
+            "true",
+        ])
+        .unwrap();
+        assert!(on.social.badges_processor_enabled);
     }
 
     #[test]
@@ -836,8 +1032,6 @@ mod tests {
             "postgres:///catalyst",
             "--ops-writes-enabled",
             "true",
-            "--telemetry-ingest-enabled",
-            "true",
             "--credits-mock-card",
             "true",
             "--ab-cdn-enabled",
@@ -848,12 +1042,7 @@ mod tests {
             "https://rpc.example/polygon",
         ])
         .unwrap();
-        assert!(
-            c.ops.ops_writes_enabled
-                && c.ops.telemetry_ingest_enabled
-                && c.shop.credits_mock_card
-                && !c.ab_cdn.ab_cdn_enabled
-        );
+        assert!(c.ops.ops_writes_enabled && c.shop.credits_mock_card && !c.ab_cdn.ab_cdn_enabled);
     }
 
     /// The map URLs advertise this node's own routes unless one is
@@ -904,6 +1093,7 @@ mod tests {
         };
         for flag in [
             "--livekit-api-secret",
+            "--segment-signing-key",
             "--moderator-token",
             "--sendgrid-api-key",
             "--turnstile-secret-key",
@@ -919,8 +1109,6 @@ mod tests {
             "--catalyrst-economy-admin-token",
             "--rpc-endpoint-polygon",
             "--trade-rpc-urls",
-            "--catalyrst-telemetry-admin-token",
-            "--telemetry-sql-database-url",
             "--catalyrst-credits-admin-token",
             "--credits-captcha-secret",
             "--stripe-secret-key",
@@ -947,6 +1135,7 @@ mod tests {
                 && !help.contains("[env: PULSE_ROOM_AUTHORITY_KEY=")
         );
         for var in [
+            "SEGMENT_SIGNING_KEY",
             "MARKET_ADMIN_TOKEN",
             "PRICE_ADMIN_TOKEN",
             "RELAYER_PRIVATE_KEY",
@@ -954,8 +1143,6 @@ mod tests {
             "CATALYRST_ECONOMY_ADMIN_TOKEN",
             "RPC_ENDPOINT_POLYGON",
             "TRADE_RPC_URLS",
-            "CATALYRST_TELEMETRY_ADMIN_TOKEN",
-            "TELEMETRY_SQL_DATABASE_URL",
             "CATALYRST_CREDITS_ADMIN_TOKEN",
             "CREDITS_CAPTCHA_SECRET",
             "STRIPE_SECRET_KEY",
@@ -1006,6 +1193,40 @@ mod tests {
             "{err}"
         );
         unsafe { std::env::remove_var(format!("{name}_FILE")) };
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An empty RPC file fails startup instead of silently reading the
+    /// network default; other secrets still read an empty file as unset.
+    #[test]
+    fn an_empty_rpc_file_is_refused_instead_of_defaulting() {
+        let dir = std::env::temp_dir().join(format!(
+            "catalyst-config-rpc-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let blank = dir.join("blank");
+        std::fs::write(&blank, " \n\t").unwrap();
+        for name in Config::NETWORK_DEFAULTED_SECRETS {
+            let mut slot = None;
+            let err = Config::read_secret_from(name, &blank, &mut slot)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                err.contains(&format!("{name}_FILE")) && err.contains("empty"),
+                "{err}"
+            );
+            assert_eq!(slot, None);
+        }
+        let mut other = None;
+        Config::read_secret_from("SESSION_SECRET", &blank, &mut other).unwrap();
+        assert_eq!(other, None);
+
+        let filled = dir.join("filled");
+        std::fs::write(&filled, "https://eth.example.org/key\n").unwrap();
+        let mut slot = None;
+        Config::read_secret_from("ETH_RPC_URL", &filled, &mut slot).unwrap();
+        assert_eq!(slot.as_deref(), Some("https://eth.example.org/key"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

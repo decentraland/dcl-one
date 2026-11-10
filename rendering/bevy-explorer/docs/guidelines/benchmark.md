@@ -34,11 +34,12 @@ CI* run, whose artifacts hold the builds ([The workflow](#the-workflow)).
   number or its URL) and optionally `change_sha` (a commit of the pull request; its head by
   default), `base_sha` (a commit on main; by default the newest main build that has each
   artifact) and `runs` (1 to 3). Starting one takes write access.
-- **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main.
-  Setup reads `engine.optimized` from both web apps' `build-info.json` and refuses a run whose
-  change or base build is unoptimized, such as one from a CI run older than this rule. A manual
-  *Bevy Explorer / CI* run on the branch builds the same; its completion starts no benchmark, so
-  start one by hand after it.
+- **Optimized builds only.** CI builds every web app with wasm-opt, on pull requests as on main,
+  unless `BENCHMARK_ENABLED_RUNNERS` is `none`: then a pull request that compiles the engine skips
+  it, while one that reuses main's compiled engine stays optimized. Setup reads `engine.optimized`
+  from both web apps' `build-info.json` and refuses a run whose change or base build is
+  unoptimized, such as one built while the fleet was off. A manual *Bevy Explorer / CI* run on the
+  branch builds optimized; its completion starts no benchmark, so start one by hand after it.
 - **Nothing starts, silently,** for a CI run that failed, built no web app or belongs to no pull
   request, a pull request that is closed or comes from a fork, and a CI run of a commit that is no
   longer the head (the head's own run starts the benchmark). The reason is in the *Inputs* job's
@@ -381,10 +382,11 @@ the reset page's two (`reset`, `reset-done`) under `/__perf/`:
 browser stream, a leg's runner and the report, so the page's sender (`perf_stream.js`) and its
 receiver change together. CI's *Test Suite* builds it on each platform it runs and uploads it as
 `bevy-explorer-benchmark-<os>-<arch>-<sha>` (`windows-amd64`, `macos-arm64`, `linux-amd64`; kept
-90 days on main, 7 otherwise). Windows and macOS run for a change that reaches the native build.
-A change confined to `perf_stream.js` or `sso.ts`, which the runner's tests read, runs the Test
-Suite on Ubuntu only, which builds the Linux runner; one confined to other web files builds none,
-and the workflow takes the runners from main.
+90 days on main, 7 otherwise). Windows and macOS run on every main push that runs the Test Suite,
+and on a PR only for a [platform input](platforms.md) or `ci:macos`. Other PRs that run the Test
+Suite, including one confined to `perf_stream.js` or `sso.ts` (which the runner's tests read),
+build only the Linux runner; one confined to other web files builds none. The workflow takes the
+missing runners from main.
 
 | Command | Does |
 | --- | --- |
@@ -576,7 +578,9 @@ system in `FLEET` (`tooling/benchmark-inputs.py`) and its name in `MACHINES`
 - `BENCHMARK_ENABLED_RUNNERS`: the labels of the laptops that are online, for example
   `intel-i5,apple-m1`. Unset or empty means every laptop, so it can never silently turn the
   benchmark off. The match is a substring check, so any separator works. Clear it when the whole
-  fleet is online.
+  fleet is online. `none`, in any letter case, turns the benchmark off, and pull requests that
+  compile the engine then skip wasm-opt; any other value that names no laptop turns it off and
+  keeps them optimized.
 - `BENCHMARK_RUNS`: measured runs per build, 1 to 3; 3 when unset. A manual run's `runs` overrides
   it.
 - `BENCHMARK_QUEUE_TIMEOUT_MINUTES`: the watchdog's limit, 60 when unset.

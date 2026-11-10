@@ -23,7 +23,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-XIPJ6YXQstlI6H+DRcScQteTGoxHi95jFmttSp6RucQ=";
+    hash = "sha256-qI4/ThuN8GX7F7WvRe5l7gjQQxP3uXJy+pxaUCm8ItY=";
   };
   runtimeDeps = stdenv.mkDerivation {
     pname = "foundation-sites-runtime-deps";
@@ -57,7 +57,7 @@ let
       (sites + /vite.config.ts) (sites + /react-router.config.ts) (sites + /tsconfig.json)
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
-      (root + /library/catalyst-api)
+      (root + /library/catalyst-api) (root + /library/shop)
     ];
   };
 in stdenv.mkDerivation {

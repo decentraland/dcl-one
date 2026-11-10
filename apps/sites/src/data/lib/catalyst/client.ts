@@ -21,11 +21,13 @@ export class CatalystError extends Error {
   }
 }
 
-async function errorFromResponse(res: Response, url: string): Promise<CatalystError> {
+export async function errorFromResponse(res: Response, url: string): Promise<CatalystError> {
   let server: string | null = null;
   try {
-    const body: unknown = JSON.parse(await res.text());
-    const msg = (body as { message?: unknown })?.message;
+    const body = JSON.parse(await res.text()) as { message?: unknown; error?: unknown } | null;
+    // `message` where a host still sends it; the places and events routes answer
+    // the old services' `{ok, error, code}` envelope.
+    const msg = typeof body?.message === "string" ? body.message : body?.error;
     if (typeof msg === "string" && msg.trim()) server = msg.trim();
   } catch {
   }
@@ -94,6 +96,7 @@ async function fetchText(
     );
   }
   if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
     throw new CatalystError(
       `Catalyst returned ${res.status} ${res.statusText}`,
       url,

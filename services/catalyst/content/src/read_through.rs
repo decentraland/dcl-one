@@ -1,13 +1,14 @@
 //! Read-through (`READ_THROUGH_ENABLED`): a read that misses locally asks the sync sources
 //! (`SYNC_SOURCE`, in order) and keeps a verified copy. An entity goes through the sync write
-//! path: its file must hash to its id and its auth chain (the peer's `/audit`) must pass the
-//! validator sync uses before anything is stored; its content files are hash-verified as sync
-//! downloads them, and [`LiveSyncDeployer`] writes the row as a synced deployment (the newest
-//! timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
+//! path: its file must hash to its id and the entity, under its auth chain (the peer's
+//! `/audit`), must pass the content validator sync runs before anything is stored; its content
+//! files are hash-verified as sync downloads them, the validator runs again over them (a refusal
+//! then removes the entity file; so does an undecided verdict, recorded for the retry worker, which runs with sync off too), and [`LiveSyncDeployer`] writes the row as a synced
+//! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
-//! profile is still found), and a content file every local reference to which is a profile
-//! render (`social::profile_images` draws those). Any other content file is stored once it
-//! hashes to its name.
+//! profile is still found). A content file is stored once it hashes to its name, a profile's
+//! avatar renders included; a `/contents/{hash}` miss is filled the same way, so a file this
+//! node lists but lost (or synced before it stored renders) is fetched on its first read.
 //!
 //! [`Fills`] bounds it: one fill per key at a time (a second reader waits on the first), a
 //! fixed number of fills at once (a reader beyond that answers the miss), a reader waits at
@@ -29,13 +30,16 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, TryAcquireError, watc
 use tokio::time::Instant;
 
 use super::deploy_remote_entity::{
-    BufferSink, ByteBudget, ByteReservation, ContentSource, PROFILE_RENDER_FILES, RemoteDeployment,
+    BufferSink, ByteBudget, ByteReservation, ContentSource, RemoteDeployment,
     deploy_entity_streaming, fetch_verified, stream_body,
 };
 use super::queries::{self, EntityDoc};
 use super::sync::{parse_entity_types, parse_sync_sources};
-use super::sync_deployer::{LiveSyncDeployer, verify_synced_entity};
-use super::sync_types::{AuthChain, DeploymentContext, SyncError};
+use super::sync_deployer::{
+    LiveFailedDeploymentsStore, LiveSyncDeployer, SyncValidation, is_buffered, is_entity_deployed,
+};
+use super::sync_types::{AuthChain, DeploymentContext, FailedDeployment, FailureReason, SyncError};
+use super::validator::{Sources, SyncedContent};
 use crate::auth::is_canonical_cid;
 use crate::storage::{Denylist, Storage};
 
@@ -48,6 +52,11 @@ pub const MAX_CONCURRENT_FILLS: usize = 16;
 /// The hang guard of one fill, a scene's content files included.
 const FILL_DEADLINE: Duration = Duration::from_secs(300);
 const NEGATIVE_MAX_ENTRIES: usize = 100_000;
+/// Keys longer than this enter the negative cache as their SHA-256, so its
+/// memory stays bounded by entry count: upstream caps neither the length of
+/// a pointer nor of an id, and a 10 MiB `/entities/active` body can name
+/// 1000 unknown 10 KB pointers.
+const NEGATIVE_KEY_MAX_BYTES: usize = 128;
 /// Files every fill together fetches at once.
 pub const MAX_CONCURRENT_DOWNLOADS: usize = 16;
 const FLUSH_CONCURRENCY: usize = 2;
@@ -91,6 +100,17 @@ impl FillsInner {
     }
 }
 
+/// The negative cache's key for `key` ([`NEGATIVE_KEY_MAX_BYTES`]).
+fn negative_key(key: &str) -> String {
+    if key.len() <= NEGATIVE_KEY_MAX_BYTES {
+        return key.to_string();
+    }
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(key.as_bytes());
+    let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
+    format!("sha256:{hex}")
+}
+
 /// Single-flight, bounded, negatively cached fills keyed by string.
 #[derive(Clone)]
 pub struct Fills {
@@ -120,7 +140,7 @@ impl Drop for FillDone {
             }
             let mut inflight = self.inner.inflight.lock();
             for key in &self.keys {
-                negative.insert(key.clone(), now);
+                negative.insert(negative_key(key), now);
                 inflight.remove(key);
             }
         }
@@ -207,7 +227,7 @@ impl Fills {
                     waits.push(running.clone());
                     joined = true;
                 } else if !negative
-                    .get(&key)
+                    .get(&negative_key(&key))
                     .is_some_and(|at| now.duration_since(*at) < inner.negative_ttl)
                 {
                     own.push(key);
@@ -376,8 +396,9 @@ impl ReadThrough {
         sources: Vec<String>,
         entity_types: Option<HashSet<String>>,
         fills: Fills,
+        validation: SyncValidation,
     ) -> Self {
-        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY);
+        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY, validation);
         let downloads = Downloads::new(MAX_CONCURRENT_DOWNLOADS, deployer.inflight_bytes().clone());
         Self {
             upstream: Arc::new(Upstream {
@@ -403,6 +424,7 @@ impl ReadThrough {
         pool: PgPool,
         storage: Arc<Storage>,
         client: reqwest::Client,
+        validator: Arc<Sources>,
     ) -> anyhow::Result<Option<Self>> {
         if !config.content.read_through_enabled {
             return Ok(None);
@@ -426,6 +448,7 @@ impl ReadThrough {
                 sources,
                 entity_types,
                 Fills::new(MAX_CONCURRENT_FILLS, DEFAULT_WAIT),
+                SyncValidation::Content(validator),
             )
             .with_file_sources(file_sources),
         ))
@@ -448,9 +471,15 @@ impl ReadThrough {
         &self.upstream.downloads
     }
 
+    /// The peers entities are read through, in order: the retry worker's peers with sync off.
+    pub fn sources(&self) -> &[String] {
+        &self.upstream.sources
+    }
+
     /// The active entities for `values` (ids, or pointers), as the local lookup answers them
-    /// once the misses have been filled. Denylisted ids and pointers are never asked for; the
-    /// caller still filters the answer.
+    /// once the misses have been filled, without the denylisted ones. Denylisted ids and
+    /// pointers are never asked for, and a pointer whose active entity is listed counts as
+    /// answered: hidden, not missing.
     pub async fn active_docs(
         &self,
         use_ids: bool,
@@ -469,9 +498,11 @@ impl ReadThrough {
         wait: Duration,
     ) -> Result<Vec<EntityDoc>, sqlx::Error> {
         let pool = &self.upstream.pool;
-        let docs = local_docs(pool, use_ids, values).await?;
-        let missing = missing_values(use_ids, values, &docs, self.upstream.storage.denylist());
+        let denylist = self.upstream.storage.denylist();
+        let mut docs = local_docs(pool, use_ids, values).await?;
+        let missing = missing_values(use_ids, values, &docs, denylist);
         if missing.is_empty() {
+            queries::retain_non_denylisted(&mut docs, denylist);
             return Ok(docs);
         }
         let prefix = if use_ids { ID_KEY } else { POINTER_KEY };
@@ -487,10 +518,11 @@ impl ReadThrough {
                 upstream.fill_entities(use_ids, values).await;
             })
             .await;
-        if !filled {
-            return Ok(docs);
+        if filled {
+            docs = local_docs(pool, use_ids, values).await?;
         }
-        local_docs(pool, use_ids, values).await
+        queries::retain_non_denylisted(&mut docs, denylist);
+        Ok(docs)
     }
 
     /// Fetches a content file this node does not hold; `true` when the caller should look
@@ -733,9 +765,9 @@ impl Upstream {
         Err(last)
     }
 
-    /// One entity, verified before anything is stored: the file hashes to `id` and the chain
-    /// passes the sync validator; then sync's own path downloads its content files and queues
-    /// the row. Answers the pointers the verified file claims.
+    /// One entity, verified before anything is stored: the file hashes to `id` and the entity
+    /// passes the content validator; then sync's own path downloads its content files, validates
+    /// again with them and queues the row. Answers the pointers the verified file claims.
     async fn copy_entity(
         &self,
         source: usize,
@@ -770,12 +802,16 @@ impl Upstream {
             }
         }
         let (bytes, hold) = fetched?;
-        verify_synced_entity(&bytes, id, &chain).await?;
-        let pointers = entity_pointers(&serde_json::from_slice(&bytes)?);
+        self.deployer
+            .verify_entity(&bytes, id, &chain, SyncedContent::Pending)
+            .await?;
+        let doc: Value = serde_json::from_slice(&bytes)?;
+        let pointers = entity_pointers(&doc);
+        let entity_type = doc["type"].as_str().unwrap_or(entity_type).to_string();
         self.storage.store(id, bytes.into()).await?;
         drop((hold, slot));
 
-        deploy_entity_streaming(
+        let deployed = deploy_entity_streaming(
             ContentSource {
                 client: &self.client,
                 storage: self.storage.clone(),
@@ -791,25 +827,69 @@ impl Upstream {
                 retry_state: None,
             },
         )
-        .await?;
+        .await;
+        if let Err(e) = deployed {
+            self.settle_unvalidated(id, &entity_type, &chain, &e).await;
+            return Err(e);
+        }
         Ok(pointers)
     }
 
-    /// Whether every local reference to `hash` is a profile render file, which sync does not
-    /// download either ([`PROFILE_RENDER_FILES`]). A hash nothing here references is not one.
-    async fn only_profile_renders(&self, hash: &str) -> Result<bool, sqlx::Error> {
-        let only: Option<bool> = sqlx::query_scalar(
-            r#"SELECT bool_and(d.entity_type = 'profile'
-                               AND lower(regexp_replace(f.key, '^\./', '')) = ANY($2))
-               FROM content.content_files f
-               JOIN content.deployments d ON d.id = f.deployment
-               WHERE f.content_hash = $1"#,
-        )
-        .bind(hash)
-        .bind(PROFILE_RENDER_FILES)
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(only == Some(true))
+    /// After a copy failed once its files were in: a refused or undecided entity's file goes,
+    /// unless sync holds it, and an undecided one is recorded for the retry worker.
+    async fn settle_unvalidated(
+        &self,
+        id: &str,
+        entity_type: &str,
+        chain: &AuthChain,
+        error: &SyncError,
+    ) {
+        match error {
+            SyncError::DeploymentRejected(_) => {}
+            SyncError::ValidationUndecided(_) => {
+                let failure = FailedDeployment {
+                    entity_type: entity_type.to_string(),
+                    entity_id: id.to_string(),
+                    reason: FailureReason::ValidationUndecided,
+                    auth_chain: chain.clone(),
+                    error_description: error.to_string(),
+                    failure_timestamp: chrono::Utc::now().timestamp_millis(),
+                    snapshot_hash: None,
+                    retry_count: 0,
+                    next_retry_at: 0,
+                };
+                if let Err(e) = LiveFailedDeploymentsStore::new(self.pool.clone())
+                    .report_failure(failure)
+                    .await
+                {
+                    tracing::warn!(entity_id = id, error = %e, "read-through: undecided entity not recorded");
+                }
+            }
+            _ => return,
+        }
+        self.evict_refused(id).await;
+    }
+
+    /// Removes an unvalidated entity's file unless a deployment row or a sync buffer refers to it.
+    async fn evict_refused(&self, id: &str) {
+        if is_buffered(id) {
+            return;
+        }
+        match is_entity_deployed(&self.pool, id, 0).await {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(e) => {
+                tracing::warn!(entity_id = id, error = %e, "read-through: refused entity file kept");
+                return;
+            }
+        }
+        // Sync may have taken its hold during the lookup.
+        if is_buffered(id) {
+            return;
+        }
+        if let Err(evict) = self.storage.delete(id).await {
+            tracing::warn!(entity_id = id, error = %evict, "read-through: refused entity file not removed");
+        }
     }
 
     async fn fill_content(&self, hash: &str) {
@@ -818,20 +898,6 @@ impl Upstream {
             Ok(true) => return,
             Err(e) => {
                 tracing::warn!(hash, error = %e, "read-through: storage check failed");
-                return;
-            }
-        }
-        match self.only_profile_renders(hash).await {
-            Ok(false) => {}
-            Ok(true) => {
-                tracing::debug!(
-                    hash,
-                    "read-through: a profile render is drawn here, not copied"
-                );
-                return;
-            }
-            Err(e) => {
-                tracing::warn!(hash, error = %e, "read-through: reference lookup failed");
                 return;
             }
         }

@@ -5,9 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AuthIdentity } from "../../data/auth/identity";
 import { createCartStore, type CartStorage, type CartStore } from "../cart/store";
 import type { OfferFetcher } from "../cart/revalidate";
-import type { CartListingRef, PurchaseOffer, PurchaseState } from "../model/purchase";
-import type { Session } from "../model/settlement";
-import { BOOK, SIGNED_OUT, web2, web3 } from "../payment/fixtures";
+import type { CartListingRef, PurchaseOffer, PurchaseState } from "@shop/model/purchase";
+import type { Session } from "@shop/model/settlement";
+import { BOOK, SIGNED_OUT, web2, web3 } from "@shop/payment/fixtures";
 import { ShopWalletProvider } from "../wallet/context";
 import type { ShopWalletHost } from "../wallet/session";
 import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, createFakeWallet, creatorTrade, resaleTrade, type FakeHandlers } from "./fakes";
@@ -20,6 +20,7 @@ export type DemoLine = {
   name: string;
   thumbnail?: string;
   category?: string;
+  wearableCategory?: string;
   rarity?: string;
   method?: "credits" | "mana";
   quantity?: number;
@@ -38,6 +39,8 @@ export type DemoScenario = {
   walletChainId?: number;
   walletAccount?: string;
   noSigner?: boolean;
+  /** The host is still reading the session back (the Marketplace's access is pending meanwhile). */
+  resolving?: boolean;
   checkout?: (lines: { id: string }[], cart: CartStore) => PurchaseState | null;
   path?: string;
   handlers?: FakeHandlers;
@@ -79,7 +82,7 @@ export function createDemo(s: DemoScenario) {
     const line = cart.add({
       asset: offer.asset,
       listing: l.listing ?? {},
-      display: { name: l.name, thumbnail: l.thumbnail, category: l.category, rarity: l.rarity, href: `/shop/items` },
+      display: { name: l.name, thumbnail: l.thumbnail, category: l.category, ...(l.wearableCategory ? { wearableCategory: l.wearableCategory } : {}), rarity: l.rarity, href: `/shop/items` },
       quantity: l.quantity,
       available: offer.available,
       seen: l.unseen ? null : offer,
@@ -165,6 +168,7 @@ export function createDemo(s: DemoScenario) {
     onSignIn: () => {},
     onConnectWallet: () => {},
     onSwitchAccount: () => {},
+    resolving: s.resolving,
   };
 
   return { session, cart, lines: lines.map((l) => l.line), shop, chain, relay, wallet, services, host };

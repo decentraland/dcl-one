@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createShopClient } from "@ui/shop/api";
+import { createShopClient, fetchTransport } from "@ui/shop/api";
+import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFlags";
 
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
 import { loadShopPage, serverShopClient } from "./pages.server";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
 
@@ -20,7 +22,7 @@ function node(routes: Route[]) {
     if (!hit) return new Response(JSON.stringify({ error: "not found" }), { status: 404 });
     return new Response(JSON.stringify(hit.body), { status: hit.status ?? 200 });
   }) as typeof fetch;
-  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, fetchImpl }) };
+  return { asked, client: createShopClient({ base: "http://node.test", mode: "canonical", signer: null, transport: fetchTransport(fetchImpl) }) };
 }
 
 const request = (path: string) => new Request(`https://sites.test${path}`);
@@ -40,12 +42,16 @@ describe("the item page's SSR data", () => {
     expect(status).toBe(200);
     expect(asked.every((u) => u.startsWith("/shop-api/"))).toBe(true);
     expect(data.queries.map(([key]) => key)).toEqual([
-      ["shop-item", C, "7"],
+      ["shop-item", C, "7", "primary"],
       ["item-meta", C, "7"],
       ["item-desc", C, "7"],
       ["collection-meta", C],
     ]);
     expect(data.queries.every(([, , at]) => at === now())).toBe(true);
+    // The creator's sale only: a resale is the Marketplace's, decided on the client for a web3 session.
+    const unified = asked.filter((u) => u.startsWith("/shop-api/v3/catalog/unified"));
+    expect(unified.length).toBeGreaterThan(0);
+    expect(unified.every((u) => new URLSearchParams(u.split("?")[1]).get("listingType") === "primary")).toBe(true);
     expect(data.seo).toMatchObject({
       title: "Pirate Hat",
       description: "A hat for pirates.",
@@ -102,12 +108,41 @@ describe("the other pages", () => {
       { path: "/shop-api/v1/collections", body: { data: [{ contractAddress: C, name: "dcl://halloween_2019", creator: "0x1" }] } },
     ]);
     const overview = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {} });
-    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "all"]]);
+    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"]]);
     const collection = await loadShopPage("collection", { request: request(`/shop/collection/${C}`), params: { contractAddress: C }, client, now, env: {} });
     expect(collection.data.seo.title).toBe("Halloween 2019");
   });
 
-  it("the collectibles and LAND grids prime their first page under the keys the pages ask for", async () => {
+  it("the overview reads its Best Deals rail once decentraland.org's creator-sales rollout is on, and sends the flags on", async () => {
+    const { asked, client } = node([
+      { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },
+      { path: "/shop-api/v3/catalog/trending", body: { data: [] } },
+    ]);
+    const flags = { "dapps-shop-creator-sales": true, "dapps-shop-suggested-for-you": false };
+    const overview = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags });
+    expect(overview.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"], ["overview-deals"]]);
+    expect(asked.some((u) => u.includes("discounted=true"))).toBe(true);
+    // The browser primes the same answer before it hydrates.
+    expect(overview.data.featureFlags).toEqual(flags);
+
+    const off = await loadShopPage("overview", { request: request("/shop/overview"), params: {}, client, now, env: {}, flags: {} });
+    expect(off.data.queries.map(([key]) => key)).toEqual([["overview-listings"], ["overview-trending", "primary"]]);
+    // No variants, no field: the page data stays as it was.
+    expect("featureFlagVariants" in overview.data).toBe(false);
+  });
+
+  it("sends the flags' variants on with them, primed on the server as in the browser", async () => {
+    const { client } = node([]);
+    const list = "0x00000000000000000000000000000000000000aa";
+    const flags = { "dapps-shop-my-store": true };
+    const variants = { "dapps-shop-my-store": list };
+    const page = await loadShopPage("myStore", { request: request("/shop/my-store"), params: {}, client, now, env: {}, flags, flagVariants: variants });
+    expect(page.data.featureFlags).toEqual(flags);
+    expect(page.data.featureFlagVariants).toEqual(variants);
+    expect(remoteFlagVariant(REMOTE_FLAG.myStore)).toBe(list);
+  });
+
+  it("the collectibles grid primes its first page under the key the page asks for", async () => {
     const { asked, client } = node([
       { path: "/shop-api/v3/catalog/unified", body: { data: [], total: 0 } },
       { path: "/shop-api/v1/nfts", body: { data: [], total: 0 } },
@@ -116,11 +151,27 @@ describe("the other pages", () => {
     expect(items.data.queries).toHaveLength(1);
     expect(items.data.queries[0]![0]).toMatchObject(["shop-items", { category: "wearable", sortBy: "cheapest", onSale: true }]);
     expect(asked.at(-1)).toContain("first=48");
-    const lands = await loadShopPage("lands", { request: request("/shop/lands"), params: {}, client, now, env: {} });
-    expect(lands.data.queries.map(([key]) => key[0])).toEqual(["land-nfts"]);
-    expect(asked.at(-1)).toMatch(/^\/shop-api\/v1\/nfts\?.*isLand=true/);
-    // The map and a visitor's own LAND are read in the browser, for that visitor.
-    for (const q of ["?isMap=true", "?owned=true"]) expect((await loadShopPage("lands", { request: request(`/shop/lands${q}`), params: {}, client, now, env: {} })).data.queries).toEqual([]);
+  });
+
+  it("the Marketplace's public pages (LAND, an account, the rankings) read nothing and are never indexed", async () => {
+    // Drawn only for a web3 session with the rollout on (ui3 market/access.tsx), which the server can't know.
+    const { asked, client } = node([{ path: "/shop-api/v1/nfts", body: { data: [], total: 0 } }]);
+    for (const [page, path] of [["lands", "/shop/lands"], ["account", "/shop/accounts/0x1"], ["rankings", "/shop/rankings"]] as const) {
+      const res = await loadShopPage(page, { request: request(path), params: { address: "0x1" }, client, now, env: {} });
+      expect(res.status).toBe(200);
+      expect(res.data.queries).toEqual([]);
+      expect(res.data.seo.noindex).toBe(true);
+      expect(res.data.seo.canonical).toBeUndefined();
+    }
+    expect(asked).toEqual([]);
+  });
+
+  it("a LAND token's page is the Marketplace's: never indexed, with no canonical", async () => {
+    const { client } = node([]);
+    const land = Object.values(LAND_NETWORKS)[0]!.land.toLowerCase();
+    const res = await loadShopPage("tokenDetail", { request: request(`/shop/token/${land}/1`), params: { contractAddress: land, tokenId: "1" }, client, now, env: {} });
+    expect(res.data.seo.noindex).toBe(true);
+    expect(res.data.seo.canonical).toBeUndefined();
   });
 
   it("an account page is never indexed and asks the node for nothing", async () => {
@@ -137,8 +188,8 @@ describe("the other pages", () => {
 
   it("PUBLIC_CATALYST_URL names the canonical origin", async () => {
     const { client } = node([]);
-    const res = await loadShopPage("lands", { request: request("/shop/lands?isMap=false"), params: {}, client, now, env: { PUBLIC_CATALYST_URL: "https://example.org/" } });
-    expect(res.data.seo.canonical).toBe("https://example.org/shop/lands");
+    const res = await loadShopPage("names", { request: request("/shop/names?x=1"), params: {}, client, now, env: { PUBLIC_CATALYST_URL: "https://example.org/" } });
+    expect(res.data.seo.canonical).toBe("https://example.org/shop/names");
   });
 });
 

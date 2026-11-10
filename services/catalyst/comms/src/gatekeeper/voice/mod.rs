@@ -41,7 +41,7 @@ use super::moderation::store::UpsertPlayerConnection;
 use super::{CommsState, SharedState};
 use crate::rooms::private_voice_chat_room_name;
 use crate::shared::signed_fetch::SignedPath;
-use db::{CommunityJoinError, DeleteRoomError, PrivateJoin, VoiceChatUserStatus};
+use db::{CommunityJoinError, DeleteRoomError, EndedPrivateCall, PrivateJoin, VoiceChatUserStatus};
 
 const STALE_LEAVE_SKEW_MS: i64 = 1000;
 
@@ -194,6 +194,23 @@ pub async fn get_private_voice_chat_room_credentials(
     room_id: &str,
     user_addresses: &[Address],
 ) -> Result<BTreeMap<String, Value>, ApiError> {
+    private_voice_chat_room_credentials(state, room_id, user_addresses, false).await
+}
+
+pub(super) async fn pending_private_voice_chat_room_credentials(
+    state: &CommsState,
+    room_id: &str,
+    user_addresses: &[Address],
+) -> Result<BTreeMap<String, Value>, ApiError> {
+    private_voice_chat_room_credentials(state, room_id, user_addresses, true).await
+}
+
+async fn private_voice_chat_room_credentials(
+    state: &CommsState,
+    room_id: &str,
+    user_addresses: &[Address],
+    pending_only: bool,
+) -> Result<BTreeMap<String, Value>, ApiError> {
     let call_id = Uuid::parse_str(room_id.trim())
         .map_err(|_| ApiError::bad_request("Invalid request body, room_id must be a uuid"))?;
     let [caller, callee] = user_addresses else {
@@ -222,13 +239,28 @@ pub async fn get_private_voice_chat_room_credentials(
             serde_json::json!({ "connection_url": connection_url }),
         );
     }
-    let displaced = state
-        .voice_db
-        .create_private_call(call_id, caller, callee)
-        .await?;
-    if !displaced.is_empty() {
-        let rooms: Vec<String> = displaced.iter().map(private_voice_chat_room_name).collect();
-        delete_livekit_rooms(state, &rooms, "displaced private voice room").await;
+    if pending_only {
+        if !state
+            .voice_db
+            .accept_pending_private_call(call_id, caller, callee)
+            .await?
+        {
+            return Err(ApiError::not_found("Private voice chat intent not found"));
+        }
+    } else {
+        match state
+            .voice_db
+            .create_private_call(call_id, caller, callee)
+            .await
+        {
+            Ok(_) => {}
+            Err(db::CreatePrivateCallError::PartiesDiffer) => {
+                return Err(super::errors::conflict(
+                    "Private voice chat room belongs to other participants",
+                ));
+            }
+            Err(db::CreatePrivateCallError::Db(e)) => return Err(e.into()),
+        }
     }
     Ok(out)
 }
@@ -270,27 +302,37 @@ pub async fn end_private_voice_chat_by(
     state: &CommsState,
     room_id: &str,
     address: &Address,
-) -> Result<Vec<String>, ApiError> {
-    let call_id = Uuid::parse_str(room_id.trim())
-        .map_err(|_| ApiError::not_found(format!("Room {room_id} does not exist")))?;
-    let users_in_room = match state
+) -> Result<EndedPrivateCall, ApiError> {
+    let not_found = || ApiError::not_found(format!("Room {room_id} does not exist"));
+    let call_id = Uuid::parse_str(room_id.trim()).map_err(|_| not_found())?;
+    end_private_call(state, Some(call_id), address)
+        .await?
+        .ok_or_else(not_found)
+}
+
+/// Ends the accepted call `call_id` (or else the latest one `address` is in)
+/// when `address` is one of its participants: the row goes first, then the
+/// LiveKit room. A failed room delete is logged; the row is gone either way.
+/// `None` when `address` is in no such call.
+pub async fn end_private_call(
+    state: &CommsState,
+    call_id: Option<Uuid>,
+    address: &Address,
+) -> Result<Option<EndedPrivateCall>, ApiError> {
+    let ended = match state
         .voice_db
         .delete_private_call_if_member(call_id, address)
         .await
     {
-        Ok(users) => users,
-        Err(DeleteRoomError::RoomDoesNotExist) => {
-            return Err(ApiError::not_found(format!(
-                "Room {room_id} does not exist"
-            )));
-        }
+        Ok(ended) => ended,
+        Err(DeleteRoomError::RoomDoesNotExist) => return Ok(None),
         Err(DeleteRoomError::Db(e)) => return Err(e.into()),
     };
-    let room_name = private_voice_chat_room_name(&call_id);
+    let room_name = private_voice_chat_room_name(&ended.call.id);
     if let Err(e) = state.room_service().delete_room(&room_name).await {
         tracing::warn!(error = %e, room = %room_name, "failed to delete livekit private voice room");
     }
-    Ok(users_in_room)
+    Ok(Some(ended))
 }
 
 /// DELETE /private-voice-chat/{id} (service token).
@@ -306,7 +348,9 @@ pub async fn end_private_voice_chat(
         .ok_or_else(|| ApiError::bad_request("Invalid request body, missing address"))?;
     let address = Address::parse(address)
         .map_err(|_| ApiError::bad_request("Invalid request body, invalid address"))?;
-    let users_in_room = end_private_voice_chat_by(&state, &id, &address).await?;
+    let users_in_room = end_private_voice_chat_by(&state, &id, &address)
+        .await?
+        .users;
     Ok(Json(
         serde_json::json!({ "users_in_voice_chat": users_in_room }),
     ))
@@ -667,16 +711,49 @@ pub(super) async fn set_speaker(
     target: &str,
     speaker: bool,
 ) -> Result<(), ApiError> {
-    state
-        .room_service()
+    let room = crate::rooms::community_voice_chat_room_name(&community_id);
+    let service = state.room_service();
+    let result = service
         .merge_participant_metadata_with_permission(
-            &crate::rooms::community_voice_chat_room_name(&community_id),
+            &room,
             target,
-            patch(&[("isRequestingToSpeak", serde_json::json!(false)), ("isSpeaker", serde_json::json!(speaker))]),
+            patch(&[
+                ("isRequestingToSpeak", serde_json::json!(false)),
+                ("isSpeaker", serde_json::json!(speaker)),
+            ]),
             serde_json::json!({ "canPublish": speaker, "canSubscribe": true, "canPublishData": true }),
         )
-        .await
-        .map_err(|e| ApiError::internal(format!("livekit update participant permissions: {e}")))
+        .await;
+    if let Err(error) = result {
+        if !speaker {
+            // A failed metadata read must not prevent revoking publishing. Omit
+            // metadata so an unread value is never replaced. Permission is a full
+            // replacement, so retain the authorized listener permissions. Only
+            // demotion may fall back; a failed promotion never grants publishing.
+            service
+                .update_participant(
+                    &room,
+                    target,
+                    None,
+                    Some(serde_json::json!({
+                        "canPublish": false, "canSubscribe": true, "canPublishData": true
+                    })),
+                )
+                .await
+                .map_err(|fallback| {
+                    ApiError::internal(format!(
+                        "livekit demotion incomplete: participant update: {error}; permission revocation: {fallback}"
+                    ))
+                })?;
+            return Err(ApiError::internal(format!(
+                "livekit demotion incomplete: permission revocation completed but participant update failed: {error}"
+            )));
+        }
+        return Err(ApiError::internal(format!(
+            "livekit update participant permissions: {error}"
+        )));
+    }
+    Ok(())
 }
 
 pub async fn community_promote_speaker(
@@ -875,9 +952,9 @@ pub(super) async fn delete_webhook_room(state: &CommsState, room: &str) -> Resul
     .map_err(|_| ApiError::internal("webhook room deletion failed"))
 }
 
-// Persist the notification before deleting its source rows, using the provider
-// event ID as a stable broadcast key. Failed notification/DB work retains the
-// participant count and moderator state for a complete retry.
+// Record the ended stream before deleting its source rows, using the provider
+// event ID as a stable ranking key. Failed DB work retains the participant
+// count and moderator state for a complete retry.
 async fn finish_webhook_community(
     state: &CommsState,
     community_id: CommunityId,
@@ -903,13 +980,14 @@ async fn finish_webhook_community(
         );
         state
             .social
-            .notify_community_voice_ended(community_id, &key, &event, now)
+            .record_community_voice_ended(community_id, &key, &event, now)
             .await?;
     }
     state
         .voice_db
         .delete_community_voice_chat(community_id)
         .await?;
+    state.social.community_voice_room_closed(community_id).await;
     Ok(())
 }
 
@@ -979,7 +1057,7 @@ const EVENT_TYPE_STREAMING: &str = "streaming";
 const EVENT_SUBTYPE_COMMUNITY_STREAMING_ENDED: &str = "community-streaming-ended";
 
 /// The @dcl/schemas `CommunityStreamingEnded` event document (the old SNS
-/// payload), kept as the notification's metadata.
+/// payload) social's ranking reads.
 fn community_streaming_ended_event(
     community_id: &str,
     participant_count: i64,
@@ -995,12 +1073,9 @@ fn community_streaming_ended_event(
     })
 }
 
-/// The old crate wrote an SNS outbox row the notifications service fanned
-/// out; on one database the in-app notification lands in
-/// `social.notifications` directly, one row per community member, idempotent
-/// per recipient on `broadcast_key` (the old event key). Rooms already
-/// deleted (count 0) are skipped. The notifications module owns the
-/// out-of-process channels; none is enqueued here.
+/// Hands the ended stream to social's community ranking, idempotent on the
+/// event key; upstream's notification processor ignored this event, so no
+/// member notice is written. Rooms already deleted (count 0) are skipped.
 async fn notify_community_streaming_ended(state: &CommsState, rooms: &[(CommunityId, i64)]) {
     let now = now_utc();
     let now_ms = now.and_utc().timestamp_millis();
@@ -1019,20 +1094,17 @@ async fn notify_community_streaming_ended(state: &CommsState, rooms: &[(Communit
         );
         let res = state
             .social
-            .notify_community_voice_ended(*community_id, &key, &event, now)
+            .record_community_voice_ended(*community_id, &key, &event, now)
             .await;
         match res {
             Ok(_) => count += 1,
             Err(e) => {
-                tracing::error!(error = %e, %community_id, "failed to write the CommunityStreamingEnded notifications")
+                tracing::error!(error = %e, %community_id, "failed to record CommunityStreamingEnded")
             }
         }
     }
     if count > 0 {
-        tracing::info!(
-            rooms = count,
-            "published CommunityStreamingEnded notifications"
-        );
+        tracing::info!(rooms = count, "recorded CommunityStreamingEnded");
     }
 }
 
@@ -1060,6 +1132,7 @@ pub(super) async fn destroy_community_voice_chat(
     }
     let participant_count = deleted?;
     notify_community_streaming_ended(state, &[(community_id, participant_count)]).await;
+    state.social.community_voice_room_closed(community_id).await;
     Ok(())
 }
 
@@ -1190,6 +1263,9 @@ pub async fn expire_community_voice_chats(state: &CommsState) -> Result<(), ApiE
         delete_livekit_rooms(state, &rooms, "expired community voice room"),
         notify_community_streaming_ended(state, &ended)
     );
+    for id in &expired {
+        state.social.community_voice_room_closed(*id).await;
+    }
     Ok(())
 }
 
@@ -1203,6 +1279,9 @@ pub async fn expire_voice_chats(state: &CommsState) -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("community voice chat expiration: {e}"))?;
     Ok(())
 }
+
+#[cfg(test)]
+mod speaker_tests;
 
 #[cfg(test)]
 mod tests {

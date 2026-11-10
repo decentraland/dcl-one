@@ -1,7 +1,8 @@
 // from: shop@2d3bf62:app/src/intl/en.json (assetCard.buyNow, itemDetail.becauseYouOwn, itemDetail.savedCount,
-//       itemDetail.buyResale, notifyMe.*)
+//       itemDetail.buyResale, notifyMe.*); marketplace@784c4af4:webapp/src/modules/translation/locales/en.json
+//       (favorites_modal.title, favorites_modal.empty as savedBy.*)
 
-import { hasMessage, t } from "../discovery/intl";
+import { hasMessage, t } from "@shop/discovery/intl";
 
 const LOCAL: Readonly<Record<string, string>> = {
   "assetCard.buyNow": "Buy now",
@@ -12,6 +13,11 @@ const LOCAL: Readonly<Record<string, string>> = {
   "itemDetail.favoriteFailed": "Couldn't update favorites.",
   "itemDetail.favoriteRetry": "Try again",
   "itemDetail.buyResale": "Buy resale",
+  "savedBy.title": "Saved by",
+  "savedBy.open": "See who saved {name}",
+  "savedBy.loading": "Loading who saved it",
+  "savedBy.what": "Who saved this item",
+  "savedBy.empty": "Nobody has saved this item yet.",
   "notifyMe.signInCta": "Sign in to get notified",
   "notifyMe.cta": "Notify me when available",
   "notifyMe.emailLabel": "Email",

@@ -69,7 +69,10 @@
         "@decentraland/apis"
       ],
       "paths": [
-        "/services/catalyst/social/"
+        "/services/catalyst/social/",
+        "/tooling/social-*.cjs",
+        "/tooling/social-captures.json",
+        "/tooling/tests/social-*.test.cjs"
       ]
     },
     {
@@ -135,6 +138,15 @@
       ]
     },
     {
+      "id": "sdk",
+      "description": "The creator SDK packages (@dcl/sdk, ecs, react-ecs, js-runtime, sdk-commands, playground-assets)",
+      "owners": [],
+      "paths": [
+        "/library/js-sdk-toolchain/",
+        "/.github/workflows/sdk.yml"
+      ]
+    },
+    {
       "id": "database",
       "description": "One schema bootstrap, migrations and database invariants",
       "owners": [
@@ -189,18 +201,33 @@
       ],
       "paths": [
         "/apps/sites/",
-        "/apps/ui3/"
+        "/apps/ui3/",
+        "/library/ui/"
+      ]
+    },
+    {
+      "id": "async",
+      "description": "Shared asynchronous waiting and backoff utilities",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/apis"
+      ],
+      "paths": [
+        "/library/async/"
       ]
     },
     {
       "id": "shop-ui",
-      "description": "Shop product UI",
+      "description": "Shop product UI and its portable core",
       "owners": [
         "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/shop/",
-        "/apps/sites/src/routes/shop/"
+        "/library/shop/",
+        "/apps/sites/src/routes/shop/",
+        "/tooling/shop-parity/",
+        "/tooling/shop-trade-journey/"
       ]
     },
     {
@@ -239,6 +266,41 @@
       ]
     },
     {
+      "id": "explorer-rust",
+      "description": "Explorer Rust source, its workspace manifest, build script and Cargo configuration, the Rust harness crates, the vendored Rust crates including Bevy, and the generated fork pins",
+      "owners": [
+        "@robtfm"
+      ],
+      "paths": [
+        "/rendering/bevy-explorer/source/crates/",
+        "/rendering/bevy-explorer/source/src/",
+        "/rendering/bevy-explorer/source/Cargo.toml",
+        "/rendering/bevy-explorer/source/Cargo.lock",
+        "/rendering/bevy-explorer/source/build.rs",
+        "/rendering/bevy-explorer/source/.cargo/config.toml",
+        "/rendering/bevy-explorer/source/local-harness/benchmark/",
+        "/rendering/bevy-explorer/source/local-harness/presence/harness-util/",
+        "/rendering/bevy-explorer/source/vendor/",
+        "/rendering/bevy-explorer/bevy/",
+        "/rendering/bevy-explorer/cargo-patches.toml",
+        "/rendering/bevy-explorer/forks.toml"
+      ]
+    },
+    {
+      "id": "uuav-native",
+      "description": "UUAV native video player: the client crate the Explorer links, the sandboxed uuav-helper, the committed runtime set and its lock, the native build and verification workflows",
+      "owners": [
+        "@decentraland/client"
+      ],
+      "paths": [
+        "/library/uuav/",
+        "/tooling/uuav/",
+        "/tooling/native-lock/",
+        "/.github/workflows/uuav-native.yml",
+        "/.github/workflows/uuav-verify.yml"
+      ]
+    },
+    {
       "id": "quality",
       "description": "Journey evidence, conformance and checks",
       "owners": [
@@ -256,6 +318,38 @@
       ],
       "paths": [
         "/docs/"
+      ]
+    },
+    {
+      "id": "ui-provenance",
+      "description": "Provenance of the shared UI library: source and public pins, font origins, port verification and their checks; a change needs an approving code-owner review",
+      "owners": [
+        "@decentraland/web-applications"
+      ],
+      "paths": [
+        "/library/ui/upstream.lock.json",
+        "/library/ui/port-verification.json",
+        "/library/ui/figma/lock-digests.mjs",
+        "/library/ui/figma/port-verification.mjs",
+        "/library/ui/figma/public-foundations.mjs",
+        "/library/ui/figma/src/public-foundations.test.ts",
+        "/library/ui/test/foundations-source.test.ts",
+        "/library/ui/test/foundations.test.tsx",
+        "/library/ui/foundations/source.json",
+        "/library/ui/foundations/typography/font-source.json",
+        "/library/ui/figma/src/install.ts",
+        "/library/ui/figma/src/install.test.ts"
+      ]
+    },
+    {
+      "id": "ui-library-workflow",
+      "description": "The shared UI library CI workflow that runs the provenance checks; owned by the library team together with infra, which owns the other workflows",
+      "owners": [
+        "@decentraland/web-applications",
+        "@decentraland/infra"
+      ],
+      "paths": [
+        "/.github/workflows/ui-library.yml"
       ]
     }
   ]

@@ -31,6 +31,7 @@ async fn owner(state: &CommsState, context: &PlaceContext) -> Result<Address, Ap
         .owner_address
         .as_deref()
         .and_then(|a| Address::parse(a).ok())
+        .filter(|_| context.world)
     {
         return Ok(address);
     }
@@ -360,10 +361,14 @@ async fn room_metadata_fields(
     {
         admins.insert(admin.admin);
     }
+    let ban_key = match (&context.world_name, context.world) {
+        (Some(world), true) => format!("{}:{}", world, context.base_position),
+        _ => context.place_id.clone(),
+    };
     let bans: Vec<String> = sqlx::query_scalar(
-        "SELECT banned_address FROM social.scene_bans WHERE place_id = $1 ORDER BY banned_address",
+        "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
     )
-    .bind(&context.place_id)
+    .bind([ban_key, context.place_id.clone()].as_slice())
     .fetch_all(&state.pool)
     .await?;
     Ok(Some(
@@ -374,13 +379,55 @@ async fn room_metadata_fields(
     ))
 }
 
+// Retired world rooms have no current role authority. Only reconcile their
+// ban projection, using the resolver's exact-world retained mapping. Re-read
+// durable bans each pass: an earlier unban must not erase a later reban.
+async fn retired_room_ban_fields(
+    state: &CommsState,
+    room: &str,
+) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
+    let Some((world, scene)) = crate::rooms::decode_world_scene_room(room) else {
+        return Ok(None);
+    };
+    let Some(replaced) = state
+        .scenes
+        .replaced_world_scene(&world, &scene)
+        .await
+        .map_err(|_| ApiError::http(503, "Retired room identity is temporarily unavailable"))?
+    else {
+        return Ok(None);
+    };
+    let mut keys: Vec<String> = replaced
+        .ban_keys(&world)
+        .iter()
+        .map(|key| key.as_str().to_owned())
+        .collect();
+    keys.push(scene.as_str().to_owned());
+    let bans: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT banned_address FROM social.scene_bans WHERE place_id = ANY($1::text[]) ORDER BY banned_address",
+    )
+    .bind(&keys)
+    .fetch_all(&state.pool)
+    .await?;
+    Ok(Some(
+        json!({"bannedAddresses": bans})
+            .as_object()
+            .unwrap()
+            .clone(),
+    ))
+}
+
 async fn refresh_room(state: &CommsState, room: &str) -> Result<(), ApiError> {
-    let Some(fields) = room_metadata_fields(state, room).await? else {
-        return Ok(());
+    let fields = match room_metadata_fields(state, room).await? {
+        Some(fields) => fields,
+        None => match retired_room_ban_fields(state, room).await? {
+            Some(fields) => fields,
+            None => return Ok(()),
+        },
     };
     state
         .room_service()
-        .merge_room_metadata(&room, fields)
+        .merge_room_metadata(room, fields)
         .await
         .map_err(|_| ApiError::http(503, "LiveKit room metadata refresh failed"))?;
     Ok(())
@@ -425,6 +472,9 @@ async fn refresh(state: &CommsState) -> Result<(), ApiError> {
 }
 
 pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
+    if let Err(error) = crate::gatekeeper::revocation::sweep(state).await {
+        tracing::warn!(%error, "world access revocation sweep retained for retry");
+    }
     let feed = RemovedPlaces::new(state.pool.clone());
     for event in feed.pending().await? {
         if let Err(error) = cleanup(state, &feed, &event).await {
@@ -439,6 +489,8 @@ pub async fn run_once(state: &CommsState) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod current_scene_tests;
+#[cfg(test)]
+mod retired_scene_tests;
 
 #[cfg(test)]
 mod tests {
@@ -510,6 +562,32 @@ mod tests {
         ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
             Ok(None)
         }
+    }
+
+    #[tokio::test]
+    async fn genesis_owner_ignores_captured_scene_metadata() {
+        let actual = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let state = owner_state(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: actual.into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        let mut context = world_context(Some("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        context.world = false;
+        context.world_name = None;
+        assert_eq!(owner(&state, &context).await.unwrap().as_str(), actual);
+        assert_eq!(
+            owner(&owner_state(StubPolicy::default()), &context)
+                .await
+                .unwrap_err()
+                .code,
+            503
+        );
     }
 
     #[tokio::test]
@@ -601,14 +679,14 @@ mod tests {
         ) -> Result<(), sqlx::Error> {
             self.stub.set_private_messages_privacy(a, p).await
         }
-        async fn notify_community_voice_ended(
+        async fn record_community_voice_ended(
             &self,
             c: CommunityId,
             k: &str,
             e: &Value,
             at: NaiveDateTime,
         ) -> Result<(), sqlx::Error> {
-            self.stub.notify_community_voice_ended(c, k, e, at).await
+            self.stub.record_community_voice_ended(c, k, e, at).await
         }
         async fn notify_streaming_notification(
             &self,
@@ -619,6 +697,15 @@ mod tests {
             } else {
                 self.stub.notify_streaming_notification(n).await
             }
+        }
+        async fn notify_user_notifications(
+            &self,
+            transaction: &mut sqlx::PgConnection,
+            notifications: &[crate::interfaces::UserNotification],
+        ) -> Result<(), sqlx::Error> {
+            self.stub
+                .notify_user_notifications(transaction, notifications)
+                .await
         }
     }
     async fn setup(pool: sqlx::PgPool) -> (CommsState, Arc<Directory>, RemovedPlace) {
@@ -652,6 +739,48 @@ mod tests {
         let event = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE place_id = $1").bind(&id).fetch_one(&pool).await.unwrap();
         (state, directory, event)
     }
+    #[tokio::test]
+    async fn failed_revocation_sweep_does_not_block_cleanup_or_metadata_inventory() {
+        use axum::{Json, Router, extract::State, response::IntoResponse, routing::post};
+        use std::sync::atomic::AtomicUsize;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (mut state, _, event) = setup(pool.clone()).await;
+        let calls = Arc::new(AtomicUsize::new(0));
+        async fn list_rooms(State(calls): State<Arc<AtomicUsize>>) -> axum::response::Response {
+            if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+            }
+            Json(json!({"rooms":[]})).into_response()
+        }
+        let app = Router::new()
+            .route("/twirp/livekit.RoomService/ListRooms", post(list_rooms))
+            .with_state(calls.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+        state.livekit.configured = true;
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        run_once(&state).await.unwrap();
+        server.abort();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "metadata inventory ran after the failed access sweep"
+        );
+        let cleaned: bool = sqlx::query_scalar(
+            "SELECT cleaned_at IS NOT NULL FROM explore.place_removal_pending WHERE event_id=$1",
+        )
+        .bind(event.event_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert!(
+            cleaned,
+            "removed-place cleanup committed despite the access-sweep outage"
+        );
+    }
+
     #[test]
     fn metadata_sweep_is_bounded_and_resumes_past_failed_rooms() {
         let rooms: Vec<String> = (0..205).map(|n| format!("scene:main:{n:03}")).collect();
@@ -905,6 +1034,12 @@ mod tests {
             sqlx::query("INSERT INTO social.scene_bans (place_id,banned_address,banned_by) VALUES ($1,$2,$3)")
                 .bind(key).bind(banned).bind(by.as_str()).execute(&pool).await.unwrap();
         }
+        sqlx::query("UPDATE social.scene_bans SET place_id=$1 WHERE place_id=$2")
+            .bind(format!("{}:5,6", first.key()))
+            .bind(scene.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
         state.policy = Arc::new(FootprintPolicy(parcels));
         state.scenes = Arc::new(StubScenes {
             room: Ok(resolved),
@@ -1105,12 +1240,28 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
-        let (state, directory, event) = setup(pool.clone()).await;
+        let (mut state, directory, event) = setup(pool.clone()).await;
+        // Notification authority comes from LAND, independently of captured catalogue metadata.
+        let land_owner = "0xcccccccccccccccccccccccccccccccccccccccc";
+        state.policy = Arc::new(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: land_owner.into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
         let wallet = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, $3)").bind(&event.place_id).bind(wallet).bind(event.removed_at - chrono::Duration::seconds(1)).execute(&pool).await.unwrap();
         directory.fail.store(true, Ordering::SeqCst);
         let feed = RemovedPlaces::new(pool.clone());
-        assert!(cleanup(&state, &feed, &event).await.is_err());
+        assert_eq!(
+            cleanup(&state, &feed, &event).await.unwrap_err().code,
+            500,
+            "the injected notification failure must follow successful LAND resolution"
+        );
         let saved: RemovedPlace = sqlx::query_as("SELECT event_id, place_id, owner_address, world, world_name, base_position, positions, removed_at, cleaned_at FROM explore.place_removal_pending WHERE event_id = $1").bind(event.event_id).fetch_one(&pool).await.unwrap();
         assert!(
             saved.cleaned_at.is_some(),
@@ -1134,10 +1285,9 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(count, 0, "ack follows successful notification");
-        assert_eq!(
-            directory.stub.streaming_notifications.lock().unwrap().len(),
-            1
-        );
+        let notifications = directory.stub.streaming_notifications.lock().unwrap();
+        assert_eq!(notifications.len(), 1);
+        assert_eq!(notifications[0].recipient.as_str(), land_owner);
     }
     #[tokio::test]
     async fn unknown_owner_does_not_block_cleanup_and_notification_remains_pending() {

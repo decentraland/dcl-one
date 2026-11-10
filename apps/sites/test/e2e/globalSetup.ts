@@ -47,19 +47,16 @@ async function checkNode(nodeUrl: string): Promise<void> {
 async function checkSchemaAndSeed(pgUrl: string): Promise<void> {
   const pool = new Pool({ connectionString: pgUrl, max: 2 });
   try {
-    const probe = await pool.query<{ place: string | null; events: string | null }>(
-      "SELECT to_regclass('explore.place')::text AS place, to_regclass('telemetry.events')::text AS events",
+    const probe = await pool.query<{ place: string | null }>(
+      "SELECT to_regclass('explore.place')::text AS place",
     );
-    const row = probe.rows[0];
-    if (!row?.place || !row?.events) {
+    if (!probe.rows[0]?.place) {
       throw new Error(
-        "explore.place or telemetry.events is missing: apply the v2 schema first (`catalyst schema apply` with DATABASE_URL set to this database)",
+        "explore.place is missing: apply the v2 schema first (`catalyst schema apply` with DATABASE_URL set to this database)",
       );
     }
     const n = await seedPlaces(pool);
     console.log(`[e2e] seeded ${n} places into explore.place`);
-    await pool.query("TRUNCATE telemetry.events RESTART IDENTITY");
-    console.log("[e2e] cleared telemetry.events");
   } catch (e) {
     throw unusable(`lab postgres at ${PG_VAR}`, (e as Error).message);
   } finally {
@@ -81,7 +78,6 @@ export async function setup(): Promise<void> {
 
   process.env.CATALYST_URL = nodeUrl;
   process.env.CATALYST_DATABASE_URL = pgUrl;
-  process.env.TELEMETRY_DATABASE_URL = pgUrl;
   process.env.SITES_E2E_PG = "ready";
 }
 

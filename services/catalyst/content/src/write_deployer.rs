@@ -5,22 +5,27 @@
 //! call, a plpgsql function named after the hash of its own body and defined
 //! in `schemas/00_content.sql` ([`super::land_publish::content_functions_sql`]).
 //!
-//! Before that call: the request TTLs, the operator denylist
+//! Before that call, in upstream's order and with its texts: the entity
+//! file and its parse (its `id` is the request's), the operator denylist
 //! ([`super::denylist::refusal`]: a listed entity id, content hash or
-//! pointer is refused), the per-pointer rate limits, and the validation.
+//! pointer is refused, a dcl-one refusal), the signature at the entity's
+//! timestamp, the pointers and this process's in-flight claim on them, the
+//! newer-entity check, the per-pointer rate limits, the request TTLs
+//! ([`DeployLimits`]), and the validation.
 //! With the content validator attached ([`WriteDeployer::with_validator`],
 //! as `serve` builds it) that is the old `ContentValidator` in full: the
 //! auth chain (the shared EIP-1654 validator for contract wallets), the
 //! per-type rules and size caps, content existence, and the access step per
-//! type, whose LAND leg is `land_authz::can_deploy_batch` (the index once its
-//! fold is published, the marketplace subgraph's owner leg before that,
-//! undecidable when neither can answer). Without it (a deployer built for a
-//! test) the partial checks below run: the chain, the LAND leg of a local
-//! scene and content existence. Peer sync does not use this deployer: it
+//! type, whose LAND leg is the Checker contract's `checkLAND` at the
+//! deploy's block (undecidable when the chain cannot answer). Without it (a
+//! deployer built for a test) the partial checks below run: the chain, the
+//! LAND leg of a local scene over `land_authz::can_deploy_batch` and content
+//! existence. Peer sync does not use this deployer: it
 //! batches through [`super::sync_deployer::LiveSyncDeployer`], which shares
 //! [`lock_deployment_pointers`].
 
 use std::collections::{HashMap, HashSet};
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::{Arc, LazyLock};
 use std::time::{Duration, Instant};
 
@@ -45,14 +50,37 @@ pub enum DeployFailure {
     /// This node could not decide, so the deposit is neither accepted nor at fault; answer 503 so
     /// the caller retries instead of being told their content does not exist.
     Unavailable(Vec<String>),
+    /// A contract-wallet signature this node could not check: 503 like
+    /// `Unavailable`, but it follows from the caller's auth chain.
+    Unverifiable(Vec<String>),
 }
 
 impl DeployFailure {
     pub fn errors(&self) -> &[String] {
         match self {
-            DeployFailure::Rejected(errors) | DeployFailure::Unavailable(errors) => errors,
+            DeployFailure::Rejected(errors)
+            | DeployFailure::Unavailable(errors)
+            | DeployFailure::Unverifiable(errors) => errors,
         }
     }
+}
+
+/// A `local_timestamp` in ms as the history routes report it: their
+/// `date_part('epoch', ..) * 1000`, truncated.
+macro_rules! local_ms_sql {
+    ($column:literal) => {
+        concat!("floor(date_part('epoch', ", $column, ") * 1000)::bigint")
+    };
+}
+
+/// Upstream's answer for a deploy that failed on this node's side; the
+/// cause (a database, store or task error) is logged, never answered.
+pub(crate) const DEPLOY_ERROR_MESSAGE: &str = "There was an error deploying the entity";
+
+/// `Unavailable` with [`DEPLOY_ERROR_MESSAGE`], `cause` logged.
+fn deploy_error(entity_id: &str, cause: &str) -> DeployFailure {
+    tracing::error!(entity_id, cause, "deployment failed on this node");
+    DeployFailure::Unavailable(vec![DEPLOY_ERROR_MESSAGE.to_string()])
 }
 
 impl From<Vec<String>> for DeployFailure {
@@ -67,9 +95,10 @@ struct HashedUpload {
     bytes: Bytes,
 }
 
-static UPLOAD_HASH_JOBS: LazyLock<Arc<Semaphore>> = LazyLock::new(|| Arc::new(Semaphore::new(4)));
+pub(crate) static UPLOAD_HASH_JOBS: LazyLock<Arc<Semaphore>> =
+    LazyLock::new(|| Arc::new(Semaphore::new(4)));
 
-async fn bounded_upload_hash<T: Send + 'static>(
+pub(crate) async fn bounded_upload_hash<T: Send + 'static>(
     limit: Arc<Semaphore>,
     hash: impl FnOnce() -> T + Send + 'static,
 ) -> Result<T, String> {
@@ -82,7 +111,10 @@ async fn bounded_upload_hash<T: Send + 'static>(
         hash()
     })
     .await
-    .map_err(|e| format!("upload hashing failed: {e}"))
+    .map_err(|e| {
+        tracing::error!(error = %e, "upload hashing task failed");
+        "Upload hashing failed.".to_string()
+    })
 }
 
 async fn hash_uploads(files: Vec<Bytes>) -> Result<Vec<HashedUpload>, String> {
@@ -199,10 +231,80 @@ impl TtlBucket {
         ttl_hit || size_hit
     }
 
+    /// Until the pointers clear: the latest of their windows, or a whole
+    /// TTL when the bucket is over its size; `None` when not limited.
+    fn retry_after(&mut self, pointers: &[String]) -> Option<Duration> {
+        if !self.is_limited(pointers) {
+            return None;
+        }
+        let now = tokio::time::Instant::now();
+        let window = pointers
+            .iter()
+            .filter_map(|p| self.entries.get(p))
+            .map(|t| self.ttl.saturating_sub(now.duration_since(*t)))
+            .max();
+        Some(window.unwrap_or(self.ttl))
+    }
+
+    #[cfg(test)]
     fn record(&mut self, pointers: &[String]) {
         let now = tokio::time::Instant::now();
         for p in pointers {
             self.entries.insert(p.clone(), now);
+        }
+    }
+
+    /// The check and the record in one step: `None` when limited.
+    fn try_reserve(&mut self, pointers: &[String]) -> Option<Held> {
+        if self.is_limited(pointers) {
+            return None;
+        }
+        let at = tokio::time::Instant::now();
+        let mut prev = HashMap::with_capacity(pointers.len());
+        for p in pointers {
+            let old = self.entries.insert(p.clone(), at);
+            prev.entry(p.clone()).or_insert(old);
+        }
+        Some(Held { at, prev })
+    }
+
+    /// Restores each pointer's earlier entry, unless something re-recorded it since.
+    fn release(&mut self, held: Held) {
+        for (p, old) in held.prev {
+            if self.entries.get(&p) != Some(&held.at) {
+                continue;
+            }
+            match old {
+                Some(t) => self.entries.insert(p, t),
+                None => self.entries.remove(&p),
+            };
+        }
+    }
+}
+
+struct Held {
+    at: tokio::time::Instant,
+    prev: HashMap<String, Option<tokio::time::Instant>>,
+}
+
+/// Pointers held from a passed check; [`Reservation::release`] frees them when the deploy is
+/// known not to have been stored. Dropping it keeps them, since a cancelled write may have committed.
+struct Reservation<'a> {
+    limiter: &'a DeployRateLimiter,
+    etype: String,
+    held: Option<Held>,
+    unchanged: Option<Held>,
+}
+
+impl Reservation<'_> {
+    fn release(self) {
+        if let Some(held) = self.held
+            && let Some(bk) = self.limiter.buckets.lock().get_mut(self.etype.as_str())
+        {
+            bk.release(held);
+        }
+        if let Some(held) = self.unchanged {
+            self.limiter.unchanged_profile.lock().release(held);
         }
     }
 }
@@ -212,19 +314,101 @@ struct DeployRateLimiter {
     unchanged_profile: Mutex<TtlBucket>,
 }
 
+/// The built-in per-pointer windows and key caps by entity type, upstream's
+/// (`getCacheConfigPerEntityMap` in `rate-limiter.ts`), used where no
+/// `DEPLOYMENT_RATE_LIMIT_*_<TYPE>` setting names the type.
+const REFERENCE_RATE_LIMITS: [(&str, Duration, usize); 6] = [
+    ("profile", Duration::from_secs(3), 500),
+    ("scene", Duration::from_secs(20), 1000),
+    ("wearable", Duration::from_secs(20), 1000),
+    ("store", Duration::from_secs(3), 300),
+    ("emote", Duration::from_secs(20), 1000),
+    ("outfits", Duration::from_secs(3), 2000),
+];
+
+/// The deployer's request bounds: `REQUEST_TTL_BACKWARDS`, and per entity
+/// type the per-pointer rate limit's window and key cap. A type takes its
+/// own `DEPLOYMENT_RATE_LIMIT_TTL_<TYPE>` / `_MAX_<TYPE>`, else its
+/// [`REFERENCE_RATE_LIMITS`] entry. As upstream's `rate-limiter.ts`,
+/// `DEPLOYMENTS_DEFAULT_RATE_LIMIT_TTL` / `_MAX` apply only to a type
+/// outside that table, and every type this node deploys is in it.
+#[derive(Clone, Debug)]
+pub struct DeployLimits {
+    pub request_ttl_backwards_ms: i64,
+    pub rate_limits: Vec<(&'static str, Duration, usize)>,
+}
+
+impl Default for DeployLimits {
+    fn default() -> Self {
+        Self {
+            request_ttl_backwards_ms: REQUEST_TTL_BACKWARDS_MS,
+            rate_limits: REFERENCE_RATE_LIMITS.to_vec(),
+        }
+    }
+}
+
+impl DeployLimits {
+    pub fn from_config(c: &crate::config::ContentConfig) -> Self {
+        let per_type = |etype: &str| match etype {
+            "scene" => (
+                c.deployment_rate_limit_ttl_scene_ms,
+                c.deployment_rate_limit_max_scene,
+            ),
+            "profile" => (
+                c.deployment_rate_limit_ttl_profile_ms,
+                c.deployment_rate_limit_max_profile,
+            ),
+            "wearable" => (
+                c.deployment_rate_limit_ttl_wearable_ms,
+                c.deployment_rate_limit_max_wearable,
+            ),
+            "store" => (
+                c.deployment_rate_limit_ttl_store_ms,
+                c.deployment_rate_limit_max_store,
+            ),
+            "emote" => (
+                c.deployment_rate_limit_ttl_emote_ms,
+                c.deployment_rate_limit_max_emote,
+            ),
+            _ => (
+                c.deployment_rate_limit_ttl_outfits_ms,
+                c.deployment_rate_limit_max_outfits,
+            ),
+        };
+        let rate_limits = REFERENCE_RATE_LIMITS
+            .iter()
+            .map(|&(etype, ttl, max)| {
+                let (type_ttl, type_max) = per_type(etype);
+                let ttl = type_ttl.map_or(ttl, Duration::from_millis);
+                let max = type_max.map_or(max, |m| usize::try_from(m).unwrap_or(usize::MAX));
+                (etype, ttl, max)
+            })
+            .collect();
+        Self {
+            request_ttl_backwards_ms: i64::try_from(c.request_ttl_backwards_ms).unwrap_or(i64::MAX),
+            rate_limits,
+        }
+    }
+}
+
 impl DeployRateLimiter {
     fn with_reference_defaults() -> Self {
-        let mut m = HashMap::new();
-        m.insert("profile", TtlBucket::new(Duration::from_secs(3), 500));
-        m.insert("scene", TtlBucket::new(Duration::from_secs(20), 1000));
-        m.insert("wearable", TtlBucket::new(Duration::from_secs(20), 1000));
-        m.insert("store", TtlBucket::new(Duration::from_secs(3), 300));
-        m.insert("emote", TtlBucket::new(Duration::from_secs(20), 1000));
-        m.insert("outfits", TtlBucket::new(Duration::from_secs(3), 2000));
         Self {
-            buckets: Mutex::new(m),
+            buckets: Mutex::new(Self::buckets(&REFERENCE_RATE_LIMITS)),
             unchanged_profile: Mutex::new(TtlBucket::new(Duration::from_secs(300), usize::MAX)),
         }
+    }
+
+    fn buckets(limits: &[(&'static str, Duration, usize)]) -> HashMap<&'static str, TtlBucket> {
+        limits
+            .iter()
+            .map(|&(etype, ttl, max)| (etype, TtlBucket::new(ttl, max)))
+            .collect()
+    }
+
+    /// Replaces the windows, forgetting what the old ones held.
+    fn configure(&self, limits: &[(&'static str, Duration, usize)]) {
+        *self.buckets.lock() = Self::buckets(limits);
     }
 
     fn is_rate_limited(&self, etype: &str, pointers: &[String]) -> bool {
@@ -234,10 +418,46 @@ impl DeployRateLimiter {
             .unwrap_or(false)
     }
 
+    #[cfg(test)]
     fn record(&self, etype: &str, pointers: &[String]) {
         if let Some(bk) = self.buckets.lock().get_mut(etype) {
             bk.record(pointers);
         }
+    }
+
+    /// Checks and records the pointers atomically (and in the unchanged-profile bucket when
+    /// `unchanged`); `None` when either bucket is limited.
+    fn reserve(
+        &self,
+        etype: &str,
+        pointers: &[String],
+        unchanged: bool,
+    ) -> Option<Reservation<'_>> {
+        let held = match self.buckets.lock().get_mut(etype) {
+            Some(bk) => Some(bk.try_reserve(pointers)?),
+            None => None,
+        };
+        let mut reservation = Reservation {
+            limiter: self,
+            etype: etype.to_string(),
+            held,
+            unchanged: None,
+        };
+        if unchanged {
+            let held = self.unchanged_profile.lock().try_reserve(pointers);
+            match held {
+                Some(held) => reservation.unchanged = Some(held),
+                None => {
+                    reservation.release();
+                    return None;
+                }
+            }
+        }
+        Some(reservation)
+    }
+
+    fn retry_after(&self, etype: &str, pointers: &[String]) -> Option<Duration> {
+        self.buckets.lock().get_mut(etype)?.retry_after(pointers)
     }
 
     fn is_unchanged_limited(&self, pointers: &[String]) -> bool {
@@ -251,9 +471,34 @@ impl DeployRateLimiter {
         }
         self.unchanged_profile.lock().entries.clear();
     }
+}
 
-    fn record_unchanged(&self, pointers: &[String]) {
-        self.unchanged_profile.lock().record(pointers);
+/// One deploy at a time per entity id in this process. A copy of an
+/// in-flight deploy (a client's retry after a timeout) waits for it and
+/// answers the timestamp it stored, instead of meeting the pointers the first
+/// one holds in the rate limiter. An entry lives while a deploy holds or
+/// awaits it.
+#[derive(Default)]
+struct EntityLocks(Mutex<HashMap<String, std::sync::Weak<EntityLock>>>);
+
+/// The stored timestamp once a holder deployed the entity.
+type EntityLock = tokio::sync::Mutex<Option<i64>>;
+
+impl EntityLocks {
+    async fn lock(&self, entity_id: &str) -> tokio::sync::OwnedMutexGuard<Option<i64>> {
+        let lock = {
+            let mut locks = self.0.lock();
+            locks.retain(|_, lock| lock.strong_count() > 0);
+            match locks.get(entity_id).and_then(std::sync::Weak::upgrade) {
+                Some(lock) => lock,
+                None => {
+                    let lock = Arc::new(EntityLock::new(None));
+                    locks.insert(entity_id.to_string(), Arc::downgrade(&lock));
+                    lock
+                }
+            }
+        };
+        lock.lock_owned().await
     }
 }
 
@@ -263,11 +508,9 @@ pub struct WriteDeployer {
     /// The shared EIP-1654 validator (`crate::auth::cached_rpc_validator`);
     /// `None` without `ETH_RPC_URL`: a contract-wallet link is undecidable.
     eip1654: Option<Arc<dyn Eip1654Validator>>,
-    /// The LAND rights source of a local scene deploy (`land_authz::can_deploy_batch`:
-    /// the index once its fold is published, the marketplace subgraph's owner
-    /// leg before that; the old `LandOperatorResolver` over the squid index).
-    /// The partial checks' LAND leg (`None` runs none) and the unpublish
-    /// route's parcel check.
+    /// The LAND rights index (`land_authz::can_deploy_batch`): the partial
+    /// checks' LAND leg (`None` runs none) and the unpublish route's parcel
+    /// check.
     land_authz: Option<Arc<LandAuthzState>>,
     /// The full content validator (`super::validator`); when attached it
     /// replaces the partial checks in `validate`.
@@ -276,6 +519,12 @@ pub struct WriteDeployer {
     /// listed id is refused.
     denylist: Option<Arc<Denylist>>,
     rate_limiter: DeployRateLimiter,
+    /// `REQUEST_TTL_BACKWARDS`, ms ([`WriteDeployer::configure`]).
+    request_ttl_backwards_ms: AtomicI64,
+    /// The pointers a deploy of this process holds, by entity type, from its
+    /// checks to its write: a second deploy of any of them is refused.
+    pointers_in_flight: Mutex<HashMap<String, HashSet<String>>>,
+    deploying: EntityLocks,
     /// The deploy function per provenance variant, once its existence was checked.
     deploy_fns: [tokio::sync::OnceCell<String>; 2],
     /// Upstream forwarding (`CONTENT_FORWARD_UPSTREAM_URL`): a local deploy
@@ -304,9 +553,58 @@ impl WriteDeployer {
             validator: None,
             denylist: None,
             rate_limiter: DeployRateLimiter::with_reference_defaults(),
+            request_ttl_backwards_ms: AtomicI64::new(REQUEST_TTL_BACKWARDS_MS),
+            pointers_in_flight: Mutex::new(HashMap::new()),
+            deploying: EntityLocks::default(),
             deploy_fns: [tokio::sync::OnceCell::new(), tokio::sync::OnceCell::new()],
             forwarder: None,
         }
+    }
+
+    /// Applies the configured request TTL and rate limits.
+    pub fn configure(&self, limits: &DeployLimits) {
+        self.request_ttl_backwards_ms
+            .store(limits.request_ttl_backwards_ms, Ordering::Relaxed);
+        self.rate_limiter.configure(&limits.rate_limits);
+    }
+
+    /// `REQUEST_TTL_BACKWARDS`, ms.
+    pub(crate) fn request_ttl_backwards_ms(&self) -> i64 {
+        self.request_ttl_backwards_ms.load(Ordering::Relaxed)
+    }
+
+    /// Whether a deploy of this process holds `pointer` of `etype`.
+    #[cfg(test)]
+    pub(crate) fn holds_pointer(&self, etype: &str, pointer: &str) -> bool {
+        self.pointers_in_flight
+            .lock()
+            .get(etype)
+            .is_some_and(|held| held.contains(pointer))
+    }
+
+    /// Claims `pointers` of `etype` for one deploy; `Err` names the ones
+    /// another deploy of this process holds, in the entity's order.
+    fn claim_pointers<'a>(
+        &'a self,
+        etype: &str,
+        pointers: &[String],
+    ) -> Result<PointerClaim<'a>, Vec<String>> {
+        let mut in_flight = self.pointers_in_flight.lock();
+        let held = in_flight.entry(etype.to_string()).or_default();
+        let busy: Vec<String> = pointers
+            .iter()
+            .filter(|p| held.contains(*p))
+            .cloned()
+            .collect();
+        if !busy.is_empty() {
+            return Err(busy);
+        }
+        held.extend(pointers.iter().cloned());
+        Ok(PointerClaim {
+            deployer: self,
+            etype: etype.to_string(),
+            pointers: pointers.to_vec(),
+        })
     }
 
     pub fn with_forwarder(mut self, forwarder: Option<Arc<super::forward::Forwarder>>) -> Self {
@@ -341,11 +639,113 @@ impl WriteDeployer {
         self.eip1654.as_deref()
     }
 
+    pub(crate) fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    pub(crate) fn storage(&self) -> &Arc<Storage> {
+        &self.storage
+    }
+
+    /// The stored `local_timestamp` (ms) of a deployed entity, as the
+    /// history routes report it.
+    pub(crate) async fn deployed_timestamp(&self, entity_id: &str) -> sqlx::Result<Option<i64>> {
+        sqlx::query_scalar(concat!(
+            "SELECT ",
+            local_ms_sql!("local_timestamp"),
+            " FROM content.deployments WHERE entity_id = $1"
+        ))
+        .bind(entity_id)
+        .fetch_optional(&self.pool)
+        .await
+    }
+
+    /// The deploy statement's newer-entity test, ahead of it: a deployment
+    /// of the same type on any of the pointers that happened after `entity`.
+    pub(crate) async fn has_newer_deployment(&self, entity: &Entity) -> sqlx::Result<bool> {
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM content.deployments
+                WHERE entity_type = $1 AND entity_pointers && $2
+                  AND (entity_timestamp > to_timestamp($3 / 1000.0)
+                       OR (entity_timestamp = to_timestamp($3 / 1000.0)
+                           AND lower(entity_id) > lower($4))))",
+        )
+        .bind(entity.entity_type.as_str())
+        .bind(&entity.pointers)
+        .bind(entity.timestamp as f64)
+        .bind(&entity.id)
+        .fetch_one(&self.pool)
+        .await
+    }
+
+    /// Seconds until the per-pointer deploy limit lets `pointers` through
+    /// (at least 1); `None` when it does now.
+    pub(crate) fn rate_limit_retry_after(&self, etype: &str, pointers: &[String]) -> Option<u64> {
+        self.rate_limiter
+            .retry_after(etype, pointers)
+            .map(|d| d.as_secs_f64().ceil().max(1.0) as u64)
+    }
+
+    /// The chain checked against `entity_id` at `at_ms`, as the deploy
+    /// validator checks it: `Unverifiable` for a contract wallet this node
+    /// cannot ask about, `Rejected` with upstream's text otherwise.
+    pub(crate) async fn check_signature(
+        &self,
+        entity_id: &str,
+        auth_chain: &AuthChain,
+        at_ms: i64,
+    ) -> Result<(), DeployFailure> {
+        match self.validate_signature(entity_id, auth_chain, at_ms).await {
+            Ok(()) => Ok(()),
+            Err(e @ (AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented)) => {
+                Err(DeployFailure::Unverifiable(vec![format!(
+                    "The signature is invalid. {e}"
+                )]))
+            }
+            Err(e) => Err(DeployFailure::Rejected(vec![format!(
+                "The signature is invalid. {e}"
+            )])),
+        }
+    }
+
+    /// The validation of one partial-upload batch: the content validator's
+    /// staging subset when attached, else the LAND leg (the signature is
+    /// checked before). The access step is skipped when `include_access` is off.
+    pub(crate) async fn validate_staging(
+        &self,
+        entity: &Entity,
+        files: &HashMap<String, Bytes>,
+        auth_chain: &AuthChain,
+        include_access: bool,
+    ) -> Result<(), DeployFailure> {
+        if let Some(sources) = &self.validator {
+            let ctx = super::validator::Context {
+                sources,
+                auth_chain,
+            };
+            return super::validator::validate_staging(entity, files, &ctx, include_access)
+                .await
+                .map_err(super::validator::into_deploy_failure);
+        }
+        if include_access
+            && let Some(signer) = auth_chain.first().map(|link| link.payload.to_lowercase())
+        {
+            self.validate_land_rights(entity, &signer).await?;
+        }
+        Ok(())
+    }
+
     /// Forgets every per-pointer TTL: a route test deploys to one pointer
     /// more than once inside the 3-20 s windows.
     #[cfg(test)]
     pub(crate) fn clear_rate_limits(&self) {
         self.rate_limiter.clear();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn is_rate_limited(&self, etype: &str, pointer: &str) -> bool {
+        self.rate_limiter
+            .is_rate_limited(etype, &[pointer.to_lowercase()])
     }
 
     /// The old validator's LAND leg for a local scene: every pointer must be
@@ -380,7 +780,10 @@ impl WriteDeployer {
         let decisions = crate::land_authz::can_deploy_batch(land, &coords, signer)
             .await
             .map_err(|e| {
-                DeployFailure::Unavailable(vec![format!("Error checking parcel access: {e}")])
+                warn!(entity_id = %entity.id, error = %e, "LAND rights could not be checked");
+                DeployFailure::Unavailable(vec![
+                    super::validator::checker::PARCEL_ACCESS_UNDECIDED.to_string(),
+                ])
             })?;
         let errors: Vec<String> = coords
             .iter()
@@ -428,7 +831,7 @@ impl WriteDeployer {
     async fn validate(
         &self,
         entity: &Entity,
-        files: &HashMap<String, Vec<u8>>,
+        files: &HashMap<String, Bytes>,
         auth_chain: &AuthChain,
         context: &str,
     ) -> Result<(), DeployFailure> {
@@ -441,18 +844,7 @@ impl WriteDeployer {
                 .await
                 .map_err(super::validator::into_deploy_failure);
         }
-        if let Err(e) = self
-            .validate_signature(&entity.id, auth_chain, entity.timestamp)
-            .await
-        {
-            let message = format!("The auth chain is invalid: {e}");
-            return Err(match e {
-                AuthError::Eip1654ValidationFailed(_) | AuthError::Eip1654NotImplemented => {
-                    DeployFailure::Unavailable(vec![message])
-                }
-                _ => DeployFailure::Rejected(vec![message]),
-            });
-        }
+        // The chain was checked before the server checks.
         if context == "LOCAL"
             && let Some(signer) = auth_chain.first().map(|link| link.payload.to_lowercase())
         {
@@ -509,7 +901,56 @@ impl WriteDeployer {
     }
 }
 
+/// `REQUEST_TTL_BACKWARDS`'s default.
 pub(crate) const REQUEST_TTL_BACKWARDS_MS: i64 = 20 * 60 * 1000;
+
+/// One deploy's hold on its pointers ([`WriteDeployer::claim_pointers`]),
+/// released on drop.
+struct PointerClaim<'a> {
+    deployer: &'a WriteDeployer,
+    etype: String,
+    pointers: Vec<String>,
+}
+
+impl Drop for PointerClaim<'_> {
+    fn drop(&mut self) {
+        let mut in_flight = self.deployer.pointers_in_flight.lock();
+        if let Some(held) = in_flight.get_mut(&self.etype) {
+            for p in &self.pointers {
+                held.remove(p);
+            }
+        }
+    }
+}
+
+/// ` (entityId=<id> pointers=<p,..>)`, the tail upstream's server checks
+/// put before their final period.
+fn entity_suffix(entity: &Entity) -> String {
+    format!(
+        " (entityId={} pointers={})",
+        entity.id,
+        entity.pointers.join(",")
+    )
+}
+
+/// Upstream's refusal of an entity a newer one on its pointers overtook.
+pub(crate) fn newer_entity_message(entity: &Entity) -> String {
+    format!(
+        "There is a newer entity pointed by one or more of the pointers you provided{}.",
+        entity_suffix(entity)
+    )
+}
+
+/// Whether `message` refuses pointers another deploy of this process holds.
+pub(crate) fn is_pointer_conflict_message(message: &str) -> bool {
+    message.starts_with("The following pointers are currently being deployed: ")
+}
+
+/// Whether `message` is [`newer_entity_message`]'s.
+pub(crate) fn is_newer_entity_message(message: &str) -> bool {
+    message
+        .starts_with("There is a newer entity pointed by one or more of the pointers you provided")
+}
 pub(crate) const REQUEST_TTL_FORWARDS_MS: i64 = 15 * 60 * 1000;
 
 impl WriteDeployer {
@@ -522,30 +963,67 @@ impl WriteDeployer {
         auth_chain: Value,
         context: &str,
     ) -> Result<i64, DeployFailure> {
+        self.deploy_entity_anchored(files, entity_id, auth_chain, context, None)
+            .await
+    }
+
+    /// [`Self::deploy_entity`] with the request TTLs measured from
+    /// `ttl_anchor_ms` instead of now: a partial upload's publication
+    /// measures them from the upload's first batch.
+    pub(crate) async fn deploy_entity_anchored(
+        &self,
+        files: Vec<Bytes>,
+        entity_id: &str,
+        auth_chain: Value,
+        context: &str,
+        ttl_anchor_ms: Option<i64>,
+    ) -> Result<i64, DeployFailure> {
+        let mut deployed = self.deploying.lock(entity_id).await;
+        if let Some(creation_ts) = *deployed {
+            return Ok(creation_ts);
+        }
+        let result = self
+            .deploy_entity_unlocked(files, entity_id, auth_chain, context, ttl_anchor_ms)
+            .await;
+        if let Ok(creation_ts) = result {
+            *deployed = Some(creation_ts);
+        }
+        result
+    }
+
+    async fn deploy_entity_unlocked(
+        &self,
+        files: Vec<Bytes>,
+        entity_id: &str,
+        auth_chain: Value,
+        context: &str,
+        ttl_anchor_ms: Option<i64>,
+    ) -> Result<i64, DeployFailure> {
         let started = Instant::now();
         let uploads = hash_uploads(files)
             .await
-            .map_err(|e| DeployFailure::Unavailable(vec![e]))?;
+            .map_err(|e| deploy_error(entity_id, &e))?;
         let hash_us = started.elapsed().as_micros() as u64;
         let entity_bytes = uploads
             .iter()
             .find(|upload| upload.v1 == entity_id || upload.v0 == entity_id)
             .map(|upload| upload.bytes.clone())
-            .ok_or_else(|| {
-                vec!["The entity file was not part of the uploaded files.".to_string()]
-            })?;
+            .ok_or_else(|| vec!["Failed to find the entity file.".to_string()])?;
 
-        let mut entity: Entity = serde_json::from_slice(&entity_bytes)
-            .map_err(|e| vec![format!("There was a problem parsing the entity: {e}")])?;
-
-        if entity.id.is_empty() {
-            entity.id = entity_id.to_string();
-        } else if entity.id != entity_id {
-            return Err(
-                vec!["Entity id does not match the uploaded entity file.".to_string()].into(),
-            );
+        // Upstream answers the bare sentence; the parser's text is logged.
+        let mut entity: Entity = serde_json::from_slice(&entity_bytes).map_err(|e| {
+            info!(entity_id, error = %e, "deployment refused: unparsable entity file");
+            vec!["There was a problem parsing the entity".to_string()]
+        })?;
+        for pointer in &mut entity.pointers {
+            *pointer = pointer.to_lowercase();
         }
+        // The id is the request's, as upstream's parser takes it: the file
+        // hashes to it, whatever `id` field it carries.
+        entity.id = entity_id.to_string();
 
+        // A dcl-one refusal upstream does not make: the operator denylist
+        // keeps a listed id, hash or pointer off this node.
         if let Some(errors) = self
             .denylist
             .as_deref()
@@ -555,19 +1033,33 @@ impl WriteDeployer {
             return Err(DeployFailure::Rejected(errors));
         }
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
-        if now_ms - entity.timestamp > REQUEST_TTL_BACKWARDS_MS {
-            return Err(vec![
-                "The request is not recent enough, please submit it again with a new timestamp."
-                    .to_string(),
-            ]
-            .into());
+        let auth_chain: AuthChain = serde_json::from_value(auth_chain)
+            .map_err(|e| vec![format!("invalid auth chain: {e}")])?;
+        // Upstream's order: the signature at the entity's timestamp, then
+        // the pointers, the in-flight claim and the server checks (newer
+        // entity, rate limit, request TTLs), then the validator.
+        self.check_signature(entity_id, &auth_chain, entity.timestamp)
+            .await?;
+        if entity.pointers.is_empty() {
+            return Err(vec!["The entity does not have any pointer.".to_string()].into());
         }
-        if now_ms - entity.timestamp < -REQUEST_TTL_FORWARDS_MS {
-            return Err(vec!["The request timestamp is too far in the future.".to_string()].into());
-        }
+        let _claim = self
+            .claim_pointers(entity.entity_type.as_str(), &entity.pointers)
+            .map_err(|busy| {
+                vec![format!(
+                    "The following pointers are currently being deployed: '{}'. Please try again in a few seconds.",
+                    busy.join(",")
+                )]
+            })?;
 
-        let pointers_lc: Vec<String> = entity.pointers.iter().map(|p| p.to_lowercase()).collect();
+        // An early refusal, as upstream's; the write's own check is binding,
+        // so a failed lookup goes on to it.
+        match self.has_newer_deployment(&entity).await {
+            Ok(true) => return Err(vec![newer_entity_message(&entity)].into()),
+            Ok(false) => {}
+            Err(e) => warn!(entity_id, error = %e, "newer-entity lookup failed"),
+        }
+        let pointers_lc = &entity.pointers;
         let rate_limited_msg = || {
             vec![format!(
                 "Entity rate limited (entityId={} pointers={}).",
@@ -575,22 +1067,33 @@ impl WriteDeployer {
                 entity.pointers.join(",")
             )]
         };
+        // An early refusal; the reservation after validation is the binding check.
         if self
             .rate_limiter
-            .is_rate_limited(entity.entity_type.as_str(), &pointers_lc)
+            .is_rate_limited(entity.entity_type.as_str(), pointers_lc)
         {
             return Err(rate_limited_msg().into());
         }
         let content_unchanged =
             entity.entity_type == EntityType::Profile && self.is_content_unchanged(&entity).await;
-        if content_unchanged && self.rate_limiter.is_unchanged_limited(&pointers_lc) {
+        if content_unchanged && self.rate_limiter.is_unchanged_limited(pointers_lc) {
             return Err(rate_limited_msg().into());
         }
 
-        self.rate_limiter
-            .record(entity.entity_type.as_str(), &pointers_lc);
-        if content_unchanged {
-            self.rate_limiter.record_unchanged(&pointers_lc);
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        if ttl_anchor_ms.unwrap_or(now_ms) - entity.timestamp > self.request_ttl_backwards_ms() {
+            return Err(vec![format!(
+                "The request is not recent enough, please submit it again with a new timestamp{}.",
+                entity_suffix(&entity)
+            )]
+            .into());
+        }
+        if now_ms - entity.timestamp < -REQUEST_TTL_FORWARDS_MS {
+            return Err(vec![format!(
+                "The request is too far in the future, please submit it again with a new timestamp{}.",
+                entity_suffix(&entity)
+            )]
+            .into());
         }
 
         let declared: HashSet<&str> = entity
@@ -599,7 +1102,7 @@ impl WriteDeployer {
             .map(|c| c.hash.as_str())
             .chain(std::iter::once(entity.id.as_str()))
             .collect();
-        let mut vfiles: HashMap<String, Vec<u8>> = HashMap::new();
+        let mut vfiles: HashMap<String, Bytes> = HashMap::new();
         for upload in &uploads {
             let key = if declared.contains(upload.v1.as_str()) {
                 &upload.v1
@@ -609,7 +1112,7 @@ impl WriteDeployer {
                 &upload.v1
             };
 
-            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.to_vec())
+            if let Some(prev) = vfiles.insert(key.clone(), upload.bytes.clone())
                 && prev != upload.bytes
             {
                 return Err(vec![format!(
@@ -618,9 +1121,6 @@ impl WriteDeployer {
                 .into());
             }
         }
-
-        let auth_chain: AuthChain = serde_json::from_value(auth_chain)
-            .map_err(|e| vec![format!("invalid auth chain: {e}")])?;
 
         let validation_started = Instant::now();
         match self.validate(&entity, &vfiles, &auth_chain, context).await {
@@ -637,25 +1137,54 @@ impl WriteDeployer {
                 );
                 return Err(DeployFailure::Unavailable(errors));
             }
+            Err(DeployFailure::Unverifiable(errors)) => {
+                warn!(
+                    entity_id,
+                    ?errors,
+                    "deployment signature could not be checked"
+                );
+                return Err(DeployFailure::Unverifiable(errors));
+            }
         }
 
         let validation_us = validation_started.elapsed().as_micros() as u64;
         let persist_started = Instant::now();
-        let creation_ts = self
+        // Released on a failed or no-op write, so only an accepted deploy holds its pointers.
+        let Some(reservation) =
+            self.rate_limiter
+                .reserve(entity.entity_type.as_str(), pointers_lc, content_unchanged)
+        else {
+            return Err(rate_limited_msg().into());
+        };
+        let persisted = match self
             .persist(&entity, &entity_bytes, &uploads, &auth_chain, context)
-            .await?;
+            .await
+        {
+            Ok(persisted) => persisted,
+            Err(e) => {
+                reservation.release();
+                return Err(e);
+            }
+        };
+        if !persisted.inserted {
+            reservation.release();
+        }
 
         let persist_us = persist_started.elapsed().as_micros() as u64;
         let cleanup_started = Instant::now();
         drop(vfiles);
         drop(uploads);
         tracing::debug!(target: "catalyst_perf", phase="deploy", entity_id, hash_us, validation_us, persist_us, cleanup_us=cleanup_started.elapsed().as_micros() as u64, elapsed_us=started.elapsed().as_micros() as u64);
-        Ok(creation_ts)
+        Ok(persisted.creation_ts)
     }
 }
 
-const NEWER_ENTITY_MESSAGE: &str =
-    "There is a newer entity pointed by one or more of the pointers you provided.";
+struct Persisted {
+    /// The stored `local_timestamp` (ms), as the history routes report it.
+    creation_ts: i64,
+    /// `false` when the entity was already deployed.
+    inserted: bool,
+}
 
 #[derive(sqlx::FromRow)]
 struct PersistOutcome {
@@ -663,7 +1192,15 @@ struct PersistOutcome {
     newer: bool,
     overwrote: i32,
     cleared: i32,
+    /// The statement's `now()`, the `local_timestamp` an insert stores, in
+    /// ms ([`LOCAL_MS_SQL`]); absent from the bare CTE the tests run.
+    #[sqlx(default)]
+    local_ms: i64,
 }
+
+/// The deploy call's `now()`: one statement is one transaction, so it is the
+/// `now()` the function stored as the deployment's `local_timestamp`.
+const LOCAL_MS_SQL: &str = local_ms_sql!("now()");
 
 /// The whole write as one statement off the pointer lock: the newer-entity check and the
 /// overwrite calculation read the locked snapshot, the deployment insert is gated on the former,
@@ -805,7 +1342,7 @@ pub(crate) fn deploy_function_sql(local_provenance: bool, or_replace: bool) -> S
 
 pub(crate) fn deploy_function_call(name: &str) -> String {
     format!(
-        "SELECT dep_id, newer, overwrote, cleared FROM content.{name}($1, $2, $3, $4, $5::json, $6, $7, $8::json, $9, $10, $11)"
+        "SELECT dep_id, newer, overwrote, cleared, {LOCAL_MS_SQL} AS local_ms FROM content.{name}($1, $2, $3, $4, $5::json, $6, $7, $8::json, $9, $10, $11)"
     )
 }
 
@@ -819,7 +1356,7 @@ pub(crate) fn forward_call(name: &str) -> String {
               queued AS (INSERT INTO content.forward_outbox (entity_id, target) \
                          SELECT $4, $12 FROM d WHERE d.dep_id IS NOT NULL AND NOT d.newer \
                          ON CONFLICT (entity_id) DO NOTHING) \
-         SELECT dep_id, newer, overwrote, cleared FROM d",
+         SELECT dep_id, newer, overwrote, cleared, local_ms FROM d",
         deploy_function_call(name)
     )
 }
@@ -832,8 +1369,8 @@ impl WriteDeployer {
         uploads: &[HashedUpload],
         auth_chain: &AuthChain,
         context: &str,
-    ) -> Result<i64, DeployFailure> {
-        let unavailable = |e: String| DeployFailure::Unavailable(vec![e]);
+    ) -> Result<Persisted, DeployFailure> {
+        let unavailable = |e: String| deploy_error(&entity.id, &e);
         let started = Instant::now();
         store_deployment_files(
             &self.storage,
@@ -907,17 +1444,21 @@ impl WriteDeployer {
             .await
             .map_err(|e| unavailable(format!("deployment write failed: {e}")))?;
 
-        let now_ms = chrono::Utc::now().timestamp_millis();
         tracing::debug!(target: "catalyst_perf", phase="persist", entity_id=%entity.id, storage_us, db_us=db_started.elapsed().as_micros() as u64);
 
         if outcome.newer {
-            return Err(DeployFailure::Rejected(vec![
-                NEWER_ENTITY_MESSAGE.to_string(),
-            ]));
+            return Err(DeployFailure::Rejected(vec![newer_entity_message(entity)]));
         }
         let Some(dep_id) = outcome.dep_id else {
             info!(entity_id = %entity.id, "entity already deployed; treating as success");
-            return Ok(now_ms);
+            let stored = self
+                .deployed_timestamp(&entity.id)
+                .await
+                .map_err(|e| unavailable(format!("reading the stored deployment: {e}")))?;
+            return Ok(Persisted {
+                creation_ts: stored.unwrap_or(outcome.local_ms),
+                inserted: false,
+            });
         };
         info!(
             entity_id = %entity.id,
@@ -930,7 +1471,10 @@ impl WriteDeployer {
         if let Some(forwarder) = forward {
             forwarder.kick();
         }
-        Ok(now_ms)
+        Ok(Persisted {
+            creation_ts: outcome.local_ms,
+            inserted: true,
+        })
     }
 }
 

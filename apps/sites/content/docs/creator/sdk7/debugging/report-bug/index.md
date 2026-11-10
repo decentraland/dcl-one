@@ -18,18 +18,18 @@ Before submitting a bug report, please ensure the following:
 To report a bug with the SDK, you'll need a GitHub account. Follow these steps:
 
 1. Visit the following link: [New Issue Page](https://github.com/decentraland/sdk/issues/new/choose)
-2. Click **Get Started** next to **Bug Report**. ![](/docs/creator/images/report-bug.webp)
+2. Click **Get Started** next to **Bug Report**. ![](/docs/creator/images/report-bug.webp)
 3. Complete all the fields in the template. The template provides instructions for each section. The more details you can provide, the quicker our developers can identify and resolve the issue.
 4. Click **Submit new issue**.
 
-![](/docs/creator/images/submit-issue.webp)
+![](/docs/creator/images/submit-issue.webp)
 
 Developers may ask follow-up questions on your ticket if they need clarifications or additional information. You'll receive email notifications of updates to your bug report.
 
 
 > [!WARNING]
 > **📔 Note**: For any issues not related to the SDK please contact the support team. To reach out, please visit this page [intercom.decentraland.org](https://intercom.decentraland.org/) or send us an email to [hello@decentraland.org](mailto:hello@decentraland.org). You can also find us on [Discord](https://decentraland.org/discord/). The team is available to help out from Monday-Sunday, 12pm to 9pm UTC and will do its best to get back in touch as soon as possible. You can expect a reply within 60 min on Discord during the above time frame and within 24h on email.
-> 
+>
 > You can also contact the DAO support team on the [DAO Discord](https://discord.gg/bxHtcMxUs4).
 
 
@@ -48,7 +48,7 @@ You can paste code snippets within your issue text, but the best way to provide 
 1. Write your code snippet on the left, and view your scene on the right panel.
 2. Click the **Share** button and paste the link into your issue report.
 
-![](/docs/creator/images/playground/playground.webp)
+![](/docs/creator/images/playground/playground.webp)
 
 Using the playground simplifies issue reproduction and ensures that anyone opening the link can see the same output, regardless of their operating system, SDK version, Node version, etc. It also facilitates quick iteration to identify affected conditions and pinpoint the issue's cause.
 

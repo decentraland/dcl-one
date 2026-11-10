@@ -1,0 +1,9 @@
+.root { padding-top: 16px; border-top: 1px solid var(--fill-4); }
+.title { margin: 0 0 12px; }
+.list { list-style: none; padding: 0; margin: 0; }
+.scene, .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 0; }
+.detailLink { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; color: inherit; }
+.travelLink { color: inherit; overflow-wrap: anywhere; }
+.button { padding: 6px 12px; cursor: pointer; color: var(--text); background: var(--panel); border: 1px solid var(--ink-45); border-radius: 6px; }
+.button:disabled { cursor: default; }
+.root :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }

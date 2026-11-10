@@ -847,25 +847,42 @@ pub async fn lookup_portable(
     let Some(urn) = first_scene else {
         return Err("Empty scenesUrn on server/about/configurations".to_owned());
     };
-    let hacked_urn = urn.replace('?', "?=&").replace("?=&=&", "?=&");
-
-    let Ok(path) = IpfsPath::new_from_urn::<EntityDefinition>(&hacked_urn) else {
-        return Err("failed to parse urn".to_owned());
-    };
-
-    let Ok(Some(hash)) = path.context_free_hash() else {
-        return Err("failed to resolve content hash from urn".to_owned());
-    };
-
+    let (hash, pid) = resolve_portable_urn(&urn, &url)?;
     Ok((
         hash,
         PortableSource {
-            pid: hacked_urn,
+            pid,
             parent_scene,
             ens: None,
             super_user,
         },
     ))
+}
+
+fn resolve_portable_urn(urn: &str, realm_url: &str) -> Result<(String, String), String> {
+    let urn = urn.replace('?', "?=&").replace("?=&=&", "?=&");
+    let path = IpfsPath::new_from_urn::<EntityDefinition>(&urn)
+        .map_err(|_| "failed to parse urn".to_owned())?;
+    let hash = path
+        .context_free_hash()
+        .ok()
+        .flatten()
+        .ok_or_else(|| "failed to resolve content hash from urn".to_owned())?;
+    let pid = match path.base_url() {
+        Some(base)
+            if matches!(
+                url::Url::parse(base),
+                Err(url::ParseError::RelativeUrlWithoutBase)
+            ) =>
+        {
+            let base = url::Url::parse(&format!("{}/", realm_url.trim_end_matches('/')))
+                .and_then(|url| url.join(base))
+                .map_err(|error| error.to_string())?;
+            format!("urn:decentraland:entity:{hash}?=&baseUrl={base}")
+        }
+        _ => urn,
+    };
+    Ok((hash, pid))
 }
 
 type SpawnResponseChannel = Option<RpcResultSender<Result<SpawnResponse, String>>>;
@@ -2026,6 +2043,10 @@ pub fn handle_generic_perm(
     mut perms: Permission<RpcResultSender<bool>>,
     mut tys: Local<HashSet<PermissionType>>,
 ) {
+    // Dropping a cancelled caller's prompt receiver also dismisses it in the HUD.
+    perms
+        .pending
+        .retain(|(response, ..)| !response.is_cancelled());
     for ev in events.read() {
         if let (
             RpcOrigin::Scene { entity: scene, .. },
@@ -2036,6 +2057,9 @@ pub fn handle_generic_perm(
             },
         ) = (&ev.origin, &ev.call)
         {
+            if response.is_cancelled() {
+                continue;
+            }
             let allow_out_of_scene = matches!(
                 ty,
                 PermissionType::HideAvatarsNametags
@@ -2197,6 +2221,53 @@ struct SignedFetchMeta {
     is_guest: Option<bool>,
     realm: SignedFetchMetaRealm,
     signer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hash_payload: Option<String>,
+}
+
+fn delegated_signed_fetch_meta(
+    meta: String,
+    body_hash: Option<String>,
+) -> Result<String, serde_json::Error> {
+    let Some(hash) = body_hash else {
+        return Ok(meta);
+    };
+    let mut value: serde_json::Value = serde_json::from_str(&meta)?;
+    value["hashPayload"] = hash.into();
+    Ok(value.to_string())
+}
+
+fn validate_signed_fetch(
+    uri: &str,
+    body_hash: Option<&str>,
+    preview: bool,
+) -> Result<(Uri, Option<String>), String> {
+    if let Some(hash) = body_hash {
+        if hash.len() != 64 || !hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
+            return Err("expected a 64-character lowercase hexadecimal body hash".to_owned());
+        }
+    }
+    let mut parsed = url::Url::parse(uri).map_err(|e| format!("invalid signed fetch URL: {e}"))?;
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("signed fetch URLs cannot contain credentials".to_owned());
+    }
+    if !(preview || ["https", "wss"].contains(&parsed.scheme()) || parsed.is_loopback()) {
+        return Err("signed fetch requires HTTPS or WSS outside preview or loopback".to_owned());
+    }
+    // Fetch applies WHATWG path normalization and strips fragments before transmission.
+    parsed.set_fragment(None);
+    let uri =
+        Uri::try_from(parsed.as_str()).map_err(|e| format!("invalid signed fetch URL: {e}"))?;
+    Ok((uri, body_hash.map(str::to_owned)))
+}
+
+fn signed_fetch_tld(domain: &str) -> &'static str {
+    match domain {
+        "decentraland.zone" => "zone",
+        "decentraland.today" => "today",
+        // Custom domains without an explicit environment mapping use the historical `org` fallback.
+        _ => "org",
+    }
 }
 
 /// `realm.hostname` in the shape unity sends: the bare host for the `main` realm (the
@@ -2249,27 +2320,22 @@ fn handle_sign_request(
         // selects a per-scene storage delegation in server mode
         if let (
             RpcOrigin::Scene { hash: scene, .. },
-            RpcCall::SignRequest {
+            RpcCall::SignRequest(common::rpc::SignRequest {
                 method,
                 uri,
+                body_hash,
                 response,
-            },
+            }),
         ) = (&ev.origin, &ev.call)
         {
-            let https_or_local = url::Url::parse(uri).is_ok_and(|url| {
-                preview_mode.is_preview
-                    || ["https", "wss"].contains(&url.scheme())
-                    || url.is_loopback()
-            });
-            if !https_or_local {
-                response.send(Err(format!("URL scheme must be `https` (request `{uri}`)")));
-                continue;
-            }
-
-            let Ok(uri) = Uri::try_from(uri) else {
-                response.send(Err(format!("failed to parse uri: {uri}")));
-                continue;
-            };
+            let (uri, hash_payload) =
+                match validate_signed_fetch(uri, body_hash.as_deref(), preview_mode.is_preview) {
+                    Ok(inputs) => inputs,
+                    Err(error) => {
+                        response.send(Err(error));
+                        continue;
+                    }
+                };
 
             // world-storage requests from a delegated scene are signed with the
             // delegation's ephemeral key + scope header instead of the engine wallet
@@ -2291,6 +2357,7 @@ fn handle_sign_request(
                 let scope_header = delegation.scope_header.clone();
                 let ephemeral = delegation.wallet.clone();
                 let task = IoTaskPool::get().spawn_compat(async move {
+                    let meta = delegated_signed_fetch_meta(meta, hash_payload)?;
                     let mut headers = sign_request(&method, &uri, &ephemeral, meta).await?;
                     headers.push(("x-authoritative-scope".to_owned(), scope_header));
                     Ok(headers)
@@ -2318,6 +2385,7 @@ fn handle_sign_request(
             let hostname = signed_fetch_realm_hostname(&realm.about_url, &realm_name);
 
             let method = method.clone();
+            let tld = signed_fetch_tld(common::base_domain::get()).to_owned();
             let scene = scene.to_string();
             let wallet = wallet.clone();
             let ipfs = ipfs.ipfs().clone();
@@ -2333,7 +2401,7 @@ fn handle_sign_request(
                     origin: Some(base_url.clone()),
                     scene_id: Some(scene),
                     parcel: Some(scene_meta.scene.base),
-                    tld: Some("org".to_owned()),
+                    tld: Some(tld),
                     network: Some("mainnet".to_owned()),
                     is_guest: Some(is_guest),
                     realm: SignedFetchMetaRealm {
@@ -2342,6 +2410,7 @@ fn handle_sign_request(
                         server_name: realm_name,
                     },
                     signer: "decentraland-kernel-scene".to_owned(),
+                    hash_payload,
                 };
                 debug!("signed fetch meta {:?}", meta);
 
@@ -2359,16 +2428,13 @@ fn handle_sign_request(
             response,
         } = ev
         {
-            let Ok(uri) = Uri::try_from(uri) else {
-                response.send(Err(format!("failed to parse uri: {uri}")));
-                continue;
-            };
-
+            let uri = uri.clone();
             let method = method.clone();
             let meta = meta.to_owned().unwrap_or_default();
             let wallet = wallet.clone();
-            let task = IoTaskPool::get()
-                .spawn_compat(async move { sign_request(&method, &uri, &wallet, meta).await });
+            let task = IoTaskPool::get().spawn_compat(async move {
+                wallet::sign_service_request(&method, &uri, &wallet, meta).await
+            });
             tasks.push((response.clone(), task));
         }
     }
@@ -2600,6 +2666,60 @@ pub fn process_startup_scenes(
 }
 
 #[cfg(test)]
+mod portable_urn_tests {
+    use super::resolve_portable_urn;
+
+    #[test]
+    fn relative_content_urls_follow_the_served_realm_at_any_gateway_path() {
+        for realm in [
+            "https://play.example/bridge-scene/static/BevyExplorerUI",
+            "https://play.example/play/bridge-scene/static/BevyExplorerUI/",
+        ] {
+            let (hash, urn) = resolve_portable_urn(
+                "urn:decentraland:entity:bafkreiexample?=&baseUrl=../",
+                realm,
+            )
+            .unwrap();
+            assert_eq!(hash, "bafkreiexample");
+            let base = realm
+                .trim_end_matches('/')
+                .trim_end_matches("BevyExplorerUI");
+            assert_eq!(
+                urn,
+                format!("urn:decentraland:entity:bafkreiexample?=&baseUrl={base}")
+            );
+        }
+    }
+
+    #[test]
+    fn absolute_content_urls_and_missing_bases_are_preserved() {
+        for suffix in [
+            "",
+            "?=&baseUrl=https://cdn.example/content/",
+            "?=&baseUrl=file:///scene/",
+        ] {
+            let urn = format!("urn:decentraland:entity:bafkreiexample{suffix}");
+            assert_eq!(
+                resolve_portable_urn(&urn, "https://play.example/realm")
+                    .unwrap()
+                    .1,
+                urn
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_urns_and_relative_bases_without_a_realm_are_rejected() {
+        assert!(resolve_portable_urn("invalid", "https://play.example/realm").is_err());
+        assert!(resolve_portable_urn(
+            "urn:decentraland:entity:bafkreiexample?=&baseUrl=../",
+            "invalid",
+        )
+        .is_err());
+    }
+}
+
+#[cfg(test)]
 mod readfile_url_guard_tests {
     use super::{filename_looks_like_url, reads_local_realm_origin};
     use common::structs::CurrentRealm;
@@ -2728,5 +2848,111 @@ mod signed_fetch_identity_tests {
             signed_fetch_realm_hostname("http://127.0.0.1:8000/about", "LocalPreview"),
             "127.0.0.1"
         );
+    }
+}
+
+#[cfg(test)]
+mod signed_fetch_body_tests {
+    use super::*;
+    #[test]
+    fn malformed_scene_body_hash_is_rejected() {
+        for hash in [
+            String::new(),
+            "0".repeat(63),
+            "0".repeat(65),
+            "A".repeat(64),
+            format!("{}g", "a".repeat(63)),
+            format!("{}é", "a".repeat(62)),
+        ] {
+            assert!(
+                validate_signed_fetch("https://example.org", Some(&hash), false).is_err(),
+                "accepted {hash:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_metadata_distinguishes_an_absent_body_from_an_empty_body() {
+        let empty_body = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+        for hash in [None, Some(empty_body)] {
+            let (_, hash_payload) =
+                validate_signed_fetch("https://example.org", hash, false).unwrap();
+            let meta = serde_json::to_value(SignedFetchMeta {
+                hash_payload,
+                ..Default::default()
+            })
+            .unwrap();
+            assert_eq!(meta.get("hashPayload"), hash.map(|s| json!(s)).as_ref());
+        }
+    }
+
+    #[test]
+    fn delegation_claims_are_preserved_when_body_is_bound() {
+        let original = r#"{"signer":"dcl:authoritative-server","sceneId":"Mixed","parcel":"1,2"}"#;
+        let digest = "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a";
+        let (_, hash_payload) =
+            validate_signed_fetch("https://storage.decentraland.org", Some(digest), false).unwrap();
+        assert_eq!(
+            delegated_signed_fetch_meta(original.to_owned(), None).unwrap(),
+            original
+        );
+        let meta: serde_json::Value = serde_json::from_str(
+            &delegated_signed_fetch_meta(original.to_owned(), hash_payload).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(meta["sceneId"], "Mixed");
+        assert_eq!(meta["signer"], "dcl:authoritative-server");
+        assert_eq!(meta["parcel"], "1,2");
+        assert_eq!(meta["hashPayload"], digest);
+    }
+    #[test]
+    fn normalizes_fetch_url_before_signing() {
+        let (uri, _) = validate_signed_fetch(
+            "https://Example.org/assets/../API/Mixed?Q=Yes#fragment",
+            None,
+            false,
+        )
+        .unwrap();
+        assert_eq!(uri.path(), "/API/Mixed");
+        assert_eq!(uri.query(), Some("Q=Yes"));
+        assert_eq!(uri.authority().unwrap().as_str(), "example.org");
+    }
+
+    #[test]
+    fn rejects_url_credentials_without_disclosing_them() {
+        let error = validate_signed_fetch(
+            "https://scene-user:scene-password@example.org/",
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.contains("credentials"));
+        assert!(!error.contains("scene-user"));
+        assert!(!error.contains("scene-password"));
+
+        let error = validate_signed_fetch(
+            "https://scene-user:scene-password@invalid host/",
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(!error.contains("scene-user"));
+        assert!(!error.contains("scene-password"));
+    }
+
+    #[test]
+    fn signed_fetch_scheme_policy_allows_preview_and_loopback() {
+        assert!(validate_signed_fetch("wss://example.org", None, false).is_ok());
+        assert!(validate_signed_fetch("http://example.org", None, false).is_err());
+        assert!(validate_signed_fetch("http://example.org", None, true).is_ok());
+        assert!(validate_signed_fetch("http://localhost", None, false).is_ok());
+    }
+
+    #[test]
+    fn chooses_environment_from_trusted_base_domain() {
+        assert_eq!(signed_fetch_tld("decentraland.org"), "org");
+        assert_eq!(signed_fetch_tld("decentraland.zone"), "zone");
+        assert_eq!(signed_fetch_tld("decentraland.today"), "today");
+        assert_eq!(signed_fetch_tld("custom.example"), "org");
     }
 }

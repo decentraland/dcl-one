@@ -10,11 +10,15 @@ nix develop                        # FOUNDATION_DEV_AUTOSTART=0: no services
 nix develop --command make check   # non-interactive: never starts services
 ```
 
+`flake.nix` pins nixpkgs to a nixos-unstable commit. The Update nixpkgs workflow
+proposes the current tip on the first of each month; `python3
+tooling/nixpkgs-update.py` does the same locally.
+
 `nix develop` starts a per-checkout PostgreSQL 18, API, Sites, LiveKit, NATS and
 Pulse that outlive the shell and reload on edits.
 
 Ports, from base 5210 (`FOUNDATION_DEV_PORT` on first use; saved in
-`.cache/dev/settings.json`): API and `/ws` +0, Sites and Pulse WebTransport +2,
+`.cache/dev/settings.json`): API and `/ws` +0, its metrics +1, Sites and Pulse WebTransport +2,
 PostgreSQL +3, LiveKit +4..+6, Pulse ENet and `/metrics` +7, NATS +8, its
 monitor +9. An occupied saved port fails startup.
 
@@ -24,10 +28,10 @@ monitor +9. An occupied saved port fails startup.
 | `wait --timeout 1800` | Wait for readiness |
 | `logs`, `restart <service>` | After lockfile changes restart `web-install`, then `sites` |
 | `up`, `down` | Start or attach, stop (`--postgres-only`) |
-| `profile mirror\|offline` | Switch profile while stopped |
+| `profile mirror\|testnet\|offline` | Switch profile while stopped |
 | `service install\|uninstall` | Login service (WSL: `systemd=true`) |
 | `trades-snapshot <file>` | Snapshot for `FOUNDATION_DEV_TRADES_SNAPSHOT` |
-| `env` | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL` |
+| `env` | App URLs, `FOUNDATION_DEV_TEST_DATABASE_URL`, `FOUNDATION_DEV_STACK_PROFILE` |
 
 Without this Chrome profile, `/play` logs `pulse: webtransport connect failed`
 and shows no other avatars:
@@ -45,6 +49,7 @@ and shows no other avatars:
 - `WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS` trusts the upstream's deployer list; it is not verification.
 - Deployments answer 503 except profiles (`SERVE_UNSYNCED_DEPLOY_TYPES=profile`); nothing is written upstream.
 - `offline` (`FOUNDATION_DEV_PROFILE=offline`) starts empty for local deployments.
+- `testnet` (`FOUNDATION_DEV_PROFILE=testnet`) mirrors the Shop's catalogue and order book from Decentraland's testnet (.zone, Amoy and Sepolia) and settles on Amoy, for [`tooling/shop-trade-journey`](../tooling/shop-trade-journey/README.md). Start it in its own worktree: a stack holding data of another profile refuses to switch to it, and a testnet stack refuses `trades-snapshot`. Credits settle through dcl-one's own CreditsManager on Amoy with mock card top-ups (the Shop refuses the shared upstream one); the stack signs them only when `.cache/dev/credits-signer.key` holds a key with that contract's signer role. Until the relay admits that manager, a credits purchase is a transaction the wallet pays gas for, so in-app wallets can't buy with Credits on this profile.
 - Never delete `.cache/dev` to fix a migration failure.
 - Keep `settings.json` with the database; without it startup refuses to create credentials.
 - Use Linux for exact `en_US.utf8` collation comparisons.
@@ -69,9 +74,19 @@ nix develop --command bash tooling/dev-smoke.sh
 nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL only
 ```
 
+CI runs the Rust suites in `nix develop .#ci`: the toolchain, the services the tests
+start and the build tools, without the web and media tools.
+
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
-PRs run macOS Rust tests only; macOS smoke runs on `main`, or on a PR labelled
-`ci:macos` (label, then push or reopen; re-running a job does not pick up a new
-label).
+On PRs, macOS runs the Rust tests only for build and dev-stack inputs: Cargo
+manifests and lockfiles, build scripts, toolchain files, `.cargo`,
+`library/vendor/rusty_enet`, Nix, `infra/dev`, the Makefile, the dev tooling and
+`.github/workflows/development.yml` (`tooling/dev-ci.py`). Catalyst, library and
+schema source, the web apps and other Python tooling stay on Linux. On `main`,
+the Rust tests and smoke run on macOS, and a new push does not cancel a running
+Development run: it waits, replacing any run already waiting, so each completed
+run tests every earlier commit and a macOS-only failure in source shows up
+there. A PR labelled `ci:macos` runs both on macOS (label, then push or reopen;
+re-running a job does not pick up a new label).

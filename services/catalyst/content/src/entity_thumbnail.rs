@@ -18,7 +18,7 @@ use std::sync::{Arc, LazyLock, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, RawQuery, State};
 use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -33,11 +33,15 @@ use super::formatters::{
 };
 use super::get_content::{detect_content_type, set_content_type, x_accel_redirect_path};
 use super::queries::active_entity_docs_by_pointers;
+use super::query_params::{parse_query_string, qs_get_string};
 use super::{ContentState, SharedState};
 
-#[derive(Default, serde::Deserialize)]
-pub struct ThumbnailQuery {
-    pub width: Option<u32>,
+/// `?width=` when it names a served size; any other value is ignored, as
+/// upstream ignores the parameter.
+fn requested_width(query: Option<&str>) -> Option<u32> {
+    qs_get_string(&parse_query_string(query.unwrap_or("")), "width")
+        .and_then(|w| w.parse::<u32>().ok())
+        .filter(|w| valid_width(*w))
 }
 
 pub fn valid_width(width: u32) -> bool {
@@ -91,30 +95,24 @@ fn not_modified(headers: Vec<(&'static str, String)>) -> Response {
 pub async fn get_entity_thumbnail(
     State(state): State<SharedState>,
     Path(pointer): Path<String>,
-    Query(query): Query<ThumbnailQuery>,
+    RawQuery(query): RawQuery,
     method: Method,
     headers: HeaderMap,
 ) -> AppResult<Response> {
-    if query.width.is_some_and(|width| !valid_width(width)) {
-        return Ok((
-            StatusCode::BAD_REQUEST,
-            "width must be 80, 160, 320, 640 or 960",
-        )
-            .into_response());
-    }
+    let width = requested_width(query.as_deref());
     let entity = entity_by_pointer(&state, &pointer).await?;
     let hash = file_hash(&entity, "thumbnail")
         .ok_or_else(|| AppError::not_found("Entity has no thumbnail."))?;
     if state.denylist.contains(&hash) {
         return Err(AppError::not_found("Entity has no thumbnail."));
     }
-    if let Some(width) = query.width {
+    if let Some(width) = width {
         return serve_variant(&state, &hash, width, &method, &headers).await;
     }
     if let Some(h) = check_not_modified(&headers, &hash) {
         return Ok(not_modified(h));
     }
-    serve_content_blob(&state, &hash, &method, &headers).await
+    serve_content_blob(&state, &hash, &method, &headers, "Entity has no thumbnail.").await
 }
 
 /// `GET`/`HEAD .../{pointer}/image`.
@@ -133,7 +131,7 @@ pub async fn get_entity_image(
     if let Some(h) = check_not_modified(&headers, &hash) {
         return Ok(not_modified(h));
     }
-    serve_content_blob(&state, &hash, &method, &headers).await
+    serve_content_blob(&state, &hash, &method, &headers, "Entity has no image.").await
 }
 
 fn apply(response: &mut Response, headers: &[(&'static str, String)]) {
@@ -162,15 +160,17 @@ async fn open_blob(
     }
 }
 
+/// `missing` is upstream's 404 message for a file the store does not hold.
 async fn serve_content_blob(
     state: &ContentState,
     hash: &str,
     method: &Method,
     headers: &HeaderMap,
+    missing: &'static str,
 ) -> AppResult<Response> {
     let mut opened = open_blob(state, hash)
         .await?
-        .ok_or_else(|| AppError::not_found("Content not found."))?;
+        .ok_or_else(|| AppError::not_found(missing))?;
     let head = opened.read_range(0, 31).await?;
     let detected = detect_content_type(&head);
     let range_header = headers.get("range").and_then(|v| v.to_str().ok());
@@ -191,10 +191,10 @@ async fn serve_content_blob(
             Ok(response)
         }
         Some(ParsedRange::Range { start, end }) => {
-            let body: Bytes = if *method == Method::HEAD {
-                Bytes::new()
+            let body = if *method == Method::HEAD {
+                Body::empty()
             } else {
-                opened.read_range(start, end).await?
+                opened.into_range_body(start, end).await?
             };
             let mut response = (StatusCode::PARTIAL_CONTENT, body).into_response();
             apply(&mut response, &base_headers);
@@ -274,7 +274,7 @@ async fn serve_variant(
         .get_or_fetch(key.clone(), || async {
             let mut source = open_blob(state, hash)
                 .await?
-                .ok_or_else(|| AppError::not_found("Content not found."))?;
+                .ok_or_else(|| AppError::not_found("Entity has no thumbnail."))?;
             if source.size > MAX_SOURCE {
                 return Err(AppError::invalid("Thumbnail source too large"));
             }
@@ -645,6 +645,60 @@ mod tests {
         );
     }
 
+    /// CS-18: a file the store does not hold is upstream's "has no" 404.
+    #[tokio::test]
+    async fn a_missing_blob_answers_the_routes_message() {
+        use crate::tests::support::{TEST_CID, TestNode};
+        let node = TestNode::without_db("blob-missing").await;
+        for message in ["Entity has no thumbnail.", "Entity has no image."] {
+            let err = serve_content_blob(
+                &node.state,
+                TEST_CID,
+                &Method::GET,
+                &HeaderMap::new(),
+                message,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(err.to_string(), message);
+        }
+    }
+
+    #[tokio::test]
+    async fn a_blob_range_streams_only_the_window() {
+        use crate::tests::support::{TEST_CID, TestNode};
+        let node = TestNode::without_db("blob-range").await;
+        let mut blob = vec![0u8; 4096];
+        blob[..8].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        for (i, b) in blob.iter_mut().enumerate().skip(8) {
+            *b = (i % 251) as u8;
+        }
+        let blob = Bytes::from(blob);
+        node.store(TEST_CID, blob.clone()).await;
+        let mut headers = HeaderMap::new();
+        headers.insert(header::RANGE, "bytes=100-4999".parse().unwrap());
+
+        for method in [Method::GET, Method::HEAD] {
+            let resp = serve_content_blob(&node.state, TEST_CID, &method, &headers, "missing")
+                .await
+                .unwrap();
+            let get = |name| resp.headers()[name].to_str().unwrap().to_string();
+            assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+            assert_eq!(get(header::CONTENT_TYPE), "image/png");
+            assert_eq!(get(header::CONTENT_RANGE), "bytes 100-4095/4096");
+            assert_eq!(get(header::CONTENT_LENGTH), "3996");
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            let expected = if method == Method::HEAD {
+                Bytes::new()
+            } else {
+                blob.slice(100..)
+            };
+            assert_eq!(body, expected, "{method}");
+        }
+    }
+
     #[tokio::test]
     async fn an_items_thumbnail_and_image_are_served_by_pointer() {
         use crate::tests::support::TestNode;
@@ -717,8 +771,18 @@ mod tests {
         let (status, ct, bytes) = get(format!("/queries/items/{pointer}/thumbnail?width=80")).await;
         assert_eq!((status, ct.as_str()), (StatusCode::OK, "image/jpeg"));
         assert_eq!(image::load_from_memory(&bytes).unwrap().width(), 80);
-        let (status, _, _) = get(format!("/queries/items/{pointer}/thumbnail?width=81")).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        // CS-18: a width this node does not serve is ignored, as upstream
+        // ignores the parameter: the stored file comes back.
+        for width in ["81", "abc", ""] {
+            let (status, ct, bytes) =
+                get(format!("/queries/items/{pointer}/thumbnail?width={width}")).await;
+            assert_eq!(
+                (status, ct.as_str()),
+                (StatusCode::OK, "image/png"),
+                "{width}"
+            );
+            assert_eq!(bytes, png, "{width}");
+        }
         let (status, _, bytes) = get(
             "/queries/items/urn:decentraland:matic:collections-v2:0xnone:1/thumbnail".to_string(),
         )

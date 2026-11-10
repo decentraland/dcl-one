@@ -1,0 +1,5495 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088"
+  },
+  "node": "v26.12.0",
+  "protocol": "1.0.0-29103578374.commit-3c4b54e",
+  "promClient": "15.1.3",
+  "scope": "Actual source registry, pool, RPC metrics wrapper, subscription components and Social API loopback HTTP listener/router; deterministic injected dependencies and a fake wall clock for pool/RPC durations. No providers, database, kernel-buffer or deployment equivalence.",
+  "initial": "# HELP http_request_duration_seconds Request duration in seconds.\n# TYPE http_request_duration_seconds histogram\n\n# HELP http_requests_total Total number of HTTP requests\n# TYPE http_requests_total counter\n\n# HELP http_request_size_bytes Duration of HTTP requests size in bytes\n# TYPE http_request_size_bytes histogram\n\n# HELP wkc_logger_logs_total Log amounts per logger and level\n# TYPE wkc_logger_logs_total counter\n\n# HELP ws_active_connections_by_protocol Active WebSocket connections by protocol\n# TYPE ws_active_connections_by_protocol gauge\n\n# HELP ws_connection_duration_seconds_by_protocol WebSocket connection duration by protocol\n# TYPE ws_connection_duration_seconds_by_protocol histogram\n\n# HELP ws_auth_errors_by_protocol Authentication failures by protocol and cause\n# TYPE ws_auth_errors_by_protocol counter\n\n# HELP ws_admission_evictions Oldest WebSocket connections closed to keep an address within its connection cap\n# TYPE ws_admission_evictions counter\n\n# HELP ws_admission_rejections Subscription starts rejected by the per-address rate limit\n# TYPE ws_admission_rejections counter\n\n# HELP ws_active_connections Number of WebSocket active connections\n# TYPE ws_active_connections gauge\nws_active_connections 0\n\n# HELP ws_connections_rejected Number of WebSocket connections rejected because the pool reached WS_MAX_CONCURRENT_CONNECTIONS\n# TYPE ws_connections_rejected counter\nws_connections_rejected 0\n\n# HELP ws_messages_received Number of WebSocket messages received\n# TYPE ws_messages_received counter\nws_messages_received 0\n\n# HELP ws_messages_sent Number of outbound WebSocket messages accepted by the socket (sent or buffered)\n# TYPE ws_messages_sent counter\nws_messages_sent 0\n\n# HELP ws_errors Number of WebSocket errors\n# TYPE ws_errors counter\nws_errors 0\n\n# HELP ws_close_codes Number of WebSocket close codes\n# TYPE ws_close_codes counter\n\n# HELP ws_transport_errors Number of WebSocket transport errors\n# TYPE ws_transport_errors counter\nws_transport_errors 0\n\n# HELP ws_auth_errors Number of WebSocket authentication errors\n# TYPE ws_auth_errors counter\n\n# HELP ws_auth_race_condition_aborted Number of authentication attempts aborted due to connection closed during auth\n# TYPE ws_auth_race_condition_aborted counter\nws_auth_race_condition_aborted 0\n\n# HELP ws_idle_timeouts Number of WebSocket idle timeouts\n# TYPE ws_idle_timeouts counter\nws_idle_timeouts 0\n\n# HELP ws_connection_duration_seconds Duration of WebSocket connections in seconds\n# TYPE ws_connection_duration_seconds histogram\n\n# HELP rpc_procedure_call_total Total number of RPC procedure calls\n# TYPE rpc_procedure_call_total counter\n\n# HELP rpc_procedure_call_duration_seconds Duration of RPC procedure calls in seconds\n# TYPE rpc_procedure_call_duration_seconds histogram\n\n# HELP rpc_in_procedure_call_size_bytes Size of incoming RPC procedure call payloads in bytes\n# TYPE rpc_in_procedure_call_size_bytes histogram\n\n# HELP rpc_out_procedure_call_size_bytes Size of outgoing RPC procedure call payloads in bytes\n# TYPE rpc_out_procedure_call_size_bytes histogram\n\n# HELP rpc_updates_sent_on_subscription Number of updates sent on RPC subscription streams\n# TYPE rpc_updates_sent_on_subscription counter\n\n# HELP stream_ws_messages_received Number of messages received on the plain WebSocket stream protocol\n# TYPE stream_ws_messages_received counter\n\n# HELP stream_ws_updates_sent Number of updates sent on plain WebSocket stream subscriptions\n# TYPE stream_ws_updates_sent counter\n\n# HELP stream_ws_errors Number of errors reported on the plain WebSocket stream protocol\n# TYPE stream_ws_errors counter\n\n# HELP stream_ws_authentications Successful plain WebSocket stream authentications by handshake method\n# TYPE stream_ws_authentications counter\n\n# HELP stream_ws_close_codes Number of plain WebSocket stream protocol close codes\n# TYPE stream_ws_close_codes counter\n\n# HELP ws_unexpected_send_result_events Number of unexpected send result events\n# TYPE ws_unexpected_send_result_events counter\nws_unexpected_send_result_events 0\n\n# HELP ws_backpressure_events Number of WebSocket messages that encountered backpressure or were dropped\n# TYPE ws_backpressure_events counter\n\n# HELP ws_drain_events Number of WebSocket drain events\n# TYPE ws_drain_events counter\nws_drain_events 0\n\n# HELP ws_message_size_bytes Size of WebSocket messages in bytes\n# TYPE ws_message_size_bytes histogram\n\n# HELP ws_queue_vs_backpressure_ratio Ratio of message queue size to uWebSocket buffered amount\n# TYPE ws_queue_vs_backpressure_ratio gauge\nws_queue_vs_backpressure_ratio 0\n\n# HELP subscribers_local_count Number of local in-memory subscriber emitters\n# TYPE subscribers_local_count gauge\nsubscribers_local_count 0\n\n# HELP subscribers_generators_count Number of active async generators across all subscribers\n# TYPE subscribers_generators_count gauge\nsubscribers_generators_count 0\n\n# HELP subscribers_stale_cleaned Number of stale subscribers removed by reconciliation\n# TYPE subscribers_stale_cleaned counter\nsubscribers_stale_cleaned 0\n\n# HELP subscribers_stale_connections_cleaned Number of stale connections (socket gone, address still active) removed by reconciliation\n# TYPE subscribers_stale_connections_cleaned counter\nsubscribers_stale_connections_cleaned 0\n\n# HELP subscription_duplicates_total Number of duplicate stream subscriptions rejected by the per-(address, event) guard\n# TYPE subscription_duplicates_total counter\n\n# HELP subscription_updates_dropped_total Number of subscription updates dropped because a connection's value queue overflowed (slow consumer)\n# TYPE subscription_updates_dropped_total counter\n\n# HELP friendship_rate_limiter_unavailable Number of friendship/block mutations allowed because the Redis rate limiter was unreachable\n# TYPE friendship_rate_limiter_unavailable counter\nfriendship_rate_limiter_unavailable 0\n\n# HELP ai_compliance_validation_duration_seconds Duration of AI compliance validation in seconds\n# TYPE ai_compliance_validation_duration_seconds histogram\n\n# HELP ai_compliance_validation_total Total number of AI compliance validations (compliant, non-compliant, failed)\n# TYPE ai_compliance_validation_total counter\n",
+  "histograms": [
+    {
+      "name": "http_request_duration_seconds",
+      "buckets": [
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "http_request_size_bytes",
+      "buckets": [
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1,
+        2.5,
+        5,
+        10,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "ws_connection_duration_seconds_by_protocol",
+      "buckets": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        300,
+        600,
+        1800,
+        3600,
+        7200,
+        14400,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "ws_connection_duration_seconds",
+      "buckets": [
+        1,
+        5,
+        10,
+        30,
+        60,
+        300,
+        600,
+        1800,
+        3600,
+        7200,
+        14400,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "rpc_procedure_call_duration_seconds",
+      "buckets": [
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1,
+        2,
+        5,
+        10,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "rpc_in_procedure_call_size_bytes",
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "rpc_out_procedure_call_size_bytes",
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "ws_message_size_bytes",
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384,
+        "+Inf"
+      ]
+    },
+    {
+      "name": "ai_compliance_validation_duration_seconds",
+      "buckets": [
+        0.01,
+        0.05,
+        0.1,
+        0.5,
+        1,
+        2,
+        5,
+        10,
+        30,
+        "+Inf"
+      ]
+    }
+  ],
+  "jsonCases": [
+    {
+      "id": "User.default",
+      "type": "User",
+      "hex": "",
+      "decoded": {
+        "address": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "User.seeded",
+      "type": "User",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "address": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "FriendProfile.default",
+      "type": "FriendProfile",
+      "hex": "",
+      "decoded": {
+        "address": "",
+        "name": "",
+        "hasClaimedName": false,
+        "profilePictureUrl": ""
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "FriendProfile.seeded",
+      "type": "FriendProfile",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "address": "fixture😀",
+        "name": "fixture😀",
+        "hasClaimedName": true,
+        "profilePictureUrl": "fixture😀",
+        "nameColor": {
+          "r": 0.10000000149011612,
+          "g": 0.10000000149011612,
+          "b": 0.10000000149011612
+        }
+      },
+      "jsonBytes": 188
+    },
+    {
+      "id": "BlockedUserProfile.default",
+      "type": "BlockedUserProfile",
+      "hex": "",
+      "decoded": {
+        "address": "",
+        "name": "",
+        "hasClaimedName": false,
+        "profilePictureUrl": ""
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "BlockedUserProfile.seeded",
+      "type": "BlockedUserProfile",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f9880287b320f0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "address": "fixture😀",
+        "name": "fixture😀",
+        "hasClaimedName": true,
+        "profilePictureUrl": "fixture😀",
+        "blockedAt": 123,
+        "nameColor": {
+          "r": 0.10000000149011612,
+          "g": 0.10000000149011612,
+          "b": 0.10000000149011612
+        }
+      },
+      "jsonBytes": 204
+    },
+    {
+      "id": "Pagination.default",
+      "type": "Pagination",
+      "hex": "",
+      "decoded": {
+        "limit": 0,
+        "offset": 0
+      },
+      "jsonBytes": 22
+    },
+    {
+      "id": "Pagination.seeded",
+      "type": "Pagination",
+      "hex": "087b107b",
+      "decoded": {
+        "limit": 123,
+        "offset": 123
+      },
+      "jsonBytes": 26
+    },
+    {
+      "id": "FriendshipRequestResponse.default",
+      "type": "FriendshipRequestResponse",
+      "hex": "",
+      "decoded": {
+        "createdAt": 0,
+        "id": ""
+      },
+      "jsonBytes": 23
+    },
+    {
+      "id": "FriendshipRequestResponse.seeded",
+      "type": "FriendshipRequestResponse",
+      "hex": "0a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d107b1a0b66697874757265f09f9880220b66697874757265f09f9880",
+      "decoded": {
+        "friend": {
+          "address": "fixture😀",
+          "name": "fixture😀",
+          "hasClaimedName": true,
+          "profilePictureUrl": "fixture😀",
+          "nameColor": {
+            "r": 0.10000000149011612,
+            "g": 0.10000000149011612,
+            "b": 0.10000000149011612
+          }
+        },
+        "createdAt": 123,
+        "message": "fixture😀",
+        "id": "fixture😀"
+      },
+      "jsonBytes": 258
+    },
+    {
+      "id": "FriendshipRequests.default",
+      "type": "FriendshipRequests",
+      "hex": "",
+      "decoded": {
+        "requests": []
+      },
+      "jsonBytes": 15
+    },
+    {
+      "id": "FriendshipRequests.seeded",
+      "type": "FriendshipRequests",
+      "hex": "0a580a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d107b1a0b66697874757265f09f9880220b66697874757265f09f9880",
+      "decoded": {
+        "requests": [
+          {
+            "friend": {
+              "address": "fixture😀",
+              "name": "fixture😀",
+              "hasClaimedName": true,
+              "profilePictureUrl": "fixture😀",
+              "nameColor": {
+                "r": 0.10000000149011612,
+                "g": 0.10000000149011612,
+                "b": 0.10000000149011612
+              }
+            },
+            "createdAt": 123,
+            "message": "fixture😀",
+            "id": "fixture😀"
+          }
+        ]
+      },
+      "jsonBytes": 273
+    },
+    {
+      "id": "GetFriendsPayload.default",
+      "type": "GetFriendsPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetFriendsPayload.seeded",
+      "type": "GetFriendsPayload",
+      "hex": "0a04087b107b",
+      "decoded": {
+        "pagination": {
+          "limit": 123,
+          "offset": 123
+        }
+      },
+      "jsonBytes": 41
+    },
+    {
+      "id": "GetFriendshipRequestsPayload.default",
+      "type": "GetFriendshipRequestsPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetFriendshipRequestsPayload.seeded",
+      "type": "GetFriendshipRequestsPayload",
+      "hex": "0a04087b107b",
+      "decoded": {
+        "pagination": {
+          "limit": 123,
+          "offset": 123
+        }
+      },
+      "jsonBytes": 41
+    },
+    {
+      "id": "UpsertFriendshipPayload.default",
+      "type": "UpsertFriendshipPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipPayload.seeded",
+      "type": "UpsertFriendshipPayload",
+      "hex": "0a1c0a0d0a0b66697874757265f09f98801a0b66697874757265f09f9880",
+      "decoded": {
+        "action": {
+          "$case": "request",
+          "request": {
+            "user": {
+              "address": "fixture😀"
+            },
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 99
+    },
+    {
+      "id": "UpsertFriendshipPayload.action.accept",
+      "type": "UpsertFriendshipPayload",
+      "hex": "120f0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "action": {
+          "$case": "accept",
+          "accept": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 73
+    },
+    {
+      "id": "UpsertFriendshipPayload.action.reject",
+      "type": "UpsertFriendshipPayload",
+      "hex": "220f0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "action": {
+          "$case": "reject",
+          "reject": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 73
+    },
+    {
+      "id": "UpsertFriendshipPayload.action.delete",
+      "type": "UpsertFriendshipPayload",
+      "hex": "2a0f0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "action": {
+          "$case": "delete",
+          "delete": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 73
+    },
+    {
+      "id": "UpsertFriendshipPayload.action.cancel",
+      "type": "UpsertFriendshipPayload",
+      "hex": "320f0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "action": {
+          "$case": "cancel",
+          "cancel": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 73
+    },
+    {
+      "id": "UpsertFriendshipPayload_RequestPayload.default",
+      "type": "UpsertFriendshipPayload_RequestPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipPayload_RequestPayload.seeded",
+      "type": "UpsertFriendshipPayload_RequestPayload",
+      "hex": "0a0d0a0b66697874757265f09f98801a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        },
+        "message": "fixture😀"
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "UpsertFriendshipPayload_AcceptPayload.default",
+      "type": "UpsertFriendshipPayload_AcceptPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipPayload_AcceptPayload.seeded",
+      "type": "UpsertFriendshipPayload_AcceptPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "UpsertFriendshipPayload_RejectPayload.default",
+      "type": "UpsertFriendshipPayload_RejectPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipPayload_RejectPayload.seeded",
+      "type": "UpsertFriendshipPayload_RejectPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "UpsertFriendshipPayload_DeletePayload.default",
+      "type": "UpsertFriendshipPayload_DeletePayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipPayload_DeletePayload.seeded",
+      "type": "UpsertFriendshipPayload_DeletePayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "UpsertFriendshipPayload_CancelPayload.default",
+      "type": "UpsertFriendshipPayload_CancelPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipPayload_CancelPayload.seeded",
+      "type": "UpsertFriendshipPayload_CancelPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "GetMutualFriendsPayload.default",
+      "type": "GetMutualFriendsPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetMutualFriendsPayload.seeded",
+      "type": "GetMutualFriendsPayload",
+      "hex": "0a0d0a0b66697874757265f09f98801204087b107b",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        },
+        "pagination": {
+          "limit": 123,
+          "offset": 123
+        }
+      },
+      "jsonBytes": 74
+    },
+    {
+      "id": "PaginatedResponse.default",
+      "type": "PaginatedResponse",
+      "hex": "",
+      "decoded": {
+        "total": 0,
+        "page": 0
+      },
+      "jsonBytes": 20
+    },
+    {
+      "id": "PaginatedResponse.seeded",
+      "type": "PaginatedResponse",
+      "hex": "087b107b",
+      "decoded": {
+        "total": 123,
+        "page": 123
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "PaginatedFriendsProfilesResponse.default",
+      "type": "PaginatedFriendsProfilesResponse",
+      "hex": "",
+      "decoded": {
+        "friends": []
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "PaginatedFriendsProfilesResponse.seeded",
+      "type": "PaginatedFriendsProfilesResponse",
+      "hex": "0a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d1204087b107b",
+      "decoded": {
+        "friends": [
+          {
+            "address": "fixture😀",
+            "name": "fixture😀",
+            "hasClaimedName": true,
+            "profilePictureUrl": "fixture😀",
+            "nameColor": {
+              "r": 0.10000000149011612,
+              "g": 0.10000000149011612,
+              "b": 0.10000000149011612
+            }
+          }
+        ],
+        "paginationData": {
+          "total": 123,
+          "page": 123
+        }
+      },
+      "jsonBytes": 244
+    },
+    {
+      "id": "PaginatedFriendshipRequestsResponse.default",
+      "type": "PaginatedFriendshipRequestsResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "PaginatedFriendshipRequestsResponse.seeded",
+      "type": "PaginatedFriendshipRequestsResponse",
+      "hex": "0a5a0a580a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d107b1a0b66697874757265f09f9880220b66697874757265f09f98801a04087b107b",
+      "decoded": {
+        "response": {
+          "$case": "requests",
+          "requests": {
+            "requests": [
+              {
+                "friend": {
+                  "address": "fixture😀",
+                  "name": "fixture😀",
+                  "hasClaimedName": true,
+                  "profilePictureUrl": "fixture😀",
+                  "nameColor": {
+                    "r": 0.10000000149011612,
+                    "g": 0.10000000149011612,
+                    "b": 0.10000000149011612
+                  }
+                },
+                "createdAt": 123,
+                "message": "fixture😀",
+                "id": "fixture😀"
+              }
+            ]
+          }
+        },
+        "paginationData": {
+          "total": 123,
+          "page": 123
+        }
+      },
+      "jsonBytes": 360
+    },
+    {
+      "id": "PaginatedFriendshipRequestsResponse.response.internalServerError",
+      "type": "PaginatedFriendshipRequestsResponse",
+      "hex": "120d0a0b66697874757265f09f98801a04087b107b",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        },
+        "paginationData": {
+          "total": 123,
+          "page": 123
+        }
+      },
+      "jsonBytes": 134
+    },
+    {
+      "id": "UpsertFriendshipResponse.default",
+      "type": "UpsertFriendshipResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertFriendshipResponse.seeded",
+      "type": "UpsertFriendshipResponse",
+      "hex": "0a580a0b66697874757265f09f9880107b1a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d220b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "accepted",
+          "accepted": {
+            "id": "fixture😀",
+            "createdAt": 123,
+            "friend": {
+              "address": "fixture😀",
+              "name": "fixture😀",
+              "hasClaimedName": true,
+              "profilePictureUrl": "fixture😀",
+              "nameColor": {
+                "r": 0.10000000149011612,
+                "g": 0.10000000149011612,
+                "b": 0.10000000149011612
+              }
+            },
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 303
+    },
+    {
+      "id": "UpsertFriendshipResponse.response.invalidFriendshipAction",
+      "type": "UpsertFriendshipResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidFriendshipAction",
+          "invalidFriendshipAction": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 100
+    },
+    {
+      "id": "UpsertFriendshipResponse.response.internalServerError",
+      "type": "UpsertFriendshipResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "UpsertFriendshipResponse.response.invalidRequest",
+      "type": "UpsertFriendshipResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "UpsertFriendshipResponse_Accepted.default",
+      "type": "UpsertFriendshipResponse_Accepted",
+      "hex": "",
+      "decoded": {
+        "id": "",
+        "createdAt": 0
+      },
+      "jsonBytes": 23
+    },
+    {
+      "id": "UpsertFriendshipResponse_Accepted.seeded",
+      "type": "UpsertFriendshipResponse_Accepted",
+      "hex": "0a0b66697874757265f09f9880107b1a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d220b66697874757265f09f9880",
+      "decoded": {
+        "id": "fixture😀",
+        "createdAt": 123,
+        "friend": {
+          "address": "fixture😀",
+          "name": "fixture😀",
+          "hasClaimedName": true,
+          "profilePictureUrl": "fixture😀",
+          "nameColor": {
+            "r": 0.10000000149011612,
+            "g": 0.10000000149011612,
+            "b": 0.10000000149011612
+          }
+        },
+        "message": "fixture😀"
+      },
+      "jsonBytes": 258
+    },
+    {
+      "id": "SubscriptionStreamClosed.default",
+      "type": "SubscriptionStreamClosed",
+      "hex": "",
+      "decoded": {
+        "reason": 0
+      },
+      "jsonBytes": 12
+    },
+    {
+      "id": "SubscriptionStreamClosed.seeded",
+      "type": "SubscriptionStreamClosed",
+      "hex": "0800120b66697874757265f09f9880",
+      "decoded": {
+        "reason": 0,
+        "message": "fixture😀"
+      },
+      "jsonBytes": 36
+    },
+    {
+      "id": "FriendshipUpdate.default",
+      "type": "FriendshipUpdate",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "FriendshipUpdate.seeded",
+      "type": "FriendshipUpdate",
+      "hex": "0a580a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d107b1a0b66697874757265f09f9880220b66697874757265f09f98803a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "update": {
+          "$case": "request",
+          "request": {
+            "friend": {
+              "address": "fixture😀",
+              "name": "fixture😀",
+              "hasClaimedName": true,
+              "profilePictureUrl": "fixture😀",
+              "nameColor": {
+                "r": 0.10000000149011612,
+                "g": 0.10000000149011612,
+                "b": 0.10000000149011612
+              }
+            },
+            "createdAt": 123,
+            "message": "fixture😀",
+            "id": "fixture😀"
+          }
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 351
+    },
+    {
+      "id": "FriendshipUpdate.update.accept",
+      "type": "FriendshipUpdate",
+      "hex": "120f0a0d0a0b66697874757265f09f98803a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "update": {
+          "$case": "accept",
+          "accept": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 125
+    },
+    {
+      "id": "FriendshipUpdate.update.reject",
+      "type": "FriendshipUpdate",
+      "hex": "1a0f0a0d0a0b66697874757265f09f98803a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "update": {
+          "$case": "reject",
+          "reject": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 125
+    },
+    {
+      "id": "FriendshipUpdate.update.delete",
+      "type": "FriendshipUpdate",
+      "hex": "220f0a0d0a0b66697874757265f09f98803a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "update": {
+          "$case": "delete",
+          "delete": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 125
+    },
+    {
+      "id": "FriendshipUpdate.update.cancel",
+      "type": "FriendshipUpdate",
+      "hex": "2a0f0a0d0a0b66697874757265f09f98803a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "update": {
+          "$case": "cancel",
+          "cancel": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 125
+    },
+    {
+      "id": "FriendshipUpdate.update.block",
+      "type": "FriendshipUpdate",
+      "hex": "320f0a0d0a0b66697874757265f09f98803a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "update": {
+          "$case": "block",
+          "block": {
+            "user": {
+              "address": "fixture😀"
+            }
+          }
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 123
+    },
+    {
+      "id": "FriendshipUpdate_RequestResponse.default",
+      "type": "FriendshipUpdate_RequestResponse",
+      "hex": "",
+      "decoded": {
+        "createdAt": 0,
+        "id": ""
+      },
+      "jsonBytes": 23
+    },
+    {
+      "id": "FriendshipUpdate_RequestResponse.seeded",
+      "type": "FriendshipUpdate_RequestResponse",
+      "hex": "0a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d107b1a0b66697874757265f09f9880220b66697874757265f09f9880",
+      "decoded": {
+        "friend": {
+          "address": "fixture😀",
+          "name": "fixture😀",
+          "hasClaimedName": true,
+          "profilePictureUrl": "fixture😀",
+          "nameColor": {
+            "r": 0.10000000149011612,
+            "g": 0.10000000149011612,
+            "b": 0.10000000149011612
+          }
+        },
+        "createdAt": 123,
+        "message": "fixture😀",
+        "id": "fixture😀"
+      },
+      "jsonBytes": 258
+    },
+    {
+      "id": "FriendshipUpdate_AcceptResponse.default",
+      "type": "FriendshipUpdate_AcceptResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "FriendshipUpdate_AcceptResponse.seeded",
+      "type": "FriendshipUpdate_AcceptResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "FriendshipUpdate_RejectResponse.default",
+      "type": "FriendshipUpdate_RejectResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "FriendshipUpdate_RejectResponse.seeded",
+      "type": "FriendshipUpdate_RejectResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "FriendshipUpdate_DeleteResponse.default",
+      "type": "FriendshipUpdate_DeleteResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "FriendshipUpdate_DeleteResponse.seeded",
+      "type": "FriendshipUpdate_DeleteResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "FriendshipUpdate_CancelResponse.default",
+      "type": "FriendshipUpdate_CancelResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "FriendshipUpdate_CancelResponse.seeded",
+      "type": "FriendshipUpdate_CancelResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "FriendshipUpdate_BlockResponse.default",
+      "type": "FriendshipUpdate_BlockResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "FriendshipUpdate_BlockResponse.seeded",
+      "type": "FriendshipUpdate_BlockResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "FriendConnectivityUpdate.default",
+      "type": "FriendConnectivityUpdate",
+      "hex": "",
+      "decoded": {
+        "status": 0
+      },
+      "jsonBytes": 12
+    },
+    {
+      "id": "FriendConnectivityUpdate.seeded",
+      "type": "FriendConnectivityUpdate",
+      "hex": "0a3a0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f98802a0f0dcdcccc3d15cdcccc3d1dcdcccc3d10001a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "friend": {
+          "address": "fixture😀",
+          "name": "fixture😀",
+          "hasClaimedName": true,
+          "profilePictureUrl": "fixture😀",
+          "nameColor": {
+            "r": 0.10000000149011612,
+            "g": 0.10000000149011612,
+            "b": 0.10000000149011612
+          }
+        },
+        "status": 0,
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 262
+    },
+    {
+      "id": "GetFriendshipStatusPayload.default",
+      "type": "GetFriendshipStatusPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetFriendshipStatusPayload.seeded",
+      "type": "GetFriendshipStatusPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "GetFriendshipStatusResponse.default",
+      "type": "GetFriendshipStatusResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetFriendshipStatusResponse.seeded",
+      "type": "GetFriendshipStatusResponse",
+      "hex": "0a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "accepted",
+          "accepted": {
+            "status": 0,
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 81
+    },
+    {
+      "id": "GetFriendshipStatusResponse.response.internalServerError",
+      "type": "GetFriendshipStatusResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "GetFriendshipStatusResponse.response.invalidRequest",
+      "type": "GetFriendshipStatusResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "GetFriendshipStatusResponse_Ok.default",
+      "type": "GetFriendshipStatusResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "status": 0
+      },
+      "jsonBytes": 12
+    },
+    {
+      "id": "GetFriendshipStatusResponse_Ok.seeded",
+      "type": "GetFriendshipStatusResponse_Ok",
+      "hex": "0800120b66697874757265f09f9880",
+      "decoded": {
+        "status": 0,
+        "message": "fixture😀"
+      },
+      "jsonBytes": 36
+    },
+    {
+      "id": "BlockUserPayload.default",
+      "type": "BlockUserPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "BlockUserPayload.seeded",
+      "type": "BlockUserPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "BlockUserResponse.default",
+      "type": "BlockUserResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "BlockUserResponse.seeded",
+      "type": "BlockUserResponse",
+      "hex": "0a3e0a3c0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f9880287b320f0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "profile": {
+              "address": "fixture😀",
+              "name": "fixture😀",
+              "hasClaimedName": true,
+              "profilePictureUrl": "fixture😀",
+              "blockedAt": 123,
+              "nameColor": {
+                "r": 0.10000000149011612,
+                "g": 0.10000000149011612,
+                "b": 0.10000000149011612
+              }
+            }
+          }
+        }
+      },
+      "jsonBytes": 249
+    },
+    {
+      "id": "BlockUserResponse.response.internalServerError",
+      "type": "BlockUserResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "BlockUserResponse.response.invalidRequest",
+      "type": "BlockUserResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "BlockUserResponse.response.profileNotFound",
+      "type": "BlockUserResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "profileNotFound",
+          "profileNotFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 84
+    },
+    {
+      "id": "BlockUserResponse_Ok.default",
+      "type": "BlockUserResponse_Ok",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "BlockUserResponse_Ok.seeded",
+      "type": "BlockUserResponse_Ok",
+      "hex": "0a3c0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f9880287b320f0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "profile": {
+          "address": "fixture😀",
+          "name": "fixture😀",
+          "hasClaimedName": true,
+          "profilePictureUrl": "fixture😀",
+          "blockedAt": 123,
+          "nameColor": {
+            "r": 0.10000000149011612,
+            "g": 0.10000000149011612,
+            "b": 0.10000000149011612
+          }
+        }
+      },
+      "jsonBytes": 216
+    },
+    {
+      "id": "UnblockUserPayload.default",
+      "type": "UnblockUserPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UnblockUserPayload.seeded",
+      "type": "UnblockUserPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 34
+    },
+    {
+      "id": "UnblockUserResponse.default",
+      "type": "UnblockUserResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UnblockUserResponse.seeded",
+      "type": "UnblockUserResponse",
+      "hex": "0a3e0a3c0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f9880287b320f0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "profile": {
+              "address": "fixture😀",
+              "name": "fixture😀",
+              "hasClaimedName": true,
+              "profilePictureUrl": "fixture😀",
+              "blockedAt": 123,
+              "nameColor": {
+                "r": 0.10000000149011612,
+                "g": 0.10000000149011612,
+                "b": 0.10000000149011612
+              }
+            }
+          }
+        }
+      },
+      "jsonBytes": 249
+    },
+    {
+      "id": "UnblockUserResponse.response.internalServerError",
+      "type": "UnblockUserResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "UnblockUserResponse.response.invalidRequest",
+      "type": "UnblockUserResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "UnblockUserResponse.response.profileNotFound",
+      "type": "UnblockUserResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "profileNotFound",
+          "profileNotFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 84
+    },
+    {
+      "id": "UnblockUserResponse_Ok.default",
+      "type": "UnblockUserResponse_Ok",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UnblockUserResponse_Ok.seeded",
+      "type": "UnblockUserResponse_Ok",
+      "hex": "0a3c0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f9880287b320f0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "profile": {
+          "address": "fixture😀",
+          "name": "fixture😀",
+          "hasClaimedName": true,
+          "profilePictureUrl": "fixture😀",
+          "blockedAt": 123,
+          "nameColor": {
+            "r": 0.10000000149011612,
+            "g": 0.10000000149011612,
+            "b": 0.10000000149011612
+          }
+        }
+      },
+      "jsonBytes": 216
+    },
+    {
+      "id": "SocialSettings.default",
+      "type": "SocialSettings",
+      "hex": "",
+      "decoded": {
+        "privateMessagesPrivacy": 0,
+        "blockedUsersMessagesVisibility": 0,
+        "showSituationReactions": 0
+      },
+      "jsonBytes": 90
+    },
+    {
+      "id": "SocialSettings.seeded",
+      "type": "SocialSettings",
+      "hex": "080010001800",
+      "decoded": {
+        "privateMessagesPrivacy": 0,
+        "blockedUsersMessagesVisibility": 0,
+        "showSituationReactions": 0
+      },
+      "jsonBytes": 90
+    },
+    {
+      "id": "GetSocialSettingsResponse.default",
+      "type": "GetSocialSettingsResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetSocialSettingsResponse.seeded",
+      "type": "GetSocialSettingsResponse",
+      "hex": "0a080a06080010001800",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "settings": {
+              "privateMessagesPrivacy": 0,
+              "blockedUsersMessagesVisibility": 0,
+              "showSituationReactions": 0
+            }
+          }
+        }
+      },
+      "jsonBytes": 136
+    },
+    {
+      "id": "GetSocialSettingsResponse.response.internalServerError",
+      "type": "GetSocialSettingsResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "GetSocialSettingsResponse_Ok.default",
+      "type": "GetSocialSettingsResponse_Ok",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetSocialSettingsResponse_Ok.seeded",
+      "type": "GetSocialSettingsResponse_Ok",
+      "hex": "0a06080010001800",
+      "decoded": {
+        "settings": {
+          "privateMessagesPrivacy": 0,
+          "blockedUsersMessagesVisibility": 0,
+          "showSituationReactions": 0
+        }
+      },
+      "jsonBytes": 103
+    },
+    {
+      "id": "UpsertSocialSettingsPayload.default",
+      "type": "UpsertSocialSettingsPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertSocialSettingsPayload.seeded",
+      "type": "UpsertSocialSettingsPayload",
+      "hex": "080010001800",
+      "decoded": {
+        "privateMessagesPrivacy": 0,
+        "blockedUsersMessagesVisibility": 0,
+        "showSituationReactions": 0
+      },
+      "jsonBytes": 90
+    },
+    {
+      "id": "UpsertSocialSettingsResponse.default",
+      "type": "UpsertSocialSettingsResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "UpsertSocialSettingsResponse.seeded",
+      "type": "UpsertSocialSettingsResponse",
+      "hex": "0a06080010001800",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "privateMessagesPrivacy": 0,
+            "blockedUsersMessagesVisibility": 0,
+            "showSituationReactions": 0
+          }
+        }
+      },
+      "jsonBytes": 123
+    },
+    {
+      "id": "UpsertSocialSettingsResponse.response.internalServerError",
+      "type": "UpsertSocialSettingsResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "UpsertSocialSettingsResponse.response.invalidRequest",
+      "type": "UpsertSocialSettingsResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "GetPrivateMessagesSettingsPayload.default",
+      "type": "GetPrivateMessagesSettingsPayload",
+      "hex": "",
+      "decoded": {
+        "user": []
+      },
+      "jsonBytes": 11
+    },
+    {
+      "id": "GetPrivateMessagesSettingsPayload.seeded",
+      "type": "GetPrivateMessagesSettingsPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "user": [
+          {
+            "address": "fixture😀"
+          }
+        ]
+      },
+      "jsonBytes": 36
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse.default",
+      "type": "GetPrivateMessagesSettingsResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse.seeded",
+      "type": "GetPrivateMessagesSettingsResponse",
+      "hex": "0a150a130a0d0a0b66697874757265f09f988010001801",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "settings": [
+              {
+                "user": {
+                  "address": "fixture😀"
+                },
+                "privateMessagesPrivacy": 0,
+                "isFriend": true
+              }
+            ]
+          }
+        }
+      },
+      "jsonBytes": 125
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse.response.internalServerError",
+      "type": "GetPrivateMessagesSettingsResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse.response.invalidRequest",
+      "type": "GetPrivateMessagesSettingsResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse.response.profileNotFound",
+      "type": "GetPrivateMessagesSettingsResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "profileNotFound",
+          "profileNotFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 84
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse_PrivateMessagesSettings.default",
+      "type": "GetPrivateMessagesSettingsResponse_PrivateMessagesSettings",
+      "hex": "",
+      "decoded": {
+        "privateMessagesPrivacy": 0,
+        "isFriend": false
+      },
+      "jsonBytes": 45
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse_PrivateMessagesSettings.seeded",
+      "type": "GetPrivateMessagesSettingsResponse_PrivateMessagesSettings",
+      "hex": "0a0d0a0b66697874757265f09f988010001801",
+      "decoded": {
+        "user": {
+          "address": "fixture😀"
+        },
+        "privateMessagesPrivacy": 0,
+        "isFriend": true
+      },
+      "jsonBytes": 77
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse_Ok.default",
+      "type": "GetPrivateMessagesSettingsResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "settings": []
+      },
+      "jsonBytes": 15
+    },
+    {
+      "id": "GetPrivateMessagesSettingsResponse_Ok.seeded",
+      "type": "GetPrivateMessagesSettingsResponse_Ok",
+      "hex": "0a130a0d0a0b66697874757265f09f988010001801",
+      "decoded": {
+        "settings": [
+          {
+            "user": {
+              "address": "fixture😀"
+            },
+            "privateMessagesPrivacy": 0,
+            "isFriend": true
+          }
+        ]
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "GetBlockedUsersPayload.default",
+      "type": "GetBlockedUsersPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetBlockedUsersPayload.seeded",
+      "type": "GetBlockedUsersPayload",
+      "hex": "0a04087b107b",
+      "decoded": {
+        "pagination": {
+          "limit": 123,
+          "offset": 123
+        }
+      },
+      "jsonBytes": 41
+    },
+    {
+      "id": "GetBlockedUsersResponse.default",
+      "type": "GetBlockedUsersResponse",
+      "hex": "",
+      "decoded": {
+        "profiles": []
+      },
+      "jsonBytes": 15
+    },
+    {
+      "id": "GetBlockedUsersResponse.seeded",
+      "type": "GetBlockedUsersResponse",
+      "hex": "0a3c0a0b66697874757265f09f9880120b66697874757265f09f98801801220b66697874757265f09f9880287b320f0dcdcccc3d15cdcccc3d1dcdcccc3d1204087b107b",
+      "decoded": {
+        "profiles": [
+          {
+            "address": "fixture😀",
+            "name": "fixture😀",
+            "hasClaimedName": true,
+            "profilePictureUrl": "fixture😀",
+            "blockedAt": 123,
+            "nameColor": {
+              "r": 0.10000000149011612,
+              "g": 0.10000000149011612,
+              "b": 0.10000000149011612
+            }
+          }
+        ],
+        "paginationData": {
+          "total": 123,
+          "page": 123
+        }
+      },
+      "jsonBytes": 261
+    },
+    {
+      "id": "GetBlockingStatusResponse.default",
+      "type": "GetBlockingStatusResponse",
+      "hex": "",
+      "decoded": {
+        "blockedUsers": [],
+        "blockedByUsers": []
+      },
+      "jsonBytes": 39
+    },
+    {
+      "id": "GetBlockingStatusResponse.seeded",
+      "type": "GetBlockingStatusResponse",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "blockedUsers": [
+          "fixture😀"
+        ],
+        "blockedByUsers": [
+          "fixture😀"
+        ]
+      },
+      "jsonBytes": 65
+    },
+    {
+      "id": "BlockUpdate.default",
+      "type": "BlockUpdate",
+      "hex": "",
+      "decoded": {
+        "address": "",
+        "isBlocked": false
+      },
+      "jsonBytes": 32
+    },
+    {
+      "id": "BlockUpdate.seeded",
+      "type": "BlockUpdate",
+      "hex": "0a0b66697874757265f09f988010011a0f0800120b66697874757265f09f9880",
+      "decoded": {
+        "address": "fixture😀",
+        "isBlocked": true,
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 94
+    },
+    {
+      "id": "CommunityMemberConnectivityUpdate.default",
+      "type": "CommunityMemberConnectivityUpdate",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "status": 0
+      },
+      "jsonBytes": 29
+    },
+    {
+      "id": "CommunityMemberConnectivityUpdate.seeded",
+      "type": "CommunityMemberConnectivityUpdate",
+      "hex": "0a0b66697874757265f09f9880120d0a0b66697874757265f09f98801800220f0800120b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀",
+        "member": {
+          "address": "fixture😀"
+        },
+        "status": 0,
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 127
+    },
+    {
+      "id": "StartPrivateVoiceChatPayload.default",
+      "type": "StartPrivateVoiceChatPayload",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "StartPrivateVoiceChatPayload.seeded",
+      "type": "StartPrivateVoiceChatPayload",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "callee": {
+          "address": "fixture😀"
+        }
+      },
+      "jsonBytes": 36
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse.default",
+      "type": "StartPrivateVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse.seeded",
+      "type": "StartPrivateVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse.response.internalServerError",
+      "type": "StartPrivateVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse.response.invalidRequest",
+      "type": "StartPrivateVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse.response.conflictingError",
+      "type": "StartPrivateVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "conflictingError",
+          "conflictingError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 86
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse.response.forbiddenError",
+      "type": "StartPrivateVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse_Ok.default",
+      "type": "StartPrivateVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "StartPrivateVoiceChatResponse_Ok.seeded",
+      "type": "StartPrivateVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "AcceptPrivateVoiceChatPayload.default",
+      "type": "AcceptPrivateVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "AcceptPrivateVoiceChatPayload.seeded",
+      "type": "AcceptPrivateVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse.default",
+      "type": "AcceptPrivateVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse.seeded",
+      "type": "AcceptPrivateVoiceChatResponse",
+      "hex": "0a1c0a0b66697874757265f09f9880120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "fixture😀",
+            "credentials": {
+              "connectionUrl": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 103
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse.response.internalServerError",
+      "type": "AcceptPrivateVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse.response.invalidRequest",
+      "type": "AcceptPrivateVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse.response.notFound",
+      "type": "AcceptPrivateVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse.response.forbiddenError",
+      "type": "AcceptPrivateVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse_Ok.default",
+      "type": "AcceptPrivateVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "AcceptPrivateVoiceChatResponse_Ok.seeded",
+      "type": "AcceptPrivateVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀",
+        "credentials": {
+          "connectionUrl": "fixture😀"
+        }
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "RejectPrivateVoiceChatPayload.default",
+      "type": "RejectPrivateVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "RejectPrivateVoiceChatPayload.seeded",
+      "type": "RejectPrivateVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse.default",
+      "type": "RejectPrivateVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse.seeded",
+      "type": "RejectPrivateVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse.response.internalServerError",
+      "type": "RejectPrivateVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse.response.invalidRequest",
+      "type": "RejectPrivateVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse.response.notFound",
+      "type": "RejectPrivateVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse_Ok.default",
+      "type": "RejectPrivateVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "RejectPrivateVoiceChatResponse_Ok.seeded",
+      "type": "RejectPrivateVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "PrivateVoiceChatCredentials.default",
+      "type": "PrivateVoiceChatCredentials",
+      "hex": "",
+      "decoded": {
+        "connectionUrl": ""
+      },
+      "jsonBytes": 20
+    },
+    {
+      "id": "PrivateVoiceChatCredentials.seeded",
+      "type": "PrivateVoiceChatCredentials",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "connectionUrl": "fixture😀"
+      },
+      "jsonBytes": 31
+    },
+    {
+      "id": "PrivateVoiceChatUpdate.default",
+      "type": "PrivateVoiceChatUpdate",
+      "hex": "",
+      "decoded": {
+        "callId": "",
+        "status": 0
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "PrivateVoiceChatUpdate.seeded",
+      "type": "PrivateVoiceChatUpdate",
+      "hex": "0a0b66697874757265f09f988010001a0d0a0b66697874757265f09f9880220d0a0b66697874757265f09f98802a0d0a0b66697874757265f09f9880320f0800120b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀",
+        "status": 0,
+        "caller": {
+          "address": "fixture😀"
+        },
+        "callee": {
+          "address": "fixture😀"
+        },
+        "credentials": {
+          "connectionUrl": "fixture😀"
+        },
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 203
+    },
+    {
+      "id": "EndPrivateVoiceChatPayload.default",
+      "type": "EndPrivateVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "EndPrivateVoiceChatPayload.seeded",
+      "type": "EndPrivateVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "EndPrivateVoiceChatResponse.default",
+      "type": "EndPrivateVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "EndPrivateVoiceChatResponse.seeded",
+      "type": "EndPrivateVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "EndPrivateVoiceChatResponse.response.internalServerError",
+      "type": "EndPrivateVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "EndPrivateVoiceChatResponse.response.notFound",
+      "type": "EndPrivateVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "EndPrivateVoiceChatResponse_Ok.default",
+      "type": "EndPrivateVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "EndPrivateVoiceChatResponse_Ok.seeded",
+      "type": "EndPrivateVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 24
+    },
+    {
+      "id": "GetIncomingPrivateVoiceChatRequestResponse.default",
+      "type": "GetIncomingPrivateVoiceChatRequestResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "GetIncomingPrivateVoiceChatRequestResponse.seeded",
+      "type": "GetIncomingPrivateVoiceChatRequestResponse",
+      "hex": "0a1c0a0d0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "caller": {
+              "address": "fixture😀"
+            },
+            "callId": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "GetIncomingPrivateVoiceChatRequestResponse.response.notFound",
+      "type": "GetIncomingPrivateVoiceChatRequestResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "GetIncomingPrivateVoiceChatRequestResponse.response.internalServerError",
+      "type": "GetIncomingPrivateVoiceChatRequestResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "GetIncomingPrivateVoiceChatRequestResponse_Ok.default",
+      "type": "GetIncomingPrivateVoiceChatRequestResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "callId": ""
+      },
+      "jsonBytes": 13
+    },
+    {
+      "id": "GetIncomingPrivateVoiceChatRequestResponse_Ok.seeded",
+      "type": "GetIncomingPrivateVoiceChatRequestResponse_Ok",
+      "hex": "0a0d0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "caller": {
+          "address": "fixture😀"
+        },
+        "callId": "fixture😀"
+      },
+      "jsonBytes": 59
+    },
+    {
+      "id": "CommunityVoiceChatCredentials.default",
+      "type": "CommunityVoiceChatCredentials",
+      "hex": "",
+      "decoded": {
+        "connectionUrl": ""
+      },
+      "jsonBytes": 20
+    },
+    {
+      "id": "CommunityVoiceChatCredentials.seeded",
+      "type": "CommunityVoiceChatCredentials",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "connectionUrl": "fixture😀"
+      },
+      "jsonBytes": 31
+    },
+    {
+      "id": "StartCommunityVoiceChatPayload.default",
+      "type": "StartCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": ""
+      },
+      "jsonBytes": 18
+    },
+    {
+      "id": "StartCommunityVoiceChatPayload.seeded",
+      "type": "StartCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀"
+      },
+      "jsonBytes": 29
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse.default",
+      "type": "StartCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse.seeded",
+      "type": "StartCommunityVoiceChatResponse",
+      "hex": "0a0f0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "credentials": {
+              "connectionUrl": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "StartCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "StartCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse.response.conflictingError",
+      "type": "StartCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "conflictingError",
+          "conflictingError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 86
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse.response.internalServerError",
+      "type": "StartCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse_Ok.default",
+      "type": "StartCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "StartCommunityVoiceChatResponse_Ok.seeded",
+      "type": "StartCommunityVoiceChatResponse_Ok",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "credentials": {
+          "connectionUrl": "fixture😀"
+        }
+      },
+      "jsonBytes": 47
+    },
+    {
+      "id": "JoinCommunityVoiceChatPayload.default",
+      "type": "JoinCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": ""
+      },
+      "jsonBytes": 18
+    },
+    {
+      "id": "JoinCommunityVoiceChatPayload.seeded",
+      "type": "JoinCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀"
+      },
+      "jsonBytes": 29
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.default",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.seeded",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "0a1c0a0b66697874757265f09f9880120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "voiceChatId": "fixture😀",
+            "credentials": {
+              "connectionUrl": "fixture😀"
+            }
+          }
+        }
+      },
+      "jsonBytes": 108
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.response.notFoundError",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.response.conflictingError",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "conflictingError",
+          "conflictingError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 86
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse.response.internalServerError",
+      "type": "JoinCommunityVoiceChatResponse",
+      "hex": "320d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse_Ok.default",
+      "type": "JoinCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "voiceChatId": ""
+      },
+      "jsonBytes": 18
+    },
+    {
+      "id": "JoinCommunityVoiceChatResponse_Ok.seeded",
+      "type": "JoinCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "voiceChatId": "fixture😀",
+        "credentials": {
+          "connectionUrl": "fixture😀"
+        }
+      },
+      "jsonBytes": 75
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatPayload.default",
+      "type": "RequestToSpeakInCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "isRaisingHand": false
+      },
+      "jsonBytes": 40
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatPayload.seeded",
+      "type": "RequestToSpeakInCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f98801001",
+      "decoded": {
+        "communityId": "fixture😀",
+        "isRaisingHand": true
+      },
+      "jsonBytes": 50
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse.default",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse.seeded",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse.response.notFoundError",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse.response.internalServerError",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse_Ok.default",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "message": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "RequestToSpeakInCommunityVoiceChatResponse_Ok.seeded",
+      "type": "RequestToSpeakInCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatPayload.default",
+      "type": "PromoteSpeakerInCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "userAddress": ""
+      },
+      "jsonBytes": 35
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatPayload.seeded",
+      "type": "PromoteSpeakerInCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀",
+        "userAddress": "fixture😀"
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse.default",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse.seeded",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse.response.notFoundError",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse.response.internalServerError",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse_Ok.default",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "message": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "PromoteSpeakerInCommunityVoiceChatResponse_Ok.seeded",
+      "type": "PromoteSpeakerInCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatPayload.default",
+      "type": "DemoteSpeakerInCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "userAddress": ""
+      },
+      "jsonBytes": 35
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatPayload.seeded",
+      "type": "DemoteSpeakerInCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀",
+        "userAddress": "fixture😀"
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse.default",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse.seeded",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse.response.notFoundError",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse.response.internalServerError",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse_Ok.default",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "message": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "DemoteSpeakerInCommunityVoiceChatResponse_Ok.seeded",
+      "type": "DemoteSpeakerInCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatPayload.default",
+      "type": "KickPlayerFromCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "userAddress": ""
+      },
+      "jsonBytes": 35
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatPayload.seeded",
+      "type": "KickPlayerFromCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀",
+        "userAddress": "fixture😀"
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse.default",
+      "type": "KickPlayerFromCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse.seeded",
+      "type": "KickPlayerFromCommunityVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "KickPlayerFromCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "KickPlayerFromCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse.response.notFoundError",
+      "type": "KickPlayerFromCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse.response.internalServerError",
+      "type": "KickPlayerFromCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse_Ok.default",
+      "type": "KickPlayerFromCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "message": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "KickPlayerFromCommunityVoiceChatResponse_Ok.seeded",
+      "type": "KickPlayerFromCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatPayload.default",
+      "type": "RejectSpeakRequestInCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "userAddress": ""
+      },
+      "jsonBytes": 35
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatPayload.seeded",
+      "type": "RejectSpeakRequestInCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀",
+        "userAddress": "fixture😀"
+      },
+      "jsonBytes": 57
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse.default",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse.seeded",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse.response.notFoundError",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse.response.internalServerError",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse_Ok.default",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "message": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "RejectSpeakRequestInCommunityVoiceChatResponse_Ok.seeded",
+      "type": "RejectSpeakRequestInCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatPayload.default",
+      "type": "MuteSpeakerFromCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "userAddress": "",
+        "muted": false
+      },
+      "jsonBytes": 49
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatPayload.seeded",
+      "type": "MuteSpeakerFromCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880120b66697874757265f09f98801801",
+      "decoded": {
+        "communityId": "fixture😀",
+        "userAddress": "fixture😀",
+        "muted": true
+      },
+      "jsonBytes": 70
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse.default",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse.seeded",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "hex": "0a020801",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "muted": true
+          }
+        }
+      },
+      "jsonBytes": 47
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse.response.notFoundError",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse.response.internalServerError",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse_Ok.default",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "muted": false
+      },
+      "jsonBytes": 15
+    },
+    {
+      "id": "MuteSpeakerFromCommunityVoiceChatResponse_Ok.seeded",
+      "type": "MuteSpeakerFromCommunityVoiceChatResponse_Ok",
+      "hex": "0801",
+      "decoded": {
+        "muted": true
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "EndCommunityVoiceChatPayload.default",
+      "type": "EndCommunityVoiceChatPayload",
+      "hex": "",
+      "decoded": {
+        "communityId": ""
+      },
+      "jsonBytes": 18
+    },
+    {
+      "id": "EndCommunityVoiceChatPayload.seeded",
+      "type": "EndCommunityVoiceChatPayload",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀"
+      },
+      "jsonBytes": 29
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse.default",
+      "type": "EndCommunityVoiceChatResponse",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse.seeded",
+      "type": "EndCommunityVoiceChatResponse",
+      "hex": "0a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 58
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse.response.invalidRequest",
+      "type": "EndCommunityVoiceChatResponse",
+      "hex": "120d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse.response.forbiddenError",
+      "type": "EndCommunityVoiceChatResponse",
+      "hex": "1a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 82
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse.response.notFoundError",
+      "type": "EndCommunityVoiceChatResponse",
+      "hex": "220d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 80
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse.response.internalServerError",
+      "type": "EndCommunityVoiceChatResponse",
+      "hex": "2a0d0a0b66697874757265f09f9880",
+      "decoded": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "fixture😀"
+          }
+        }
+      },
+      "jsonBytes": 92
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse_Ok.default",
+      "type": "EndCommunityVoiceChatResponse_Ok",
+      "hex": "",
+      "decoded": {
+        "message": ""
+      },
+      "jsonBytes": 14
+    },
+    {
+      "id": "EndCommunityVoiceChatResponse_Ok.seeded",
+      "type": "EndCommunityVoiceChatResponse_Ok",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "CommunityVoiceChatUpdate.default",
+      "type": "CommunityVoiceChatUpdate",
+      "hex": "",
+      "decoded": {
+        "communityId": "",
+        "createdAt": 0,
+        "status": 0,
+        "positions": [],
+        "isMember": false,
+        "communityName": "",
+        "worlds": []
+      },
+      "jsonBytes": 106
+    },
+    {
+      "id": "CommunityVoiceChatUpdate.seeded",
+      "type": "CommunityVoiceChatUpdate",
+      "hex": "0a0b66697874757265f09f9880107b1800207b2a0b66697874757265f09f988030013a0b66697874757265f09f9880420b66697874757265f09f98804a0b66697874757265f09f9880520f0800120b66697874757265f09f9880",
+      "decoded": {
+        "communityId": "fixture😀",
+        "createdAt": 123,
+        "status": 0,
+        "endedAt": 123,
+        "positions": [
+          "fixture😀"
+        ],
+        "isMember": true,
+        "communityName": "fixture😀",
+        "communityImage": "fixture😀",
+        "worlds": [
+          "fixture😀"
+        ],
+        "streamClosed": {
+          "reason": 0,
+          "message": "fixture😀"
+        }
+      },
+      "jsonBytes": 252
+    },
+    {
+      "id": "InvalidFriendshipAction.default",
+      "type": "InvalidFriendshipAction",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "InvalidFriendshipAction.seeded",
+      "type": "InvalidFriendshipAction",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "InternalServerError.default",
+      "type": "InternalServerError",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "InternalServerError.seeded",
+      "type": "InternalServerError",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "InvalidRequest.default",
+      "type": "InvalidRequest",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "InvalidRequest.seeded",
+      "type": "InvalidRequest",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "ProfileNotFound.default",
+      "type": "ProfileNotFound",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "ProfileNotFound.seeded",
+      "type": "ProfileNotFound",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "ConflictingError.default",
+      "type": "ConflictingError",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "ConflictingError.seeded",
+      "type": "ConflictingError",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "ForbiddenError.default",
+      "type": "ForbiddenError",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "ForbiddenError.seeded",
+      "type": "ForbiddenError",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "NotFoundError.default",
+      "type": "NotFoundError",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "NotFoundError.seeded",
+      "type": "NotFoundError",
+      "hex": "0a0b66697874757265f09f9880",
+      "decoded": {
+        "message": "fixture😀"
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "Color3.default",
+      "type": "Color3",
+      "hex": "",
+      "decoded": {
+        "r": 0,
+        "g": 0,
+        "b": 0
+      },
+      "jsonBytes": 19
+    },
+    {
+      "id": "Color3.seeded",
+      "type": "Color3",
+      "hex": "0dcdcccc3d15cdcccc3d1dcdcccc3d",
+      "decoded": {
+        "r": 0.10000000149011612,
+        "g": 0.10000000149011612,
+        "b": 0.10000000149011612
+      },
+      "jsonBytes": 73
+    },
+    {
+      "id": "Color4.default",
+      "type": "Color4",
+      "hex": "",
+      "decoded": {
+        "r": 0,
+        "g": 0,
+        "b": 0,
+        "a": 0
+      },
+      "jsonBytes": 25
+    },
+    {
+      "id": "Color4.seeded",
+      "type": "Color4",
+      "hex": "0dcdcccc3d15cdcccc3d1dcdcccc3d25cdcccc3d",
+      "decoded": {
+        "r": 0.10000000149011612,
+        "g": 0.10000000149011612,
+        "b": 0.10000000149011612,
+        "a": 0.10000000149011612
+      },
+      "jsonBytes": 97
+    },
+    {
+      "id": "ColorRange.default",
+      "type": "ColorRange",
+      "hex": "",
+      "decoded": {},
+      "jsonBytes": 2
+    },
+    {
+      "id": "ColorRange.seeded",
+      "type": "ColorRange",
+      "hex": "0a140dcdcccc3d15cdcccc3d1dcdcccc3d25cdcccc3d12140dcdcccc3d15cdcccc3d1dcdcccc3d25cdcccc3d",
+      "decoded": {
+        "start": {
+          "r": 0.10000000149011612,
+          "g": 0.10000000149011612,
+          "b": 0.10000000149011612,
+          "a": 0.10000000149011612
+        },
+        "end": {
+          "r": 0.10000000149011612,
+          "g": 0.10000000149011612,
+          "b": 0.10000000149011612,
+          "a": 0.10000000149011612
+        }
+      },
+      "jsonBytes": 211
+    }
+  ],
+  "poolObservations": [
+    {
+      "name": "ws_active_connections_by_protocol",
+      "labels": {
+        "protocol": "rpc"
+      },
+      "value": 1
+    },
+    {
+      "name": "ws_active_connections",
+      "labels": {},
+      "value": 1
+    },
+    {
+      "name": "ws_active_connections_by_protocol",
+      "labels": {
+        "protocol": "stream"
+      },
+      "value": 1
+    },
+    {
+      "name": "ws_active_connections",
+      "labels": {},
+      "value": 2
+    },
+    {
+      "name": "ws_connections_rejected",
+      "labels": {},
+      "value": 1
+    },
+    {
+      "name": "ws_active_connections_by_protocol",
+      "labels": {
+        "protocol": "rpc"
+      },
+      "value": 0
+    },
+    {
+      "name": "ws_active_connections",
+      "labels": {},
+      "value": 1
+    },
+    {
+      "name": "ws_connection_duration_seconds",
+      "labels": {},
+      "value": 5
+    },
+    {
+      "name": "ws_connection_duration_seconds_by_protocol",
+      "labels": {
+        "protocol": "rpc"
+      },
+      "value": 5
+    },
+    {
+      "name": "ws_active_connections_by_protocol",
+      "labels": {
+        "protocol": "stream"
+      },
+      "value": 0
+    },
+    {
+      "name": "ws_active_connections",
+      "labels": {},
+      "value": 0
+    },
+    {
+      "name": "ws_connection_duration_seconds",
+      "labels": {},
+      "value": 5
+    },
+    {
+      "name": "ws_connection_duration_seconds_by_protocol",
+      "labels": {
+        "protocol": "stream"
+      },
+      "value": 5
+    }
+  ],
+  "subscriptionObservations": [
+    {
+      "name": "subscription_duplicates_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "subscription_updates_dropped_total",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    }
+  ],
+  "subscriberObservations": [
+    {
+      "name": "subscribers_local_count",
+      "labels": {},
+      "value": 2
+    },
+    {
+      "name": "subscribers_generators_count",
+      "labels": {},
+      "value": 1
+    },
+    {
+      "name": "subscribers_local_count",
+      "labels": {},
+      "value": 0
+    },
+    {
+      "name": "subscribers_generators_count",
+      "labels": {},
+      "value": 0
+    }
+  ],
+  "httpObservations": [
+    {
+      "name": "http_requests_total",
+      "labels": {
+        "method": "get",
+        "handler": "/status",
+        "code": 200
+      },
+      "value": 1
+    },
+    {
+      "name": "wkc_logger_logs_total",
+      "labels": {
+        "logger": "privacy-handler",
+        "level": "INFO"
+      },
+      "value": 1
+    },
+    {
+      "name": "http_requests_total",
+      "labels": {
+        "method": "get",
+        "handler": "/v1/users/:address/privacy-settings",
+        "code": 400
+      },
+      "value": 1
+    },
+    {
+      "name": "http_requests_total",
+      "labels": {
+        "method": "post",
+        "handler": "/health/live",
+        "code": 200
+      },
+      "value": 1
+    },
+    {
+      "name": "http_requests_total",
+      "labels": {
+        "method": "head",
+        "handler": "",
+        "code": 404
+      },
+      "value": 1
+    }
+  ],
+  "httpRoutes": [
+    {
+      "path": "/v1/communities/:address/managed",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/members",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/members",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/members/:memberAddress",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/members/:address",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/bans",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/members/:memberAddress/bans",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/members/:memberAddress/bans",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/members/:address/communities",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/members/:address/communities",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/members/:address/requests",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/requests",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/members/:address/invites",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id",
+      "methods": [
+        "PUT"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/places",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/places",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/places/:placeId",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/posts",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/posts",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/posts/:postId",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/posts/:postId/like",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/posts/:postId/like",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/referral-progress",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/referral-progress",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/referral-progress",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/referral-email",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/requests",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/communities/:id/requests/:requestId",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/social-settings",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/social-settings",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/private-messages-settings",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/mutes",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/mutes",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/mutes",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/friends/:address",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/users/:address/friendship-status",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/friendship-requests",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/friendship-requests/:address",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/blocks",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/blocks/:address",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/blocking-status",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/active",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/private-voice-chats",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/private-voice-chats/incoming",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v1/private-voice-chats/:callId",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/private-voice-chats/:callId",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/participants",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/participants/:address",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/speakers/:address",
+      "methods": [
+        "PUT"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/speakers/:address",
+      "methods": [
+        "PATCH"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/speakers/:address",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/speak-requests",
+      "methods": [
+        "POST"
+      ]
+    },
+    {
+      "path": "/v1/community-voice-chats/:communityId/speak-requests/:address",
+      "methods": [
+        "DELETE"
+      ]
+    },
+    {
+      "path": "/v1/moderation/communities",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/communities/:id",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/communities",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/communities/:id/members",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/communities/:id/bans",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/members/:address/requests",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/communities/:id/requests",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/communities/:id/posts",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/friends",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/users/:address/mutual-friends",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/friendship-requests",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    },
+    {
+      "path": "/v2/blocks",
+      "methods": [
+        "HEAD",
+        "GET"
+      ]
+    }
+  ],
+  "apiCases": [
+    {
+      "method": "GET",
+      "path": "/unknown",
+      "status": 404,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "GET",
+            "handler": "",
+            "code": 404
+          },
+          "value": 0
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "GET",
+            "handler": "",
+            "code": 404
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "OPTIONS",
+      "path": "/unknown",
+      "status": 204,
+      "observations": []
+    },
+    {
+      "method": "GET",
+      "path": "/v1/social-settings",
+      "status": 400,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "GET",
+            "handler": "/v1/social-settings",
+            "code": 400
+          },
+          "value": 0
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "GET",
+            "handler": "/v1/social-settings",
+            "code": 400
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/friends/0x1111111111111111111111111111111111111111",
+      "status": 400,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "DELETE",
+            "handler": "/v1/friends/:address",
+            "code": 400
+          },
+          "value": 0
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "DELETE",
+            "handler": "/v1/friends/:address",
+            "code": 400
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "DELETE",
+      "path": "/v1/communities/fixture/members/0x1111111111111111111111111111111111111111",
+      "status": 400,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "DELETE",
+            "handler": "/v1/communities/:id/members/:memberAddress",
+            "code": 400
+          },
+          "value": 0
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "DELETE",
+            "handler": "/v1/communities/:id/members/:memberAddress",
+            "code": 400
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "GET",
+      "path": "/v1/communities/0x1111111111111111111111111111111111111111/managed",
+      "status": 401,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "GET",
+            "handler": "/v1/communities/:address/managed",
+            "code": 401
+          },
+          "value": 0
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "GET",
+            "handler": "/v1/communities/:address/managed",
+            "code": 401
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/social-settings",
+      "status": 405,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "POST",
+            "handler": "",
+            "code": 405
+          },
+          "value": 0
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "POST",
+            "handler": "",
+            "code": 405
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/v1/friendship-requests",
+      "body": "{}",
+      "status": 400,
+      "observations": [
+        {
+          "name": "http_request_size_bytes",
+          "labels": {
+            "method": "POST",
+            "handler": "/v1/friendship-requests",
+            "code": 400
+          },
+          "value": 2
+        },
+        {
+          "name": "http_requests_total",
+          "labels": {
+            "method": "POST",
+            "handler": "/v1/friendship-requests",
+            "code": 400
+          },
+          "value": 1
+        }
+      ]
+    },
+    {
+      "method": "POST",
+      "path": "/unknown",
+      "body": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "status": 413,
+      "observations": []
+    }
+  ],
+  "unary": [
+    {
+      "procedure": "getFriends",
+      "requestType": "GetFriendsPayload",
+      "responseType": "PaginatedFriendsProfilesResponse",
+      "request": {
+        "pagination": {
+          "limit": 10,
+          "offset": 0
+        }
+      },
+      "response": {
+        "friends": [],
+        "paginationData": {
+          "total": 0
+        }
+      },
+      "params": {
+        "pagination": {
+          "limit": 10,
+          "offset": 0
+        }
+      },
+      "result": {
+        "friends": [],
+        "paginationData": {
+          "total": 0,
+          "page": 0
+        }
+      },
+      "requestHex": "0a02080a",
+      "responseHex": "12021000",
+      "observations": [
+        {
+          "name": "rpc_in_procedure_call_size_bytes",
+          "labels": {
+            "procedure": "getFriends"
+          },
+          "value": 38
+        },
+        {
+          "name": "rpc_out_procedure_call_size_bytes",
+          "labels": {
+            "code": "OK",
+            "procedure": "getFriends"
+          },
+          "value": 52
+        },
+        {
+          "name": "rpc_procedure_call_total",
+          "labels": {
+            "code": "OK",
+            "procedure": "getFriends"
+          },
+          "value": 1
+        },
+        {
+          "name": "rpc_procedure_call_duration_seconds",
+          "labels": {
+            "code": "OK",
+            "procedure": "getFriends"
+          },
+          "value": 0.05
+        }
+      ]
+    },
+    {
+      "procedure": "blockUser",
+      "requestType": "BlockUserPayload",
+      "responseType": "BlockUserResponse",
+      "request": {},
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User is missing"
+          }
+        }
+      },
+      "params": {},
+      "result": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User is missing"
+          }
+        }
+      },
+      "requestHex": "",
+      "responseHex": "1a110a0f55736572206973206d697373696e67",
+      "observations": [
+        {
+          "name": "rpc_in_procedure_call_size_bytes",
+          "labels": {
+            "procedure": "blockUser"
+          },
+          "value": 2
+        },
+        {
+          "name": "rpc_out_procedure_call_size_bytes",
+          "labels": {
+            "code": "INVALID_REQUEST",
+            "procedure": "blockUser"
+          },
+          "value": 86
+        },
+        {
+          "name": "rpc_procedure_call_total",
+          "labels": {
+            "code": "INVALID_REQUEST",
+            "procedure": "blockUser"
+          },
+          "value": 1
+        },
+        {
+          "name": "rpc_procedure_call_duration_seconds",
+          "labels": {
+            "code": "INVALID_REQUEST",
+            "procedure": "blockUser"
+          },
+          "value": 0.05
+        }
+      ]
+    },
+    {
+      "procedure": "getSocialSettings",
+      "request": {},
+      "responseType": "GetSocialSettingsResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "settings": {
+              "privateMessagesPrivacy": 0,
+              "blockedUsersMessagesVisibility": 0,
+              "showSituationReactions": 0
+            }
+          }
+        }
+      },
+      "params": {},
+      "result": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "settings": {
+              "privateMessagesPrivacy": 0,
+              "blockedUsersMessagesVisibility": 0,
+              "showSituationReactions": 0
+            }
+          }
+        }
+      },
+      "requestHex": "",
+      "responseHex": "0a020a00",
+      "observations": [
+        {
+          "name": "rpc_in_procedure_call_size_bytes",
+          "labels": {
+            "procedure": "getSocialSettings"
+          },
+          "value": 2
+        },
+        {
+          "name": "rpc_out_procedure_call_size_bytes",
+          "labels": {
+            "code": "OK",
+            "procedure": "getSocialSettings"
+          },
+          "value": 136
+        },
+        {
+          "name": "rpc_procedure_call_total",
+          "labels": {
+            "code": "OK",
+            "procedure": "getSocialSettings"
+          },
+          "value": 1
+        },
+        {
+          "name": "rpc_procedure_call_duration_seconds",
+          "labels": {
+            "code": "OK",
+            "procedure": "getSocialSettings"
+          },
+          "value": 0.05
+        }
+      ]
+    },
+    {
+      "procedure": "getBlockingStatus",
+      "request": {},
+      "responseType": "GetBlockingStatusResponse",
+      "response": {
+        "blockedUsers": [],
+        "blockedByUsers": []
+      },
+      "params": {},
+      "result": {
+        "blockedUsers": [],
+        "blockedByUsers": []
+      },
+      "requestHex": "",
+      "responseHex": "",
+      "observations": [
+        {
+          "name": "rpc_in_procedure_call_size_bytes",
+          "labels": {
+            "procedure": "getBlockingStatus"
+          },
+          "value": 2
+        },
+        {
+          "name": "rpc_out_procedure_call_size_bytes",
+          "labels": {
+            "code": "OK",
+            "procedure": "getBlockingStatus"
+          },
+          "value": 39
+        },
+        {
+          "name": "rpc_procedure_call_total",
+          "labels": {
+            "code": "OK",
+            "procedure": "getBlockingStatus"
+          },
+          "value": 1
+        },
+        {
+          "name": "rpc_procedure_call_duration_seconds",
+          "labels": {
+            "code": "OK",
+            "procedure": "getBlockingStatus"
+          },
+          "value": 0.05
+        }
+      ]
+    },
+    {
+      "procedure": "getFriends",
+      "requestType": "GetFriendsPayload",
+      "request": {},
+      "throws": true,
+      "params": {},
+      "result": null,
+      "requestHex": "",
+      "responseHex": "",
+      "observations": [
+        {
+          "name": "rpc_in_procedure_call_size_bytes",
+          "labels": {
+            "procedure": "getFriends"
+          },
+          "value": 2
+        },
+        {
+          "name": "rpc_procedure_call_total",
+          "labels": {
+            "code": "ERROR",
+            "procedure": "getFriends"
+          },
+          "value": 1
+        },
+        {
+          "name": "rpc_procedure_call_duration_seconds",
+          "labels": {
+            "code": "ERROR",
+            "procedure": "getFriends"
+          },
+          "value": 0.05
+        }
+      ]
+    }
+  ],
+  "streamObservations": [
+    {
+      "name": "rpc_in_procedure_call_size_bytes",
+      "labels": {
+        "procedure": "subscribeToBlockUpdates"
+      },
+      "value": 2
+    },
+    {
+      "name": "rpc_updates_sent_on_subscription",
+      "labels": {
+        "event": "blockUpdate"
+      },
+      "value": 1
+    },
+    {
+      "name": "rpc_procedure_call_total",
+      "labels": {
+        "code": "OK",
+        "procedure": "subscribeToBlockUpdates"
+      },
+      "value": 1
+    },
+    {
+      "name": "rpc_procedure_call_duration_seconds",
+      "labels": {
+        "code": "OK",
+        "procedure": "subscribeToBlockUpdates"
+      },
+      "value": 0.5
+    }
+  ]
+}

@@ -501,9 +501,9 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
     );
 
     // An entity of the year window overwritten after the pass: the outdated
-    // probe sees active late arrivals only, so a pass keeps the window; the
-    // rebuild (the console's regenerate) rewrites every window, and only the
-    // year's CID moves.
+    // probe sees active late arrivals only, and the row is younger than a
+    // month, so a pass keeps the window; the rebuild (the console's
+    // regenerate) rewrites every window, and only the year's CID moves.
     sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
         .execute(&db.pool)
         .await
@@ -531,7 +531,8 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         );
     }
 
-    // /snapshots lists what the table holds, newest window first.
+    // /snapshots lists what the table holds in division order, oldest window
+    // first, as upstream does.
     let listed = get_json(&content_router(state.clone()), "/content/snapshots").await;
     let hashes: Vec<&str> = listed
         .as_array()
@@ -539,9 +540,78 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
         .iter()
         .map(|s| s["hash"].as_str().unwrap())
         .collect();
-    let mut want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
-    want.reverse();
+    let want: Vec<&str> = rows.iter().map(|r| r.hash.as_str()).collect();
     assert_eq!(hashes, want);
+
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Upstream's inactive-entities check: a window whose row is over a month
+/// (four weeks) old and lists more entities than are active now is
+/// regenerated with the old hash in `replacedSnapshotHashes`; a month-old
+/// row whose entities are all active, or a younger row with an overwritten
+/// entity, is reused.
+#[tokio::test]
+async fn a_month_old_window_listing_an_overwritten_entity_is_regenerated() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("inactive");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state.clone(), false, settings(1000));
+    let (end, golden) = golden_pass(0);
+    let year = golden[0].range;
+    let (first, _) = generator.generate(end).await.unwrap();
+    assert_eq!(first[0].hash, golden[0].hash);
+
+    // The year row as if generated one hour after the seed's local_timestamp
+    // (so the outdated probe stays quiet), and a pass four weeks and a day
+    // later: the year window is unchanged by the later division.
+    let generated = sqlx::query_scalar::<_, chrono::NaiveDateTime>(
+        "UPDATE content.snapshots SET generation_time = '2021-01-07 07:00'
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         RETURNING generation_time",
+    )
+    .bind(year.init_timestamp as f64)
+    .fetch_one(&db.pool)
+    .await
+    .unwrap()
+    .and_utc()
+    .timestamp_millis();
+    let month = 28 * DAY;
+    let year_row =
+        |rows: &[SnapshotMetadata]| rows.iter().find(|r| r.time_range == year).cloned().unwrap();
+
+    // Every listed entity still active: the month-old row is reused.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    let kept = year_row(&rows);
+    assert_eq!(kept.hash, golden[0].hash);
+    assert_eq!(kept.generation_timestamp, generated);
+
+    // An entity overwritten, the row younger than a month: still reused.
+    sqlx::query("UPDATE content.deployments SET deleter_deployment = 0 WHERE entity_id = 'bafkreiprofile000001'")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let (rows, _) = generator.generate(generated + month - DAY).await.unwrap();
+    assert_eq!(year_row(&rows), kept);
+
+    // Over a month old with fewer active entities than it lists: regenerated.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    let rebuilt = year_row(&rows);
+    assert_eq!(rebuilt.number_of_entities, golden[0].entities - 1);
+    assert_ne!(rebuilt.hash, kept.hash);
+    assert_eq!(
+        rebuilt.replaced_snapshot_hashes.as_deref(),
+        Some(&[kept.hash.clone()][..])
+    );
+    assert!(rebuilt.generation_timestamp > generated);
+
+    // The new row is younger than a month: the next pass reuses it.
+    let (rows, _) = generator.generate(generated + month + DAY).await.unwrap();
+    assert_eq!(year_row(&rows), rebuilt);
 
     db.teardown().await;
     let _ = std::fs::remove_dir_all(root);
@@ -549,6 +619,86 @@ async fn a_pass_reuses_regenerates_prunes_and_rekeys() {
 
 fn content_router(state: Arc<ContentState>) -> Router {
     catalyst::content::build_router(state)
+}
+
+const STEP_0026: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/migrations/0026_content_snapshots_outdated.sql"
+));
+
+/// A window's `outdated` mark and whether its generation time is the epoch.
+async fn mark_of(pool: &PgPool, hash: &str) -> (bool, bool) {
+    sqlx::query_as(
+        "SELECT outdated, generation_time = 'epoch'::timestamp FROM content.snapshots WHERE hash = $1",
+    )
+    .bind(hash)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// Step 0026 carries a window an older binary marked by stamping the epoch
+/// over its generation time into `outdated`, and leaves the others alone;
+/// run twice it changes nothing more.
+#[tokio::test]
+async fn step_0026_carries_an_epoch_mark_into_outdated() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("step-0026");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state, false, settings(1000));
+    let (end, _) = golden_pass(0);
+    let (rows, _) = generator.generate(end).await.unwrap();
+    let (marked, kept) = (&rows[2].hash, &rows[1].hash);
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp, outdated = false WHERE hash = $1",
+    )
+    .bind(marked)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    for _ in 0..2 {
+        sqlx::raw_sql(STEP_0026).execute(&db.pool).await.unwrap();
+        assert_eq!(mark_of(&db.pool, marked).await, (true, true));
+        assert_eq!(mark_of(&db.pool, kept).await, (false, false));
+    }
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window an older binary marked with the epoch, which the new binary
+/// reads without the step having flagged it, regenerates at the next pass
+/// and comes back with a real generation time and no mark; the others are
+/// reused.
+#[tokio::test]
+async fn an_epoch_mark_from_an_older_binary_regenerates_its_window() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    sqlx::raw_sql(SEED).execute(&db.pool).await.unwrap();
+    let root = temp_dir("epoch-mark");
+    let state = content_state(&db.pool, &root).await;
+    let generator = SnapshotGenerator::new(state, false, settings(1000));
+    let (end, _) = golden_pass(0);
+    let (first, _) = generator.generate(end).await.unwrap();
+    sqlx::query(
+        "UPDATE content.snapshots SET generation_time = 'epoch'::timestamp, outdated = false WHERE hash = $1",
+    )
+    .bind(&first[2].hash)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let (rows, summary) = generator.generate(end).await.unwrap();
+    assert_eq!((summary.generated, summary.reused), (1, 3), "{summary:?}");
+    assert!(rows[2].generation_timestamp > 0);
+    assert_eq!(mark_of(&db.pool, &rows[2].hash).await, (false, false));
+    for i in [0, 1, 3] {
+        assert_eq!(rows[i], first[i]);
+    }
+    db.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
 }
 
 async fn get_json(app: &Router, uri: &str) -> Value {
@@ -679,6 +829,7 @@ async fn spawn_stub_peer(now: i64) -> (String, tokio::task::JoinHandle<()>) {
 fn sync_settings(peer: &str) -> SyncSettings {
     SyncSettings {
         peers: vec![peer.to_string()],
+        dao: None,
         entity_types: None,
         from_timestamp_ms: 0,
         phased_sync: true,
@@ -889,7 +1040,18 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         )
         .await
         .unwrap_or_else(|e| panic!("local deploy on A: {:?}", e.errors()));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    let prior = jobs_a
+        .report()
+        .iter()
+        .find(|job| job.name == snapshot_gen::JOB_NAME)
+        .map_or(0, |job| job.passes);
+    assert!(
+        catalyst::shared::test_wait::until(async || jobs_a
+            .report()
+            .iter()
+            .any(|job| job.name == snapshot_gen::JOB_NAME && job.passes > prior))
+        .await
+    );
     assert!(
         snapshot_gen::all_snapshots(&db_a.pool)
             .await
@@ -906,6 +1068,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         node_a.storage.clone(),
         node_a.sync.clone(),
         reqwest::Client::new(),
+        catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_a,
     )
     .await
@@ -936,6 +1099,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         node_b.storage.clone(),
         node_b.sync.clone(),
         reqwest::Client::new(),
+        catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_b,
     )
     .await
@@ -1026,6 +1190,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         node_b.storage.clone(),
         node_b.sync.clone(),
         reqwest::Client::new(),
+        catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_b,
     )
     .await
@@ -1069,11 +1234,11 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
 
 /// A scene this node unpublished (`DELETE /scenes/{coord}`: tombstoned, its
 /// deployment row kept with `deleter_deployment` NULL, the older scene it had
-/// overwritten restored) is not history a peer replays: `/pointer-changes`
-/// and the snapshot windows leave it out, and the unpublish outdates the
-/// windows it touched, so a fresh peer ends with this node's active set (the
-/// restored scene on the parcel, the unpublished one nowhere). Before the
-/// 2026-09-25 review the peer served the unpublished scene as active.
+/// overwritten left superseded and the parcel empty) is not history a peer
+/// replays: `/pointer-changes` and the snapshot windows leave it and the
+/// scenes it superseded out, and the unpublish outdates the windows it
+/// touched, so a fresh peer ends with this node's active set (the parcel
+/// empty, neither scene anywhere).
 #[tokio::test]
 async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     let _ = tracing_subscriber::fmt()
@@ -1128,33 +1293,54 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         "the old scene is overwritten, the newer one is in today's remainder"
     );
 
-    // The owner unpublishes 7,7: A's parcel falls back to the old scene.
-    let outcome = catalyst::content::land_publish::tombstone_and_repoint(&db_a.pool, "7,7")
-        .await
-        .unwrap();
-    assert_eq!(outcome.entity_id, new_local);
-    assert_eq!(
-        outcome.repointed,
-        vec![("7,7".to_string(), Some(old_local.clone()))]
-    );
-    let a_pointer: String =
-        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
-            .fetch_one(&db_a.pool)
+    // The owner unpublishes 7,7: A's parcel is left empty.
+    let outcome =
+        catalyst::content::land_publish::unpublish_local_scene(&db_a.pool, "7,7", &new_local)
             .await
             .unwrap();
-    assert_eq!(a_pointer, old_local);
+    assert_eq!(outcome.entity_id, new_local);
+    assert_eq!(outcome.parcels, vec!["7,7".to_string()]);
+    let a_pointer: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
+            .fetch_optional(&db_a.pool)
+            .await
+            .unwrap();
+    assert_eq!(a_pointer, None);
 
-    // The unpublish outdates the windows it touched; the next pass holds the old scene alone.
-    let (after, summary) = generator
+    // The unpublish outdates the windows it touched: the old scene's is regenerated.
+    let (_, summary) = generator
         .generate(chrono::Utc::now().timestamp_millis())
         .await
         .unwrap();
     assert!(summary.generated >= 1, "{summary:?}");
-    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
-    assert_eq!(
-        in_files, 1,
-        "the restored old scene's window was outdated by the unpublish and regenerated"
+
+    // A scene on 8,8 B waits for: once it lands, B has replayed A.
+    let marker_asset = b"a neighbouring scene".to_vec();
+    let marker_hash = catalyst::auth::hash_bytes_v1(&marker_asset);
+    let (marker, marker_bytes) = entity_file(
+        "scene",
+        &["8,8"],
+        now - 30_000,
+        &[("bin/game.js", &marker_hash)],
     );
+    let chain = serde_json::to_value(auth::signed_chain(&marker).await).unwrap();
+    deployer
+        .deploy_entity(
+            vec![Bytes::from(marker_bytes), Bytes::from(marker_asset)],
+            &marker,
+            chain,
+            "LOCAL",
+        )
+        .await
+        .unwrap_or_else(|e| panic!("local deploy on A: {:?}", e.errors()));
+
+    // The next pass holds neither scene of 7,7.
+    let (after, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the old scene stays superseded");
     let (url_a, _, serve_a) = serve_node(node_a.clone()).await;
     let changes: Value = reqwest::Client::new()
         .get(format!("{url_a}/content/pointer-changes"))
@@ -1171,7 +1357,9 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         .map(|d| d["entityId"].as_str().unwrap())
         .collect();
     assert!(
-        listed.contains(&old_local.as_str()) && !listed.contains(&new_local.as_str()),
+        listed.contains(&marker.as_str())
+            && !listed.contains(&old_local.as_str())
+            && !listed.contains(&new_local.as_str()),
         "{listed:?}"
     );
 
@@ -1183,6 +1371,7 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         node_b.storage.clone(),
         node_b.sync.clone(),
         reqwest::Client::new(),
+        catalyst::content::sync_deployer::SyncValidation::AuthChainOnly,
         &jobs_b,
     )
     .await
@@ -1192,9 +1381,9 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     })
     .await;
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    let b_pointer = loop {
+    let b_marker = loop {
         let p: Option<String> = sqlx::query_scalar(
-            "SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'",
+            "SELECT entity_id FROM content.active_pointers WHERE pointer = '8,8'",
         )
         .fetch_optional(&db_b.pool)
         .await
@@ -1204,18 +1393,20 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     };
-    assert_eq!(
-        b_pointer.as_deref(),
-        Some(old_local.as_str()),
-        "B serves A's active scene on 7,7"
-    );
-    let unpublished_on_b: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id = $1")
-            .bind(&new_local)
+    assert_eq!(b_marker.as_deref(), Some(marker.as_str()), "B replayed A");
+    let b_pointer: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
+            .fetch_optional(&db_b.pool)
+            .await
+            .unwrap();
+    assert_eq!(b_pointer, None, "B leaves 7,7 empty, as A does");
+    let on_b: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id = ANY($1)")
+            .bind(vec![new_local.clone(), old_local.clone()])
             .fetch_one(&db_b.pool)
             .await
             .unwrap();
-    assert_eq!(unpublished_on_b, 0, "the unpublished scene never reached B");
+    assert_eq!(on_b, 0, "neither scene of 7,7 reached B");
 
     jobs_b.shutdown(Duration::from_secs(10)).await;
     serve_a.abort();
@@ -1223,6 +1414,480 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     db_b.teardown().await;
     let _ = std::fs::remove_dir_all(root_a);
     let _ = std::fs::remove_dir_all(root_b);
+}
+
+/// A database an earlier unpublish left behind on 7,7: the newer local scene
+/// tombstoned, the older one it had superseded restored (deleter cleared, the
+/// parcel re-pointed). Returns the database, the store root, the node and the
+/// two entity ids (old, new).
+async fn restored_scene_database(
+    tag: &str,
+) -> Option<(
+    db::ScratchDb,
+    std::path::PathBuf,
+    Arc<ContentState>,
+    String,
+    String,
+)> {
+    let db_a = db::scratch_database().await?;
+    let now = chrono::Utc::now().timestamp_millis();
+    let root = temp_dir(tag);
+    let node = content_state(&db_a.pool, &root).await;
+    node.sync.set_state(SyncState::Syncing);
+
+    let old_local = seed_old_local_scene(&node, now).await;
+    let deployer = WriteDeployer::new(
+        db_a.pool.clone(),
+        node.storage.clone(),
+        Arc::new(catalyst::auth::PeerValidated),
+    );
+    let asset = b"a newer scene".to_vec();
+    let asset_hash = catalyst::auth::hash_bytes_v1(&asset);
+    let (new_local, new_local_bytes) = entity_file(
+        "scene",
+        &["7,7"],
+        now - 60_000,
+        &[("bin/game.js", &asset_hash)],
+    );
+    let chain = serde_json::to_value(auth::signed_chain(&new_local).await).unwrap();
+    deployer
+        .deploy_entity(
+            vec![Bytes::from(new_local_bytes), Bytes::from(asset)],
+            &new_local,
+            chain,
+            "LOCAL",
+        )
+        .await
+        .unwrap_or_else(|e| panic!("local deploy: {:?}", e.errors()));
+
+    // The earlier unpublish: the newer scene tombstoned, the old one restored.
+    for sql in [
+        "UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now()) WHERE entity_id = $1",
+        "UPDATE content.deployments SET deleter_deployment = NULL WHERE entity_id = $2",
+        "UPDATE content.active_pointers SET entity_id = $2 WHERE pointer = '7,7'",
+    ] {
+        sqlx::query(sql)
+            .bind(&new_local)
+            .bind(&old_local)
+            .execute(&db_a.pool)
+            .await
+            .unwrap();
+    }
+    Some((db_a, root, node, old_local, new_local))
+}
+
+/// A database an earlier unpublish left behind: the unpublish restored the
+/// older scene it had superseded (its deleter cleared, the parcel re-pointed)
+/// and the next pass wrote that scene into its window. The deleter repair
+/// supersedes it again, empties the parcel and marks the window, so the next
+/// pass regenerates it without the scene and `/pointer-changes` agrees.
+#[tokio::test]
+async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored() {
+    let Some((db_a, root, node, old_local, new_local)) =
+        restored_scene_database("repair-window").await
+    else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
+    let (before, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = before.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 1, "the restored scene is in its window");
+
+    catalyst::content::sync::LiveDeploymentRepository::new(
+        db_a.pool.clone(),
+        Arc::new(SyncStatus::default()),
+    )
+    .resolve_deleter_deployments()
+    .await
+    .unwrap();
+    let a_pointer: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
+            .fetch_optional(&db_a.pool)
+            .await
+            .unwrap();
+    assert_eq!(a_pointer, None, "the repair empties the parcel");
+    // Upstream never publishes a generation time of 0: the mark is a flag and
+    // the window keeps its real generation time until the next pass.
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .unwrap()
+        .clone();
+    let (outdated, generated) = window_mark(&db_a.pool, &window.time_range).await;
+    assert!(outdated, "the repair marks the window");
+    assert_eq!(generated, window.generation_timestamp);
+    assert!(generated > 0);
+
+    let (after, summary) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    assert!(summary.generated >= 1, "{summary:?}");
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the regenerated window leaves the scene out");
+    let regenerated = after
+        .iter()
+        .find(|r| r.time_range == window.time_range)
+        .unwrap();
+    assert!(regenerated.generation_timestamp >= generated);
+    assert_eq!(
+        window_mark(&db_a.pool, &window.time_range).await,
+        (false, regenerated.generation_timestamp),
+        "the regenerated row is unmarked"
+    );
+    assert!(
+        after.iter().all(|r| r.generation_timestamp > 0),
+        "{after:?}"
+    );
+
+    let (url, _, serve) = serve_node(node.clone()).await;
+    let changes: Value = reqwest::Client::new()
+        .get(format!("{url}/content/pointer-changes"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let listed: Vec<&str> = changes["deltas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| d["entityId"].as_str().unwrap())
+        .collect();
+    assert!(
+        !listed.contains(&old_local.as_str()) && !listed.contains(&new_local.as_str()),
+        "{listed:?}"
+    );
+
+    serve.abort();
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window row's `outdated` mark and its generation time in milliseconds.
+async fn window_mark(pool: &PgPool, window: &TimeRange) -> (bool, i64) {
+    let (outdated, generated): (bool, chrono::NaiveDateTime) = sqlx::query_as(
+        "SELECT outdated, generation_time FROM content.snapshots
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+           AND end_timestamp = to_timestamp($2 / 1000.0) AT TIME ZONE 'UTC'",
+    )
+    .bind(window.init_timestamp as f64)
+    .bind(window.end_timestamp as f64)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (outdated, generated.and_utc().timestamp_millis())
+}
+
+/// Backends of this database waiting on a lock.
+async fn lock_waiters(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn wait_for_lock_waiters(pool: &PgPool, n: i64) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while lock_waiters(pool).await < n {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{n} lock waiters never showed up"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The deleter repair commits while a pass is between reading a window and
+/// writing its row: the window's new row still carries the repair's mark, so
+/// the next pass regenerates it without the superseded scene. The test holds
+/// the window's row so the pass stops right before its write, then lets the
+/// repair run into it.
+#[tokio::test]
+async fn a_window_written_beside_the_deleter_repair_keeps_its_mark() {
+    let Some((db_a, root, node, _, _)) = restored_scene_database("repair-race").await else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
+    let (before, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .expect("the restored scene is in a window")
+        .time_range;
+
+    let mut hold = db_a.pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT 1 FROM content.snapshots
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         FOR UPDATE",
+    )
+    .bind(window.init_timestamp as f64)
+    .execute(&mut *hold)
+    .await
+    .unwrap();
+    let pass = tokio::spawn({
+        let generator = generator.clone();
+        async move {
+            generator
+                .regenerate(chrono::Utc::now().timestamp_millis())
+                .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 1).await;
+    let repair = tokio::spawn({
+        let pool = db_a.pool.clone();
+        async move {
+            catalyst::content::sync::LiveDeploymentRepository::new(
+                pool,
+                Arc::new(SyncStatus::default()),
+            )
+            .resolve_deleter_deployments()
+            .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 2).await;
+    hold.rollback().await.unwrap();
+    let (written, _) = pass.await.unwrap().unwrap();
+    repair.await.unwrap().unwrap();
+    let row = written
+        .iter()
+        .find(|r| r.time_range == window)
+        .expect("the window's row");
+    assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
+
+    let (outdated, generated) = window_mark(&db_a.pool, &window).await;
+    assert!(outdated, "the window keeps the repair's mark");
+    assert!(
+        generated > 0,
+        "the mark leaves the generation time as it was"
+    );
+    let (after, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the next pass leaves the scene out");
+
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A window the deleter repair marked is regenerated at the job's next tick,
+/// not a whole generation interval later.
+#[tokio::test]
+async fn the_job_regenerates_a_marked_window_at_the_next_tick() {
+    let Some((db_a, root, node, _, _)) = restored_scene_database("repair-tick").await else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(
+        node.clone(),
+        false,
+        snapshot_gen::Settings {
+            interval: Duration::from_secs(6 * 3600),
+            tick: Duration::from_millis(100),
+        },
+    );
+    let jobs = Jobs::new();
+    generator.spawn_job(&jobs);
+    wait_until("the first pass", 20, || {
+        generator
+            .report()
+            .last_summary
+            .is_some_and(|s| s.windows > 0)
+    })
+    .await;
+    let first = generator.report().last_finished_ms;
+
+    catalyst::content::sync::LiveDeploymentRepository::new(
+        db_a.pool.clone(),
+        Arc::new(SyncStatus::default()),
+    )
+    .resolve_deleter_deployments()
+    .await
+    .unwrap();
+    wait_until("a pass after the repair", 20, || {
+        generator.report().last_finished_ms > first
+    })
+    .await;
+    let summary = generator.report().last_summary.unwrap();
+    assert!(summary.generated >= 1, "{summary:?}");
+    let in_files: i64 =
+        sqlx::query_scalar("SELECT coalesce(sum(number_of_entities), 0) FROM content.snapshots")
+            .fetch_one(&db_a.pool)
+            .await
+            .unwrap();
+    assert_eq!(in_files, 0, "the regenerated window leaves the scene out");
+
+    jobs.shutdown(Duration::from_secs(5)).await;
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The deleter repair commits after a pass read a window but before the pass
+/// writes its row: the row the pass writes carries the repair's mark, so the
+/// next pass regenerates the window without the superseded scene. The test
+/// holds the restored scene's row so the repair stops mid-statement while the
+/// pass reads.
+#[tokio::test]
+async fn a_window_read_before_the_deleter_repair_commits_is_written_marked() {
+    let Some((db_a, root, node, old_local, _)) = restored_scene_database("repair-read").await
+    else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
+    let (before, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .expect("the restored scene is in a window")
+        .time_range;
+    // Only this window is regenerated, so the pass's first row write is its.
+    sqlx::query(
+        "UPDATE content.snapshots SET outdated = true
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
+    )
+    .bind(window.init_timestamp as f64)
+    .execute(&db_a.pool)
+    .await
+    .unwrap();
+
+    let mut hold = db_a.pool.begin().await.unwrap();
+    sqlx::query("SELECT 1 FROM content.deployments WHERE entity_id = $1 FOR UPDATE")
+        .bind(&old_local)
+        .execute(&mut *hold)
+        .await
+        .unwrap();
+    let repair = tokio::spawn({
+        let pool = db_a.pool.clone();
+        async move {
+            catalyst::content::sync::LiveDeploymentRepository::new(
+                pool,
+                Arc::new(SyncStatus::default()),
+            )
+            .resolve_deleter_deployments()
+            .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 1).await;
+    let pass = tokio::spawn({
+        let generator = generator.clone();
+        async move {
+            generator
+                .generate(chrono::Utc::now().timestamp_millis())
+                .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 2).await;
+    hold.rollback().await.unwrap();
+    repair.await.unwrap().unwrap();
+    let (written, _) = pass.await.unwrap().unwrap();
+    let row = written
+        .iter()
+        .find(|r| r.time_range == window)
+        .expect("the window's row");
+    assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
+    let (outdated, generated) = window_mark(&db_a.pool, &window).await;
+    assert!(outdated, "the window carries the repair's mark");
+    assert_eq!(
+        generated, row.generation_timestamp,
+        "the real generation time is published"
+    );
+    assert!(generated > 0);
+
+    let (after, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the next pass leaves the scene out");
+
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A pass stamps a window with the oldest open transaction's start, which can
+/// precede the window when a transaction stays open for days. That stamp is
+/// not the deleter repair's mark: the job waits for its interval, and the
+/// window is only outdated when a row in it changed since.
+#[tokio::test]
+async fn a_window_stamped_before_it_began_is_not_rewritten_at_every_tick() {
+    let Some((db_a, root, node, _, _)) = restored_scene_database("early-stamp").await else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(
+        node.clone(),
+        false,
+        snapshot_gen::Settings {
+            interval: Duration::from_secs(6 * 3600),
+            tick: Duration::from_millis(100),
+        },
+    );
+    let jobs = Jobs::new();
+    generator.spawn_job(&jobs);
+    wait_until("the first pass", 20, || {
+        generator
+            .report()
+            .last_summary
+            .is_some_and(|s| s.windows > 0)
+    })
+    .await;
+    let first = generator.report().last_finished_ms;
+
+    let (init, end): (chrono::NaiveDateTime, chrono::NaiveDateTime) = sqlx::query_as(
+        "UPDATE content.snapshots SET generation_time = init_timestamp - interval '1 day'
+         WHERE hash = (SELECT hash FROM content.snapshots
+                       WHERE number_of_entities = 0 ORDER BY init_timestamp DESC LIMIT 1)
+         RETURNING init_timestamp, end_timestamp",
+    )
+    .fetch_one(&db_a.pool)
+    .await
+    .unwrap();
+    let window = TimeRange {
+        init_timestamp: init.and_utc().timestamp_millis(),
+        end_timestamp: end.and_utc().timestamp_millis(),
+    };
+    assert!(
+        !snapshot_is_outdated(&db_a.pool, &window, window.init_timestamp - 86_400_000)
+            .await
+            .unwrap(),
+        "an unchanged window is current"
+    );
+    let prior = jobs
+        .report()
+        .iter()
+        .find(|job| job.name == snapshot_gen::JOB_NAME)
+        .unwrap()
+        .passes;
+    assert!(
+        catalyst::shared::test_wait::until(async || jobs
+            .report()
+            .iter()
+            .any(|job| job.name == snapshot_gen::JOB_NAME && job.passes >= prior + 2))
+        .await
+    );
+    assert_eq!(
+        generator.report().last_finished_ms,
+        first,
+        "no pass ran before the interval"
+    );
+
+    jobs.shutdown(Duration::from_secs(5)).await;
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
 }
 
 /// A pass over a populated database. Not a contract: run by hand with

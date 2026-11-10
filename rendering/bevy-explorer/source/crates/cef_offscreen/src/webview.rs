@@ -147,7 +147,7 @@ fn create_webview(
         browsers.create_browser(
             entity,
             &uri.0,
-            size.0,
+            *size,
             requester.clone(),
             ipc_event_sender.0.clone(),
             cursor_icon_sender.clone(),
@@ -161,7 +161,7 @@ fn resize(
     webviews: Query<(Entity, &WebviewSize), Changed<WebviewSize>>,
 ) {
     for (webview, size) in webviews.iter() {
-        browsers.resize(&webview, size.0);
+        browsers.resize(&webview, *size);
     }
 }
 

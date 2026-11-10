@@ -6,12 +6,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import Button from "../../../atoms/Button";
-import { CHAIN, type ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { useShopProvider, useWalletBlock, useWrite, WriteStatus } from "../../market/components/kit";
 import type { PublishableItem } from "../lib/builder";
 import { isIssueValid, isValidIssueAddress, issueTokens, totalToIssue, type IssueEntry } from "../lib/issue";
+import { settlementChainId } from "../../checkout/chain/config";
 
-export function IssueForm({ item, chainId = CHAIN.POLYGON, onClose }: { item: PublishableItem; chainId?: ChainId; onClose: () => void }) {
+export function IssueForm({ item, chainId = settlementChainId(), onClose }: { item: PublishableItem; chainId?: ChainId; onClose: () => void }) {
   const qc = useQueryClient();
   const provider = useShopProvider();
   const block = useWalletBlock("Issuing copies");

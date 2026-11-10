@@ -12,10 +12,25 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parent.parent
 SELECTION = "--workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol"
-BROAD = "cd services/catalyst && cargo test --locked " + SELECTION
+BROAD = "tooling/catalyst-test.sh " + SELECTION
 VENDOR = "cargo test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib"
 VENDOR_CHECK = "cargo check --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --all-features --all-targets"
-BEVY = "cargo test --all --release --locked -- --test-threads=1"
+BEVY = "cargo test --all --profile ci-test --locked -- --test-threads=1"
+TEST_SCRIPT = [
+    'cargo test --locked "$@" --no-run --message-format=json-render-diagnostics | python3 -c \'',
+    'if artifact.get("executable") and artifact.get("profile", {}).get("test"):',
+    'print(artifact["executable"])',
+    '\' > "$logs/binaries"',
+    '[ -s "$logs/binaries" ] || { echo "catalyst-test: no test binaries found" >&2; exit 1; }',
+    'grep -E \'/(archipelago|pulse)_[^/]*$\' "$logs/binaries" > "$logs/sockets" || [ $? -eq 1 ]',
+    'grep -v -E \'/(archipelago|pulse)_[^/]*$\' "$logs/binaries" > "$logs/others" || [ $? -eq 1 ]',
+    'xargs -P "$1" -I{} sh -c \'',
+    '"$1" > "$log" 2>&1 || { cat "$log"; exit 1; }',
+    'run "$jobs" < "$logs/binaries"',
+    'run "$jobs" < "$logs/others"',
+    'run "$socket_jobs" < "$logs/sockets"',
+    'cargo test --locked "$@" --doc',
+]
 
 
 def require(condition, message):
@@ -67,6 +82,19 @@ def validate_runtime_script(script):
     require(logical.count(sequence) == 1, "vendor compile gate must run unconditionally before the default runtime")
 
 
+def validate_test_script(script):
+    # Pins the lines that keep the run complete: bash under set -e, the selection compiled
+    # unfiltered, every listed binary run without arguments in both phases, the doc-tests,
+    # and no exit before the end. Comment lines are inert.
+    require(script.splitlines()[:1] == ["#!/usr/bin/env bash"], "catalyst-test.sh must run under bash")
+    lines = [line.strip() for line in script.splitlines() if line.strip() and not line.lstrip().startswith("#")]
+    require(lines[:1] == ["set -euo pipefail"], "catalyst-test.sh must stop at the first failing step")
+    positions = [[index for index, line in enumerate(lines) if line == pinned] for pinned in TEST_SCRIPT]
+    require(all(len(found) == 1 for found in positions) and positions == sorted(positions),
+            "catalyst-test.sh must compile the selection unfiltered, run every listed binary without arguments and the doc-tests exactly once; update the guard's pinned lines with the script")
+    require(not any(line.startswith("exit") for line in lines), "catalyst-test.sh must not exit before the doc-tests")
+
+
 def validate_bevy_workflow(workflow):
     # Fixed indentation/shape contract for this checked-in workflow, not a YAML
     # evaluator. Fail closed if the job, selection condition or step changes.
@@ -90,17 +118,20 @@ def run(command, cwd=ROOT):
     return result.stdout
 
 
-def compiled_targets(arguments, cwd):
-    output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json"], cwd)
-    return artifact_targets(output)
+def compiled_targets(arguments, cwd, *, selected=None, kind=None):
+    output = run(["cargo", "test", "--locked", *arguments, "--no-run", "--message-format=json-render-diagnostics"], cwd)
+    return artifact_targets(output, selected, kind=kind)
 
 
-def artifact_targets(output, selected=None):
+def artifact_targets(output, selected=None, *, kind=None):
     targets = {}
     for line in output.splitlines():
         message = json.loads(line)
         if message.get("reason") == "compiler-artifact" and message.get("executable") and message.get("profile", {}).get("test"):
-            name = message["target"]["name"]
+            target = message["target"]
+            if kind is not None and kind not in target["kind"]:
+                continue
+            name = target["name"]
             if selected is not None and name not in selected:
                 continue
             require(name not in targets, f"duplicate executable target: {name}")
@@ -154,15 +185,14 @@ def main():
         verify_targets(manifest["bevy"], targets)
         return
     validate_runtime_script((ROOT / "tooling/dev-test.sh").read_text())
+    validate_test_script((ROOT / "tooling/catalyst-test.sh").read_text())
     validate_invocation(run(["make", "--no-print-directory", "-n", "catalyst-test"]), os.environ)
     required = manifest["catalyst"]
     if os.name != "nt":
         for target, names in manifest["unix"].items():
             required[target] += names
-    selection = SELECTION.split()
-    for target in required:
-        selection += ["--test", target]
-    targets = compiled_targets(selection, ROOT / "services/catalyst")
+    # Match the runtime selection so Cargo reuses the same feature graph and binaries.
+    targets = compiled_targets(SELECTION.split(), ROOT / "services/catalyst", selected=required, kind="test")
     verify_targets(required, targets)
     vendor_targets = compiled_targets(["--manifest-path", "library/vendor/rusty_enet/Cargo.toml", "--lib"], ROOT)
     require("rusty_enet" in vendor_targets, "missing vendor lib target")

@@ -20,12 +20,12 @@ const NODE_ROWS = readFileSync(
 );
 
 describe("db places counts match the node's places API", () => {
-  it("favorites, likes and dislikes add the node's own interaction counts exactly as rows.rs place_columns does", () => {
-    for (const column of ["favorites", "likes", "dislikes"]) {
-      const node = NODE_ROWS.match(new RegExp(`^\\s*(${column} \\+ COALESCE\\(.*\\) AS ${column}),$`, "m"))?.[1];
-      expect(node, `rows.rs projects ${column}`).toContain("explore.place_interaction_counts");
-      // The node reads the explore.place_indexed view; sites reads its explore.place leg, unaliased.
-      const sites = node!.replace("place_indexed.id", "place.id");
+  it("favorites, likes, dislikes, like_rate and like_score are projected exactly as rows.rs place_columns does", () => {
+    for (const column of ["favorites", "likes", "dislikes", "like_rate", "like_score"]) {
+      const node = NODE_ROWS.match(new RegExp(`^\\s*(.*place_interaction_counts.* AS ${column}),$`, "m"))?.[1];
+      expect(node, `rows.rs projects ${column} from the interaction counts`).toBeDefined();
+      // The node reads the explore.place_indexed view; sites reads explore.place, unaliased.
+      const sites = node!.replaceAll("place_indexed.", "place.");
       for (const query of [buildPlaceQuery("p").text, buildListQuery({}).text]) {
         expect(query).toContain(sites);
         expect(query).toMatch(/ FROM explore\.place WHERE /);
@@ -55,10 +55,11 @@ describe("db places counts match the node's places API", () => {
 });
 
 describe("db places query builders (faithful to catalyrst-places SQL)", () => {
-  it("no filters: disabled-only WHERE, like_score order, default paging; limit clamps to 0..100 and offset floors", () => {
+  it("no filters: disabled-only WHERE, the served like_score order, default paging; limit clamps to 0..100 and offset floors", () => {
     const q = buildListQuery({});
     expect(q.text).toContain("WHERE disabled IS FALSE");
-    expect(q.text).toMatch(/ORDER BY.*like_score.*DESC/);
+    expect(q.text).toContain("ORDER BY like_score DESC NULLS LAST, deployed_at DESC, id ASC LIMIT 100 OFFSET 0");
+    expect(q.text).not.toMatch(/ORDER BY.*raw->>'like_score'/);
     expect(q.text).toContain("LIMIT 100 OFFSET 0");
     expect(q.values).toEqual([]);
 
@@ -93,7 +94,7 @@ describe("db places query builders (faithful to catalyrst-places SQL)", () => {
 });
 
 describe("placeFromDbRow + mapPlace on a Postgres-style row", () => {
-  it("normalizes a row (nulls + extra cols) into a card; null user_count -> players 0 / not live, null title -> empty", () => {
+  it("preserves an unknown player count in the card, keeps it not live, and normalizes a null title", () => {
     const row = {
       id: "abc",
       title: "Genesis Plaza",
@@ -143,7 +144,8 @@ describe("placeFromDbRow + mapPlace on a Postgres-style row", () => {
         like_rate: null,
       }),
     );
-    expect(card.players).toBe(0);
+    // Missing occupancy is unknown; PlaceCard displays an em dash rather than claiming an empty scene.
+    expect(card.players).toBeNull();
     expect(card.live).toBe(false);
     expect(card.title).toBe("");
     expect(card.rating).toBe(0);

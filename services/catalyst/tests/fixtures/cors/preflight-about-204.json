@@ -1,5 +1,5 @@
 {
-  "description": "CORS preflight: OPTIONS /content/about must short-circuit to 204 with Access-Control-Allow-* headers. catalyrst registers NO OPTIONS handlers; the cors middleware handles all preflights.",
+  "description": "CORS preflight on a path under /content/ that has no route: the cors middleware answers 204 with upstream's content-server rule before routing.",
   "request": {
     "method": "OPTIONS",
     "path": "/content/about",
@@ -14,16 +14,16 @@
   "response": {
     "status": 204,
     "headers": {
-      "access-control-allow-methods": "GET,HEAD,POST,PUT,DELETE,PATCH,OPTIONS",
       "access-control-allow-headers": "content-type",
-      "access-control-max-age": "86400",
-      "access-control-allow-origin": "https://decentraland.org",
-      "access-control-allow-credentials": "true",
-      "vary": "Origin"
+      "access-control-allow-methods": "GET,HEAD,POST,OPTIONS",
+      "access-control-allow-origin": "*",
+      "access-control-expose-headers": "*",
+      "access-control-max-age": "600",
+      "vary": "Access-Control-Request-Headers"
     },
     "body_bytes_b64": ""
   },
-  "captured_from": "INTENTIONAL DIVERGENCE from upstream \u2014 allow-headers are REFLECTED from Access-Control-Request-Headers (the nginx _cors.inc behavior the transparent front used to provide): auth chains are open-ended (X-Identity-Auth-Chain-N grows with delegation/EIP-1654 links), so any enumerated list is a ceiling that breaks signed login. Decision 2026-07-31, transparent-front cutover gate. Golden asserts OUR (post-reflect) headers.",
-  "captured_at": "2026-05-23T20:30:00Z",
+  "captured_from": "The headers of peer.decentraland.org's preflight under /content/ (conformance/content-lambdas/captures/content-reads/CR-11-preflight.json, 2026-11-04); this path itself was not captured.",
+  "captured_at": "2026-11-04T00:00:00Z",
   "volatile_paths": []
 }

@@ -8,7 +8,7 @@
 
 import type { Hex } from "viem";
 
-import type { ChainId } from "../../model/chain";
+import type { ChainId } from "@shop/model/chain";
 import { gaslessEnabled } from "../chain/config";
 import { requireContracts } from "../chain/contracts";
 import { isGaslessUnavailable, isSignatureDeclined, relayMetaTransaction, type MetaTxTarget } from "../chain/metatx";
@@ -16,7 +16,7 @@ import { sendAndConfirm, TxPendingError } from "../chain/wallet";
 import { AuthorizationKind, ensureAuthorization } from "../lib/authorizations";
 import { getMarketplaceForTrade } from "../lib/marketplace";
 import { canPayGasItself } from "../lib/wallet-kind";
-import { buyOneWithCredits, type AnyPurchase } from "./credits";
+import { buyOneWithCredits, creditsManagerFor, type AnyPurchase } from "./credits";
 import { encodeMarketplaceCall, encodeStoreBuy, type ListingCoupon, type SignedTrade, type SpendableCredit, type StoreItemToBuy } from "./encoding";
 import { buyOneGasless, isSettlementPending, waitForSettlement } from "./gasless";
 import type { RailContext } from "./rail";
@@ -205,7 +205,8 @@ async function payGapWithMana(ctx: RailContext, target: PurchaseTarget, opts: Ga
   if (opts.credits.length === 0) throw new Error("No credits to spend: use the MANA-only rail for that");
   if (opts.manaGapWei <= 0n) throw new Error("No MANA gap to cover: use the credits-only rail for that");
   const chainId = targetChainId(target);
-  const { spender } = manaSpenderFor("combined", target);
+  // The book's manager, which pulls the gap: a credit signed for any other is refused before this approves.
+  const spender = creditsManagerFor(chainId, opts.credits).address;
   await ensureManaAllowance(ctx, chainId, spender, opts.manaGapWei);
   const creditsValue = opts.credits.reduce((acc, c) => acc + BigInt(c.availableAmount), 0n);
   const purchase = purchaseFor(target, opts.credits, (creditsValue + opts.manaGapWei).toString());

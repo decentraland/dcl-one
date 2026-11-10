@@ -46,6 +46,36 @@ CREATE TABLE social.user_settings (
         CHECK (show_situation_reactions IN ('show', 'hide'))
 );
 
+-- Fixed-window mutation counters: at most two atomic keyed increments per
+-- attempt (actor, then pair). Expiry is set only by the first increment. NULL
+-- records Redis's persistent key after a failed first EXPIRE. The expiry/key
+-- index serves bounded 1000-row cleanup; no profile or friendship FK applies.
+-- UTC Unix milliseconds preserve the signed-64 Redis TTL range, which exceeds
+-- PostgreSQL timestamp range. The database clock supplies production time.
+CREATE TABLE social.friendship_mutation_limits (
+    key text NOT NULL,
+    attempts bigint NOT NULL,
+    expires_at_ms bigint,
+    CONSTRAINT friendship_mutation_limits_pkey PRIMARY KEY (key),
+    CONSTRAINT friendship_mutation_limits_attempts_check CHECK (attempts > 0)
+);
+CREATE INDEX friendship_mutation_limits_expiry_idx
+    ON social.friendship_mutation_limits (expires_at_ms, key) WHERE expires_at_ms IS NOT NULL;
+
+-- Legacy registry minimal-profile cache. One shared fact per exact source
+-- cache key: single reads use the requested pointer; batch fills use public
+-- avatar.userId. Expiry is600s after last successful upsert; no negative entries
+-- or content-write invalidation. Bounded expiry work orders this index.
+CREATE TABLE social.registry_profile_cache (
+    profile_key text NOT NULL PRIMARY KEY,
+    profile jsonb NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    CONSTRAINT registry_profile_cache_object CHECK(jsonb_typeof(profile)='object')
+);
+CREATE INDEX registry_profile_cache_expiry_idx
+    ON social.registry_profile_cache(expires_at,profile_key);
+
+
 -- ── friendships ────────────────────────────────────────────────────────────
 
 -- One canonical row per unordered pair. last_action/last_actor/last_action_at
@@ -148,19 +178,21 @@ CREATE INDEX friend_messages_pair_idx
 
 -- ── private voice calls ────────────────────────────────────────────────────
 
--- The call; its LiveKit room is 'voice-chat-private-' || id. Live while
--- created_at >= $now - PRIVATE_VOICE_CHAT_EXPIRATION_TIME (bind parameter);
--- the sweep deletes expired calls in bounded created_at order.
+-- The call; its LiveKit room is 'voice-chat-private-' || id. A pending call (no
+-- participant rows) keeps its parties busy until the expiry sweep deletes it,
+-- including after PRIVATE_VOICE_CHAT_EXPIRATION_TIME. An accepted call lives until ended.
 CREATE TABLE social.private_voice_chats (
     id uuid NOT NULL,
     caller_address text NOT NULL,
     callee_address text NOT NULL,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT private_voice_chats_pkey PRIMARY KEY (id),
-    CONSTRAINT private_voice_chats_caller_key UNIQUE (caller_address),
-    CONSTRAINT private_voice_chats_callee_key UNIQUE (callee_address),
     CONSTRAINT private_voice_chats_no_self_call_check CHECK (caller_address <> callee_address)
 );
+
+-- Pending creation serializes both normalized wallets with transaction advisory
+-- locks before probing rows without participants. A media row may coexist with
+-- a pending call; caller/callee UNIQUEs would incorrectly forbid that history.
 
 -- The expiry sweep and the admin "active calls" read.
 CREATE INDEX private_voice_chats_created_idx ON social.private_voice_chats (created_at);
@@ -185,9 +217,10 @@ CREATE INDEX private_voice_chat_participants_status_idx
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
--- operator hold (a separate axis, 0005). ranking_score has no writer yet
--- (derived column, source "none"; stays 0), editors_choice is set by the
--- admin route; both are read by the listing's ORDER BY.
+-- operator hold (a separate axis, 0005). The local ranking job derives
+-- ranking_score from the five lifetime counters and current community facts.
+-- Its activation timestamp prevents rebuilding missing lifetime history from
+-- an old event catalogue. Mirrored rankings are not recalculated.
 CREATE TABLE social.communities (
     id uuid NOT NULL,
     name text NOT NULL,
@@ -198,6 +231,12 @@ CREATE TABLE social.communities (
     unlisted boolean NOT NULL DEFAULT false,
     editors_choice boolean NOT NULL DEFAULT false,
     ranking_score real NOT NULL DEFAULT 0,
+    ranking_events_count integer NOT NULL DEFAULT 0,
+    ranking_photos_count integer NOT NULL DEFAULT 0,
+    ranking_streams_count integer NOT NULL DEFAULT 0,
+    ranking_events_total_attendees integer NOT NULL DEFAULT 0,
+    ranking_streams_total_participants integer NOT NULL DEFAULT 0,
+    ranking_tracking_since timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     suspended boolean NOT NULL DEFAULT false,
     suspended_at timestamp without time zone,
     suspended_by text,
@@ -209,10 +248,37 @@ CREATE TABLE social.communities (
     origin text NOT NULL DEFAULT 'local',
     CONSTRAINT communities_pkey PRIMARY KEY (id),
     CONSTRAINT communities_origin_known CHECK (origin IN ('upstream', 'local')),
+    CONSTRAINT communities_ranking_nonnegative CHECK (ranking_events_count >= 0 AND ranking_photos_count >= 0 AND ranking_streams_count >= 0 AND ranking_events_total_attendees >= 0 AND ranking_streams_total_participants >= 0),
     CONSTRAINT communities_suspension_check
         CHECK ((suspended AND suspended_at IS NOT NULL AND suspended_by IS NOT NULL)
             OR (NOT suspended AND suspended_at IS NULL AND suspended_by IS NULL AND suspension_reason IS NULL))
 );
+
+-- Local lifecycle retries and ended-occurrence scans share a durable receipt.
+-- A photo fans out to several communities, hence community_id is part of its
+-- key. Counters and receipts commit together; receipts are retained for the
+-- community's lifetime and never expire behind a scanner checkpoint.
+CREATE TABLE social.community_ranking_events (
+    kind text NOT NULL,
+    event_key text NOT NULL,
+    community_id uuid NOT NULL REFERENCES social.communities(id) ON DELETE CASCADE,
+    occurred_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (kind, event_key, community_id),
+    CHECK (kind IN ('photo', 'event', 'stream'))
+);
+-- Community deletion probes the referencing side of its cascading foreign key.
+CREATE INDEX community_ranking_events_community_idx ON social.community_ranking_events (community_id);
+
+-- Two-hour provider results, keyed exactly as the source Redis cache. Cached
+-- rejections carry their full issue lists; expiry uses a bounded indexed job.
+CREATE TABLE social.community_compliance_cache (
+    model text NOT NULL,
+    input_hash bytea NOT NULL CHECK (octet_length(input_hash) = 32),
+    result jsonb NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (model, input_hash)
+);
+CREATE INDEX community_compliance_cache_expiry_idx ON social.community_compliance_cache (expires_at);
 
 -- The public listing's ORDER BY; the listing carries exactly this predicate.
 CREATE INDEX communities_ranking_idx
@@ -489,6 +555,33 @@ CREATE TABLE social.livekit_removal_intents (
 CREATE INDEX livekit_removal_intents_due_idx ON social.livekit_removal_intents (next_attempt_at, created_at, root_key, target_key);
 CREATE INDEX livekit_removal_intents_room_idx ON social.livekit_removal_intents (room_name, room_sid) WHERE room_name IS NOT NULL;
 
+-- Comms-owned shared-secret throttle of the world comms mints, shared by every
+-- replica. Each secret check first reserves an attempt for (world key, caller
+-- IP source or wallet, lowercase) with one PK upsert; the row is deleted on a
+-- right secret or by the comms-secret-attempts-sweep job once its 60 s window
+-- has passed. Rows are tiny and short-lived: bounded by recent secret callers.
+CREATE TABLE social.world_secret_attempts (
+    world_name text NOT NULL,
+    subject text NOT NULL,
+    attempts integer NOT NULL,
+    window_start timestamp without time zone NOT NULL,
+    CONSTRAINT world_secret_attempts_pkey PRIMARY KEY (world_name, subject),
+    CONSTRAINT world_secret_attempts_positive CHECK (attempts > 0)
+);
+-- The expiry sweep.
+CREATE INDEX world_secret_attempts_window_idx ON social.world_secret_attempts (window_start);
+
+-- Keep the latest edit cutoff even after successful enforcement: refreshed tokens can reconnect.
+CREATE TABLE social.world_access_rechecks (
+    world_name text PRIMARY KEY,
+    revision uuid NOT NULL DEFAULT gen_random_uuid(),
+    changed_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    next_attempt_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
+-- The due scan reads this index from the front. A completed check parks its
+-- row at infinity, at the end, so the scan never reads enforced history.
+CREATE INDEX world_access_rechecks_due_idx ON social.world_access_rechecks (next_attempt_at, world_name);
+
 CREATE TABLE social.user_warnings (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     warned_address text NOT NULL,
@@ -572,6 +665,7 @@ CREATE TABLE social.notifications (
     read boolean NOT NULL DEFAULT false,
     read_at timestamp(3) without time zone,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    in_app boolean NOT NULL DEFAULT true,
     CONSTRAINT notifications_pkey PRIMARY KEY (id),
     CONSTRAINT notifications_read_check CHECK ((read AND read_at IS NOT NULL) OR (NOT read AND read_at IS NULL))
 );
@@ -588,6 +682,63 @@ CREATE INDEX notifications_unread_idx
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
+
+-- A producer's address-less notification, stored once and listed in every
+-- wallet's inbox (no subscription needed). id = v5 (namespace
+-- 3f8a52d4-9c1e-4b07-a62d-71e05c9318bb) over the JSON `["<type>",null,"<eventKey>"]`;
+-- a repeat updates metadata/occurred_at. Few rows (announcements), read on each
+-- poll; listed and kept only within NOTIFICATIONS_BROADCAST_HORIZON_DAYS.
+CREATE TABLE social.broadcast_notifications (
+    id uuid NOT NULL,
+    type text NOT NULL,
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    occurred_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT broadcast_notifications_pkey PRIMARY KEY (id)
+);
+-- The poll's `occurred_at >= $from ORDER BY occurred_at DESC, id DESC LIMIT n`.
+CREATE INDEX broadcast_notifications_time_idx
+    ON social.broadcast_notifications (occurred_at DESC, id DESC);
+
+-- Per-wallet read state of a broadcast; absent = unread.
+CREATE TABLE social.broadcast_reads (
+    broadcast_id uuid NOT NULL REFERENCES social.broadcast_notifications (id) ON DELETE CASCADE,
+    address text NOT NULL,
+    read_at timestamp(3) without time zone NOT NULL,
+    CONSTRAINT broadcast_reads_pkey PRIMARY KEY (broadcast_id, address)
+);
+
+-- Social owns event delivery intents and progress. Explore inserts transitions
+-- in its authoring transaction; Social inserts occurrence notices. No FK: the event
+-- mirror may remove a catalogue row while an already-committed host notice
+-- still needs delivery. Payload snapshots keep that dispatch recoverable.
+CREATE TABLE social.event_notification_intents (
+    id uuid PRIMARY KEY,
+    event_id text NOT NULL,
+    kind text NOT NULL,
+    event jsonb NOT NULL,
+    local_event boolean NOT NULL,
+    occurrence_start timestamp without time zone,
+    occurred_at timestamp without time zone NOT NULL,
+    dispatch_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    recipient_after text NOT NULL DEFAULT '',
+    processed_at timestamp without time zone,
+    CONSTRAINT event_notification_intents_kind_check CHECK (kind IN ('event_approved', 'event_rejected', 'event_deleted', 'event_created', 'events_starts_soon', 'events_started')),
+    CONSTRAINT event_notification_intents_occurrence_check CHECK ((kind IN ('events_starts_soon', 'events_started')) = (occurrence_start IS NOT NULL))
+);
+-- The social worker claims unfinished dispatches in bounded pages; locked
+-- rows are skipped, and its recipient cursor advances with delivery inserts.
+CREATE INDEX event_notification_intents_pending_idx
+    ON social.event_notification_intents (dispatch_at, id) WHERE processed_at IS NULL;
+
+-- A retained occurrence is the durable scan checkpoint, including empty or
+-- suppressed delivery. Catch-up is one hour; completed rows remain 30 days.
+CREATE UNIQUE INDEX event_notification_occurrence_idx
+    ON social.event_notification_intents (event_id, occurrence_start, kind)
+    WHERE occurrence_start IS NOT NULL;
+-- Completed queue retention deletes bounded old batches, never pending work.
+CREATE INDEX event_notification_retention_idx
+    ON social.event_notification_intents (processed_at, id) WHERE processed_at IS NOT NULL;
 
 -- Explicit delivery state for the out-of-process channels; the worker claims
 -- a bounded due set (`state = 'pending' AND next_attempt_at <= $now`) with
@@ -609,6 +760,10 @@ CREATE TABLE social.notification_deliveries (
 -- The worker's due set; `now` is the bind, never the predicate.
 CREATE INDEX notification_deliveries_due_idx
     ON social.notification_deliveries (next_attempt_at, notification_id) WHERE state = 'pending';
+
+-- Retention: terminal rows oldest first, deleted in bounded batches after 30 days.
+CREATE INDEX notification_deliveries_terminal_idx
+    ON social.notification_deliveries (updated_at) WHERE state <> 'pending';
 
 -- details is the @dcl/schemas SubscriptionDetails document, read and written
 -- as a unit; the 0001 unconfirmed_email/email_confirmation_token columns were
@@ -655,8 +810,15 @@ CREATE TABLE social.notification_reader_seen (
 
 -- ── badges ─────────────────────────────────────────────────────────────────
 
--- Reference data (seeded by the badges module/agent; schema.sql carries no
--- data rows). assets is the { "2d": {...}, "3d": {...} } document.
+-- The catalog (the badges section at the end seeds upstream's). A badge is
+-- public once published_at is set; archived_at retires it: still listed and
+-- kept by its earners, never awarded again. Awardable = published and not
+-- archived (badges::progress checks it under FOR SHARE, so an archive waits
+-- for an in-flight award). created_at, then id, is the catalog order.
+-- criteria_steps is a single badge's target (a tiered badge's targets are its
+-- tiers'). category is upstream's enum. assets is the { "2d": {...}, "3d": {...} }
+-- document of paths relative to BADGES_PUBLIC_ASSET_BASE_URL; a tiered
+-- badge's art is its tiers'.
 CREATE TABLE social.badge_definitions (
     id text NOT NULL,
     name text NOT NULL,
@@ -664,21 +826,39 @@ CREATE TABLE social.badge_definitions (
     category text,
     is_tier boolean NOT NULL DEFAULT false,
     assets jsonb NOT NULL DEFAULT '{}'::jsonb,
-    CONSTRAINT badge_definitions_pkey PRIMARY KEY (id)
+    criteria_steps integer,
+    published_at timestamp without time zone,
+    archived_at timestamp without time zone,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_definitions_pkey PRIMARY KEY (id),
+    CONSTRAINT badge_definitions_category_check
+        CHECK (category IN ('Explorer', 'Collector', 'Creator', 'Socializer', 'Builder')),
+    CONSTRAINT badge_definitions_criteria_steps_check CHECK (criteria_steps > 0),
+    CONSTRAINT badge_definitions_tier_steps_check CHECK (NOT is_tier OR criteria_steps IS NULL)
 );
 
+-- A tiered badge's goals; ordinal is upstream's position - 1. Earned tiers
+-- (user_achieved_tiers) name the tier id, not the row, so the ordinal is
+-- unique but deferred: a reorder swaps ordinals inside one transaction.
 CREATE TABLE social.badge_tiers (
     badge_id text NOT NULL REFERENCES social.badge_definitions (id) ON DELETE CASCADE,
     tier_id text NOT NULL,
     tier_name text NOT NULL,
     description text,
     assets jsonb NOT NULL DEFAULT '{}'::jsonb,
-    criteria_steps integer NOT NULL DEFAULT 0,
+    criteria_steps integer NOT NULL,
     ordinal integer NOT NULL DEFAULT 0,
-    CONSTRAINT badge_tiers_pkey PRIMARY KEY (badge_id, tier_id)
+    CONSTRAINT badge_tiers_pkey PRIMARY KEY (badge_id, tier_id),
+    CONSTRAINT badge_tiers_criteria_steps_check CHECK (criteria_steps > 0),
+    CONSTRAINT badge_tiers_ordinal_check CHECK (ordinal >= 0),
+    CONSTRAINT badge_tiers_badge_ordinal_key UNIQUE (badge_id, ordinal) DEFERRABLE INITIALLY DEFERRED
 );
 
 -- granted_by distinguishes a console grant from an event-consumer write.
+-- progress is upstream's per-badge document verbatim (`steps` plus each
+-- evaluator's dedup/resume state); steps_done is its `steps`, the counter
+-- the targets compare against, and the two change together
+-- (badges::progress::apply_progress).
 CREATE TABLE social.user_badge_progress (
     address text NOT NULL,
     badge_id text NOT NULL REFERENCES social.badge_definitions (id) ON DELETE CASCADE,
@@ -687,8 +867,10 @@ CREATE TABLE social.user_badge_progress (
     last_completed_tier_id text,
     granted_by text,
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    progress jsonb NOT NULL DEFAULT '{}'::jsonb,
     CONSTRAINT user_badge_progress_pkey PRIMARY KEY (address, badge_id),
-    CONSTRAINT user_badge_progress_steps_check CHECK (steps_done >= 0)
+    CONSTRAINT user_badge_progress_steps_check CHECK (steps_done >= 0),
+    CONSTRAINT user_badge_progress_progress_check CHECK (jsonb_typeof(progress) = 'object')
 );
 
 CREATE TABLE social.user_achieved_tiers (
@@ -714,15 +896,208 @@ CREATE TABLE social.badge_admin_audit (
     CONSTRAINT badge_admin_audit_action_check CHECK (action IN ('grant', 'revoke'))
 );
 
+-- The badge processor's durable read positions, one row per source, advanced
+-- in the transaction that writes the progress the rows it passed produced:
+-- `client_events` (social.client_events.seq), `deployments`
+-- (content.deployments.id), `sales:<table>:<network>` (block_number,
+-- log_index of a shop log) and the recount passes (`position` counts the
+-- passes, the first of which writes no notification; `resume_after` is the
+-- last wallet the pass in progress recounted, NULL between passes).
+CREATE TABLE social.badge_cursors (
+    source text NOT NULL,
+    position bigint NOT NULL,
+    log_index integer NOT NULL DEFAULT 0,
+    resume_after text,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_cursors_pkey PRIMARY KEY (source)
+);
+
+-- Ids an id cursor (`client_events`, `deployments`) passed without seeing
+-- their rows, `lo..=hi`: a value drawn by a transaction still open when the
+-- cursor read past it (sequence order is not commit order), or one that
+-- never commits (a rollback, an ON CONFLICT that burned it). Every batch
+-- re-reads them and processes a row that appeared; a gap is dropped once
+-- every transaction that held an id when it was found has ended (`horizon`,
+-- the id of the transaction that found it, taken after its scan, at or
+-- below a later snapshot's xmin) and it is older than the processor's
+-- grace, and then again for the transactions open when the grace ran out
+-- (`restamped`: `horizon` replaced by a later batch's id). At most 5,000
+-- per source: at the cap the cursor holds.
+CREATE TABLE social.badge_cursor_gaps (
+    source text NOT NULL,
+    lo bigint NOT NULL,
+    hi bigint NOT NULL,
+    horizon bigint NOT NULL,
+    seen_at timestamp without time zone NOT NULL,
+    restamped boolean NOT NULL DEFAULT false,
+    CONSTRAINT badge_cursor_gaps_pkey PRIMARY KEY (source, lo),
+    CONSTRAINT badge_cursor_gaps_range_check CHECK (lo <= hi),
+    CONSTRAINT badge_cursor_gaps_source_fkey FOREIGN KEY (source)
+        REFERENCES social.badge_cursors (source) ON DELETE CASCADE
+);
+
+-- Append-only; one row per catalog write of the admin routes
+-- (badges::catalog): an upsert with the definition it wrote, or one
+-- publication or archive transition. No foreign key: it outlives the row.
+CREATE TABLE social.badge_catalog_audit (
+    id bigint GENERATED ALWAYS AS IDENTITY,
+    action text NOT NULL,
+    badge_id text NOT NULL,
+    definition jsonb,
+    actor text NOT NULL,
+    acted_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT badge_catalog_audit_pkey PRIMARY KEY (id),
+    CONSTRAINT badge_catalog_audit_action_check
+        CHECK (action IN ('upsert', 'publish', 'unpublish', 'archive', 'unarchive'))
+);
+
+-- Presence badges (upstream presence_badges, same columns): where a catalog
+-- badge counts (a scene by its base parcel, or a world), inside which UTC
+-- window, and the rule: a visit, or a stay of required_seconds. The badge's
+-- criteria_steps is required_seconds for a stay and 1 for a visit. Config
+-- only; no ON DELETE: a configured badge is archived, not deleted.
+CREATE TABLE social.presence_badges (
+    badge_id text NOT NULL REFERENCES social.badge_definitions (id),
+    location_kind text NOT NULL,
+    parcel text,
+    world_name text,
+    window_start timestamp without time zone NOT NULL,
+    window_end timestamp without time zone NOT NULL,
+    mode text NOT NULL,
+    required_seconds integer NOT NULL DEFAULT 0,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT presence_badges_pkey PRIMARY KEY (badge_id),
+    CONSTRAINT presence_badges_location_check CHECK (
+        (location_kind = 'scene' AND parcel IS NOT NULL
+         AND parcel ~ '^(0|-?[1-9][0-9]{0,2}),(0|-?[1-9][0-9]{0,2})$' AND world_name IS NULL)
+        OR (location_kind = 'world' AND world_name IS NOT NULL AND parcel IS NULL)),
+    CONSTRAINT presence_badges_window_check CHECK (window_end > window_start),
+    CONSTRAINT presence_badges_mode_check CHECK (
+        (mode = 'visit' AND required_seconds = 0) OR (mode = 'stay' AND required_seconds > 0))
+);
+
+-- The presence flow's runtime state (upstream #246's tables, social/src/
+-- badges/presence). Every instant that meets a LiveKit event time or the
+-- progress document's `intervals` is epoch milliseconds (bigint), as
+-- upstream's; only the local arrival time is a timestamp.
+--
+-- presence_events: the gatekeeper's verified wallet joins and leaves of
+-- scene and world rooms, queued by the webhook and deleted by the
+-- `badges-presence` job in the transaction that applies each one (the queue
+-- is its own cursor: a row a slower writer commits behind a later seq is
+-- still there on the next pass). event_id is LiveKit's webhook id, so a
+-- redelivered webhook is one row; seq is the apply order. Rows exist only
+-- between a webhook and the next pass.
+CREATE TABLE social.presence_events (
+    seq bigint GENERATED ALWAYS AS IDENTITY,
+    event_id text NOT NULL,
+    kind text NOT NULL,
+    room_type text NOT NULL,
+    realm_name text NOT NULL,
+    scene_id text,
+    wallet text NOT NULL,
+    session_id text NOT NULL,
+    event_time_ms bigint NOT NULL,
+    received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT presence_events_pkey PRIMARY KEY (event_id),
+    CONSTRAINT presence_events_kind_check CHECK (kind IN ('join', 'leave')),
+    CONSTRAINT presence_events_room_type_check CHECK (room_type IN ('scene', 'world')),
+    CONSTRAINT presence_events_session_check CHECK (session_id <> '')
+);
+-- the job's ORDER BY seq LIMIT n
+CREATE UNIQUE INDEX presence_events_seq_idx ON social.presence_events (seq);
+
+-- An open visit: a wallet's connections to one room, counted for one badge.
+-- joins and sessions are parallel (a wallet can hold several connections to
+-- a room; a leave ends only its own session's); opened_at is the earliest
+-- join. absences are the instants an occupancy observation first missed the
+-- wallet (absent_since the current one); a leave after one proves nothing
+-- past it. Dropping a badge's configuration drops its visits.
+CREATE TABLE social.presence_visits (
+    badge_id text NOT NULL REFERENCES social.presence_badges (badge_id) ON DELETE CASCADE,
+    wallet text NOT NULL,
+    room text NOT NULL,
+    opened_at bigint NOT NULL,
+    joins bigint[] NOT NULL,
+    sessions text[] NOT NULL,
+    realm_name text NOT NULL,
+    parcel text,
+    is_world boolean NOT NULL,
+    last_checked_at bigint,
+    absent_since bigint,
+    absences bigint[] NOT NULL DEFAULT '{}',
+    CONSTRAINT presence_visits_pkey PRIMARY KEY (badge_id, wallet, room),
+    CONSTRAINT presence_visits_connections_check
+        CHECK (cardinality(joins) = cardinality(sessions) AND cardinality(joins) > 0)
+);
+-- a leave's open visits of the wallet in its realm
+CREATE INDEX presence_visits_wallet_realm_idx ON social.presence_visits (wallet, realm_name);
+-- the sweeper's due visits, oldest first
+CREATE INDEX presence_visits_opened_at_idx ON social.presence_visits (opened_at);
+CREATE INDEX presence_visits_last_checked_at_opened_at_idx
+    ON social.presence_visits (last_checked_at, opened_at);
+
+-- Applied event keys and terminal-session markers (`ended|badge|wallet|room|
+-- session`, `pending-leave|...`), so a redelivery applies once and an ended
+-- session never reopens; pruned after the redelivery window.
+CREATE TABLE social.presence_applied_events (
+    event_id text NOT NULL,
+    applied_at bigint NOT NULL,
+    CONSTRAINT presence_applied_events_pkey PRIMARY KEY (event_id)
+);
+CREATE INDEX presence_applied_events_applied_at_idx ON social.presence_applied_events (applied_at);
+
+-- A leave as a fact of its session (room is `world:<name>` for any room of a
+-- world), kept for every badge of the place so a join of that session that
+-- arrives later pairs with it; pruned after the redelivery window.
+CREATE TABLE social.presence_pending_leaves (
+    wallet text NOT NULL,
+    room text NOT NULL,
+    session_id text NOT NULL,
+    left_at bigint NOT NULL,
+    recorded_at bigint NOT NULL,
+    CONSTRAINT presence_pending_leaves_pkey PRIMARY KEY (wallet, room, session_id)
+);
+CREATE INDEX presence_pending_leaves_recorded_at_idx ON social.presence_pending_leaves (recorded_at);
+
+-- Each instant an observation first missed the wallet in a room, kept apart
+-- from the visit row so a late join older than it is still capped by it.
+CREATE TABLE social.presence_absence_facts (
+    wallet text NOT NULL,
+    room text NOT NULL,
+    absence_at bigint NOT NULL,
+    recorded_at bigint NOT NULL,
+    CONSTRAINT presence_absence_facts_pkey PRIMARY KEY (wallet, room, absence_at)
+);
+CREATE INDEX presence_absence_facts_recorded_at_idx ON social.presence_absence_facts (recorded_at);
+
 -- ── referral ───────────────────────────────────────────────────────────────
 
 -- One row per invited wallet; first referrer wins (ON CONFLICT DO NOTHING).
 CREATE TABLE social.referral_progress (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     invited_user text NOT NULL,
     referrer text NOT NULL,
     status text NOT NULL DEFAULT 'pending',
+    invited_user_ip text,
+    signed_up_at timestamp without time zone,
+    tier_granted boolean NOT NULL DEFAULT false,
+    tier_granted_at timestamp without time zone,
+    -- Set with the milestone grant; cleared once its reward and downstream
+    -- effects finish. Claims without a response require provider reconciliation.
+    reward_tier integer,
+    reward_requested_at timestamp without time zone,
+    reward_response jsonb,
+    reward_retry_at timestamp without time zone,
+    -- Confirmed reward ({tier, reward, notified}) while notification or image
+    -- delivery remains pending. Known successful notifications are not resent.
+    reward_paid jsonb,
+    -- The source's no-TTL login-day set; whole-value reads, at most the
+    -- configured minimum distinct UTC dates before the next login grants.
+    login_days date[] NOT NULL DEFAULT '{}',
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_progress_id_key UNIQUE (id),
     CONSTRAINT referral_progress_pkey PRIMARY KEY (invited_user),
     CONSTRAINT referral_progress_status_check
         CHECK (status IN ('pending', 'signed_up', 'tier_granted', 'rejected_ip_match')),
@@ -730,7 +1105,42 @@ CREATE TABLE social.referral_progress (
 );
 
 -- The referrer's `COUNT(*) WHERE status = 'tier_granted'` and progress list.
+-- Its referrer prefix also bounds registration's referrer+IP count, which
+-- compares each row's IP as inet (historical aliases included), so no index
+-- on the stored IP text can serve it.
 CREATE INDEX referral_progress_referrer_idx ON social.referral_progress (referrer, status);
+CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer) WHERE tier_granted;
+-- drain_pending_rewards scans due retryable grants in retry-time and wallet order.
+CREATE INDEX referral_progress_reward_due_idx ON social.referral_progress (reward_retry_at NULLS FIRST, invited_user)
+    WHERE reward_tier IS NOT NULL AND (reward_requested_at IS NULL OR reward_response IS NOT NULL);
+
+-- Authenticated Explorer login retries share one receipt per invited wallet and
+-- login ID. The FK shares referral attribution's restore/deletion lifecycle.
+-- At most 120 new IDs per rolling 24 hours of server receipt time are admitted
+-- under its referral row lock;
+-- the existing referral worker removes a bounded expiry batch each minute.
+CREATE TABLE social.referral_login_receipts (
+    invited_user text NOT NULL REFERENCES social.referral_progress(invited_user) ON DELETE CASCADE,
+    login_id uuid NOT NULL,
+    received_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', clock_timestamp()),
+    expires_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (invited_user, login_id)
+);
+CREATE INDEX referral_login_receipts_expiry_idx
+    ON social.referral_login_receipts (expires_at, invited_user, login_id);
+
+-- Reward art returned by the rewards API after a tier's guarded transition;
+-- source IDs and all historical snapshots survive imports and later updates.
+CREATE TABLE social.referral_reward_images (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    referrer text NOT NULL,
+    reward_image_url text NOT NULL,
+    tier integer NOT NULL CHECK (tier > 0),
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_reward_images_pkey PRIMARY KEY (id)
+);
+CREATE INDEX referral_reward_images_referrer_idx ON social.referral_reward_images (referrer);
+
 
 -- The invitedUsersAccepted count each referrer last saw.
 CREATE TABLE social.referral_progress_viewed (
@@ -739,6 +1149,22 @@ CREATE TABLE social.referral_progress_viewed (
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT referral_progress_viewed_pkey PRIMARY KEY (referrer)
 );
+
+-- The contact emails a referrer who reached the IRL-swag tier (100 accepted
+-- invites) gave through POST /v1/referral-email; one row per submission, the
+-- newest per referrer gates the next (once per 24 hours).
+CREATE TABLE social.referral_emails (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    referrer text NOT NULL,
+    email text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_emails_pkey PRIMARY KEY (id),
+    CONSTRAINT referral_emails_email_length_check CHECK (char_length(email) <= 254)
+);
+
+-- The referrer's newest submission (the 24-hour gate).
+CREATE INDEX referral_emails_referrer_idx ON social.referral_emails (referrer, updated_at DESC);
 
 -- ── media: translation cache ───────────────────────────────────────────────
 
@@ -1069,33 +1495,195 @@ CREATE TABLE social.land_transfer_cursor (
     CONSTRAINT land_transfer_cursor_pkey PRIMARY KEY (id),
     CONSTRAINT land_transfer_cursor_singleton_check CHECK (id = 1)
 );
+
+-- One row per Segment webhook event the explorer (`client`) or the web
+-- (`web`) delivered to /events-notifier (social/src/segment_webhooks), the
+-- notifier's published event: keyed by Segment's messageId so a redelivery
+-- is one row; address is the owner of the auth chain a client event carried
+-- (a delegation that wallet signed once, not proof it sent this event) or
+-- traits.ethAddress (web); metadata is the sub-type part. Rows are immutable;
+-- the client-events-purge job deletes those older than
+-- CLIENT_EVENTS_RETENTION_DAYS, oldest first.
+CREATE SEQUENCE social.client_events_seq AS bigint;
+CREATE TABLE social.client_events (
+    key text NOT NULL,
+    source text NOT NULL,
+    sub_type text NOT NULL,
+    address text NOT NULL,
+    session_id text,
+    anonymous_id text,
+    realm text,
+    ip text,
+    reported_at timestamp(3) without time zone NOT NULL,
+    received_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    -- Insertion order for consumer cursors (the badge processor), drawn
+    -- before the inserting transaction commits, so not commit order. NULL on
+    -- rows kept from before step 0037 (they precede every cursor). The
+    -- sequence is named as text so step 0037 can set the default before the
+    -- object pass creates it.
+    seq bigint DEFAULT nextval('social.client_events_seq'::text),
+    CONSTRAINT client_events_pkey PRIMARY KEY (key),
+    CONSTRAINT client_events_source_check CHECK (source IN ('client', 'web')),
+    CONSTRAINT client_events_sub_type_check CHECK (sub_type IN ('move-to-parcel', 'used-emote', 'passport-opened', 'walked-distance', 'vertical-height-reached', 'logged-in', 'logged-in-cached', 'auth-identify')),
+    CONSTRAINT client_events_address_check CHECK (address ~ '^0x[0-9a-f]{40}$')
+);
+-- Consumers scan forward in insertion order; the purge deletes the oldest.
+CREATE INDEX client_events_created_idx ON social.client_events (created_at, key);
+ALTER SEQUENCE social.client_events_seq OWNED BY social.client_events.seq;
+-- The badge processor's cursor scan (seq > cursor ORDER BY seq). Both seq
+-- indexes are partial so their build on a table kept from before step 0037
+-- (every seq NULL) is one heap scan with nothing to sort.
+CREATE UNIQUE INDEX client_events_seq_idx ON social.client_events (seq) WHERE seq IS NOT NULL;
+-- Traveler's session read-back: a wallet's moves in one session, newest first.
+CREATE INDEX client_events_session_moves_idx ON social.client_events (address, session_id, seq)
+    WHERE sub_type = 'move-to-parcel' AND seq IS NOT NULL;
+
+-- Every stored client event is announced on the `social.client_events`
+-- channel, the row's identity columns as JSON (never the metadata: the
+-- payload is bounded), for listeners outside the request path. A
+-- redelivered key inserts no row and announces nothing.
+CREATE FUNCTION social.notify_client_event() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('social.client_events', json_build_object(
+        'key', NEW.key, 'source', NEW.source, 'sub_type', NEW.sub_type,
+        'address', NEW.address, 'session_id', NEW.session_id,
+        'anonymous_id', NEW.anonymous_id, 'realm', NEW.realm, 'ip', NEW.ip,
+        'reported_at', NEW.reported_at, 'received_at', NEW.received_at)::text);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER client_events_notify_trigger
+    AFTER INSERT ON social.client_events
+    FOR EACH ROW EXECUTE FUNCTION social.notify_client_event();
 -- ==== end section: notifications ====
 
 -- ==== section: badges ====
--- Reference rows: the old crate's fixture
--- (catalyrst-badges/migrations/0002_seed_fixture.sql with the 0005 asset
--- fix-up applied), so `catalyst schema apply` is the one bootstrap. Asset URLs
--- keep the upstream host; the badges module rewrites it to
--- BADGES_PUBLIC_ASSET_BASE_URL at serve time and serves the embedded PNGs at
--- /badges/assets/{path}. Never per-user rows.
-INSERT INTO social.badge_definitions (id, name, description, category, is_tier, assets) VALUES
-  ('open_for_business', 'Open for Business', 'Set up a store and publish a collection.', 'Builder', false,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/open_for_business/2d/normal.png","hrm":"https://badges.decentraland.org/assets/open_for_business/2d/hrm.png","baseColor":"https://badges.decentraland.org/assets/open_for_business/2d/baseColor.png"},"3d":{"normal":"https://badges.decentraland.org/assets/open_for_business/3d/normal.png","hrm":"https://badges.decentraland.org/assets/open_for_business/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/open_for_business/3d/baseColor.png"}}'::jsonb),
-  ('decentraland_citizen', 'Decentraland Citizen', 'Log in to Decentraland for the first time.', 'Explorer', false,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/decentraland_citizen/2d/normal.png","hrm":"","baseColor":""},"3d":{"normal":"https://badges.decentraland.org/assets/decentraland_citizen/3d/normal.png","hrm":"https://badges.decentraland.org/assets/decentraland_citizen/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/decentraland_citizen/3d/baseColor.png"}}'::jsonb),
-  ('walkabout', 'Walkabout', 'Walk a cumulative distance across Decentraland.', 'Explorer', true,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/2d/normal.png","hrm":"","baseColor":""},"3d":{"normal":"https://badges.decentraland.org/assets/walkabout/3d/normal.png","hrm":"https://badges.decentraland.org/assets/walkabout/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/walkabout/3d/baseColor.png"}}'::jsonb),
-  ('emotionista', 'Emotionista', 'Play emotes in-world.', 'Socializer', true,
-   '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/2d/normal.png","hrm":"","baseColor":""},"3d":{"normal":"https://badges.decentraland.org/assets/emotionista/3d/normal.png","hrm":"https://badges.decentraland.org/assets/emotionista/3d/hrm.png","baseColor":"https://badges.decentraland.org/assets/emotionista/3d/baseColor.png"}}'::jsonb);
+-- Reference rows: upstream's catalog (decentraland/badges processor
+-- migration 1791331200000_badge_catalog and its frozen seed: 34 badges, 84
+-- tiers) with its ids, texts and creation order: published at upstream's
+-- instant, created one millisecond apart in seed order. A single badge (its
+-- one upstream tier in the `root` slot) keeps that tier's steps in
+-- criteria_steps and has no tier rows. Asset paths follow upstream's CDN
+-- layout (<badge>[/<tier slot>]/{2d,3d}/...), resolved against
+-- BADGES_PUBLIC_ASSET_BASE_URL at serve time. Never per-user rows.
+INSERT INTO social.badge_definitions
+    (id, name, description, category, is_tier, assets, criteria_steps, published_at, created_at)
+SELECT s.id, s.name, s.description, s.category, s.steps IS NULL,
+       CASE WHEN s.steps IS NULL THEN '{}'::jsonb ELSE jsonb_build_object(
+           '2d', jsonb_build_object('normal', s.id || '/2d/normal.png'),
+           '3d', jsonb_build_object('normal', s.id || '/3d/normal.png', 'hrm', s.id || '/3d/hrm.png',
+                                    'basecolor', s.id || '/3d/basecolor.png')) END,
+       s.steps, timestamp '2026-10-07 00:00:00',
+       timestamp '2026-10-07 00:00:00' + s.n * interval '1 millisecond'
+FROM (VALUES
+  (0, 'dclcitizen', 'Decentraland Citizen', 'Landed in Decentraland', 'Explorer', 1),
+  (1, 'epic_ensemble', 'Epic Ensemble', 'Equipped at least 3 Epic Wearables at the same time', 'Collector', 1),
+  (2, 'regally_rare', 'Regally Rare', 'Equipped at least 3 Rare Wearables at the same time', 'Collector', 1),
+  (3, 'legendary_look', 'Legendary Look', 'Equipped at least 3 Legendary Wearables at the same time', 'Collector', 1),
+  (4, 'mythic_model', 'Mythic Model', 'Equipped at least 3 Mythic Wearables at the same time', 'Collector', 1),
+  (5, 'unique_unicorn', 'Unique Unicorn', 'Equipped at least 3 Unique Wearables at the same time', 'Collector', 1),
+  (6, 'exotic_elegance', 'Exotic Elegance', 'Equipped at least 3 Exotic Wearables at the same time', 'Collector', 1),
+  (7, 'open_for_business', 'Open for Business', 'Complete Store Information and submit at least 1 collection', 'Creator', 2),
+  (8, 'traveler', 'Traveler', 'Starter: 1 Genesis City scene explored (for at least 1 min);Bronze: 50 Genesis City scenes explored (for at least 1 min);Silver: 250 Genesis City scenes explored (for at least 1 min);Gold: 1,000 Genesis City scenes explored (for at least 1 min);Platinum: 2,500 Genesis City scenes explored (for at least 1 min);Diamond: 10,000 Genesis City scenes explored (for at least 1 min)', 'Explorer', NULL),
+  (9, 'profile_pro', 'Profile Pro', 'Added information to Profile', 'Socializer', 1),
+  (10, 'emotionista', 'Emotionista', 'Starter: 1 Emote purchased;Bronze: 10 Emotes purchased;Silver: 25 Emotes purchased;Gold: 50 Emotes purchased;Platinum: 150 Emotes purchased;Diamond: 300  Emotes purchased', 'Collector', NULL),
+  (11, 'fashionista', 'Fashionista', 'Starter: 1 Wearable purchased;Bronze: 25 Wearables purchased;Silver: 75 Wearables purchased;Gold: 250 Wearables purchased;Platinum: 500 Wearables purchased;Diamond: 1,500 Wearables purchased', 'Collector', NULL),
+  (12, 'event_enthusiast', 'Event Enthusiast', 'Starter: 1 Events attended (for at least 5 min);Bronze: 50 Events attended (for at least 5 min);Silver: 100 Events attended (for at least 5 min);Gold: 500 Events attended (for at least 5 min);Platinum: 1000 Events attended (for at least 5 min);Diamond: 2000 Events attended (for at least 5 min)', 'Socializer', NULL),
+  (13, 'moves_master', 'Moves Master', 'Starter: Emoted 100 times (max 1/min);Bronze: Emoted 1,000 times (max 1/min);Silver: Emoted 5,000 times (max 1/min);Gold: Emoted 10,000 times (max 1/min);Platinum: Emoted 100,000 times (max 1/min);Diamond: Emoted 500,000 times (max 1/min)', 'Explorer', NULL),
+  (14, 'social_butterfly', 'Social Butterfly', 'Starter: 1 Profile viewed;Bronze: 50 Profiles viewed;Silver: 100 Profiles viewed;Gold: 250 Profiles viewed;Platinum: 500 Profiles viewed;Diamond: 1,000 Profiles viewed', 'Socializer', NULL),
+  (15, 'vertical_voyager', 'Vertical Voyager', 'Achieved a total elevation gain of at least 500m in one session', 'Explorer', 1),
+  (16, 'walkabout_wanderer', 'Walkabout Wanderer', 'Starter: 10k Steps walked in Decentraland;Bronze: 40k Steps walked in Decentraland;Silver: 150k Steps walked in Decentraland;Gold: 600k Steps walked in Decentraland;Platinum: 2.5M Steps walked in Decentraland;Diamond: 10M Steps walked in Decentraland', 'Explorer', NULL),
+  (17, 'land_architect', 'LAND Architect', 'Deployed a scene to Genesis City', 'Builder', 1),
+  (18, 'emote_creator', 'Emote Creator', 'Starter: 1 Emote published;Bronze: 5 Emotes published;Silver: 10 Emotes published;Gold: 20 Emotes published;Platinum: 50 Emotes published;Diamond: 100 Emotes published', 'Creator', NULL),
+  (19, 'wearable_designer', 'Wearable Designer', 'Starter: 1 Wearable published;Bronze: 5 Wearables published;Silver: 25 Wearables published;Gold: 50 Wearables published;Platinum: 175 Wearables published;Diamond: 350 Wearables published', 'Creator', NULL),
+  (20, 'referral', 'Community Recruiter', 'Starter: Welcomed 5 friends to Decentraland;Bronze: Welcomed 10 friends to Decentraland;Silver: Welcomed 25 friends to Decentraland;Gold: Welcomed 50 friends to Decentraland;Platinum: Welcomed 75 friends to Decentraland;Diamond: Welcomed 100 friends to Decentraland;', 'Socializer', NULL),
+  (21, 'music_festival_2024', 'Decentraland Music Festival 2024', 'Jumped in and attended Decentraland Music Festival 2024', 'Socializer', 1),
+  (22, 'fashion_week_2025', 'Metaverse Fashion Week 2025', 'Jumped in and attended Metaverse Fashion Week 2025', 'Socializer', 1),
+  (23, 'builder_talent_trail_2025', 'Builder Talent Trail 2025', 'Jumped in and attended Builder Talent Trail 2025', 'Socializer', 1),
+  (24, 'music_talent_trail_2025', 'Music Talent Trail 2025', 'Jumped in and attended Music Talent Trail 2025', 'Socializer', 1),
+  (25, 'game_night_2025', 'Game Night 2025', 'Jumped in and attended Game Night 2025', 'Socializer', 1),
+  (26, 'career_quest_2025', 'Career Quest 2025', 'Jumped in and attended Career Quest 2025', 'Socializer', 1),
+  (27, 'art_week_2025', 'Art Week 2025', 'Jumped in and attended Art Week 2025', 'Socializer', 1),
+  (28, 'fright_night_2025', 'Fright Night 2025', 'Jumped in and attended Fright Night 2025', 'Socializer', 1),
+  (29, 'music_festival_2025', 'Decentraland Music Festival 2025', 'Jumped in and attended Decentraland Music Festival 2025', 'Socializer', 1),
+  (30, 'festive_trail_2025', 'Festive Trail 2025', 'Jumped in to celebrate the holiday season 2025', 'Socializer', 1),
+  (31, 'welcome_guide', 'Welcome Guide', 'Welcomes newcomers and sparks first connections', 'Socializer', 1),
+  (32, 'buildathon_friendzone', 'Friendzone Buildathon', 'Awarded for being part of the 2026 Friendzone Buildathon', 'Builder', 1),
+  (33, 'halloweeks_2026', 'Halloweeks 2026', 'Jumped in for a spooky time', 'Socializer', 1)
+) AS s (n, id, name, description, category, steps);
 
-INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, assets, criteria_steps, ordinal) VALUES
-  ('walkabout', 'walkabout-starter', 'Starter', 'Walk 1,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/starter/2d/normal.png"}}'::jsonb, 1000, 0),
-  ('walkabout', 'walkabout-bronze', 'Bronze', 'Walk 10,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/bronze/2d/normal.png"}}'::jsonb, 10000, 1),
-  ('walkabout', 'walkabout-silver', 'Silver', 'Walk 100,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/silver/2d/normal.png"}}'::jsonb, 100000, 2),
-  ('walkabout', 'walkabout-gold', 'Gold', 'Walk 1,000,000 meters.', '{"2d":{"normal":"https://badges.decentraland.org/assets/walkabout/gold/2d/normal.png"}}'::jsonb, 1000000, 3),
-  ('emotionista', 'emotionista-bronze', 'Bronze', 'Play 10 emotes.', '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/bronze/2d/normal.png"}}'::jsonb, 10, 0),
-  ('emotionista', 'emotionista-silver', 'Silver', 'Play 100 emotes.', '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/silver/2d/normal.png"}}'::jsonb, 100, 1),
-  ('emotionista', 'emotionista-gold', 'Gold', 'Play 1000 emotes.', '{"2d":{"normal":"https://badges.decentraland.org/assets/emotionista/gold/2d/normal.png"}}'::jsonb, 1000, 2);
+INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, assets, criteria_steps, ordinal)
+SELECT t.badge_id, t.tier_id, t.tier_name, t.description,
+       jsonb_build_object(
+           '2d', jsonb_build_object('normal', (t.badge_id || '/' || t.slot) || '/2d/normal.png'),
+           '3d', jsonb_build_object('normal', (t.badge_id || '/' || t.slot) || '/3d/normal.png', 'hrm', (t.badge_id || '/' || t.slot) || '/3d/hrm.png',
+                                    'basecolor', (t.badge_id || '/' || t.slot) || '/3d/basecolor.png')),
+       t.steps, t.ordinal
+FROM (VALUES
+  ('traveler', 'traveler-starter', 'Starter', '1 Genesis City scene explored (for at least 1 min)', 'starter', 1, 0),
+  ('traveler', 'traveler-bronze', 'Bronze', '50 Genesis City scenes explored (for at least 1 min)', 'bronze', 50, 1),
+  ('traveler', 'traveler-silver', 'Silver', '250 Genesis City scenes explored (for at least 1 min)', 'silver', 250, 2),
+  ('traveler', 'traveler-gold', 'Gold', '1,000 Genesis City scenes explored (for at least 1 min)', 'gold', 1000, 3),
+  ('traveler', 'traveler-platinum', 'Platinum', '2,500 Genesis City scenes explored (for at least 1 min)', 'platinum', 2500, 4),
+  ('traveler', 'traveler-diamond', 'Diamond', '10,000 Genesis City scenes explored (for at least 1 min)', 'diamond', 10000, 5),
+  ('emotionista', 'emotionista-starter', 'Starter', '1 Emote purchased', 'starter', 1, 0),
+  ('emotionista', 'emotionista-bronze', 'Bronze', '10 Emotes purchased', 'bronze', 10, 1),
+  ('emotionista', 'emotionista-silver', 'Silver', '25 Emotes purchased', 'silver', 25, 2),
+  ('emotionista', 'emotionista-gold', 'Gold', '50 Emotes purchased', 'gold', 50, 3),
+  ('emotionista', 'emotionista-platinum', 'Platinum', '150 Emotes purchased', 'platinum', 150, 4),
+  ('emotionista', 'emotionista-diamond', 'Diamond', '300  Emotes purchased', 'diamond', 300, 5),
+  ('fashionista', 'fashionista-starter', 'Starter', '1 Wearable purchased', 'starter', 1, 0),
+  ('fashionista', 'fashionista-bronze', 'Bronze', '25 Wearables purchased', 'bronze', 25, 1),
+  ('fashionista', 'fashionista-silver', 'Silver', '75 Wearables purchased', 'silver', 75, 2),
+  ('fashionista', 'fashionista-gold', 'Gold', '250 Wearables purchased', 'gold', 250, 3),
+  ('fashionista', 'fashionista-platinum', 'Platinum', '500 Wearables purchased', 'platinum', 500, 4),
+  ('fashionista', 'fashionista-diamond', 'Diamond', '1,500 Wearables purchased', 'diamond', 1500, 5),
+  ('event_enthusiast', 'event-enthusiast-starter', 'Starter', '1 Events attended (for at least 5 min)', 'starter', 1, 0),
+  ('event_enthusiast', 'event-enthusiast-bronze', 'Bronze', '50 Events attended (for at least 5 min)', 'bronze', 50, 1),
+  ('event_enthusiast', 'event-enthusiast-silver', 'Silver', '100 Events attended (for at least 5 min)', 'silver', 100, 2),
+  ('event_enthusiast', 'event-enthusiast-gold', 'Gold', '500 Events attended (for at least 5 min)', 'gold', 500, 3),
+  ('event_enthusiast', 'event-enthusiast-platinum', 'Platinum', '1000 Events attended (for at least 5 min)', 'platinum', 1000, 4),
+  ('event_enthusiast', 'event-enthusiast-diamond', 'Diamond', '2000 Events attended (for at least 5 min)', 'diamond', 2000, 5),
+  ('moves_master', 'moves-master-starter', 'Starter', 'Emoted 100 times (max 1/min)', 'starter', 100, 0),
+  ('moves_master', 'moves-master-bronze', 'Bronze', 'Emoted 1,000 times (max 1/min)', 'bronze', 1000, 1),
+  ('moves_master', 'moves-master-silver', 'Silver', 'Emoted 5,000 times (max 1/min)', 'silver', 5000, 2),
+  ('moves_master', 'moves-master-gold', 'Gold', 'Emoted 10,000 times (max 1/min)', 'gold', 10000, 3),
+  ('moves_master', 'moves-master-platinum', 'Platinum', 'Emoted 100,000 times (max 1/min)', 'platinum', 100000, 4),
+  ('moves_master', 'moves-master-diamond', 'Diamond', 'Emoted 500,000 times (max 1/min)', 'diamond', 500000, 5),
+  ('social_butterfly', 'social-butterfly-starter', 'Starter', '1 Profile viewed', 'starter', 1, 0),
+  ('social_butterfly', 'social-butterfly-bronze', 'Bronze', '50 Profiles viewed', 'bronze', 50, 1),
+  ('social_butterfly', 'social-butterfly-silver', 'Silver', '100 Profiles viewed', 'silver', 100, 2),
+  ('social_butterfly', 'social-butterfly-gold', 'Gold', '250 Profiles viewed', 'gold', 250, 3),
+  ('social_butterfly', 'social-butterfly-platinum', 'Platinum', '500 Profiles viewed', 'platinum', 500, 4),
+  ('social_butterfly', 'social-butterfly-diamond', 'Diamond', '1,000 Profiles viewed', 'diamond', 1000, 5),
+  ('walkabout_wanderer', 'walkabout-wanderer-starter', 'Starter', '10k Steps walked in Decentraland', 'starter', 10000, 0),
+  ('walkabout_wanderer', 'walkabout-wanderer-bronze', 'Bronze', '40k Steps walked in Decentraland', 'bronze', 40000, 1),
+  ('walkabout_wanderer', 'walkabout-wanderer-silver', 'Silver', '150k Steps walked in Decentraland', 'silver', 150000, 2),
+  ('walkabout_wanderer', 'walkabout-wanderer-gold', 'Gold', '600k Steps walked in Decentraland', 'gold', 600000, 3),
+  ('walkabout_wanderer', 'walkabout-wanderer-platinum', 'Platinum', '2.5M Steps walked in Decentraland', 'platinum', 2500000, 4),
+  ('walkabout_wanderer', 'walkabout-wanderer-diamond', 'Diamond', '10M Steps walked in Decentraland', 'diamond', 10000000, 5),
+  ('emote_creator', 'emote-creator-starter', 'Starter', '1 Emote published', 'starter', 1, 0),
+  ('emote_creator', 'emote-creator-bronze', 'Bronze', '5 Emotes published', 'bronze', 5, 1),
+  ('emote_creator', 'emote-creator-silver', 'Silver', '10 Emotes published', 'silver', 10, 2),
+  ('emote_creator', 'emote-creator-gold', 'Gold', '20 Emotes published', 'gold', 20, 3),
+  ('emote_creator', 'emote-creator-platinum', 'Platinum', '50 Emotes published', 'platinum', 50, 4),
+  ('emote_creator', 'emote-creator-diamond', 'Diamond', '100 Emotes published', 'diamond', 100, 5),
+  ('wearable_designer', 'wearable-designer-starter', 'Starter', '1 Wearable published', 'starter', 1, 0),
+  ('wearable_designer', 'wearable-designer-bronze', 'Bronze', '5 Wearables published', 'bronze', 5, 1),
+  ('wearable_designer', 'wearable-designer-silver', 'Silver', '25 Wearables published', 'silver', 25, 2),
+  ('wearable_designer', 'wearable-designer-gold', 'Gold', '50 Wearables published', 'gold', 50, 3),
+  ('wearable_designer', 'wearable-designer-platinum', 'Platinum', '175 Wearables published', 'platinum', 175, 4),
+  ('wearable_designer', 'wearable-designer-diamond', 'Diamond', '350 Wearables published', 'diamond', 350, 5),
+  ('referral', 'referral-starter', 'Starter', 'Welcomed 5 friends to Decentraland', 'starter', 5, 0),
+  ('referral', 'referral-bronze', 'Bronze', 'Welcomed 10 friends to Decentraland', 'bronze', 10, 1),
+  ('referral', 'referral-silver', 'Silver', 'Welcomed 25 friends to Decentraland', 'silver', 25, 2),
+  ('referral', 'referral-gold', 'Gold', 'Welcomed 50 friends to Decentraland', 'gold', 50, 3),
+  ('referral', 'referral-platinum', 'Platinum', 'Welcomed 75 friends to Decentraland', 'platinum', 75, 4),
+  ('referral', 'referral-diamond', 'Diamond', 'Welcomed 100 friends to Decentraland', 'diamond', 100, 5)
+) AS t (badge_id, tier_id, tier_name, description, slot, steps, ordinal);
 -- ==== end section: badges ====
 
 CREATE INDEX scene_stream_access_reconcile_idx ON social.scene_stream_access (streaming_checked_at NULLS FIRST, id) WHERE active AND streaming;
@@ -1187,3 +1775,36 @@ CREATE TABLE social.island_takeover_receipts (
 CREATE INDEX island_takeover_receipts_due_idx
     ON social.island_takeover_receipts(next_attempt_at, wallet, source_incarnation, takeover_id)
     WHERE NOT acknowledged;
+
+-- Immutable overflow transport payloads for core NATS' bounded social messages.
+-- This is a transient cache, not an outbox: publication may still be lost.
+CREATE TABLE social.event_payloads (
+    id uuid PRIMARY KEY,
+    payload bytea NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    CONSTRAINT event_payloads_size_check CHECK (octet_length(payload) > 0 AND octet_length(payload) <= 536870912)
+);
+CREATE INDEX event_payloads_expiry_idx ON social.event_payloads (expires_at, id);
+
+-- Versioned admission SQL; installed by the schema object pass.
+CREATE FUNCTION social.world_authorization_started_5633b2b39c6d(text) RETURNS timestamp without time zone LANGUAGE plpgsql SET lock_timeout = '500ms' AS $admission$ BEGIN
+    PERFORM 1 FROM worlds.worlds WHERE name = $1 FOR SHARE;
+    IF NOT FOUND THEN
+        RETURN NULL;
+    END IF;
+    RETURN timezone('UTC', clock_timestamp());
+END $admission$;
+
+CREATE FUNCTION social.world_secret_refund_9424d3307765(text, text, timestamp without time zone) RETURNS void LANGUAGE plpgsql SET lock_timeout = '500ms' AS $admission$ DECLARE
+    charged integer;
+BEGIN
+    SELECT attempts INTO charged FROM social.world_secret_attempts
+    WHERE world_name = $1 AND subject = $2 AND window_start = $3 FOR UPDATE;
+    IF charged = 1 THEN
+        DELETE FROM social.world_secret_attempts
+        WHERE world_name = $1 AND subject = $2 AND window_start = $3;
+    ELSIF charged > 1 THEN
+        UPDATE social.world_secret_attempts SET attempts = attempts - 1
+        WHERE world_name = $1 AND subject = $2 AND window_start = $3;
+    END IF;
+END $admission$;

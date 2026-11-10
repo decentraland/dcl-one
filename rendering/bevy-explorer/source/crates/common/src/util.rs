@@ -52,7 +52,7 @@ impl<T> TaskExt for Task<T> {
     fn complete(&mut self) -> Option<Self::Output> {
         use futures_lite::FutureExt;
 
-        // wasm doesn't have `is_finished``, but polling is cheap as it is just a oneshot receiver
+        // polling is cheap as it is just a oneshot receiver
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         if let std::task::Poll::Ready(res) = self.poll(&mut context) {
             Some(res)
@@ -482,7 +482,7 @@ pub fn camera_to_render_layers<'a>(
 // convenient non-pooled client use for infrequent requests
 #[cfg(not(target_arch = "wasm32"))]
 pub fn reqwest_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    platform::http_client_builder()
         .timeout(std::time::Duration::from_secs(5))
         .use_native_tls()
         .user_agent("DCLExplorer/0.1")
@@ -492,7 +492,7 @@ pub fn reqwest_client() -> reqwest::Client {
 
 #[cfg(target_arch = "wasm32")]
 pub fn reqwest_client() -> reqwest::Client {
-    reqwest::Client::builder()
+    platform::http_client_builder()
         .user_agent("DCLExplorer/0.1")
         .build()
         .unwrap()
@@ -712,8 +712,8 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
 /// SSRF guard for scene-controlled URLs (fetch / signedFetch / readFile). Enforces an
 /// http(s)/ws(s) scheme and resolves the host, rejecting if ANY resolved address is
 /// non-public (defeats a literal private IP and static-DNS pointers to internal hosts).
-/// `allow_private` widens the allowance to the local network for local preview only (never
-/// to link-local / metadata). Returns Ok for a public destination.
+/// `allow_private` permits the local network for preview and trusted native system scenes,
+/// while excluding link-local and cloud metadata addresses.
 /// Native-only: it is invoked exclusively from the native request-executing ops; the
 /// wasm/web client relies on the browser's own network sandbox.
 #[cfg(not(target_arch = "wasm32"))]
@@ -737,8 +737,8 @@ pub async fn assert_public_url(url_str: &str, allow_private: bool) -> Result<(),
 
 /// True for addresses on this machine or its local network: loopback and RFC1918 / IPv6
 /// unique-local. Deliberately EXCLUDES link-local (`169.254/16`, `fe80::/10`) so cloud
-/// metadata (`169.254.169.254`) stays unreachable even where local network is permitted
-/// (i.e. preview). This is the set that `allow_private` opens up.
+/// metadata (`169.254.169.254` and `fd00:ec2::254`) stays unreachable even where local
+/// network access is permitted. This is the set that `allow_private` opens up.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
@@ -748,8 +748,9 @@ pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
             if let Some(mapped) = v6.to_ipv4_mapped() {
                 return is_private_lan(&IpAddr::V4(mapped));
             }
-            // unique local fc00::/7
-            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+            // EC2 metadata has a unique-local IPv6 address.
+            let metadata = [0xfd00, 0xec2, 0, 0, 0, 0, 0, 0x254];
+            v6.is_loopback() || ((v6.segments()[0] & 0xfe00) == 0xfc00 && v6.segments() != metadata)
         }
     }
 }
@@ -898,9 +899,14 @@ mod tests {
 
         // the metadata endpoint: never local network, always forbidden — so a preview
         // `allow_private` skip never reaches it.
-        let meta: IpAddr = "169.254.169.254".parse().unwrap();
-        assert!(!is_private_lan(&meta), "metadata must not be local network");
-        assert!(is_forbidden_ip(&meta), "metadata must stay forbidden");
+        for address in ["169.254.169.254", "::ffff:169.254.169.254", "fd00:ec2::254"] {
+            let meta: IpAddr = address.parse().unwrap();
+            assert!(
+                !is_private_lan(&meta),
+                "{address} must not be local network"
+            );
+            assert!(is_forbidden_ip(&meta), "{address} must stay forbidden");
+        }
 
         // ordinary public address is neither
         let pubip: IpAddr = "8.8.8.8".parse().unwrap();
@@ -923,6 +929,9 @@ mod tests {
         assert!(resolve_public_addrs("192.168.1.1", 80, true).await.is_ok());
         // link-local / metadata: refused in every mode, preview included
         assert!(resolve_public_addrs("169.254.169.254", 80, true)
+            .await
+            .is_err());
+        assert!(resolve_public_addrs("[fd00:ec2::254]", 80, true)
             .await
             .is_err());
     }
@@ -981,6 +990,17 @@ impl JoinRelativeExt for Path {
         });
         (!escapes).then(|| self.join(rhs))
     }
+}
+
+pub fn watch_send_if_modified<T: PartialEq>(
+    watch: &tokio::sync::watch::Sender<T>,
+    value: T,
+) -> bool {
+    watch.send_if_modified(|old_value| {
+        let diff = old_value != &value;
+        *old_value = value;
+        diff
+    })
 }
 
 #[cfg(test)]

@@ -1,0 +1,48 @@
+/* from: decentraland-ui2@3.23.8:dist/components/Navbar/Credits.styled.js (CreditsBalanceButton,
+   ShopCreditsBalanceButton) with the dark navbar scheme's control text. */
+.chip {
+  all: unset;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: #fcfcfc;
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-weight: 600;
+  font-size: 16px;
+  letter-spacing: -0.8px;
+  transition: opacity 0.15s ease;
+}
+
+.chip[data-link] {
+  cursor: pointer;
+}
+
+.chip[data-link]:hover {
+  opacity: 0.8;
+}
+
+.chip:focus-visible {
+  outline: 2px solid #ff2d55;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.chip svg {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+}
+
+@media (max-width: 991px) {
+  .chip {
+    font-size: 12px;
+    letter-spacing: -0.6px;
+  }
+
+  .chip svg {
+    width: 14px;
+    height: 14px;
+  }
+}

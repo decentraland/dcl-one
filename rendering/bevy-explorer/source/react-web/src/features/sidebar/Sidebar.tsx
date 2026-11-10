@@ -5,7 +5,9 @@
 // migrated to React.
 
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { ControlButton, IconButton, Panel, Toggle } from '../../design'
+import { createPortal } from 'react-dom'
+import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
+import { useDebugPanel } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '../../engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
@@ -26,6 +28,7 @@ import galleryArt from '../../assets/sidebar-rail/gallery.webp'
 import settingsArt from '../../assets/sidebar-rail/settings.webp'
 import helpArt from '../../assets/sidebar-rail/help.webp'
 import bugArt from '../../assets/sidebar-rail/bug.webp'
+import debugIcon from '../../assets/sidebar-icons/debug.png'
 import skyboxArt from '../../assets/sidebar-rail/skybox.webp'
 import emotesArt from '../../assets/sidebar-rail/emotes.webp'
 import friendsArt from '../../assets/sidebar-rail/friends.webp'
@@ -57,6 +60,7 @@ type Item =
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
+  | { kind: 'camera'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'create'; icon: IconName; label: string }
   | { kind: 'link'; icon: IconName; label: string; url: string | (() => string) }
   | { kind: 'divider' }
@@ -96,6 +100,7 @@ const TOP: Item[] = [
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
   { kind: 'link', icon: 'marketplace', label: 'Shop', url: () => withUtm('https://decentraland.org/shop') },
+  { kind: 'camera', icon: 'camera', label: 'Camera', hotkey: 'PhotoMode' },
   { kind: 'gallery', icon: 'gallery', label: 'Gallery', hotkey: 'Gallery' },
   { kind: 'settings', icon: 'settings', label: 'Settings', hotkey: 'Settings' },
   { kind: 'create', icon: 'create', label: 'Create' },
@@ -202,6 +207,10 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         active={session.places.open}
         onClick={session.places.toggle}
       />
+    )
+  if (item.kind === 'camera')
+    return (
+      <RailButton key="camera" icon={item.icon} label={item.label} shortcut={shortcut} onClick={() => session.photoMode.set(true, 'button')} />
     )
   if (item.kind === 'gallery')
     return (
@@ -329,6 +338,7 @@ export function Sidebar({
   const liveEvents = useLiveEventCount()
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
+  const debugPanel = useDebugPanel(session)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
   const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null)
@@ -358,8 +368,16 @@ export function Sidebar({
       off()
     }
   }, [configOpen])
+  const launcher = debugPanel.developmentBuild && (
+    <ControlButton variant="dark" className={styles.debugLauncher} aria-label="Toggle debug panel"
+      title="Toggle debug panel" active={debugPanel.launcherLayer != null} onClick={() => debugPanel.toggle()}>
+      <img src={debugIcon} width={28} height={28} alt="" draggable={false} />
+    </ControlButton>
+  )
   return (
     <>
+      {/* Keep the toggle clickable and inside the popup's focus trap while the panel is open. */}
+      {debugPanel.launcherLayer ? createPortal(launcher, debugPanel.launcherLayer) : launcher}
       {autoHide.hidden && <div className={styles.reveal} data-testid="sidebar-reveal" onPointerEnter={autoHide.onPointerEnter} />}
       <nav
         ref={hudInsetRef}
@@ -421,6 +439,10 @@ export function Sidebar({
         <Panel className={styles.config} role="dialog" aria-label="Sidebar settings">
           <span>Auto-hide sidebar</span>
           <Toggle checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Auto-hide sidebar" />
+          <Button size="sm" variant="secondary" onClick={() => {
+            setConfigOpen(false)
+            debugPanel.toggle()
+          }}>Debug panel</Button>
         </Panel>
       )}
     </>

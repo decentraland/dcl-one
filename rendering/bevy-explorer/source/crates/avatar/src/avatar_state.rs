@@ -10,6 +10,7 @@ use common::{
     util::AsH160,
 };
 use comms::{global_crdt::ForeignPlayer, profile::UserProfile};
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_runner::{initialize_scene::SuperUserScene, SceneEntity};
 use serde_json::{json, Value};
 
@@ -19,13 +20,44 @@ use crate::{
     AvatarDefinition, AvatarLoaded, AvatarProcessed, AvatarSelection, PreviousAvatar,
 };
 
+pub(super) fn register(app: &mut App) {
+    app.add_console_command::<AvatarStateCommand, _>(avatar_state_cmd);
+
+    app.add_debug_section(DebugSection {
+        title: "Avatar",
+        query: "/avatar_state --panel",
+        fields: &[
+            ("Body shape", "rendered.bodyShape"),
+            ("Address", "address"),
+            ("Rendered wearables", "rendered.wearables"),
+            ("Hidden slots", "rendered.hidden"),
+            ("Equipped emotes", "selected.emotes"),
+            ("Animation", "emote.urn"),
+            ("Animation source", "emote.source"),
+        ],
+        actions: &[(
+            "Play wave",
+            "/emote urn:decentraland:off-chain:base-emotes:wave",
+        )],
+        inputs: &[DebugInput {
+            label: "Play emote (URN or equipped slot)",
+            field: "",
+            command: "/emote {value}",
+            kind: DebugInputKind::Text,
+        }],
+    });
+}
+
 /// Report, as JSON, what avatars are selected to wear, what was built from that and the emote they
 /// play: the local player's, all of them, or the player with an address
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/avatar_state")]
-pub struct AvatarStateCommand {
+struct AvatarStateCommand {
     /// `all`, or a player's address; the local player's avatar by default
     target: Option<String>,
+    /// Read the local player's completed model and explain any missing panel readings.
+    #[arg(long, conflicts_with = "target")]
+    panel: bool,
 }
 
 /// What an avatar is. Declared in the order a report lists them.
@@ -125,6 +157,9 @@ struct EmoteState {
     repeat: bool,
     finished: bool,
     mask: &'static str,
+    /// An idle pose, which a triggered emote takes over: a scene's movement animation outranks
+    /// one only while it is not idle.
+    idle: bool,
 }
 
 impl AvatarReport {
@@ -164,6 +199,7 @@ impl EmoteState {
             "repeat": self.repeat,
             "finished": self.finished,
             "mask": self.mask,
+            "idle": self.idle,
         })
     }
 }
@@ -191,7 +227,7 @@ fn hidden_slots<'a>(hides: impl IntoIterator<Item = &'a WearableCategory>) -> Ve
 }
 
 #[allow(clippy::type_complexity)]
-pub fn avatar_state_cmd(
+fn avatar_state_cmd(
     mut input: ConsoleCommand<AvatarStateCommand>,
     avatars: Query<(
         Entity,
@@ -204,6 +240,7 @@ pub fn avatar_state_cmd(
         Option<&SceneEntity>,
         Has<BoothAvatar>,
         Option<&UserProfile>,
+        Has<crate::RetryRenderAvatar>,
     )>,
     renders: Query<(&AvatarDefinition, Has<AvatarProcessed>, Has<AvatarLoaded>)>,
     super_user_scenes: Query<(), With<SuperUserScene>>,
@@ -221,13 +258,15 @@ pub fn avatar_state_cmd(
         }
     };
 
-    let emote_state = |playback: &EmotePlayback, source: ActiveEmoteSource| EmoteState {
-        urn: emotes.source_urn(&playback.urn).to_owned(),
-        source: source_name(source),
-        repeat: playback.repeat,
-        finished: playback.finished,
-        mask: mask_name(playback.mask),
-    };
+    let emote_state =
+        |playback: &EmotePlayback, source: ActiveEmoteSource, idle: bool| EmoteState {
+            urn: emotes.source_urn(&playback.urn).to_owned(),
+            source: source_name(source),
+            repeat: playback.repeat,
+            finished: playback.finished,
+            mask: mask_name(playback.mask),
+            idle,
+        };
 
     let mut reports = Vec::new();
     for (
@@ -241,6 +280,7 @@ pub fn avatar_state_cmd(
         scene_entity,
         is_booth,
         profile,
+        resolving,
     ) in &avatars
     {
         let (kind, address) = if is_primary {
@@ -273,41 +313,70 @@ pub fn avatar_state_cmd(
             })
             .and_then(|child| renders.get(child).ok());
 
+        let render_reason = match render {
+            Some((_, true, false)) => "The avatar model failed to load.",
+            Some(_) => "The avatar model is being built.",
+            None if resolving => "Resolving the avatar's body and wearables.",
+            None => "No avatar model has been built.",
+        };
+        // A replacement is reported by the inventory immediately. The panel reports the
+        // model the renderer has finished, which may still be the preceding one.
+        let render = if command.panel && !render.is_some_and(|(_, done, loaded)| done && loaded) {
+            previous
+                .and_then(|previous| renders.get(previous.0).ok())
+                .filter(|(_, done, loaded)| *done && *loaded)
+        } else {
+            render
+        };
         let shape = &selection.shape.0;
-        reports.push((
-            entity,
-            AvatarReport {
-                kind,
-                address,
-                selected: Selected {
-                    body_shape: shape.body_shape.clone(),
-                    wearables: shape.wearables.clone(),
-                    emotes: shape.emotes.clone(),
-                    force_render: shape.force_render.clone(),
-                    from_scene: selection.scene.is_some(),
-                },
-                rendered: render.map(|(definition, processed, loaded)| {
-                    let definition = &definition.render;
-                    Rendered {
-                        processed,
-                        failed: processed && !loaded,
-                        body_shape: definition.body_shape.clone(),
-                        wearables: definition
-                            .wearables
-                            .iter()
-                            .map(|(urn, wearable)| (wearable.category.slot, urn.to_string()))
-                            .collect(),
-                        hidden: hidden_slots(&definition.hides),
-                    }
-                }),
-                emote: emote.map(|(active, _)| emote_state(active, active.source())),
-                upper_body_emote: emote
-                    .and_then(|(_, masked)| masked.active_request())
-                    .map(|playback| emote_state(playback, ActiveEmoteSource::TriggeredEmote)),
+        let report = AvatarReport {
+            kind,
+            address,
+            selected: Selected {
+                body_shape: shape.body_shape.clone(),
+                wearables: shape.wearables.clone(),
+                emotes: shape.emotes.clone(),
+                force_render: shape.force_render.clone(),
+                from_scene: selection.scene.is_some(),
             },
-        ));
+            rendered: render.map(|(definition, processed, loaded)| {
+                let definition = &definition.render;
+                Rendered {
+                    processed,
+                    failed: processed && !loaded,
+                    body_shape: definition.body_shape.clone(),
+                    wearables: definition
+                        .wearables
+                        .iter()
+                        .map(|(urn, wearable)| (wearable.category.slot, urn.to_string()))
+                        .collect(),
+                    hidden: hidden_slots(&definition.hides),
+                }
+            }),
+            emote: emote.map(|(active, _)| emote_state(active, active.source(), active.is_idle())),
+            upper_body_emote: emote
+                .and_then(|(_, masked)| masked.active_request())
+                .map(|playback| emote_state(playback, ActiveEmoteSource::TriggeredEmote, false)),
+        };
+        if command.panel {
+            let mut state = report.to_json();
+            state["unavailable"] = json!({
+                "rendered": render_reason,
+                "emote": "No active full-body animation.",
+                "address": "No local profile address.",
+            });
+            input.reply_ok(state.to_string());
+            return;
+        }
+        reports.push((entity, report));
     }
 
+    if command.panel {
+        input.reply_ok(
+            json!({"unavailable":{"":"No local avatar appearance selected."}}).to_string(),
+        );
+        return;
+    }
     reports.sort_by_key(|(entity, report)| (report.kind, report.address, *entity));
     input.reply_ok(
         Value::Array(reports.iter().map(|(_, report)| report.to_json()).collect()).to_string(),
@@ -319,6 +388,55 @@ mod tests {
     use super::*;
 
     const ADDRESS: &str = "0x00000000000000000000000000000000000000a1";
+
+    #[test]
+    fn panel_tracks_only_the_local_player_and_preserves_the_console_inventory() {
+        use bevy_console::{ConsoleCommandEntered, PrintConsoleLine};
+        use std::sync::{mpsc, Arc};
+
+        let mut app = App::new();
+        app.add_event::<ConsoleCommandEntered>()
+            .add_event::<PrintConsoleLine>()
+            .init_resource::<Collectibles<Emote>>()
+            .add_systems(Update, avatar_state_cmd);
+        let query = |app: &mut App, args: &[&str]| {
+            let (tx, rx) = mpsc::channel();
+            app.world_mut().send_event(ConsoleCommandEntered {
+                command_name: "/avatar_state".into(),
+                args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+                responder: Some(Arc::new(move |result| tx.send(result).unwrap())),
+            });
+            app.update();
+            serde_json::from_str::<Value>(&rx.try_recv().unwrap().unwrap()).unwrap()
+        };
+        let selection = || AvatarSelection {
+            scene: None,
+            shape: crate::AvatarShape(default()),
+            automatic_delete: false,
+            disable_dither: false,
+        };
+        app.world_mut().spawn(selection());
+        assert_eq!(query(&mut app, &[]), json!([]));
+        assert!(query(&mut app, &["--panel"])["unavailable"][""].is_string());
+
+        app.world_mut().spawn((
+            PrimaryUser::default(),
+            selection(),
+            crate::RetryRenderAvatar,
+        ));
+        let panel = query(&mut app, &["--panel"]);
+        assert_eq!(panel["kind"], "player");
+        assert!(panel["rendered"].is_null());
+        assert_eq!(
+            panel["unavailable"]["rendered"],
+            "Resolving the avatar's body and wearables."
+        );
+        let all = query(&mut app, &["all"]);
+        assert_eq!(all.as_array().unwrap().len(), 2);
+        assert_eq!(all[0]["kind"], "player");
+        assert!(all[0].get("unavailable").is_none());
+        assert_eq!(query(&mut app, &[])[0], all[0]);
+    }
 
     fn report() -> AvatarReport {
         AvatarReport {
@@ -347,6 +465,7 @@ mod tests {
                 repeat: true,
                 finished: false,
                 mask: "fullBody",
+                idle: true,
             }),
             upper_body_emote: None,
         }
@@ -382,6 +501,7 @@ mod tests {
                     "repeat": true,
                     "finished": false,
                     "mask": "fullBody",
+                    "idle": true,
                 },
                 "upperBodyEmote": null,
             })

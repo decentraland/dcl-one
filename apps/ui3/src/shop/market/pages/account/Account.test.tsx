@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
-import { BOOK } from "../../../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { OWNED_NAMES, OWNED_WEARABLES } from "../../fixtures";
 import type { FakeRoute } from "../../testing";
 import { mountShop } from "../../testHarness";
@@ -21,7 +21,7 @@ const catalog: FakeRoute = { method: "GET", path: /^\/v3\/catalog\/items$/, repl
 describe("Account (upstream Marketplace AccountPage)", () => {
   it("opens on Collectibles > All Assets with not-on-sale included, and prices resales only in MANA", async () => {
     const seen: URLSearchParams[] = [];
-    mountShop({ path: `/shop/accounts/${BOOK.creator}`, who: "signedOut", routes: [nfts(seen), catalog] });
+    mountShop({ path: `/shop/accounts/${BOOK.creator}`, who: "web3", routes: [nfts(seen), catalog] });
     expect(await screen.findByTestId("shop-account-banner")).toBeInTheDocument();
     const tiles = await screen.findAllByTestId("shop-asset-tile");
     expect(tiles).toHaveLength(3);
@@ -37,7 +37,7 @@ describe("Account (upstream Marketplace AccountPage)", () => {
 
   it("the sidebar switches sections and to Originals", async () => {
     const seen: URLSearchParams[] = [];
-    mountShop({ path: `/shop/accounts/${BOOK.creator}`, who: "signedOut", routes: [nfts(seen), catalog] });
+    mountShop({ path: `/shop/accounts/${BOOK.creator}`, who: "web3", routes: [nfts(seen), catalog] });
     await screen.findAllByTestId("shop-asset-tile");
     fireEvent.click(screen.getByRole("button", { name: "Names" }));
     await waitFor(() => expect(seen.at(-1)!.get("category")).toBe("ens"));

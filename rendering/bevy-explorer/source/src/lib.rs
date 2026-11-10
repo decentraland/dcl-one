@@ -4,8 +4,13 @@
 pub mod automation;
 mod autopilot;
 mod commands;
+mod debug_panel;
 mod deep_link;
 mod ext;
+mod gpu_memory;
+mod memory;
+#[cfg(test)]
+mod memory_tests;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -19,7 +24,7 @@ use std::str::FromStr;
 
 use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
-use av::AVPlayerPlugin;
+use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
@@ -36,6 +41,7 @@ use bevy::{
 };
 #[cfg(not(debug_assertions))]
 use build_time::build_time_utc;
+use camera_reel::CameraReelPlugin;
 use collectibles::CollectiblesPlugin;
 use common::{
     inputs::InputMap,
@@ -197,6 +203,17 @@ pub struct DecentralandArguments {
     pub launch: LaunchOptions,
     #[command(flatten)]
     pub client: ClientOptions,
+    /// Route first-party HTTP APIs through this gateway; other services keep their configured destinations.
+    ///
+    /// A hostname beginning with `gateway.` selects service aliases and gateway signing paths;
+    /// any other hostname uses direct Catalyst paths. Explicit service flags take precedence.
+    /// Pulse, social/Ethereum WebSockets, storage delegations and auth/reels pages are not remapped:
+    /// use --pulse-server HOST[:PORT], --social-rpc WS(S)://..., --ethereum-rpc WS(S)://...,
+    /// --storage HTTPS://..., --auth-page or --reels as needed. Otherwise they use --base-domain
+    /// (decentraland.org by default); Pulse also honors PULSE_SERVER before the domain fallback.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "url", help_heading = system_api_types::launch_options::help_heading::SERVICES)]
+    pub gateway: Option<String>,
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
@@ -274,6 +291,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Expose observed native engine HTTP transfers to Chrome DevTools on a loopback port
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "port", help_heading = DEBUG)]
+    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]
@@ -613,7 +634,8 @@ impl DecentralandApp {
         app.insert_resource(decentraland_app_config.app_config);
 
         // Plugins
-        app.add_plugins(SceneRunnerPlugin)
+        app.add_plugins((memory::MemoryStatusPlugin, gpu_memory::GpuMemoryPlugin))
+            .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)
@@ -631,12 +653,17 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
+            // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
+            // without an extension to the last image loader registered, which must stay
+            // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,
+            // registered before it, then only ever sees `.ktx2` paths.
+            .add_plugins(ImageProcessingPlugin)
             .add_plugins(NftShapePlugin)
             .add_plugins(TweenPlugin)
             .add_plugins(CollectiblesPlugin)
             .add_plugins(WorldUiPlugin)
             .add_plugins(TextureCameraPlugin)
-            .add_plugins(ImageProcessingPlugin)
+            .add_plugins(CameraReelPlugin)
             .add_plugins(SystemBridgePlugin { bare: false })
             .add_plugins(world_state::WorldStatePlugin)
             .add_plugins(deep_link::DeepLinkPlugin)
@@ -701,6 +728,7 @@ impl DecentralandApp {
         app.add_console_command::<SceneThreadsCommand, _>(scene_threads);
         app.add_console_command::<FpsCommand, _>(set_fps);
         app.add_console_command::<SessionGraphicsCommand, _>(session_graphics);
+        debug_panel::register(&mut app);
 
         app
     }
@@ -818,7 +846,13 @@ fn update_app_config_from_arguments(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> PluginGroupBuilder {
-    let compute_threads = decentraland_app_config.arguments.client.compute_threads;
+    // Compute runs both worlds' parallel systems and `par_iter` work, so it is sized from the core
+    // count, not from what IO and async leave over (bevy assigns those first).
+    let compute_threads = decentraland_app_config
+        .arguments
+        .client
+        .compute_threads
+        .unwrap_or_else(|| (bevy::tasks::available_parallelism() / 2).clamp(2, 8));
     DefaultPlugins
         .set(TaskPoolPlugin {
             task_pool_options: TaskPoolOptions {
@@ -837,8 +871,8 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
                     on_thread_destroy: None,
                 },
                 compute: TaskPoolThreadAssignmentPolicy {
-                    min_threads: compute_threads.unwrap_or(2),
-                    max_threads: compute_threads.unwrap_or(8),
+                    min_threads: compute_threads,
+                    max_threads: compute_threads,
                     percent: 0.25,
                     on_thread_spawn: None,
                     on_thread_destroy: None,

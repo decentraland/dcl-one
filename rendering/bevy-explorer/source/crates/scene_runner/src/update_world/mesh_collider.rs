@@ -230,6 +230,12 @@ pub struct SceneColliderData {
     disabled: HashSet<ColliderHandle>,
 }
 
+impl SceneColliderData {
+    pub(crate) fn collider_count(&self) -> usize {
+        self.collider_set.len()
+    }
+}
+
 // max world-space size change (metres) before we rebuild the scaled shape
 const COLLIDER_RESCALE_SIZE: f32 = 0.01;
 // disable colliders whose largest scaled extent falls below this (metres)
@@ -778,6 +784,57 @@ impl SceneColliderData {
                 position: DVec3::from(position).as_vec3(),
             }
         })
+    }
+
+    /// The nearest hit of a ball of `radius` swept from `origin` along `direction` for up to
+    /// `distance`, as a time of impact. Colliders the ball starts inside do not count, so it can
+    /// leave one it was placed in.
+    pub fn cast_ball_nearest(
+        &mut self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        radius: f64,
+        collision_mask: u32,
+    ) -> Option<f64> {
+        self.update_bvh();
+
+        if !direction.is_finite() || distance <= 0.0 {
+            return None;
+        }
+
+        let ball = Ball::new(radius);
+        let groups = InteractionGroups::new(
+            Group::from_bits_truncate(collision_mask),
+            Group::from_bits_truncate(collision_mask),
+            InteractionTestMode::And,
+        );
+
+        let mut skip = self.disabled.clone();
+        skip.extend(
+            self.query_pipeline(QueryFilter::default().groups(groups).exclude_sensors())
+                .intersect_shape(origin.into(), &ball)
+                .map(|(h, _)| h),
+        );
+        let predicate = |h, _: &_| !skip.contains(&h);
+        let filter = QueryFilter::default()
+            .groups(groups)
+            .exclude_sensors()
+            .predicate(&predicate);
+
+        self.query_pipeline(filter)
+            .cast_shape(
+                &origin.into(),
+                &direction.into(),
+                &ball,
+                ShapeCastOptions {
+                    max_time_of_impact: distance,
+                    target_distance: 0.0,
+                    stop_at_penetration: true,
+                    compute_impact_geometry_on_penetration: false,
+                },
+            )
+            .map(|(_, hit)| hit.time_of_impact)
     }
 
     fn avatar_intersections(
@@ -1456,5 +1513,61 @@ fn render_debug_colliders<T: ColliderType>(
 
             debug_entities.insert(collider_ent, debug_ent);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn wall(colliders: &mut SceneColliderData, index: u32, centre: Vec3, half_extents: Vec3) {
+        colliders.set_wall(
+            &ColliderId::new(SceneEntityId::ROOT, None, index),
+            centre,
+            half_extents,
+            Quat::IDENTITY,
+        );
+    }
+
+    #[test]
+    fn a_ball_sweep_stops_at_a_thin_wall_it_would_cross_in_one_step() {
+        let mut colliders = SceneColliderData::default();
+        wall(
+            &mut colliders,
+            0,
+            Vec3::new(0.0, 1.0, -2.0),
+            Vec3::new(4.0, 2.0, 0.01),
+        );
+        let mask = ColliderLayer::ClPhysics as u32;
+        // the destination is clear of the wall; only the path crosses it
+        let toi = colliders.cast_ball_nearest(DVec3::new(0.0, 1.0, 0.0), -DVec3::Z, 4.0, 0.1, mask);
+        assert!(toi.is_some_and(|toi| (toi - 1.89).abs() < 1e-3), "{toi:?}");
+        assert!(colliders
+            .cast_ball_nearest(DVec3::new(0.0, 1.0, 0.0), DVec3::Z, 4.0, 0.1, mask)
+            .is_none());
+    }
+
+    #[test]
+    fn a_ball_that_starts_inside_a_collider_can_leave_it_but_still_hits_the_next() {
+        let mut colliders = SceneColliderData::default();
+        wall(
+            &mut colliders,
+            0,
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 1.0, 1.0),
+        );
+        wall(
+            &mut colliders,
+            1,
+            Vec3::new(0.0, 1.0, -4.0),
+            Vec3::new(1.0, 1.0, 0.1),
+        );
+        let mask = ColliderLayer::ClPhysics as u32;
+        let toi =
+            colliders.cast_ball_nearest(DVec3::new(0.0, 1.0, 0.0), -DVec3::Z, 10.0, 0.1, mask);
+        assert!(toi.is_some_and(|toi| toi > 3.0 && toi < 4.0), "{toi:?}");
+        assert!(colliders
+            .cast_ball_nearest(DVec3::new(0.0, 1.0, 0.0), DVec3::Z, 10.0, 0.1, mask)
+            .is_none());
     }
 }

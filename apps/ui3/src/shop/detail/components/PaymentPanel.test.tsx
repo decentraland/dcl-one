@@ -3,11 +3,11 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
-import { manaFromWhole, usdCents, type ManaWei, type UsdCents } from "../../model/money";
-import type { PurchaseOffer } from "../../model/purchase";
-import type { Session } from "../../model/settlement";
-import { nameRegistration, parcelResale, SIGNED_OUT, storeMint, wearableResale, web2, web3, BOOK } from "../../payment/fixtures";
-import { ruleFor } from "../../payment/rule";
+import { manaFromWhole, usdCents, type ManaWei, type UsdCents } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import type { Session } from "@shop/model/settlement";
+import { nameRegistration, parcelResale, SIGNED_OUT, storeMint, wearableResale, web2, web3, BOOK } from "@shop/payment/fixtures";
+import { ruleFor } from "@shop/payment/rule";
 import { withCreditsOutage } from "../fixtures";
 import type { OffersStatus } from "../offers";
 import type { GuidanceRevalidation } from "../../wallet/ManaGuidance";
@@ -108,6 +108,13 @@ describe("an eligible primary wearable (a store mint)", () => {
     expect(screen.queryByTestId("pay-mana")).toBeNull();
     fireEvent.click(screen.getByTestId("cta-sign-in"));
     expect(signIn).toHaveBeenCalled();
+    expect(screen.queryByTestId("state-signInRequired")).toBeNull();
+  });
+
+  it("signed out with no way to sign in here: the disabled buy says why", () => {
+    show(storeMint(SIGNED_OUT), SIGNED_OUT);
+    expect(screen.queryByTestId("cta-sign-in")).toBeNull();
+    expect(screen.getByTestId("state-signInRequired")).toBeTruthy();
   });
 
   it("short credits: an explicit top-up, credits stay selected, nothing moves to MANA", () => {

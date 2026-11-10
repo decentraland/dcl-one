@@ -11,15 +11,15 @@ conformance capture corpus and internal docs stay in the private repository.
 | Path | Contents |
 | --- | --- |
 | `services/catalyst/` | Rust workspace: the `catalyst` binary (APIs, content, comms, worlds, shop, social) |
-| `apps/sites/`, `apps/ui3/` | Web sites; shared product UI |
+| `apps/sites/` | Web sites |
 | `apps/dcl-scene-cli/` | The scene SDK toolchain (`dcl-scene-cli`) |
 | `apps/creator-hub/` | Creator Hub native shell |
 | `rendering/bevy-explorer/` | Explorer source and Play pins |
 | `apps/bevy-explorer/` | Explorer builds and images |
-| `library/` | Shared crates, API types, the protocol (`library/protocol`) |
+| `library/` | Shared crates, API types, the protocol (`library/protocol`), the SDK (`library/js-sdk-toolchain`) |
 | `schemas/` | The PostgreSQL schema |
 | `infra/` | Nix packages, container images, the gateway |
-| `tooling/` | Build and publication tools used by the workflows, and their tests |
+| `tooling/` | Build and publication tools used by the workflows, developer tools such as the Shop parity harness, and their tests |
 
 ## Agentic roles
 
@@ -57,10 +57,18 @@ make bevy-web   # or bevy-headless
 `make catalyst-test` runs the service workspace; the suites that touch a database
 or the message bus read `CATALYST_TEST_DATABASE_URL` (a PostgreSQL the tests may
 create databases in), `PULSE_NATS_SERVER_BIN` and `ARCHIPELAGO_NATS_SERVER_BIN`,
-and skip when unset. The web packages run `pnpm test` (`apps/ui3`, `apps/sites`,
-`apps/ui3/editor-scene`) and `npm test` in `rendering/bevy-explorer/source/react-web`
-after `scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol
+and skip when unset. The test binaries run `CATALYST_TEST_JOBS` at a time
+(default: the core count, at most 16); tests create their own scratch databases, and
+the socket binaries run with at most one test thread per core. The web
+packages run `pnpm test` (`apps/ui3`, `apps/sites`, `apps/ui3/editor-scene`) and
+`npm test` in `rendering/bevy-explorer/source/react-web` after
+`scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol
 test`; the workflow guards run with `python3 -m unittest discover -s tooling/tests`.
+
+## Standards
+
+Web UI code follows [UI standards](docs/ui-standards.md); component styles use
+CSS Modules.
 
 ## Clone the repository
 

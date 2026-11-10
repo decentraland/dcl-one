@@ -4,15 +4,17 @@ import type { AuthIdentity } from "../../auth/types";
 import { signedFetch } from "../../auth/signer";
 import { getJSON, worldsBase, CatalystError, type GetOptions } from "../client";
 
+// The worlds server leaves unset text fields and categories out, as the
+// upstream worlds content server does.
 const WireSettings = z.object({
-  title: z.string().nullable(),
-  description: z.string().nullable(),
-  categories: z.array(z.string()).nullable(),
-  spawn_coordinates: z.string().nullable(),
+  title: z.string().nullish(),
+  description: z.string().nullish(),
+  categories: z.array(z.string()).nullish(),
+  spawn_coordinates: z.string().nullish(),
   skybox_time: z.number().nullable(),
   single_player: z.boolean(),
   show_in_places: z.boolean(),
-  thumbnail_hash: z.string().nullable(),
+  thumbnail_hash: z.string().nullish(),
 });
 
 function decode(raw: unknown, base: string): WorldSettingsValues {

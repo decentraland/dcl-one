@@ -5,6 +5,7 @@ type SearchCache<T> = {
   key(request: Request): string;
   get(key: string): T | undefined;
   set(key: string, value: T): void;
+  delete(key: string): void;
 };
 
 export function makeSearchCache<T>(
@@ -35,5 +36,6 @@ export function makeSearchCache<T>(
         map.delete(oldest);
       }
     },
+    delete(key: string): void { map.delete(key); },
   };
 }

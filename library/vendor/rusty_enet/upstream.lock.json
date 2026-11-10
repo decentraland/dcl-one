@@ -11,7 +11,7 @@
   "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
-    "checksums.sha256": "218049fad236d75292ce6bab6bae5bc1808f8dcc542b1afcf3540e25cb4d1fef"
+    "checksums.sha256": "31aa3ba4cd67f74693d5d21bbc89cfdc9964c83a66b42b9ad2cea15945b553df"
   },
   "patches": [
     {
@@ -50,6 +50,27 @@
         "Preserve queued Connect and Disconnect lifecycle dispatch after nonterminal aggregate receive reports",
         "Retain existing terminal payload handling, receive policy and queue accounting",
         "Exercise same-pass disconnect, lifecycle staging, timeout and native peer-slot reuse"
+      ]
+    },
+    {
+      "path": "patches/0005-poll-loopback-delivery-in-oversized-declaration-test.patch",
+      "sha256": "f136948351b53762596f1b006772918d0ab8dc4dd82c8e641ec668eca2afe7c0",
+      "changes": [
+        "Poll the host for up to five seconds in the oversized-declaration test instead of once: macOS delivers loopback datagrams asynchronously, so a single non-blocking poll after send_to raced and failed on the macOS runners"
+      ]
+    },
+    {
+      "path": "patches/0006-quiet-toolchain-1-99-warnings.patch",
+      "sha256": "b1050b7ef9938f49b2e7253e40db112a8645567c10b71a06fc0ac0b0805a9e8e",
+      "changes": [
+        "Name the elided lifetime of Event in check_events and service, and allow the range coder's unused final byte assignment, so the 1.99 toolchain compiles the crate without warnings"
+      ]
+    },
+    {
+      "path": "patches/0007-explicit-connected-event-lifetimes.patch",
+      "sha256": "07f82e57096294f3383128ce75ba7a177cab5a20b81febc2c4bceda26356b3b8",
+      "changes": [
+        "Name the borrowed Event lifetime in the connected host's handle_event, check_events and service return types, matching the host's Rust 1.99 lifetime syntax fix"
       ]
     }
   ],

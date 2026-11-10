@@ -7,16 +7,16 @@ import { Link } from "react-router";
 import Button from "../../../atoms/Button";
 import Icon from "../../discovery/components/Icon";
 import { pdpText } from "../copy";
-import { chainLabel } from "../../model/chain";
-import { creditsCeil, formatMana, type ManaWei, type UsdCents } from "../../model/money";
-import type { PurchaseOffer } from "../../model/purchase";
-import type { Eligibility, PaymentMethod, Reason, Session } from "../../model/settlement";
-import { optionStateText, outageText, reasonText } from "../../payment/copy";
-import { presentPayment, type MixedPayment, type OptionState, type PaymentOptionView } from "../../payment/present";
+import { chainLabel } from "@shop/model/chain";
+import { creditsCeil, formatMana, type ManaWei, type UsdCents } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import type { Eligibility, PaymentMethod, Reason, Session } from "@shop/model/settlement";
+import { optionStateText, outageText, reasonText } from "@shop/payment/copy";
+import { presentPayment, type MixedPayment, type OptionState, type PaymentOptionView } from "@shop/payment/present";
 import { SHOP_BASE } from "../../routes";
 import ManaGuidance, { type GuidanceRevalidation } from "../../wallet/ManaGuidance";
 import { CreditsAmount, ManaAmount } from "../../discovery/components/PriceTag";
-import { t } from "../../discovery/intl";
+import { t } from "@shop/discovery/intl";
 import type { OffersStatus } from "../offers";
 import "./paymentpanel.css";
 
@@ -56,6 +56,11 @@ export type PaymentPanelProps = {
   onRetry(): void;
   onBuy(method: PaymentMethod, offer: PurchaseOffer, mixed?: MixedPayment): void;
   onAddToCart(method: PaymentMethod | null): void;
+  /**
+   * Buy now opens the purchase over the page (upstream's BuyModal, signed in): the panel then shows the price, the stock
+   * and the two CTAs only, as upstream's detail page does; how to pay, a top-up and the wallet's state are the dialog's.
+   */
+  onBuyNow?(): void;
 };
 
 type OptionRow = { method: PaymentMethod; view: PaymentOptionView | null; state: OptionState };
@@ -129,6 +134,7 @@ export default function PaymentPanel(props: PaymentPanelProps) {
   const buyLabel = current.method === "credits" ? t("itemDetail.buyWithCredits") : splitting ? t("itemDetail.buyWithMixed") : t("itemDetail.buyWithMana");
 
   const stock = props.stock ?? null;
+  const inDialog = !!props.onBuyNow;
   return (
     <div className="shop-pay" data-testid="payment-panel" data-mana-only={manaOnly || undefined}>
       <div className="shop-pay__block">
@@ -148,7 +154,7 @@ export default function PaymentPanel(props: PaymentPanelProps) {
             </div>
           ) : null}
         </div>
-        {rows.length > 1 ? (
+        {rows.length > 1 && !inDialog ? (
           <fieldset className="shop-pay__options">
             <legend>{t("itemDetail.payWith")}</legend>
             {rows.map((row) => (
@@ -162,78 +168,89 @@ export default function PaymentPanel(props: PaymentPanelProps) {
         ) : null}
       </div>
 
-      {current.method === "mana" && mixed ? (
-        <label className="shop-pay__mixed" data-testid="mixed-payment">
-          <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} data-testid="pay-mixed" />
-          {t("itemDetail.mixedOption", { credits: t("assetCard.credits", { count: mixed.credits }), mana: formatMana(mixed.manaWei, { group: true }) })}
-        </label>
-      ) : null}
-
-      {current.method === "mana" ? (
-        <p className="shop-pay__network" data-testid="mana-network">
-          {t("itemDetail.manaNetwork", { network: chainLabel(chainId) })}
-        </p>
-      ) : null}
-
-      {manaOnly && reasons.length > 0 ? (
-        <ul className="shop-pay__reasons" data-testid="mana-only-reasons">
-          {reasons.map((r) => (
-            <li key={r}>{reasonText(r)}</li>
-          ))}
-        </ul>
-      ) : null}
-
-      {outage ? (
-        <div className="shop-pay__outage" role="status" data-testid="payment-outage">
-          <p>{status === "routeMissing" ? t("itemDetail.quoteRouteMissing") : t("itemDetail.quoteFailed")}</p>
-          <Button variant="secondary" size="sm" onClick={props.onRetry}>
-            {t("itemDetail.retryPrice")}
-          </Button>
-        </div>
-      ) : current.state.kind === "unavailable" && !deferToSignIn ? (
-        <div className="shop-pay__outage" role="status" data-testid="payment-outage">
-          <p>{outageText(current.method, current.state.missing, current.state.withheld)}</p>
-          <Button variant="secondary" size="sm" onClick={props.onRetry}>
-            {t("itemDetail.retryPrice")}
-          </Button>
-        </div>
-      ) : current.state.kind !== "ready" && current.state.kind !== "walletRequired" && !deferToSignIn ? (
-        <p className="shop-pay__state" role="status" data-testid={`state-${current.state.kind}`}>
-          {optionStateText(current.method, current.state)}
-          {current.state.kind === "topUpRequired" ? ` ${t("itemDetail.topUpShort", { credits: t("assetCard.credits", { count: creditsCeil(current.state.short) }) })}` : ""}
-        </p>
-      ) : null}
-
-      {wallet.accountMismatch && current.method === "mana" ? (
-        <div className="shop-pay__mismatch" role="alert" data-testid="account-mismatch">
-          <p>{t("itemDetail.accountMismatch", { wallet: wallet.walletAccount ?? "", account: wallet.account ?? "" })}</p>
-          {wallet.onSwitchAccount ? (
-            <Button variant="secondary" size="sm" onClick={wallet.onSwitchAccount}>
-              {t("itemDetail.switchAccount")}
-            </Button>
+      {inDialog ? null : (
+        <>
+          {current.method === "mana" && mixed ? (
+            <label className="shop-pay__mixed" data-testid="mixed-payment">
+              <input type="checkbox" checked={useMixed} onChange={(e) => setUseMixed(e.target.checked)} data-testid="pay-mixed" />
+              {t("itemDetail.mixedOption", { credits: t("assetCard.credits", { count: mixed.credits }), mana: formatMana(mixed.manaWei, { group: true }) })}
+            </label>
           ) : null}
-        </div>
-      ) : null}
 
-      {guidance && current.method === "mana" ? (
-        <ManaGuidance
-          guidance={guidance}
-          required={requiredMana}
-          reasons={reasons}
-          item={item}
-          returnTo={item.href}
-          wallet={wallet.walletAccount ? { account: wallet.walletAccount, chainId: wallet.chainId, manaBalance: props.manaBalance ?? null, pendingChainId: wallet.pendingChainId } : undefined}
-          onSignIn={wallet.onSignIn}
-          onConnectWallet={wallet.onConnectWallet}
-          onSwitchAccount={wallet.onSwitchAccount}
-          onSwitchNetwork={wallet.onSwitchNetwork}
-          setupUrl={props.setupUrl}
-          revalidation={quoteFailed ? null : props.revalidation}
-        />
-      ) : null}
+          {current.method === "mana" ? (
+            <p className="shop-pay__network" data-testid="mana-network">
+              {t("itemDetail.manaNetwork", { network: chainLabel(chainId) })}
+            </p>
+          ) : null}
+
+          {manaOnly && reasons.length > 0 ? (
+            <ul className="shop-pay__reasons" data-testid="mana-only-reasons">
+              {reasons.map((r) => (
+                <li key={r}>{reasonText(r)}</li>
+              ))}
+            </ul>
+          ) : null}
+
+          {outage ? (
+            <div className="shop-pay__outage" role="status" data-testid="payment-outage">
+              <p>{status === "routeMissing" ? t("itemDetail.quoteRouteMissing") : t("itemDetail.quoteFailed")}</p>
+              <Button variant="secondary" size="sm" onClick={props.onRetry}>
+                {t("itemDetail.retryPrice")}
+              </Button>
+            </div>
+          ) : current.state.kind === "unavailable" && !deferToSignIn ? (
+            <div className="shop-pay__outage" role="status" data-testid="payment-outage">
+              <p>{outageText(current.method, current.state.missing, current.state.withheld)}</p>
+              <Button variant="secondary" size="sm" onClick={props.onRetry}>
+                {t("itemDetail.retryPrice")}
+              </Button>
+            </div>
+          ) : current.state.kind !== "ready" && current.state.kind !== "walletRequired" && !(current.state.kind === "signInRequired" && wallet.onSignIn) && !deferToSignIn ? (
+            <p className="shop-pay__state" role="status" data-testid={`state-${current.state.kind}`}>
+              {optionStateText(current.method, current.state)}
+              {current.state.kind === "topUpRequired" ? ` ${t("itemDetail.topUpShort", { credits: t("assetCard.credits", { count: creditsCeil(current.state.short) }) })}` : ""}
+            </p>
+          ) : null}
+
+          {wallet.accountMismatch && current.method === "mana" ? (
+            <div className="shop-pay__mismatch" role="alert" data-testid="account-mismatch">
+              <p>{t("itemDetail.accountMismatch", { wallet: wallet.walletAccount ?? "", account: wallet.account ?? "" })}</p>
+              {wallet.onSwitchAccount ? (
+                <Button variant="secondary" size="sm" onClick={wallet.onSwitchAccount}>
+                  {t("itemDetail.switchAccount")}
+                </Button>
+              ) : null}
+            </div>
+          ) : null}
+
+          {guidance && current.method === "mana" ? (
+            <ManaGuidance
+              guidance={guidance}
+              required={requiredMana}
+              reasons={reasons}
+              item={item}
+              returnTo={item.href}
+              wallet={wallet.walletAccount ? { account: wallet.walletAccount, chainId: wallet.chainId, manaBalance: props.manaBalance ?? null, pendingChainId: wallet.pendingChainId } : undefined}
+              onSignIn={wallet.onSignIn}
+              onConnectWallet={wallet.onConnectWallet}
+              onSwitchAccount={wallet.onSwitchAccount}
+              onSwitchNetwork={wallet.onSwitchNetwork}
+              setupUrl={props.setupUrl}
+              revalidation={quoteFailed ? null : props.revalidation}
+            />
+          ) : null}
+        </>
+      )}
 
       <div className="shop-pay__ctas" data-dual>
-        {(current.state.kind === "signInRequired" || deferToSignIn) && wallet.onSignIn ? (
+        {inDialog ? (
+          <button type="button" className="shop-pay__buy" onClick={props.onBuyNow} data-testid="cta-buy-now">
+            <span>{pdpText("assetCard.buyNow")}</span>
+            <span className="shop-pay__ctaprice" aria-hidden>
+              <OptionPrice row={current} listing={listing} network={network} testId="" />
+            </span>
+          </button>
+        ) : (current.state.kind === "signInRequired" || deferToSignIn) && wallet.onSignIn ? (
           <button type="button" className="shop-pay__buy" onClick={wallet.onSignIn} data-testid="cta-sign-in">
             <span>{pdpText("assetCard.buyNow")}</span>
             <span className="shop-pay__ctaprice" aria-hidden>

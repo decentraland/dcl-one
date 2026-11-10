@@ -51,6 +51,10 @@ pub struct ExploreConfig {
     #[arg(long, env = "EVENTS_MIRROR_INTERVAL_SECS", default_value_t = 3600)]
     pub events_mirror_interval_secs: u64,
 
+    /// Adopt the rows the events mirror wrote as this node's own (`origin = 'local'`), once the old service stops and the mirror is off; `explore.mirror_state` records it, so it runs once per database.
+    #[arg(long, env = "EVENTS_MIRROR_ADOPT", default_value_t = false, action = clap::ArgAction::Set)]
+    pub events_mirror_adopt: bool,
+
     /// The events site `/events/sitemap*.xml` points at.
     #[arg(
         long,
@@ -59,10 +63,32 @@ pub struct ExploreConfig {
     )]
     pub events_base_url: String,
 
+    /// The jump-in site the event notifications link to
+    /// (`JUMP_IN_SITE_URL/events?id=&position=&realm=`, the old service's
+    /// `Notifications/index.ts:18,30-39`); also the prefix the Slack
+    /// submission notice recognises as a generated event link.
+    #[arg(
+        long,
+        env = "JUMP_IN_SITE_URL",
+        default_value = "https://decentraland.org/jump"
+    )]
+    pub jump_in_site_url: String,
+
     /// Bearer for `GET /api/events/moderation` and the admin-only event
     /// filters; unset refuses them.
     #[arg(long, env = "CATALYRST_EVENTS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_events_admin_token: Option<String>,
+
+    /// Optional Slack-compatible moderation webhook; unset disables delivery.
+    /// Requires OPS_WRITES_ENABLED. Also accepts SLACK_WEBHOOK_FILE.
+    #[arg(long, env = "SLACK_WEBHOOK", hide_env_values = true)]
+    pub events_slack_webhook: Option<String>,
+
+    /// Queue the reminder job's `:runner:` upcoming-event Slack notice, one per
+    /// occurrence, through the moderation outbox to SLACK_WEBHOOK. Disabled by
+    /// default; requires OPS_WRITES_ENABLED and a nonempty webhook.
+    #[arg(long, env = "EVENTS_UPCOMING_SUMMARIES_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
+    pub events_upcoming_summaries_enabled: bool,
 
     /// The places admin bearer (the reports queue, POIs, moderation,
     /// featured, rankings; also PLACES_ADMIN_AUTH_TOKEN_FILE); unset refuses it.
@@ -77,6 +103,37 @@ pub struct ExploreConfig {
     /// disable), comma-separated.
     #[arg(long, env = "PLACES_ADMIN_ADDRESSES", value_delimiter = ',')]
     pub places_admin_addresses: Vec<String>,
+
+    /// The places site the social cards' canonical URLs and the moderation
+    /// notices link to (the old service's `PLACES_BASE_URL`, `Place/utils.ts`).
+    #[arg(
+        long,
+        env = "PLACES_BASE_URL",
+        default_value = "https://decentraland.org/places"
+    )]
+    pub places_base_url: String,
+
+    /// The Snapshot score API the favorite and like writes ask for the
+    /// signer's voting power (upstream's `fetchScore`, `Snapshot/utils.ts:90`);
+    /// a vote under 100 VP does not weigh in `like_rate`/`like_score`. Empty,
+    /// the default, asks none and scores every voter 0; the old service asked
+    /// `https://score.snapshot.org/`.
+    #[arg(long, env = "SNAPSHOT_SCORE_URL", default_value = "")]
+    pub snapshot_score_url: String,
+
+    /// Optional Slack-compatible webhook for the places moderation notices
+    /// (a disable, a rating upgrade); unset captures none. Requires
+    /// OPS_WRITES_ENABLED. Also accepts PLACES_MODERATION_WEBHOOK_FILE.
+    #[arg(long, env = "PLACES_MODERATION_WEBHOOK", hide_env_values = true)]
+    pub places_moderation_webhook: Option<String>,
+
+    /// Origins the explore `/api` CORS allows beside upstream's lists
+    /// (places and events alike): comma-separated JavaScript-style regular
+    /// expressions matched against the Origin header as written, e.g.
+    /// `^https://explore\.example\.org$`. Empty adds none; an invalid
+    /// pattern refuses to start.
+    #[arg(long, env = "EXPLORE_CORS_ORIGINS", value_delimiter = ',')]
+    pub explore_cors_origins: Vec<String>,
 
     // explore/api: the explorer boot surface (realm provider, asset-bundle
     // registry reader, dcl-lists, denylist, feature flags, atlas map).
@@ -295,4 +352,25 @@ pub struct AbCdnConfig {
     /// The marketplace the metadata's `external_url` links to; unset yields no link.
     #[arg(long, env = "MAP_EXTERNAL_BASE_URL")]
     pub map_external_base_url: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn upcoming_summary_opt_in_is_independent_of_a_moderation_webhook() {
+        let disabled = crate::config::Config::parse_env_for_tests([
+            ("DATABASE_URL", "postgres://x/y"),
+            ("SLACK_WEBHOOK", "https://example.org/moderation"),
+        ])
+        .unwrap();
+        assert!(!disabled.explore.events_upcoming_summaries_enabled);
+        for (value, expected) in [("true", true), ("false", false)] {
+            let config = crate::config::Config::parse_env_for_tests([
+                ("DATABASE_URL", "postgres://x/y"),
+                ("EVENTS_UPCOMING_SUMMARIES_ENABLED", value),
+            ])
+            .unwrap();
+            assert_eq!(config.explore.events_upcoming_summaries_enabled, expected);
+        }
+    }
 }

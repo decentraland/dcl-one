@@ -23,10 +23,14 @@ pub struct PointerChangesOptions<'a> {
     pub entity_type_filter: Option<&'a HashSet<String>>,
 }
 
+/// The peers a scheduled entity's files may be downloaded from; read per entity, so a running
+/// stream follows a changed peer list.
+pub type PeerUrls = std::sync::RwLock<std::sync::Arc<[String]>>;
+
 /// Where a stream hands its deployments and how their acknowledgement is tracked.
 pub struct ScheduleTarget<'a> {
     pub deployer: &'a BatchDeployer,
-    pub content_servers: &'a [String],
+    pub content_servers: &'a PeerUrls,
     pub report: &'a std::sync::Arc<DeploymentReport>,
 }
 
@@ -363,8 +367,9 @@ where
             }
 
             delivered.record_delivered(&deployment);
+            let servers = content_servers.read().unwrap().clone();
             deployer
-                .schedule_entity_deployment(deployment, content_servers, Some(report))
+                .schedule_entity_deployment(deployment, &servers, Some(report))
                 .await?;
         }
 
@@ -724,7 +729,11 @@ mod tests {
             reqwest::Client::new(),
             storage,
             pool.clone(),
-            Arc::new(LiveSyncDeployer::new(pool.clone(), 2)),
+            Arc::new(LiveSyncDeployer::new(
+                pool.clone(),
+                2,
+                crate::sync_deployer::SyncValidation::AuthChainOnly,
+            )),
             Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
             BloomFilter::with_capacity(100),
         );
@@ -740,7 +749,7 @@ mod tests {
             },
             ScheduleTarget {
                 deployer: &batch,
-                content_servers: &[base.to_owned()],
+                content_servers: &PeerUrls::new(std::sync::Arc::from(vec![base.to_owned()])),
                 report: &report,
             },
             None,

@@ -10,8 +10,9 @@ import { Pager } from './Pager'
 import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
+import { ContextMenu } from './ContextMenu'
 import { HintsButton, KeyCap } from './HintsButton'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
 import { Tooltip } from './Tooltip'
 import { Toggle } from './Toggle'
@@ -27,6 +28,7 @@ import { DclLogo } from './DclLogo'
 import { Avatar } from './Avatar'
 import { WearableCard, type Rarity } from './WearableCard'
 import { EquippedItemCard } from './EquippedItemCard'
+import { ScrollThumb } from './ScrollThumb'
 import { showConfirm, showDialog, PopupHost } from './popups'
 import { Icon, type IconName } from './icons'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
@@ -314,6 +316,17 @@ export function Showcase(): React.JSX.Element {
               { id: 'blocked', label: 'Blocked', disabled: true }
             ]}
           />
+          <Tabs
+            variant="shop"
+            aria-label="Shop example"
+            value={pillTab}
+            onChange={setPillTab}
+            items={[
+              { id: 'wearables', label: 'Wearables', icon: <Bag size={18} /> },
+              { id: 'emotes', label: 'Emotes' },
+              { id: 'outfits', label: 'Outfits' }
+            ]}
+          />
         </div>
       </Section>
 
@@ -353,6 +366,19 @@ export function Showcase(): React.JSX.Element {
                 { value: '720', label: '1280 × 720' },
                 { value: '1080', label: '1920 × 1080' },
                 { value: '1440', label: '2560 × 1440' }
+              ]}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14 }}>Picker (placeholder)</span>
+            <Select
+              value=""
+              onChange={() => undefined}
+              aria-label="Add a place"
+              placeholder="Select LAND or World"
+              options={[
+                { value: 'a', label: 'Genesis Plaza (0,0)' },
+                { value: 'b', label: 'My World (example.dcl.eth)' }
               ]}
             />
           </div>
@@ -436,6 +462,10 @@ export function Showcase(): React.JSX.Element {
           <Chip label="All" onClick={() => undefined} />
           <Chip label="Hair" selected onClick={() => undefined} onClear={() => undefined} />
         </div>
+        <div style={{ ...row, gap: 6, marginTop: 12 }}>
+          <Chip variant="dark" label="All" selected onClick={() => undefined} />
+          <Chip variant="dark" label="Head" onClick={() => undefined} />
+        </div>
       </Section>
 
       <Section title="OptionMenu">
@@ -444,6 +474,22 @@ export function Showcase(): React.JSX.Element {
           sections={[
             { label: 'Sort by', options: [{ id: 'newest', label: 'Newest' }, { id: 'oldest', label: 'Oldest' }], value: 'newest', onChange: () => undefined },
             { label: 'View', options: [{ id: 'all', label: 'All Items' }, { id: 'col', label: 'Collectibles only' }], value: 'all', onChange: () => undefined }
+          ]}
+        />
+      </Section>
+
+      <Section title="ContextMenu (items · submenu · exclusive options)">
+        <ContextMenu
+          items={[
+            { label: 'View Community' },
+            { kind: 'submenu', label: 'Notification Ping' },
+            { kind: 'separator' },
+            { kind: 'title', label: 'Notification Ping' },
+            { kind: 'option', label: 'All Messages', checked: true },
+            { kind: 'option', label: 'Mentions Only', checked: false },
+            { kind: 'option', label: 'None', checked: false },
+            { kind: 'separator' },
+            { label: 'Delete chat history', danger: true }
           ]}
         />
       </Section>
@@ -475,6 +521,10 @@ export function Showcase(): React.JSX.Element {
       </Section>
       <Section title="Button (card sizes)">
         <Button size="card">Jump in</Button>
+        <Button size="cta">Claim name</Button>
+        <Button size="cta" disabled>
+          Claim name
+        </Button>
         <div style={{ width: 264 }}>
           <Button size="cardSm">Jump in</Button>
         </div>
@@ -484,12 +534,17 @@ export function Showcase(): React.JSX.Element {
       </Section>
       <Section title="Pager">
         <Pager page={2} count={9} onChange={() => undefined} />
+        <Pager variant="shop" page={0} count={9} onChange={() => undefined} />
       </Section>
 
       <Section title="ColorPicker (avatar colors)">
         <div style={{ maxWidth: 320 }}>
           <ColorPicker label="Hair color" value="#5b310f" presets={['#1c1c1c', '#3c210b', '#5b310f', '#7b4818', '#985f37', '#8c2014', '#e98234', '#ffbe28', '#fad281', '#d4d4d4']} onChange={() => undefined} />
         </div>
+      </Section>
+
+      <Section title="ColorPicker (swatch, hue only: name colour)">
+        <ColorPicker label="Name color" value="#40eaff" presets={['#a140ff', '#ff40ad', '#ff9840', '#ffe340', '#40ff45', '#40eaff']} hueOnly swatch onChange={() => undefined} />
       </Section>
 
       <Section title="Panel">
@@ -543,6 +598,25 @@ export function Showcase(): React.JSX.Element {
             />
           ))}
         </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 108px)', gap: 12, marginTop: 12 }}>
+          {(['epic', 'legendary', 'rare'] as Rarity[]).map((r, i) => (
+            <EquippedItemCard
+              key={r}
+              name={`Pinned ${r}`}
+              rarity={r}
+              shopUrl="https://decentraland.org/shop/item/0xa42e166edac870aa5351b098ae6458d39ca0fca6/0"
+              shopLabel={i === 0 ? 'Buy' : 'View'}
+              price={i === 0 ? '25 Credits' : undefined}
+              pinShop
+              categoryIcon={<Icon name="emotes" size={15} />}
+            />
+          ))}
+        </div>
+      </Section>
+
+      <Section title="ScrollThumb (fixed length, as the Shop draws it)">
+        <ShowcaseScroller />
+        <ShowcaseRowScroller />
       </Section>
 
       <Section title="Chat components">
@@ -559,6 +633,36 @@ export function Showcase(): React.JSX.Element {
           </div>
         </div>
       </Section>
+    </div>
+  )
+}
+
+// A short scroller with a fixed-length thumb beside it.
+function ShowcaseScroller(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 440, height: 320 }}>
+      <div ref={ref} style={{ height: '100%', overflowY: 'auto', scrollbarWidth: 'none', display: 'grid', gridTemplateColumns: 'repeat(2, 197px)', gap: 20 }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} style={{ height: 200, borderRadius: 16, background: 'var(--white-10)' }} />
+        ))}
+      </div>
+      <ScrollThumb target={ref} length={80} className={undefined} />
+    </div>
+  )
+}
+
+// A short row that scrolls sideways, its thumb along the bottom.
+function ShowcaseRowScroller(): React.JSX.Element {
+  const ref = useRef<HTMLDivElement>(null)
+  return (
+    <div style={{ position: 'relative', width: 440, height: 140 }}>
+      <div ref={ref} style={{ display: 'flex', gap: 16, overflowX: 'auto', scrollbarWidth: 'none' }}>
+        {Array.from({ length: 6 }, (_, i) => (
+          <div key={i} style={{ flex: 'none', width: 110, height: 110, borderRadius: 16, background: 'var(--white-10)' }} />
+        ))}
+      </div>
+      <ScrollThumb target={ref} length={80} axis="x" className={undefined} />
     </div>
   )
 }

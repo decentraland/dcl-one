@@ -7,12 +7,13 @@ import { sceneRecipients } from "../../data/catalyst/sceneOwner";
 import { catalystBase } from "../../data/catalyst/client";
 import { detectWallets, selectWallet, type Eip1193Provider } from "../../data/auth/wallet";
 import { FakeBridge, bridgeStoreDetached, makeFriend, makeFriendRequest } from "../../test/fakeBridge";
-import { encodeManaTransfer, PAYMENTS_CONFIG_PATH } from "./manaTip";
+import { encodeManaTransfer, PAYMENTS_CONFIG_PATH, TIP_FORWARD_PATH } from "./manaTip";
 import { SceneFeedbackModal, SceneTipModal } from "./SceneOwnerActions";
 
 const OWNER = "0x92de52247aeae00fcfb18072c8564f3549b64f9c";
 const MANA = "0x0f5d2fb29fb7d3cfee444a200298f468908cc942";
 const SIGNER = "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd";
+const TX = `0x${"de".repeat(32)}`;
 
 type Json = { ok: boolean; status: number; statusText: string; json: () => Promise<unknown> };
 const json = (body: unknown): Json => ({ ok: true, status: 200, statusText: "OK", json: async () => body });
@@ -131,20 +132,25 @@ describe("feedback delivery", () => {
 });
 
 describe("tip delivery", () => {
-  function fakeWallet(chainId = "0x89") {
+  const isForward = (p: { url: string }) => p.url.endsWith(TIP_FORWARD_PATH);
+  const isMessage = (p: { url: string }) => !isForward(p);
+
+  function fakeWallet(chainId = "0x89", account = SIGNER) {
     const calls: { method: string; params?: unknown[] }[] = [];
     const provider: Eip1193Provider = {
       request: async (args) => {
         calls.push(args);
         switch (args.method) {
           case "eth_requestAccounts":
-            return [SIGNER.toUpperCase()];
+            return [account.toUpperCase()];
           case "eth_chainId":
             return chainId;
           case "wallet_switchEthereumChain":
             return null;
           case "eth_sendTransaction":
-            return "0xdeadbeef";
+            return TX;
+          case "eth_getTransactionReceipt":
+            return { status: "0x1", transactionHash: TX };
           default:
             throw new Error(`unexpected ${args.method}`);
         }
@@ -180,17 +186,49 @@ describe("tip delivery", () => {
     expect(screen.getByText(/Your wallet will ask you to confirm 5 MANA on Polygon/)).toBeInTheDocument();
     await user.click(send);
 
-    expect(await screen.findByText("0xdeadbeef")).toBeInTheDocument();
+    expect(await screen.findByText(TX)).toBeInTheDocument();
+    const forward = await waitFor(() => bridge.expectSent("SignedFetch"));
     expect(calls.map((c) => c.method)).toEqual([
       "eth_requestAccounts",
       "eth_chainId",
       "wallet_switchEthereumChain",
       "eth_sendTransaction",
+      "eth_getTransactionReceipt",
     ]);
+    expect(calls[4]?.params).toEqual([TX]);
     expect(calls[2]?.params).toEqual([{ chainId: "0x89" }]);
     expect(calls[3]?.params).toEqual([
       { from: SIGNER, to: MANA, data: encodeManaTransfer(OWNER, 5n * 10n ** 18n) },
     ]);
+    expect(forward.url).toBe(`${catalystBase()}/events-notifier/forward-blockchain`);
+    expect(forward.method).toBe("POST");
+    expect(JSON.parse(forward.body ?? "")).toEqual({ type: "tip-received", transactionHash: TX });
+    act(() => bridge.push({ kind: "signedFetchResult", id: forward.id, status: 202, body: "{}" }));
+    expect(bridge.sentOf("SignedFetch")).toHaveLength(1);
+  });
+
+  test("a refused tip forward is only logged and the tip stays submitted", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { provider } = fakeWallet();
+    window.ethereum = provider;
+    const user = mount(<SceneTipModal owner={OWNER} sceneTitle="Plaza" coords="0,0" onClose={() => {}} />);
+    act(() => bridge.pushIdentity({ address: SIGNER, signerAddress: SIGNER }));
+    await user.click(await screen.findByRole("button", { name: "Send 5 MANA" }));
+    const forward = await waitFor(() => bridge.expectSent("SignedFetch", isForward));
+    act(() => bridge.push({ kind: "signedFetchResult", id: forward.id, status: 400, body: "{\"error\":\"too small\"}" }));
+    await waitFor(() => expect(warn).toHaveBeenCalledWith("[tip] could not notify the recipient", TX, "refused"));
+    expect(screen.getByText(/Tip submitted on Polygon/)).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  test("a tip from a wallet other than the signed-in account is not forwarded", async () => {
+    const { provider, calls } = fakeWallet("0x89", "0x4444444444444444444444444444444444444444");
+    window.ethereum = provider;
+    const user = mount(<SceneTipModal owner={OWNER} sceneTitle="Plaza" coords="0,0" onClose={() => {}} />);
+    act(() => bridge.pushIdentity({ address: SIGNER, signerAddress: SIGNER }));
+    await user.click(await screen.findByRole("button", { name: "Send 5 MANA" }));
+    expect(await screen.findByText(TX)).toBeInTheDocument();
+    expect(calls.filter(call => call.method === "eth_sendTransaction")).toHaveLength(1);
     expect(bridge.sentOf("SignedFetch")).toEqual([]);
   });
 
@@ -204,7 +242,9 @@ describe("tip delivery", () => {
     });
     await user.type(screen.getByRole("textbox", { name: "Feedback" }), "Thanks!");
     await user.click(await screen.findByRole("button", { name: "Send 5 MANA and message" }));
-    const first = bridge.expectSent("SignedFetch");
+    const forward = await waitFor(() => bridge.expectSent("SignedFetch", isForward));
+    act(() => bridge.push({ kind: "signedFetchResult", id: forward.id, status: 204, body: "" }));
+    const first = await waitFor(() => bridge.expectSent("SignedFetch", isMessage));
     act(() => bridge.push({ kind: "signedFetchResult", id: first.id, status: 500, body: "unavailable" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("Your tip was already submitted");
     expect(screen.queryByRole("group", { name: "Quick amounts" })).toBeNull();
@@ -213,6 +253,7 @@ describe("tip delivery", () => {
     act(() => bridge.push({ kind: "signedFetchResult", id: retry.id, status: 200, body: "{}" }));
     expect(await screen.findByText(/Delivered\. Your note/)).toBeInTheDocument();
     expect(calls.filter(call => call.method === "eth_sendTransaction")).toHaveLength(1);
+    expect(bridge.sentOf("SignedFetch").filter(isForward)).toHaveLength(1);
   });
 
   test("a rejected wallet transfer does not send the accompanying message", async () => {

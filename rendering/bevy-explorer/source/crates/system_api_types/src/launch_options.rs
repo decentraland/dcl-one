@@ -87,7 +87,7 @@ pub struct ClientOptions {
     #[arg(long, value_name = "a;b", help_heading = SYSTEM_SCENES)]
     pub portables: Option<String>,
 
-    /// Cap per-frame gpu uploads
+    /// Cap per-frame gpu uploads; absent = the saved setting (10 MB by default), 0 = unlimited
     #[arg(long, value_name = "bytes", help_heading = SETTINGS)]
     pub gpu_bytes_per_frame: Option<usize>,
 

@@ -8,7 +8,7 @@ import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
 import { SHOP_BASE } from "../../routes";
-import { fetchShopItems, fetchTrendingItems } from "../api";
+import { fetchShopItems, fetchTrendingItems } from "@shop/discovery/api";
 import { useCampaignHero } from "../components/CampaignBanner";
 import heroDesktop from "../frames/assets/hero-credits-outfits.webp?url";
 import heroMobile from "../frames/assets/hero-credits-mobile.webp?url";
@@ -20,12 +20,15 @@ import LivePromo from "../components/LivePromo";
 import Rail from "../components/Rail";
 import SuggestedForYouRow from "../components/SuggestedForYouRow";
 import TopCreators from "../components/TopCreators";
-import { indexUnavailable } from "../freshness";
+import { indexUnavailable } from "@shop/discovery/freshness";
+import { useMarketplace } from "../../market/access";
+import { listingTypeFor } from "@shop/market/access-rule";
 import { isIapMode, shopFlags } from "../flags";
 import { useListingsFreshness, useSeo } from "../hooks";
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import { useShopQuery } from "../query";
 import "./overview.css";
+import { shopReads } from "../reads";
 
 const MIN_DEALS = 3;
 
@@ -56,7 +59,7 @@ function Hero() {
     preload(heroMobile, { as: "image", fetchPriority: "high", media: "(max-width: 768px)" });
   }
   return (
-    <section className="shop-overview__hero" data-testid="overview-hero" style={campaign?.desktopImage ? { backgroundImage: `url("${campaign.desktopImage}")` } : undefined}>
+    <section className="shop-overview__hero" style={campaign?.desktopImage ? { backgroundImage: `url("${campaign.desktopImage}")` } : undefined}>
       <div className="shop-overview__hero-inner">
         <h1 data-testid="hero-title">{campaign?.title || t("overview.heroTitle")}</h1>
         {iap ? null : campaign ? (
@@ -79,12 +82,16 @@ export default function Overview() {
   useSeo({ title: null });
   useHomeTitle();
   const flags = shopFlags();
-  const listingType = flags.secondarySales ? undefined : ("primary" as const);
+  // Trending lists resales too only for a visitor who sees the Marketplace (market/access.tsx).
+  const listingType = listingTypeFor(useMarketplace());
 
-  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, { signal }));
-  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, { signal }));
+  const listings = useShopQuery(["overview-listings"], (signal) => fetchShopItems({ first: 12, sortBy: "newest", listingType: "primary" }, shopReads(signal)));
+  // Widening to resales (a web3 visitor whose access resolves after hydration) keeps the primed rail until it lands.
+  const trending = useShopQuery(["overview-trending", listingType ?? "all"], (signal) => fetchTrendingItems({ first: 12, listingType }, shopReads(signal)), {
+    keepPrevious: listingType === undefined,
+  });
   const deals = useShopQuery(flags.creatorSales ? ["overview-deals"] : null, (signal) =>
-    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, { signal }),
+    fetchShopItems({ first: 12, discounted: true, sortBy: "discount", listingType: "primary" }, shopReads(signal)),
   );
 
   const items = listings.data?.items ?? [];
@@ -117,7 +124,7 @@ export default function Overview() {
       ) : listings.isLoading || items.length > 0 ? (
         <>
           <IndexNotice freshness={listings.data?.meta.freshness ?? listingsFreshness} what={t("overview.newCreations")} />
-          <Rail title={t("overview.newCreations")} items={items.slice(0, 12)} loading={listings.isLoading} source="new_creations" viewAllTo={`${SHOP_BASE}/items`} testId="new-creations-rail" />
+          <Rail title={t("overview.newCreations")} items={items.slice(0, 12)} loading={listings.isLoading} source="new_creations" viewAllTo={`${SHOP_BASE}/items`} />
           <div className="shop-overview__promos">
             <LivePromo
               to={`${SHOP_BASE}/items?category=emote`}

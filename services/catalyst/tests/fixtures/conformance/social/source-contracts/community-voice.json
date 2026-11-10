@@ -1,0 +1,163 @@
+{
+  "source": "decentraland/social-service-ea",
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "companion": {
+    "source": "decentraland/comms-gatekeeper",
+    "revision": "be6a4b97a2189157884503485892ff46d0ac68da"
+  },
+  "node": "v26.12.0",
+  "sources": {
+    "social": [
+      "src/adapters/comms-gatekeeper.ts",
+      "src/logic/community/communities.ts",
+      "src/logic/community-voice/community-voice.ts",
+      "src/controllers/handlers/http/get-community-v2-handler.ts",
+      "src/controllers/handlers/http/get-community-handler.ts",
+      "src/controllers/handlers/http/get-active-community-voice-chats-handler.ts"
+    ],
+    "companion": [
+      "src/logic/voice/voice.ts",
+      "src/controllers/handlers/community-voice-chat/get-community-voice-chat-status-handler.ts"
+    ]
+  },
+  "cases": [
+    {
+      "name": "inactive200",
+      "gatekeeper": {
+        "status": 200,
+        "body": {
+          "active": false,
+          "participant_count": 0,
+          "moderator_count": 0
+        }
+      },
+      "adapter": {
+        "isActive": false,
+        "participantCount": 0,
+        "moderatorCount": 0
+      },
+      "detail": {
+        "status": 200,
+        "body": {
+          "data": {
+            "id": "00000000-0000-4000-8000-000000000001",
+            "name": "Fixture community",
+            "description": "Description",
+            "ownerAddress": "0x0000000000000000000000000000000000000001",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "detail-v1-error",
+      "result": {
+        "status": 500,
+        "body": {
+          "message": "fixture community lookup failed"
+        }
+      }
+    },
+    {
+      "name": "detail-v2-error",
+      "result": {
+        "status": 500,
+        "body": {
+          "message": "fixture community lookup failed"
+        }
+      }
+    },
+    {
+      "name": "empty",
+      "result": {
+        "status": 200,
+        "body": {
+          "data": {
+            "activeChats": [],
+            "total": 0
+          }
+        }
+      }
+    },
+    {
+      "name": "gatekeeper-error",
+      "result": {
+        "status": 500,
+        "body": {
+          "message": "Server responded with status 500"
+        }
+      }
+    },
+    {
+      "name": "community-error",
+      "result": {
+        "status": 500,
+        "body": {
+          "message": "fixture community lookup failed"
+        }
+      }
+    },
+    {
+      "name": "member-thumbnail-error",
+      "result": {
+        "status": 200,
+        "body": {
+          "data": {
+            "activeChats": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "participantCount": 2,
+                "moderatorCount": 1,
+                "isMember": true,
+                "communityName": "Member community",
+                "positions": [],
+                "worlds": []
+              },
+              {
+                "communityId": "00000000-0000-4000-8000-000000000002",
+                "participantCount": 3,
+                "moderatorCount": 1,
+                "isMember": false,
+                "communityName": "Public community",
+                "positions": [
+                  "0,0"
+                ],
+                "worlds": []
+              }
+            ],
+            "total": 2
+          }
+        }
+      }
+    },
+    {
+      "name": "nonmember-places-error",
+      "result": {
+        "status": 200,
+        "body": {
+          "data": {
+            "activeChats": [
+              {
+                "communityId": "00000000-0000-4000-8000-000000000001",
+                "participantCount": 2,
+                "moderatorCount": 1,
+                "isMember": true,
+                "communityName": "Member community",
+                "positions": [],
+                "worlds": []
+              }
+            ],
+            "total": 1
+          }
+        }
+      }
+    }
+  ]
+}

@@ -28,67 +28,6 @@ crates = [
 ]
 
 [[source]]
-url = "https://github.com/robtfm/bevy"
-branch = "release-0.16-dcl"
-rev = "fdfca192418deb8ff2d53e7e024d142657712353"
-parent = "bevyengine/bevy"
-default_branch = "main"
-pushed_at = "2026-10-24"
-ahead_of_parent = 299
-behind_parent = 3918
-branch_commits_since_pin = 0
-reason = "mess required by ecosystem crates referencing bevy subcrates directly"
-crates = [
-  "bevy 0.16.1",
-  "bevy_a11y 0.16.1",
-  "bevy_animation 0.16.1",
-  "bevy_app 0.16.1",
-  "bevy_asset 0.16.1",
-  "bevy_asset_macros 0.16.1",
-  "bevy_color 0.16.2",
-  "bevy_core_pipeline 0.16.1",
-  "bevy_derive 0.16.1",
-  "bevy_diagnostic 0.16.1",
-  "bevy_ecs 0.16.1",
-  "bevy_ecs_macros 0.16.1",
-  "bevy_encase_derive 0.16.1",
-  "bevy_gilrs 0.16.1",
-  "bevy_gizmos 0.16.1",
-  "bevy_gizmos_macros 0.16.1",
-  "bevy_gltf 0.16.1",
-  "bevy_image 0.16.1",
-  "bevy_input 0.16.1",
-  "bevy_input_focus 0.16.1",
-  "bevy_internal 0.16.1",
-  "bevy_log 0.16.1",
-  "bevy_macro_utils 0.16.1",
-  "bevy_math 0.16.1",
-  "bevy_mesh 0.16.1",
-  "bevy_mikktspace 0.16.1",
-  "bevy_pbr 0.16.1",
-  "bevy_picking 0.16.1",
-  "bevy_platform 0.16.1",
-  "bevy_ptr 0.16.1",
-  "bevy_reflect 0.16.1",
-  "bevy_reflect_derive 0.16.1",
-  "bevy_remote 0.16.1",
-  "bevy_render 0.16.1",
-  "bevy_render_macros 0.16.1",
-  "bevy_scene 0.16.1",
-  "bevy_sprite 0.16.1",
-  "bevy_state 0.16.1",
-  "bevy_state_macros 0.16.1",
-  "bevy_tasks 0.16.1",
-  "bevy_text 0.16.1",
-  "bevy_time 0.16.1",
-  "bevy_transform 0.16.1",
-  "bevy_ui 0.16.1",
-  "bevy_utils 0.16.1",
-  "bevy_window 0.16.1",
-  "bevy_winit 0.16.1",
-]
-
-[[source]]
 url = "https://github.com/robtfm/bevy-console"
 branch = "0.16"
 rev = "4a48b6bd3b85c87e26d0f80c837cedfc6c4ec34d"

@@ -5,7 +5,21 @@ use crate::rpc::context::Context;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::v2::*;
 
-const MAX_USER_ADDRESSES: usize = 50;
+/// Upstream `MAX_PRIVATE_MESSAGES_SETTINGS_ADDRESSES`, for both transports.
+pub(crate) const MAX_USER_ADDRESSES: usize = 50;
+
+/// `(address, privacy, is_friend)` per distinct target at its first
+/// occurrence, as both the procedure and `GET /v1/private-messages-settings`
+/// answer it (upstream `settings.getPrivateMessagesSettings`).
+pub(crate) async fn private_messages_settings(
+    ctx: &Context,
+    me: &str,
+    mut targets: Vec<String>,
+) -> Result<Vec<(String, String, bool)>, crate::rpc::db::DbError> {
+    let mut seen = std::collections::HashSet::new();
+    targets.retain(|t| seen.insert(t.clone()));
+    ctx.db().private_messages_settings(me, &targets).await
+}
 
 impl SocialServiceImpl {
     /// An absent row reads as upstream's defaults (`all`, `show_messages`,
@@ -40,6 +54,36 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<UpsertSocialSettingsResponse, SocialError> {
         let me = Self::caller(&context)?;
+        let invalid = if request.private_messages_privacy.is_none()
+            && request.blocked_users_messages_visibility.is_none()
+            && request.show_situation_reactions.is_none()
+        {
+            Some("At least one setting to update must be provided")
+        } else if request
+            .private_messages_privacy
+            .is_some_and(|value| PrivateMessagePrivacySetting::try_from(value).is_err())
+        {
+            Some("Unknown private messages privacy setting")
+        } else if request
+            .blocked_users_messages_visibility
+            .is_some_and(|value| BlockedUsersMessagesVisibilitySetting::try_from(value).is_err())
+        {
+            Some("Unknown blocked users messages visibility setting")
+        } else if request
+            .show_situation_reactions
+            .is_some_and(|value| SituationReactionsVisibility::try_from(value).is_err())
+        {
+            Some("Unknown situation reactions visibility setting")
+        } else {
+            None
+        };
+        if let Some(message) = invalid {
+            return Ok(UpsertSocialSettingsResponse {
+                response: Some(upsert_social_settings_response::Response::InvalidRequest(
+                    invalid_req(message),
+                )),
+            });
+        }
         let pmp = request
             .private_messages_privacy
             .map(|_| pmp_to_db(request.private_messages_privacy()));
@@ -87,12 +131,8 @@ impl SocialServiceImpl {
                 ),
             });
         }
-        let rows = match context
-            .server_context
-            .db()
-            .private_messages_settings(&me, &targets)
-            .await
-        {
+        // One entry per address, at its first occurrence; the limit counts the request as sent.
+        let rows = match private_messages_settings(&context.server_context, &me, targets).await {
             Ok(r) => r,
             Err(e) => {
                 return Ok(GetPrivateMessagesSettingsResponse {

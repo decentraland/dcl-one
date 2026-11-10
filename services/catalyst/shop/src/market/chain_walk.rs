@@ -31,6 +31,7 @@ use crate::land_authz::indexer::{
 pub const INDEXER_MANA: &str = "mana_transfers";
 
 pub const INDEXER_NFT: &str = "nft";
+pub const INDEXER_SALES: &str = "sales";
 pub const INDEXER_TRADE_EVENTS: &str = "trade_events";
 
 /// How old a publish may be before readers stop trusting it (a stopped job).
@@ -117,6 +118,8 @@ pub struct IndexSettings {
     pub mana_transfers_enabled: bool,
     /// `MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED`.
     pub trade_events_enabled: bool,
+    /// `MARKETPLACE_SALES_INDEX_ENABLED`.
+    pub sales_enabled: bool,
     /// `MARKETPLACE_INDEX_INTERVAL_SECS` (5): pause between passes.
     pub interval: Duration,
     /// `MARKETPLACE_INDEX_REQUESTS_PER_PASS` (100): `eth_getLogs` calls one
@@ -139,6 +142,11 @@ pub struct IndexSettings {
     pub neighbours_interval: Duration,
     /// `MARKETPLACE_COUPON_REFRESH_INTERVAL_SECS` (300): between two coupon state reads.
     pub coupon_refresh_interval: Duration,
+    /// `MARKETPLACE_INDEX_CHAIN_ID_{ETHEREUM,MATIC}` (1, 137): the chain the
+    /// trade-events walk of each network reads, its mainnet or its testnet
+    /// (11155111, 80002). The other indexes read mainnet only.
+    pub chain_id_ethereum: i64,
+    pub chain_id_matic: i64,
 }
 
 impl Default for IndexSettings {
@@ -147,6 +155,7 @@ impl Default for IndexSettings {
             nft_enabled: false,
             mana_transfers_enabled: false,
             trade_events_enabled: false,
+            sales_enabled: false,
             interval: Duration::from_secs(5),
             requests_per_pass: 100,
             window_blocks: 10_000,
@@ -157,11 +166,49 @@ impl Default for IndexSettings {
             stop_block_matic: None,
             neighbours_interval: Duration::from_secs(6 * 3600),
             coupon_refresh_interval: Duration::from_secs(300),
+            chain_id_ethereum: ChainNet::Ethereum.chain_id(),
+            chain_id_matic: ChainNet::Matic.chain_id(),
         }
     }
 }
 
 impl IndexSettings {
+    /// The chain the trade-events walk of `net` reads.
+    pub fn chain_id(&self, net: ChainNet) -> i64 {
+        match net {
+            ChainNet::Ethereum => self.chain_id_ethereum,
+            ChainNet::Matic => self.chain_id_matic,
+        }
+    }
+
+    /// Refuses a chain that is neither the network's mainnet nor its
+    /// testnet: the walk would read another network's contracts.
+    pub fn check_chains(&self) -> Result<(), String> {
+        for (net, allowed, var) in [
+            (
+                ChainNet::Ethereum,
+                [1, 11_155_111],
+                "MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM",
+            ),
+            (
+                ChainNet::Matic,
+                [137, 80_002],
+                "MARKETPLACE_INDEX_CHAIN_ID_MATIC",
+            ),
+        ] {
+            let id = self.chain_id(net);
+            if !allowed.contains(&id) {
+                return Err(format!(
+                    "{var}={id}: {} indexes chain {} or {}",
+                    net.db_name(),
+                    allowed[0],
+                    allowed[1]
+                ));
+            }
+        }
+        Ok(())
+    }
+
     pub fn start_override(&self, net: ChainNet) -> Option<u64> {
         match net {
             ChainNet::Ethereum => self.start_block_ethereum,
@@ -711,10 +758,16 @@ pub async fn run_pass(
         if header.hash != stored {
             let to = cur.start_block - 1;
             let mut tx = pool.begin().await?;
+            let replay =
+                super::notice_cursor::plan_replay(&mut tx, name, net, to, cur.last_block).await?;
             ix.rewind(&mut tx, to)
                 .await
                 .context("undoing the reorged range")?;
             rewind(&mut tx, name, net, to).await?;
+            // Cursor rows are locked after the deletes: producers wait only for the commit.
+            if let Some(replay) = replay {
+                replay.apply(&mut tx).await?;
+            }
             tx.commit().await?;
             tracing::warn!(indexer = name, network = net.db_name(), block = cur.last_block, stored, chain = %header.hash, rewound_to = to, "marketplace index: the cursor block's hash changed (a reorg past the confirmation depth); rewound");
             out.reorg_rewound_to = Some(to);
@@ -851,6 +904,33 @@ pub async fn run_pass(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_network_indexes_its_mainnet_or_its_testnet_only() {
+        let defaults = IndexSettings::default();
+        assert_eq!(
+            (
+                defaults.chain_id(ChainNet::Ethereum),
+                defaults.chain_id(ChainNet::Matic)
+            ),
+            (1, 137)
+        );
+        assert!(defaults.check_chains().is_ok());
+        let testnet = IndexSettings {
+            chain_id_ethereum: 11_155_111,
+            chain_id_matic: 80_002,
+            ..defaults.clone()
+        };
+        assert!(testnet.check_chains().is_ok());
+        for (ethereum, matic) in [(137, 137), (1, 1), (1, 80_001), (80_002, 80_002), (1, 0)] {
+            let wrong = IndexSettings {
+                chain_id_ethereum: ethereum,
+                chain_id_matic: matic,
+                ..defaults.clone()
+            };
+            assert!(wrong.check_chains().is_err(), "{ethereum} / {matic}");
+        }
+    }
 
     fn cursor_row(last: i64, folded: Option<i64>, at: Option<DateTime<Utc>>, full: bool) -> Cursor {
         Cursor {

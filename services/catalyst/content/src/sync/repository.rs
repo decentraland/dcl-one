@@ -138,19 +138,51 @@ impl LiveDeploymentRepository {
         Ok(())
     }
 
+    /// Whether this version of the deleter repair has already run on this database.
+    pub async fn deleter_repair_done(&self) -> Result<bool, SyncError> {
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT value FROM content.system_properties WHERE key = $1")
+                .bind(DELETER_REPAIR_KEY)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SyncError::Storage(e.to_string()))?;
+        Ok(value
+            .and_then(|v| v.parse::<i64>().ok())
+            .is_some_and(|v| v >= DELETER_REPAIR_VERSION))
+    }
+
     /// Repairs `deleter_deployment` for every row an intra-batch overwrite could not see:
     /// each pointer's successor chain, ordered by (entity_timestamp, lower(entity_id)), per type.
-    /// A row an unpublished local scene still deletes is released first (its nearest live
-    /// successor, or none and its pointers back), all in one transaction.
+    /// An unpublished local scene is a link of the chain like any other (its parcels stay
+    /// empty); a row the repair gives a deleter gives up its pointers, and the snapshot windows
+    /// that may still list it are marked for regeneration, in the same transaction.
     pub async fn resolve_deleter_deployments(&self) -> Result<(), SyncError> {
+        self.resolve_deleter_deployments_reporting(None).await
+    }
+
+    /// [`Self::resolve_deleter_deployments`], storing its transaction's backend pid in
+    /// `backend` so the caller can cancel the statement in progress.
+    pub async fn resolve_deleter_deployments_reporting(
+        &self,
+        backend: Option<&std::sync::atomic::AtomicI32>,
+    ) -> Result<(), SyncError> {
         let start = std::time::Instant::now();
         let storage = |e: sqlx::Error| SyncError::Storage(e.to_string());
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let released: Vec<i32> = sqlx::query_scalar(RELEASE_UNPUBLISHED_DELETERS_SQL)
-            .fetch_all(&mut *tx)
+        if let Some(backend) = backend {
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(storage)?;
+            backend.store(pid, std::sync::atomic::Ordering::SeqCst);
+        }
+        // Waits out a window write in progress, so its row takes the mark below.
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
+            .execute(&mut *tx)
             .await
             .map_err(storage)?;
-        let result = sqlx::query(
+        let (superseded, cleared, outdated): (i64, i64, i64) = sqlx::query_as(
             r#"
             WITH pointer_successors AS (
                 SELECT id AS older_id,
@@ -163,10 +195,6 @@ impl LiveDeploymentRepository {
                            unnest(entity_pointers) AS pointer
                     FROM content.deployments d
                     WHERE deleter_deployment IS NULL
-                      -- an unpublished local scene is no link of any chain
-                      AND NOT EXISTS (
-                          SELECT 1 FROM content.local_entities le
-                          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)
                 ) pointers
                 WHERE pointer IS NOT NULL
             ), successors AS (
@@ -174,31 +202,63 @@ impl LiveDeploymentRepository {
                 FROM pointer_successors p
                 JOIN content.deployments newer ON newer.id = p.newer_id
                 ORDER BY p.older_id, newer.entity_timestamp, lower(newer.entity_id)
+            ), superseded AS (
+                UPDATE content.deployments older
+                SET deleter_deployment = successors.newer_id
+                FROM successors
+                WHERE older.id = successors.older_id
+                  AND older.deleter_deployment IS NULL
+                RETURNING older.entity_id, older.entity_timestamp
+            ), cleared AS (
+                DELETE FROM content.active_pointers ap
+                USING superseded s
+                WHERE ap.entity_id = s.entity_id
+                RETURNING ap.pointer
+            ), outdated AS (
+                -- a marked window is regenerated at the generator's next tick
+                UPDATE content.snapshots sn
+                SET outdated = true
+                WHERE EXISTS (
+                    SELECT 1 FROM superseded s
+                    WHERE s.entity_timestamp BETWEEN sn.init_timestamp AND sn.end_timestamp)
+                RETURNING 1
             )
-            UPDATE content.deployments older
-            SET deleter_deployment = successors.newer_id
-            FROM successors
-            WHERE older.id = successors.older_id
-              AND older.deleter_deployment IS NULL
+            SELECT (SELECT count(*) FROM superseded), (SELECT count(*) FROM cleared),
+                   (SELECT count(*) FROM outdated)
             "#,
         )
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(storage)?;
+        if superseded > 0 {
+            // A window pass that read before this commit marks the row it writes.
+            sqlx::query(
+                "INSERT INTO content.system_properties (key, value) VALUES ($1, '1')
+                 ON CONFLICT (key) DO UPDATE
+                 SET value = (content.system_properties.value::bigint + 1)::text",
+            )
+            .bind(crate::snapshot_gen::DELETER_REPAIR_RUNS_KEY)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
+        }
+        // Only ever raised: an older binary never lowers what a newer one recorded.
+        sqlx::query(
+            "INSERT INTO content.system_properties (key, value) VALUES ($1, $2)
+             ON CONFLICT (key) DO UPDATE SET value =
+                 GREATEST(content.system_properties.value::bigint, EXCLUDED.value::bigint)::text",
+        )
+        .bind(DELETER_REPAIR_KEY)
+        .bind(DELETER_REPAIR_VERSION.to_string())
         .execute(&mut *tx)
         .await
         .map_err(storage)?;
-        if !released.is_empty() {
-            for sql in [CLEAR_RELEASED_SUCCESSORS_SQL, RECLAIM_RELEASED_POINTERS_SQL] {
-                sqlx::query(sql)
-                    .bind(&released)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(storage)?;
-            }
-        }
         tx.commit().await.map_err(storage)?;
 
         tracing::info!(
-            released = released.len(),
-            rows_affected = result.rows_affected(),
+            rows_affected = superseded,
+            pointers_cleared = cleared,
+            snapshots_outdated = outdated,
             elapsed_ms = start.elapsed().as_millis() as u64,
             "Resolved deleter_deployment"
         );
@@ -206,60 +266,10 @@ impl LiveDeploymentRepository {
     }
 }
 
-/// Rows whose deleter is an unpublished local scene (a flush or repair that ran beside the
-/// unpublish, or one from before the flush skipped tombstones) take their nearest live
-/// successor, or none; returns their ids.
-const RELEASE_UNPUBLISHED_DELETERS_SQL: &str = r#"
-    UPDATE content.deployments d
-    SET deleter_deployment = (
-        SELECT c.id FROM content.deployments c
-        WHERE c.entity_pointers && d.entity_pointers
-          AND c.entity_type = d.entity_type
-          AND c.id <> d.id
-          AND (c.entity_timestamp > d.entity_timestamp
-               OR (c.entity_timestamp = d.entity_timestamp
-                   AND lower(c.entity_id) > lower(d.entity_id)))
-          AND NOT EXISTS (
-              SELECT 1 FROM content.local_entities le
-              WHERE le.entity_id = c.entity_id AND le.tombstoned_at IS NOT NULL)
-        ORDER BY c.entity_timestamp, lower(c.entity_id)
-        LIMIT 1)
-    FROM content.deployments del
-    JOIN content.local_entities le ON le.entity_id = del.entity_id AND le.tombstoned_at IS NOT NULL
-    WHERE d.deleter_deployment = del.id
-    RETURNING d.id
-"#;
-
-/// A released row that is deleted again, and a scene a released row now deletes, give up
-/// their pointers: the flush's clearing of replaced rows (`$1` the released ids).
-const CLEAR_RELEASED_SUCCESSORS_SQL: &str = r#"
-    DELETE FROM content.active_pointers ap
-    USING content.deployments d
-    WHERE ap.entity_id = d.entity_id
-      AND d.deleter_deployment IS NOT NULL
-      AND (d.deleter_deployment = ANY($1) OR d.id = ANY($1))
-"#;
-
-/// A released row left undeleted takes its pointers back unless a newer entity holds one,
-/// the flush's rule (`$1` the released ids).
-const RECLAIM_RELEASED_POINTERS_SQL: &str = r#"
-    INSERT INTO content.active_pointers (pointer, entity_id, entity_type)
-    SELECT DISTINCT ON (p.pointer) p.pointer, d.entity_id, d.entity_type
-    FROM content.deployments d
-    CROSS JOIN LATERAL unnest(d.entity_pointers) AS p(pointer)
-    WHERE d.id = ANY($1) AND d.deleter_deployment IS NULL
-    ORDER BY p.pointer, d.entity_timestamp DESC, lower(d.entity_id) DESC
-    ON CONFLICT (pointer) DO UPDATE
-        SET entity_id = EXCLUDED.entity_id, entity_type = EXCLUDED.entity_type
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM content.deployments cur, content.deployments incoming
-            WHERE cur.entity_id = active_pointers.entity_id
-              AND incoming.entity_id = EXCLUDED.entity_id
-              AND (cur.entity_timestamp > incoming.entity_timestamp
-                   OR (cur.entity_timestamp = incoming.entity_timestamp
-                       AND lower(cur.entity_id) > lower(EXCLUDED.entity_id))))
-"#;
+/// The `content.system_properties` key the deleter repair records its version under.
+const DELETER_REPAIR_KEY: &str = "deleter_repair_version";
+/// Bumped whenever the repair's rules change, so every database runs the new rules once.
+const DELETER_REPAIR_VERSION: i64 = 2;
 
 /// GREATEST-monotonic upsert: a stale offer can never rewind the persisted frontier.
 const ADVANCE_SYNC_FRONTIER_SQL: &str = "INSERT INTO content.system_properties (key, value) VALUES ('sync_frontier', $1) ON CONFLICT (key) DO UPDATE SET value = GREATEST(content.system_properties.value::bigint, EXCLUDED.value::bigint)::text";
@@ -395,7 +405,7 @@ mod tests {
             .await
             .unwrap();
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
+            .max_connections(6)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
@@ -438,11 +448,257 @@ mod tests {
         .unwrap()
     }
 
-    /// The bootstrap repair walks each pointer's chain of undeleted rows; an
-    /// unpublished local scene is not part of it, so the peer scene older than it
-    /// stays active instead of gaining the tombstone as its deleter.
+    /// The repair a process without a sync worker runs at startup: skipped while a
+    /// sync leader holds the `sync` lease, applied once the lease is free.
     #[tokio::test]
-    async fn the_deleter_repair_skips_unpublished_local_scenes() {
+    async fn the_startup_repair_runs_only_without_a_sync_leader() {
+        use crate::jobs::{JobState, Jobs, LeaseSettings, Leases};
+        let Some((admin, pool, name)) = repair_database().await else {
+            return;
+        };
+        insert_scene(&pool, "bafyolder", 1_000.0, "0,0").await;
+        insert_scene(&pool, "bafynewer", 2_000.0, "0,0").await;
+        let lease_settings = LeaseSettings {
+            namespace: format!("repair-{}", &unique()[..12]),
+            ..LeaseSettings::default()
+        };
+        let leader = Arc::new(Leases::new(pool.clone(), lease_settings.clone()));
+        let held = leader
+            .try_acquire("sync")
+            .await
+            .unwrap()
+            .expect("sync lease");
+
+        let run = |jobs: Arc<Jobs>| {
+            let pool = pool.clone();
+            async move {
+                super::super::worker::spawn_startup_repair(&jobs, pool);
+                for _ in 0..200 {
+                    let report = jobs.report();
+                    let job = report.iter().find(|j| j.name == "deleter-repair").unwrap();
+                    if job.state == JobState::Finished {
+                        return job.progress.clone();
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                }
+                panic!(
+                    "the repair job never finished: {:?}",
+                    jobs.report()
+                        .iter()
+                        .map(|j| (&j.name, j.state))
+                        .collect::<Vec<_>>()
+                );
+            }
+        };
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings.clone()));
+        let progress = run(jobs.clone()).await;
+        assert_eq!(
+            progress.as_deref(),
+            Some("skipped: a sync leader holds the sync lease")
+        );
+        jobs.shutdown(std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
+        );
+
+        held.release().await;
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings.clone()));
+        assert_eq!(run(jobs.clone()).await.as_deref(), Some("done"));
+        jobs.shutdown(std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![
+                ("bafynewer".into(), None),
+                ("bafyolder".into(), Some("bafynewer".into())),
+            ]
+        );
+
+        // Once per database: the next start skips it, whatever it would find.
+        sqlx::query("UPDATE content.deployments SET deleter_deployment = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings));
+        assert_eq!(
+            run(jobs.clone()).await.as_deref(),
+            Some("skipped: this database already had this repair")
+        );
+        jobs.shutdown(std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
+        );
+        drop(leader);
+
+        drop_repair_database(admin, pool, &name).await;
+    }
+
+    /// The startup repair stops when the lease connection drops: what it had
+    /// written rolls back, and a sync leader that takes the lease meanwhile
+    /// owns the database.
+    #[tokio::test]
+    async fn the_startup_repair_rolls_back_when_its_lease_is_lost() {
+        use crate::jobs::{Jobs, LeaseSettings};
+        use std::time::Duration;
+        let Some((admin, pool, name)) = repair_database().await else {
+            return;
+        };
+        insert_scene(&pool, "bafyolder", 1_000.0, "0,0").await;
+        insert_scene(&pool, "bafynewer", 2_000.0, "0,0").await;
+        let lease_settings = LeaseSettings {
+            namespace: format!("repair-{}", &unique()[..12]),
+            keepalive: Duration::from_millis(200),
+            ..LeaseSettings::default()
+        };
+        let waiters = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // The row the repair updates is held, so the repair stops mid-statement.
+        let mut hold = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM content.deployments WHERE entity_id = 'bafyolder' FOR UPDATE")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings.clone()));
+        super::super::worker::spawn_startup_repair(&jobs, pool.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while waiters().await < 1 {
+            assert!(std::time::Instant::now() < deadline, "the repair never ran");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let leader = tokio::spawn({
+            let mut conn = pool.acquire().await.unwrap().detach();
+            let namespace = lease_settings.namespace.clone();
+            async move {
+                sqlx::query("SELECT pg_advisory_lock(hashtext($1), hashtext('sync'))")
+                    .bind(namespace)
+                    .execute(&mut conn)
+                    .await
+                    .unwrap();
+                conn
+            }
+        });
+        while waiters().await < 2 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the leader never queued"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let pid = jobs.leases().unwrap().backend_pid().await.unwrap();
+        let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+            .bind(pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(killed);
+        let held = tokio::time::timeout(deadline - std::time::Instant::now(), leader)
+            .await
+            .expect("the sync lease never freed")
+            .unwrap();
+
+        while !jobs.report().iter().any(|j| {
+            j.name == "deleter-repair"
+                && j.last_error.as_deref().is_some_and(|e| e.contains("lost"))
+        }) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the loss was never seen"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // The repair's statement is cancelled on the server while the row is still held:
+        // nothing waits, its transaction is gone and the snapshot lock is free.
+        let repair_running = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND pid <> pg_backend_pid()
+                   AND query LIKE '%pointer_successors%' AND state <> 'idle'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        while waiters().await > 0 || repair_running().await > 0 {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the repair's statement still runs on the server"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let mut probe = pool.acquire().await.unwrap();
+        let free: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
+            .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
+            .fetch_one(&mut *probe)
+            .await
+            .unwrap();
+        assert!(free, "the repair still holds the snapshot lock");
+        sqlx::query("SELECT pg_advisory_unlock($1)")
+            .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
+            .execute(&mut *probe)
+            .await
+            .unwrap();
+        drop(probe);
+        hold.rollback().await.unwrap();
+        assert_eq!(
+            deleters(&pool).await,
+            vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
+        );
+
+        jobs.shutdown(Duration::from_secs(5)).await;
+        drop(held);
+        drop_repair_database(admin, pool, &name).await;
+    }
+
+    /// The repair's version marker only rises: a newer version recorded on the
+    /// database survives a run of this one, and counts as done.
+    #[tokio::test]
+    async fn the_deleter_repair_marker_is_never_lowered() {
+        let Some((admin, pool, name)) = repair_database().await else {
+            return;
+        };
+        let repo = LiveDeploymentRepository::new(pool.clone(), Arc::new(SyncStatus::default()));
+        let marker = || async {
+            sqlx::query_scalar::<_, String>(
+                "SELECT value FROM content.system_properties WHERE key = $1",
+            )
+            .bind(DELETER_REPAIR_KEY)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+        assert!(!repo.deleter_repair_done().await.unwrap());
+        repo.resolve_deleter_deployments().await.unwrap();
+        assert_eq!(marker().await, DELETER_REPAIR_VERSION.to_string());
+
+        let newer = (DELETER_REPAIR_VERSION + 1).to_string();
+        sqlx::query("UPDATE content.system_properties SET value = $2 WHERE key = $1")
+            .bind(DELETER_REPAIR_KEY)
+            .bind(&newer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        repo.resolve_deleter_deployments().await.unwrap();
+        assert_eq!(marker().await, newer);
+        assert!(repo.deleter_repair_done().await.unwrap());
+
+        drop_repair_database(admin, pool, &name).await;
+    }
+
+    /// The bootstrap repair walks each pointer's chain of undeleted rows; an
+    /// unpublished local scene is a link of it like any other, so the peer scene
+    /// older than it gains the tombstone as its deleter.
+    #[tokio::test]
+    async fn the_deleter_repair_keeps_unpublished_local_scenes_in_the_chain() {
         let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
@@ -470,19 +726,18 @@ mod tests {
             vec![
                 ("bafylocal".into(), None),
                 ("bafyold".into(), Some("bafypeer".into())),
-                ("bafypeer".into(), None),
+                ("bafypeer".into(), Some("bafylocal".into())),
             ]
         );
 
         drop_repair_database(admin, pool, &name).await;
     }
 
-    /// A row an unpublished local scene still deletes (a flush or a repair that ran beside the
-    /// unpublish, or one from before the flush skipped tombstones) is released: on 0,0 the peer
-    /// scene takes the pointer back from the older scene the unpublish repointed it to; on 0,1
-    /// the row takes its nearest live successor.
+    /// A row the repair gives a deleter gives up its pointers: on 0,0 the scene an
+    /// unpublished local scene had superseded but that still holds the parcel goes,
+    /// leaving it empty; on 0,1 the newest scene keeps the parcel.
     #[tokio::test]
-    async fn the_deleter_repair_releases_rows_an_unpublished_scene_still_deletes() {
+    async fn the_deleter_repair_clears_the_pointers_of_rows_it_supersedes() {
         let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
@@ -491,22 +746,18 @@ mod tests {
             ("bafypeer", 1_000.0, "0,0"),
             ("bafylocal", 2_000.0, "0,0"),
             ("bafymid", 1_500.0, "0,1"),
-            ("bafylocal2", 1_800.0, "0,1"),
             ("bafynewest", 3_000.0, "0,1"),
         ] {
             insert_scene(&pool, id, ts, pointer).await;
         }
         for sql in [
             "INSERT INTO content.local_entities (entity_id, signer, tombstoned_at)
-             VALUES ('bafylocal', '0xabc', timezone('UTC', now())),
-                    ('bafylocal2', '0xabc', timezone('UTC', now()))",
+             VALUES ('bafylocal', '0xabc', timezone('UTC', now()))",
             "UPDATE content.deployments o SET deleter_deployment = d.id
-             FROM (VALUES ('bafypeer', 'bafylocal'), ('bafymid', 'bafylocal2'),
-                          ('bafylocal2', 'bafynewest')) AS v(older, newer)
-             JOIN content.deployments d ON d.entity_id = v.newer
-             WHERE o.entity_id = v.older",
+             FROM content.deployments d
+             WHERE o.entity_id = 'bafyold' AND d.entity_id = 'bafypeer'",
             "INSERT INTO content.active_pointers (pointer, entity_id, entity_type)
-             VALUES ('0,0', 'bafyold', 'scene'), ('0,1', 'bafynewest', 'scene')",
+             VALUES ('0,0', 'bafypeer', 'scene'), ('0,1', 'bafynewest', 'scene')",
         ] {
             sqlx::query(sql).execute(&pool).await.unwrap();
         }
@@ -519,11 +770,10 @@ mod tests {
             deleters(&pool).await,
             vec![
                 ("bafylocal".into(), None),
-                ("bafylocal2".into(), Some("bafynewest".into())),
                 ("bafymid".into(), Some("bafynewest".into())),
                 ("bafynewest".into(), None),
                 ("bafyold".into(), Some("bafypeer".into())),
-                ("bafypeer".into(), None),
+                ("bafypeer".into(), Some("bafylocal".into())),
             ]
         );
         let active: Vec<(String, String)> = sqlx::query_as(
@@ -532,13 +782,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(
-            active,
-            vec![
-                ("0,0".into(), "bafypeer".into()),
-                ("0,1".into(), "bafynewest".into()),
-            ]
-        );
+        assert_eq!(active, vec![("0,1".into(), "bafynewest".into())]);
 
         drop_repair_database(admin, pool, &name).await;
     }
@@ -613,7 +857,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_bloom_seed_streams_every_deployed_entity_id() {
-        let Some(pool) = test_pool(2).await else {
+        let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
         let repo = LiveDeploymentRepository::new(pool.clone(), Arc::new(SyncStatus::default()));
@@ -638,11 +882,8 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert!(seeded >= ids.len() as u64, "seeded {seeded} ids");
-        assert!(
-            seeded <= in_table as u64,
-            "seeded {seeded} ids, table holds {in_table}"
-        );
+        assert_eq!(seeded, ids.len() as u64);
+        assert_eq!(seeded, in_table as u64);
         for id in &ids {
             assert!(
                 bloom.maybe_contains(id),
@@ -651,11 +892,7 @@ mod tests {
         }
         assert!(!bloom.maybe_contains(&format!("bafk-seed-{tag}-missing")));
 
-        sqlx::query("DELETE FROM content.deployments WHERE entity_id LIKE $1")
-            .bind(format!("bafk-seed-{tag}-%"))
-            .execute(&pool)
-            .await
-            .unwrap();
+        drop_repair_database(admin, pool, &name).await;
     }
 
     #[tokio::test]

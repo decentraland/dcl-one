@@ -181,6 +181,17 @@ If you set a virtual width to 1920, and a virtual height to 1080, the UI will be
 
 The actual calculation for the Ui Scale Factor that gets multiplied on pixel values is [`Math.min(realWidth / virtualWidth, realHeight / virtualHeight)`](https://github.com/decentraland/js-sdk-toolchain/blob/main/packages/%40dcl/react-ecs/src/system.ts).
 
+#### Full-screen art is taller than your virtual size
+
+The scale factor keeps your reference resolution **inside** the screen, so on a screen that isn't the same shape as your virtual size, the extra space is still part of the UI. Percentages aren't scaled, so a root element at `width: '100%'`, `height: '100%'` covers the whole screen, which can be more than your virtual size in one direction.
+
+On a 16:10 screen with the default `1920x1080`, the scale factor comes from the width, and that full-screen root measures **1920x1200** in virtual pixels. On a wider screen it gets wider than 1920 instead.
+
+So for a background image that must fill the screen:
+
+* Export the art **larger than 1920x1080** and let it crop, the way a CSS `cover` fit works. Art sized exactly 1920x1080 leaves bars on a taller screen.
+* Keep anything that must stay visible (logos, titles, buttons) inside a centred 1920x1080 area, and treat everything outside it as safe to lose.
+
 ### Default virtual size
 
 The virtual size is optional, but its two dimensions go together: pass both, or neither. When you don't pass one, a platform default is applied:
@@ -224,9 +235,9 @@ Three special cases:
 
 > [!WARNING]
 > **📔 What changed for scenes written before this SDK version**
-> 
+>
 > Three changes affect existing scenes. None of them are opt-in, so a scene that isn't touched at all will still look different once it updates its SDK version:
-> 
+>
 > 1. **A virtual screen now applies by default.** A scene that passed no options used to lay out pixel values as raw canvas pixels. It's now scaled against `1920x1080` (`1600x720` on mobile). To get the previous behavior back, disable the virtual screen explicitly with `setUiRenderer(ui, { virtualWidth: 0, virtualHeight: 0 })`.
 > 2. **`screenInset` defaults to `'device'`.** Your UI is now positioned inside the device safe area, so on mobile it moves inwards, and a root-level `100%` is no longer the full screen — full-screen backgrounds, dimmers and overlays stop short of the notch and the home indicator. To get the previous behavior back, pass `setUiRenderer(ui, { screenInset: 'none' })`. See [Screen inset area](#screen-inset-area).
 > 3. **`devicePixelRatio` takes no part in UI layout.** Pixel-sized UI is now up to 2–3 times larger on high-density (retina and mobile) screens than it was before. **There is no opt-out for this one** — re-check any sizes that were hand-tuned, and remove any scale factor your scene computed for itself.
@@ -263,7 +274,7 @@ On desktop the device insets are zero, so `'device'` places the UI over the whol
 
 > [!WARNING]
 > **📔 `'interactable'` is not a no-op on desktop.** Unlike the device insets, the interactable area is *not* zero on the desktop client: it reserves roughly the left 25% of the screen for its own UI, so `screenInset: 'interactable'` places your UI in the remaining 75% there. That is the point of the option, but it does mean it changes your desktop layout too — branch with [`isMobile()`](/docs/creator/build-for-mobile/develop/detect-platform/) if you only want it on phones.
-> 
+>
 > **Client support**: `'interactable'` needs an explorer that reports the area. It is supported on desktop, and on mobile from client version `1.12.1` onwards — on older mobile clients the value is reported as zero, and the UI falls back to covering the whole screen. That same `1.12.1` release also normalizes the `'device'` area between Android and iOS, so treat it as the floor for any layout that depends on either inset. `'none'` behaves the same everywhere.
 
 
@@ -276,11 +287,11 @@ On desktop the device insets are zero, so `'device'` places the UI over the whol
 
 The captures below are the same scene on the same phone, rendered three times with only the `screenInset` value changed. The magenta rectangle is the UI itself; the outlines are the areas the explorer reports — cyan is the full canvas, amber is `screenInsetArea`, green is `interactableArea`.
 
-<figure><img src="/docs/.gitbook/assets/screeninset-none.webp" alt="Scene UI covering the whole phone screen, including the notch strip and the areas under the client controls"><figcaption><p><code>screenInset: 'none'</code> — the UI covers the whole canvas. Its corners sit under the notch and behind the client's own controls.</p></figcaption></figure>
+<figure><img src="/docs/creator/.gitbook/assets/screeninset-none.webp" alt="Scene UI covering the whole phone screen, including the notch strip and the areas under the client controls"><figcaption><p><code>screenInset: 'none'</code> — the UI covers the whole canvas. Its corners sit under the notch and behind the client's own controls.</p></figcaption></figure>
 
-<figure><img src="/docs/.gitbook/assets/screeninset-device.webp" alt="Scene UI inset to the device safe area, clear of the notch"><figcaption><p><code>screenInset: 'device'</code> (the default) — the UI is pulled in to the device safe area, clear of the notch and the rounded corners. It still overlaps the client's controls, which are not part of this area.</p></figcaption></figure>
+<figure><img src="/docs/creator/.gitbook/assets/screeninset-device.webp" alt="Scene UI inset to the device safe area, clear of the notch"><figcaption><p><code>screenInset: 'device'</code> (the default) — the UI is pulled in to the device safe area, clear of the notch and the rounded corners. It still overlaps the client's controls, which are not part of this area.</p></figcaption></figure>
 
-<figure><img src="/docs/.gitbook/assets/screeninset-interactable.webp" alt="Scene UI inset to the area the client reports as free of its own HUD"><figcaption><p><code>screenInset: 'interactable'</code> — the UI is placed inside the rectangle the client designates for scene UI. On mobile client <code>1.12.1</code>, captured here, that excludes the left-hand column (profile, chat, joystick); the action buttons on the bottom right are drawn over the area by design.</p></figcaption></figure>
+<figure><img src="/docs/creator/.gitbook/assets/screeninset-interactable.webp" alt="Scene UI inset to the area the client reports as free of its own HUD"><figcaption><p><code>screenInset: 'interactable'</code> — the UI is placed inside the rectangle the client designates for scene UI. On mobile client <code>1.12.1</code>, captured here, that excludes the left-hand column (profile, chat, joystick); the action buttons on the bottom right are drawn over the area by design.</p></figcaption></figure>
 
 
 > [!NOTE]

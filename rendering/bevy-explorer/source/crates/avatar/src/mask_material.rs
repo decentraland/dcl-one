@@ -6,7 +6,7 @@ use bevy::{
         storage::ShaderStorageBuffer,
     },
 };
-use scene_material::{SceneBound, SceneBoundData, SceneBounds};
+use scene_material::{reveal_shader_defs, SceneBound, SceneBoundData, SceneBounds};
 
 pub struct MaskMaterialPlugin;
 
@@ -27,6 +27,19 @@ impl Material for MaskMaterial {
 
     fn depth_bias(&self) -> f32 {
         10000.0
+    }
+
+    fn specialize(
+        _: &bevy::pbr::MaterialPipeline<Self>,
+        descriptor: &mut bevy::render::render_resource::RenderPipelineDescriptor,
+        _: &bevy::render::mesh::MeshVertexBufferLayoutRef,
+        _: bevy::pbr::MaterialPipelineKey<Self>,
+    ) -> Result<(), bevy::render::render_resource::SpecializedMeshPipelineError> {
+        // mask_material.wgsl imports reveal_discard
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.extend(reveal_shader_defs());
+        }
+        Ok(())
     }
 }
 

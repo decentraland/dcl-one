@@ -13,7 +13,7 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use super::{DeploymentContext, FailedDeployment, SyncError};
+use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
 use crate::storage::Storage;
 use crate::sync_deployer::{DueCursor, LiveFailedDeploymentsStore, LiveSyncDeployer};
@@ -38,8 +38,6 @@ pub struct RetryFailedConfig {
     pub max_retries: u32,
     /// Due entities re-attempted at once (`SYNC_RETRY_CONCURRENCY`).
     pub retry_concurrency: usize,
-    /// The old binary slept this long before its first cycle so startup sync got a head start.
-    pub initial_delay_ms: u64,
     /// Due records per page of a cycle. A cycle keeps paging until the due set it started with
     /// is drained, so this bounds memory and statement size, not the work a cycle does.
     pub retry_batch_size: usize,
@@ -51,7 +49,6 @@ impl Default for RetryFailedConfig {
             retry_delay_ms: 900_000,
             max_retries: DEFAULT_MAX_RETRIES,
             retry_concurrency: DEFAULT_RETRY_CONCURRENCY,
-            initial_delay_ms: 60_000,
             retry_batch_size: DEFAULT_RETRY_BATCH_SIZE,
         }
     }
@@ -74,6 +71,61 @@ fn next_attempt(failure: &FailedDeployment) -> (u32, u64) {
     (failure.retry_count + 1, backoff_ms(failure.retry_count))
 }
 
+/// How long a record may stay undecided before the worker gives up on it: past any RPC outage
+/// (hours, rarely a day or two) and an operator's fix of a broken RPC, with a daily attempt
+/// for most of it.
+pub const UNDECIDED_GIVE_UP_MS: i64 = 7 * 86_400_000;
+
+/// `content.failed_deployments` rows waiting for a verdict, set each retry cycle.
+pub const UNDECIDED_RECORDS: &str = "content_failed_deployments_undecided";
+
+/// An undecided attempt spends nothing against the cap. It waits as long as the record has been
+/// undecided (its first failure, which no re-report moves), between the base interval and a
+/// day: the wait doubles attempt by attempt.
+fn undecided_attempt(failure: &FailedDeployment, now_ms: i64) -> (u32, u64) {
+    let undecided_for = (now_ms - failure.failure_timestamp).max(0) as u64;
+    (
+        failure.retry_count,
+        undecided_for.clamp(BASE_RETRY_INTERVAL_MS, MAX_RETRY_INTERVAL_MS),
+    )
+}
+
+/// The record a failed retry leaves behind, re-reported at `now_ms`. An undecided record past
+/// [`UNDECIDED_GIVE_UP_MS`] becomes a refusal, which is never retried and the prune takes.
+fn retried_record(
+    failure: &FailedDeployment,
+    error: &SyncError,
+    attempt: (u32, u64),
+    now_ms: i64,
+) -> FailedDeployment {
+    let reason = error.failure_reason();
+    if reason == FailureReason::ValidationUndecided
+        && now_ms - failure.failure_timestamp >= UNDECIDED_GIVE_UP_MS
+    {
+        return FailedDeployment {
+            reason: FailureReason::Rejected,
+            error_description: format!(
+                "Gave up after {} days undecided: {error}",
+                UNDECIDED_GIVE_UP_MS / 86_400_000
+            ),
+            failure_timestamp: now_ms,
+            next_retry_at: now_ms,
+            ..failure.clone()
+        };
+    }
+    let (retry_count, wait_ms) = match reason {
+        FailureReason::ValidationUndecided => undecided_attempt(failure, now_ms),
+        _ => attempt,
+    };
+    FailedDeployment {
+        reason,
+        error_description: error.to_string(),
+        retry_count,
+        next_retry_at: now_ms + wait_ms as i64,
+        ..failure.clone()
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetryDisposition {
     Due,
@@ -86,7 +138,7 @@ fn classify(failure: &FailedDeployment, max_retries: u32, now_ms: i64) -> RetryD
     if failure.auth_chain.is_empty() {
         return RetryDisposition::NoAuthChain;
     }
-    if failure.retry_count >= max_retries {
+    if failure.retry_count >= max_retries && failure.reason != FailureReason::ValidationUndecided {
         return RetryDisposition::Exhausted;
     }
     let remaining_ms = failure.next_retry_at - now_ms;
@@ -168,6 +220,10 @@ impl RetryFailedDeployments {
 
         let now_ms = chrono::Utc::now().timestamp_millis();
         let evicted = self.evict_exhausted(now_ms).await;
+        match self.failed_store.count_undecided().await {
+            Ok(undecided) => metrics::gauge!(UNDECIDED_RECORDS).set(undecided as f64),
+            Err(e) => warn!(error = %e, "Failed to count undecided failed deployments"),
+        }
         let waiting = self.failed_store.count_waiting(now_ms).await?;
 
         let retry_concurrency = self.config.retry_concurrency.max(1);
@@ -268,13 +324,21 @@ impl RetryFailedDeployments {
                             }
                             Err(e) => {
                                 debug!(entity_id = %failure.entity_id, error = %e, "Retry still failing");
-                                let deferred = FailedDeployment {
-                                    error_description: e.to_string(),
-                                    retry_count: attempt.0,
-                                    next_retry_at: chrono::Utc::now().timestamp_millis()
-                                        + attempt.1 as i64,
-                                    ..failure.clone()
-                                };
+                                let deferred = retried_record(
+                                    failure,
+                                    &e,
+                                    attempt,
+                                    chrono::Utc::now().timestamp_millis(),
+                                );
+                                if deferred.reason == FailureReason::Rejected
+                                    && failure.reason == FailureReason::ValidationUndecided
+                                {
+                                    warn!(
+                                        entity_id = %failure.entity_id,
+                                        entity_type = %failure.entity_type,
+                                        "Giving up on an entity whose validation stayed undecided"
+                                    );
+                                }
                                 if let Err(report_err) = self.failed_store.report_failure(deferred).await {
                                     error!(entity_id = %failure.entity_id, error = %report_err, "Failed to record retry backoff");
                                 }
@@ -329,7 +393,7 @@ impl RetryFailedDeployments {
             "Starting retry-failed-deployments loop"
         );
 
-        let mut delay = std::time::Duration::from_millis(self.config.initial_delay_ms);
+        let mut delay = std::time::Duration::ZERO;
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
@@ -365,13 +429,15 @@ pub struct RetryStats {
 }
 
 /// One pass of the old daily prune: records whose first failure is older than `ttl_days`.
+/// Undecided records stay: the retry worker gives up on them after [`UNDECIDED_GIVE_UP_MS`].
 pub async fn prune_failed_deployments(
     pool: &sqlx::PgPool,
     ttl_days: i64,
 ) -> Result<u64, SyncError> {
     let result = sqlx::query(
         "DELETE FROM content.failed_deployments
-         WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)",
+         WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)
+           AND reason <> 'Validation undecided'",
     )
     .bind(ttl_days as i32)
     .execute(pool)
@@ -380,15 +446,13 @@ pub async fn prune_failed_deployments(
     Ok(result.rows_affected())
 }
 
-/// The prune loop as the old binary ran it: first pass after `initial_delay`, then daily.
 pub async fn run_prune_loop(
     pool: sqlx::PgPool,
     ttl_days: i64,
-    initial_delay: std::time::Duration,
     cancel: CancellationToken,
     on_pass: impl Fn(Result<u64, &SyncError>),
 ) {
-    let mut delay = initial_delay;
+    let mut delay = std::time::Duration::ZERO;
     loop {
         tokio::select! {
             _ = cancel.cancelled() => return,
@@ -414,7 +478,7 @@ pub async fn run_prune_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::{AuthLink, AuthLinkType, FailureReason};
+    use crate::sync::{AuthLink, AuthLinkType};
 
     fn failure(retry_count: u32, next_retry_at: i64) -> FailedDeployment {
         FailedDeployment {
@@ -505,6 +569,65 @@ mod tests {
             classify(&failure(10, i64::MAX), 10, 1_000),
             RetryDisposition::Exhausted
         );
+    }
+
+    fn undecided(first_failure: i64, retry_count: u32) -> FailedDeployment {
+        FailedDeployment {
+            reason: FailureReason::ValidationUndecided,
+            failure_timestamp: first_failure,
+            ..failure(retry_count, 0)
+        }
+    }
+
+    #[test]
+    fn an_undecided_wait_doubles_from_its_first_failure_up_to_a_day() {
+        let mut record = undecided(0, 3);
+        let mut now = 0;
+        let mut waits = Vec::new();
+        for _ in 0..10 {
+            let next = retried_record(
+                &record,
+                &SyncError::ValidationUndecided("rpc down".into()),
+                next_attempt(&record),
+                now,
+            );
+            assert_eq!(next.retry_count, 3, "nothing spent against the cap");
+            assert_eq!(next.failure_timestamp, 0, "the first failure stays");
+            waits.push((next.next_retry_at - now) / 60_000);
+            now = next.next_retry_at;
+            record = next;
+        }
+        assert_eq!(waits, [15, 15, 30, 60, 120, 240, 480, 960, 1440, 1440]);
+    }
+
+    #[test]
+    fn an_undecided_record_is_given_up_after_a_week_as_a_refusal() {
+        let undecided_error = SyncError::ValidationUndecided("rpc down".into());
+        let record = undecided(1_000, 0);
+        let attempt = next_attempt(&record);
+        let now = 1_000 + UNDECIDED_GIVE_UP_MS - 1;
+        let kept = retried_record(&record, &undecided_error, attempt, now);
+        assert_eq!(kept.reason, FailureReason::ValidationUndecided);
+        assert_eq!(kept.next_retry_at, now + MAX_RETRY_INTERVAL_MS as i64);
+
+        let now = 1_000 + UNDECIDED_GIVE_UP_MS;
+        let given_up = retried_record(&record, &undecided_error, attempt, now);
+        assert_eq!(given_up.reason, FailureReason::Rejected);
+        assert!(
+            given_up
+                .error_description
+                .starts_with("Gave up after 7 days undecided:"),
+            "{}",
+            given_up.error_description
+        );
+        assert_eq!(
+            given_up.failure_timestamp, now,
+            "the prune counts from the give-up"
+        );
+
+        let other = retried_record(&record, &SyncError::Other("peer down".into()), attempt, now);
+        assert_eq!(other.reason, FailureReason::DeploymentError);
+        assert_eq!((other.retry_count, other.failure_timestamp), (1, 1_000));
     }
 
     #[test]

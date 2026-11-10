@@ -11,10 +11,11 @@ import { Link } from "react-router";
 
 import Button from "../../../atoms/Button";
 import EmptyState from "../../../components/EmptyState";
-import { CENTS_PER_CREDIT, formatUsd, parseManaWei, usdCents } from "../../model/money";
+import { CENTS_PER_CREDIT, formatUsd, parseManaWei, usdCents } from "@shop/model/money";
 import { shopPath } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
 import { LoadFailure, Loading, ManaAmount, useShopProvider, useWalletBlock, writeFailureText } from "../../market/components/kit";
+import { useMarketplace } from "../../market/access";
 import { useImportable } from "../hooks";
 import { countConfirmations, importListing, RelistFailedError, type ImportItem, type ImportPhase } from "../lib/import";
 
@@ -30,6 +31,9 @@ const PHASE_TEXT: Record<ImportPhase["step"], string> = {
 type Outcome = { state: "done" } | { state: "failed"; message: string; unlisted: boolean } | { state: "working"; phase: string };
 
 export function ImportListingsView({ creations, owned }: { creations: ImportItem[]; owned: ImportItem[] }) {
+  // Resales (tokens the account owns) are the Marketplace's (market/access.tsx): their panel and its "Change price"
+  // only with it; a creator's own listings are the Shop's and always shown.
+  const marketplace = useMarketplace();
   const qc = useQueryClient();
   const { account } = useShopWallet();
   const provider = useShopProvider();
@@ -131,7 +135,7 @@ export function ImportListingsView({ creations, owned }: { creations: ImportItem
           </div>
         </>
       ) : null}
-      {owned.length > 0 ? (
+      {marketplace && owned.length > 0 ? (
         <div className="mk-panel" data-testid="shop-import-owned">
           <h3 className="mk-panel__title">Resales stay in MANA</h3>
           <p className="mk-hint">These are tokens you own, not your creations. Their listings stay as they are and buyers pay them in MANA.</p>

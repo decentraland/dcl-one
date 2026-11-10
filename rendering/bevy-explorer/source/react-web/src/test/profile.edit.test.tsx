@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfilePassport, type PassportEditing } from '../features/profile/ProfilePassport'
 import { isValidLinkUrl, isValidName } from '../features/profile/profileFields'
@@ -19,7 +19,7 @@ const profile: Profile = {
 }
 
 function editing(over: Partial<PassportEditing> = {}): PassportEditing {
-  return { saving: false, error: null, save: vi.fn(), dismissError: vi.fn(), editName: vi.fn(), ...over }
+  return { saving: false, error: null, save: vi.fn(), dismissError: vi.fn(), editName: vi.fn(), pickNameColor: vi.fn(), ...over }
 }
 
 const renderPassport = (edit: PassportEditing, self = true, p: Profile = profile): void => {
@@ -152,7 +152,7 @@ describe('passport edit mode', () => {
   })
 
   it('turns the close × into CANCEL while editing, and asks before dropping the edit', async () => {
-    resetPopups()
+    act(() => resetPopups())
     await openEditor(editing())
     expect(screen.queryByRole('button', { name: 'Close' })).toBeNull()
     await userEvent.type(screen.getByLabelText('About me'), '!')
@@ -166,7 +166,7 @@ describe('passport edit mode', () => {
     // Back to the passport, with the × restored.
     expect(screen.queryByLabelText('About me')).toBeNull()
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy()
-    resetPopups()
+    act(() => resetPopups())
   })
 
   it('keeps a value the option list does not carry, rather than dropping it', async () => {

@@ -21,6 +21,9 @@ const waveUrl = new URL("./emotes/wave.glb", import.meta.url).href;
 const danceUrl = new URL("./emotes/dance.glb", import.meta.url).href;
 const clapUrl = new URL("./emotes/clap.glb", import.meta.url).href;
 const dabUrl = new URL("./emotes/dab.glb", import.meta.url).href;
+// From decentraland/wearable-preview@e1572ae75425 public/emotes, like the five above: the walk-through its promo
+// tiles play (PreviewEmote.FASHION) when no emote item drives the motion.
+const fashionUrl = new URL("./emotes/fashion.glb", import.meta.url).href;
 
 function prefersReducedMotion(): boolean {
   return (
@@ -53,6 +56,11 @@ export interface AvatarSceneOptions {
   urns?: string[] | string;
   outfit?: OutfitData | null;
   profile?: string;
+  /**
+   * Report "empty" unless at least one requested wearable mounted: the bare body alone is not the picture asked for
+   * (a promo whose items this network cannot resolve keeps its still image instead).
+   */
+  requireWearables?: boolean;
 }
 
 export type AvatarCameraOptions = Pick<
@@ -77,6 +85,7 @@ const EMOTES: Record<string, string> = {
   dance: danceUrl,
   clap: clapUrl,
   dab: dabUrl,
+  fashion: fashionUrl,
 };
 
 const PART_CACHE_MAX = 32;
@@ -219,6 +228,7 @@ export function createAvatarScene(
   const mixers = new Map<string, THREE.AnimationMixer>();
   let currentClip: THREE.AnimationClip | null = null;
   let bodyRoot: THREE.Object3D | null = null;
+  let currentBodyShape = "";
   let revealed = false;
   let loadGen = 0;
   let swapTimer: ReturnType<typeof setTimeout> | null = null;
@@ -526,28 +536,68 @@ export function createAvatarScene(
     return EMOTES[e] || null;
   }
 
-  const clipCache = new Map<string, Promise<THREE.AnimationClip | null>>();
+  type EmoteFile = { clip: THREE.AnimationClip | null; props: THREE.Object3D | null; animations: THREE.AnimationClip[] };
+  const emoteCache = new Map<string, Promise<EmoteFile | null>>();
 
-  function loadClip(url: string): Promise<THREE.AnimationClip | null> {
-    let pending = clipCache.get(url);
+  /**
+   * An emote's file: the body's clip (the one driving `Avatar_` bones, else the longest) and, for an emote item
+   * that carries props (ADR-74: a microphone, a guitar), its scene with every mesh that is not skinned to the body's
+   * own armature, animated by the file's clips.
+   */
+  function loadEmote(url: string): Promise<EmoteFile | null> {
+    let pending = emoteCache.get(url);
     if (!pending) {
       pending = new GLTFLoader()
         .loadAsync(url)
         .then((gltf) => {
           const clips = gltf.animations || [];
-          return (
+          const clip =
             clips.find((c) => c.tracks.some((t) => t.name.startsWith("Avatar_"))) ||
             clips.slice().sort((a, b) => b.duration - a.duration)[0] ||
-            null
-          );
+            null;
+          let hasProp = false;
+          gltf.scene.traverse((node) => {
+            const mesh = node as THREE.Object3D & { isMesh?: boolean; isSkinnedMesh?: boolean; skeleton?: { bones: { name: string }[] } };
+            if (!mesh.isMesh) return;
+            const bodySkinned = mesh.isSkinnedMesh && mesh.skeleton?.bones.some((b: { name: string }) => b.name.startsWith("Avatar_"));
+            if (bodySkinned) mesh.visible = false;
+            else hasProp = true;
+          });
+          return { clip, props: hasProp ? gltf.scene : null, animations: clips };
         })
         .catch((err) => {
           console.warn("[wearable-preview] emote failed", err);
           return null;
         });
-      clipCache.set(url, pending);
+      emoteCache.set(url, pending);
     }
     return pending;
+  }
+
+  function loadClip(url: string): Promise<THREE.AnimationClip | null> {
+    return loadEmote(url).then((file) => file?.clip ?? null);
+  }
+
+  // The props of the emote playing, in the avatar's space, and their own mixer (kept apart from the parts').
+  let props: { obj: THREE.Object3D; mixer: THREE.AnimationMixer } | null = null;
+  const PROPS_KEY = "\u0000emote-props";
+
+  function clearProps(): void {
+    if (!props) return;
+    props.mixer.stopAllAction();
+    avatarGroup.remove(props.obj);
+    mixers.delete(PROPS_KEY);
+    props = null;
+  }
+
+  function mountProps(file: EmoteFile | null): void {
+    clearProps();
+    if (!file?.props) return;
+    const mixer = new THREE.AnimationMixer(file.props);
+    for (const animation of file.animations) mixer.clipAction(animation).play();
+    avatarGroup.add(file.props);
+    props = { obj: file.props, mixer };
+    mixers.set(PROPS_KEY, mixer);
   }
 
   function clipBinds(clip: THREE.AnimationClip): boolean {
@@ -570,11 +620,12 @@ export function createAvatarScene(
     return mixer;
   }
 
-  function applyClip(clip: THREE.AnimationClip): void {
+  function applyClip(clip: THREE.AnimationClip, file: EmoteFile | null = null): void {
     for (const m of mixers.values()) m.stopAllAction();
     mixers.clear();
     currentClip = clip;
     for (const part of mounted.values()) mixers.set(part.key, bindClip(part, clip, 0));
+    mountProps(file);
     lastFrame = performance.now();
     if (!revealed) frame();
     reveal();
@@ -582,23 +633,69 @@ export function createAvatarScene(
   }
 
   async function playEmote(url: string): Promise<boolean> {
-    let clip = await loadClip(url);
+    let file = await loadEmote(url);
+    let clip = file?.clip ?? null;
     if (disposed) return false;
     if (clip && !clipBinds(clip)) {
       console.warn("[wearable-preview] emote does not bind to this avatar", url);
       clip = null;
+      file = null;
     }
-    if (!clip && url !== EMOTES.idle) clip = await loadClip(EMOTES.idle as string);
+    if (!clip && url !== EMOTES.idle) {
+      file = null;
+      clip = await loadClip(EMOTES.idle as string);
+    }
     if (!clip || disposed) return false;
-    applyClip(clip);
+    applyClip(clip, file);
     return true;
   }
 
+  /**
+   * The animation of an emote item, by URN: its ADR-74 representation for this body (else its first), whose main file
+   * is served from the content server like a wearable's.
+   */
+  async function emoteItemUrl(urn: string, bodyShape: string): Promise<string | null> {
+    const entity = (await fetchEntities(base, [urn])).get(urn.toLowerCase());
+    const reps = entity?.metadata?.emoteDataADR74?.representations || [];
+    const bs = bodyShape.toLowerCase();
+    const rep = reps.find((r) => (r.bodyShapes || []).some((b) => String(b).toLowerCase() === bs)) || reps[0];
+    if (!entity || !rep?.mainFile) return null;
+    // fileMapFor indexes every file by its full path and by its basename.
+    const hash = fileMapFor(entity).get(rep.mainFile.toLowerCase());
+    return hash ? `${base}/content/contents/${hash}` : null;
+  }
+
+  /**
+   * The emote item among the requested URNs, as upstream's preview reads them: an emote item in the outfit drives
+   * the motion over a named emote, so a promo tile that lists one plays it.
+   */
+  async function outfitEmoteUrl(bodyShape: string): Promise<string | null> {
+    const listed = (Array.isArray(opts.urns) ? opts.urns : opts.urns ? [opts.urns] : []).filter((u) => u.startsWith("urn:"));
+    if (!listed.length) return null;
+    const entities = await fetchEntities(base, listed);
+    const emote = listed.find((u) => entities.get(u.toLowerCase())?.metadata?.emoteDataADR74);
+    return emote ? emoteItemUrl(emote, bodyShape) : null;
+  }
+
   async function setEmote(input: string | null | undefined): Promise<void> {
-    const url = emoteUrlFor(input);
-    if (!url || disposed || !mounted.size) return;
-    cycleGen++;
+    // Claimed before the item's fetch, so a later call wins even when this one's lookup is still in flight.
+    const gen = ++cycleGen;
+    const url = input?.startsWith("urn:") ? await emoteItemUrl(input, currentBodyShape).catch(() => null) : emoteUrlFor(input);
+    if (!url || disposed || !mounted.size || gen !== cycleGen) return;
     await playEmote(url);
+  }
+
+  // The emote item of the outfit now playing (its file's URL), so an outfit swap that adds, drops or changes one,
+  // or changes the body it is drawn for, replays the right motion and props.
+  let outfitEmote: string | null = null;
+
+  async function followOutfitEmote(bodyShape: string, gen: number): Promise<void> {
+    const item = await outfitEmoteUrl(bodyShape).catch(() => null);
+    if (disposed || stale(gen) || item === outfitEmote) return;
+    outfitEmote = item;
+    const claimed = ++cycleGen;
+    const url = item ?? emoteUrlFor(opts.emotes?.length ? opts.emotes[0] : opts.emote) ?? (EMOTES.idle as string);
+    if (claimed === cycleGen) await playEmote(url);
   }
 
   const EMOTE_REST_MS = 1500;
@@ -626,9 +723,13 @@ export function createAvatarScene(
     }
   }
 
-  async function bindInitialEmote(): Promise<void> {
+  async function bindInitialEmote(bodyShape: string): Promise<void> {
     const wanted = opts.emotes?.length ? opts.emotes[0] : opts.emote;
-    await playEmote(emoteUrlFor(wanted) ?? (EMOTES.idle as string));
+    const listed = await outfitEmoteUrl(bodyShape).catch(() => null);
+    outfitEmote = listed;
+    const item = listed ?? (wanted?.startsWith("urn:") ? await emoteItemUrl(wanted, bodyShape).catch(() => null) : null);
+    if (disposed) return;
+    await playEmote(item ?? emoteUrlFor(wanted) ?? (EMOTES.idle as string));
     if (disposed) return;
     reveal();
     if (opts.emotes?.length) void runEmoteCycle(opts.emotes);
@@ -700,7 +801,9 @@ export function createAvatarScene(
     }
     applyColors(colors);
     renderOnce();
-    return { count: mounted.size, bodyChanged };
+    // The body is always there; with requireWearables only a wearable counts as something shown.
+    const wearablesMounted = [...mounted.values()].filter((p) => !p.isBody).length + features.size;
+    return { count: opts.requireWearables ? wearablesMounted : mounted.size, bodyChanged };
   }
 
   function failInitial(err: unknown): void {
@@ -726,8 +829,12 @@ export function createAvatarScene(
         return;
       }
       if (initial || result.bodyChanged) frame();
+      currentBodyShape = target.bodyShape;
       if (initial) {
-        await bindInitialEmote();
+        await bindInitialEmote(target.bodyShape);
+        if (stale(gen)) return;
+      } else {
+        await followOutfitEmote(target.bodyShape, gen);
         if (stale(gen)) return;
       }
       scene.visible = true;

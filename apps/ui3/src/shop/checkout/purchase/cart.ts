@@ -7,19 +7,20 @@
 // silently charged; a line whose settlement this cart cannot build (a NAME registration, a rental, a
 // legacy order: single-asset calls) is `unsupported` and finishes on its own page.
 
-import { shopClient, type ShopClient } from "../../api/shop";
-import type { CreditLineRequest } from "../../api/types";
-import { tokenRefId } from "../../model/asset";
-import { discountedCents, discountedMana, usdCents, type ManaWei, type UsdCents } from "../../model/money";
-import { offerQuote, offerSettlementKey, type CartLine, type PurchaseOffer } from "../../model/purchase";
-import type { PaymentMethod, Quote, Session } from "../../model/settlement";
-import { presentPayment } from "../../payment/present";
-import { lineUnits } from "../../cart/partition";
+import { type ShopClient } from "@shop/api/shop";
+import type { CreditLineRequest } from "@shop/api/types";
+import { tokenRefId } from "@shop/model/asset";
+import { discountedCents, discountedMana, usdCents, type ManaWei, type UsdCents } from "@shop/model/money";
+import { offerQuote, offerSettlementKey, type CartLine, type PurchaseOffer } from "@shop/model/purchase";
+import type { PaymentMethod, Quote, Session } from "@shop/model/settlement";
+import { presentPayment } from "@shop/payment/present";
+import { lineUnits } from "@shop/cart/partition";
 import { fetchStoreMintState, isTradeNotFound, resolveLiveCoupon, resolveLiveTrade, usdWeiToCents } from "../lib/api";
 import { getCouponManagerForTrade, getMarketplaceForTrade } from "../lib/marketplace";
-import { isOwnTrade } from "../lib/ownership";
+import { isOwnTrade } from "@shop/checkout/lib/ownership";
 import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./encoding";
 import type { PurchaseTarget } from "./mana";
+import { shopClient } from "../../api/host";
 
 const PPM = 1_000_000;
 /** CollectionDiscountCoupon.DISCOUNT_TYPE_RATE: the only kind the Shop prices and settles. */
@@ -201,6 +202,16 @@ export type LineUnbuyable = "gone" | "own" | "no-price" | "stale" | "unsupported
 
 export type LineOutcome = { status: "buyable"; resolved: ResolvedLine } | { status: LineUnbuyable; lineId: string; detail?: string };
 
+/** The coupon about to settle is the one the offer was priced with: same id, contract and discount. */
+function sameCoupon(coupon: ListingCoupon, priced: PurchaseOffer["coupon"]): boolean {
+  return (
+    !!priced &&
+    coupon.id === priced.id &&
+    coupon.couponAddress.toLowerCase() === priced.couponAddress.toLowerCase() &&
+    Number(coupon.discount) === priced.discountPpm
+  );
+}
+
 function tradePriceMatches(trade: SignedTrade, coupon: ListingCoupon | undefined, quote: Quote): boolean {
   const price = trade.received[0];
   const amount = price?.amount ?? price?.value;
@@ -255,6 +266,9 @@ export async function resolveLine(
   if (key.call.kind === "acceptWithCoupon") {
     coupon = couponForTrade(await resolvers.coupon?.(line), trade, now);
     if (!coupon) return { status: "stale", lineId: line.id, detail: "the sale ended" };
+    // The sale the buyer confirmed, and no other: a USD-priced line paid in MANA is not re-checked by price, so a
+    // coupon swapped or lowered since the offer would otherwise settle at a price the buyer never saw.
+    if (!sameCoupon(coupon, offer.coupon)) return { status: "stale", lineId: line.id, detail: "the sale changed" };
   }
   if (!tradePriceMatches(trade, coupon, quote)) return { status: "stale", lineId: line.id, detail: "price moved" };
   return { status: "buyable", resolved: { ...base, acquisition: "trade", trade, ...(coupon ? { coupon } : {}) } };

@@ -130,11 +130,32 @@ impl Relayer {
 
     async fn wait_for_broadcast(&self, tx_id: &str) -> Result<String, ApiError> {
         let url = self.transaction_url(tx_id);
-        for _ in 0..self.max_status_checks {
-            tokio::time::sleep(self.sleep).await;
+        // The checks run until the configured budget, `sleep × checks`: the
+        // backoff starts under one interval, so a count of attempts would
+        // give up early.
+        let deadline =
+            tokio::time::Instant::now() + self.sleep.saturating_mul(self.max_status_checks);
+        let mut delays = Self::backoff(self.sleep);
+        let mut first = true;
+        loop {
+            if !std::mem::take(&mut first) {
+                let delay = delays.next().unwrap_or(self.sleep);
+                tokio::time::sleep(
+                    delay.min(deadline.saturating_duration_since(tokio::time::Instant::now())),
+                )
+                .await;
+                if tokio::time::Instant::now() >= deadline {
+                    break;
+                }
+            }
             let Ok(resp) = self
                 .http
                 .get(&url)
+                .timeout(
+                    deadline
+                        .saturating_duration_since(tokio::time::Instant::now())
+                        .max(Duration::from_millis(1)),
+                )
                 .header(reqwest::header::AUTHORIZATION, self.bearer())
                 .send()
                 .await
@@ -173,6 +194,16 @@ impl Relayer {
         ))
     }
 
+    /// The waits between status checks: from a quarter second, doubling up
+    /// to the configured interval (`OZ_SLEEP_TIME_BETWEEN_CHECKS_MS`), so a
+    /// transaction broadcast after the first checks is seen within one
+    /// interval.
+    fn backoff(sleep: Duration) -> impl Iterator<Item = Duration> {
+        std::iter::successors(Some(sleep.min(Duration::from_millis(250))), move |d| {
+            Some(d.saturating_mul(2).min(sleep))
+        })
+    }
+
     async fn cancel_transaction(&self, tx_id: &str) {
         let url = self.transaction_url(tx_id);
         let result = self
@@ -191,6 +222,112 @@ impl Relayer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn broadcast_is_checked_immediately_and_pending_statuses_retry() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        for pending in [0, 1] {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let observed = calls.clone();
+            let app = axum::Router::new().route("/api/v1/relayers/rid/transactions/tx", axum::routing::get(move || {
+                let check = observed.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    axum::Json(serde_json::json!({"success": true, "data": {
+                        "id": "tx", "status": if check < pending { "pending" } else { "submitted" },
+                        "hash": if check < pending { None } else { Some("0xhash") }
+                    }}))
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let relayer = Relayer::new(
+                Outbound::for_tests(),
+                &url,
+                "rid",
+                "key",
+                "fast",
+                3,
+                if pending == 0 {
+                    Duration::from_secs(60)
+                } else {
+                    Duration::from_millis(10)
+                },
+            );
+            let result =
+                tokio::time::timeout(Duration::from_secs(2), relayer.wait_for_broadcast("tx"))
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(result, "0xhash");
+            assert_eq!(calls.load(Ordering::SeqCst), pending + 1);
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
+    async fn exhausted_status_checks_cancel_the_transaction() {
+        use std::sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        };
+
+        let checks = Arc::new(AtomicUsize::new(0));
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let observed = checks.clone();
+        let cancelled = cancellations.clone();
+        let app = axum::Router::new().route(
+            "/api/v1/relayers/rid/transactions/tx",
+            axum::routing::get(move || {
+                observed.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::SERVICE_UNAVAILABLE }
+            })
+            .delete(move || {
+                cancelled.fetch_add(1, Ordering::SeqCst);
+                async { axum::http::StatusCode::NO_CONTENT }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let relayer = Relayer::new(
+            Outbound::for_tests(),
+            &url,
+            "rid",
+            "key",
+            "fast",
+            3,
+            Duration::from_millis(10),
+        );
+        let result = tokio::time::timeout(Duration::from_secs(2), relayer.wait_for_broadcast("tx"))
+            .await
+            .unwrap();
+        assert!(matches!(result, Err(ApiError::RelayerTimeout(_))));
+        let checks = checks.load(Ordering::SeqCst);
+        assert!(
+            (1..=3).contains(&checks),
+            "{checks} checks in a 30 ms budget"
+        );
+        assert_eq!(cancellations.load(Ordering::SeqCst), 1);
+        server.abort();
+    }
+
+    #[test]
+    fn the_status_checks_back_off_up_to_the_configured_interval() {
+        let ms = |v: u64| Duration::from_millis(v);
+        assert_eq!(
+            Relayer::backoff(ms(800)).take(5).collect::<Vec<_>>(),
+            [ms(250), ms(500), ms(800), ms(800), ms(800)]
+        );
+        assert_eq!(
+            Relayer::backoff(ms(100)).take(3).collect::<Vec<_>>(),
+            [ms(100), ms(100), ms(100)]
+        );
+    }
 
     #[test]
     fn urls_are_the_defender_relayer_api() {

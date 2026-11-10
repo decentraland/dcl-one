@@ -160,7 +160,8 @@ fn valid_content_id(s: &str) -> bool {
 /// Re-arms one failed deployment for the retry worker: its deadline moves to
 /// the epoch and its attempt count to zero, so the next `retry-failed` cycle
 /// (at most `retry_delay_ms`, 15 min by default, after this call) picks it
-/// first instead of evicting a record that had reached the cap. The old live
+/// first instead of evicting a record that had reached the cap; a recorded
+/// refusal becomes retryable again. The old live
 /// node answered 501 here; a synchronous re-deploy stays with the worker, so
 /// one code path attempts entities. Same transaction as the audit row.
 pub async fn failed_retry(
@@ -181,7 +182,8 @@ pub async fn failed_retry(
         let mut tx = state.pool.begin().await?;
         let rearmed = sqlx::query(
             "UPDATE content.failed_deployments
-             SET next_retry_at = '1970-01-01 00:00:00'::timestamp, retry_count = 0
+             SET next_retry_at = '1970-01-01 00:00:00'::timestamp, retry_count = 0,
+                 reason = CASE WHEN reason = 'Deployment rejected' THEN 'Deployment error' ELSE reason END
              WHERE entity_id = $1",
         )
         .bind(&req.id)
@@ -314,7 +316,7 @@ pub async fn sync(_session: AdminSession, State(state): State<SharedState>) -> R
         .await?;
         let failed = sqlx::query_as::<_, FailedCounts>(
             "SELECT count(*)::bigint AS total,
-                    count(*) FILTER (WHERE next_retry_at <= $1
+                    count(*) FILTER (WHERE next_retry_at <= $1 AND reason <> 'Deployment rejected'
                         AND CASE WHEN json_typeof(auth_chain) = 'array' THEN json_array_length(auth_chain) > 0 ELSE false END)::bigint AS due_now,
                     count(*) FILTER (WHERE next_retry_at > $1)::bigint AS waiting,
                     count(*) FILTER (WHERE NOT CASE WHEN json_typeof(auth_chain) = 'array' THEN json_array_length(auth_chain) > 0 ELSE false END)::bigint AS without_auth_chain

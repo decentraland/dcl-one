@@ -126,13 +126,25 @@ class OnlineProvenanceTests(unittest.TestCase):
     def test_required_online_ci_step_and_relevant_selection(self):
         workflow = (SOURCE.parents[2] / ".github/workflows/development.yml").read_text()
         self.guard.validate_workflow(workflow)
-        for bad in [workflow.replace("      - 'tooling/enet-provenance.py'\n", ""),
+        mutations = [workflow.replace("      - 'tooling/enet-provenance.py'\n", ""),
                     workflow.replace("      - 'library/**'\n", ""),
                     workflow.replace("      - 'tooling/tests/**'\n", ""),
                     workflow.replace("      - name: Verify the exact public ENet source pin", "      - if: false\n        name: Verify the exact public ENet source pin"),
-                    workflow.replace("        run: nix develop --command python3 tooling/enet-provenance.py",
-                                     "        continue-on-error: true\n        run: nix develop --command python3 tooling/enet-provenance.py"),
-                    workflow.replace("nix develop --command python3 tooling/enet-provenance.py", "echo skipped")]:
+                    workflow.replace("        run: nix develop .#ci --command python3 tooling/enet-provenance.py",
+                                     "        continue-on-error: true\n        run: nix develop .#ci --command python3 tooling/enet-provenance.py"),
+                    workflow.replace("nix develop .#ci --command python3 tooling/enet-provenance.py", "echo skipped"),
+                    workflow.replace("  rust:\n", "  native:\n"),
+                    workflow.replace("'[\"ubuntu-26.04\"]'", "'[]'"),
+                    workflow.replace('"ubuntu-26.04", "macos-26"', '"macos-26"'),
+                    workflow.replace(" || '[\"ubuntu-26.04\"]') }}", "\n          || '[\"macos-26\"]') }}"),
+                    workflow.replace("    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}\n", ""),
+                    workflow.replace("    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}\n", "    if: ${{ success() }}\n"),
+                    workflow.replace("    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}\n", "    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}\n    continue-on-error: true\n"),
+                    # The skip must stay tied to the plan's comparison, never an unconditional or looser one.
+                    workflow.replace("    if: ${{ !cancelled() && needs.changes.outputs.run != 'false' }}\n", "    if: ${{ !cancelled() && false }}\n")]
+        for bad in mutations:
+            # Every mutation must actually change the workflow, or the test would prove nothing.
+            self.assertNotEqual(bad, workflow)
             with self.subTest(bad=bad[:80]), self.assertRaisesRegex(ValueError, "online provenance"):
                 self.guard.validate_workflow(bad)
 

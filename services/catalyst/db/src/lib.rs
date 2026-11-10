@@ -7,9 +7,9 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use thiserror::Error;
 
 pub const SCHEMA_IDENTITY: &str = "catalyst";
-/// 2 (2026-09-26): schema `marketplace` is `shop` and the four checkout ledgers
-/// left `economy` (DATABASE.md, "Bootstrap, schema versions and local writes"); 1: the closure layout.
-pub const SCHEMA_VERSION: i32 = 2;
+/// Version 3 separates pending-call uniqueness from retained media-room history.
+/// Databases stamped version 2 need the reviewed private-voice release before startup.
+pub const SCHEMA_VERSION: i32 = 3;
 /// `schema/*.sql` rendered in name order by build.rs; `catalyst schema print`
 /// writes the same text.
 pub const SCHEMA_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/schema.sql"));
@@ -21,6 +21,19 @@ pub const MIGRATIONS_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/migrati
 /// Every connection runs with this path and clock; application SQL is
 /// schema-qualified anyway, and no request ever changes either.
 const SESSION_OPTIONS: &[(&str, &str)] = &[("search_path", "content,meta"), ("TimeZone", "UTC")];
+
+/// Missing function signatures in input order, checked in one catalog query.
+/// Signatures use PostgreSQL's `to_regprocedure` spelling; query errors remain
+/// SQLx errors so callers can preserve their domain's operator guidance.
+pub async fn missing_functions(pool: &PgPool, signatures: &[String]) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT signature FROM unnest($1::text[]) WITH ORDINALITY AS functions(signature, position) \
+         WHERE to_regprocedure(signature) IS NULL ORDER BY position",
+    )
+    .bind(signatures)
+    .fetch_all(pool)
+    .await
+}
 
 #[derive(Debug, Clone)]
 pub struct PoolSettings {
@@ -186,6 +199,9 @@ pub enum BootstrapError {
     #[error("reading the schema layout: {0}")]
     LayoutCheck(#[from] crate::schema_migrate::LayoutError),
 
+    #[error("reading schema migration policy: {0}")]
+    MigrationCheck(#[from] crate::schema_migrate::MigrateError),
+
     #[error("reading meta.schema: {0}")]
     Sqlx(#[from] sqlx::Error),
 }
@@ -208,7 +224,11 @@ pub async fn bootstrap(pool: &PgPool) -> Result<(), BootstrapError> {
                 applied_at = %stamp.applied_at,
                 "schema verified"
             );
-            let gaps = crate::schema_migrate::gaps(pool, SCHEMA_SQL).await?;
+            let status = crate::schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL).await?;
+            if !status.drifted_steps.is_empty() || status.refused_step.is_some() {
+                return Err(BootstrapError::Layout(status.lines().join("; ")));
+            }
+            let gaps = status.gaps;
             let fatal = gaps.fatal();
             if !fatal.is_empty() {
                 return Err(BootstrapError::Layout(fatal.join(", ")));
@@ -248,12 +268,15 @@ pub enum ApplySchemaError {
 
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
+
+    #[error(transparent)]
+    MigrationPolicy(#[from] crate::schema_migrate::MigrateError),
 }
 
 /// Administrative only (`catalyst schema apply`): runs the rendered schema on
 /// an empty database and refuses when a schema is already there. The steps
-/// of `schemas/migrations/` are recorded as carried from birth (schema.sql
-/// already holds their effects), so `schema migrate` never re-runs them.
+/// of `schemas/migrations/` still active in this version are recorded as carried
+/// from birth. Retired steps gain no receipt; `schema migrate` never runs them.
 pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     // One apply at a time per process: the DDL holds a lock per object it
     // creates until commit, and parallel applies (the test suites create a
@@ -269,7 +292,8 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     }
     let mut tx = pool.begin().await?;
     sqlx::raw_sql(SCHEMA_SQL).execute(&mut *tx).await?;
-    let steps = crate::schema_migrate::parse_steps(MIGRATIONS_SQL);
+    let steps =
+        crate::schema_migrate::fresh_steps(crate::schema_migrate::parse_steps(MIGRATIONS_SQL))?;
     crate::schema_migrate::record_steps(&mut *tx, &steps, true).await?;
     tx.commit().await?;
     tracing::info!(
@@ -281,13 +305,13 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     Ok(())
 }
 
-/// The lib crate's database-backed tests share one throwaway database per
-/// test process, `catalyst_test_lib_<pid>_<rand>`, created on the cluster
-/// `CATALYST_TEST_DATABASE_URL` names (the database in that URL is never
-/// touched, so a live node's rows are out of reach) and seeded with
-/// schema.sql; the tests seed uuid-scoped rows inside it. There is no
-/// in-process teardown: the next test process drops every
-/// `catalyst_test_lib_<pid>_*` whose pid is gone.
+/// `pool` shares one throwaway database per test process for uuid-scoped
+/// fixtures; `isolated_pool` creates a fresh database per call for tests
+/// that read or rewrite whole tables. Both use `catalyst_test_lib_<pid>_<rand>`
+/// databases on the cluster `CATALYST_TEST_DATABASE_URL` names, seeded with
+/// schema.sql. The database in that URL is never touched, so a live node's
+/// rows are out of reach. There is no in-process teardown: the next test
+/// process drops every `catalyst_test_lib_<pid>_*` whose pid is gone.
 #[cfg(any(test, feature = "scratch"))]
 pub mod scratch {
     use super::*;
@@ -313,6 +337,24 @@ pub mod scratch {
             )
             .await
             .expect("connecting to the scratch test database"),
+        )
+    }
+
+    /// A fresh database for a test that reads or rewrites whole tables.
+    /// It follows the shared database's process-based cleanup lifecycle.
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn isolated_pool(max_connections: u32) -> Option<PgPool> {
+        let url = create().await?;
+        Some(
+            connect_pool(
+                &url,
+                &PoolSettings {
+                    max_connections,
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("connecting to the isolated test database"),
         )
     }
 
@@ -358,6 +400,32 @@ pub mod scratch {
         Some(url)
     }
 
+    /// `/proc` is absent on macOS. Signal zero probes existence without sending
+    /// a signal; permission denied also proves that a process still exists.
+    pub(super) fn process_alive(pid: u32) -> bool {
+        if pid == std::process::id() {
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            let Ok(pid) = libc::pid_t::try_from(pid) else {
+                return false;
+            };
+            if pid <= 0 {
+                return false;
+            }
+            // SAFETY: signal 0 never delivers a signal and pid is a positive process id.
+            let exists = unsafe { libc::kill(pid, 0) == 0 };
+            exists || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        }
+        #[cfg(not(unix))]
+        {
+            // Without a portable existence probe, retain a database rather than
+            // forcibly dropping another test process's active database.
+            true
+        }
+    }
+
     /// Drops the scratch databases of test processes that no longer exist.
     async fn sweep_dead(admin: &PgPool) {
         let names: Vec<String> = sqlx::query_scalar(
@@ -372,9 +440,7 @@ pub mod scratch {
                 .split('_')
                 .next()
                 .and_then(|p| p.parse::<u32>().ok());
-            let alive = pid.is_some_and(|pid| {
-                pid == std::process::id() || std::path::Path::new(&format!("/proc/{pid}")).exists()
-            });
+            let alive = pid.is_none_or(process_alive);
             if alive {
                 continue;
             }
@@ -394,6 +460,43 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn isolated_pools_do_not_share_facts() {
+        let Some(first) = scratch::isolated_pool(1).await else {
+            return;
+        };
+        let second = scratch::isolated_pool(1).await.unwrap();
+        sqlx::query("INSERT INTO content.system_properties(key,value) VALUES ('scratch_isolation_probe','first')")
+            .execute(&first)
+            .await
+            .unwrap();
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM content.system_properties WHERE key='scratch_isolation_probe'",
+        )
+        .fetch_optional(&second)
+        .await
+        .unwrap();
+        assert_eq!(value, None);
+        first.close().await;
+        second.close().await;
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scratch_cleanup_distinguishes_a_live_child_from_a_reaped_process() {
+        assert!(scratch::process_alive(std::process::id()));
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        assert!(scratch::process_alive(pid));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(!scratch::process_alive(pid));
+        assert!(!scratch::process_alive(u32::MAX));
+    }
 
     /// Once bootstrap verified a database, any connection opened to it
     /// afterwards (a reconnect after the backends were killed, here a second
@@ -561,7 +664,7 @@ mod tests {
     /// from birth: `schema migrate` on it applies nothing, and `status` says
     /// up to date.
     #[tokio::test]
-    async fn a_fresh_schema_records_every_step_as_carried_from_birth() {
+    async fn a_fresh_schema_records_only_active_steps_as_carried_from_birth() {
         let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
             return;
         };
@@ -591,7 +694,9 @@ mod tests {
         .await
         .unwrap();
         apply_schema(&pool).await.unwrap();
-        let steps = crate::schema_migrate::parse_steps(MIGRATIONS_SQL);
+        let steps =
+            crate::schema_migrate::fresh_steps(crate::schema_migrate::parse_steps(MIGRATIONS_SQL))
+                .unwrap();
         let recorded: Vec<(String, String, bool)> =
             sqlx::query_as("SELECT step, sha256, created_fresh FROM meta.schema_steps WHERE step ~ '^[0-9]{4}_' ORDER BY step")
                 .fetch_all(&pool)

@@ -332,7 +332,11 @@ pub(super) async fn fetch_remote(dest: &Dest) -> (Remote, Option<String>) {
     if let Some(w) = &dest.world {
         let base = &dest.read_bases[0];
         let url = format!("{base}/world/{}/scenes", deploy::encode_segment(w));
-        return match fetch_json::<serde_json::Value>(status_client().get(&url)).await {
+        let pages = deploy::all_world_scene_pages(|offset| {
+            let page = deploy::world_scenes_page_url(&url, offset);
+            async move { fetch_json::<serde_json::Value>(status_client().get(&page)).await }
+        });
+        return match pages.await {
             Ok(body) => (world_remote(&body, &dest.pointers), Some(base.clone())),
             Err(ProbeFail::Http(404)) => (Remote::Empty, Some(base.clone())),
             Err(e) => (Remote::Unreachable(e.sentence(base)), None),
@@ -400,14 +404,19 @@ pub(super) async fn cached_hashes(
 }
 
 /// The forecast's split over the preview's names and sizes: a file whose
-/// hash the server holds transfers nothing; a file with no hash (unreadable,
-/// or hashing failed) counts as an upload.
+/// hash the server holds transfers nothing; byte-identical files count once,
+/// as they travel once; a file with no hash (unreadable, or hashing failed)
+/// counts as an upload.
 pub(super) fn split_reuse(
     files: &[(String, Option<u64>)],
     hashes: &HashMap<String, String>,
     on_server: &HashSet<String>,
 ) -> Reuse {
-    Reuse::tally(files.iter().map(|(rel, len)| {
+    let mut tallied = HashSet::new();
+    let files = files
+        .iter()
+        .filter(|(rel, _)| hashes.get(rel).is_none_or(|h| tallied.insert(h.as_str())));
+    Reuse::tally(files.map(|(rel, len)| {
         let held = hashes.get(rel).is_some_and(|h| on_server.contains(h));
         (held, len.unwrap_or(0))
     }))

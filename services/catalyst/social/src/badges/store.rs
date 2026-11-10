@@ -1,49 +1,59 @@
 //! The SQL and the assembly of the badges routes over `social.badge_*` and
-//! `social.user_*`. Definitions and tiers are reference data (seeded by the
-//! schema), so every read shares one 300 s catalogue snapshot; a wallet's
-//! two tables come in one statement. Timestamps are `timestamp without time
-//! zone` in UTC and go out as epoch ms.
+//! `social.user_*`. The published catalog (active and archived badges, in
+//! `created_at, id` order) is read on every request, as upstream reads it:
+//! one statement of ~0.3 ms over the 34-badge, 84-tier catalog, so a
+//! backfill, an import or a console edit shows at once; a wallet's two
+//! tables come in one statement. Timestamps are
+//! `timestamp without time zone` in UTC and go out as epoch ms. The
+//! assembly follows upstream's `badge-service.ts` and `get-user-badges.ts`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use chrono::NaiveDateTime;
+use serde_json::Value;
 use sqlx::Row;
 use sqlx::postgres::PgPool;
 
+use super::progress::{Applied, ApplyOptions, apply_progress};
 use super::types::{
-    AchievedTier, Assets, BadgeData, BadgeProgress, LatestAchievedBadge, TierCriteria, TierData,
+    AchievedTier, Assets, BadgeData, BadgeProgress, CatalogBadge, LastCompletedTier,
+    LatestAchievedBadge, RawAchievedTier, TierCriteria, TierData, UserBadgeRow,
 };
 use crate::identity::Address;
 use crate::notifications::errors::ApiError;
-use crate::shared::cache::TtlMap;
 
-/// The host baked into the seed rows; `BADGES_PUBLIC_ASSET_BASE_URL`
-/// replaces it at serve time, the rows are never rewritten.
-pub const DEFAULT_ASSET_BASE_URL: &str = "https://badges.decentraland.org";
-const CATALOG_TTL: Duration = Duration::from_secs(300);
+/// Upstream's production `CDN_HOST`: the default base every asset path
+/// resolves against, so the URLs are upstream's.
+pub const DEFAULT_ASSET_BASE_URL: &str = "https://assets-cdn.decentraland.org";
+/// The prefix earlier catalog rows (and the TS database import) wrote in
+/// front of the same relative paths; it resolves like a relative path.
+pub const LEGACY_ASSET_PREFIX: &str = "https://badges.decentraland.org/assets/";
+/// Upstream's category enum, in its order (`GET /categories`).
+pub const CATEGORIES: [&str; 5] = ["Explorer", "Collector", "Creator", "Socializer", "Builder"];
+const BADGE_NOTIFICATION_NS: uuid::Uuid =
+    uuid::Uuid::from_u128(0x3b1e_6f0a_92c4_4d57_8e21_b6a0_c9d3_7f14);
 
-/// Walks arbitrarily nested JSON so it need not know the `{"2d":{...},"3d":{...}}` shape;
-/// empty strings (the unfilled fields in the seed) never match a non-empty `from`
-/// prefix and pass through unchanged.
-pub fn rewrite_base(value: &serde_json::Value, from: &str, to: &str) -> serde_json::Value {
-    if from == to {
-        return value.clone();
-    }
+/// Every string of an `assets` document as a URL: a relative path (or one
+/// under [`LEGACY_ASSET_PREFIX`]) becomes `{base}/{path}`; an absolute URL
+/// and an empty string pass through.
+pub fn resolve_assets(value: &Value, base: &str) -> Value {
     match value {
-        serde_json::Value::String(s) => match s.strip_prefix(from) {
-            Some(rest) => serde_json::Value::String(format!("{to}{rest}")),
-            None => value.clone(),
-        },
-        serde_json::Value::Object(map) => serde_json::Value::Object(
+        Value::String(s)
+            if s.is_empty() || (s.contains("://") && !s.starts_with(LEGACY_ASSET_PREFIX)) =>
+        {
+            value.clone()
+        }
+        Value::String(s) => {
+            let path = s.strip_prefix(LEGACY_ASSET_PREFIX).unwrap_or(s);
+            Value::String(format!("{base}/{}", path.trim_start_matches('/')))
+        }
+        Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), rewrite_base(v, from, to)))
+                .map(|(k, v)| (k.clone(), resolve_assets(v, base)))
                 .collect(),
         ),
-        serde_json::Value::Array(arr) => {
-            serde_json::Value::Array(arr.iter().map(|v| rewrite_base(v, from, to)).collect())
-        }
+        Value::Array(arr) => Value::Array(arr.iter().map(|v| resolve_assets(v, base)).collect()),
         other => other.clone(),
     }
 }
@@ -52,18 +62,59 @@ fn epoch_ms(ts: NaiveDateTime) -> i64 {
     ts.and_utc().timestamp_millis()
 }
 
+fn image(assets: &Assets) -> Option<String> {
+    assets
+        .get("2d")
+        .and_then(|d| d.get("normal"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+}
+
+/// The `badge_granted` notification upstream's processor published, as the
+/// notifications parser stored it; keyed per (address, badge, tier) so a
+/// repeated award never notifies twice. `assets` are already resolved.
+pub(super) fn badge_granted_notification(
+    address: &Address,
+    badge_id: &str,
+    tier_id: Option<&str>,
+    description: &str,
+    assets: &Assets,
+    at: NaiveDateTime,
+) -> crate::notifications::NewNotification {
+    let key = format!(
+        "badge:{}:{badge_id}:{}",
+        address.as_str(),
+        tier_id.unwrap_or_default()
+    );
+    crate::notifications::NewNotification {
+        id: uuid::Uuid::new_v5(&BADGE_NOTIFICATION_NS, key.as_bytes()),
+        address: address.clone(),
+        kind: "badge_granted".into(),
+        metadata: serde_json::json!({
+            "id": badge_id,
+            "title": "New Badge Unlocked!",
+            "description": description,
+            "image": image(assets),
+        }),
+        occurred_at: at,
+    }
+}
+
 pub struct BadgesStore {
     pool: PgPool,
     public_asset_base_url: String,
-    catalog: TtlMap<(), Arc<Catalog>>,
 }
 
 struct Catalog {
+    /// Published badges (active and archived) in catalog order.
     defs: Vec<DefRow>,
-    tiers: HashMap<String, Vec<TierRow>>,
 }
 
-type AchievedMap = HashMap<String, Vec<(String, NaiveDateTime)>>;
+impl Catalog {
+    fn get(&self, id: &str) -> Option<&DefRow> {
+        self.defs.iter().find(|d| d.id == id)
+    }
+}
 
 struct DefRow {
     id: String,
@@ -71,7 +122,55 @@ struct DefRow {
     description: Option<String>,
     category: Option<String>,
     is_tier: bool,
+    criteria_steps: Option<i32>,
+    archived: bool,
     assets: Assets,
+    tiers: Vec<TierRow>,
+}
+
+impl DefRow {
+    /// A single badge's target.
+    fn target(&self) -> i32 {
+        self.criteria_steps.unwrap_or(1)
+    }
+
+    fn tier(&self, tier_id: &str) -> Option<(usize, &TierRow)> {
+        self.tiers
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.tier_id == tier_id)
+    }
+
+    fn tier_data(&self) -> Vec<TierData> {
+        self.tiers
+            .iter()
+            .map(|t| TierData {
+                tier_id: t.tier_id.clone(),
+                tier_name: t.tier_name.clone(),
+                description: t.description.clone(),
+                criteria: TierCriteria {
+                    steps: t.criteria_steps,
+                },
+                assets: t.assets.clone(),
+            })
+            .collect()
+    }
+
+    fn catalog_badge(&self) -> CatalogBadge {
+        let single = !self.is_tier;
+        CatalogBadge {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            category: self.category.clone(),
+            description: self.description.clone(),
+            criteria: single.then(|| TierCriteria {
+                steps: self.target(),
+            }),
+            assets: single.then(|| self.assets.clone()),
+            tiers: self.is_tier.then(|| self.tier_data()),
+            archived: self.archived,
+        }
+    }
 }
 
 struct TierRow {
@@ -87,12 +186,14 @@ struct ProgressRow {
     completed_at: Option<NaiveDateTime>,
 }
 
+/// A wallet's earned tiers per badge, in earning order (stamp, then tier order).
+type AchievedMap = HashMap<String, Vec<(String, NaiveDateTime)>>;
+
 impl BadgesStore {
     pub fn new(pool: PgPool, public_asset_base_url: String) -> Self {
         Self {
             pool,
             public_asset_base_url,
-            catalog: TtlMap::new(CATALOG_TTL),
         }
     }
 
@@ -100,106 +201,107 @@ impl BadgesStore {
         &self.pool
     }
 
-    /// Drops the catalogue snapshot (a test that inserts a definition).
-    pub fn invalidate_catalog(&self) {
-        self.catalog.clear();
+    /// `BADGES_PUBLIC_ASSET_BASE_URL` without a trailing slash: the base
+    /// [`ApplyOptions::notify`] takes.
+    pub fn asset_base_url(&self) -> &str {
+        &self.public_asset_base_url
     }
+
+    /// Nothing to drop: the catalog is read per request. Kept for callers
+    /// written against the earlier snapshot.
+    pub fn invalidate_catalog(&self) {}
 
     async fn catalog(&self) -> Result<Arc<Catalog>, ApiError> {
-        self.catalog
-            .get_or_fetch((), || async {
-                let (defs, tiers) =
-                    tokio::try_join!(self.load_definitions(), self.load_all_tiers())?;
-                Ok::<_, ApiError>(Arc::new(Catalog { defs, tiers }))
-            })
-            .await
+        Ok(Arc::new(self.load_catalog().await?))
     }
 
-    fn rewrite_assets(&self, assets: Assets) -> Assets {
-        rewrite_base(&assets, DEFAULT_ASSET_BASE_URL, &self.public_asset_base_url)
-    }
-
-    pub async fn list_categories(&self) -> Result<Vec<String>, ApiError> {
-        let catalog = self.catalog().await?;
-        let mut categories: Vec<String> = catalog
-            .defs
-            .iter()
-            .filter_map(|d| d.category.clone())
-            .collect();
-        categories.sort();
-        categories.dedup();
-        Ok(categories)
-    }
-
-    async fn load_definitions(&self) -> Result<Vec<DefRow>, ApiError> {
+    /// One statement, so a publish or archive never splits the snapshot. A
+    /// tiered row without tiers is not a valid definition and is left out,
+    /// as upstream's catalog leaves out invalid rows.
+    async fn load_catalog(&self) -> Result<Catalog, ApiError> {
         let rows = sqlx::query(
-            "SELECT id, name, description, category, is_tier, assets \
-             FROM social.badge_definitions ORDER BY id",
+            "SELECT d.id, d.name, d.description, d.category, d.is_tier, d.criteria_steps, \
+                    d.archived_at IS NOT NULL AS archived, d.assets, \
+                    COALESCE((SELECT jsonb_agg(jsonb_build_object( \
+                                 'tier_id', t.tier_id, 'tier_name', t.tier_name, \
+                                 'description', t.description, 'assets', t.assets, \
+                                 'steps', t.criteria_steps) ORDER BY t.ordinal) \
+                              FROM social.badge_tiers t WHERE t.badge_id = d.id), '[]'::jsonb) AS tiers \
+             FROM social.badge_definitions d \
+             WHERE d.published_at IS NOT NULL \
+             ORDER BY d.created_at, d.id",
         )
         .fetch_all(&self.pool)
         .await?;
-        Ok(rows
-            .into_iter()
-            .map(|r| DefRow {
-                id: r.get("id"),
+        let base = &self.public_asset_base_url;
+        let mut defs = Vec::with_capacity(rows.len());
+        for r in rows {
+            let is_tier: bool = r.get("is_tier");
+            let tiers: Vec<TierRow> = if is_tier {
+                r.get::<Value, _>("tiers")
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|t| TierRow {
+                        tier_id: t["tier_id"].as_str().unwrap_or_default().to_string(),
+                        tier_name: t["tier_name"].as_str().unwrap_or_default().to_string(),
+                        description: t["description"].as_str().map(str::to_string),
+                        assets: resolve_assets(&t["assets"], base),
+                        criteria_steps: t["steps"].as_i64().unwrap_or(0) as i32,
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let id: String = r.get("id");
+            if is_tier && tiers.is_empty() {
+                tracing::warn!(badge = %id, "badges: a tiered badge without tiers is left out");
+                continue;
+            }
+            defs.push(DefRow {
+                id,
                 name: r.get("name"),
                 description: r.get("description"),
                 category: r.get("category"),
-                is_tier: r.get("is_tier"),
-                assets: self.rewrite_assets(r.get("assets")),
-            })
+                is_tier,
+                criteria_steps: r.get("criteria_steps"),
+                archived: r.get("archived"),
+                assets: resolve_assets(&r.get::<Value, _>("assets"), base),
+                tiers,
+            });
+        }
+        Ok(Catalog { defs })
+    }
+
+    /// `GET /badges`: every published badge, archived ones marked.
+    pub async fn list_badges(&self) -> Result<Vec<CatalogBadge>, ApiError> {
+        Ok(self
+            .catalog()
+            .await?
+            .defs
+            .iter()
+            .map(DefRow::catalog_badge)
             .collect())
     }
 
-    async fn load_all_tiers(&self) -> Result<HashMap<String, Vec<TierRow>>, ApiError> {
-        let rows = sqlx::query(
-            "SELECT badge_id, tier_id, tier_name, description, assets, criteria_steps \
-             FROM social.badge_tiers ORDER BY badge_id, ordinal",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        let mut map: HashMap<String, Vec<TierRow>> = HashMap::new();
-        for r in rows {
-            let badge_id: String = r.get("badge_id");
-            map.entry(badge_id).or_default().push(TierRow {
-                tier_id: r.get("tier_id"),
-                tier_name: r.get("tier_name"),
-                description: r.get("description"),
-                assets: self.rewrite_assets(r.get("assets")),
-                criteria_steps: r.get("criteria_steps"),
-            });
-        }
-        Ok(map)
-    }
-
-    pub async fn list_tiers(&self, badge_id: &str) -> Result<Vec<TierData>, ApiError> {
-        let catalog = self.catalog().await?;
-        if !catalog.defs.iter().any(|d| d.id == badge_id) {
-            return Err(ApiError::not_found("Badge not found"));
-        }
-        Ok(catalog
-            .tiers
+    /// `GET /badges/{id}`: `None` for an unknown or unpublished id.
+    pub async fn badge(&self, badge_id: &str) -> Result<Option<CatalogBadge>, ApiError> {
+        Ok(self
+            .catalog()
+            .await?
             .get(badge_id)
-            .map(|ts| {
-                ts.iter()
-                    .map(|t| TierData {
-                        tier_id: t.tier_id.clone(),
-                        tier_name: t.tier_name.clone(),
-                        description: t.description.clone(),
-                        assets: t.assets.clone(),
-                        criteria: TierCriteria {
-                            steps: t.criteria_steps,
-                        },
-                    })
-                    .collect()
-            })
-            .unwrap_or_default())
+            .map(DefRow::catalog_badge))
     }
 
-    /// Both per-address tables in one statement; tier rows arrive in
-    /// `completed_at` order, which is the order the assemblers rely on.
+    /// `None` for an unknown or unpublished id; `[]` for a single badge.
+    pub async fn list_tiers(&self, badge_id: &str) -> Result<Option<Vec<TierData>>, ApiError> {
+        Ok(self.catalog().await?.get(badge_id).map(DefRow::tier_data))
+    }
+
+    /// Both per-address tables in one statement.
     async fn load_user_state(
         &self,
+        catalog: &Catalog,
         address: &str,
     ) -> Result<(HashMap<String, ProgressRow>, AchievedMap), ApiError> {
         let rows = sqlx::query_as::<
@@ -216,8 +318,7 @@ impl BadgesStore {
              FROM social.user_badge_progress WHERE address = $1 \
              UNION ALL \
              SELECT 't', badge_id, NULL::integer, completed_at, tier_id \
-             FROM social.user_achieved_tiers WHERE address = $1 \
-             ORDER BY 1, 4",
+             FROM social.user_achieved_tiers WHERE address = $1",
         )
         .bind(address)
         .fetch_all(&self.pool)
@@ -241,47 +342,154 @@ impl BadgesStore {
                 _ => {}
             }
         }
+        for (badge_id, tiers) in achieved.iter_mut() {
+            let def = catalog.get(badge_id);
+            let position = |tier_id: &str| {
+                def.and_then(|d| d.tier(tier_id))
+                    .map_or(usize::MAX, |(i, _)| i)
+            };
+            tiers.sort_by(|a, b| a.1.cmp(&b.1).then(position(&a.0).cmp(&position(&b.0))));
+        }
         Ok((progress, achieved))
     }
 
     /// `address` is whatever the path carried, lowercased when it parses:
     /// a malformed one reads no rows and answers empty, as upstream does.
+    /// An archived badge is listed only as achieved, with nothing left to
+    /// reach; the merged list keeps catalog order.
     pub async fn user_badges(
         &self,
         address: &str,
         include_not_achieved: bool,
     ) -> Result<(Vec<BadgeData>, Vec<BadgeData>), ApiError> {
         let catalog = self.catalog().await?;
-        let (progress, achieved_tiers) = self.load_user_state(address).await?;
-
+        let (progress, achieved_tiers) = self.load_user_state(&catalog, address).await?;
         let mut achieved = Vec::new();
         let mut not_achieved = Vec::new();
         for def in &catalog.defs {
             let prog = progress.get(&def.id);
-            let badge_tiers = catalog.tiers.get(&def.id);
-            let user_tiers = achieved_tiers.get(&def.id);
-            let is_achieved = match prog {
-                _ if def.is_tier => user_tiers.map(|t| !t.is_empty()).unwrap_or(false),
-                Some(p) => p.completed_at.is_some(),
-                None => false,
-            };
-            if !is_achieved && !include_not_achieved {
-                continue;
-            }
-            let badge = assemble_badge(def, badge_tiers, prog, user_tiers);
-            if is_achieved {
-                achieved.push(badge)
-            } else {
-                not_achieved.push(badge)
+            let user_tiers = achieved_tiers
+                .get(&def.id)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            match assemble_badge(def, prog, user_tiers) {
+                Some(badge) => achieved.push(badge),
+                None if include_not_achieved && !def.archived => {
+                    not_achieved.push(not_achieved_badge(def, prog))
+                }
+                None => {}
             }
         }
         Ok((achieved, not_achieved))
     }
 
-    /// One statement: resolves the badge and (for tiered badges) the tier, and
-    /// only when that resolves writes the tier, the progress row and the audit
-    /// row. `Ok(false)` is "no such badge"; an unresolvable tier keeps its own
-    /// error and writes nothing.
+    /// Upstream's preview: one row per achievement instant of a badge (each
+    /// earned tier, and the completion), newest first, paged. A completion
+    /// that shares its instant with an earned tier is that tier's row.
+    pub async fn latest_achieved(
+        &self,
+        address: &str,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<LatestAchievedBadge>, ApiError> {
+        let catalog = self.catalog().await?;
+        let (progress, achieved_tiers) = self.load_user_state(&catalog, address).await?;
+        // (badge position, instant) -> the highest known tier earned then
+        let mut rows: HashMap<(usize, NaiveDateTime), Option<usize>> = HashMap::new();
+        for (index, def) in catalog.defs.iter().enumerate() {
+            for (tier_id, at) in achieved_tiers.get(&def.id).into_iter().flatten() {
+                let tier = def.tier(tier_id).map(|(i, _)| i);
+                let slot = rows.entry((index, *at)).or_insert(None);
+                *slot = (*slot).max(tier);
+            }
+            if let Some(at) = progress.get(&def.id).and_then(|p| p.completed_at) {
+                rows.entry((index, at)).or_insert(None);
+            }
+        }
+        let mut rows: Vec<_> = rows.into_iter().collect();
+        rows.sort_by(|((ia, a), _), ((ib, b), _)| b.cmp(a).then(ia.cmp(ib)));
+        Ok(rows
+            .into_iter()
+            .skip(offset.max(0) as usize)
+            .take(limit.max(0) as usize)
+            .map(|((index, _), tier)| {
+                let def = &catalog.defs[index];
+                let tier = tier.map(|i| &def.tiers[i]);
+                let fallback = match def.tiers.first() {
+                    Some(first) => image(&first.assets),
+                    None => image(&def.assets),
+                };
+                LatestAchievedBadge {
+                    id: def.id.clone(),
+                    name: def.name.clone(),
+                    tier_name: tier.map(|t| t.tier_name.clone()),
+                    image: tier.and_then(|t| image(&t.assets)).or(fallback),
+                }
+            })
+            .collect())
+    }
+
+    /// The admin read of upstream's raw progress row: the outer `None` is an
+    /// unknown or unpublished badge, the inner one a wallet with no row.
+    pub async fn user_badge(
+        &self,
+        address: &str,
+        badge_id: &str,
+    ) -> Result<Option<Option<UserBadgeRow>>, ApiError> {
+        let catalog = self.catalog().await?;
+        let Some(def) = catalog.get(badge_id) else {
+            return Ok(None);
+        };
+        let row: Option<(i32, Value, Option<NaiveDateTime>, NaiveDateTime)> = sqlx::query_as(
+            "SELECT steps_done, progress, completed_at, updated_at FROM social.user_badge_progress \
+             WHERE address = $1 AND badge_id = $2",
+        )
+        .bind(address)
+        .bind(badge_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        let Some((steps, document, completed_at, updated_at)) = row else {
+            return Ok(Some(None));
+        };
+        let achieved_tiers = if def.is_tier {
+            let (_, achieved) = self.load_user_state(&catalog, address).await?;
+            Some(
+                achieved
+                    .get(badge_id)
+                    .into_iter()
+                    .flatten()
+                    .map(|(tier_id, at)| RawAchievedTier {
+                        tier_id: tier_id.clone(),
+                        completed_at: epoch_ms(*at),
+                    })
+                    .collect(),
+            )
+        } else {
+            None
+        };
+        let mut progress = match document {
+            Value::Object(map) => map,
+            _ => serde_json::Map::new(),
+        };
+        progress.insert("steps".into(), Value::from(steps));
+        Ok(Some(Some(UserBadgeRow {
+            badge_id: badge_id.to_string(),
+            user_address: address.to_string(),
+            progress: Value::Object(progress),
+            achieved_tiers,
+            completed_at: completed_at.map(|t| epoch_ms(t).to_string()),
+            updated_at: epoch_ms(updated_at).to_string(),
+        })))
+    }
+
+    /// The console grant: raises the wallet's steps to the target of
+    /// `tier_id` (required for a tiered badge, refused on a single one), so
+    /// every tier up to it is earned and the badge completes only at its last
+    /// tier, then audits it, through [`apply_progress`] with notifications.
+    /// `Ok(false)` is "no such published badge"; an archived badge, a missing
+    /// or unknown tier keep their own errors and write nothing. The definition
+    /// is read `FOR SHARE`, so an archive or catalog write waits for the grant
+    /// or is seen by it, and the target and audited tier are the awarded ones.
     pub async fn grant_badge(
         &self,
         address: &Address,
@@ -290,73 +498,85 @@ impl BadgesStore {
         granted_by: &str,
     ) -> Result<bool, ApiError> {
         let now = chrono::Utc::now().naive_utc();
-        let row: Option<(bool, bool)> = sqlx::query_as(
-            "WITH def AS ( \
-                 SELECT d.is_tier, t.tier_id, t.criteria_steps \
-                 FROM social.badge_definitions d \
-                 LEFT JOIN LATERAL ( \
-                     SELECT tier_id, criteria_steps FROM social.badge_tiers \
-                     WHERE badge_id = d.id AND ($3::text IS NULL OR tier_id = $3) \
-                     ORDER BY ordinal DESC LIMIT 1 \
-                 ) t ON TRUE \
-                 WHERE d.id = $2 \
-             ), ok AS ( \
-                 SELECT * FROM def WHERE NOT is_tier OR tier_id IS NOT NULL \
-             ), tier AS ( \
-                 INSERT INTO social.user_achieved_tiers \
-                   (address, badge_id, tier_id, completed_at, granted_by, granted_at) \
-                 SELECT $1, $2, tier_id, $5, $4, $5 FROM ok WHERE is_tier \
-                 ON CONFLICT (address, badge_id, tier_id) DO UPDATE \
-                   SET granted_by = EXCLUDED.granted_by, granted_at = EXCLUDED.granted_at \
-             ), prog AS ( \
-                 INSERT INTO social.user_badge_progress \
-                   (address, badge_id, steps_done, completed_at, last_completed_tier_id, \
-                    updated_at, granted_by) \
-                 SELECT $1, $2, \
-                        CASE WHEN is_tier THEN criteria_steps ELSE 1 END, \
-                        $5, \
-                        CASE WHEN is_tier THEN tier_id END, \
-                        $5, $4 \
-                 FROM ok \
-                 ON CONFLICT (address, badge_id) DO UPDATE SET \
-                   steps_done = GREATEST(social.user_badge_progress.steps_done, EXCLUDED.steps_done), \
-                   completed_at = COALESCE(social.user_badge_progress.completed_at, EXCLUDED.completed_at), \
-                   last_completed_tier_id = COALESCE(EXCLUDED.last_completed_tier_id, \
-                                                     social.user_badge_progress.last_completed_tier_id), \
-                   updated_at = EXCLUDED.updated_at, \
-                   granted_by = EXCLUDED.granted_by \
-             ), audit AS ( \
-                 INSERT INTO social.badge_admin_audit (action, address, badge_id, tier_id, actor, acted_at) \
-                 SELECT 'grant', $1, $2, $3, $4, $5 FROM ok \
-             ) \
-             SELECT is_tier, tier_id IS NOT NULL FROM def",
+        let mut tx = self.pool.begin().await?;
+        let def: Option<(bool, Option<i32>, bool, bool)> = sqlx::query_as(
+            "SELECT is_tier, criteria_steps, published_at IS NOT NULL, archived_at IS NOT NULL \
+             FROM social.badge_definitions WHERE id = $1 FOR SHARE",
+        )
+        .bind(badge_id)
+        .fetch_optional(&mut *tx)
+        .await?;
+        let Some((is_tier, criteria_steps, true, archived)) = def else {
+            return Ok(false);
+        };
+        if archived {
+            return Err(ApiError::bad_request(format!(
+                "badge '{badge_id}' is archived and can no longer be granted"
+            )));
+        }
+        let target = if is_tier {
+            let Some(tid) = tier_id else {
+                return Err(ApiError::bad_request(format!(
+                    "tiered badge '{badge_id}' needs a tierId"
+                )));
+            };
+            let steps: Option<i32> = sqlx::query_scalar(
+                "SELECT criteria_steps FROM social.badge_tiers WHERE badge_id = $1 AND tier_id = $2",
+            )
+            .bind(badge_id)
+            .bind(tid)
+            .fetch_optional(&mut *tx)
+            .await?;
+            steps.ok_or_else(|| {
+                ApiError::not_found(format!("no tier '{tid}' on badge '{badge_id}'"))
+            })?
+        } else if let Some(tid) = tier_id {
+            return Err(ApiError::bad_request(format!(
+                "badge '{badge_id}' has no tiers; tierId '{tid}' does not apply"
+            )));
+        } else {
+            criteria_steps.unwrap_or(1)
+        };
+        let options = ApplyOptions {
+            at: now,
+            notify: Some(&self.public_asset_base_url),
+            granted_by: Some(granted_by),
+        };
+        let applied = apply_progress(&mut tx, address, badge_id, &options, |p| {
+            p.steps = p.steps.max(target)
+        })
+        .await?;
+        if applied == Applied::NotAwardable {
+            return Ok(false);
+        }
+        sqlx::query(
+            "INSERT INTO social.badge_admin_audit (action, address, badge_id, tier_id, actor, acted_at) \
+             VALUES ('grant', $1, $2, $3, $4, $5)",
         )
         .bind(address)
         .bind(badge_id)
         .bind(tier_id)
         .bind(granted_by)
         .bind(now)
-        .fetch_optional(&self.pool)
+        .execute(&mut *tx)
         .await?;
-
-        match row {
-            None => Ok(false),
-            Some((true, false)) => Err(match tier_id {
-                Some(tid) => ApiError::not_found(format!("no tier '{tid}' on badge '{badge_id}'")),
-                None => ApiError::bad_request(format!(
-                    "tiered badge '{badge_id}' has no tiers; specify tierId"
-                )),
-            }),
-            Some(_) => Ok(true),
-        }
+        tx.commit().await?;
+        Ok(true)
     }
 
+    /// Deletes the wallet's rows of any defined badge (published or not),
+    /// serialized with [`apply_progress`] on its advisory lock.
     pub async fn revoke_badge(
         &self,
         address: &Address,
         badge_id: &str,
         revoked_by: &str,
     ) -> Result<bool, ApiError> {
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))")
+            .bind(format!("badge-progress:{}:{badge_id}", address.as_str()))
+            .execute(&mut *tx)
+            .await?;
         let exists: bool = sqlx::query_scalar(
             "WITH def AS ( \
                  SELECT id FROM social.badge_definitions WHERE id = $2 \
@@ -376,98 +596,97 @@ impl BadgesStore {
         .bind(badge_id)
         .bind(revoked_by)
         .bind(chrono::Utc::now().naive_utc())
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await?;
+        tx.commit().await?;
         Ok(exists)
-    }
-
-    pub async fn latest_achieved(
-        &self,
-        address: &str,
-        limit: i64,
-    ) -> Result<Vec<LatestAchievedBadge>, ApiError> {
-        let catalog = self.catalog().await?;
-        let (progress, achieved_tiers) = self.load_user_state(address).await?;
-        let mut rows: Vec<(NaiveDateTime, LatestAchievedBadge)> = Vec::new();
-        for def in &catalog.defs {
-            if def.is_tier {
-                let Some((tier_id, at)) = achieved_tiers.get(&def.id).and_then(|t| t.last()) else {
-                    continue;
-                };
-                let tier_def = catalog
-                    .tiers
-                    .get(&def.id)
-                    .and_then(|defs| defs.iter().find(|t| &t.tier_id == tier_id));
-                rows.push((
-                    *at,
-                    LatestAchievedBadge {
-                        id: def.id.clone(),
-                        name: def.name.clone(),
-                        tier_name: tier_def.map(|t| t.tier_name.clone()),
-                        image: tier_def
-                            .and_then(|t| tier_image(&t.assets))
-                            .or_else(|| tier_image(&def.assets)),
-                    },
-                ));
-            } else if let Some(at) = progress.get(&def.id).and_then(|p| p.completed_at) {
-                rows.push((
-                    at,
-                    LatestAchievedBadge {
-                        id: def.id.clone(),
-                        name: def.name.clone(),
-                        tier_name: None,
-                        image: tier_image(&def.assets),
-                    },
-                ));
-            }
-        }
-        rows.sort_by_key(|b| std::cmp::Reverse(b.0));
-        Ok(rows
-            .into_iter()
-            .take(limit.max(0) as usize)
-            .map(|(_, b)| b)
-            .collect())
     }
 }
 
+/// An achieved badge as upstream's `calculateUserProgress` builds it, or
+/// `None` when the wallet has not achieved it (no completion and no earned
+/// tier the catalog knows).
 fn assemble_badge(
     def: &DefRow,
-    badge_tiers: Option<&Vec<TierRow>>,
     prog: Option<&ProgressRow>,
-    user_tiers: Option<&Vec<(String, NaiveDateTime)>>,
-) -> BadgeData {
+    user_tiers: &[(String, NaiveDateTime)],
+) -> Option<BadgeData> {
     let steps_done = prog.map(|p| p.steps_done).unwrap_or(0);
-    let total_steps_target: i32 = match badge_tiers {
-        Some(ts) if def.is_tier => ts.iter().map(|t| t.criteria_steps).max().unwrap_or(0),
-        _ => 1,
+    let completed_at = prog.and_then(|p| p.completed_at);
+    let last = user_tiers.last().filter(|_| def.is_tier);
+    let current = last.and_then(|(tier_id, _)| def.tier(tier_id));
+    if completed_at.is_none() && current.is_none() {
+        return None;
+    }
+    let (next, total, assets, last_completed, achieved_tiers) = if def.is_tier {
+        let total = def.tiers.last().map_or(0, |t| t.criteria_steps);
+        let next_index = match last {
+            Some((tier_id, _)) => def.tier(tier_id).map_or(0, |(i, _)| i + 1),
+            None => 0,
+        };
+        let next = def
+            .tiers
+            .get(next_index)
+            .map_or(total, |t| t.criteria_steps);
+        let current = current.map(|(_, t)| t);
+        (
+            next,
+            total,
+            current.map(|t| t.assets.clone()),
+            LastCompletedTier {
+                at: last.map(|(_, at)| epoch_ms(*at)),
+                name: current.map(|t| t.tier_name.clone()),
+                image: current.and_then(|t| image(&t.assets)),
+            },
+            Some(
+                user_tiers
+                    .iter()
+                    .map(|(tier_id, at)| AchievedTier {
+                        tier_id: tier_id.clone(),
+                        completed_at: epoch_ms(*at),
+                    })
+                    .collect(),
+            ),
+        )
+    } else {
+        (
+            def.target(),
+            def.target(),
+            Some(def.assets.clone()),
+            LastCompletedTier {
+                at: None,
+                name: None,
+                image: None,
+            },
+            None,
+        )
     };
-    let achieved_list: Vec<AchievedTier> = user_tiers
-        .map(|ts| {
-            ts.iter()
-                .map(|(tier_id, at)| AchievedTier {
-                    tier_id: tier_id.clone(),
-                    completed_at: Some(epoch_ms(*at)),
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let last = user_tiers.and_then(|ts| ts.last());
-    let last_tier_def = last.and_then(|(tier_id, _)| {
-        badge_tiers.and_then(|defs| defs.iter().find(|t| &t.tier_id == tier_id))
-    });
-    let next_steps_target: Option<i32> = match badge_tiers {
-        Some(ts) if def.is_tier => ts
-            .iter()
-            .map(|t| t.criteria_steps)
-            .filter(|&s| s > steps_done)
-            .min(),
-        _ => {
-            if steps_done >= total_steps_target {
-                None
-            } else {
-                Some(total_steps_target)
-            }
-        }
+    Some(BadgeData {
+        id: def.id.clone(),
+        name: def.name.clone(),
+        description: def.description.clone(),
+        category: def.category.clone(),
+        is_tier: def.is_tier,
+        completed_at: completed_at.map(|t| epoch_ms(t).to_string()),
+        assets,
+        progress: BadgeProgress {
+            achieved_tiers,
+            steps_done,
+            next_steps_target: (completed_at.is_none() && !def.archived).then_some(next),
+            total_steps_target: total,
+            last_completed: Some(last_completed),
+        },
+    })
+}
+
+fn not_achieved_badge(def: &DefRow, prog: Option<&ProgressRow>) -> BadgeData {
+    let (next, total, assets) = match (def.tiers.first(), def.tiers.last()) {
+        (Some(first), Some(last)) if def.is_tier => (
+            first.criteria_steps,
+            last.criteria_steps,
+            first.assets.clone(),
+        ),
+        _ => (def.target(), def.target(), def.assets.clone()),
     };
     BadgeData {
         id: def.id.clone(),
@@ -475,77 +694,50 @@ fn assemble_badge(
         description: def.description.clone(),
         category: def.category.clone(),
         is_tier: def.is_tier,
-        completed_at: prog.and_then(|p| p.completed_at.map(|t| epoch_ms(t).to_string())),
-        assets: def.assets.clone(),
+        completed_at: None,
+        assets: Some(assets),
         progress: BadgeProgress {
-            steps_done,
-            next_steps_target,
-            total_steps_target,
-            last_completed_tier_at: last.map(|(_, at)| epoch_ms(*at)),
-            last_completed_tier_name: last_tier_def.map(|t| t.tier_name.clone()),
-            last_completed_tier_image: last_tier_def.and_then(|t| tier_image(&t.assets)),
-            achieved_tiers: achieved_list,
+            achieved_tiers: None,
+            steps_done: prog.map(|p| p.steps_done).unwrap_or(0),
+            next_steps_target: Some(next),
+            total_steps_target: total,
+            last_completed: None,
         },
     }
 }
 
-fn tier_image(assets: &Assets) -> Option<String> {
-    assets
-        .get("2d")
-        .and_then(|d| d.get("normal"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-}
-
 #[cfg(test)]
-mod rewrite_base_tests {
-    use super::rewrite_base;
+mod resolve_assets_tests {
+    use super::{DEFAULT_ASSET_BASE_URL, resolve_assets};
     use serde_json::json;
 
     #[test]
-    fn swaps_the_host_prefix_on_every_nested_url() {
+    fn relative_and_legacy_paths_resolve_against_the_base() {
         let assets = json!({
-            "2d": {"normal": "https://badges.decentraland.org/assets/open_for_business/2d/normal.png", "hrm": "", "baseColor": ""},
-            "3d": {"normal": "https://badges.decentraland.org/assets/open_for_business/3d/normal.png", "hrm": "", "baseColor": ""}
+            "2d": {"normal": "traveler/starter/2d/normal.png"},
+            "3d": {
+                "normal": "https://badges.decentraland.org/assets/traveler/starter/3d/normal.png",
+                "hrm": "https://elsewhere.example/x.png",
+                "basecolor": ""
+            }
         });
-        let rewritten = rewrite_base(
-            &assets,
-            "https://badges.decentraland.org",
-            "https://badges.interconnected.online",
+        assert_eq!(
+            resolve_assets(&assets, DEFAULT_ASSET_BASE_URL),
+            json!({
+                "2d": {"normal": "https://assets-cdn.decentraland.org/traveler/starter/2d/normal.png"},
+                "3d": {
+                    "normal": "https://assets-cdn.decentraland.org/traveler/starter/3d/normal.png",
+                    "hrm": "https://elsewhere.example/x.png",
+                    "basecolor": ""
+                }
+            })
         );
         assert_eq!(
-            rewritten["2d"]["normal"],
-            "https://badges.interconnected.online/assets/open_for_business/2d/normal.png"
-        );
-        assert_eq!(
-            rewritten["3d"]["normal"],
-            "https://badges.interconnected.online/assets/open_for_business/3d/normal.png"
-        );
-    }
-
-    #[test]
-    fn leaves_empty_strings_untouched() {
-        let assets = json!({"2d": {"normal": "", "hrm": "", "baseColor": ""}});
-        assert_eq!(
-            rewrite_base(
-                &assets,
-                "https://badges.decentraland.org",
-                "https://badges.interconnected.online"
+            resolve_assets(
+                &json!({"2d": {"normal": "/a/2d/normal.png"}}),
+                "https://node.example/badges/assets"
             ),
-            assets
-        );
-    }
-
-    #[test]
-    fn is_a_no_op_when_from_and_to_match() {
-        let assets = json!({"2d": {"normal": "https://badges.decentraland.org/x.png"}});
-        assert_eq!(
-            rewrite_base(
-                &assets,
-                "https://badges.decentraland.org",
-                "https://badges.decentraland.org"
-            ),
-            assets
+            json!({"2d": {"normal": "https://node.example/badges/assets/a/2d/normal.png"}})
         );
     }
 }

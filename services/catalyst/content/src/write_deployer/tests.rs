@@ -272,6 +272,221 @@ async fn rate_limiter_ttl_and_size() {
 }
 
 #[test]
+fn a_reservation_holds_its_pointers_until_released() {
+    let rl = DeployRateLimiter::with_reference_defaults();
+    let ptrs = vec!["0,0".to_string(), "0,1".to_string(), "0,0".to_string()];
+
+    let held = rl.reserve("scene", &ptrs, false).unwrap();
+    assert!(
+        rl.reserve("scene", &ptrs[1..2], false).is_none(),
+        "a held pointer refuses a second reservation"
+    );
+    held.release();
+    assert!(
+        !rl.is_rate_limited("scene", &ptrs),
+        "a released reservation frees its pointers"
+    );
+
+    drop(rl.reserve("scene", &ptrs, false).unwrap());
+    assert!(
+        rl.is_rate_limited("scene", &ptrs),
+        "a reservation that is not released keeps its pointers"
+    );
+
+    let profile = vec!["0xabc".to_string()];
+    drop(rl.reserve("profile", &profile, true).unwrap());
+    assert!(rl.is_unchanged_limited(&profile));
+    rl.clear();
+    drop(rl.reserve("profile", &profile, true).unwrap());
+    rl.buckets
+        .lock()
+        .get_mut("profile")
+        .unwrap()
+        .entries
+        .clear();
+    assert!(
+        rl.reserve("profile", &profile, true).is_none(),
+        "the unchanged bucket refuses on its own"
+    );
+    assert!(
+        !rl.is_rate_limited("profile", &profile),
+        "a refused unchanged reservation releases the type bucket"
+    );
+}
+
+const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/// A signed scene entity with no content files: its bytes, id and auth chain.
+async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Value) {
+    use alloy::signers::{Signer, local::PrivateKeySigner};
+    let bytes = Bytes::from(
+        serde_json::to_vec(&serde_json::json!({
+            "version": "v3",
+            "type": "scene",
+            "pointers": pointers,
+            "timestamp": timestamp,
+            "content": [],
+            "metadata": {}
+        }))
+        .unwrap(),
+    );
+    let id = hash_bytes_v1(&bytes);
+    let key: PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
+    let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
+    let chain = serde_json::json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
+    ]);
+    (bytes, id, chain)
+}
+
+#[tokio::test]
+async fn a_deploy_with_a_bad_or_missing_signature_does_not_hold_its_pointers() {
+    let (deployer, tmp) = deployer_over_temp_storage("bad-signature").await;
+    let pointers = vec!["3,3".to_string()];
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms).await;
+    let forged = serde_json::json!([
+        {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": chain[1]["signature"]}
+    ]);
+    let unsigned = serde_json::json!([chain[0].clone()]);
+    for bad in [forged, unsigned] {
+        let err = deployer
+            .deploy_entity(vec![bytes.clone()], &id, bad, "LOCAL")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, DeployFailure::Rejected(errors) if errors[0].starts_with("The signature is invalid. ")),
+            "{err:?}"
+        );
+        assert!(!deployer.is_rate_limited("scene", "3,3"));
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
+async fn a_rejected_deploy_with_an_oversized_pointer_list_does_not_fill_the_bucket() {
+    let (deployer, tmp) = deployer_over_temp_storage("oversized").await;
+    let pointers: Vec<String> = (0..1001).map(|y| format!("0,{y}")).collect();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, _) = signed_scene(&pointers, now_ms).await;
+    let unsigned = serde_json::json!([
+        {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"}
+    ]);
+    deployer
+        .deploy_entity(vec![bytes], &id, unsigned, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(
+        !deployer.is_rate_limited("scene", "100,100"),
+        "an unrelated pointer is still free"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
+async fn a_deploy_whose_write_fails_does_not_hold_its_pointers() {
+    let (deployer, tmp) = deployer_over_temp_storage("persist-fails").await;
+    let pointers = vec!["4,4".to_string()];
+    let (bytes, id, chain) = signed_scene(&pointers, chrono::Utc::now().timestamp_millis()).await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DeployFailure::Unavailable(_)), "{err:?}");
+    assert!(!deployer.is_rate_limited("scene", "4,4"));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// Two concurrent deploys of one entity (a client's retry while the first
+/// is still in flight) both answer its stored timestamp; the second waits for
+/// the first instead of meeting the pointer it holds.
+#[tokio::test]
+async fn two_concurrent_deploys_of_one_entity_both_answer_its_stored_timestamp() {
+    let Some(pool) = test_pool(4).await else {
+        return;
+    };
+    let (storage, tmp) = temp_storage("same-entity").await;
+    let deployer = WriteDeployer::new(pool, storage, Arc::new(NoEip1654));
+    let pointers = Scope::new().pointers(&["8,8"]);
+    let (bytes, id, chain) = signed_scene(&pointers, chrono::Utc::now().timestamp_millis()).await;
+    let deploy = || deployer.deploy_entity(vec![bytes.clone()], &id, chain.clone(), "LOCAL");
+
+    let (first, second) = tokio::join!(deploy(), deploy());
+    let first = first.expect("the first copy deploys");
+    let second = second.expect("the concurrent copy answers the stored timestamp");
+    assert_eq!(first, second);
+    assert_eq!(deployer.deployed_timestamp(&id).await.unwrap(), Some(first));
+    assert!(deployer.is_rate_limited("scene", &pointers[0]));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The first deploy holds its pointer while it is in flight (a database that accepts
+/// connections and never answers), so a concurrent deploy to that pointer is refused with
+/// upstream's in-flight text, unqueued; a cancelled deploy lets its pointers go.
+#[tokio::test]
+async fn of_two_concurrent_deploys_to_one_pointer_the_second_is_refused_as_in_flight() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
+    let silent = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        connected_tx.send(()).unwrap();
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(60))
+        .connect_lazy(&format!("postgres://nobody@{addr}/nowhere"))
+        .unwrap();
+    let (storage, tmp) = temp_storage("concurrent").await;
+    let deployer = Arc::new(WriteDeployer::new(pool, storage, Arc::new(NoEip1654)));
+    let pointers = vec!["5,5".to_string()];
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (first_bytes, first_id, first_chain) = signed_scene(&pointers, now_ms).await;
+    let (second_bytes, second_id, second_chain) = signed_scene(&pointers, now_ms + 1).await;
+
+    let first = {
+        let deployer = Arc::clone(&deployer);
+        tokio::spawn(async move {
+            deployer
+                .deploy_entity(vec![first_bytes], &first_id, first_chain, "LOCAL")
+                .await
+        })
+    };
+    connected_rx.await.unwrap();
+
+    let second = tokio::time::timeout(
+        Duration::from_secs(10),
+        deployer.deploy_entity(vec![second_bytes], &second_id, second_chain, "LOCAL"),
+    )
+    .await
+    .expect("the second deploy is refused, not queued behind the first")
+    .unwrap_err();
+    assert_eq!(
+        second.errors(),
+        [
+            "The following pointers are currently being deployed: '5,5'. Please try again in a few seconds."
+        ],
+        "{second:?}"
+    );
+
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    assert!(
+        deployer
+            .pointers_in_flight
+            .lock()
+            .values()
+            .all(HashSet::is_empty),
+        "a cancelled deploy releases its claim"
+    );
+    silent.abort();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn has_newer_entity_timestamp_and_tiebreak() {
     assert!(stored_is_newer_or_equal(200, "bafy_a", 100, "bafy_z"));
     assert!(!stored_is_newer_or_equal(50, "bafy_z", 100, "bafy_a"));
@@ -672,8 +887,6 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
         return;
     };
     let (storage, tmp) = temp_storage("e2e").await;
-    // The rate limiter records the pointers before validation runs, so every attempt below
-    // gets its own deployer: a rejected attempt must not shadow the next one for 20 s.
     let fresh = || WriteDeployer::new(pool.clone(), storage.clone(), Arc::new(NoEip1654));
     let scope = Scope::new();
     let pointers = scope.pointers(&["7,7"]);
@@ -734,11 +947,26 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
         .await
         .expect_err("a chain whose signature does not recover to its signer is rejected");
     assert!(
-        matches!(&forged, DeployFailure::Rejected(errors) if errors[0].starts_with("The auth chain is invalid")),
+        matches!(&forged, DeployFailure::Rejected(errors) if errors[0].starts_with("The signature is invalid. ")),
         "{forged:?}"
     );
 
-    fresh()
+    let deployer = fresh();
+    deployer
+        .deploy_entity(
+            vec![entity_bytes.clone(), model.clone()],
+            &entity_id,
+            chain.clone(),
+            "LOCAL",
+        )
+        .await
+        .expect("a signed scene with every file at hand deploys");
+    assert!(
+        deployer.is_rate_limited("scene", &pointers[0]),
+        "an accepted deploy holds its pointer"
+    );
+    deployer.clear_rate_limits();
+    deployer
         .deploy_entity(
             vec![entity_bytes.clone(), model.clone()],
             &entity_id,
@@ -746,7 +974,11 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
             "LOCAL",
         )
         .await
-        .expect("a signed scene with every file at hand deploys");
+        .expect("a deploy of an already deployed entity succeeds");
+    assert!(
+        !deployer.is_rate_limited("scene", &pointers[0]),
+        "a deploy that inserted nothing does not hold the pointer"
+    );
 
     let row: (String, String, Vec<String>, Option<Value>) = sqlx::query_as(
         "SELECT deployer_address, entity_type, entity_pointers, entity_metadata
@@ -833,7 +1065,7 @@ async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_
         .unwrap_err();
     assert!(matches!(err, DeployFailure::Unavailable(_)), "{err:?}");
     assert!(
-        err.errors()[0].starts_with("Error checking parcel access: no LAND rights source"),
+        err.errors()[0] == crate::validator::checker::PARCEL_ACCESS_UNDECIDED,
         "{err:?}"
     );
 
@@ -867,4 +1099,40 @@ async fn a_local_scene_deploy_without_a_land_rights_source_is_undecidable_never_
         .await
         .unwrap();
     let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// As upstream's `rate-limiter.ts`: each type takes its own setting, else
+/// its built-in window; `DEPLOYMENTS_DEFAULT_RATE_LIMIT_*` (here the operator
+/// docs' `60`, read as 60 ms) changes none of them.
+#[test]
+fn the_default_rate_limit_leaves_every_types_own_window() {
+    let config = crate::config::Config::parse_for_tests(&[
+        "x",
+        "--database-url",
+        "postgres:///c",
+        "--deployments-default-rate-limit-ttl-ms",
+        "60",
+        "--deployments-default-rate-limit-max",
+        "300",
+        "--deployment-rate-limit-ttl-scene-ms",
+        "5s",
+        "--deployment-rate-limit-max-scene",
+        "7",
+    ])
+    .unwrap();
+    let limits = DeployLimits::from_config(&config.content);
+    let of = |etype: &str| {
+        limits
+            .rate_limits
+            .iter()
+            .find(|(t, ..)| *t == etype)
+            .map(|&(_, ttl, max)| (ttl, max))
+            .unwrap()
+    };
+    assert_eq!(of("profile"), (Duration::from_secs(3), 500));
+    assert_eq!(of("scene"), (Duration::from_secs(5), 7));
+    for &(etype, ttl, max) in REFERENCE_RATE_LIMITS.iter().filter(|(t, ..)| *t != "scene") {
+        assert_eq!(of(etype), (ttl, max), "{etype}");
+    }
+    assert_eq!(limits.rate_limits.len(), REFERENCE_RATE_LIMITS.len());
 }

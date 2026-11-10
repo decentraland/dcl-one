@@ -30,6 +30,8 @@ export const EventRecordSchema = z.object({
   image: z.string().nullable(),
   image_vertical: z.string().nullable(),
   description: z.string().nullable(),
+  contact: z.string().nullable().optional(),
+  details: z.string().nullable().optional(),
   start_at: z.string().nullable(),
   finish_at: z.string().nullable(),
   next_start_at: z.string().nullable(),
@@ -81,7 +83,7 @@ export const EventRecordSchema = z.object({
   deleted_by: z.string().nullable(),
   deleted_at: z.string().nullable(),
   deleted_reason: z.string().nullable(),
-  previous_place_id: z.string().nullable(),
+  previous_place_id: z.string().nullable().optional(),
   connected_addresses: z.array(z.string()).optional(),
 });
 
@@ -114,6 +116,8 @@ export const V1EventRecordSchema = z.object({
   image: z.string().nullable(),
   image_vertical: z.string().nullable(),
   description: z.string().nullable(),
+  contact: z.string().nullable().optional(),
+  details: z.string().nullable().optional(),
   start_at: z.string().nullable(),
   finish_at: z.string().nullable(),
   next_start_at: z.string().nullable(),
@@ -165,7 +169,7 @@ export const V1EventRecordSchema = z.object({
   deleted_by: z.string().nullable(),
   deleted_at: z.string().nullable(),
   deleted_reason: z.string().nullable(),
-  previous_place_id: z.string().nullable(),
+  previous_place_id: z.string().nullable().optional(),
   connected_addresses: z.array(z.string()).optional(),
 });
 

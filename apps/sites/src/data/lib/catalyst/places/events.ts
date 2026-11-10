@@ -28,6 +28,8 @@ export type Event = {
   start_at: string | null;
   finish_at: string | null;
   next_start_at: string | null;
+  next_finish_at?: string | null;
+  duration?: number | null;
   all_day: boolean;
   x: number | null;
   y: number | null;
@@ -44,6 +46,7 @@ export type Event = {
   recurrent_frequency: string | null;
   total_attendees: number | null;
   place_id: string | null;
+  connected_addresses?: string[];
 };
 
 export type EventCategory = {
@@ -61,12 +64,15 @@ function parseEvent(raw: unknown): Event {
   throw new CatalystError("event payload failed validation", "events");
 }
 
-function parseEvents(raw: unknown[]): Event[] {
-  const out: Event[] = [];
+function parseEvents(raw: unknown[]): (Event | null)[] {
+  const out: (Event | null)[] = [];
   for (const row of raw ?? []) {
     const r = EventRecordSchema.safeParse(row);
     if (r.success) out.push(r.data);
-    else warnInvalid("Event", r.error.issues);
+    else {
+      warnInvalid("Event", r.error.issues);
+      out.push(null);
+    }
   }
   return out;
 }
@@ -80,10 +86,16 @@ function toEventCategory(c: z.infer<typeof EventCategoryRecordSchema>): EventCat
   };
 }
 
+export const EVENT_CALENDAR_LIMIT = 500;
+
 type FetchEventsParams = {
   list?: "live" | "active" | "highlight" | "trending";
   search?: string;
   category?: string;
+  from?: string;
+  to?: string;
+  recurrent?: boolean;
+  with_connected_users?: boolean;
   limit?: number;
   offset?: number;
 };
@@ -114,15 +126,21 @@ export type _DriftAttendeeListEnvelope = Assert<
   AssignableTo<RsApiOk<RsEventAttendee[]>, z.input<typeof AttendeeListEnvelope>>
 >;
 
-export async function fetchEvents(
-  params: FetchEventsParams = {},
-  opts: GetOptions = {},
-): Promise<{ data: Event[]; total: number; copy?: CopyStamp | null }> {
-  const raw = await getJSON<unknown>(eventsApiPath("get", "/api/events"), {
+async function fetchEventRows(
+  params: FetchEventsParams,
+  opts: GetOptions,
+): Promise<{ rows: (Event | null)[]; total: number; copy: CopyStamp | null }> {
+  // `/v1/events`: the strict `/api/events` schema (upstream's `additionalProperties: false`)
+  // refuses `recurrent`, which this site sends; the v1 list keeps the same envelope.
+  const raw = await getJSON<unknown>(eventsApiPath("get", "/v1/events"), {
     ...opts,
     query: {
       list: params.list,
       search: params.search,
+      from: params.from,
+      to: params.to,
+      recurrent: params.recurrent,
+      with_connected_users: params.with_connected_users,
       limit: params.limit,
       offset: params.offset,
     },
@@ -131,11 +149,33 @@ export async function fetchEvents(
   const env = EventListEnvelope.safeParse(raw);
   if (!env.success) {
     warnInvalid("Events envelope", env.error.issues);
-    return { data: [], total: 0, copy };
+    throw new CatalystError("events envelope failed validation", "events");
   }
   const payload = env.data.data;
-  const data = parseEvents(Array.isArray(payload) ? payload : payload.events);
-  return { data, total: Array.isArray(payload) ? data.length : payload.total, copy };
+  const rows = parseEvents(Array.isArray(payload) ? payload : payload.events);
+  return { rows, total: Array.isArray(payload) ? rows.length : payload.total, copy };
+}
+
+export async function fetchEvents(
+  params: FetchEventsParams = {},
+  opts: GetOptions = {},
+): Promise<{ data: Event[]; total: number; received?: number; invalidCount?: number; copy?: CopyStamp | null }> {
+  const { rows, total, copy } = await fetchEventRows(params, opts);
+  return { data: rows.filter((event) => event !== null), total, received: rows.length, invalidCount: rows.filter((event) => event === null).length, copy };
+}
+
+/** Slice server slots before discarding malformed records so lookahead never leaks into this page. */
+export async function fetchEventPage(
+  params: FetchEventsParams & { limit: number },
+  opts: GetOptions = {},
+): Promise<{ data: Event[]; hasMore: boolean; invalidCount?: number; copy?: CopyStamp | null }> {
+  const { rows, copy } = await fetchEventRows({ ...params, limit: params.limit + 1 }, opts);
+  return {
+    data: rows.slice(0, params.limit).filter((event) => event !== null),
+    hasMore: rows.length > params.limit,
+    invalidCount: rows.slice(0, params.limit).filter((event) => event === null).length,
+    copy,
+  };
 }
 
 export async function fetchEvent(id: string, opts: GetOptions = {}): Promise<Event> {
@@ -227,10 +267,8 @@ type UpcomingCard = {
   jumpUrl?: string;
 };
 
-export function effectiveStartAt(e: Event, now = new Date()): string | null {
-  const start = e.start_at ? new Date(e.start_at) : null;
-  if (start && !Number.isNaN(start.getTime()) && start >= now) return e.start_at;
-  return e.next_start_at ?? e.start_at;
+export function effectiveStartAt(e: Event): string | null {
+  return eventOccurrence(e).start ?? null;
 }
 
 export function eventJumpUrl(e: Event): string | null {
@@ -283,7 +321,7 @@ export function toLiveNowCard(e: Event): LiveNowCard {
   return {
     id: e.id,
     title: e.name ?? "Untitled event",
-    users: e.total_attendees,
+    users: e.connected_addresses ? new Set(e.connected_addresses.map((address) => address.toLowerCase())).size : null,
     isEvent: true,
     creator: e.user_name ?? e.scene_name ?? "Decentraland",
     hue: hueFor(e.id),
@@ -328,7 +366,7 @@ export function groupEventsByDay(
   const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const allDays: DayEvent[][] = Array.from({ length: days }, () => []);
   for (const e of events) {
-    const iso = effectiveStartAt(e, now);
+    const iso = effectiveStartAt(e);
     if (!iso) continue;
     const t = new Date(iso).getTime();
     if (Number.isNaN(t)) continue;
@@ -345,7 +383,7 @@ export function groupEventsByDay(
         timeZone: "UTC",
       }),
       live: liveIds.has(e.id),
-      users: e.total_attendees ?? undefined,
+      users: toLiveNowCard(e).users ?? undefined,
       x: e.x ?? e.position?.[0] ?? undefined,
       y: e.y ?? e.position?.[1] ?? undefined,
       hue: hueFor(e.id),
@@ -361,4 +399,19 @@ export function groupEventsByDay(
       .toUpperCase();
   });
   return { allDays, dayLabels };
+}
+
+/** Public cards, detail pages and calendar exports refer to the same next occurrence. */
+export function eventOccurrence(event: Pick<Event, "start_at" | "next_start_at" | "finish_at" | "next_finish_at" | "duration" | "recurrent">): { start: string | undefined; finish: string | undefined } {
+  const start = event.next_start_at ?? event.start_at ?? undefined;
+  const startTime = start ? Date.parse(start) : NaN;
+  const duration = event.duration ?? (!event.recurrent && event.finish_at && event.start_at
+    ? Date.parse(event.finish_at) - Date.parse(event.start_at)
+    : undefined);
+  const finish = event.next_finish_at && Date.parse(event.next_finish_at) > startTime
+    ? event.next_finish_at
+    : (Number.isFinite(startTime) && duration !== undefined && Number.isFinite(duration) && duration > 0
+    ? new Date(startTime + duration).toISOString()
+    : undefined);
+  return { start, finish };
 }

@@ -727,6 +727,101 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         "5 MANA at the seeded 0.02 spot is one credit: {}",
         body["data"][0]
     );
+    // A price no credit amount can hold (Amoy carries an item at 2^256-1 wei)
+    // leaves its row in the page, priced in no credits, instead of failing the
+    // whole page on the bigint cast.
+    let priced = body["data"][0]["itemId"].as_str().unwrap().to_string();
+    let price: String = sqlx::query_scalar(
+        "SELECT price::text FROM shop.items WHERE contract_address = $1 AND item_id = $2::numeric",
+    )
+    .bind(c1.clone())
+    .bind(&priced)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let set_price = |value: String| {
+        sqlx::query(
+            "UPDATE shop.items SET price = $1::numeric WHERE contract_address = $2 AND item_id = $3::numeric",
+        )
+        .bind(value)
+        .bind(c1.clone())
+        .bind(priced.clone())
+        .execute(&pool)
+    };
+    set_price(
+        "115792089237316195423570985008687907853269984665640564039457584007913129639935".into(),
+    )
+    .await
+    .unwrap();
+    state.readers.clear();
+    let (status, body) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000"),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "an absurd price fails no page: {body}"
+    );
+    let row = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["itemId"] == priced.as_str())
+        .cloned()
+        .unwrap_or_else(|| panic!("item {priced} stays in the page: {body}"));
+    assert_eq!(row["priceCredits"], 0, "priced in no credits: {row}");
+    set_price(price).await.unwrap();
+    state.readers.clear();
+    // isOnSale=false is the complement of isOnSale=true, not the whole list:
+    // item 4 sold out is the one item of c1 not on sale.
+    let sold_out = |available: i32| {
+        sqlx::query(
+            "UPDATE shop.items SET available = $1 WHERE contract_address = $2 AND item_id = '4'",
+        )
+        .bind(available)
+        .bind(c1.clone())
+        .execute(&pool)
+    };
+    let stock: i32 = sqlx::query_scalar(
+        "SELECT available::int FROM shop.items WHERE contract_address = $1 AND item_id = '4'",
+    )
+    .bind(c1.clone())
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    sold_out(0).await.unwrap();
+    state.readers.clear();
+    let total = |body: &Value| body["total"].as_i64().unwrap();
+    let (_, all) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000"),
+    )
+    .await;
+    let (_, on) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000&isOnSale=true"),
+    )
+    .await;
+    let (status, off) = get(
+        app(),
+        &format!("/v3/catalog/items?contractAddress={c1}&first=1000&isOnSale=false"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{off}");
+    assert_eq!(total(&off), 1, "{off}");
+    assert_eq!(off["data"][0]["itemId"], "4", "{off}");
+    assert_eq!(off["data"][0]["isOnSale"], false, "{off}");
+    assert_eq!(
+        total(&on) + total(&off),
+        total(&all),
+        "on {} / all {}",
+        total(&on),
+        total(&all)
+    );
+    sold_out(stock).await.unwrap();
+    state.readers.clear();
 
     // The collections mirror behind /v1/contracts and /v1/collections.
     let (status, body) = get(app(), "/v1/contracts?first=1000").await;
@@ -764,6 +859,32 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         (Some(3), Some("primary"), Some("male"))
     );
     assert!(listing["coupon"].is_null() && listing["compareAtCredits"].is_null());
+    // `creator` takes a comma-separated list, any of which matches, in any case (the Shop's creators filter).
+    let stranger = "0x00000000000000000000000000000000000000aa";
+    for feed in ["/v3/catalog/shop?", "/v3/catalog/unified?groupBy=item&"] {
+        let (_, all) = get(app(), &format!("{feed}contractAddress={c1}")).await;
+        let listed = all["total"].as_i64().unwrap();
+        assert!(listed > 0, "{feed}: {all}");
+        for (creators, want) in [
+            (
+                format!("{stranger},0x{}", CREATOR[2..].to_uppercase()),
+                listed,
+            ),
+            (stranger.to_string(), 0),
+        ] {
+            let (status, body) = get(
+                app(),
+                &format!("{feed}contractAddress={c1}&creator={creators}"),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            assert_eq!(
+                body["total"].as_i64(),
+                Some(want),
+                "{feed}creator={creators}: {body}"
+            );
+        }
+    }
     // The creator's live coupon discounts the listing, but only one signed
     // against the manager paired with the marketplace the listing settles on
     // (the V3 trade here): the bigger V2-manager coupon never applies.
@@ -931,6 +1052,50 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         vec![format!("{c2}-10"), format!("{c2}-5")],
         "{body}"
     );
+    // The emote attributes: c2's items 5 and 10 are emotes on sale; 5 loops
+    // with sound, 10 plays once with props.
+    let emote = |item: &'static str, looped: bool, sound: bool, geometry: bool| {
+        sqlx::query("UPDATE shop.items SET emote_loop = $1, emote_has_sound = $2, emote_has_geometry = $3 WHERE contract_address = $4 AND item_id = $5::numeric")
+            .bind(looped)
+            .bind(sound)
+            .bind(geometry)
+            .bind(c2.clone())
+            .bind(item)
+            .execute(&pool)
+    };
+    emote("5", true, true, false).await.unwrap();
+    emote("10", false, false, true).await.unwrap();
+    let picked_with = |filter: &'static str| {
+        let app = app();
+        let uri =
+            format!("/v3/catalog/unified?groupBy=item&items={c2}-5,{c2}-10&first=10&{filter}");
+        async move {
+            let (status, body) = get(app, &uri).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let mut ids: Vec<String> = body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d["itemId"].as_str().unwrap().to_string())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    assert_eq!(picked_with("emotePlayMode=loop").await, vec!["5"]);
+    assert_eq!(picked_with("emotePlayMode=simple").await, vec!["10"]);
+    assert_eq!(
+        picked_with("emotePlayMode=loop&emotePlayMode=simple").await,
+        vec!["10", "5"],
+        "both modes is no filter"
+    );
+    assert_eq!(picked_with("emoteHasSound=true").await, vec!["5"]);
+    assert_eq!(picked_with("emoteHasGeometry=true").await, vec!["10"]);
+    assert!(
+        picked_with("emoteHasSound=true&emoteHasGeometry=true")
+            .await
+            .is_empty()
+    );
     let (_, body) = get(
         app(),
         &format!("/v3/catalog/unified?groupBy=item&contractAddress=junk&items={c2}-5"),
@@ -1048,6 +1213,42 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
     assert_eq!(
         body["data"][1]["tradeId"].as_str(),
         Some(resale_id.as_str())
+    );
+    // `/v1/nfts` gives a token with no legacy order its open v3 listing,
+    // but only one its current owner signed.
+    let resold_token = format!(
+        "{}",
+        alloy_primitives::U256::from(2u64) << 216u32 | alloy_primitives::U256::from(7u64)
+    );
+    let wanted = |owner: &str| {
+        vec![(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+            owner.to_string(),
+        )]
+    };
+    let listed = super::orders::open_trade_orders(&state, &wanted(WALLET_A))
+        .await
+        .unwrap();
+    let order = listed
+        .get(&(
+            "matic".to_string(),
+            c_nft.to_ascii_lowercase(),
+            resold_token.clone(),
+        ))
+        .expect("the owner's open listing");
+    assert_eq!(
+        (order.id.as_str(), order.trade_id.as_deref()),
+        (resale_id.as_str(), Some(resale_id.as_str()))
+    );
+    assert_eq!(order.price, "3000000000000000000");
+    assert!(
+        super::orders::open_trade_orders(&state, &wanted(CREATOR))
+            .await
+            .unwrap()
+            .is_empty(),
+        "a listing its signer no longer owns is not the token's order"
     );
     assert_eq!(body["data"][1]["issuedId"], "7");
     let (status, body) = get(app(), &format!("/v1/orders/open-by-items?item={c_nft}-2")).await;
@@ -1775,6 +1976,174 @@ async fn a_signed_item_order_is_stored_once_and_only_behind_the_write_switch() {
     for id in [id, created] {
         delete_trade(&pool, &id).await;
     }
+}
+
+fn item_bid_json(signer: &str, contract: &str, item_id: &str) -> String {
+    format!(
+        r#"{{ "signer": "{signer}", "signature": "0x00", "type": "bid", "network": "MATIC", "chainId": 137,
+             "checks": {{ "uses": 1, "expiration": 4102444800000, "effective": 0, "salt": "0x1234", "contractSignatureIndex": 0, "signerSignatureIndex": 0, "allowedRoot": "0x", "externalChecks": [] }},
+             "sent": [ {{"assetType": 1, "contractAddress": "0x2222222222222222222222222222222222222222", "amount": "1500000000000000000", "extra": "0x"}} ],
+             "received": [ {{"assetType": 4, "contractAddress": "{contract}", "itemId": "{item_id}", "extra": "0x", "beneficiary": "{signer}"}} ] }}"#
+    )
+}
+
+async fn bid_notifications(pool: &PgPool, address: &str) -> Vec<(uuid::Uuid, Value)> {
+    sqlx::query_as("SELECT id, metadata FROM social.notifications WHERE address = $1 AND type = 'bid_received'")
+        .bind(address)
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_local_bid_notifies_the_item_creator_once() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 7);
+    let creator = contract_of(&t, 6);
+    sqlx::query(
+        "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+             total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+         VALUES ('matic', $1, 1, 137, 'wearable_v2', $2, $3, 'legendary', 0, 10, 10, 0, 'https://img.example/1.png', 'Space Jams', 'hat', 0, 0, 0, now())",
+    )
+    .bind(&contract)
+    .bind(format!("urn:decentraland:matic:collections-v2:{contract}:1"))
+    .bind(&creator)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let bid = |item: &str| {
+        let mut trade = listings::test_support::parse(&item_bid_json(&signer, &contract, item));
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade
+    };
+
+    let trade = bid("1");
+    let id = listings::create_trade(&pool, Some(&state), &trade, &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(matches!(
+        listings::create_trade(&pool, Some(&state), &trade, &signer, 1_000)
+            .await
+            .unwrap_err(),
+        listings::TradeCreationError::Duplicate
+    ));
+    // A bid on an item no index describes is stored without a notification.
+    let unknown = listings::create_trade(&pool, Some(&state), &bid("2"), &signer, 1_000)
+        .await
+        .unwrap();
+    let rows = bid_notifications(&pool, &creator).await;
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(
+        rows[0].1,
+        json!({
+            "image": "https://img.example/1.png",
+            "seller": creator,
+            "category": "wearable",
+            "rarity": "legendary",
+            "link": "https://decentraland.org/marketplace/account?section=bids",
+            "nftName": "Space Jams",
+            "price": "1500000000000000000",
+            "title": "Bid Received",
+            "description": "You received a bid of 1.5 MANA for this Space Jams.",
+            "network": "MATIC",
+        })
+    );
+
+    sqlx::query("DELETE FROM social.notifications WHERE address = $1")
+        .bind(&creator)
+        .execute(&pool)
+        .await
+        .unwrap();
+    delete_trade(&pool, &id).await;
+    delete_trade(&pool, &unknown).await;
+    cleanup_mirror(&pool, &[contract]).await;
+}
+
+/// A bid on the bidder's own item notifies nobody, and a failing
+/// notification insert leaves the bid stored.
+#[tokio::test]
+async fn a_bid_stands_without_its_notification() {
+    let Some(state) = state_with_db(Settings::for_tests()).await else {
+        return;
+    };
+    let pool = state.pool.clone();
+    let t = tag();
+    let contract = contract_of(&t, 8);
+    let creator = contract_of(&t, 9);
+    let signer = listings::test_support::signer().address().to_checksum(None);
+    let own = signer.to_ascii_lowercase();
+    for (item, by) in [("1", &creator), ("2", &own)] {
+        sqlx::query(
+            "INSERT INTO shop.items (network, contract_address, item_id, chain_id, item_type, urn, creator, rarity, \
+                 total_supply, max_supply, available, price, image, name, category, created_at, updated_at, reviewed_at, mirrored_at) \
+             VALUES ('matic', $1, $2::numeric, 137, 'wearable_v2', $3, $4, 'rare', 0, 10, 10, 0, 'https://img.example/1.png', 'Hat', 'hat', 0, 0, 0, now())",
+        )
+        .bind(&contract)
+        .bind(item)
+        .bind(format!("urn:decentraland:matic:collections-v2:{contract}:{item}"))
+        .bind(by)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let marketplace = listings::offchain_marketplace_v3(137).unwrap();
+    let bid = |item: &str| {
+        let mut trade = listings::test_support::parse(&item_bid_json(&signer, &contract, item));
+        listings::test_support::sign(&mut trade, &marketplace);
+        trade
+    };
+
+    let self_bid = listings::create_trade(&pool, Some(&state), &bid("2"), &signer, 1_000)
+        .await
+        .unwrap();
+    assert!(
+        bid_notifications(&pool, &own).await.is_empty(),
+        "no self-notification"
+    );
+
+    let func = format!("fail_bid_{t}");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION public.{func}() RETURNS trigger LANGUAGE plpgsql AS $f$ \
+         BEGIN IF NEW.address = '{creator}' THEN RAISE EXCEPTION 'notification refused'; END IF; RETURN NEW; END $f$"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER {func} BEFORE INSERT ON social.notifications FOR EACH ROW EXECUTE FUNCTION public.{func}()"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let stored = listings::create_trade(&pool, Some(&state), &bid("1"), &signer, 1_000).await;
+    for drop in [
+        format!("DROP TRIGGER {func} ON social.notifications"),
+        format!("DROP FUNCTION public.{func}()"),
+    ] {
+        sqlx::query(sqlx::AssertSqlSafe(drop))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let id = stored.expect("the bid is created although its notification failed");
+    let exists: bool =
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM shop.trades WHERE id = $1::uuid)")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(exists);
+    assert!(bid_notifications(&pool, &creator).await.is_empty());
+
+    delete_trade(&pool, &id).await;
+    delete_trade(&pool, &self_bid).await;
+    cleanup_mirror(&pool, &[contract]).await;
 }
 
 #[tokio::test]

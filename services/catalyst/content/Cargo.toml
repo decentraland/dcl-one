@@ -6,6 +6,7 @@ description = "The content server: entity deployment, validation, sync from the 
 publish = false
 
 [dependencies]
+catalyst-db = { path = "../db" }
 dcl-http = { workspace = true, features = ["db"] }
 dcl-auth.workspace = true
 catalyst-jobs = { path = "../jobs" }
@@ -28,6 +29,7 @@ futures.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
 uuid.workspace = true
+ipnet.workspace = true
 tokio-util.workspace = true
 parking_lot.workspace = true
 hex.workspace = true
@@ -35,6 +37,7 @@ libc.workspace = true
 urlencoding.workspace = true
 base64.workspace = true
 alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
 sha2.workspace = true
 bs58.workspace = true
 reqwest.workspace = true
@@ -49,6 +52,8 @@ ts = ["catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "cataly
 test-support = ["catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support"]
 
 [dev-dependencies]
+# Its own test-support items for the integration tests under tests/.
+catalyst-content = { path = ".", features = ["test-support"] }
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }

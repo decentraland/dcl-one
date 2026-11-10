@@ -431,6 +431,8 @@ pub async fn deploy_entity_streaming(
         report,
         retry_state,
     } = target;
+    // The read-through never removes a file held here until the flush takes the entity.
+    let _in_flight = crate::sync_deployer::hold_buffered(entity_id);
     let budget = deployer.inflight_bytes();
     download_file_with_retries(client, storage.as_ref(), entity_id, servers, Some(budget)).await?;
 
@@ -540,24 +542,11 @@ fn entity_parse_error(
     ))
 }
 
-/// Profile snapshot files sync leaves behind: all four avatar renders a profile deploys
-/// (`face.png`, `face128.png`, `face256.png`, `body.png`). They are about 1.9M profiles' worth of
-/// blobs nobody asks for until a face is shown, and they are derivable: `social::profile_images`
-/// renders `/entities/{cid}/face.png` and `/body.png` from the avatar in the entity's metadata
-/// when the store does not hold them, as the old node generated them on the fly. Their
-/// `/contents/{hash}` answers 404, as for any content this node does not hold, and the
-/// read-through does not fetch them either. A hash that some other file also references is still
-/// fetched through that reference.
-pub(crate) const PROFILE_RENDER_FILES: &[&str] =
-    &["face.png", "face128.png", "face256.png", "body.png"];
-
-fn is_profile_render_file(file: &str) -> bool {
-    let file = file.strip_prefix("./").unwrap_or(file);
-    PROFILE_RENDER_FILES
-        .iter()
-        .any(|render| file.eq_ignore_ascii_case(render))
-}
-
+/// The hashes sync downloads for an entity: every content file, a profile's avatar renders
+/// (`face.png`, `face128.png`, `face256.png`, `body.png`) included, as the reference catalyst
+/// stores them, so every hash this node lists in `/deployments`, `/pointer-changes` and its
+/// snapshots is one `/contents/{hash}` serves. An entity other than a profile that carries
+/// avatars (`metadata.avatars` or a top-level `avatars`) also has their snapshot hashes fetched.
 fn extract_content_hashes(entity_data: &[u8]) -> Result<Vec<String>, serde_json::Error> {
     let entity: serde_json::Value = serde_json::from_slice(entity_data)?;
     let is_profile = entity.get("type").and_then(|t| t.as_str()) == Some("profile");
@@ -566,14 +555,6 @@ fn extract_content_hashes(entity_data: &[u8]) -> Result<Vec<String>, serde_json:
 
     if let Some(content) = entity.get("content").and_then(|c| c.as_array()) {
         for entry in content {
-            if is_profile
-                && entry
-                    .get("file")
-                    .and_then(|f| f.as_str())
-                    .is_some_and(is_profile_render_file)
-            {
-                continue;
-            }
             if let Some(hash) = entry.get("hash").and_then(|h| h.as_str())
                 && seen.insert(hash.to_string())
             {
@@ -647,7 +628,12 @@ pub async fn download_file_with_retries(
         }
 
         if attempt + 1 < MAX_DOWNLOAD_RETRIES {
-            tokio::time::sleep(std::time::Duration::from_millis(RETRY_WAIT_MS)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(
+                RETRY_WAIT_MS
+                    .saturating_mul(1u64 << attempt.min(6))
+                    .min(30_000),
+            ))
+            .await;
         }
     }
 
@@ -812,7 +798,7 @@ mod tests {
     }
 
     #[test]
-    fn profiles_skip_every_avatar_render() {
+    fn profiles_fetch_every_avatar_render() {
         let entity = serde_json::json!({
             "type": "profile",
             "content": [
@@ -836,32 +822,15 @@ mod tests {
             }
         });
         let data = serde_json::to_vec(&entity).unwrap();
-        assert_eq!(extract_content_hashes(&data).unwrap(), vec!["bafextra"]);
-    }
-
-    #[test]
-    fn a_render_shared_with_another_profile_file_is_still_fetched() {
-        let entity = serde_json::json!({
-            "type": "profile",
-            "content": [
-                {"file": "face256.png", "hash": "bafshared"},
-                {"file": "extra.png", "hash": "bafshared"},
-            ],
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
-        assert_eq!(extract_content_hashes(&data).unwrap(), vec!["bafshared"]);
-    }
-
-    #[test]
-    fn only_profiles_skip_face_files() {
-        let entity = serde_json::json!({
-            "type": "wearable",
-            "content": [{"file": "face.png", "hash": "bafwearableface"}],
-        });
-        let data = serde_json::to_vec(&entity).unwrap();
         assert_eq!(
             extract_content_hashes(&data).unwrap(),
-            vec!["bafwearableface"]
+            vec![
+                "bafbody",
+                "bafface256",
+                "bafface512",
+                "bafface128",
+                "bafextra"
+            ]
         );
     }
 
@@ -903,6 +872,67 @@ mod tests {
             verify_cached_entity(CORRUPT_BYTES, "zUnknownScheme"),
             CachedEntityVerification::Unverifiable
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_entity_is_held_from_its_download_until_the_attempt_ends() {
+        let asked = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let (on_ask, on_release) = (asked.clone(), release.clone());
+        let app = axum::Router::new().route(
+            "/contents/{hash}",
+            axum::routing::get(move || {
+                let (asked, release) = (on_ask.clone(), on_release.clone());
+                async move {
+                    asked.notify_one();
+                    let _open = release.acquire().await;
+                    axum::http::StatusCode::NOT_FOUND
+                }
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let (storage, tmp) = temp_storage("in-flight").await;
+        let deployer = LiveSyncDeployer::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            1,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        );
+        let id = hash_bytes_v1(format!("in-flight-{}", uuid::Uuid::new_v4()).as_bytes());
+        let servers = vec![url];
+        let (client, chain) = (reqwest::Client::new(), Vec::new());
+        let attempt = deploy_entity_streaming(
+            ContentSource {
+                client: &client,
+                storage,
+                servers: &servers,
+                content_semaphore: Arc::new(tokio::sync::Semaphore::new(1)),
+            },
+            &deployer,
+            RemoteDeployment {
+                entity_id: &id,
+                auth_chain: &chain,
+                context: DeploymentContext::Synced,
+                report: None,
+                retry_state: None,
+            },
+        );
+        let observe = async {
+            asked.notified().await;
+            let during = crate::sync_deployer::is_buffered(&id);
+            release.add_permits(1);
+            during
+        };
+        let (result, held_during_download) = tokio::join!(attempt, observe);
+        assert!(held_during_download, "held while its file downloads");
+        assert!(result.is_err());
+        assert!(
+            !crate::sync_deployer::is_buffered(&id),
+            "released after the attempt"
+        );
+        server.abort();
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[tokio::test]

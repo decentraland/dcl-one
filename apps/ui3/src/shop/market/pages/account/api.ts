@@ -3,9 +3,11 @@
 // Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
-import { shopClient, type ShopClient } from "../../../api/shop";
-import type { Gender } from "../../../discovery/lib/catalogItem";
+import { type ShopClient } from "@shop/api/shop";
+import { catalogCategoryParams } from "@shop/discovery/lib/categories";
+import type { Gender } from "@shop/discovery/lib/catalogItem";
 import { toMyAsset, type MyAsset } from "../../lib/api";
+import { shopClient } from "../../../api/host";
 
 export type AccountNft = MyAsset & {
   wearableCategory?: string;
@@ -119,7 +121,8 @@ export async function fetchAccountNfts(address: string, q: AccountNftsQuery, c: 
     else if (q.section === "emotes") query.category = "emote";
     else if (isWearableSection(q.section)) {
       query.category = "wearable";
-      query.wearableCategory = wearableCategoriesOf(q.section);
+      // A group (Head, Accessories) is its flag, as the catalog's: /v1/nfts reads one wearableCategory.
+      Object.assign(query, catalogCategoryParams(wearableCategoriesOf(q.section)));
     }
   }
   const res = await c.market.nfts(query);

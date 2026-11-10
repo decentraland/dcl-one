@@ -1,5 +1,6 @@
 pub mod avatar_movement;
 pub mod camera;
+mod debug_panel;
 pub mod point_at;
 
 use bevy::{app::Propagate, ecs::query::Has, prelude::*, render::view::RenderLayers};
@@ -9,7 +10,7 @@ use camera::update_cursor_lock;
 use common::{
     sets::{PostUpdateSets, SceneSets},
     structs::{
-        CursorLocks, EngineMovementControl, PlayerModifiers, PrimaryCamera, PrimaryUser,
+        CursorLocks, EngineMovementControl, PhotoMode, PlayerModifiers, PrimaryCamera, PrimaryUser,
         PRIMARY_AVATAR_LIGHT_LAYER_INDEX,
     },
 };
@@ -29,6 +30,7 @@ pub struct UserInputPlugin;
 impl Plugin for UserInputPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((AvatarMovementPlugin, PointAtPlugin));
+        debug_panel::register(app);
         app.add_systems(
             Update,
             update_camera
@@ -55,7 +57,7 @@ impl Plugin for UserInputPlugin {
 
 #[allow(clippy::type_complexity)]
 fn manage_player_visibility(
-    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
+    camera: Query<(&GlobalTransform, Has<PhotoMode>), With<PrimaryCamera>>,
     mut player: Query<
         (
             &GlobalTransform,
@@ -67,8 +69,10 @@ fn manage_player_visibility(
         With<PrimaryUser>,
     >,
 ) {
-    if let (Ok(cam_transform), Ok((player_transform, mut vis, mut layers, is_oow, modifiers))) =
-        (camera.single(), player.single_mut())
+    if let (
+        Ok((cam_transform, photo_mode)),
+        Ok((player_transform, mut vis, mut layers, is_oow, modifiers)),
+    ) = (camera.single(), player.single_mut())
     {
         #[allow(clippy::collapsible_else_if)]
         if is_oow || modifiers.hide {
@@ -86,8 +90,9 @@ fn manage_player_visibility(
             (cam_transform.translation() - player_transform.translation() - Vec3::Y * 1.81)
                 .length();
 
+        // the photo camera may pass through the head; the avatar stays whole for the photo
         #[allow(clippy::collapsible_else_if)]
-        if distance < 0.5 {
+        if distance < 0.5 && !photo_mode {
             layers.0 = layers
                 .0
                 .clone()

@@ -67,6 +67,39 @@ clipboard, anything that touches the host OS or a page) must be excluded from th
 at code level, not merely denied by the permissions table: a config-driven deny is one edit away
 from being an allow. The scene promise still gets answered, with a denial.
 
+## Network capabilities
+
+Use the existing engine-assigned scene identity and the transport's Rust address policy when
+granting scene network access. Verify that the dialled addresses are checked, including
+addresses selected after a redirect where the transport follows redirects. Keep link-local
+and metadata addresses blocked. State the scope for each transport and platform in the
+[running guide](running.md).
+
+For signed service routing, verify the path the destination actually checks against the real
+proxy rewrite. Reject paths whose interpretation can shift the request to another service
+during URL normalisation or proxy decoding. Validate untrusted path parameters as single
+segments before building the URI. Backends may trust a forwarded path only on a connection
+from a trusted proxy that overwrites the client-supplied header.
+
+## Scene signed fetch
+
+For `signedFetch` and `getHeaders`, scene-runtime Rust hashes the UTF-8 bytes of the
+snapshotted body before queuing the signing request. An empty string produces the SHA-256
+digest of zero bytes. An absent or null body omits the digest. The engine accepts a supplied
+digest only if it is exactly 64 lowercase hexadecimal characters. It places the digest in
+`hashPayload` and builds the scene, realm and delegation claims from trusted state. The
+launch domains `decentraland.org`, `decentraland.zone` and `decentraland.today` select
+`org`, `zone` and `today` respectively. Other domains use `org`.
+
+Body-bearing calls require a signer that returns a valid body hash in its signed metadata. If a
+new scene runtime is paired with an older engine that does not supply one, the call is rejected
+before `signedFetch` sends a request. Bodyless calls retain their existing compatibility. The
+signature binds the normalized request path. Callers using `getHeaders` must send the same method,
+URL and body they supplied for signing.
+
+A service that relies on a signed body must require `hashPayload` and compare it
+with the SHA-256 of the bytes it receives before it processes the request.
+
 ## Reporting
 
 Do not disclose a security problem in a public issue or PR. Use the private reporting

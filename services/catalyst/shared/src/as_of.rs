@@ -118,9 +118,9 @@ pub fn splice(body: &[u8], at: DateTime<Utc>, stale_after: Duration) -> Option<V
     Some(out)
 }
 
-/// A 2xx answer with the `x-as-of` and `x-stale-after-secs` headers and,
-/// when it is a JSON object, both keys spliced in; anything else as it came.
-pub async fn stamp(mut response: Response, at: DateTime<Utc>, stale_after: Duration) -> Response {
+/// A 2xx answer with the `x-as-of` and `x-stale-after-secs` headers only,
+/// for a route whose body is another service's contract (the lambdas).
+pub fn stamp_headers(mut response: Response, at: DateTime<Utc>, stale_after: Duration) -> Response {
     if !response.status().is_success() {
         return response;
     }
@@ -130,6 +130,16 @@ pub async fn stamp(mut response: Response, at: DateTime<Utc>, stale_after: Durat
     response
         .headers_mut()
         .insert(STALE_AFTER_HEADER, HeaderValue::from(stale_after.as_secs()));
+    response
+}
+
+/// A 2xx answer with the `x-as-of` and `x-stale-after-secs` headers and,
+/// when it is a JSON object, both keys spliced in; anything else as it came.
+pub async fn stamp(response: Response, at: DateTime<Utc>, stale_after: Duration) -> Response {
+    if !response.status().is_success() {
+        return response;
+    }
+    let response = stamp_headers(response, at, stale_after);
     let json = response
         .headers()
         .get(header::CONTENT_TYPE)

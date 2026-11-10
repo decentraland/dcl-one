@@ -3,1500 +3,3131 @@
  * Do not make direct changes to the file.
  */
 
-
 export interface paths {
-  "/api/events": {
-    get: operations["get_event_list"];
-    post: operations["create_event"];
-  };
-  "/api/events/{event_id}": {
-    get: operations["get_event"];
-    delete: operations["delete_event"];
-    patch: operations["patch_event"];
-  };
-  "/api/events/{event_id}/attendees": {
-    get: operations["get_event_attendees"];
-    post: operations["create_event_attendee"];
-    delete: operations["delete_event_attendee"];
-  };
-  "/api/events/attending": {
-    get: operations["get_attending_event_list"];
-  };
-  "/api/events/categories": {
-    get: operations["get_event_category_list"];
-  };
-  "/api/events/moderation": {
-    get: operations["get_moderation_list"];
-  };
-  "/api/events/search": {
-    post: operations["post_event_search"];
-  };
-  "/api/poster": {
-    post: operations["upload_poster"];
-  };
-  "/api/poster-vertical": {
-    post: operations["upload_poster_vertical"];
-  };
-  "/api/profiles/{profile_id}/settings": {
-    get: operations["get_profile_settings"];
-    patch: operations["update_profile_settings"];
-  };
-  "/api/profiles/me/settings": {
-    get: operations["get_auth_profile_settings"];
-    patch: operations["update_my_profile_settings"];
-  };
-  "/api/profiles/settings": {
-    get: operations["list_profile_settings"];
-  };
-  "/api/profiles/subscriptions": {
-    get: operations["get_profile_subscription"];
-    post: operations["create_profile_subscription"];
-    delete: operations["delete_profile_subscription"];
-  };
-  "/api/schedules": {
-    get: operations["get_schedule_list"];
-    post: operations["create_schedule"];
-  };
-  "/api/schedules/{schedule_id}": {
-    get: operations["get_schedule_by_id"];
-    patch: operations["patch_schedule"];
-  };
-  "/events/sitemap.events.xml": {
-    get: operations["sitemap_events"];
-  };
-  "/events/sitemap.schedules.xml": {
-    get: operations["sitemap_schedules"];
-  };
-  "/events/sitemap.static.xml": {
-    get: operations["sitemap_static"];
-  };
-  "/events/sitemap.xml": {
-    get: operations["sitemap_index"];
-  };
-  "/federation/v1/events/{event_id}/attendance": {
-    get: operations["get_attendance"];
-  };
-  "/federation/v1/events/feed": {
-    get: operations["get_feed"];
-  };
-  "/poster-vertical/{filename}": {
-    get: operations["get_poster_vertical"];
-  };
-  "/poster/{filename}": {
-    get: operations["get_poster"];
-  };
-  "/v1/destinations/{id}/events": {
-    get: operations["get_v1_destination_events"];
-  };
-  "/v1/events": {
-    get: operations["get_v1_event_list"];
-  };
-  "/v1/events/{event_id}": {
-    get: operations["get_v1_event"];
-  };
+    "/api/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The query is validated against the old events service's schema (additionalProperties: false; `positions`, `world_names` and `places_ids` as arrays); unknown params answer 400. `recurrent`, `with_recurrent_dates` and `allow_deleted` are served on /v1/events only. */
+        get: operations["get_event_list"];
+        put?: never;
+        /** @description A signed fetch by a wallet whose profile this node holds; the admin bearer is not honoured (401). The body follows CreateEventBody; the created event is pending approval and the answer is the owner's view (contact and details present). Behind DATA_WRITES_ENABLED (503). */
+        post: operations["create_event"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/attending": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Every event that has not finished, is not rejected and not deleted (pending events of other creators included), each with the signer's `attending` flag; signed fetch only (the bearer is not honoured). */
+        get: operations["get_attending_event_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_event_category_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/moderation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_moderation_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description The query is validated against the old events service's schema (additionalProperties: false; `positions`, `world_names` and `places_ids` as arrays); unknown params answer 400. `recurrent`, `with_recurrent_dates` and `allow_deleted` are served on /v1/events only. */
+        post: operations["post_event_search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_event"];
+        put?: never;
+        post?: never;
+        /** @description The owner (deleted_by_user, the body ignored) or an edit_any_event grant (deleted_by_admin with the body's reason) by signed fetch; the admin bearer (deleted_by_admin, deleted_by the body's actor or `admin`). An already deleted event is answered unchanged. 403 `You don't have permission to delete this event` otherwise. */
+        delete: operations["delete_event"];
+        options?: never;
+        head?: never;
+        /** @description A signed chain wins over the bearer. Signed wallets: UpdateEventBody (unknown fields ignored); 404 for an event the wallet cannot read (pending or rejected events of others), 403 `You don't have permission to edit this event` unless the owner, a moderator or an edit_any_event grant; an owner's change of moderated content (name, description, images, location, categories, world, featured_item) sends an approved event back to pending unless the owner may approve. The admin bearer: AdminEventPatch; its answers carry contact and details and attending false. Non-owner wallet edits are operator writes (OPS_WRITES_ENABLED). A plain signed fetch needs no x-identity-metadata; a signed body_sha256 must match (400) and a signed nonce refuses its replay (409). */
+        patch: operations["patch_event"];
+        trace?: never;
+    };
+    "/api/events/{event_id}/attendees": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The event is read as GET /api/events/{event_id} does (400 for a non-UUID, 404 when hidden); a `Bearer` header is anonymous here. */
+        get: operations["get_event_attendees"];
+        put?: never;
+        /** @description A signed fetch by a wallet whose profile this node holds (404 `Not found profile for "<user>"`), whose name is the row's user_name; the event must be readable by the signer. Behind DATA_WRITES_ENABLED. */
+        post: operations["create_event_attendee"];
+        /** @description A signed fetch; the event must be readable by the signer (404 otherwise). Behind DATA_WRITES_ENABLED. */
+        delete: operations["delete_event_attendee"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/poster": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description A signed fetch (multipart field `poster`) by a wallet whose profile this node holds; 400 `Poster param is required` / `Multiple files are not allowed` / `Empty files are not allowed` / `Invalid file content; expected one of ...`; 413 `File size limit has been reached`; 404 `Not found profile for "<user>"`; 503 `Service unavailable` without a blob store. */
+        post: operations["upload_poster"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/poster-vertical": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description A signed fetch (multipart field `poster`) by a wallet whose profile this node holds; 400 `Poster param is required` / `Multiple files are not allowed` / `Empty files are not allowed` / `Invalid file content; expected one of ...`; 413 `File size limit has been reached` (max 500 KB); 404 `Not found profile for "<user>"`; 503 `Service unavailable` without a blob store. */
+        post: operations["upload_poster_vertical"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/me/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_auth_profile_settings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description The signer's own fields (UpdateMyProfileSettingsBody) or a ProfileSettingsUpdate envelope for the signer. 400 `Invalid data was sent to the server`. */
+        patch: operations["update_my_profile_settings"];
+        trace?: never;
+    };
+    "/api/profiles/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The rows holding permissions (ProfileSettingsModel.list), for a moderator or an edit_any_profile grant (403 `Forbidden`). */
+        get: operations["list_profile_settings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/subscriptions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The signer's web-push subscriptions (ProfileSubscription/routes.ts:37-40); nothing sends pushes. */
+        get: operations["get_profile_subscription"];
+        put?: never;
+        /** @description Stores the browser's subscription and turns the signer's notify_by_browser on (ProfileSubscription/routes.ts:45-62). */
+        post: operations["create_profile_subscription"];
+        /** @description Removes the signer's subscriptions and turns notify_by_browser off (ProfileSubscription/routes.ts:65-73). */
+        delete: operations["delete_profile_subscription"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description The stored row or `data: null`, for a moderator or an edit_any_profile grant (403 `Forbidden`); a non-address is 404 `Not found "<id>" profile: invalid address`. */
+        get: operations["get_profile_settings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description The target's permissions (UpdateProfileSettingsBody), by a moderator or an edit_any_profile grant; a ProfileSettingsUpdate envelope stays a moderator's. A changed set queues the Slack moderation notice. */
+        patch: operations["update_profile_settings"];
+        trace?: never;
+    };
+    "/api/schedules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_schedule_list"];
+        put?: never;
+        /** @description A plain signed body (CreateScheduleBody) or a ScheduleUpsert envelope; validation (400 `Invalid data was sent to the server`) runs before the permission check (403 `Forbidden`: a moderator or an edit_any_schedule grant). */
+        post: operations["create_schedule"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/schedules/{schedule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_schedule_by_id"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** @description A plain signed body (UpdateScheduleBody) answers only the merged eight keys; the ScheduleUpsert envelope answers the whole record. 404 `Schedule "<id>" not found`. */
+        patch: operations["patch_schedule"];
+        trace?: never;
+    };
+    "/events/sitemap.events.xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["sitemap_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/sitemap.schedules.xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["sitemap_schedules"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/sitemap.static.xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["sitemap_static"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/events/sitemap.xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["sitemap_index"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/federation/v1/events/feed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_feed"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/federation/v1/events/{event_id}/attendance": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_attendance"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/poster-vertical/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_poster_vertical"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/poster/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_poster"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/destinations/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_destination_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_event_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/events/{event_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_event"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profile/{user}/face.png": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 302 to `avatar.snapshots.face256 || face` of the profile this node holds, else `https://decentraland.org/images/male.png` (also for a non-address); `Cache-Control: max-age=86400` (decentraland-gatsby Profile/routes.js). */
+        get: operations["get_profile_face"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profile/{user}/body.png": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description 302 to `avatar.snapshots.body` of the profile this node holds, else `https://decentraland.org/images/male.png` (also for a non-address); `Cache-Control: max-age=86400` (decentraland-gatsby Profile/routes.js). */
+        get: operations["get_profile_body"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
-
 export type webhooks = Record<string, never>;
-
 export interface components {
-  schemas: {
-    ApiErrorBody: {
-      error: string;
-      federation_adr?: string | null;
-      message: string;
-      ok: boolean;
+    schemas: {
+        /** @description The old services' error envelope (decentraland-gatsby RequestError.toJSON): `error` is the message, `code` the snake-cased status (bad_request, unauthorized, forbidden, not_found, payload_too_large, service_unavailable, internal_server_error) and `data` carries detail when the refusal has it, such as a validation failure's ajv `errors`, their `messages` and the validated `body`. Never a `stack`. */
+        ApiErrorBody: {
+            code: string;
+            data?: {
+                [key: string]: unknown;
+            };
+            error: string;
+            /** @enum {boolean} */
+            ok: false;
+        };
+        ApiOk_EventListData: {
+            data: components["schemas"]["EventListWithTotal"] | components["schemas"]["EventRecord"][];
+            ok: boolean;
+        };
+        ApiOk_EventRecord: {
+            data: {
+                all_day: boolean;
+                approved: boolean;
+                approved_by?: string | null;
+                attending: boolean;
+                categories: string[];
+                community_id?: string | null;
+                connected_addresses?: string[] | null;
+                coordinates: number[];
+                /** Format: date-time */
+                created_at?: string | null;
+                /** Format: date-time */
+                deleted_at?: string | null;
+                deleted_by?: string | null;
+                deleted_by_admin: boolean;
+                deleted_by_user: boolean;
+                deleted_reason?: string | null;
+                description?: string | null;
+                /** Format: int64 */
+                duration?: number | null;
+                estate_id?: string | null;
+                estate_name?: string | null;
+                featured_item?: string | null;
+                /** Format: date-time */
+                finish_at?: string | null;
+                highlighted: boolean;
+                id: string;
+                image?: string | null;
+                image_vertical?: string | null;
+                latest_attendees: string[];
+                live: boolean;
+                name: string;
+                /** Format: date-time */
+                next_finish_at?: string | null;
+                /** Format: date-time */
+                next_start_at?: string | null;
+                place_id?: string | null;
+                position: number[];
+                previous_place_id?: string | null;
+                recurrent: boolean;
+                /** Format: int64 */
+                recurrent_count?: number | null;
+                recurrent_dates: string[];
+                recurrent_frequency?: string | null;
+                /** Format: int64 */
+                recurrent_interval: number;
+                /** Format: int64 */
+                recurrent_month_mask: number;
+                /** Format: int64 */
+                recurrent_monthday?: number | null;
+                /** Format: int64 */
+                recurrent_setpos?: number | null;
+                /** Format: date-time */
+                recurrent_until?: string | null;
+                /** Format: int64 */
+                recurrent_weekday_mask: number;
+                rejected: boolean;
+                rejected_by?: string | null;
+                rejection_reason?: string | null;
+                scene_name?: string | null;
+                schedules: string[];
+                server?: string | null;
+                /** Format: date-time */
+                start_at?: string | null;
+                /** Format: int64 */
+                total_attendees: number;
+                trending: boolean;
+                /** Format: date-time */
+                updated_at?: string | null;
+                url?: string | null;
+                user?: string | null;
+                user_name?: string | null;
+                world: boolean;
+                /** Format: int32 */
+                x: number;
+                /** Format: int32 */
+                y: number;
+            };
+            ok: boolean;
+        };
+        ApiOk_ScheduleRecord: {
+            data: {
+                active: boolean;
+                /** Format: date-time */
+                active_since?: string | null;
+                /** Format: date-time */
+                active_until?: string | null;
+                background: string[];
+                /** Format: date-time */
+                created_at?: string | null;
+                description?: string | null;
+                id: string;
+                image?: string | null;
+                name: string;
+                theme?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+            };
+            ok: boolean;
+        };
+        ApiOk_V1EventRecord: {
+            data: components["schemas"]["EventRecord"] & {
+                destination?: Record<string, never> | null;
+                destination_id?: string | null;
+            };
+            ok: boolean;
+        };
+        ApiOk_Vec_EventAttendeeRecord: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                event_id: string;
+                user: string;
+                user_name?: string | null;
+            }[];
+            ok: boolean;
+        };
+        ApiOk_Vec_EventCategoryRecord: {
+            data: {
+                active: boolean;
+                /** Format: date-time */
+                created_at: string;
+                i18n: Record<string, never>;
+                name: string;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            ok: boolean;
+        };
+        ApiOk_Vec_EventRecord: {
+            data: {
+                all_day: boolean;
+                approved: boolean;
+                approved_by?: string | null;
+                attending: boolean;
+                categories: string[];
+                community_id?: string | null;
+                connected_addresses?: string[] | null;
+                coordinates: number[];
+                /** Format: date-time */
+                created_at?: string | null;
+                /** Format: date-time */
+                deleted_at?: string | null;
+                deleted_by?: string | null;
+                deleted_by_admin: boolean;
+                deleted_by_user: boolean;
+                deleted_reason?: string | null;
+                description?: string | null;
+                /** Format: int64 */
+                duration?: number | null;
+                estate_id?: string | null;
+                estate_name?: string | null;
+                featured_item?: string | null;
+                /** Format: date-time */
+                finish_at?: string | null;
+                highlighted: boolean;
+                id: string;
+                image?: string | null;
+                image_vertical?: string | null;
+                latest_attendees: string[];
+                live: boolean;
+                name: string;
+                /** Format: date-time */
+                next_finish_at?: string | null;
+                /** Format: date-time */
+                next_start_at?: string | null;
+                place_id?: string | null;
+                position: number[];
+                previous_place_id?: string | null;
+                recurrent: boolean;
+                /** Format: int64 */
+                recurrent_count?: number | null;
+                recurrent_dates: string[];
+                recurrent_frequency?: string | null;
+                /** Format: int64 */
+                recurrent_interval: number;
+                /** Format: int64 */
+                recurrent_month_mask: number;
+                /** Format: int64 */
+                recurrent_monthday?: number | null;
+                /** Format: int64 */
+                recurrent_setpos?: number | null;
+                /** Format: date-time */
+                recurrent_until?: string | null;
+                /** Format: int64 */
+                recurrent_weekday_mask: number;
+                rejected: boolean;
+                rejected_by?: string | null;
+                rejection_reason?: string | null;
+                scene_name?: string | null;
+                schedules: string[];
+                server?: string | null;
+                /** Format: date-time */
+                start_at?: string | null;
+                /** Format: int64 */
+                total_attendees: number;
+                trending: boolean;
+                /** Format: date-time */
+                updated_at?: string | null;
+                url?: string | null;
+                user?: string | null;
+                user_name?: string | null;
+                world: boolean;
+                /** Format: int32 */
+                x: number;
+                /** Format: int32 */
+                y: number;
+            }[];
+            ok: boolean;
+        };
+        ApiOk_Vec_ScheduleRecord: {
+            data: {
+                active: boolean;
+                /** Format: date-time */
+                active_since?: string | null;
+                /** Format: date-time */
+                active_until?: string | null;
+                background: string[];
+                /** Format: date-time */
+                created_at?: string | null;
+                description?: string | null;
+                id: string;
+                image?: string | null;
+                name: string;
+                theme?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+            }[];
+            ok: boolean;
+        };
+        /** @description `newEventSchema` (events `Event/schemas.ts:518-675`): the body of POST /api/events after the service's defaults (a falsy image, image_vertical, server or featured_item is null; a falsy url is the generated jump-in link `https://decentraland.org/jump/events?position=x%2Cy[&realm=<server>]`). Unknown fields are refused (`Invalid data was sent to the server`, `data.errors`). The signer needs a profile this node holds (404 `Not found profile for "<user>"`). `schedules` are always stored as `[]`; any signer may set `url` (a public http(s) link). A missing `categories` is stored as `[]`. */
+        CreateEventBody: {
+            name: string;
+            description?: string | null;
+            /** @description Accepted and ignored: a created event is pending. */
+            approved?: boolean;
+            /** @description Accepted and ignored. */
+            rejected?: boolean;
+            /** @description Accepted and ignored. */
+            rejection_reason?: string | null;
+            /** @description Accepted and ignored. */
+            deleted_by_user?: boolean;
+            /** @description Accepted and ignored. */
+            deleted_by_admin?: boolean;
+            /** @description Accepted and ignored. */
+            deleted_reason?: string | null;
+            /** @description Accepted and ignored. */
+            highlighted?: boolean;
+            /** @description Accepted and ignored. */
+            trending?: boolean;
+            /**
+             * Format: uri
+             * @description Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503. Default: the parcel or estate map image for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event.
+             */
+            image?: string | null;
+            /**
+             * Format: uri
+             * @description Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503.
+             */
+            image_vertical?: string | null;
+            /** Format: date-time */
+            start_at: string;
+            /** @description Milliseconds; at most 24 hours (`Maximum allowed duration 24Hrs`). */
+            duration: number;
+            all_day?: boolean;
+            recurrent?: boolean;
+            /** @enum {unknown} */
+            recurrent_frequency?: "YEARLY" | "MONTHLY" | "WEEKLY" | "DAILY" | "HOURLY" | null;
+            recurrent_setpos?: number | null;
+            recurrent_monthday?: number | null;
+            recurrent_weekday_mask?: number;
+            recurrent_month_mask?: number;
+            recurrent_interval?: number;
+            /** @description May be combined with recurrent_until; the earlier bound ends the series. A rule whose expansion from start_at to now exceeds 50 000 steps is refused. */
+            recurrent_count?: number | null;
+            /** Format: date-time */
+            recurrent_until?: string | null;
+            /** @description Also checked against the world limits (400 `Event is outside the world limits`), world events included. */
+            x: number;
+            y: number;
+            server?: string | null;
+            contact?: string | null;
+            details?: string | null;
+            /**
+             * Format: uri
+             * @description A public http(s) link (400 `Invalid event url <url>; only public HTTP(S) URLs are allowed`).
+             */
+            url?: string;
+            /** @description Known category names (400 `Invalid category tag supplied`). */
+            categories?: string[] | null;
+            /** @description Validated as UUIDs, then ignored: a created event has no schedules. */
+            schedules?: string[] | null;
+            world?: boolean;
+            /**
+             * Format: uuid
+             * @description A community the signer owns or moderates (400 `Failed to validate community ownership: Community "<id>" not found or you don't have access to it`).
+             */
+            community_id?: string | null;
+            featured_item?: string | null;
+        };
+        DeleteEventBody: {
+            /** @description Admin bearer and edit_any_event deletes: stored as deleted_reason, blank as null (400 `deleted_reason must be a string`, `deleted_reason must be 500 characters or less`). Ignored for the owner's own delete. */
+            reason?: string | null;
+            /** @description Admin bearer only: deleted_by; defaults to `admin`. */
+            actor?: string;
+        };
+        EventAttendeeRecord: {
+            /** Format: date-time */
+            created_at: string;
+            event_id: string;
+            user: string;
+            user_name?: string | null;
+        };
+        EventCategoryRecord: {
+            active: boolean;
+            /** Format: date-time */
+            created_at: string;
+            i18n: Record<string, never>;
+            name: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        EventListData: components["schemas"]["EventListWithTotal"] | components["schemas"]["EventRecord"][];
+        EventListWithTotal: {
+            events: components["schemas"]["EventRecord"][];
+            /** Format: int64 */
+            total: number;
+        };
+        EventRecord: {
+            all_day: boolean;
+            approved: boolean;
+            approved_by?: string | null;
+            attending: boolean;
+            categories: string[];
+            community_id?: string | null;
+            /** @description Present on every item when `with_connected_users` is set; an empty array when the room is unknown. */
+            connected_addresses?: string[];
+            coordinates: number[];
+            /** Format: date-time */
+            created_at?: string | null;
+            /** Format: date-time */
+            deleted_at?: string | null;
+            deleted_by?: string | null;
+            deleted_by_admin: boolean;
+            deleted_by_user: boolean;
+            deleted_reason?: string | null;
+            description?: string | null;
+            /** Format: int64 */
+            duration?: number | null;
+            estate_id?: string | null;
+            estate_name?: string | null;
+            featured_item?: string | null;
+            /** Format: date-time */
+            finish_at?: string | null;
+            highlighted: boolean;
+            id: string;
+            /** @description Public event image. Generated default posters are absolute URLs under the configured events base URL, including any mount prefix. */
+            image?: string | null;
+            image_vertical?: string | null;
+            latest_attendees: string[];
+            live: boolean;
+            name: string;
+            /** Format: date-time */
+            next_finish_at?: string | null;
+            /** Format: date-time */
+            next_start_at?: string | null;
+            place_id?: string | null;
+            position: number[];
+            /** @description Only on the `/v1` routes; the `/api` routes answer the old events service's record without it. */
+            previous_place_id?: string | null;
+            recurrent: boolean;
+            /** Format: int64 */
+            recurrent_count?: number | null;
+            /** @description The next occurrences that have not ended, at most 10 (`MAX_EVENT_RECURRENT`); `/v1/events?with_recurrent_dates=true` answers the stored window. */
+            recurrent_dates: string[];
+            recurrent_frequency?: string | null;
+            /** Format: int64 */
+            recurrent_interval: number;
+            /** Format: int64 */
+            recurrent_month_mask: number;
+            /** Format: int64 */
+            recurrent_monthday?: number | null;
+            /** Format: int64 */
+            recurrent_setpos?: number | null;
+            /** Format: date-time */
+            recurrent_until?: string | null;
+            /** Format: int64 */
+            recurrent_weekday_mask: number;
+            rejected: boolean;
+            rejected_by?: string | null;
+            rejection_reason?: string | null;
+            scene_name?: string | null;
+            schedules: string[];
+            server?: string | null;
+            /** Format: date-time */
+            start_at?: string | null;
+            /** Format: int64 */
+            total_attendees: number;
+            trending: boolean;
+            /** Format: date-time */
+            updated_at?: string | null;
+            url?: string | null;
+            user?: string | null;
+            /** @description The creator's profile name; `Decentraland Foundation` for the wallets the `events-decentraland-foundation-addresses` feature flag lists. */
+            user_name?: string | null;
+            world: boolean;
+            /** Format: int32 */
+            x: number;
+            /** Format: int32 */
+            y: number;
+            /** @description Present only in the owner's view and in the admin bearer's GET, PATCH and DELETE answers. */
+            contact?: string | null;
+            /** @description Present only in the owner's view and in the admin bearer's GET, PATCH and DELETE answers. */
+            details?: string | null;
+        };
+        EventSearchBody: {
+            communityId?: string | null;
+            placeIds?: string[];
+        };
+        ScheduleRecord: {
+            active: boolean;
+            /** Format: date-time */
+            active_since?: string | null;
+            /** Format: date-time */
+            active_until?: string | null;
+            background: string[];
+            /** Format: date-time */
+            created_at?: string | null;
+            description?: string | null;
+            id: string;
+            image?: string | null;
+            name: string;
+            theme?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+        };
+        ScheduleUpsertEnvelope: {
+            domain: Record<string, never>;
+            message: components["schemas"]["ScheduleUpsertMessage"];
+            nonce: number[];
+            signature: string;
+            /** Format: int64 */
+            signed_at: number;
+        };
+        ScheduleUpsertMessage: {
+            active: boolean;
+            /** Format: int64 */
+            active_since: number;
+            /** Format: int64 */
+            active_until: number;
+            background?: string[];
+            description?: string | null;
+            image?: string | null;
+            name: string;
+            schedule_id?: string | null;
+            /** Format: int64 */
+            signed_at: number;
+            theme?: string | null;
+        };
+        /** @description Signed-wallet PATCH body (`updateEvent.ts:183-236`). Unknown fields are ignored. The owner may set image, image_vertical, rejected, name, description, start_at, duration, all_day, x, y, server, recurrent*, categories, world, featured_item, contact, details and community_id (and approved, with the approve_own_event grant); an edit_any_event grant (or a moderator) may also set highlighted, trending, schedules and url; an approve_any_event grant may set approved and rejection_reason. Fields outside the caller's sets are ignored, never refused. The merged event is validated against `newEventSchema` (400 `Invalid data was sent to the server`). */
+        UpdateEventBody: {
+            name?: string;
+            description?: string | null;
+            /** @description Honoured for the owner with approve_own_event and for approve_any_event grants; a rejected event stays unapproved unless rejected is also set false. */
+            approved?: boolean;
+            /** @description The owner (or an edit_any_event grant) may reject the event; a rejection clears approved, highlighted and trending. */
+            rejected?: boolean;
+            /** @description approve_any_event grants only: a non-empty string of at most 500 characters, or null to clear (400 `rejection_reason cannot be empty`, `rejection_reason must be 500 characters or less`, `rejection_reason must be a string`). */
+            rejection_reason?: string | null;
+            /** @description edit_any_event grants only. */
+            highlighted?: boolean;
+            /** @description edit_any_event grants only. */
+            trending?: boolean;
+            /**
+             * Format: uri
+             * @description Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503. Default: the parcel or estate map image for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event.
+             */
+            image?: string | null;
+            /**
+             * Format: uri
+             * @description Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503.
+             */
+            image_vertical?: string | null;
+            /** Format: date-time */
+            start_at?: string;
+            /** @description Milliseconds; at most 24 hours (`Maximum allowed duration 24Hrs`). */
+            duration?: number;
+            all_day?: boolean;
+            recurrent?: boolean;
+            /** @enum {unknown} */
+            recurrent_frequency?: "YEARLY" | "MONTHLY" | "WEEKLY" | "DAILY" | "HOURLY" | null;
+            recurrent_setpos?: number | null;
+            recurrent_monthday?: number | null;
+            recurrent_weekday_mask?: number;
+            recurrent_month_mask?: number;
+            recurrent_interval?: number;
+            /** @description May be combined with recurrent_until; the earlier bound ends the series. A rule whose expansion from start_at to now exceeds 50 000 steps is refused. */
+            recurrent_count?: number | null;
+            /** Format: date-time */
+            recurrent_until?: string | null;
+            /** @description Also checked against the world limits (400 `Event is outside the world limits`), world events included. */
+            x?: number;
+            y?: number;
+            server?: string | null;
+            contact?: string | null;
+            details?: string | null;
+            /**
+             * Format: uri
+             * @description edit_any_event grants only. An empty or `https://decentraland.org/jump`-prefixed url is regenerated from the location.
+             */
+            url?: string;
+            /** @description Known category names (400 `Invalid category tag supplied`). */
+            categories?: string[] | null;
+            /** @description edit_any_event grants only; deduplicated; unknown ids answer 400 `Schedule not found: <ids>`. */
+            schedules?: string[] | null;
+            world?: boolean;
+            /**
+             * Format: uuid
+             * @description A community the signer owns or moderates (400 `Failed to validate community ownership: Community "<id>" not found or you don't have access to it`).
+             */
+            community_id?: string | null;
+            featured_item?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        V1EventRecord: components["schemas"]["EventRecord"] & {
+            destination?: Record<string, never> | null;
+            destination_id?: string | null;
+        };
+        /** @description Admin bearer PATCH body (`admin.ts:253-387`). Either a state body whose keys are a subset of actor, approved, rejected and reason (approved and rejected booleans, never both: `approved and rejected cannot be set in the same request`; `rejected: true` needs a non-empty reason of at most 500 characters; an already-approved or already-rejected-for-the-same-reason event is answered unchanged; a rejection clears highlighted and trending), or a content body of the editable attributes (the signed body's fields minus rejected and rejection_reason, plus highlighted, trending, schedules, url and contact, details, community_id) with an optional actor. Any other key answers 400 `Unsupported admin event fields: <keys>`; an empty body `At least one admin event field is required`; a body with only actor `approved or rejected field is required`. */
+        AdminEventPatch: {
+            /** @description The audit actor (approved_by, rejected_by, deleted_by); defaults to `admin`. 400 `actor must be a string`, `actor cannot be empty`, `actor must be 42 characters or less`. */
+            actor?: string;
+            approved?: boolean;
+            rejected?: boolean;
+            /** @description Required with `rejected: true` (400 `rejection reason is required`, `rejection reason cannot be empty`, `rejection reason must be 500 characters or less`, `rejection reason must be a string`). */
+            reason?: string;
+            name?: string;
+            description?: string | null;
+            /** @description edit_any_event grants only. */
+            highlighted?: boolean;
+            /** @description edit_any_event grants only. */
+            trending?: boolean;
+            /**
+             * Format: uri
+             * @description Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503. Default: the parcel or estate map image for a land event, `EVENTS_BASE_URL/images/event-default.jpg` for a world event.
+             */
+            image?: string | null;
+            /**
+             * Format: uri
+             * @description Poster URL. The old events service required its bucket's origin; this node requires a poster it serves (an absolute URL on its own origin or the router-local `/poster/<file>` path answered by POST /api/poster). Otherwise 400 `Invalid image url <url>, please upload the image through the upload poster endpoint (POST /poster)`; without a blob store, 503.
+             */
+            image_vertical?: string | null;
+            /** Format: date-time */
+            start_at?: string;
+            /** @description Milliseconds; at most 24 hours (`Maximum allowed duration 24Hrs`). */
+            duration?: number;
+            all_day?: boolean;
+            recurrent?: boolean;
+            /** @enum {unknown} */
+            recurrent_frequency?: "YEARLY" | "MONTHLY" | "WEEKLY" | "DAILY" | "HOURLY" | null;
+            recurrent_setpos?: number | null;
+            recurrent_monthday?: number | null;
+            recurrent_weekday_mask?: number;
+            recurrent_month_mask?: number;
+            recurrent_interval?: number;
+            /** @description May be combined with recurrent_until; the earlier bound ends the series. A rule whose expansion from start_at to now exceeds 50 000 steps is refused. */
+            recurrent_count?: number | null;
+            /** Format: date-time */
+            recurrent_until?: string | null;
+            /** @description Also checked against the world limits (400 `Event is outside the world limits`), world events included. */
+            x?: number;
+            y?: number;
+            server?: string | null;
+            contact?: string | null;
+            details?: string | null;
+            /**
+             * Format: uri
+             * @description edit_any_event grants only. An empty or `https://decentraland.org/jump`-prefixed url is regenerated from the location.
+             */
+            url?: string;
+            /** @description Known category names (400 `Invalid category tag supplied`). */
+            categories?: string[] | null;
+            /** @description edit_any_event grants only; deduplicated; unknown ids answer 400 `Schedule not found: <ids>`. */
+            schedules?: string[] | null;
+            world?: boolean;
+            /**
+             * Format: uuid
+             * @description A community the signer owns or moderates (400 `Failed to validate community ownership: Community "<id>" not found or you don't have access to it`).
+             */
+            community_id?: string | null;
+            featured_item?: string | null;
+        };
+        /** @description The old events service's PosterAttributes (Poster/routes.ts:132-137): filename is `poster/<file>` or `poster-vertical/<file>` (the file named by its content hash), url the absolute location on this node's `/events` mount (PUBLIC_URL/events/<filename>). */
+        PosterUpload: {
+            filename: string;
+            /** Format: uri */
+            url: string;
+            /** Format: int64 */
+            size: number;
+            /** @enum {string} */
+            type: "image/jpeg" | "image/png" | "image/gif" | "image/webp";
+        };
+        ApiOk_PosterUpload: {
+            ok: boolean;
+            data: components["schemas"]["PosterUpload"];
+        };
+        /** @enum {string} */
+        ProfilePermission: "approve_own_event" | "approve_any_event" | "edit_any_event" | "edit_any_schedule" | "edit_any_profile";
+        /** @description The old ProfileSettingsAttributes (ProfileSettings/types.ts:1-13); a wallet without a row answers the defaults with epoch timestamps. A moderator's permissions are the whole set. */
+        ProfileSettings: {
+            user: string;
+            email: string | null;
+            email_verified: boolean;
+            /** Format: date-time */
+            email_verified_at: string | null;
+            /** Format: date-time */
+            email_updated_at: string | null;
+            use_local_time: boolean;
+            notify_by_email: boolean;
+            notify_by_browser: boolean;
+            permissions: components["schemas"]["ProfilePermission"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description The signer's own settings with its web-push subscription endpoints (ProfileSettings/routes/getAuthProfileSettings.ts). */
+        ProfileSettingsSession: {
+            user: string;
+            email: string | null;
+            email_verified: boolean;
+            /** Format: date-time */
+            email_verified_at: string | null;
+            /** Format: date-time */
+            email_updated_at: string | null;
+            use_local_time: boolean;
+            notify_by_email: boolean;
+            notify_by_browser: boolean;
+            permissions: components["schemas"]["ProfilePermission"][];
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            subscriptions: string[];
+        };
+        ApiOk_ProfileSettings: {
+            ok: boolean;
+            data: components["schemas"]["ProfileSettings"];
+        };
+        ApiOk_ProfileSettingsSession: {
+            ok: boolean;
+            data: components["schemas"]["ProfileSettingsSession"];
+        };
+        ApiOk_Vec_ProfileSettings: {
+            ok: boolean;
+            data: components["schemas"]["ProfileSettings"][];
+        };
+        ApiOk_Option_ProfileSettings: {
+            ok: boolean;
+            data: components["schemas"]["ProfileSettings"] | null;
+        };
+        /** @description updateMyProfileSettingsSchema (ProfileSettings/types.ts:79-101); unknown keys are 400. `email_verified: true` is ignored; a changed email is stored unverified with notify_by_email off. */
+        UpdateMyProfileSettingsBody: {
+            /** Format: email */
+            email?: string;
+            email_verified?: boolean;
+            use_local_time?: boolean;
+            notify_by_email?: boolean;
+            notify_by_browser?: boolean;
+        };
+        /** @description updateProfileSettingsSchema (ProfileSettings/types.ts:59-77): the target's permissions, by a moderator or an edit_any_profile grant. */
+        UpdateProfileSettingsBody: {
+            permissions?: components["schemas"]["ProfilePermission"][];
+        };
+        ProfileSubscription: {
+            user: string;
+            endpoint: string;
+            p256dh: string;
+            auth: string;
+        };
+        /** @description profileSubscriptionSchema (ProfileSubscription/types.ts:10-25). */
+        ProfileSubscriptionBody: {
+            endpoint: string;
+            p256dh: string;
+            auth: string;
+        };
+        ApiOk_Vec_ProfileSubscription: {
+            ok: boolean;
+            data: components["schemas"]["ProfileSubscription"][];
+        };
+        ApiOk_bool: {
+            ok: boolean;
+            data: boolean;
+        };
+        /** @description createScheduleSchema (Schedule/schema.ts:86-142): a plain signed-fetch body; unknown keys are ignored; theme is validated and stored as null on create. */
+        CreateScheduleBody: {
+            name: string;
+            description?: string | null;
+            /** Format: uri */
+            image?: string | null;
+            /** @enum {string|null} */
+            theme?: null | "mvmf_2022" | "mvfw_2023" | "pride_2023";
+            background?: string[];
+            active?: boolean;
+            /** Format: date-time */
+            active_since: string;
+            /** Format: date-time */
+            active_until: string;
+        };
+        /** @description updateScheduleSchema (Schedule/schema.ts:144-147): any subset of the eight keys. */
+        UpdateScheduleBody: {
+            name?: string;
+            description?: string | null;
+            /** Format: uri */
+            image?: string | null;
+            /** @enum {string|null} */
+            theme?: null | "mvmf_2022" | "mvfw_2023" | "pride_2023";
+            background?: string[];
+            active?: boolean;
+            /** Format: date-time */
+            active_since?: string;
+            /** Format: date-time */
+            active_until?: string;
+        };
+        /** @description The merged eight keys a PATCH answers (Schedule/routes.ts:90-96): no id, created_at or updated_at. */
+        ScheduleFields: {
+            name: string;
+            description: string | null;
+            /** Format: uri */
+            image: string | null;
+            /** @enum {string|null} */
+            theme: null | "mvmf_2022" | "mvfw_2023" | "pride_2023";
+            background: string[];
+            active: boolean;
+            /** Format: date-time */
+            active_since: string | null;
+            /** Format: date-time */
+            active_until: string | null;
+        };
+        ApiOk_ScheduleFields: {
+            ok: boolean;
+            data: components["schemas"]["ScheduleFields"];
+        };
     };
-    ApiOk_EventListData: {
-      data: components["schemas"]["EventListWithTotal"] | components["schemas"]["EventRecord"][];
-      ok: boolean;
-    };
-    ApiOk_EventRecord: {
-      data: {
-        all_day: boolean;
-        approved: boolean;
-        approved_by?: string | null;
-        attending: boolean;
-        categories: string[];
-        community_id?: string | null;
-        connected_addresses?: string[] | null;
-        coordinates: number[];
-        /** Format: date-time */
-        created_at?: string | null;
-        /** Format: date-time */
-        deleted_at?: string | null;
-        deleted_by?: string | null;
-        deleted_by_admin: boolean;
-        deleted_by_user: boolean;
-        deleted_reason?: string | null;
-        description?: string | null;
-        /** Format: int64 */
-        duration?: number | null;
-        estate_id?: string | null;
-        estate_name?: string | null;
-        featured_item?: string | null;
-        /** Format: date-time */
-        finish_at?: string | null;
-        highlighted: boolean;
-        id: string;
-        image?: string | null;
-        image_vertical?: string | null;
-        latest_attendees: string[];
-        live: boolean;
-        name: string;
-        /** Format: date-time */
-        next_finish_at?: string | null;
-        /** Format: date-time */
-        next_start_at?: string | null;
-        place_id?: string | null;
-        position: number[];
-        previous_place_id?: string | null;
-        recurrent: boolean;
-        /** Format: int64 */
-        recurrent_count?: number | null;
-        recurrent_dates: string[];
-        recurrent_frequency?: string | null;
-        /** Format: int64 */
-        recurrent_interval: number;
-        /** Format: int64 */
-        recurrent_month_mask: number;
-        /** Format: int64 */
-        recurrent_monthday?: number | null;
-        /** Format: int64 */
-        recurrent_setpos?: number | null;
-        /** Format: date-time */
-        recurrent_until?: string | null;
-        /** Format: int64 */
-        recurrent_weekday_mask: number;
-        rejected: boolean;
-        rejected_by?: string | null;
-        rejection_reason?: string | null;
-        scene_name?: string | null;
-        schedules: string[];
-        server?: string | null;
-        /** Format: date-time */
-        start_at?: string | null;
-        /** Format: int64 */
-        total_attendees: number;
-        trending: boolean;
-        /** Format: date-time */
-        updated_at?: string | null;
-        url?: string | null;
-        user?: string | null;
-        user_name?: string | null;
-        world: boolean;
-        /** Format: int32 */
-        x: number;
-        /** Format: int32 */
-        y: number;
-      };
-      ok: boolean;
-    };
-    ApiOk_ScheduleRecord: {
-      data: {
-        active: boolean;
-        /** Format: date-time */
-        active_since?: string | null;
-        /** Format: date-time */
-        active_until?: string | null;
-        background: string[];
-        /** Format: date-time */
-        created_at?: string | null;
-        description?: string | null;
-        id: string;
-        image?: string | null;
-        name: string;
-        theme?: string | null;
-        /** Format: date-time */
-        updated_at?: string | null;
-      };
-      ok: boolean;
-    };
-    ApiOk_V1EventRecord: {
-      data: components["schemas"]["EventRecord"] & ({
-        destination?: Record<string, never> | null;
-        destination_id?: string | null;
-      });
-      ok: boolean;
-    };
-    ApiOk_Vec_EventAttendeeRecord: {
-      data: ({
-          /** Format: date-time */
-          created_at: string;
-          event_id: string;
-          user: string;
-          user_name?: string | null;
-        })[];
-      ok: boolean;
-    };
-    ApiOk_Vec_EventCategoryRecord: {
-      data: {
-          active: boolean;
-          /** Format: date-time */
-          created_at: string;
-          i18n: Record<string, never>;
-          name: string;
-          /** Format: date-time */
-          updated_at: string;
-        }[];
-      ok: boolean;
-    };
-    ApiOk_Vec_EventRecord: {
-      data: ({
-          all_day: boolean;
-          approved: boolean;
-          approved_by?: string | null;
-          attending: boolean;
-          categories: string[];
-          community_id?: string | null;
-          connected_addresses?: string[] | null;
-          coordinates: number[];
-          /** Format: date-time */
-          created_at?: string | null;
-          /** Format: date-time */
-          deleted_at?: string | null;
-          deleted_by?: string | null;
-          deleted_by_admin: boolean;
-          deleted_by_user: boolean;
-          deleted_reason?: string | null;
-          description?: string | null;
-          /** Format: int64 */
-          duration?: number | null;
-          estate_id?: string | null;
-          estate_name?: string | null;
-          featured_item?: string | null;
-          /** Format: date-time */
-          finish_at?: string | null;
-          highlighted: boolean;
-          id: string;
-          image?: string | null;
-          image_vertical?: string | null;
-          latest_attendees: string[];
-          live: boolean;
-          name: string;
-          /** Format: date-time */
-          next_finish_at?: string | null;
-          /** Format: date-time */
-          next_start_at?: string | null;
-          place_id?: string | null;
-          position: number[];
-          previous_place_id?: string | null;
-          recurrent: boolean;
-          /** Format: int64 */
-          recurrent_count?: number | null;
-          recurrent_dates: string[];
-          recurrent_frequency?: string | null;
-          /** Format: int64 */
-          recurrent_interval: number;
-          /** Format: int64 */
-          recurrent_month_mask: number;
-          /** Format: int64 */
-          recurrent_monthday?: number | null;
-          /** Format: int64 */
-          recurrent_setpos?: number | null;
-          /** Format: date-time */
-          recurrent_until?: string | null;
-          /** Format: int64 */
-          recurrent_weekday_mask: number;
-          rejected: boolean;
-          rejected_by?: string | null;
-          rejection_reason?: string | null;
-          scene_name?: string | null;
-          schedules: string[];
-          server?: string | null;
-          /** Format: date-time */
-          start_at?: string | null;
-          /** Format: int64 */
-          total_attendees: number;
-          trending: boolean;
-          /** Format: date-time */
-          updated_at?: string | null;
-          url?: string | null;
-          user?: string | null;
-          user_name?: string | null;
-          world: boolean;
-          /** Format: int32 */
-          x: number;
-          /** Format: int32 */
-          y: number;
-        })[];
-      ok: boolean;
-    };
-    ApiOk_Vec_ScheduleRecord: {
-      data: ({
-          active: boolean;
-          /** Format: date-time */
-          active_since?: string | null;
-          /** Format: date-time */
-          active_until?: string | null;
-          background: string[];
-          /** Format: date-time */
-          created_at?: string | null;
-          description?: string | null;
-          id: string;
-          image?: string | null;
-          name: string;
-          theme?: string | null;
-          /** Format: date-time */
-          updated_at?: string | null;
-        })[];
-      ok: boolean;
-    };
-    CreateEventBody: {
-      all_day?: boolean | null;
-      categories?: string[] | null;
-      community_id?: string | null;
-      contact?: string | null;
-      description?: string | null;
-      details?: string | null;
-      /** Format: int64 */
-      duration: number;
-      featured_item?: string | null;
-      image?: string | null;
-      image_vertical?: string | null;
-      name: string;
-      recurrent?: boolean | null;
-      /** Format: int64 */
-      recurrent_count?: number | null;
-      recurrent_frequency?: string | null;
-      /** Format: int64 */
-      recurrent_interval?: number | null;
-      /** Format: int64 */
-      recurrent_month_mask?: number | null;
-      /** Format: int64 */
-      recurrent_monthday?: number | null;
-      /** Format: int64 */
-      recurrent_setpos?: number | null;
-      recurrent_until?: string | null;
-      /** Format: int64 */
-      recurrent_weekday_mask?: number | null;
-      schedules?: string[] | null;
-      server?: string | null;
-      start_at: string;
-      url?: string | null;
-      world?: boolean | null;
-      /** Format: int32 */
-      x: number;
-      /** Format: int32 */
-      y: number;
-    };
-    DeleteEventBody: {
-      actor?: string | null;
-      reason?: string | null;
-    };
-    EventAttendeeRecord: {
-      /** Format: date-time */
-      created_at: string;
-      event_id: string;
-      user: string;
-      user_name?: string | null;
-    };
-    EventCategoryRecord: {
-      active: boolean;
-      /** Format: date-time */
-      created_at: string;
-      i18n: Record<string, never>;
-      name: string;
-      /** Format: date-time */
-      updated_at: string;
-    };
-    EventListData: components["schemas"]["EventListWithTotal"] | components["schemas"]["EventRecord"][];
-    EventListWithTotal: {
-      events: components["schemas"]["EventRecord"][];
-      /** Format: int64 */
-      total: number;
-    };
-    EventRecord: {
-      all_day: boolean;
-      approved: boolean;
-      approved_by?: string | null;
-      attending: boolean;
-      categories: string[];
-      community_id?: string | null;
-      connected_addresses?: string[] | null;
-      coordinates: number[];
-      /** Format: date-time */
-      created_at?: string | null;
-      /** Format: date-time */
-      deleted_at?: string | null;
-      deleted_by?: string | null;
-      deleted_by_admin: boolean;
-      deleted_by_user: boolean;
-      deleted_reason?: string | null;
-      description?: string | null;
-      /** Format: int64 */
-      duration?: number | null;
-      estate_id?: string | null;
-      estate_name?: string | null;
-      featured_item?: string | null;
-      /** Format: date-time */
-      finish_at?: string | null;
-      highlighted: boolean;
-      id: string;
-      image?: string | null;
-      image_vertical?: string | null;
-      latest_attendees: string[];
-      live: boolean;
-      name: string;
-      /** Format: date-time */
-      next_finish_at?: string | null;
-      /** Format: date-time */
-      next_start_at?: string | null;
-      place_id?: string | null;
-      position: number[];
-      previous_place_id?: string | null;
-      recurrent: boolean;
-      /** Format: int64 */
-      recurrent_count?: number | null;
-      recurrent_dates: string[];
-      recurrent_frequency?: string | null;
-      /** Format: int64 */
-      recurrent_interval: number;
-      /** Format: int64 */
-      recurrent_month_mask: number;
-      /** Format: int64 */
-      recurrent_monthday?: number | null;
-      /** Format: int64 */
-      recurrent_setpos?: number | null;
-      /** Format: date-time */
-      recurrent_until?: string | null;
-      /** Format: int64 */
-      recurrent_weekday_mask: number;
-      rejected: boolean;
-      rejected_by?: string | null;
-      rejection_reason?: string | null;
-      scene_name?: string | null;
-      schedules: string[];
-      server?: string | null;
-      /** Format: date-time */
-      start_at?: string | null;
-      /** Format: int64 */
-      total_attendees: number;
-      trending: boolean;
-      /** Format: date-time */
-      updated_at?: string | null;
-      url?: string | null;
-      user?: string | null;
-      user_name?: string | null;
-      world: boolean;
-      /** Format: int32 */
-      x: number;
-      /** Format: int32 */
-      y: number;
-    };
-    EventSearchBody: {
-      communityId?: string | null;
-      placeIds?: string[];
-    };
-    ScheduleRecord: {
-      active: boolean;
-      /** Format: date-time */
-      active_since?: string | null;
-      /** Format: date-time */
-      active_until?: string | null;
-      background: string[];
-      /** Format: date-time */
-      created_at?: string | null;
-      description?: string | null;
-      id: string;
-      image?: string | null;
-      name: string;
-      theme?: string | null;
-      /** Format: date-time */
-      updated_at?: string | null;
-    };
-    ScheduleUpsertEnvelope: {
-      domain: Record<string, never>;
-      message: components["schemas"]["ScheduleUpsertMessage"];
-      nonce: number[];
-      signature: string;
-      /** Format: int64 */
-      signed_at: number;
-    };
-    ScheduleUpsertMessage: {
-      active: boolean;
-      /** Format: int64 */
-      active_since: number;
-      /** Format: int64 */
-      active_until: number;
-      background?: string[];
-      description?: string | null;
-      image?: string | null;
-      name: string;
-      schedule_id?: string | null;
-      /** Format: int64 */
-      signed_at: number;
-      theme?: string | null;
-    };
-    UpdateEventBody: {
-      all_day?: boolean | null;
-      approved?: boolean | null;
-      categories?: string[] | null;
-      community_id?: string | null;
-      contact?: string | null;
-      description?: string | null;
-      details?: string | null;
-      /** Format: int64 */
-      duration?: number | null;
-      featured_item?: string | null;
-      highlighted?: boolean | null;
-      image?: string | null;
-      image_vertical?: string | null;
-      name?: string | null;
-      recurrent?: boolean | null;
-      /** Format: int64 */
-      recurrent_count?: number | null;
-      recurrent_frequency?: string | null;
-      /** Format: int64 */
-      recurrent_interval?: number | null;
-      /** Format: int64 */
-      recurrent_month_mask?: number | null;
-      /** Format: int64 */
-      recurrent_monthday?: number | null;
-      /** Format: int64 */
-      recurrent_setpos?: number | null;
-      recurrent_until?: string | null;
-      /** Format: int64 */
-      recurrent_weekday_mask?: number | null;
-      rejected?: boolean | null;
-      rejection_reason?: string | null;
-      schedules?: string[] | null;
-      server?: string | null;
-      start_at?: string | null;
-      trending?: boolean | null;
-      url?: string | null;
-      world?: boolean | null;
-      /** Format: int32 */
-      x?: number | null;
-      /** Format: int32 */
-      y?: number | null;
-    };
-    V1EventRecord: components["schemas"]["EventRecord"] & ({
-      destination?: Record<string, never> | null;
-      destination_id?: string | null;
-    });
-  };
-  responses: never;
-  parameters: never;
-  requestBodies: never;
-  headers: never;
-  pathItems: never;
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
-
 export type $defs = Record<string, never>;
-
-export type external = Record<string, never>;
-
 export interface operations {
-
-  get_event_list: {
-    parameters: {
-      query?: {
-        list?: string;
-        search?: string;
-        limit?: number;
-        offset?: number;
-        order?: string;
-        highlighted?: string;
-        creator?: string;
-        owner?: string;
-        only_attendee?: string;
-        world?: string;
-        world_names?: string[];
-        position?: string;
-        positions?: string[];
-        estate_id?: string;
-        community_id?: string;
-        places_ids?: string[];
-        from?: string;
-        to?: string;
-        schedule?: string;
-        with_connected_users?: string;
-        approved?: string;
-        rejected?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventListData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  create_event: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["CreateEventBody"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventRecord"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_event: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventRecord"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_event: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["DeleteEventBody"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventRecord"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_event: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["UpdateEventBody"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventRecord"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_event_attendees: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventAttendeeRecord"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  create_event_attendee: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventAttendeeRecord"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_event_attendee: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventAttendeeRecord"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_attending_event_list: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventRecord"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_event_category_list: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventCategoryRecord"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_moderation_list: {
-    parameters: {
-      query?: {
-        limit?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventRecord"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_event_search: {
-    parameters: {
-      query?: {
-        list?: string;
-        search?: string;
-        limit?: number;
-        offset?: number;
-        only_attendee?: string;
-        owner?: string;
-        with_connected_users?: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["EventSearchBody"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventListData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  upload_poster: {
-    requestBody: {
-      content: {
-        "multipart/form-data": number[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      413: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  upload_poster_vertical: {
-    requestBody: {
-      content: {
-        "multipart/form-data": number[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      413: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_profile_settings: {
-    parameters: {
-      path: {
-        profile_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  update_profile_settings: {
-    parameters: {
-      path: {
-        profile_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_auth_profile_settings: {
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  update_my_profile_settings: {
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  list_profile_settings: {
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_profile_subscription: {
-    responses: {
-      410: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  create_profile_subscription: {
-    responses: {
-      410: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_profile_subscription: {
-    responses: {
-      410: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_schedule_list: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_ScheduleRecord"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  create_schedule: {
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ScheduleUpsertEnvelope"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_ScheduleRecord"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_schedule_by_id: {
-    parameters: {
-      path: {
-        schedule_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_ScheduleRecord"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_schedule: {
-    parameters: {
-      path: {
-        schedule_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["ScheduleUpsertEnvelope"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_ScheduleRecord"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  sitemap_events: {
-    parameters: {
-      query?: {
-        page?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/xml": string;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  sitemap_schedules: {
-    responses: {
-      200: {
-        content: {
-          "application/xml": string;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  sitemap_static: {
-    responses: {
-      200: {
-        content: {
-          "application/xml": string;
-        };
-      };
-    };
-  };
-  sitemap_index: {
-    responses: {
-      200: {
-        content: {
-          "application/xml": string;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_attendance: {
-    parameters: {
-      query?: {
-        since?: number;
-        limit?: number;
-      };
-      path: {
-        event_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-    };
-  };
-  get_feed: {
-    parameters: {
-      query?: {
-        since?: number;
-        limit?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-    };
-  };
-  get_poster_vertical: {
-    responses: {
-      200: {
-        content: {
-          "image/png": number[];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_poster: {
-    responses: {
-      200: {
-        content: {
-          "image/png": number[];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_v1_destination_events: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_Vec_EventRecord"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_v1_event_list: {
-    parameters: {
-      query?: {
-        list?: string;
-        search?: string;
-        limit?: number;
-        offset?: number;
-        order?: string;
-        highlighted?: string;
-        creator?: string;
-        owner?: string;
-        only_attendee?: string;
-        world?: string;
-        world_names?: string[];
-        position?: string;
-        positions?: string[];
-        estate_id?: string;
-        community_id?: string;
-        places_ids?: string[];
-        from?: string;
-        to?: string;
-        schedule?: string;
-        with_connected_users?: string;
-        approved?: string;
-        rejected?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_EventListData"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_v1_event: {
-    parameters: {
-      path: {
-        event_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiOk_V1EventRecord"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
+    get_event_list: {
+        parameters: {
+            query?: {
+                list?: string;
+                search?: string;
+                limit?: string;
+                offset?: string;
+                order?: string;
+                highlighted?: string;
+                creator?: string;
+                owner?: string;
+                only_attendee?: string;
+                world?: string;
+                world_names?: string[];
+                position?: string;
+                positions?: string[];
+                estate_id?: string;
+                community_id?: string;
+                places_ids?: string[];
+                from?: string;
+                to?: string;
+                schedule?: string;
+                with_connected_users?: string;
+                approved?: string;
+                rejected?: string;
+                /** @description Admin-bearer only: include soft-deleted events (`true`/`1`) or exclude them (`false`/`0`, the default). */
+                deleted?: "true" | "false" | "1" | "0";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventListData"];
+                };
+            };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description The admin bearer does not match ("Unauthorized"), or the filter requires authentication */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateEventBody"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created. The answer is the record the route built (`createEvent.ts:235-270`): it carries no `updated_at`; later reads do. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventRecord"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description No profile for the signer: `Not found profile for "<user>"` */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Writes disabled, or an image was sent while this node has no blob store */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_attending_event_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventRecord"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_event_category_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventCategoryRecord"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_moderation_list: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventRecord"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_event_search: {
+        parameters: {
+            query?: {
+                list?: string;
+                search?: string;
+                limit?: string;
+                offset?: string;
+                only_attendee?: string;
+                owner?: string;
+                with_connected_users?: string;
+                /** @description Admin-bearer only: include soft-deleted events (`true`/`1`) or exclude them (`false`/`0`, the default). */
+                deleted?: "true" | "false" | "1" | "0";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EventSearchBody"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventListData"];
+                };
+            };
+            /** @description Validation failed: 400 with `data.errors`, `data.messages` and the validated `data.body` */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description The admin bearer does not match ("Unauthorized"), or the filter requires authentication */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventRecord"];
+                };
+            };
+            /** @description `event_id` is not a UUID (ajv `format: uuid`) */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description The admin bearer does not match ("Unauthorized"), or the filter requires authentication */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteEventBody"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventRecord"];
+                };
+            };
+            /** @description A non-UUID id, or an invalid reason or actor */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A replayed signed nonce, or a mirrored event deleted by its owner */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateEventBody"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventRecord"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A replayed signed nonce, or a mirrored event (edit it at the node it mirrors) */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description A `Bearer` was sent while EVENTS_ADMIN_AUTH_TOKEN is not configured */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_event_attendees: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventAttendeeRecord"];
+                };
+            };
+            /** @description event_id must match format "uuid" */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found event */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_event_attendee: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventAttendeeRecord"];
+                };
+            };
+            /** @description event_id must match format "uuid" */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Writes disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_event_attendee: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventAttendeeRecord"];
+                };
+            };
+            /** @description event_id must match format "uuid" */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Not found event */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            /** @description Writes disabled */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    upload_poster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": number[];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_PosterUpload"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    upload_poster_vertical: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": number[];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_PosterUpload"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_auth_profile_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_ProfileSettingsSession"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    update_my_profile_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateMyProfileSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_ProfileSettings"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_profile_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_ProfileSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_profile_subscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_ProfileSubscription"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_profile_subscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProfileSubscriptionBody"];
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_bool"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_profile_subscription: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_bool"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_profile_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Option_ProfileSettings"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    update_profile_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateProfileSettingsBody"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_ProfileSettings"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_schedule_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_ScheduleRecord"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    create_schedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateScheduleBody"] | components["schemas"]["ScheduleUpsertEnvelope"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_ScheduleRecord"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_schedule_by_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_ScheduleRecord"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_schedule: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                schedule_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateScheduleBody"] | components["schemas"]["ScheduleUpsertEnvelope"];
+            };
+        };
+        responses: {
+            /** @description HTTP response for Created */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_ScheduleFields"] | components["schemas"]["ApiOk_ScheduleRecord"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    sitemap_events: {
+        parameters: {
+            query?: {
+                page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    sitemap_schedules: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    sitemap_static: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                };
+            };
+        };
+    };
+    sitemap_index: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_feed: {
+        parameters: {
+            query?: {
+                since?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_attendance: {
+        parameters: {
+            query?: {
+                since?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_poster_vertical: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": number[];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_poster: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/png": number[];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_v1_destination_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_Vec_EventRecord"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_v1_event_list: {
+        parameters: {
+            query?: {
+                list?: string;
+                search?: string;
+                limit?: number;
+                offset?: number;
+                order?: string;
+                highlighted?: string;
+                creator?: string;
+                owner?: string;
+                only_attendee?: string;
+                world?: string;
+                /** @description Filter recurring or one-off events before pagination. Invalid values return 400. */
+                recurrent?: "true" | "false" | "1" | "0";
+                world_names?: string[];
+                position?: string;
+                positions?: string[];
+                estate_id?: string;
+                community_id?: string;
+                places_ids?: string[];
+                from?: string;
+                to?: string;
+                schedule?: string;
+                with_connected_users?: string;
+                /** @description Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes. */
+                with_recurrent_dates?: string;
+                approved?: string;
+                rejected?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_EventListData"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_v1_event: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                event_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiOk_V1EventRecord"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_profile_face: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            302: {
+                headers: {
+                    Location?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_profile_body: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            302: {
+                headers: {
+                    Location?: string;
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/plain": string;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
 }

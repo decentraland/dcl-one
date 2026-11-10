@@ -3,28 +3,29 @@
 //! **Publish.** A scene deployed against this node's write API is local
 //! authority: the write deployer admits it only when the signer holds a
 //! deploy-granting leg on every parcel it points at (the content
-//! validator's LAND leg, `land_authz::can_deploy_batch`: the index once its
-//! fold is published, the marketplace subgraph's owner leg before that,
-//! `Unavailable` when neither can answer), and the deploy function records
+//! validator's LAND leg, the Checker contract's `checkLAND` at the deploy's
+//! block or five minutes before it, `Unavailable` when the chain cannot
+//! answer), and the deploy function records
 //! its provenance row (`content.local_entities`, signer lowercased, origin
 //! `land-publish`) in the same statement as the deployment. Peer data never
 //! creates a row. [`local_provenance`] is the row as `/audit` shows it.
 //!
-//! **Unpublish** ([`tombstone_and_repoint`], `DELETE /scenes/{coord}`):
-//! only a locally published, not yet tombstoned scene can be taken down.
-//! One call of the hash-named function `content.unpublish_scene_<hash>`
-//! (defined in `schemas/00_content.sql`, [`unpublish_function_sql`]) finds
-//! the scene active at the pointer, takes the pointer locks the deploy
-//! function takes (every pointer of the scene, sorted in byte order), and
-//! in one statement off that lock: tombstones the provenance row, clears
-//! `deleter_deployment` on the rows the scene had superseded, re-points
-//! each pointer the scene held to the newest remaining scene listing it
-//! (never a tombstoned local one; the candidates are one GIN-served
-//! `entity_pointers && <the scene's pointers>` probe, `metrics/unpublish.md`)
-//! or deletes the pointer when nothing is underneath, and
-//! wakes the `new_deployment` listeners. A concurrent write that moved the
-//! parcel between the lookup and the lock makes the tombstone a no-op
-//! ([`UnpublishError::Conflict`]).
+//! **Unpublish** ([`local_scene_at`], then [`unpublish_local_scene`],
+//! `DELETE /scenes/{coord}`): only a locally published, not yet tombstoned
+//! scene can be taken down, and the route authorizes the signer on every
+//! parcel of it first. One call of the hash-named function
+//! `content.unpublish_scene_<hash>` (defined in `schemas/00_content.sql`,
+//! [`unpublish_function_sql`]) finds the scene active at the pointer, takes
+//! the pointer locks the deploy function takes (every pointer of the scene,
+//! sorted in byte order), and in one statement off that lock: tombstones the
+//! provenance row, deletes every pointer the scene held and wakes the
+//! `new_deployment` listeners. The freed parcels stay empty: the rows the
+//! scene superseded keep it as their `deleter_deployment`, and sync keeps
+//! the tombstone as the successor of any older scene on those parcels. A
+//! concurrent write that moved the parcel between the lookup and the lock,
+//! or another scene than the authorized one active there, makes the
+//! tombstone a no-op ([`UnpublishError::Conflict`]); a concurrent unpublish
+//! of the same scene leaves nothing to take down ([`UnpublishError::NotLocal`]).
 //!
 //! The functions of the write path live in the schema, not in the binary's
 //! startup: the runtime role cannot create them (`deploy/nix/postgresql.nix`
@@ -78,12 +79,18 @@ pub async fn local_provenance(
 
 pub use super::queries::provenance_json;
 
+/// A locally published, not yet tombstoned scene active at a pointer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalScene {
+    pub entity_id: String,
+    pub pointers: Vec<String>,
+}
+
 #[derive(Debug)]
 pub struct UnpublishOutcome {
     pub entity_id: String,
-    /// Every pointer the scene held, with the entity now active there
-    /// (`None`: the pointer was deleted, nothing underneath).
-    pub repointed: Vec<(String, Option<String>)>,
+    /// The pointers the scene held, now empty, in byte order.
+    pub parcels: Vec<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -105,8 +112,9 @@ impl From<sqlx::Error> for UnpublishError {
     }
 }
 
-/// The body of the unpublish function. `$1` is the pointer; `v_entity_id`
-/// the scene active there, `v_pointers` its pointers.
+/// The body of the unpublish function. `$1` is the pointer, `$2` the scene
+/// the caller authorized; `v_entity_id` the scene active there, `v_pointers`
+/// its pointers.
 fn unpublish_function_body() -> String {
     r#"#variable_conflict use_column
 DECLARE v_entity_id text; v_pointers text[];
@@ -125,57 +133,25 @@ WITH cur AS (
     JOIN content.deployments d ON d.entity_id = ap.entity_id
     JOIN content.local_entities le ON le.entity_id = d.entity_id AND le.tombstoned_at IS NULL
     WHERE ap.pointer = $1 AND d.entity_type = 'scene' AND d.entity_id = v_entity_id
+      AND d.entity_id = $2
 ), tomb AS (
     UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now())
     WHERE entity_id = v_entity_id AND tombstoned_at IS NULL AND EXISTS (SELECT 1 FROM cur)
     RETURNING entity_id
-), restored AS (
-    UPDATE content.deployments SET deleter_deployment = NULL
-    WHERE deleter_deployment = (SELECT id FROM cur) AND EXISTS (SELECT 1 FROM tomb)
-    RETURNING id
-), held AS (
-    SELECT ap.pointer
-    FROM content.active_pointers ap
-    WHERE ap.entity_id = v_entity_id AND EXISTS (SELECT 1 FROM tomb)
-), candidates AS MATERIALIZED (
-    SELECT d.entity_id, d.entity_pointers, d.entity_timestamp
-    FROM content.deployments d
-    WHERE d.entity_pointers && v_pointers
-      AND d.entity_type = 'scene'
-      AND d.entity_id <> v_entity_id
-      AND (d.deleter_deployment IS NULL OR d.deleter_deployment = (SELECT id FROM cur))
-      AND NOT EXISTS (
-          SELECT 1 FROM content.local_entities le
-          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)
-      AND EXISTS (SELECT 1 FROM tomb)
-), replacement AS (
-    SELECT DISTINCT ON (h.pointer) h.pointer, c.entity_id
-    FROM held h
-    JOIN candidates c ON c.entity_pointers @> ARRAY[h.pointer::text]
-    ORDER BY h.pointer, c.entity_timestamp DESC, lower(c.entity_id) DESC
-), repointed AS (
-    UPDATE content.active_pointers ap SET entity_id = r.entity_id, entity_type = 'scene'
-    FROM replacement r
-    WHERE ap.pointer = r.pointer
-    RETURNING ap.pointer
 ), removed AS (
     DELETE FROM content.active_pointers ap
-    WHERE ap.entity_id = v_entity_id
-      AND ap.pointer IN (SELECT pointer FROM held)
-      AND NOT EXISTS (SELECT 1 FROM replacement r WHERE r.pointer = ap.pointer)
+    WHERE ap.entity_id = v_entity_id AND EXISTS (SELECT 1 FROM tomb)
     RETURNING ap.pointer
 ), notified AS (
     SELECT pg_notify('new_deployment', 'scene:' || v_entity_id) AS sent
 )
 SELECT v_entity_id AS entity_id,
        (SELECT count(*) FROM tomb) AS tombstoned,
-       h.pointer::text AS pointer,
-       r.entity_id AS replacement
+       r.pointer::text AS pointer
 FROM (SELECT 1) AS marker
 CROSS JOIN notified
-LEFT JOIN held h ON true
-LEFT JOIN replacement r ON r.pointer = h.pointer
-ORDER BY h.pointer;
+LEFT JOIN removed r ON true
+ORDER BY r.pointer;
 END"#
         .to_string()
 }
@@ -191,14 +167,14 @@ pub fn unpublish_function_name() -> String {
 }
 
 pub fn unpublish_function_signature() -> String {
-    format!("content.{}(text)", unpublish_function_name())
+    format!("content.{}(text,text)", unpublish_function_name())
 }
 
-/// `CREATE [OR REPLACE] FUNCTION content.unpublish_scene_<hash>(text)`.
+/// `CREATE [OR REPLACE] FUNCTION content.unpublish_scene_<hash>(text, text)`.
 pub fn unpublish_function_sql(or_replace: bool) -> String {
     format!(
-        "CREATE {}FUNCTION content.{}(text) \
-         RETURNS TABLE (entity_id text, tombstoned bigint, pointer text, replacement text) \
+        "CREATE {}FUNCTION content.{}(text, text) \
+         RETURNS TABLE (entity_id text, tombstoned bigint, pointer text) \
          LANGUAGE plpgsql AS $unpublish$ {} $unpublish$",
         if or_replace { "OR REPLACE " } else { "" },
         unpublish_function_name(),
@@ -223,12 +199,10 @@ pub fn content_functions_sql(or_replace: bool) -> String {
 /// `Ok` once `signature` (a `to_regprocedure` spelling) exists; the error
 /// names the function and how to install it, never a grant to ask for.
 pub(crate) async fn require_function(pool: &PgPool, signature: &str) -> Result<(), String> {
-    let installed: bool = sqlx::query_scalar("SELECT to_regprocedure($1) IS NOT NULL")
-        .bind(signature)
-        .fetch_one(pool)
+    let missing = crate::db::missing_functions(pool, &[signature.to_owned()])
         .await
         .map_err(|e| format!("checking {signature}: {e}"))?;
-    if installed {
+    if missing.is_empty() {
         Ok(())
     } else {
         Err(format!(
@@ -254,38 +228,80 @@ async fn unpublish_function(pool: &PgPool) -> Result<&'static str, UnpublishErro
         .map(String::as_str)
 }
 
-/// Takes the local scene active at `pointer` down (module docs).
-pub async fn tombstone_and_repoint(
+/// The local scene active at `pointer`, as the unpublish function finds it.
+pub async fn local_scene_at(
     pool: &PgPool,
     pointer: &str,
+) -> Result<Option<LocalScene>, sqlx::Error> {
+    let row: Option<(String, Vec<String>)> = sqlx::query_as(
+        "SELECT d.entity_id, d.entity_pointers
+         FROM content.active_pointers ap
+         JOIN content.deployments d ON d.entity_id = ap.entity_id
+         JOIN content.local_entities le ON le.entity_id = d.entity_id AND le.tombstoned_at IS NULL
+         WHERE ap.pointer = $1 AND d.entity_type = 'scene'",
+    )
+    .bind(pointer.to_lowercase())
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(entity_id, pointers)| LocalScene {
+        entity_id,
+        pointers,
+    }))
+}
+
+/// Takes the local scene `entity_id` active at `pointer` down (module
+/// docs); [`UnpublishError::NotLocal`] when it is already unpublished,
+/// [`UnpublishError::Conflict`] when another scene is active there.
+pub async fn unpublish_local_scene(
+    pool: &PgPool,
+    pointer: &str,
+    entity_id: &str,
 ) -> Result<UnpublishOutcome, UnpublishError> {
     let pointer = pointer.to_lowercase();
     let unpublish_fn = unpublish_function(pool).await?;
     let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
-        "SELECT entity_id, tombstoned, pointer, replacement FROM content.{unpublish_fn}($1)"
+        "SELECT entity_id, tombstoned, pointer FROM content.{unpublish_fn}($1, $2)"
     )))
     .bind(&pointer)
+    .bind(entity_id)
     .fetch_all(pool)
     .await?;
 
-    let Some(first) = rows.first() else {
-        return Err(UnpublishError::NotLocal(pointer));
+    let tombstoned: i64 = match rows.first() {
+        Some(first) => first.try_get("tombstoned")?,
+        None => 0,
     };
-    let entity_id: String = first.try_get("entity_id")?;
-    let tombstoned: i64 = first.try_get("tombstoned")?;
     if tombstoned != 1 {
-        return Err(UnpublishError::Conflict);
+        return Err(missed(pool, &pointer, entity_id).await?);
     }
+    let entity_id = entity_id.to_string();
 
-    let mut repointed: Vec<(String, Option<String>)> = Vec::with_capacity(rows.len());
+    let mut parcels: Vec<String> = Vec::with_capacity(rows.len());
     for row in &rows {
         if let Some(pointer) = row.try_get::<Option<String>, _>("pointer")? {
-            repointed.push((pointer, row.try_get("replacement")?));
+            parcels.push(pointer);
         }
     }
-    Ok(UnpublishOutcome {
-        entity_id,
-        repointed,
+    parcels.sort_unstable();
+    Ok(UnpublishOutcome { entity_id, parcels })
+}
+
+/// Why the unpublish of `entity_id` took nothing down: gone already (tombstoned,
+/// or never a local scene) or still there behind another scene.
+async fn missed(
+    pool: &PgPool,
+    pointer: &str,
+    entity_id: &str,
+) -> Result<UnpublishError, sqlx::Error> {
+    let tombstoned: Option<bool> = sqlx::query_scalar(
+        "SELECT tombstoned_at IS NOT NULL FROM content.local_entities WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(match tombstoned {
+        Some(false) => UnpublishError::Conflict,
+        _ => UnpublishError::NotLocal(pointer.to_string()),
     })
 }
 

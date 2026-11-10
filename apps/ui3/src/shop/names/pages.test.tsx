@@ -1,20 +1,23 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { Hex } from "viem";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { useLocation } from "react-router";
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
-import { LAND_NETWORKS } from "../land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { erc20Abi } from "../land/evm";
 import { NET, nameResult } from "../land/fixtures";
 import { fakeWallet, stubClient, type Answer } from "../land/testkit";
 import { ShopHarness, type SessionKind } from "../land/testkit-react";
-import { CHAIN } from "../model/chain";
+import { marketplaceOn } from "../market/testing-flags";
+import { CHAIN } from "@shop/model/chain";
 import { controllerAbi, NAME_PRICE_WEI, registrarAbi, useCreditsAbi } from "./names";
 import NamesHub from "./NamesHub";
 import { interimNameOffer } from "./offer";
 import { RESUME_NAME_KEY } from "./resume";
-import type { EvmAddress } from "../model/address";
-import type { PurchaseOffer } from "../model/purchase";
-import { nameRegistration } from "../payment/fixtures";
+import type { EvmAddress } from "@shop/model/address";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import { nameRegistration } from "@shop/payment/fixtures";
+import { primeRemoteFlags } from "../discovery/lib/remoteFlags";
 
 const MANA = 10n ** 18n;
 const BUYER = "0x0000000000000000000000000000000000000b0b";
@@ -32,6 +35,12 @@ type Setup = {
   extra?: Record<string, Answer>;
   host?: Record<string, unknown>;
   path?: string;
+};
+
+/** Where the page left the URL. */
+const Where = () => {
+  const { pathname, search } = useLocation();
+  return <output data-testid="location">{pathname + search}</output>;
 };
 
 function setup(o: Setup) {
@@ -59,7 +68,10 @@ function setup(o: Setup) {
   const offerSource = interimNameOffer({ client, reader: reader(1), chainId: 1 });
   render(
     <ShopHarness session={o.session} account={BUYER} provider={o.session === "web3" ? wallet : null} path={o.path ?? "/shop/names"} route="/shop/names" host={o.host}>
-      <NamesHub client={client} offerSource={offerSource} loadBanned={async () => ["banned"]} debounceMs={0} modal={{ readerFor: reader, portal: false, timing }} />
+      <>
+        <NamesHub client={client} offerSource={offerSource} loadBanned={async () => ["banned"]} debounceMs={0} modal={{ readerFor: reader, portal: false, timing }} />
+        <Where />
+      </>
     </ShopHarness>,
   );
   return { wallet, client };
@@ -81,11 +93,20 @@ describe("NAME registration search", () => {
     expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("Nacho");
   });
 
-  it("links a taken NAME to its resale search", async () => {
-    setup({ session: "web2", available: false });
+  it("links a taken NAME to its resale search, for a web3 session with the Marketplace on", async () => {
+    onTestFinished(marketplaceOn());
+    setup({ session: "web3", available: false });
     type("taken");
     expect(await screen.findByRole("link", { name: "Make offer" })).toHaveAttribute("href", "/shop/names?section=resale&search=taken");
     expect(screen.getByRole("button", { name: "Claim name" })).toBeDisabled();
+  });
+
+  it("without the Marketplace (a web2 session), a taken NAME only asks for another: an offer is a Marketplace bid", async () => {
+    onTestFinished(marketplaceOn());
+    setup({ session: "web2", available: false });
+    type("taken");
+    expect(await screen.findByText("This NAME is taken. Choose another NAME.")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Make offer" })).toBeNull();
   });
 
   it("prices an available NAME in credits for everyone", async () => {
@@ -97,6 +118,7 @@ describe("NAME registration search", () => {
   });
 
   it("an offer the rule judges a resale is a taken NAME: no credit price, no credits wording, a link to the resale browse", async () => {
+    onTestFinished(marketplaceOn());
     const resale: PurchaseOffer = { ...nameRegistration({ kind: "web3", wallet: BUYER as EvmAddress }), sale: "secondary" };
     vi.spyOn(console, "warn").mockImplementation(() => {});
     render(
@@ -116,6 +138,28 @@ describe("NAME registration search", () => {
     type("Nacho");
     fireEvent.click(await screen.findByRole("button", { name: "Claim name for 500 Credits" }));
     expect(onSignIn).toHaveBeenCalled();
+  });
+
+  it("opens the buy dialog on the NAME a link names, as the in-world Shop's CLAIM NAME sends it", async () => {
+    setup({ session: "web2", path: "/shop/names?name=Nacho" });
+    expect(await screen.findByRole("dialog", { name: "Buy Nacho.dcl.eth" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("Nacho");
+  });
+
+  it("keeps the link's other parameters, and takes its NAME over a stashed top-up's", async () => {
+    sessionStorage.setItem(RESUME_NAME_KEY, "Stashed");
+    setup({ session: "web2", path: "/shop/names?name=Nacho&utm_source=bevy-web-client" });
+    expect(await screen.findByRole("dialog", { name: "Buy Nacho.dcl.eth" })).toBeInTheDocument();
+    expect(screen.getByTestId("location")).toHaveTextContent("/shop/names?utm_source=bevy-web-client");
+    // The superseded top-up NAME is taken too: it would reopen on a later visit.
+    expect(sessionStorage.getItem(RESUME_NAME_KEY)).toBeNull();
+  });
+
+  it("ignores a linked NAME that can't be registered", async () => {
+    setup({ session: "web2", path: "/shop/names?name=no%20way" });
+    await screen.findByRole("textbox", { name: "Search for a NAME" });
+    expect(screen.getByRole("textbox", { name: "Search for a NAME" })).toHaveValue("");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("re-opens the buy dialog on the NAME a top-up was started for", async () => {
@@ -253,11 +297,31 @@ describe("the NAME buy dialog", () => {
   });
 });
 
+describe("a NAME resale link while the Marketplace has not answered", () => {
+  it("waits instead of mounting the claim page, and reads nothing", async () => {
+    primeRemoteFlags(null);
+    vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>(() => {})));
+    onTestFinished(() => {
+      vi.unstubAllGlobals();
+    });
+    const client = stubClient({});
+    render(
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
+        <NamesHub client={client} />
+      </ShopHarness>,
+    );
+    expect(await screen.findByTestId("names-pending")).toHaveAttribute("aria-busy", "true");
+    expect(screen.queryByRole("textbox")).toBeNull();
+    expect(client.requests).toHaveLength(0);
+  });
+});
+
 describe("NAMEs being resold", () => {
+  beforeEach(() => marketplaceOn());
   it("lists NAME resales with their MANA price and links to the token page", async () => {
     const client = stubClient({ "GET /shop-api/v1/nfts": { body: { data: [nameResult("Nacho", { price: (250n * MANA).toString() })], total: 1 } } });
     render(
-      <ShopHarness session="web2" path="/shop/names?section=resale" route="/shop/names">
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
         <NamesHub client={client} />
       </ShopHarness>,
     );
@@ -272,11 +336,103 @@ describe("NAMEs being resold", () => {
   it("says the index is catching up instead of an empty market", async () => {
     const client = stubClient({ "GET /shop-api/v1/nfts": { status: 503, body: { error: "Service Unavailable", message: "nft-indexer is catching up" } } });
     render(
-      <ShopHarness session="web2" path="/shop/names?section=resale" route="/shop/names">
+      <ShopHarness session="web3" path="/shop/names?section=resale" route="/shop/names">
         <NamesHub client={client} />
       </ShopHarness>,
     );
     expect(await screen.findByText(/nft-indexer is catching up.*not an empty market/)).toBeInTheDocument();
   });
 
+  describe("the MANA price range", () => {
+    const Search = () => <output data-testid="search">{useLocation().search}</output>;
+    const browse = (path: string, results = [nameResult("Nacho", { price: (5n * MANA).toString() })]) => {
+      const client = stubClient({ "GET /shop-api/v1/nfts": { body: { data: results, total: results.length } } });
+      render(
+        <ShopHarness session="web3" path={path} route="/shop/names">
+          <NamesHub client={client} />
+          <Search />
+        </ShopHarness>,
+      );
+      const sent = () => client.requests.filter((r) => r.url.includes("/v1/nfts")).map((r) => new URL(r.url).searchParams);
+      return { client, sent };
+    };
+
+    it("asks for the range in wei and keeps MANA in the URL", async () => {
+      const { sent } = browse("/shop/names?section=resale");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual([null, null]);
+      fireEvent.change(screen.getByRole("textbox", { name: "Minimum price in MANA" }), { target: { value: "1.5" } });
+      fireEvent.change(screen.getByRole("textbox", { name: "Maximum price in MANA" }), { target: { value: " 20 " } });
+      fireEvent.submit(screen.getByRole("form", { name: "Price in MANA" }));
+      await waitFor(() => expect(sent()).toHaveLength(2));
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual([(15n * MANA / 10n).toString(), (20n * MANA).toString()]);
+      const search = new URLSearchParams(screen.getByTestId("search").textContent!);
+      expect([search.get("minPrice"), search.get("maxPrice"), search.get("section")]).toEqual(["1.5", "20", "resale"]);
+    });
+
+    it("applies the range when the focus leaves it, not while moving between its boxes", async () => {
+      const { sent } = browse("/shop/names?section=resale");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      const min = screen.getByRole("textbox", { name: "Minimum price in MANA" });
+      const max = screen.getByRole("textbox", { name: "Maximum price in MANA" });
+      fireEvent.change(min, { target: { value: "3" } });
+      fireEvent.blur(min, { relatedTarget: max });
+      expect(screen.getByTestId("search").textContent).not.toContain("minPrice");
+      fireEvent.blur(max, { relatedTarget: null });
+      await waitFor(() => expect(sent()).toHaveLength(2));
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice")]).toEqual([(3n * MANA).toString(), null]);
+    });
+
+    it("restores a range from the URL and drops a bound that is not a MANA amount", async () => {
+      const { sent } = browse("/shop/names?section=resale&minPrice=2&maxPrice=lots");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      expect(screen.getByRole("textbox", { name: "Minimum price in MANA" })).toHaveValue("2");
+      expect(screen.getByRole("textbox", { name: "Maximum price in MANA" })).toHaveValue("");
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("maxPrice")]).toEqual([(2n * MANA).toString(), null]);
+    });
+
+    it("holds back a bound that is not an amount, or a minimum above the maximum, and says why", async () => {
+      const { sent } = browse("/shop/names?section=resale");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      const min = screen.getByRole("textbox", { name: "Minimum price in MANA" });
+      const max = screen.getByRole("textbox", { name: "Maximum price in MANA" });
+      const form = screen.getByRole("form", { name: "Price in MANA" });
+      fireEvent.change(min, { target: { value: "ten" } });
+      fireEvent.submit(form);
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a MANA amount, such as 10 or 2.5.");
+      expect(min).toHaveAttribute("aria-invalid", "true");
+      fireEvent.change(min, { target: { value: "30" } });
+      fireEvent.change(max, { target: { value: "10" } });
+      fireEvent.submit(form);
+      expect(screen.getByRole("alert")).toHaveTextContent("The minimum is above the maximum.");
+      expect(sent()).toHaveLength(1);
+      fireEvent.change(max, { target: { value: "40" } });
+      expect(screen.queryByRole("alert")).toBeNull();
+      fireEvent.submit(form);
+      await waitFor(() => expect(sent()).toHaveLength(2));
+    });
+
+    it("reads zero as no bound, refuses an amount past uint256, and asks for live listings with a range", async () => {
+      const { sent } = browse("/shop/names?section=resale&onlyOnSale=false&minPrice=0");
+      await screen.findByRole("link", { name: "Nacho.dcl.eth, 5 MANA" });
+      expect([sent()[0]!.get("minPrice"), sent()[0]!.get("isOnSale")]).toEqual([null, null]);
+      const min = screen.getByRole("textbox", { name: "Minimum price in MANA" });
+      const max = screen.getByRole("textbox", { name: "Maximum price in MANA" });
+      const form = screen.getByRole("form", { name: "Price in MANA" });
+      fireEvent.change(max, { target: { value: "1" + "0".repeat(60) } });
+      fireEvent.submit(form);
+      expect(screen.getByRole("alert")).toHaveTextContent("Enter a MANA amount");
+      fireEvent.change(min, { target: { value: "0.0" } });
+      fireEvent.change(max, { target: { value: " 8 " } });
+      fireEvent.submit(form);
+      await waitFor(() => expect(sent()).toHaveLength(2));
+      expect([sent()[1]!.get("minPrice"), sent()[1]!.get("maxPrice"), sent()[1]!.get("isOnSale")]).toEqual([null, (8n * MANA).toString(), "true"]);
+      expect([min, max].map((b) => (b as HTMLInputElement).value)).toEqual(["", "8"]);
+    });
+
+    it("says when nothing on resale falls in the range", async () => {
+      browse("/shop/names?section=resale&maxPrice=1", []);
+      expect(await screen.findByText("No NAMEs on resale in this price range")).toBeInTheDocument();
+    });
+  });
 });

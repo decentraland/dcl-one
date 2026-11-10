@@ -1,5 +1,7 @@
 //! The operator routes behind [`RequireAdmin`]: grants, revokes, the claim
-//! block, the pack catalogue, the purchase/checkout/ledger pages, the manual
+//! block, the multi-accounting flags (notified over `wallet_flags.rs` or
+//! posted by an operator), the pack
+//! catalogue, the purchase/checkout/ledger pages, the manual
 //! refund and force-fulfil of a checkout, the escrow reclaim/release of a
 //! lease (through the economy broker) and the reconciler. Every mutation
 //! audits into `ops.admin_audit` with the server-chosen actor.
@@ -8,13 +10,13 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 
 use crate::credits::SharedState;
 use crate::credits::admin::{
-    RequireAdmin, normalize_address, paginate, validate_currency, validate_escrow_ref,
+    FlagBody, RequireAdmin, normalize_address, paginate, validate_currency, validate_escrow_ref,
     validate_idempotency_key, validate_positive_amount, validate_price_cents, validate_sku,
     validated_reason,
 };
@@ -27,6 +29,8 @@ pub fn router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
+        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags/{address}", delete(unflag_wallet))
         .route("/admin/packs", get(list_packs).post(create_pack))
         .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
         .route("/admin/purchases", get(list_purchases))
@@ -49,6 +53,8 @@ pub fn shop_router() -> Router<SharedState> {
         .route("/admin/credits/grant", post(grant_credits))
         .route("/admin/credits/revoke", post(revoke_credits))
         .route("/admin/users/{address}/block", post(block_user))
+        .route("/admin/flags", get(list_flags).post(flag_wallets))
+        .route("/admin/flags/{address}", delete(unflag_wallet))
         .route("/admin/packs", get(list_packs).post(create_pack))
         .route("/admin/packs/{sku}", put(update_pack).delete(delete_pack))
         .route("/admin/purchases", get(list_purchases))
@@ -172,6 +178,101 @@ async fn block_user(
         )
         .await?;
     Ok(Json(BlockOut { address, blocked }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct FlagOut {
+    flagged: Vec<String>,
+}
+
+/// `POST /admin/flags`: an operator's flag by hand, the body the
+/// `credits.wallet_flags` notification carries (`FlagBody`). Every address
+/// of the body is flagged, the body being each row's linked set.
+async fn flag_wallets(
+    admin: RequireAdmin,
+    State(state): State<SharedState>,
+    body: Option<Json<FlagBody>>,
+) -> Result<Json<FlagOut>, ApiError> {
+    let Json(body) =
+        body.ok_or_else(|| ApiError::bad_request("missing JSON body { addresses, source, ip? }"))?;
+    let flag = body.validate()?;
+    let actor = admin.audit_actor_description();
+    state
+        .credits
+        .admin_flag_wallets(
+            &flag.addresses,
+            &flag.source,
+            flag.ip.as_deref(),
+            &actor,
+            &flag.detail(),
+        )
+        .await?;
+    Ok(Json(FlagOut {
+        flagged: flag.addresses,
+    }))
+}
+
+#[derive(Debug, Serialize)]
+pub struct UnflagOut {
+    address: String,
+    deleted: bool,
+}
+
+async fn unflag_wallet(
+    admin: RequireAdmin,
+    State(state): State<SharedState>,
+    Path(address): Path<String>,
+) -> Result<Json<UnflagOut>, ApiError> {
+    let address = normalize_address(&address)?;
+    let actor = admin.audit_actor_description();
+    let detail = json!({ "address": address });
+    let deleted = state
+        .credits
+        .admin_unflag_wallet(&address, &actor, &detail)
+        .await?;
+    Ok(Json(UnflagOut { address, deleted }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FlagListQuery {
+    address: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct FlaggedOut {
+    address: String,
+    source: String,
+    ip: Option<String>,
+    #[serde(rename = "linkedAddresses")]
+    linked_addresses: Vec<String>,
+    #[serde(rename = "flaggedAt")]
+    flagged_at: String,
+}
+
+async fn list_flags(
+    _admin: RequireAdmin,
+    State(state): State<SharedState>,
+    Query(q): Query<FlagListQuery>,
+) -> Result<Json<Vec<FlaggedOut>>, ApiError> {
+    let address = q.address.as_deref().map(normalize_address).transpose()?;
+    let (limit, offset) = paginate(q.limit, q.offset);
+    let rows = state
+        .credits
+        .admin_list_flags(address.as_deref(), limit, offset)
+        .await?;
+    let out = rows
+        .into_iter()
+        .map(|f| FlaggedOut {
+            address: f.address,
+            source: f.source,
+            ip: f.ip,
+            linked_addresses: f.linked_addresses,
+            flagged_at: rfc3339(f.flagged_at),
+        })
+        .collect();
+    Ok(Json(out))
 }
 
 #[derive(Debug, Deserialize)]

@@ -537,7 +537,7 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "a replayed nonce: {body}");
-        assert!(body["message"].as_str().unwrap().starts_with("replay:"));
+        assert!(body["error"].as_str().unwrap().starts_with("replay:"));
 
         let vote = sign(
             &key,
@@ -576,7 +576,7 @@ mod tests {
         )
         .await;
         assert_eq!(
-            (status, body["message"].clone()),
+            (status, body["error"].clone()),
             (
                 StatusCode::BAD_REQUEST,
                 json!("domain mismatch: expected DecentralandPlaces")
@@ -620,7 +620,7 @@ mod tests {
         .await;
         assert_eq!(
             (status, body["data"]["place_id"].clone()),
-            (StatusCode::OK, json!(place)),
+            (StatusCode::CREATED, json!(place)),
             "{body}"
         );
 
@@ -652,7 +652,7 @@ mod tests {
                 name: "MVMF".into(),
                 description: None,
                 image: None,
-                theme: Some("pride".into()),
+                theme: Some("pride_2023".into()),
                 background: vec!["#fff".into()],
                 active_since: now(),
                 active_until: now() + 86_400,
@@ -682,7 +682,7 @@ mod tests {
                 name: "MVMF".into(),
                 description: None,
                 image: None,
-                theme: Some("pride".into()),
+                theme: Some("pride_2023".into()),
                 background: vec!["#fff".into()],
                 active_since: now(),
                 active_until: now() + 86_400,
@@ -698,19 +698,29 @@ mod tests {
             Some(serde_json::to_value(&schedule).unwrap()),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         assert_eq!(
             body["data"]["id"],
             json!(schedule_id(&wallet, "MVMF", &schedule.nonce))
         );
-        let (status, _) = call(
+        // Plain schedule bodies use the legacy signed-fetch path, which
+        // authenticates before parsing authoring fields.
+        let (status, body) = call(
             &app,
             "POST",
             "/api/schedules",
             Some(json!({ "name": "unsigned" })),
         )
         .await;
-        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        let (status, body) = call(
+            &app,
+            "POST",
+            "/api/schedules",
+            Some(json!({ "domain": {}, "message": {}, "signature": "invalid" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
 
         let mine = sign(
             &key,
@@ -734,7 +744,7 @@ mod tests {
             Some(serde_json::to_value(&mine).unwrap()),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         assert_eq!(
             (
                 body["data"]["email"].clone(),
@@ -778,6 +788,55 @@ mod tests {
         assert_eq!(feed, json!({ "events": [], "partial": false }));
     }
 
+    #[tokio::test]
+    async fn changing_the_email_requires_verification_again_but_other_edits_preserve_it() {
+        let Some(pool) = crate::db::scratch::pool(3).await else {
+            return;
+        };
+        let key = PrivateKeySigner::random();
+        let wallet = format!("{:#x}", key.address());
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",email,email_verified) VALUES ($1,'verified@example.org',true)")
+            .bind(&wallet).execute(&pool).await.unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        for (email, expected) in [
+            (None, true),
+            (Some("verified@example.org"), true),
+            (Some("new@example.org"), false),
+        ] {
+            let request = sign(
+                &key,
+                catalyst_fed::domains::events(),
+                ProfileSettingsUpdate {
+                    target: wallet.clone(),
+                    email: email.map(str::to_owned),
+                    email_verified: None,
+                    use_local_time: Some(false),
+                    notify_by_email: None,
+                    notify_by_browser: None,
+                    permissions: None,
+                    signed_at: now(),
+                },
+                now(),
+            );
+            let (status, body) = call(
+                &app,
+                "PATCH",
+                "/api/profiles/me/settings",
+                Some(serde_json::to_value(request).unwrap()),
+            )
+            .await;
+            assert_eq!(status, StatusCode::CREATED, "{body}");
+            assert_eq!(body["data"]["email_verified"], expected, "{body}");
+        }
+    }
+
     /// A moderator's writes (a schedule, another wallet's settings) are the
     /// node's moderation, behind `OPS_WRITES_ENABLED`; a wallet's own
     /// settings are a user write, behind `DATA_WRITES_ENABLED`.
@@ -813,7 +872,7 @@ mod tests {
                     name: "Gates".into(),
                     description: None,
                     image: None,
-                    theme: Some("pride".into()),
+                    theme: Some("pride_2023".into()),
                     background: vec!["#fff".into()],
                     active_since: now(),
                     active_until: now() + 86_400,
@@ -853,7 +912,7 @@ mod tests {
             let (status, body) = call(&data_only, method, path, Some(body)).await;
             assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}: {body}");
             assert!(
-                body["message"]
+                body["error"]
                     .as_str()
                     .unwrap()
                     .contains("OPS_WRITES_ENABLED"),
@@ -867,13 +926,13 @@ mod tests {
             Some(settings_of(&wallet)),
         )
         .await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
 
         let ops_only = app(false, true);
         let (status, body) = call(&ops_only, "POST", "/api/schedules", Some(schedule())).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         let (status, body) = call(&ops_only, "PATCH", &other_path, Some(settings_of(other))).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         let (status, body) = call(
             &ops_only,
             "PATCH",
@@ -883,7 +942,7 @@ mod tests {
         .await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
         assert!(
-            body["message"]
+            body["error"]
                 .as_str()
                 .unwrap()
                 .contains("DATA_WRITES_ENABLED"),

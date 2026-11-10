@@ -23,6 +23,7 @@
 //! until a build exists (`personalized: false`). Coupons are stored and
 //! served by `/v1/coupons` (`coupons`).
 
+use crate::types::ManaUsdRate;
 use std::collections::HashMap;
 
 use axum::Json;
@@ -197,7 +198,8 @@ pub struct ShopCatalogFilters {
     pub category: Option<String>,
     pub contract_address: Option<String>,
     pub item_id: Option<String>,
-    pub creator: Option<String>,
+    /// `creator`: one or more comma-separated creator addresses, any of which matches.
+    pub creator: Vec<String>,
     pub rarities: Vec<String>,
     pub wearable_categories: Vec<String>,
     pub is_smart: bool,
@@ -209,6 +211,12 @@ pub struct ShopCatalogFilters {
     pub discounted: Option<bool>,
     pub include_social_emotes: bool,
     pub listing_type: Option<ShopListingType>,
+    /// `emotePlayMode` (`loop` | `simple`): `Some(true)` loops only, `Some(false)`
+    /// plays once only; both or neither is no filter (as `/v3/catalog/items`).
+    pub emote_loop: Option<bool>,
+    /// `emoteHasSound` / `emoteHasGeometry`: emotes with sound / with props.
+    pub emote_has_sound: bool,
+    pub emote_has_geometry: bool,
 }
 
 impl Default for ShopCatalogFilters {
@@ -219,7 +227,7 @@ impl Default for ShopCatalogFilters {
             category: None,
             contract_address: None,
             item_id: None,
-            creator: None,
+            creator: Vec::new(),
             rarities: Vec::new(),
             wearable_categories: Vec::new(),
             is_smart: false,
@@ -231,6 +239,9 @@ impl Default for ShopCatalogFilters {
             discounted: None,
             include_social_emotes: true,
             listing_type: None,
+            emote_loop: None,
+            emote_has_sound: false,
+            emote_has_geometry: false,
         }
     }
 }
@@ -411,7 +422,7 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         category: p.get_string("category", None),
         contract_address: p.get_string("contractAddress", None),
         item_id: p.get_string("itemId", None),
-        creator: p.get_string("creator", None),
+        creator: csv(p.get_string("creator", None)),
         rarities: csv(p.get_string("rarity", None)),
         wearable_categories: csv(p.get_string("wearableCategory", None)),
         is_smart: p.get_boolean("isSmart"),
@@ -427,6 +438,11 @@ pub fn parse_shop_filters(pairs: &[(String, String)]) -> ShopCatalogFilters {
         include_social_emotes: p.get_string("includeSocialEmotes", None).as_deref()
             != Some("false"),
         listing_type: parse_listing_type(&p),
+        emote_loop: super::items::emote_play_mode_clause(
+            &p.get_list("emotePlayMode", &["loop", "simple"]),
+        ),
+        emote_has_sound: p.get_boolean("emoteHasSound"),
+        emote_has_geometry: p.get_boolean("emoteHasGeometry"),
     }
 }
 
@@ -949,7 +965,7 @@ fn branch_base(
             format!(
                 "SELECT '{source}'::text AS source, 'trade'::text AS acquisition, u.id::text AS trade_id, u.type AS trade_type, u.signer, \
                         i.contract_address, i.item_id::text AS item_id, u.token_id::text AS token_id, i.name, i.image, i.rarity, i.item_type, \
-                        i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.creator, \
+                        i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.emote_has_sound, i.emote_has_geometry, i.creator, \
                         CASE WHEN u.type = 'public_item_order' THEN i.available END AS available, \
                         u.amount_received::numeric AS amount, i.network, u.created_at, i.search_is_collection_approved AS approved, \
                         u.chain_id, lower(u.trade_contract) AS trade_contract, \
@@ -965,7 +981,7 @@ fn branch_base(
         UnifiedAcquisition::Store => format!(
             "SELECT 'legacy'::text AS source, 'store'::text AS acquisition, i.contract_address || '-' || i.item_id::text AS trade_id, 'public_item_order'::text AS trade_type, i.creator AS signer, \
                     i.contract_address, i.item_id::text AS item_id, NULL::text AS token_id, i.name, i.image, i.rarity, i.item_type, \
-                    i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.creator, \
+                    i.category AS wearable_category, i.body_shapes, i.emote_loop, i.emote_outcome_type, i.emote_has_sound, i.emote_has_geometry, i.creator, \
                     i.available, i.price::numeric AS amount, i.network, (to_timestamp(i.created_at) AT TIME ZONE 'UTC') AS created_at, i.search_is_collection_approved AS approved, \
                     NULL::integer AS chain_id, NULL::text AS trade_contract, \
                     NULL::text AS seller, NULL::text AS issued_id \
@@ -1039,9 +1055,14 @@ fn append_unified_filters(
         let p = b.bind_string(iid.clone());
         wheres.push(format!("mv.item_id = {p}"));
     }
-    if let Some(creator) = f.creator.as_deref().filter(|c| !c.is_empty()) {
-        let p = b.bind_string(creator.to_lowercase());
-        wheres.push(format!("lower(mv.creator) = {p}"));
+    if !f.creator.is_empty() {
+        let p = b.bind_strings(
+            &f.creator
+                .iter()
+                .map(|c| c.to_lowercase())
+                .collect::<Vec<_>>(),
+        );
+        wheres.push(format!("lower(mv.creator) = ANY({p})"));
     }
     match f.category.as_deref() {
         Some("emote") => wheres.push("mv.item_type ILIKE 'emote%'".to_string()),
@@ -1068,6 +1089,16 @@ fn append_unified_filters(
     }
     if f.is_smart {
         wheres.push("mv.item_type = 'smart_wearable_v1'".to_string());
+    }
+    // A wearable's emote columns are NULL, so these keep emotes only.
+    if let Some(looped) = f.emote_loop {
+        wheres.push(format!("mv.emote_loop = {looped}"));
+    }
+    if f.emote_has_sound {
+        wheres.push("mv.emote_has_sound = true".to_string());
+    }
+    if f.emote_has_geometry {
+        wheres.push("mv.emote_has_geometry = true".to_string());
     }
     if let Some(shapes) = body_shapes_for_genders(&f.wearable_genders) {
         let p = b.bind_strings(&shapes);
@@ -1098,7 +1129,7 @@ fn append_unified_filters(
 /// The chains this deployment sells on, each (chain, marketplace, coupon
 /// manager) pairing of them: a coupon is redeemable only by the marketplace
 /// version its manager is wired into, on the chain it was signed for.
-fn coupon_pairings() -> Vec<(i64, String, String)> {
+pub(crate) fn coupon_pairings() -> Vec<(i64, String, String)> {
     use super::listings::{offchain_marketplace_v2, offchain_marketplace_v3};
     use crate::coupons::contracts::{CouponMarketplace, coupon_contracts};
     let served = [
@@ -1157,9 +1188,10 @@ fn coupon_join() -> String {
              AND {paired} \
              AND c.effective_since <= timezone('UTC', now()) AND c.expires_at > timezone('UTC', now()) \
              AND lower(mv.contract_address) = ANY(c.collections) \
+             AND c.discount_type = 1 AND c.discount_ppm > 0 AND c.discount_ppm < 1000000 \
              AND NOT COALESCE(cs.cancelled, false) AND NOT COALESCE(cs.revoked, false) \
              AND COALESCE(cs.uses, 0) < (c.checks->>'uses')::numeric \
-           ORDER BY c.discount_ppm DESC, c.expires_at ASC \
+           ORDER BY c.discount_ppm DESC, c.expires_at ASC, c.id ASC \
            LIMIT 1 \
          ) cp ON true"
     )
@@ -1236,7 +1268,7 @@ fn unified_branch(
 }
 
 /// The branches the request's `source` keeps, joined by UNION ALL.
-fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: f64) -> String {
+fn unified_inner(b: &mut Builder, filters: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
     let rate_p = (filters.source != Some(UnifiedSource::Native))
         .then(|| b.bind_string(rate_to_numeric_string(rate)));
     let branches = [
@@ -1426,7 +1458,7 @@ pub fn build_importable_listings_sql(
 
 pub fn build_unified_listings_sql(
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1452,7 +1484,7 @@ pub fn build_unified_listings_sql(
 /// The UNION collapsed to one representative row per item: primary before
 /// secondary, native before legacy, cheapest, trade before store; with the
 /// per-item `listing_count` window. Callers wrap it as `d`.
-fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: f64) -> String {
+fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: ManaUsdRate) -> String {
     let inner = unified_inner(b, f, rate);
     format!(
         "SELECT DISTINCT ON (f.contract_address, f.item_id) f.*, CEIL(f.usd_wei / {USD_WEI_PER_CREDIT}::numeric)::bigint AS price_credits, {compare_at} AS compare_at_credits \
@@ -1465,7 +1497,7 @@ fn item_unified_core(b: &mut Builder, f: &UnifiedCatalogFilters, rate: f64) -> S
 
 pub fn build_unified_items_sql(
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1481,7 +1513,7 @@ pub fn build_unified_items_sql(
 pub fn build_items_by_ids_sql(
     ids: &[String],
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1539,7 +1571,7 @@ pub fn build_related_items_sql(
     reference_rarity: Option<&str>,
     first: Option<i64>,
     rail: &RelatedItemsFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     since: Option<chrono::NaiveDateTime>,
 ) -> Builder {
     let mut b = Builder::new();
@@ -1835,7 +1867,7 @@ pub async fn importable_listings(
 pub async fn unified_listings(
     state: &MarketplaceState,
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedListing>, i64), ApiError> {
     let rows = fetch(state, build_unified_listings_sql(f, rate, since(state))).await?;
     Ok((
@@ -1847,7 +1879,7 @@ pub async fn unified_listings(
 pub async fn unified_items(
     state: &MarketplaceState,
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<(Vec<UnifiedItem>, i64), ApiError> {
     let rows = fetch(state, build_unified_items_sql(f, rate, since(state))).await?;
     Ok((rows.iter().map(map_unified_item).collect(), total_of(&rows)))
@@ -1857,7 +1889,7 @@ pub async fn items_by_ids(
     state: &MarketplaceState,
     ids: &[String],
     f: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<Vec<UnifiedItem>, ApiError> {
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -1889,7 +1921,7 @@ pub async fn related_items(
     item_id: &str,
     first: Option<i64>,
     rail: &RelatedItemsFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<Vec<UnifiedItem>, ApiError> {
     let Some(reference) = reference_item(state, contract_address, item_id).await? else {
         return Ok(Vec::new());
@@ -1995,7 +2027,7 @@ pub async fn trending_items(
     first: Option<i64>,
     days: Option<i64>,
     filters: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
 ) -> Result<Vec<TrendingItem>, Response> {
     let first = trending_clamp_first(first);
     let days = trending_clamp_days(days);
@@ -2532,7 +2564,7 @@ async fn personal_rows(
     p: &Params<'_>,
     verified: Option<&str>,
     filters: &UnifiedCatalogFilters,
-    rate: f64,
+    rate: ManaUsdRate,
     limit: usize,
 ) -> Result<Vec<SuggestedItem>, ApiError> {
     let wallet = p
@@ -3170,7 +3202,7 @@ mod tests {
         );
         let unified = build_unified_items_sql(
             &parse_unified_filters(&pairs(&[("groupBy", "item")])),
-            0.5,
+            ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
             None,
         );
         assert_eq!(
@@ -3190,7 +3222,7 @@ mod tests {
         );
         let native = build_unified_listings_sql(
             &parse_unified_filters(&pairs(&[("source", "native")])),
-            0.5,
+            ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
             None,
         );
         assert!(
@@ -3213,7 +3245,7 @@ mod tests {
             Some("rare"),
             None,
             &RelatedItemsFilters::default(),
-            0.5,
+            ManaUsdRate::parse_usd_per_mana("0.5").unwrap(),
             None,
         );
         assert!(

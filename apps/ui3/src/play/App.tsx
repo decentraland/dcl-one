@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BridgeClient } from './engine/bridge'
 import { EngineDriver } from './engine/EngineDriver'
 import { EngineRpc } from './engine/engineRpc'
@@ -12,6 +13,7 @@ import { FriendsPanel } from './features/friends/FriendsPanel'
 import { SettingsPanel } from './features/settings/SettingsPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
 import { NotificationsPanel } from './features/notifications/NotificationsPanel'
+import { NotificationToastHost } from './features/notifications/NotificationToast'
 import { SkyboxMenu } from './features/skybox/SkyboxMenu'
 import { EmotesWheel } from './features/emotes/EmotesWheel'
 import { BackpackPage } from './features/backpack/BackpackPage'
@@ -20,6 +22,11 @@ import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { ShopPage } from './features/shop/ShopPage'
+import { IN_WORLD_SHOP } from './features/shop/entry'
+// The in-world Shop, which replaces ShopPage (`?shop=old` keeps ShopPage while it is retired), loaded only when it is first opened. lazy()
+// keeps a failed load, so a crash swaps in a fresh one for the next open.
+const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
+let InWorldShop = /* @__PURE__ */ loadInWorldShop()
 import { PlacesPicker } from './features/places/PlacesPicker'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { WelcomePage } from './features/welcome/WelcomePage'
@@ -27,6 +34,7 @@ import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
+import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
@@ -57,7 +65,7 @@ import { openRealmError } from './features/error/RealmErrorModal'
 import { DIALOG_TITLE, isDialogSource } from './features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { unrecognisedEntryParams } from './lib/entryParams'
-import { EDITOR_BUILD, editorOffered, EditorOffered } from './features/editorHost/config'
+import { EDITOR_BUILD, editorOffered, EditorOffered, FEATURES_PARAM } from './features/editorHost/config'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
 // failed load, so a crash swaps in a fresh one for the next open.
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
@@ -103,11 +111,11 @@ const GATE_REASON = gateReason()
 // front-end doesn't recognise get an interstitial before anything boots — captured at module
 // scope, from the ENTRY url, so a later history.replaceState can't retire the warning.
 const UNTRUSTED_PARAMS = untrustedLaunchParams({ native: MODE === 'native' })
-const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname)
+const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname, location.search)
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
-const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds'] : [])
+const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : [])
 
 export function App(): React.JSX.Element {
   const showFps = useFpsToggle()
@@ -194,9 +202,18 @@ function Hud(): React.JSX.Element {
   }, [])
 
   const session = useEngineSession(createDriver)
+  // The HUD's one server-state cache (docs/web-app-standards.md, "QueryClient"), with the reference defaults.
+  const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }))
+  // login.account is the remembered welcome-back identity. The engine's
+  // current profile identifies its player; until it arrives, discovery reads
+  // the same fresh SSO identity the login driver uses.
+  const discoveryAccount = session.profile.data?.address
   // mounted for good once wanted: `?editor`, or Create opened
   const [editorWanted, setEditorWanted] = useState(params.has('editor'))
   if (EDITOR_BUILD && EDITOR && !editorWanted && session.create.open) setEditorWanted(true)
+  // mounted for good once the Shop is first opened (unless `?shop=old`)
+  const [shopWanted, setShopWanted] = useState(false)
+  if (IN_WORLD_SHOP && !shopWanted && session.shop.open) setShopWanted(true)
 
   // A link with params the Explorer doesn't know gets an ordinary dialog listing what was ignored
   // and what it accepts — informational, nothing is frozen behind it.
@@ -225,8 +242,9 @@ function Hud(): React.JSX.Element {
       : null
 
   // Scene permission prompts (e.g. ChangeRealm), one at a time, opened through the popup layer. Escape
-  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes.
-  const permFrontId = session.phase === 'world' ? session.permissions.pending[0]?.id : undefined
+  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes. Photo mode
+  // holds them: a popup would close it, and the prompt opens when it ends.
+  const permFrontId = session.phase === 'world' && !session.photoMode.active ? session.permissions.pending[0]?.id : undefined
   useEffect(() => {
     const front = session.permissions.pending[0]
     if (permFrontId == null || !front) return
@@ -309,7 +327,8 @@ function Hud(): React.JSX.Element {
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  const chrome = !pageOpen && editorMode === 'off'
+  // photo mode shows only its own overlay (and the reticle) over the world
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -331,6 +350,7 @@ function Hud(): React.JSX.Element {
   }
 
   return (
+    <QueryClientProvider client={queryClient}>
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
@@ -341,7 +361,7 @@ function Hud(): React.JSX.Element {
           <LoadingAndLogin flow={session.login} />
         ))}
       {session.phase === 'welcome' && <WelcomePage setEngineViewport={session.setEngineViewport} />}
-      {session.phase === 'picking' && <PlacesPicker onPick={session.pickDestination} />}
+      {session.phase === 'picking' && <PlacesPicker account={discoveryAccount} onPick={session.pickDestination} />}
       {session.phase === 'lobby' && (
         <>
           <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
@@ -363,6 +383,9 @@ function Hud(): React.JSX.Element {
           )}
           {/* The full-screen menu pages own the whole screen; hide the rail + chat so
               they don't show through (the map page's body is transparent). */}
+          {session.photoMode.active && !pageOpen && (
+            <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
+          )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
           {chrome && (
             <Minimap
@@ -427,6 +450,7 @@ function Hud(): React.JSX.Element {
           </SurfaceBoundary>
           <SurfaceBoundary name="Places" open={session.places.open} onCrash={session.closeAllPanels}>
             <PlacesPage
+              account={discoveryAccount}
               places={session.places}
               profile={session.profile}
               onNavigate={goToMenuPage}
@@ -443,8 +467,34 @@ function Hud(): React.JSX.Element {
               onVisitWorld={(realm) => session.map.changeRealm(realm)}
             />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Shop" open={session.shop.open} onCrash={session.closeAllPanels}>
-            <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+          <SurfaceBoundary
+            name="Shop"
+            open={session.shop.open}
+            onCrash={() => {
+              if (IN_WORLD_SHOP) InWorldShop = loadInWorldShop()
+              session.closeAllPanels()
+            }}
+          >
+            {IN_WORLD_SHOP ? (
+              shopWanted && <Suspense fallback={null}>
+                <InWorldShop
+                  shop={session.shop}
+                  profile={session.profile}
+                  onNavigate={goToMenuPage}
+                  setEngineViewport={session.setEngineViewport}
+                  equipped={session.backpack.equipped}
+                  preview={session.backpack.preview}
+                  focus={session.backpack.focus}
+                  stage={session.backpack.stage}
+                  emote={session.backpack.emote}
+                  rotate={session.backpack.rotate}
+                  zoom={session.backpack.zoom}
+                  noEngine={MODE === 'mock'}
+                />
+              </Suspense>
+            ) : (
+              <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+            )}
           </SurfaceBoundary>
           <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
             <GalleryPage
@@ -475,9 +525,11 @@ function Hud(): React.JSX.Element {
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
+      <NotificationToastHost notifications={session.notifications} friends={session.friends} />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}
     </SessionProvider>
+    </QueryClientProvider>
   )
 }

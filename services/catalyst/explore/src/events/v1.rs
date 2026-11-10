@@ -84,12 +84,19 @@ pub async fn get_v1_event(
         return Err(not_found());
     }
     let viewer = state.viewer(&headers, "get", uri.path()).await;
-    let admin = super::handlers::viewer_is_admin(&state, &headers, viewer.as_deref()).await?;
+    let access = super::handlers::access(&state, &headers, viewer.as_deref()).await?;
+    // dcl-one's own route: a soft-deleted event stays hidden from everyone
+    // but its owner and the moderation readers.
     let event = state
         .events
         .get_for_viewer(&event_id, viewer.as_deref())
         .await?
-        .filter(|evt| super::handlers::visible_to_viewer(evt, viewer.as_deref(), admin))
+        .filter(|evt| {
+            super::handlers::visible_to_viewer(evt, viewer.as_deref(), access.allow_pending)
+                && (access.allow_pending
+                    || !super::handlers::is_soft_deleted(evt)
+                    || matches!((viewer.as_deref(), evt.user.as_deref()), (Some(v), Some(u)) if v.eq_ignore_ascii_case(u)))
+        })
         .ok_or_else(not_found)?;
     let destination_id = destination_id(&event);
     let destination = match &destination_id {
@@ -144,6 +151,8 @@ mod tests {
             image: None,
             image_vertical: None,
             description: None,
+            contact: None,
+            details: None,
             start_at: start.map(at),
             finish_at: finish.map(at),
             next_start_at: start.map(at),

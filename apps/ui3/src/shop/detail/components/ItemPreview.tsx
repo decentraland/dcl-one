@@ -5,12 +5,12 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { fetchProfile } from "../../../data/catalyst/profile";
 import type { AvatarStatus } from "../../../wearable-preview/avatar";
 import type { OutfitData } from "../../../wearable-preview/outfit";
-import { t } from "../../discovery/intl";
-import type { CatalogItem } from "../../discovery/lib/catalogItem";
+import { t } from "@shop/discovery/intl";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { useShopWallet } from "../../wallet/context";
-import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "../lib/bodyShape";
+import { avatarShape as profileShape, BASE_MALE, itemShapes, shapeLabel, type BodyShapeUrn } from "@shop/detail/lib/bodyShape";
 import { pickRenderer } from "../lib/pickRenderer";
-import { itemUrn } from "../lib/urn";
+import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchWearableRules, keepEquipped } from "../lib/wearable-rules";
 import { fetchEmoteClipUrl } from "../lib/emoteBase64";
 import { useShopQuery } from "../../discovery/query";
@@ -74,7 +74,7 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const clip = useShopQuery(isEmote && urn && show3d && !waiting ? ["emote-clip", urn, body] : null, (signal) => fetchEmoteClipUrl(urn!, body, signal), { staleMs: 30 * 60_000 });
 
   return (
-    <div className="shop-preview" data-testid="item-preview" data-status={show3d ? status : "thumbnail"}>
+    <div className="shop-preview" data-status={show3d ? status : "thumbnail"}>
       {!show3d || failed || !canPreview || (view === "item" && !isEmote) ? (
         item.thumbnail ? <img className="shop-preview__thumb" src={item.thumbnail} alt={item.name} /> : null
       ) : waiting ? (
