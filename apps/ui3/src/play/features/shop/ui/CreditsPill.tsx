@@ -1,6 +1,6 @@
 // CreditsPill — the Shop header's Credits balance: the credit mark and the whole credits the buyer holds.
 
-import { formatCredits, formatCreditsFull } from '../../../../shop/checkout/lib/currency'
+import { formatCredits, formatCreditsFull } from '@shop/checkout/lib/currency'
 import { CreditsIcon } from './CreditsIcon'
 import styles from './CreditsPill.module.css'
 

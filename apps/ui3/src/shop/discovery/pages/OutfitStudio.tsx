@@ -5,18 +5,18 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router";
 
-import { isShopApiError } from "../../api/client";
-import { BASE_FEMALE, BASE_MALE } from "../../detail/lib/bodyShape";
-import { itemUrn } from "../../detail/lib/urn";
+import { isShopApiError } from "@shop/api/client";
+import { BASE_FEMALE, BASE_MALE } from "@shop/detail/lib/bodyShape";
+import { itemUrn } from "@shop/detail/lib/urn";
 import { SHOP_BASE } from "../../routes";
 import { useShopWallet } from "../../wallet/context";
-import { fetchCatalogByIds, fetchShopItems } from "../api";
-import { cardPrice } from "../cardPrice";
+import { fetchCatalogByIds, fetchShopItems } from "@shop/discovery/api";
+import { cardPrice } from "@shop/discovery/cardPrice";
 import Icon from "../components/Icon";
 import PriceTag, { formatCreditsFull } from "../components/PriceTag";
 import { useSeo } from "../hooks";
-import type { CatalogItem } from "../lib/catalogItem";
-import { isWearable, playingEmote } from "../lib/outfit";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { isWearable, playingEmote } from "@shop/discovery/lib/outfit";
 import { invalidateShopQueries, primeShopQuery, useShopQuery } from "../query";
 import {
   DEFAULT_OUTFIT_GRADIENT,
@@ -43,6 +43,7 @@ import {
 } from "./outfits";
 import signInIllustration from "./outfit-assets/signin-empty.svg";
 import "./outfitstudio.css";
+import { shopReads } from "../reads";
 
 const WearablePreview = lazy(() => import("../../../wearable-preview/WearablePreview"));
 
@@ -371,7 +372,7 @@ function StudioEditor({ outfitId }: { outfitId: string | null }) {
   );
 
   const keys = useMemo(() => [...new Set((draft?.items ?? []).map(outfitItemKey))].sort(), [draft]);
-  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, { signal }), { staleMs: 60_000 });
+  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, shopReads(signal)), { staleMs: 60_000 });
   const byKey = useMemo(() => new Map((itemsQ.data ?? []).map((item) => [item.id.toLowerCase(), item])), [itemsQ.data]);
   const resolving = keys.length > 0 && itemsQ.isLoading && !itemsQ.data;
   const selectedKeys = useMemo(() => new Set(keys), [keys]);
@@ -758,7 +759,7 @@ function OutfitItemPicker({ selectedKeys, onPick, canPick }: { selectedKeys: Rea
   useEffect(() => setPages(1), [category, debounced]);
 
   const first = PICKER_PAGE * pages;
-  const q = useShopQuery(["outfit-picker", category, debounced, first], (signal) => fetchShopItems({ search: debounced || undefined, category, onSale: true, listingType: "primary", first, sortBy: "cheapest" }, { signal }), { staleMs: 60_000, keepPrevious: true });
+  const q = useShopQuery(["outfit-picker", category, debounced, first], (signal) => fetchShopItems({ search: debounced || undefined, category, onSale: true, listingType: "primary", first, sortBy: "cheapest" }, shopReads(signal)), { staleMs: 60_000, keepPrevious: true });
   const seen = new Set<string>();
   const items = (q.data?.items ?? []).filter((item) => {
     if (!item.itemId) return false;

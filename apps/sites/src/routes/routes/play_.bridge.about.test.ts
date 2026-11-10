@@ -7,7 +7,7 @@ import { loader } from "./play_.bridge.about";
 let directory: string;
 const hash = "bafkreiexample";
 const realm = { comms: { fixedAdapter: "offline:offline" }, configurations: {
-  realmName: "BevyExplorerUI", scenesUrn: [`urn:decentraland:entity:${hash}?=&baseUrl=/bridge-scene/static/`],
+  realmName: "BevyExplorerUI", scenesUrn: [`urn:decentraland:entity:${hash}?=&baseUrl=../`],
 } };
 async function save(value: unknown) {
   await writeFile(join(directory, "bridge-scene/static/BevyExplorerUI/about"), JSON.stringify(value));
@@ -23,7 +23,10 @@ afterEach(async () => {
   await rm(directory, { recursive: true });
 });
 
-it("serves the compiled bridge at the requesting deployment's absolute Sites path", async () => {
+it.each(["../", "/bridge-scene/static/"])("serves bundled base %s at the requesting deployment's absolute Sites path", async (base) => {
+  await save({ ...realm, configurations: { ...realm.configurations,
+    scenesUrn: [`urn:decentraland:entity:${hash}?=&baseUrl=${base}`],
+  } });
   for (const origin of ["https://sites.test", "http://localhost:5212"]) {
     const response = await loader({ request: new Request(`${origin}/play/bridge/about`, {
       headers: { "X-Forwarded-Host": "untrusted.test" },
@@ -39,7 +42,11 @@ it("serves the compiled bridge at the requesting deployment's absolute Sites pat
 });
 
 it("rejects missing, foreign or malformed bridge content instead of redirecting the engine", async () => {
-  for (const urn of [undefined, "urn:decentraland:entity:bafexample?=&baseUrl=https://untrusted.test/", "bad"]) {
+  for (const urn of [undefined, "urn:decentraland:entity:bafexample?=&baseUrl=https://untrusted.test/", "bad",
+    ...["../../", "//untrusted.test/", "../?redirect=untrusted", "../&extra=true"].map(
+      (base) => `urn:decentraland:entity:${hash}?=&baseUrl=${base}`,
+    ),
+  ]) {
     await save({ configurations: { scenesUrn: urn == null ? [] : [urn] } });
     await expect(loader({ request: new Request("https://sites.test/play/bridge/about") }))
       .rejects.toMatchObject({ status: 503 });

@@ -4,13 +4,13 @@
 // partition, review and the per-operation ledger are the real ones.
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Eip1193Provider } from '../../data/auth/wallet'
-import type { CartGroup } from '../../shop/cart/partition'
+import type { CartGroup } from '@shop/cart/partition'
 import { createFakeWallet, creatorTrade, type FakeWallet } from '../../shop/checkout/fakes'
 import type { CheckoutDeps, GroupResult } from '../../shop/checkout/purchase/executor'
-import type { CatalogItem } from '../../shop/discovery/lib/catalogItem'
-import type { UsdCents } from '../../shop/model/money'
-import type { GroupProgress } from '../../shop/model/purchase'
-import { BOOK, creatorOrder, ITEM, storeMint } from '../../shop/payment/fixtures'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
+import type { UsdCents } from '@shop/model/money'
+import type { GroupProgress } from '@shop/model/purchase'
+import { BOOK, creatorOrder, ITEM, storeMint } from '@shop/payment/fixtures'
 import type { StoredLogin } from '../features/auth/sso'
 import { SHOP_BUSY, SHOP_EVENT, SHOP_PROTOCOL, type ShopNamesMode, type ShopOperation, type ShopOperationEvent } from '../lib/shopProtocol'
 import { claimLock, createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView, type ShellShopServices, type ShellShopWallet } from '../shell/shop/purchase'
@@ -1033,7 +1033,7 @@ describe('the shell purchase', () => {
   it('runs one dialog at a time', async () => {
     const t = setup()
     await t.buy()
-    await expect(t.buy('8')).rejects.toThrow(/already open/)
+    await expect(t.buy('8')).rejects.toMatchObject({ code: SHOP_BUSY })
   })
 
   it('refuses a request that names more than an item', async () => {
@@ -1042,17 +1042,18 @@ describe('the shell purchase', () => {
     await expect(t.shop.request('shop.buy', { v: 1, items: [{ contract: CONTRACT, itemId: '7', quantity: 1 }], method: 'mana' })).rejects.toThrow(/method/)
   })
 
+  // Every answer says its refusals carry a code, signed in or not: the HUD reads busy by SHOP_BUSY alone from it.
   it('tells the HUD what the session can pay with', async () => {
-    expect(await setup().shop.request('shop.capabilities', undefined)).toEqual({ v: 1, buyer: BUYER, wallet: 'managed', credits: true, marketplace: false })
+    expect(await setup().shop.request('shop.capabilities', undefined)).toEqual({ v: 1, buyer: BUYER, wallet: 'managed', credits: true, marketplace: false, codedErrors: true })
     // The Marketplace: only a web3 wallet the page vouches for (its recorded sign-in, here to sign).
     const signer = { request: vi.fn() }
     const web3 = (marketplace: boolean) => setup({ wallet: { kind: () => 'web3', provider: () => signer, marketplace: () => marketplace } })
     expect(await web3(true).shop.request('shop.capabilities', undefined)).toMatchObject({ wallet: 'web3', marketplace: true })
     expect(await web3(false).shop.request('shop.capabilities', undefined)).toMatchObject({ wallet: 'web3', marketplace: false })
     expect(await setup({ wallet: { kind: () => 'web3', provider: () => signer } }).shop.request('shop.capabilities', undefined)).toMatchObject({ marketplace: false })
-    expect(await setup({ login: () => null }).shop.request('shop.capabilities', undefined)).toMatchObject({ buyer: null, credits: false, reason: 'signedOut' })
-    expect(await setup({ login: () => login(BUYER, { guest: true }) }).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: false, reason: 'guest' })
-    expect(await setup({ wallet: null }).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: false, reason: 'noWallet' })
+    expect(await setup({ login: () => null }).shop.request('shop.capabilities', undefined)).toMatchObject({ buyer: null, credits: false, reason: 'signedOut', codedErrors: true })
+    expect(await setup({ login: () => login(BUYER, { guest: true }) }).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: false, reason: 'guest', codedErrors: true })
+    expect(await setup({ wallet: null }).shop.request('shop.capabilities', undefined)).toMatchObject({ credits: false, reason: 'noWallet', codedErrors: true })
   })
 
   it('reads the balance for the login, and none signed out', async () => {
@@ -1653,13 +1654,13 @@ describe('BUY NAME, simulated', () => {
   it('opens one purchase at a time: a second BUY NAME, or an item, waits for the open one', async () => {
     const t = setup(SIM)
     await t.buyName()
-    await expect(t.buyName('Carolo')).rejects.toThrow(SHOP_BUSY)
-    await expect(t.buy()).rejects.toThrow(SHOP_BUSY)
+    await expect(t.buyName('Carolo')).rejects.toMatchObject({ code: SHOP_BUSY })
+    await expect(t.buy()).rejects.toMatchObject({ code: SHOP_BUSY })
     ;(await t.until('confirm')).handlers.onClose()
     // And an item purchase open keeps BUY NAME out.
     await t.buy()
     await t.until('confirm')
-    await expect(t.buyName()).rejects.toThrow(SHOP_BUSY)
+    await expect(t.buyName()).rejects.toMatchObject({ code: SHOP_BUSY })
   })
 
   it('reopens nothing when its reads answer after it was cancelled', async () => {

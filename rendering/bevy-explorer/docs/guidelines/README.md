@@ -11,7 +11,7 @@ in these pages are relative to `source/`, the engine workspace.
 - [Platforms](platforms.md): what differs between native, web and headless, and what bites.
 - [The bevy fork](bevy-fork.md): how our bevy differs from stock 0.16, by area, and how to
   change the vendored tree.
-- [Decisions](decisions.md): deliberate divergences from Unity, and choices that look like mistakes.
+- [Decisions](decisions.md): deliberate client differences and choices that look like mistakes.
 - [Recipes](recipes.md): adding an SDK component, a system-scene stream, an engine param, a console command, per-avatar data on a shared material, a constant shared with WGSL, a pipeline-compile test.
 - [Porting from Unity](porting-from-unity.md): where a feature lives in the Unity explorer, the procedure, the Unity-to-engine and HLSL-to-WGSL mappings.
 - [Oddities](oddities.md): things that look wrong and aren't; read before "fixing" something surprising.

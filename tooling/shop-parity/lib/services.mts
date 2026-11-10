@@ -1,9 +1,9 @@
 // Which upstream service a request belongs to, for both sides of a parity capture.
 //
 // The reference shop calls the production hosts directly; ui3 calls the node's canonical
-// `/shop-api` (and the compatibility mounts), which apps/ui3/src/shop/api/endpoints.ts maps onto the
+// `/shop-api` (and the compatibility mounts), which library/shop/api/endpoints.ts maps onto the
 // same upstream routes. Both resolve to one (service, path) so a recorded answer is served to both.
-import { ENDPOINTS, SHOP_API_PREFIX, type Endpoint } from "../../../apps/ui3/src/shop/api/endpoints.ts";
+import { ENDPOINTS, SHOP_API_PREFIX, type Endpoint } from "../../../library/shop/api/endpoints.ts";
 
 export type Service =
   | "marketplace"
@@ -132,9 +132,34 @@ export function fromShopApi(method: string, path: string): { service: Service; p
 /**
  * Every path production routes off the sites app, so a page's read reaches the replay (and is listed as a
  * miss when the recording lacks it) instead of rendering the app's 404 page. It covers each same-origin
- * service path the production sites build reads (apps/sites/.env.production).
+ * service path the production sites build reads (apps/sites/.env.production), and the gateway's /camera-reel
+ * alias the profile gallery requests directly (apps/sites/src/data/lib/catalyst/social/photos.ts).
  */
-export const NODE_MOUNTS = ["lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "camera-reel-service", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map"];
+const NODE_MOUNTS: readonly string[] = ["lambdas", "content", "builder-items", "auth-api", "builder-api", "shop-api", "marketplace-api", "transactions-api", "signatures-api", "rpc", "camera-reel", "camera-reel-service", "media", "profile-images", "credits", "api/events", "api/places", "api/destinations", "api/schedules", "api/map"];
+
+/** Whether the sites preview relays this path to the replay rather than serving it from the sites app. */
+export function relaysToNode(path: string): boolean {
+  return NODE_MOUNTS.some((m) => path === `/${m}` || path.startsWith(`/${m}/`));
+}
+
+/** The node's prefixes for a recorded upstream, which answers the path without the prefix. */
+const UPSTREAM_PREFIXES: readonly (readonly [string, Service])[] = [
+  ["/marketplace-api", "marketplace"],
+  ["/credits", "credits"],
+  ["/transactions-api", "transactions"],
+  ["/signatures-api", "signatures"],
+  ["/builder-api", "builder"],
+  // The node serves the camera reel's API under /camera-reel-service, and the gateway aliases /camera-reel to it.
+  ["/camera-reel-service", "camera-reel"],
+  ["/camera-reel", "camera-reel"],
+  ["/rpc", "rpc"],
+];
+
+/** The node's prefixes the recorded peer answers with the prefix kept. */
+const PEER_PREFIXES: readonly string[] = ["/lambdas", "/content"];
+
+/** Every prefix `fromNodePath` answers from a recorded service: anything else is the node's own, never fetched. */
+export const RECORDED_NODE_PREFIXES: readonly string[] = [SHOP_API_PREFIX, ...UPSTREAM_PREFIXES.map(([prefix]) => prefix), ...PEER_PREFIXES];
 
 /** A request the dcl-one side makes to its own origin (or that sites makes to the node). */
 export function fromNodePath(method: string, path: string): { service: Service; path: string } {
@@ -142,20 +167,10 @@ export function fromNodePath(method: string, path: string): { service: Service; 
     const r = fromShopApi(method, path.slice(SHOP_API_PREFIX.length));
     if (r) return r;
   }
-  for (const [prefix, service] of [
-    ["/marketplace-api", "marketplace"],
-    ["/credits", "credits"],
-    ["/transactions-api", "transactions"],
-    ["/signatures-api", "signatures"],
-    ["/builder-api", "builder"],
-    // The node serves the camera reel's API under /camera-reel-service, and the gateway aliases /camera-reel to it.
-    ["/camera-reel-service", "camera-reel"],
-    ["/camera-reel", "camera-reel"],
-  ] as const) {
+  for (const [prefix, service] of UPSTREAM_PREFIXES) {
     if (path.startsWith(`${prefix}/`)) return { service, path: path.slice(prefix.length) };
   }
-  if (path.startsWith("/rpc/")) return { service: "rpc", path: path.slice("/rpc".length) };
-  if (path.startsWith("/lambdas/") || path.startsWith("/content/")) return { service: "peer", path };
+  if (PEER_PREFIXES.some((prefix) => path.startsWith(`${prefix}/`))) return { service: "peer", path };
   return { service: "node", path };
 }
 

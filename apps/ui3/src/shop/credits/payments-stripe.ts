@@ -6,8 +6,8 @@
 // is read-replica lag, not a failure: the poll keeps waiting, and a paid order that never shows up in the
 // window reads as 'pending' ("on the way"), never as an error.
 
-import { isShopApiError } from "../api/client";
-import type { ShopClient } from "../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import type { ShopClient } from "@shop/api/shop";
 import type { CheckoutSession, OrderStatus } from "./payments";
 
 function buyerTimezone(): string | undefined {
@@ -45,7 +45,8 @@ const delay = (ms: number, signal?: AbortSignal) =>
 
 /**
  * The node's error for an order it has no record of for this signer: `ORDER_NOT_FOUND` in
- * services/catalyst/shop/src/credits/handlers/orders.rs, whose test `order_not_found_wire_body` pins its body.
+ * services/catalyst/shop/src/credits/handlers/orders.rs, whose test `order_not_found_wire_body` pins its body. This
+ * side's string is pinned in credits.test.ts.
  */
 export const ORDER_NOT_FOUND = "order not found";
 

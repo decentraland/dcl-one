@@ -9,8 +9,8 @@
 import { decodeFunctionResult, encodeFunctionData, pad, toHex, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import type { ChainId } from "../../model/chain";
-import { NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "./abi";
+import type { ChainId } from "@shop/model/chain";
+import { NATIVE_META_TX_ABI, OFFCHAIN_META_TX_ABI } from "@shop/checkout/chain/abi";
 import { relayerUrl as configuredRelayer } from "./config";
 import type { MetaTxStyle } from "./contracts";
 import type { ChainReader } from "./rpc";

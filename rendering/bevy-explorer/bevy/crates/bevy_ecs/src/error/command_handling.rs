@@ -23,6 +23,9 @@ pub trait HandleError<Out = ()> {
     {
         self.handle_error_with(default_error_handler())
     }
+    /// Takes a [`Command`] that returns a Result and ignores any error that occurs, without
+    /// building a [`BevyError`] (so no backtrace is captured).
+    fn ignore_error(self) -> impl Command;
 }
 
 impl<C, T, E> HandleError<Result<T, E>> for C
@@ -41,6 +44,12 @@ where
             ),
         }
     }
+
+    fn ignore_error(self) -> impl Command {
+        move |world: &mut World| {
+            let _ = self.apply(world);
+        }
+    }
 }
 
 impl<C> HandleError<Never> for C
@@ -48,6 +57,13 @@ where
     C: Command<Never>,
 {
     fn handle_error_with(self, _error_handler: fn(BevyError, ErrorContext)) -> impl Command {
+        move |world: &mut World| {
+            self.apply(world);
+        }
+    }
+
+    #[inline]
+    fn ignore_error(self) -> impl Command {
         move |world: &mut World| {
             self.apply(world);
         }
@@ -67,6 +83,10 @@ where
     where
         Self: Sized,
     {
+        self
+    }
+    #[inline]
+    fn ignore_error(self) -> impl Command {
         self
     }
 }
