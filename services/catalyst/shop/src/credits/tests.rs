@@ -8574,6 +8574,13 @@ fn a_trial_starts_only_closed() {
     let trial = || RawSettings {
         trial_mode: true,
         writes_enabled: true,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(
+            "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3".into(),
+        ),
+        credits_manager_contract: Some("0xe21289022b9324f9b9145a91ee59297ceb040c06".into()),
+        usage_index_enabled: true,
+        usage_rpc_url: Some("https://polygon-rpc.example.org".into()),
         credits_revoker_key: Some(
             "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d".into(),
         ),
@@ -8595,6 +8602,41 @@ fn a_trial_starts_only_closed() {
             "STRIPE_SECRET_KEY",
             RawSettings {
                 stripe_secret_key: Some("sk_test_LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "STRIPE_WEBHOOK_SECRET",
+            RawSettings {
+                stripe_webhook_secret: Some("whsec_LEAKED".into()),
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_ONCHAIN_AUTHORIZE_ENABLED",
+            RawSettings {
+                credits_onchain_authorize_enabled: false,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_SIGNER_KEY_FILE",
+            RawSettings {
+                credits_signer_key: None,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_MANAGER_CONTRACT",
+            RawSettings {
+                credits_manager_contract: None,
+                ..trial()
+            },
+        ),
+        (
+            "CREDITS_USAGE_INDEX_ENABLED",
+            RawSettings {
+                usage_index_enabled: false,
                 ..trial()
             },
         ),

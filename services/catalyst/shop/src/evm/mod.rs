@@ -115,8 +115,9 @@ pub struct Settings {
     pub max_gas_price_allowed_in_wei: Option<u128>,
     /// `MAX_GAS_LIMIT` (1500000): the direct signer's gas cap; 0 disables it.
     pub max_gas_limit: u64,
-    /// `RELAYER_MAX_FEE_PER_GAS_WEI`: the highest fee per gas the direct signers sign
-    /// (EIP-1559 `max_fee_per_gas`, a legacy `gas_price`); unset, no cap.
+    /// `RELAYER_MAX_FEE_PER_GAS_WEI`: the highest fee per gas the relay's collections-chain
+    /// signer signs (EIP-1559 `max_fee_per_gas`, a legacy `gas_price`); unset, no cap. The NAMEs
+    /// chain signer and the credits revoker keep their own fees.
     pub relayer_max_fee_per_gas_wei: Option<u128>,
     /// `CREDITS_TRIAL_MODE` (false): the relay broadcasts through its own direct signer
     /// only, capped, on the collections chain alone (see [`Economy::new`]).
@@ -371,25 +372,29 @@ impl State {
             .as_deref()
             .map(str::trim)
             .filter(|k| !k.is_empty());
-        let build_signer =
-            |chain: &Arc<ChainComponent>, chain_id: u64| -> anyhow::Result<Arc<DirectSigner>> {
-                Ok(Arc::new(
-                    DirectSigner::new(
-                        chain.clone(),
-                        key.expect("a key gates the signer"),
-                        chain_id,
-                        settings.max_gas_limit,
-                        settings.receipt_poll_interval,
-                        settings.receipt_timeout,
-                    )
-                    .map_err(anyhow::Error::msg)?
-                    .with_max_fee_per_gas(settings.relayer_max_fee_per_gas_wei),
-                ))
-            };
+        let build_signer = |chain: &Arc<ChainComponent>,
+                            chain_id: u64,
+                            max_fee_per_gas: Option<u128>|
+         -> anyhow::Result<Arc<DirectSigner>> {
+            Ok(Arc::new(
+                DirectSigner::new(
+                    chain.clone(),
+                    key.expect("a key gates the signer"),
+                    chain_id,
+                    settings.max_gas_limit,
+                    settings.receipt_poll_interval,
+                    settings.receipt_timeout,
+                )
+                .map_err(anyhow::Error::msg)?
+                .with_max_fee_per_gas(max_fee_per_gas),
+            ))
+        };
         let signer = match (&chain, key, settings.meta_tx_broadcast_enabled) {
-            (Some(chain), Some(_), true) => {
-                Some(build_signer(chain, settings.collections_chain_id)?)
-            }
+            (Some(chain), Some(_), true) => Some(build_signer(
+                chain,
+                settings.collections_chain_id,
+                settings.relayer_max_fee_per_gas_wei,
+            )?),
             (None, Some(_), true) => {
                 anyhow::bail!(
                     "META_TX_BROADCAST_ENABLED=true and RELAYER_PRIVATE_KEY set, but RPC_ENDPOINT_POLYGON is empty"
@@ -420,7 +425,7 @@ impl State {
             (Some(url), Some(_), true) => {
                 let eth_chain =
                     Arc::new(ChainComponent::new(http.clone(), url, DEFAULT_RPC_TIMEOUT));
-                Some(build_signer(&eth_chain, settings.names_chain_id)?)
+                Some(build_signer(&eth_chain, settings.names_chain_id, None)?)
             }
             _ => None,
         };

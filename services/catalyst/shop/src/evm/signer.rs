@@ -165,6 +165,12 @@ impl DirectSigner {
         self
     }
 
+    /// The fee-per-gas cap this signer signs under, if any.
+    #[cfg(test)]
+    pub(crate) fn max_fee_per_gas(&self) -> Option<u128> {
+        self.max_fee_per_gas
+    }
+
     pub fn relayer_address(&self) -> Address {
         self.relayer_address
     }
@@ -321,7 +327,8 @@ impl DirectSigner {
             .await
             .map_err(|e| ApiError::RelayerFailed(format!("fee lookup failed: {e}")))?;
         if let Err(fee) = within_fee_cap(&fees, self.max_fee_per_gas) {
-            return Err(ApiError::RelayerFailed(format!(
+            // Retryable like the relay's gas-price ceiling (`check_gas_price`): 503 HIGH_CONGESTION.
+            return Err(ApiError::HighCongestion(format!(
                 "the fee per gas {fee} wei exceeds RELAYER_MAX_FEE_PER_GAS_WEI {}: not sent",
                 self.max_fee_per_gas.unwrap_or_default()
             )));

@@ -458,6 +458,21 @@ impl Settings {
             if stripe_secret_key.is_some() {
                 anyhow::bail!("CREDITS_TRIAL_MODE takes no card rail: unset STRIPE_SECRET_KEY");
             }
+            // The webhook alone still credits a card payment started before the trial.
+            if non_empty(raw.stripe_webhook_secret.clone()).is_some() {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no card rail: unset STRIPE_WEBHOOK_SECRET");
+            }
+            // Closed and complete: a trial that would answer every authorization with 503 does
+            // not start either.
+            if !(raw.credits_onchain_authorize_enabled
+                && credits_signer_key.is_some()
+                && credits_manager_contract.is_some()
+                && usage.is_configured())
+            {
+                anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs on-chain authorization: CREDITS_ONCHAIN_AUTHORIZE_ENABLED=true, CREDITS_SIGNER_KEY_FILE, CREDITS_MANAGER_CONTRACT and the CreditUsed index (CREDITS_USAGE_INDEX_ENABLED, RPC_ENDPOINT_POLYGON)"
+                );
+            }
             if raw.mock_card {
                 anyhow::bail!("CREDITS_TRIAL_MODE takes no mock card: unset CREDITS_MOCK_CARD");
             }

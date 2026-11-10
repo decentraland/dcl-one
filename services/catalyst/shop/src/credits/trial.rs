@@ -48,6 +48,26 @@ impl TrialBuyers {
     }
 }
 
+/// Under a trial the revoker and the relay never sign with one key: two direct signers, each with
+/// its own send lock, would race for one `pending` nonce. Compared by the address each key derives
+/// (as text when one doesn't parse); never echoed.
+pub fn refuse_a_shared_key(revoker: Option<&str>, relayer: Option<&str>) -> anyhow::Result<()> {
+    let (Some(revoker), Some(relayer)) = (revoker, relayer) else {
+        return Ok(());
+    };
+    let address = |key: &str| {
+        crate::evm::signer::parse_signing_key(key)
+            .map(|signer| format!("{:#x}", signer.address()))
+            .unwrap_or_else(|_| key.trim().trim_start_matches("0x").to_ascii_lowercase())
+    };
+    if address(revoker) == address(relayer) {
+        anyhow::bail!(
+            "CREDITS_TRIAL_MODE needs the revoker and the relay to sign with different keys: CREDITS_REVOKER_KEY_FILE and RELAYER_PRIVATE_KEY_FILE hold the same one"
+        );
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,6 +97,22 @@ mod tests {
             assert!(trial.is_empty());
             assert!(!trial.admits(A));
         }
+    }
+
+    #[test]
+    fn the_revoker_and_the_relay_never_share_a_key() {
+        const KEY: &str = "0x59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d";
+        const OTHER: &str = "0x5de4111afa1a4b94908f83103eb1f1706367c2e68ca870fc3fb9a804cdab365a";
+        let why = refuse_a_shared_key(Some(KEY), Some(&KEY[2..].to_uppercase()))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            why.contains("different keys") && !why.contains(&KEY[2..]),
+            "{why}"
+        );
+        assert!(refuse_a_shared_key(Some(KEY), Some(OTHER)).is_ok());
+        assert!(refuse_a_shared_key(Some(KEY), None).is_ok());
+        assert!(refuse_a_shared_key(None, Some(KEY)).is_ok());
     }
 
     #[test]

@@ -2574,8 +2574,8 @@ async fn the_direct_signer_refuses_a_fee_over_its_cap_before_sending() {
         .await
         .unwrap_err();
     assert!(
-        format!("{err:?}").contains("RELAYER_MAX_FEE_PER_GAS_WEI"),
-        "{err:?}"
+        matches!(&err, ApiError::HighCongestion(why) if why.contains("RELAYER_MAX_FEE_PER_GAS_WEI")),
+        "a fee over the cap is a retryable 503 HIGH_CONGESTION: {err:?}"
     );
     assert!(
         raws.lock().unwrap().is_empty(),
@@ -2717,4 +2717,48 @@ async fn a_trial_never_reuses_the_relayer_key_on_the_names_chain() {
     )
     .expect("outside a trial the relay starts as before");
     assert!(open.eth_signer.is_some());
+    // The fee cap is the collections-chain signer's alone: the NAMEs chain signer keeps its fees.
+    assert_eq!(
+        open.transaction
+            .direct_signer()
+            .and_then(|s| s.max_fee_per_gas()),
+        Some(500_000_000_000)
+    );
+    assert_eq!(open.eth_signer.as_ref().unwrap().max_fee_per_gas(), None);
+}
+
+/// Under a trial the MANA payment routes refuse before any work: `config` would hand a client the
+/// relay's own signer as the pay-to address of a top-up the credits lane then refuses.
+#[tokio::test]
+async fn a_trial_refuses_the_mana_payment_routes() {
+    let (chain_url, _raws) = spawn_fake_chain().await;
+    let key = PrivateKeySigner::random();
+    let settings = Settings {
+        polygon_rpc_url: Some(chain_url),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(key.to_bytes())),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        trial_mode: true,
+        ..Settings::for_tests()
+    };
+    let app = router(state(lazy_pool(), settings));
+    let wallet = format!("{:#x}", key.address());
+    for path in [
+        "/v1/payments/config".to_string(),
+        format!("/v1/payments/nonce/{wallet}"),
+        format!("/v1/payments/balance/{wallet}"),
+    ] {
+        let (status, body) = get_json(&app, &path).await;
+        assert_eq!(status, 403, "{path}: {body}");
+        assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
+    }
+    let (status, text) = send(
+        &app,
+        "POST",
+        "/v1/payments/verify",
+        Some("{}".to_string()),
+        &[],
+    )
+    .await;
+    assert_eq!(status, 403, "{text}");
 }
