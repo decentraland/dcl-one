@@ -1,5 +1,7 @@
 # Decentraland SDK Toolchain
 
+[![SDK](https://img.shields.io/npm/v/@dcl-regenesislabs/sdk?label=sdk)](https://www.npmjs.com/package/@dcl-regenesislabs/sdk)
+
 This monorepo contains the core packages for Decentraland's SDK and development tools.
 
 ## Packages
