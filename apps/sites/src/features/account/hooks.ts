@@ -3,6 +3,7 @@ import {
   useMutation,
   useQuery,
   useQueryClient,
+  type Mutation,
   type QueryClient,
   type QueryKey,
 } from "@tanstack/react-query";
@@ -15,7 +16,12 @@ import {
   type SubscriptionDetails,
   type SubscriptionResponse,
 } from "@/data/lib/account/notifications";
-import { accountKeys, creditsStatusQuery, subscriptionQuery } from "@/data/lib/account/queries";
+import {
+  ACCOUNT_STALE_MS,
+  accountKeys,
+  creditsStatusQuery,
+  subscriptionQuery,
+} from "@/data/lib/account/queries";
 
 /**
  * Writes into a cached entry only while it holds data: an updater returning `undefined` leaves the
@@ -27,11 +33,11 @@ function updateIfCached<T>(client: QueryClient, key: QueryKey, update: (current:
 }
 
 export function useSubscription(identity: AuthIdentity | null) {
-  const options = identity ? subscriptionQuery(identity) : null;
-  return useQuery({
-    queryKey: options?.queryKey ?? accountKeys.subscription(""),
-    queryFn: options?.queryFn ?? skipToken,
-  });
+  return useQuery(
+    identity
+      ? subscriptionQuery(identity)
+      : { queryKey: accountKeys.subscription(""), queryFn: skipToken, staleTime: ACCOUNT_STALE_MS },
+  );
 }
 
 /*
@@ -44,10 +50,37 @@ export type SubscriptionUpdate = { identity: AuthIdentity; details: Subscription
 const UPDATE_SUBSCRIPTION = ["account", "update-subscription"] as const;
 
 /**
- * Applies the new details to the cache at once and rolls back to the value before them on failure.
- * Each PUT sends the whole object, so the writes run one at a time (`scope`): a later toggle cannot
- * land before an earlier one and lose it. The PUT reply is not read back, since the server can answer
- * with partial details; once the last pending write settles the subscription is read again.
+ * The subscription the server last accepted, per client and account, while a chain of writes is
+ * pending. A failed write restores it, never the optimistic value an earlier queued write left.
+ */
+const confirmedSubscriptions = new WeakMap<QueryClient, Map<string, SubscriptionResponse>>();
+
+function confirmedFor(client: QueryClient) {
+  let confirmed = confirmedSubscriptions.get(client);
+  if (!confirmed) {
+    confirmed = new Map();
+    confirmedSubscriptions.set(client, confirmed);
+  }
+  return confirmed;
+}
+
+/** Pending subscription writes of one account, so another account's writes never count. */
+function pendingWritesOf(client: QueryClient, account: string) {
+  return client.isMutating({
+    mutationKey: UPDATE_SUBSCRIPTION,
+    predicate: (mutation: Mutation<unknown, unknown, unknown>) =>
+      (mutation.state.variables as SubscriptionUpdate | undefined)?.identity.signer.toLowerCase() === account,
+  });
+}
+
+/**
+ * Applies the new details to the cache at once. Each PUT sends the whole object, so the writes run
+ * one at a time (`scope`): a later toggle cannot land before an earlier one and lose it. `onMutate`
+ * still runs when a write is queued, so a failure does not restore its own snapshot: while a later
+ * write of the same account is pending, that write carries the visible details and its outcome
+ * decides. When the last pending write fails, the cache returns to the details the server last
+ * accepted in the chain. The PUT reply is not read back, since the server can answer with partial
+ * details; once the last pending write settles the subscription is read again.
  */
 export function useUpdateSubscription() {
   const client = useQueryClient();
@@ -56,20 +89,31 @@ export function useUpdateSubscription() {
     scope: { id: "account-subscription" },
     mutationFn: ({ identity, details }: SubscriptionUpdate) => putSubscription(identity, details),
     onMutate: async ({ identity, details }) => {
-      const key = accountKeys.subscription(identity.signer);
+      const account = identity.signer.toLowerCase();
+      const key = accountKeys.subscription(account);
       await client.cancelQueries({ queryKey: key });
-      const previous = client.getQueryData<SubscriptionResponse>(key);
-      updateIfCached<SubscriptionResponse>(client, key, (current) => ({ ...current, details }));
-      return { previous };
+      const confirmed = confirmedFor(client);
+      const current = client.getQueryData<SubscriptionResponse>(key);
+      if (!confirmed.has(account) && current) confirmed.set(account, current);
+      updateIfCached<SubscriptionResponse>(client, key, (cached) => ({ ...cached, details }));
     },
-    onError: (_error, { identity }, context) => {
-      const previous = context?.previous;
-      if (!previous) return;
-      updateIfCached<SubscriptionResponse>(client, accountKeys.subscription(identity.signer), () => previous);
+    onSuccess: (_result, { identity, details }) => {
+      const account = identity.signer.toLowerCase();
+      const confirmed = confirmedFor(client);
+      const accepted = confirmed.get(account);
+      if (accepted) confirmed.set(account, { ...accepted, details });
+    },
+    onError: (_error, { identity }) => {
+      const account = identity.signer.toLowerCase();
+      if (pendingWritesOf(client, account) > 1) return;
+      const accepted = confirmedFor(client).get(account);
+      if (accepted) updateIfCached<SubscriptionResponse>(client, accountKeys.subscription(account), () => accepted);
     },
     onSettled: (_result, _error, { identity }) => {
-      if (client.isMutating({ mutationKey: UPDATE_SUBSCRIPTION }) > 1) return;
-      return client.invalidateQueries({ queryKey: accountKeys.subscription(identity.signer) });
+      const account = identity.signer.toLowerCase();
+      if (pendingWritesOf(client, account) > 1) return;
+      confirmedFor(client).delete(account);
+      return client.invalidateQueries({ queryKey: accountKeys.subscription(account) });
     },
   });
 }
@@ -89,11 +133,11 @@ export function useSetEmail() {
 }
 
 export function useCreditsStatus(identity: AuthIdentity | null) {
-  const options = identity ? creditsStatusQuery(identity) : null;
-  return useQuery({
-    queryKey: options?.queryKey ?? accountKeys.creditsStatus(""),
-    queryFn: options?.queryFn ?? skipToken,
-  });
+  return useQuery(
+    identity
+      ? creditsStatusQuery(identity)
+      : { queryKey: accountKeys.creditsStatus(""), queryFn: skipToken, staleTime: ACCOUNT_STALE_MS },
+  );
 }
 
 export function useOptOutOfCredits() {
