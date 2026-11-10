@@ -10,9 +10,10 @@ import { GUEST_SESSION_KEY, guestLogin, guestSign, type GuestWallet } from './th
 
 const IDENTITY_LIFETIME_MS = 30 * 24 * 3600 * 1000
 
-/** Where the thirdweb calls run and the session id is kept: the page on web, the bridge scene on native. */
+/** Where the thirdweb calls run: the page on web, which also keeps the session id; the bridge scene
+ *  on native, which keeps nothing. */
 export interface GuestBackend {
-  /** Keep `sessionId` as this device's guest (replacing any earlier one) and sign it in. */
+  /** Sign `sessionId` in; the web backend also keeps it as this device's guest, replacing any earlier one. */
   login(sessionId: string): Promise<GuestWallet>
   sign(token: string, message: string): Promise<string>
 }

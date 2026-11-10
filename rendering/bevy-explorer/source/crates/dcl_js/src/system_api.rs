@@ -245,29 +245,32 @@ pub async fn op_set_avatar(
 
 pub async fn op_deploy_outfits(
     state: Rc<RefCell<impl State>>,
+    address: String,
     outfits: OutfitsData,
 ) -> Result<(), anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::DeployOutfits(outfits, sx))?;
+        .send(SystemApi::DeployOutfits(address, outfits, sx))?;
     rx.await?.map_err(|e| anyhow::anyhow!(e))
 }
 
 pub async fn op_get_outfit_thumbnails(
     state: Rc<RefCell<impl State>>,
+    address: String,
 ) -> Result<Vec<OutfitThumbnailData>, anyhow::Error> {
     let (sx, rx) = RpcResultSender::channel();
     state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::GetOutfitThumbnails(sx))?;
+        .send(SystemApi::GetOutfitThumbnails(address, sx))?;
     rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
 pub fn op_set_outfit_thumbnail(
     state: Rc<RefCell<impl State>>,
+    address: String,
     slot: u32,
     thumbnail: Option<String>,
 ) {
@@ -275,7 +278,7 @@ pub fn op_set_outfit_thumbnail(
     let _ = state
         .borrow_mut()
         .borrow_mut::<SuperUserScene>()
-        .send(SystemApi::SetOutfitThumbnail(slot, thumbnail));
+        .send(SystemApi::SetOutfitThumbnail(address, slot, thumbnail));
 }
 
 pub async fn op_native_input(state: Rc<RefCell<impl State>>) -> String {
