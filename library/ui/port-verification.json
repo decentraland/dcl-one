@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "lockHash": "e7bed8efa60e40fae64b34506a77c6b5148009dcab5c9e1d55dbd292f42e87a4",
+  "lockHash": "25115125bec2e90b0829962026766030dd1356c45cb96807703676294b924285",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "figmaTree": "503c3e71433544a0deb1e7f07a1897668f929233",
@@ -27,7 +27,7 @@
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "Public consumer4 and gallery19 bounds pass, accepted bridge limitations remain"
+      "detail": "Public consumer4, foundations4 and gallery19 bounds pass with accepted bridge limitations unchanged"
     },
     "install": {
       "result": "pass",
