@@ -1,10 +1,22 @@
 import { createHash } from 'node:crypto'
-import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  readlink,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const defaultKitRoot = path.dirname(fileURLToPath(import.meta.url))
 const MANIFEST = '.kit.json'
+// The only .agents/skills this kit creates or accepts: a relative link to the installed skills.
+const AGENTS_LINK_TARGET = '../.claude/skills'
 
 // The kit ships in library/ui/figma/agent-kit; its version is the library package's.
 async function readLibrary(kitRoot) {
@@ -49,21 +61,61 @@ function compareVersions(a, b) {
   return 0
 }
 
+// absent, linked (a symlink to AGENTS_LINK_TARGET), or conflict (anything else, including a real directory).
+async function agentsLinkState(target) {
+  const link = path.join(target, '.agents', 'skills')
+  let stat
+  try {
+    stat = await lstat(link)
+  } catch (error) {
+    if (error.code === 'ENOENT') return { link, state: 'absent' }
+    throw error
+  }
+  if (stat.isSymbolicLink() && (await readlink(link)) === AGENTS_LINK_TARGET)
+    return { link, state: 'linked' }
+  return { link, state: 'conflict', symlink: stat.isSymbolicLink() }
+}
+
 async function skillNames(kitRoot) {
   const entries = await readdir(path.join(kitRoot, 'skills'), { withFileTypes: true })
   return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name)
 }
 
 // Copies the skills of this library version into <target>/.claude/skills. A skill directory the kit did
-// not create (no manifest) belongs to the consumer and is never overwritten without --force.
-async function installKit({ target, force = false, linkAgents = true, kitRoot = defaultKitRoot }) {
+// not create (no manifest) belongs to the consumer and is never overwritten without --force. A skill that
+// already matches this version byte for byte is left untouched, so a repeated install is a no-op.
+// The .agents/skills link is opt-in; an existing entry that is not the kit's link is a conflict, refused
+// before anything is written; --force replaces a foreign symlink but never removes a real directory.
+async function installKit({ target, force = false, linkAgents = false, kitRoot = defaultKitRoot }) {
   const library = await readLibrary(kitRoot)
   const skillsDir = path.join(target, '.claude', 'skills')
   const installed = []
+  const unchanged = []
+  const agents = linkAgents ? await agentsLinkState(target) : undefined
+  if (agents?.state === 'conflict' && (!force || !agents.symlink))
+    throw new Error(
+      agents.symlink
+        ? `${agents.link} links elsewhere than ${AGENTS_LINK_TARGET}. Use --force to replace the link.`
+        : `${agents.link} exists and is not a link to ${AGENTS_LINK_TARGET}. Remove it or install without --agents-link.`
+    )
   await mkdir(skillsDir, { recursive: true })
 
   for (const name of await skillNames(kitRoot)) {
     const destination = path.join(skillsDir, name)
+    const manifestPath = path.join(destination, MANIFEST)
+    if (await exists(manifestPath)) {
+      const current = JSON.parse(await readFile(manifestPath, 'utf8'))
+      const shipped = await hashDirectory(path.join(kitRoot, 'skills', name))
+      if (
+        current.library === library.name &&
+        current.version === library.version &&
+        current.hash === shipped &&
+        (await hashDirectory(destination)) === shipped
+      ) {
+        unchanged.push(name)
+        continue
+      }
+    }
     if (await exists(destination)) {
       const manifestFile = path.join(destination, MANIFEST)
       if (!(await exists(manifestFile))) {
@@ -91,18 +143,14 @@ async function installKit({ target, force = false, linkAgents = true, kitRoot = 
   }
 
   let agentsLink = 'skipped'
-  if (linkAgents) {
-    const agentsDir = path.join(target, '.agents')
-    const link = path.join(agentsDir, 'skills')
-    if (await exists(link)) {
-      agentsLink = 'already-present'
-    } else {
-      await mkdir(agentsDir, { recursive: true })
-      await symlink('../.claude/skills', link, 'dir')
-      agentsLink = 'created'
-    }
+  if (agents?.state === 'linked') agentsLink = 'already-linked'
+  else if (agents) {
+    if (agents.state === 'conflict') await rm(agents.link)
+    await mkdir(path.dirname(agents.link), { recursive: true })
+    await symlink(AGENTS_LINK_TARGET, agents.link, 'dir')
+    agentsLink = agents.state === 'conflict' ? 'replaced' : 'created'
   }
-  return { library, installed, agentsLink }
+  return { library, installed, unchanged, agentsLink }
 }
 
 // Reports why the installed skills are not what this library version ships. Used in a consumer's CI.
@@ -141,6 +189,13 @@ async function checkKit({ target, kitRoot = defaultKitRoot }) {
       })
     }
   }
+  const agents = await agentsLinkState(target)
+  if (agents.state === 'conflict')
+    problems.push({
+      skill: '.agents/skills',
+      reason: 'agents-link-mismatch',
+      message: `${agents.link} exists and is not a link to ${AGENTS_LINK_TARGET}`
+    })
   return { library, ok: problems.length === 0, problems }
 }
 

@@ -108,6 +108,9 @@ migrates), `library/ui/` or
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.
+To implement a Figma design, follow the `implement-figma-design` skill in
+`.claude/skills/`; it resolves each component to the library instead of
+recreating it.
 
 State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 
