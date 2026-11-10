@@ -5,11 +5,12 @@ import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { parse } from 'yaml'
+import { COPY_THEN_NODE, GUARD_COPY } from './key-step.js'
 
 const repo = path.resolve(import.meta.dirname, '../../../..')
 const head = '1'.repeat(40),
   base = '2'.repeat(40)
-type Step = { id?: string; run?: string; name?: string }
+type Step = { id?: string; run?: string; name?: string; env?: Record<string, unknown> }
 const steps = (
   parse(await readFile(path.join(repo, '.github/workflows/ui-library-key-scan.yml'), 'utf8')) as {
     jobs: { 'key-scan': { steps: Step[] } }
@@ -277,30 +278,41 @@ describe('when the privileged scan reads the url allowlist', () => {
     return git('rev-parse', 'HEAD')
   }
   const allowlistFile = () => path.join(root, 'trusted/library/ui/figma/key-guard-allow.json')
+  const scanStep = steps.find((step) => step.id === 'scan')!
+  // The literal env of the scan step as the workflow writes it (GIT_NO_REPLACE_OBJECTS and the git config
+  // isolation), so dropping one from the workflow drops it here too. Expressions are filled in below.
+  const stepEnv = Object.fromEntries(
+    Object.entries(scanStep.env ?? {}).flatMap(([name, value]) =>
+      String(value).includes('${{') ? [] : [[name, String(value)]]
+    )
+  )
   // Runs the real scan step with main's real key guard and a synthetic key, pinned like the workflow pins it:
   // TRUSTED_SHA is the event's default branch commit, here the checkout's HEAD when the run starts unless a
   // case sets it. RUNNER_TEMP is a real path, as on a runner: the guard only starts when the path node was
   // given is the path of its own module.
-  const scan = (env: Record<string, string>) =>
-    spawnSync(
-      'bash',
-      ['-e', '-o', 'pipefail', '-c', steps.find((step) => step.id === 'scan')!.run!],
-      {
-        cwd: root,
-        encoding: 'utf8',
-        env: {
+  const scan = (env: Record<string, string>, without: string[] = []) =>
+    spawnSync('bash', ['-e', '-o', 'pipefail', '-c', scanStep.run!], {
+      cwd: root,
+      encoding: 'utf8',
+      env: Object.fromEntries(
+        Object.entries({
           ...defaults(),
-          GIT_CONFIG_NOSYSTEM: '1',
-          GIT_CONFIG_GLOBAL: '/dev/null',
-          GIT_NO_REPLACE_OBJECTS: '1',
+          ...stepEnv,
           TRUSTED_SHA: git('rev-parse', 'HEAD'),
           FIGMA_FILE_KEY: 'SyntheticKeyExample0',
           ARTIFACT_REQUIRED: 'false',
           RUNNER_TEMP: realpathSync(root),
           ...env
-        }
-      }
-    )
+        }).filter(([name]) => !without.includes(name))
+      )
+    })
+  // Where the step writes the guard copy.
+  const copy = () => path.join(root, path.basename(GUARD_COPY))
+
+  it('should write the pinned guard to a fresh file and run that file', () => {
+    expect(scanStep.run).toMatch(COPY_THEN_NODE)
+    expect(stepEnv).toMatchObject({ GIT_NO_REPLACE_OBJECTS: '1' })
+  })
   let mainBase: string, headSha: string
   beforeEach(async () => {
     await mkdir(path.join(root, 'trusted/library/ui/figma'), { recursive: true })
@@ -355,7 +367,7 @@ describe('when the privileged scan reads the url allowlist', () => {
     expect(result.status, result.stdout + result.stderr).toBe(0)
     expect(existsSync(path.join(root, 'leak'))).toBe(false)
     expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${landed}`)
-    expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
+    expect(await readFile(copy())).toEqual(committed)
   })
 
   it('should run the pinned guard when an earlier step commits a tampered one to the checkout HEAD', async () => {
@@ -370,11 +382,15 @@ describe('when the privileged scan reads the url allowlist', () => {
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha, TRUSTED_SHA: pinned })
     expect(result.status, result.stdout + result.stderr).toBe(0)
     expect(existsSync(path.join(root, 'leak'))).toBe(false)
-    expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
+    expect(await readFile(copy())).toEqual(committed)
     expect(result.stdout).toContain(`allowlisted public file ids in 1 paths from ${pinned}`)
-    expect(moved).not.toBe(pinned)
+    // The summary names the commit the guard was read from, not the checkout HEAD the earlier step moved.
+    expect(result.stdout).toContain(`figma-key-guard at ${pinned}\n`)
+    expect(result.stdout).not.toContain(moved)
   })
 
+  // GIT_NO_REPLACE_OBJECTS is left out of this run, so only the copy's own --no-replace-objects keeps the
+  // replacement out.
   it('should ignore a replace ref an earlier step created for the committed key guard', async () => {
     await writeFile(allowlistFile(), entry)
     commit()
@@ -384,22 +400,37 @@ describe('when the privileged scan reads the url allowlist', () => {
     git('replace', git('rev-parse', 'HEAD:library/ui/figma/key-guard.mjs'), evil)
     // Without --no-replace-objects, cat-file would print the tampered blob.
     expect(git('cat-file', 'blob', 'HEAD:library/ui/figma/key-guard.mjs')).toContain('leak')
-    const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
+    const result = scan({ BASE: mainBase, HEAD_SHA: headSha }, ['GIT_NO_REPLACE_OBJECTS'])
     expect(result.status, result.stdout + result.stderr).toBe(0)
     expect(existsSync(path.join(root, 'leak'))).toBe(false)
-    expect(await readFile(path.join(root, 'key-guard.mjs'))).toEqual(committed)
+    expect(await readFile(copy())).toEqual(committed)
+  })
+
+  // The step env's GIT_NO_REPLACE_OBJECTS is what keeps the guard's own reads of the scanned commits honest.
+  it('should scan the committed blob of a scanned file that an earlier step replaced with a clean one', async () => {
+    await writeFile(path.join(root, 'clean.md'), 'nothing to see\n')
+    const clean = git('hash-object', '-w', path.join(root, 'clean.md'))
+    git('replace', git('rev-parse', `${headSha}:docs/link.md`), clean)
+    expect(git('cat-file', 'blob', `${headSha}:docs/link.md`)).toBe('nothing to see')
+    const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
+    expect(result.stdout).toContain(`FAIL url ${headSha.slice(0, 12)}:docs/link.md`)
+    expect(result.status).not.toBe(0)
   })
 
   it('should replace a key guard copy an earlier step planted in $RUNNER_TEMP before running it', async () => {
-    await writeFile(path.join(root, 'key-guard.mjs'), tampered)
+    await writeFile(copy(), tampered)
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
     expect(existsSync(path.join(root, 'leak'))).toBe(false)
     expect(result.stdout).toContain(`FAIL url ${headSha.slice(0, 12)}:docs/link.md`)
     expect(result.status).not.toBe(0)
   })
 
+  // A directory at the copy path holds a package whose main is a tampered guard, which node would run if the
+  // step went on to run the copy after the write failed.
   it('should fail before running anything when the committed key guard cannot be written out', async () => {
-    await mkdir(path.join(root, 'key-guard.mjs'))
+    await mkdir(copy())
+    await writeFile(path.join(copy(), 'package.json'), JSON.stringify({ main: 'main.mjs' }))
+    await writeFile(path.join(copy(), 'main.mjs'), tampered)
     const result = scan({ BASE: mainBase, HEAD_SHA: headSha })
     expect(result.status).not.toBe(0)
     expect(result.stdout).not.toContain('check key: ran')

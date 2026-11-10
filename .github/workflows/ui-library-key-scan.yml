@@ -183,6 +183,7 @@ jobs:
       # written to a fresh file just before it runs; key-guard.mjs imports only node: builtins, so that file is
       # the whole program. cat-file prints the raw blob, with no textconv, and replace objects are off for every
       # git read in this step, so a refs/replace entry cannot swap the guard, the allowlist or a scanned blob.
+      # --revision makes the summary name TRUSTED_SHA, the commit the guard was read from, not trusted/'s HEAD.
       - name: Scan for the Figma file key
         id: scan
         if: steps.trigger.outputs.scan == 'true'
@@ -204,7 +205,7 @@ jobs:
             extra=(--tree "$HEAD_SHA:library/ui" --artifact "$RUNNER_TEMP/pr-artifact")
           fi
           git -C trusted --no-replace-objects cat-file blob "$TRUSTED_SHA:library/ui/figma/key-guard.mjs" > "$RUNNER_TEMP/key-guard.mjs"
-          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree \
+          node "$RUNNER_TEMP/key-guard.mjs" --root trusted --no-worktree --revision "$TRUSTED_SHA" \
             --range "$range" --allowlist-from "$TRUSTED_SHA" "${extra[@]}" | tee "$RUNNER_TEMP/key-scan.txt"
           grep -qx 'check key: ran' "$RUNNER_TEMP/key-scan.txt"
 
