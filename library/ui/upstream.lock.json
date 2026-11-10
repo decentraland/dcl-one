@@ -78,7 +78,8 @@
         "Key guard integrity: the key scan runs in two jobs. prepare holds no secret: it validates the triggering run, fetches the scanned commits and prefetches their LFS objects, checks the Review artifact, posts the failed check for every skip or failure, and uploads the commits as a git bundle (prerequisites: the parents of the default branch commit it checked out) and the LFS objects as the key-scan-input artifact. key-scan holds FIGMA_FILE_KEY and has only pinned actions/checkout of the default branch into trusted/ without persisted credentials, actions/setup-node, actions/download-artifact into runner.temp, the key step and a report step. The policy test requires a key step's run to equal, once trimmed, one of the fixed templates in figma/test/key-step.ts (the trusted/ scan, or an artifact scan over a workspace root checkout with the build in .preview/input), and its env to hold exactly FIGMA_FILE_KEY, TRUSTED_SHA (github.sha or github.workflow_sha), GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL and GIT_NO_REPLACE_OBJECTS at their hardening values, and the template's data variables, each from an allowlisted expression; the optional report step must equal the report template and come last. Any other step, action, action input or step key in a key job is rejected, so no shell runs before the key step and no command is parsed. The key step copies key-guard.mjs from TRUSTED_SHA by object id with --no-replace-objects before it fetches the bundle (into refs/key-scan/ only), reads the url allowlist from TRUSTED_SHA, names it with --revision, and reads LFS objects from the downloaded store (--lfs-store), each verified against its oid. Key jobs run on GitHub-hosted runners, and the import check covers export from and dynamic loads.",
         "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
         "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
-        "Install components through the verified-cache transaction and check emitted output provenance, complete input identities, CSS Modules exports and internal registry lifecycle."
+        "Install components through the verified-cache transaction and check emitted output provenance, complete input identities, CSS Modules exports and internal registry lifecycle.",
+        "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard."
       ],
       "snapshot": {
         "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -4076,7 +4077,7 @@
           ]
         },
         "library/ui/figma/test/key-scan-workflow.test.ts": {
-          "sha256": "43a7307bee1f6d3393ae40a067131aca92f453b2a2e3c5612c7d7a04f6b05250",
+          "sha256": "95d54f642cf8e11319a580fc37e1dc635c17f0197519bf4eb582681c6bcf63f5",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4084,15 +4085,17 @@
             "bot-review-279-b",
             "bot-review-279-c",
             "key-scan-repair",
-            "key-guard-integrity"
+            "key-guard-integrity",
+            "key-download-identity"
           ]
         },
         "library/ui/figma/test/key-step.ts": {
-          "sha256": "2bc9e767a09839a7dd243216c61ca4938c38dc60b63d057220cfaeb00bf3998b",
+          "sha256": "4e821745e8c2c09ad5cb46fb0f4c1d985f5430dda475ae03efb9be8d89d6972b",
           "fds": null,
           "deviation": [
             "dcl-one-only",
-            "key-guard-integrity"
+            "key-guard-integrity",
+            "key-download-identity"
           ]
         },
         "library/ui/figma/test/snapshot.ts": {
@@ -4112,7 +4115,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/test/workflows.test.ts": {
-          "sha256": "25baf7b99b3bc4e8a71f0cb3b52505c068369406aa1a494235a6a991c189213c",
+          "sha256": "dae6b772d797de0cdef8a997692628dddfe52ec8bf85d5942c0890e97198ffdf",
           "fds": null,
           "deviation": [
             "capture-removed",
@@ -4121,7 +4124,8 @@
             "bot-review-279-b",
             "review-followup-3",
             "key-scan-repair",
-            "key-guard-integrity"
+            "key-guard-integrity",
+            "key-download-identity"
           ]
         },
         "library/ui/figma/tsconfig.json": {
@@ -4162,7 +4166,8 @@
         "key-guard-integrity": 57,
         "local-components-plan": 58,
         "internal-components": 59,
-        "component-install-integrity": 60
+        "component-install-integrity": 60,
+        "key-download-identity": 61
       }
     }
   ],
