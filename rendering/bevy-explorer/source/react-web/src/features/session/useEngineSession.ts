@@ -1268,7 +1268,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunityCards((prev) => (prev[id] != null ? { ...prev, [id]: swap(prev[id]) } : prev))
     updateCommunityBrowse((prev) => ({ ...prev, items: prev.items.map(swap) }))
     setCommunityConvos((prev) => prev.map(swap))
-  },[updateCommunityBrowse])
+  }, [updateCommunityBrowse])
   const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
   const [mapOpen, setMapOpen] = useState(false)
   // Minimap pose: a ref, not state — see MinimapState.pose for why.
