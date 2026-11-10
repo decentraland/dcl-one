@@ -50,7 +50,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
         http,
-        credits_settings(&config)?,
+        credits_settings(&config, false)?,
         shop::credits::Sources {
             market: Some(market),
             price: None,
@@ -174,7 +174,13 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
     Ok(land_settings)
 }
 
-pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> {
+/// `trial_applies`: whether this process takes `CREDITS_TRIAL_MODE`'s start requirements. `serve`
+/// issues, revokes and takes top-ups, so it does; `index` only folds the CreditUsed index, so it
+/// starts without the trial's signing keys.
+pub(crate) fn credits_settings(
+    config: &Config,
+    trial_applies: bool,
+) -> anyhow::Result<shop::credits::Settings> {
     let non_empty = Config::non_empty;
     shop::credits::Settings::parse(shop::credits::RawSettings {
         writes_enabled: config.ops.ops_writes_enabled,
@@ -219,6 +225,8 @@ pub(crate) fn credits_settings(config: &Config) -> anyhow::Result<shop::credits:
         credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
         credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
         credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
+        trial_mode: trial_applies && config.shop.credits_trial_mode,
+        trial_buyers: non_empty(&config.shop.credits_trial_buyers),
         shop_base_url: config.shop.shop_base_url.clone(),
     })
     .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
