@@ -35,7 +35,7 @@ an engine-side revert of a failed publish.
   The one exception is the compact tier on Decentraland's own deployments, below. There is no
   flag between endpoints and no catalyst taken from another player: the LiveKit metadata path is
   gone. The catalyst's answer is final; a peer's own answer stays the source for guests, who have
-  no deployed profile.
+  no deployed profile, and is taken only when every address in it is the sending player's.
 - **The catalyst serves the compact tier from its own deployments.**
   `POST /lambdas/profiles/metadata` answers `{"ids": [...]}` (at most 1000) with upstream's
   `ProfileMetadataDTO` (`decentraland/asset-bundle-registry@f9578d4a`, `getMetadata`): `pointer`,

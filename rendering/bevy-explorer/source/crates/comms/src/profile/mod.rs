@@ -410,6 +410,19 @@ impl ProfileCache {
         }
     }
 
+    /// Record a profile `sender` sent of itself, under the sender's address; false, with
+    /// nothing recorded, for one naming another address. `apply`'s authority ranking keeps
+    /// a room-broadcast response from displacing an equal-version catalyst answer; a
+    /// guest's own answer counts as final via `satisfied`.
+    fn update_from_peer(&mut self, sender: Address, profile: UserProfile) -> bool {
+        if !is_senders_own(sender, &profile.content) {
+            return false;
+        }
+        self.touch(sender, ProfileTier::Full)
+            .apply(profile, ProfileSource::Peer);
+        true
+    }
+
     /// the catalyst has no compact route: from now on every fetch is full, and the
     /// addresses of the refused POST are due again at once
     fn compact_endpoint_missing(&mut self, addresses: &[Address]) {
@@ -542,16 +555,21 @@ impl ProfileManager<'_, '_> {
         self.cache.server_snapshots(profile)
     }
 
-    /// Record a profile received directly from the owning peer. `apply`'s authority
-    /// ranking keeps a room-broadcast response from displacing an equal-version
-    /// catalyst answer; a guest's own answer counts as final via `satisfied`.
-    pub fn update_from_peer(&mut self, profile: UserProfile) {
-        if let Some(address) = profile.content.eth_address.as_h160() {
-            self.cache
-                .touch(address, ProfileTier::Full)
-                .apply(profile, ProfileSource::Peer);
-        }
+    /// Record a profile `sender` sent of itself; see `ProfileCache::update_from_peer`.
+    pub fn update_from_peer(&mut self, sender: Address, profile: UserProfile) -> bool {
+        self.cache.update_from_peer(sender, profile)
     }
+}
+
+/// Whether a profile received from a peer is that peer's own: every address it carries is
+/// the sender's. A peer speaks only for itself; a profile naming anyone else would be
+/// shown as theirs.
+fn is_senders_own(sender: Address, content: &SerializedProfile) -> bool {
+    content.eth_address.as_h160() == Some(sender)
+        && content
+            .user_id
+            .as_ref()
+            .is_none_or(|id| id.as_h160() == Some(sender))
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -1303,12 +1321,8 @@ pub fn process_profile_events(
                         };
                     let version = serialized_profile.version as u32;
 
-                    // check/update profile version
                     if version < player.profile_version {
                         continue;
-                    }
-                    if version > player.profile_version {
-                        player.profile_version = version;
                     }
 
                     let profile = UserProfile {
@@ -1316,6 +1330,20 @@ pub fn process_profile_events(
                         content: serialized_profile,
                         base_url: r.base_url.clone(),
                     };
+
+                    // dropped whole when it names another address: nothing of it reaches
+                    // the sender's entity, version or identity either
+                    if !cache.update_from_peer(player.address, profile.clone()) {
+                        warn!(
+                            "dropping a profile from {:#x} that names another address",
+                            player.address
+                        );
+                        continue;
+                    }
+
+                    if version > player.profile_version {
+                        player.profile_version = version;
+                    }
 
                     // diff before any push: only write the identity crdt when the guest
                     // flag actually changes (or on first sight of this player's profile)
@@ -1337,8 +1365,6 @@ pub fn process_profile_events(
                             );
                         }
                     }
-
-                    cache.update_from_peer(profile.clone());
 
                     if let Some(mut existing_profile) = maybe_profile {
                         if existing_profile.as_ref() != &profile {
@@ -2157,6 +2183,49 @@ mod tests {
         connected.content.has_connected_web3 = Some(true);
         peer.apply(connected, ProfileSource::Peer);
         assert!(!peer.satisfied());
+    }
+
+    fn profile_of(address: Address, version: u32, name: &str) -> UserProfile {
+        let mut profile = profile(version, name);
+        profile.content.eth_address = format!("{address:#x}");
+        profile
+    }
+
+    #[test]
+    fn a_peer_profile_naming_another_address_is_not_recorded() {
+        let (sender, other) = (Address::repeat_byte(0xa1), Address::repeat_byte(0xb2));
+        let mut cache = ProfileCache::default();
+
+        // at a version no catalyst answer would displace
+        assert!(!cache.update_from_peer(sender, profile_of(other, u32::MAX, "forged")));
+
+        let mut other_user_id = profile_of(sender, 1, "forged");
+        other_user_id.content.user_id = Some(format!("{other:#x}"));
+        assert!(!cache.update_from_peer(sender, other_user_id));
+
+        let mut no_address = profile(1, "forged");
+        no_address.content.eth_address = String::new();
+        assert!(!cache.update_from_peer(sender, no_address));
+
+        assert!(cache.entries.is_empty());
+    }
+
+    #[test]
+    fn a_peer_profile_is_recorded_under_its_sender() {
+        let sender = Address::repeat_byte(0xa1);
+        let mut cache = ProfileCache::default();
+
+        let mut own = profile_of(sender, 3, "peer");
+        own.content.user_id = Some(format!("{sender:#x}").to_uppercase().replace("0X", "0x"));
+        assert!(cache.update_from_peer(sender, own));
+        assert_eq!(held_name(&cache.entries[&sender]), "peer");
+        assert_eq!(cache.entries.len(), 1);
+
+        // the catalyst's answer at that version replaces it, and is not replaced back
+        let entry = cache.entries.get_mut(&sender).unwrap();
+        assert!(entry.apply(profile_of(sender, 3, "catalyst"), ProfileSource::Catalyst));
+        assert!(cache.update_from_peer(sender, profile_of(sender, 3, "peer")));
+        assert_eq!(held_name(&cache.entries[&sender]), "catalyst");
     }
 
     #[test]
