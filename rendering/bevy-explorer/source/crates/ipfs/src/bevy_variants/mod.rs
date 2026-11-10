@@ -14,7 +14,8 @@
 //! what it decodes to. A texture variant is a BC KTX2 whose header names its BC format, handed
 //! to the loaders as the DDS it unwraps to (`ktx2`); that DDS is cached too. Anything else, at
 //! any step, reads the original. A variant that fails to decode is marked bad for the session
-//! and its asset reloaded from the original.
+//! and its asset reloaded from the original. An entity's files wait for its manifest for at
+//! most [`MANIFEST_DEADLINE`] from the request, then read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
 //! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Of the
@@ -169,6 +170,11 @@ pub fn taken_formats() -> String {
     }
     words
 }
+/// How long an entity's files wait for its manifest, from the moment it was requested. A file
+/// read after that goes to the original at once; a manifest that arrives later still serves
+/// the files read after it. Long enough for a first connection to the service (DNS, TLS), and
+/// short next to a cold scene load.
+pub const MANIFEST_DEADLINE: Duration = Duration::from_secs(2);
 /// Consecutive transport failures (manifest or variant) after which the service is treated as
 /// down for the rest of the session, so a dead host costs a few requests, not one per file.
 const BREAKER_FAILURES: u32 = 5;
@@ -405,6 +411,8 @@ pub struct BevyVariants {
     /// The GPU's BC support, once the renderer has reported it.
     bc: OnceLock<bool>,
     manifests: Mutex<HashMap<String, watch::Receiver<ManifestState>>>,
+    /// When each entity's manifest was requested, for [`MANIFEST_DEADLINE`].
+    requested_at: Mutex<HashMap<String, web_time::Instant>>,
     session: Mutex<Session>,
 }
 
@@ -437,7 +445,22 @@ impl BevyVariants {
         }
         let (sender, receiver) = watch::channel(ManifestState::Pending);
         manifests.insert(entity.to_owned(), receiver);
+        self.requested_at
+            .lock()
+            .unwrap()
+            .insert(entity.to_owned(), web_time::Instant::now());
         Some(sender)
+    }
+
+    /// How much of [`MANIFEST_DEADLINE`] an entity's files may still wait for its manifest.
+    fn manifest_wait_left(&self, entity: &str) -> Duration {
+        self.requested_at
+            .lock()
+            .unwrap()
+            .get(entity)
+            .map_or(MANIFEST_DEADLINE, |at| {
+                MANIFEST_DEADLINE.saturating_sub(at.elapsed())
+            })
     }
 
     fn manifest(&self, entity: &str) -> Option<watch::Receiver<ManifestState>> {
@@ -637,11 +660,41 @@ impl IpfsIo {
             return None;
         }
         let mut manifest = variants.manifest(scene)?;
-        let state = manifest
-            .wait_for(|state| !matches!(state, ManifestState::Pending))
-            .await
-            .ok()?
-            .clone();
+        let state = manifest.borrow().clone();
+        let state = if matches!(state, ManifestState::Pending) {
+            // wait for the manifest, but only until its deadline: a slow service must not
+            // hold the entity's files back
+            let left = variants.manifest_wait_left(scene);
+            let arrived = if left.is_zero() {
+                None
+            } else {
+                platform::within(left, async {
+                    manifest
+                        .wait_for(|state| !matches!(state, ManifestState::Pending))
+                        .await
+                        .ok()
+                        .map(|state| state.clone())
+                })
+                .await
+            };
+            match arrived {
+                Some(state) => state?,
+                None => {
+                    variants.fail(
+                        scene,
+                        file,
+                        None,
+                        format!(
+                            "the manifest was not there within {}s",
+                            MANIFEST_DEADLINE.as_secs()
+                        ),
+                    );
+                    return None;
+                }
+            }
+        } else {
+            state
+        };
         let ManifestState::Loaded(manifest) = state else {
             return None;
         };

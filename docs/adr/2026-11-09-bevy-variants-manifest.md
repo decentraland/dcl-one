@@ -107,6 +107,10 @@ Excluded from variants: source maps, audio, video and scene code.
   each wearable and emote when its entity is fetched for an avatar. A `404` is
   remembered as "no manifest". A wearable or emote takes its content server from
   the catalyst it was fetched from, so it is eligible on any realm.
+- An entity's files wait for its manifest for at most two seconds from the
+  request. A file read after that loads its original at once, so a slow service
+  delays a load by that much at worst; a manifest that arrives later still serves
+  the files read after it.
 - A content file reads as a variant only when its original CID has a variant of
   a class the Explorer supports for that file type and GPU: original CID, first
   supported variant, fetch from `{base}/{path}`, decode. Any failure (fetch, a

@@ -742,6 +742,83 @@ fn snapshot_of(variants: &BevyVariants) -> serde_json::Value {
     super::debug_panel::snapshot(variants)
 }
 
+/// A manifest that has not answered holds an entity's files only until its deadline: a read
+/// near the deadline waits out what is left, a read after it goes to the original at once, and
+/// a manifest that arrives late still serves the files read after it.
+#[tokio::test]
+async fn files_wait_for_a_pending_manifest_only_until_its_deadline() {
+    let (io, dir) = io_with_cache("deadline");
+    let (ktx2, cid, dds) = bc7_variant();
+    let variant_route = format!("/{}", served_path(&cid));
+    let (base, log) = serve(vec![(variant_route.clone(), ktx2)]).await;
+    // a loaded manifest first, for the entity and realm setup, then put back to pending
+    scene_with_variant(&io, &base, &cid).await;
+    let loaded = io.bevy_variants.manifest(SCENE).unwrap().borrow().clone();
+    let (sender, receiver) = watch::channel(ManifestState::Pending);
+    io.bevy_variants
+        .manifests
+        .lock()
+        .unwrap()
+        .insert(SCENE.to_owned(), receiver);
+    let requested = |ago: Duration| {
+        io.bevy_variants
+            .requested_at
+            .lock()
+            .unwrap()
+            .insert(SCENE.to_owned(), web_time::Instant::now() - ago);
+    };
+    let path = content_path("tex.png");
+    let ipfs_path = IpfsPath::new_from_path(&path).unwrap().unwrap();
+
+    // requested just short of the deadline: the read waits out the rest, then gives up
+    requested(MANIFEST_DEADLINE - Duration::from_millis(150));
+    let began = web_time::Instant::now();
+    assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
+    let waited = began.elapsed();
+    assert!(
+        waited >= Duration::from_millis(100) && waited < Duration::from_millis(1500),
+        "waited {waited:?}"
+    );
+    // past the deadline: no wait at all
+    let began = web_time::Instant::now();
+    assert!(io.read_bevy_variant(&ipfs_path, &path).await.is_none());
+    assert!(began.elapsed() < Duration::from_millis(100));
+    {
+        let session = io.bevy_variants.session.lock().unwrap();
+        assert_eq!(session.fallbacks, 2);
+        assert!(session.recent[0].reason.contains("manifest was not there"));
+        assert!(session.bad.is_empty());
+    }
+    assert_eq!(requests_for(&log, &variant_route), 0);
+
+    // the manifest arrives late: the next read is served from it
+    sender.send_replace(loaded);
+    assert_eq!(read_all(&io, &path).await, dds);
+    assert_eq!(requests_for(&log, &variant_route), 1);
+
+    // a read that is waiting when the manifest arrives in time is served too
+    let (sender, receiver) = watch::channel(ManifestState::Pending);
+    io.bevy_variants
+        .manifests
+        .lock()
+        .unwrap()
+        .insert(SCENE.to_owned(), receiver);
+    requested(Duration::ZERO);
+    let io2 = io.clone();
+    let path2 = path.clone();
+    let reading = tokio::spawn(async move { read_all(&io2, &path2).await });
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let manifest = format!(
+        r#"{{"v": 3, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
+        served_path(&cid)
+    );
+    sender.send_replace(ManifestState::Loaded(Arc::new(
+        parse_manifest(manifest.as_bytes()).unwrap(),
+    )));
+    assert_eq!(reading.await.unwrap(), dds);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// `track_reloads` against a real asset server: the handle of a failed variant stays `Failed`
 /// for the whole reload, and the path stays pending until the original loads, fails too, or
 /// nothing holds the asset any more.
