@@ -37,10 +37,19 @@ def release_tags(sha, ref):
     if not re.fullmatch(r'[0-9a-f]{40}', sha):
         raise ValueError('GITHUB_SHA must be a full commit SHA')
     if ref == 'refs/heads/main':
-        return [f'sha-{sha}', 'main']
-    if ref.startswith('refs/tags/v') and re.fullmatch(r'v[\w.-]{0,127}', ref[10:], re.ASCII):
-        return [f'sha-{sha}', ref[10:]]
-    raise ValueError('Publication is restricted to main and v* release tags')
+        tags = [f'sha-{sha}', 'main']
+    elif ref.startswith('refs/tags/v') and re.fullmatch(r'v[\w.-]{0,127}', ref[10:], re.ASCII):
+        tags = [f'sha-{sha}', ref[10:]]
+    else:
+        raise ValueError('Publication is restricted to main and v* release tags')
+    # A variant shares its base's repository under a suffix: a release named like a variant tag
+    # would publish over another release's variant, and a suffixed tag must still fit Docker's 128.
+    for _, suffix in VARIANTS.values():
+        if any(tag.endswith(f'-{suffix}') for tag in tags):
+            raise ValueError(f'A release tag cannot end in a variant suffix (-{suffix})')
+        if any(len(f'{tag}-{suffix}') > 128 for tag in tags):
+            raise ValueError(f'A release tag is too long for its -{suffix} variant (128 characters)')
+    return tags
 
 
 def main():
@@ -89,8 +98,11 @@ def main():
         authfile.chmod(0o600)
         env = {**os.environ, 'DOCKER_CONFIG': temporary}
         run('docker', 'buildx', 'version', env=env)
+        # Every per-architecture image first, then the moving tags: a copy that fails leaves no
+        # component's `main` (or release) moved ahead of the others.
+        sources = {}
         for service, repo in repositories.items():
-            sources = []
+            sources[service] = []
             for arch in PLATFORMS[service]:
                 archive = archive_path(args.archives, service, arch, sha)
                 digestfile = Path(temporary) / f'{service}-{arch}.digest'
@@ -100,10 +112,11 @@ def main():
                 digest = digestfile.read_text().strip()
                 if not re.fullmatch(r'sha256:[0-9a-f]{64}', digest):
                     raise ValueError('Registry copy did not return a valid digest')
-                sources.append(f'{repo}@{digest}')
+                sources[service].append(f'{repo}@{digest}')
+        for service, repo in repositories.items():
             service_tags = [f'{tag}{suffix[service]}' for tag in tags]
             tag_args = [item for tag in service_tags for item in ('--tag', f'{repo}:{tag}')]
-            run('docker', 'buildx', 'imagetools', 'create', *tag_args, *sources, env=env)
+            run('docker', 'buildx', 'imagetools', 'create', *tag_args, *sources[service], env=env)
             manifest = json.loads(run('docker', 'buildx', 'imagetools', 'inspect', '--raw',
                                      f'{repo}:{service_tags[0]}', env=env, capture_output=True).stdout)
             platforms = {(m['platform']['os'], m['platform']['architecture']) for m in manifest['manifests']}

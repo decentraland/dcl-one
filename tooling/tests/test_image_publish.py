@@ -90,6 +90,10 @@ class PublicationTest(unittest.TestCase):
             for arch in ('amd64', 'arm64')])
         indexes = [call for call in calls if call[:4] == ('docker', 'buildx', 'imagetools', 'create')]
         self.assertEqual(len(indexes), 3)
+        # Every per-architecture copy lands before the first moving tag is created.
+        last_copy = max(i for i, call in enumerate(calls) if call[:2] == ('skopeo', 'copy'))
+        first_index = min(i for i, call in enumerate(calls) if call[:4] == ('docker', 'buildx', 'imagetools', 'create'))
+        self.assertLess(last_copy, first_index)
         for component, index in zip(('apis', 'sites'), indexes):
             self.assertIn(f'quay.io/example/dcl-one-{component}:main', index)
             self.assertIn(f'quay.io/example/dcl-one-{component}:sha-{sha}', index)
@@ -166,6 +170,15 @@ class PublicationTest(unittest.TestCase):
                 publish.release_tags(sha, ref)
         with self.assertRaises(ValueError):
             publish.release_tags('short', 'refs/heads/main')
+        # A release named like a variant tag would publish over another release's variant, and a
+        # suffixed tag must fit in 128 characters: both are refused before any registry write.
+        with self.assertRaisesRegex(ValueError, 'variant suffix'):
+            publish.release_tags(sha, 'refs/tags/v1.2-polygon-credits')
+        longest = 'v' + '1' * 127
+        with self.assertRaisesRegex(ValueError, 'too long'):
+            publish.release_tags(sha, f'refs/tags/{longest}')
+        fits = 'v' + '1' * (127 - len('-polygon-credits'))
+        self.assertEqual(publish.release_tags(sha, f'refs/tags/{fits}'), [f'sha-{sha}', fits])
 
     def test_invalid_last_archive_prevents_every_registry_write(self):
         sha = 'a' * 40

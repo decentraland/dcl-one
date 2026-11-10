@@ -114,8 +114,13 @@ in stdenv.mkDerivation ({
   passthru = { inherit pnpmDeps runtimeDeps docsContent playWeb toolchain; shopSettlement = settlement; };
   meta.mainProgram = "sites-server";
 } // lib.optionalAttrs (settlement != null) {
-  # Names the settlement the build carries next to the build it shaped.
+  # Names the settlement the build carries next to the build it shaped, and fails the build if the
+  # client bundle doesn't carry the manager: the VITE_* never reached it.
   postInstall = ''
+    if ! grep -rqF ${settlement.creditsManager} "$out/build/client"; then
+      echo "the client bundle doesn't carry VITE_SHOP_CREDITS_MANAGER (${settlement.creditsManager})" >&2
+      exit 1
+    fi
     printf '{"chainId":%s,"creditsManager":"%s"}\n' ${toString settlement.chainId} ${settlement.creditsManager} > "$out/shop-settlement.json"
   '';
 })
