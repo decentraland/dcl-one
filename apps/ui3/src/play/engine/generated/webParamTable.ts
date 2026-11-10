@@ -63,12 +63,6 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Local-preview comms gatekeeper; absent = `https://comms-gatekeeper-local.<base>`"
   },
   {
-    "name": "assetBundleRegistry",
-    "kind": "string",
-    "delivery": "resolved",
-    "doc": "Asset-bundle registry; absent = `https://asset-bundle-registry.<base>` (custom domains only: org and zone profiles use the registry of the profile's own environment)"
-  },
-  {
     "name": "storage",
     "kind": "string",
     "delivery": "resolved",

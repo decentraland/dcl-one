@@ -1,8 +1,8 @@
 // The browser host's NAME reads: the node's base and fetch for the banned-names list. What is read, and how its
-// answer is understood, is names/api.ts.
+// answer is understood, is @shop/names/api.
 
 import { catalystBase } from "../../data/catalyst/client";
-import { fetchBannedNames, type ListsTransport } from "./api";
+import { fetchBannedNames, type ListsTransport } from "@shop/names/api";
 
 /** A lists transport over fetch. An error's body is let go unread, so its status refuses the answer at once. */
 export function listsTransport(fetchImpl: typeof fetch = (...a) => fetch(...a)): ListsTransport {

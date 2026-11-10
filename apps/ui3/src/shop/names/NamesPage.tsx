@@ -17,7 +17,7 @@ import { creditsCeil } from "@shop/model/money";
 import type { PurchaseOffer } from "@shop/model/purchase";
 import { presentPayment } from "@shop/payment/present";
 import { useLandWallet } from "../land/useLandWallet";
-import { quoteNameCredits } from "./api";
+import { quoteNameCredits } from "@shop/names/api";
 import { readBannedNames } from "./reads";
 import NameBuyModal, { type NameBuyModalProps } from "./NameBuyModal";
 import { NAME_CHECK_DEBOUNCE_MS, NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";

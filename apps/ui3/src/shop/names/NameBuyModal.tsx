@@ -16,7 +16,7 @@ import { offerQuote, type PurchaseOffer } from "@shop/model/purchase";
 import { outageText, optionStateText } from "@shop/payment/copy";
 import { presentPayment } from "@shop/payment/present";
 import { landChainId } from "../land/chain";
-import { landNetwork } from "../land/contracts";
+import { landNetwork } from "@shop/land/contracts";
 import { erc20Abi, readContract, rpcReader, txHref, TxPendingError, type ChainReader } from "../land/evm";
 import { useLandWallet } from "../land/useLandWallet";
 import { useResource } from "../land/useResource";

@@ -1255,7 +1255,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/EngineDriver.ts",
-      "sha256": "bb7f193d687c3c221d6f4e34727e0f6042fa52d66f451831970ab0d4b8293a25"
+      "sha256": "22fd8120f581976f2eecea94477f8a15335b61ea73ca5f2ee83ee20a64b5b082"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/avatarEquip.ts",
@@ -1991,7 +1991,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/profileStore.ts",
-      "sha256": "bc53cdb773664f7adc12fa042d8b7f9c5cd422ff4f7fa1c3eda84f84efbb20c0"
+      "sha256": "456617c786aa496613c43fa3697f85e3f7a3ef19a2069794a6ded8c76ca87718"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/sessionAnalytics.ts",
@@ -1999,7 +1999,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/useEngineSession.ts",
-      "sha256": "6e709fa96efaaca69b8b84f35c57a4daecb07806be4dcab053cd98049f031e52"
+      "sha256": "2e064bc8892a973e8061dd732f75eda14a296bed2151eb3b0cb710f39f6c8683"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/KeyBindingsTab.module.css",
@@ -2527,7 +2527,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/engineDriver.test.ts",
-      "sha256": "de2860cbb0f16df10d6a893e4ef2bb293f07a49acd73fb4eec6abf5590ac71e0"
+      "sha256": "46e9ca20307eef8ce18c397e2c33e2a2e252f26a34e93ae16fd9c8403a5bb63b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/entryParams.test.ts",
@@ -2755,7 +2755,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/profile.test.tsx",
-      "sha256": "57a657867942244ef8d7738f41afc8301d296f8229e8e36d373353f5b4e4793f"
+      "sha256": "ab246b3f5e45cac22830121c310601cd2832abe7392dcb498f22a4b4f603ac49"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/profileCard.test.tsx",
@@ -2767,7 +2767,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/profileStore.test.ts",
-      "sha256": "bdae8634257923ec67a4c78b74884f2f170ce1922ef56e5afaf9ee4273ae88a4"
+      "sha256": "de2eef372d4268391981efa5e204565840abf91312a116fc802ac385080c8ee5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/rail.test.tsx",
