@@ -8,6 +8,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from hud_manifest_fixture import seal, MANIFEST
 
 REPO = Path(__file__).resolve().parents[2]
 spec = importlib.util.spec_from_file_location('bevy_build', REPO / 'apps/bevy-explorer/build-web.py')
@@ -24,6 +25,7 @@ class EngineCacheTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.cache = self.root / '.cache/bevy-engine'
         self.source = self.root / artifact.SOURCE
+        self.write('.gitignore', '/rendering/bevy-explorer/source/react-web/src/engine/generated/\n')
         for name in (*artifact.INPUTS, 'rust-toolchain.toml', 'apps/bevy-explorer/build-headless.py',
                      artifact.SOURCE + 'src/lib.rs', artifact.SOURCE + 'Cargo.lock',
                      artifact.PROTO + 'decentraland/example.proto',
@@ -36,6 +38,7 @@ class EngineCacheTests(unittest.TestCase):
                      artifact.HUD + 'main.tsx', artifact.SOURCE + 'react-web/bridge-scene/package.json'):
             self.write(name, 'input')
         subprocess.run(['git', 'init', '-q'], cwd=self.root, check=True)
+        seal(self.root)
         subprocess.run(['git', 'add', '.'], cwd=self.root, check=True)
         self.outputs()
 
@@ -43,6 +46,8 @@ class EngineCacheTests(unittest.TestCase):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(value if isinstance(value, bytes) else value.encode())
+        if (self.root / MANIFEST).exists():
+            seal(self.root)
         return path
 
     def outputs(self):
@@ -53,6 +58,26 @@ class EngineCacheTests(unittest.TestCase):
 
     def pack(self, optimized=True):
         return artifact.pack_engine(self.cache, self.root, optimized=optimized, revision=SHA)
+
+    def test_missing_manifest_refuses_assembled_identity_without_invalidating_engine_cache(self):
+        self.pack()
+        engine_key = artifact.engine_inputs(self.root)
+        (self.root / MANIFEST).unlink()
+        with self.assertRaisesRegex(artifact.shared_inputs.ManifestError, 'Missing'):
+            artifact.inputs(self.root)
+        self.assertEqual(engine_key, artifact.engine_inputs(self.root))
+        self.assertEqual(artifact.verify_engine(self.cache, self.root, False)['revision'], SHA)
+
+    def test_stale_manifest_refuses_assembled_identity_until_the_fixture_is_resealed(self):
+        before = (self.root / MANIFEST).read_bytes()
+        engine_key = artifact.engine_inputs(self.root)
+        (self.root / artifact.HUD / 'main.tsx').write_text('changed HUD without regeneration')
+        with self.assertRaisesRegex(artifact.shared_inputs.ManifestError, 'Stale HUD input'):
+            artifact.inputs(self.root)
+        self.assertEqual(before, (self.root / MANIFEST).read_bytes())
+        self.assertEqual(engine_key, artifact.engine_inputs(self.root))
+        seal(self.root)
+        self.assertTrue(artifact.inputs(self.root))
 
     def test_hud_and_bridge_edits_reuse_engine_but_compiler_inputs_invalidate_it(self):
         engine_key = artifact.engine_inputs(self.root)
@@ -185,6 +210,8 @@ class EngineCacheTests(unittest.TestCase):
             with patch.dict(os.environ, {'GITHUB_SHA': 'b' * 40}):
                 build.web(no_opt=True, engine_cache=self.cache)
         self.assertFalse(any(c[0] in ('wasm-pack', 'bash') for c in calls))
+        self.assertIn(('npm', 'run', 'test:shared-inputs', '--prefix', 'react-web'), calls)
+        self.assertIn(('node', './react-web/scripts/shared-inputs.mjs', '--check'), calls)
         self.assertIn(('npm', 'run', 'test', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'build', '--prefix', 'react-web'), calls)
         self.assertIn(('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene'), calls)
