@@ -121,6 +121,12 @@ across workers:
 - `HierarchyPropagatePlugin`, `Propagate<C>`, `PropagateStop<C>`, `PropagateOver<C>` (upstream
   #17575): propagate a component down the hierarchy.
 - `children!` accepts more than twelve children (upstream #18865, #21099).
+- Ignored command errors build no `BevyError` (upstream #19718: `HandleError::ignore_error`,
+  `queue_silenced`): the `try_*` entity commands and the relationship hooks drop their error
+  instead of handing it to `ignore`. Building a `BevyError` captures a backtrace whenever
+  `RUST_BACKTRACE` is set, and despawning a hierarchy queues a failing `try_remove::<ChildOf>`
+  per child plus every on-remove observer's `try_remove`, nested as deep as the hierarchy; a
+  Genesis Plaza unload spent about a second capturing them.
 - `SceneSpawner` forgets child instances when their parent is gone, and `unregister_instance`
   cancels a spawn that hasn't happened yet.
 - `mark_dirty_trees` keys its early-out on this run's tick, so transform propagation can run
@@ -186,9 +192,10 @@ across workers:
 - Our delta over upstream, for a migration: `git fetch https://github.com/bevyengine/bevy tag v0.16.1`,
   then `git diff v0.16.1^{tree} HEAD:rendering/bevy-explorer/bevy` (the import's omissions show
   as deletions).
-- CI reuses a cached bevy build until its files change: Cargo would otherwise rebuild a path
+- CI reuses cached Bevy and engine builds until their inputs change: Cargo would otherwise rebuild a path
   dependency after every checkout, since a checkout makes every file new.
-  `tooling/bevy-mtimes.py` records the files' blob ids and times with the cache and gives
+  `tooling/bevy-mtimes.py` records tracked Bevy, engine and protocol files' blob ids and times with
+  the cache and gives
   unchanged files their times back; every job that caches the explorer's target runs it.
 - Never share a `target/` directory with a checkout that builds a different bevy.
 - The lockfile is edited by hand, never with `cargo update`: see the dependencies section of

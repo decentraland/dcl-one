@@ -1,3 +1,4 @@
+import { expectConsoleOutput } from './console'
 // DOMAIN: the page→engine analytics handoff — events are stamped when they happen, wait for the
 // engine's console, leave together as `/track <base64 batch>`, and a rejected send keeps them.
 
@@ -36,6 +37,7 @@ describe('page analytics', () => {
   })
 
   it('keeps a rejected send, in order and under the same ids, for the next one', async () => {
+    expectConsoleOutput('debug', [['[analytics] send failed, kept', 1, new Error('no console')]])
     const sent: QueuedEvent[][] = []
     let rejectOnce = true
     attachEngine((line) => {

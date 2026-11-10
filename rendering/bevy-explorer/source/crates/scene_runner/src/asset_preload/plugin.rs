@@ -175,13 +175,12 @@ fn asset_load_on_replace(
         entity, container_entity.root, asset_load.assets
     );
 
-    commands.entity(entity).queue_handled(
-        |mut entity: EntityWorldMut| {
+    // Fails when the entity is being despawned; nothing to do then.
+    commands
+        .entity(entity)
+        .queue_silenced(|mut entity: EntityWorldMut| {
             entity.despawn_related::<Preloader>();
-        },
-        // This might happen on despawn, and if it is the case, just leave it be
-        bevy::ecs::error::ignore,
-    );
+        });
 }
 
 /// Reports each asset's load state once. A loaded glb stays held until its `AssetLoad` goes, so

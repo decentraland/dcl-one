@@ -1,0 +1,316 @@
+import type { NavBarProps } from '../../components/NavBar/NavBar'
+const largeDesktopFalsenonedark: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: false,
+  balances: 'none',
+  theme: 'dark'
+}
+const largeDesktopFalsenonelight: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: false,
+  balances: 'none',
+  theme: 'light'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const largeDesktopFalsecreditsdark: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: false,
+  balances: 'credits',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const largeDesktopFalsecreditslight: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: false,
+  balances: 'credits',
+  theme: 'light'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const largeDesktopFalsecreditsManadark: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: false,
+  balances: 'creditsMana',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const largeDesktopFalsecreditsManalight: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: false,
+  balances: 'creditsMana',
+  theme: 'light'
+}
+const largeDesktopTruenonedark: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: true,
+  balances: 'none',
+  theme: 'dark'
+}
+const largeDesktopTruenonelight: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: true,
+  balances: 'none',
+  theme: 'light'
+}
+const largeDesktopTruecreditsdark: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: true,
+  balances: 'credits',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const largeDesktopTruecreditslight: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: true,
+  balances: 'credits',
+  theme: 'light'
+}
+const largeDesktopTruecreditsManadark: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: true,
+  balances: 'creditsMana',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const largeDesktopTruecreditsManalight: NavBarProps = {
+  viewport: 'largeDesktop',
+  signedIn: true,
+  balances: 'creditsMana',
+  theme: 'light'
+}
+const desktopFalsenonedark: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: false,
+  balances: 'none',
+  theme: 'dark'
+}
+const desktopFalsenonelight: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: false,
+  balances: 'none',
+  theme: 'light'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const desktopFalsecreditsdark: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: false,
+  balances: 'credits',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const desktopFalsecreditslight: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: false,
+  balances: 'credits',
+  theme: 'light'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const desktopFalsecreditsManadark: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: false,
+  balances: 'creditsMana',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const desktopFalsecreditsManalight: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: false,
+  balances: 'creditsMana',
+  theme: 'light'
+}
+const desktopTruenonedark: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: true,
+  balances: 'none',
+  theme: 'dark'
+}
+const desktopTruenonelight: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: true,
+  balances: 'none',
+  theme: 'light'
+}
+const desktopTruecreditsdark: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: true,
+  balances: 'credits',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const desktopTruecreditslight: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: true,
+  balances: 'credits',
+  theme: 'light'
+}
+const desktopTruecreditsManadark: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: true,
+  balances: 'creditsMana',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const desktopTruecreditsManalight: NavBarProps = {
+  viewport: 'desktop',
+  signedIn: true,
+  balances: 'creditsMana',
+  theme: 'light'
+}
+const mobileFalsenonedark: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: false,
+  balances: 'none',
+  theme: 'dark'
+}
+const mobileFalsenonelight: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: false,
+  balances: 'none',
+  theme: 'light'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const mobileFalsecreditsdark: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: false,
+  balances: 'credits',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const mobileFalsecreditslight: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: false,
+  balances: 'credits',
+  theme: 'light'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const mobileFalsecreditsManadark: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: false,
+  balances: 'creditsMana',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const mobileFalsecreditsManalight: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: false,
+  balances: 'creditsMana',
+  theme: 'light'
+}
+const mobileTruenonedark: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: true,
+  balances: 'none',
+  theme: 'dark'
+}
+const mobileTruenonelight: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: true,
+  balances: 'none',
+  theme: 'light'
+}
+const mobileTruecreditsdark: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: true,
+  balances: 'credits',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const mobileTruecreditslight: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: true,
+  balances: 'credits',
+  theme: 'light'
+}
+const mobileTruecreditsManadark: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: true,
+  balances: 'creditsMana',
+  theme: 'dark'
+}
+// @ts-expect-error Uncaptured tuple must be rejected by the internal component contract.
+const mobileTruecreditsManalight: NavBarProps = {
+  viewport: 'mobile',
+  signedIn: true,
+  balances: 'creditsMana',
+  theme: 'light'
+}
+const defaults: NavBarProps = {}
+const credits: NavBarProps = { signedIn: true, balances: 'credits' }
+// @ts-expect-error Credits require a signed-in captured tuple.
+const missingSignIn: NavBarProps = { balances: 'credits' }
+const actions: NavBarProps = { labelHref: '/discover', onSignIn: () => {} }
+// @ts-expect-error Positional text is not a public content contract.
+const label: NavBarProps = { label: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label2: NavBarProps = { label2: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label3: NavBarProps = { label3: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label4: NavBarProps = { label4: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label5: NavBarProps = { label5: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label6: NavBarProps = { label6: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label7: NavBarProps = { label7: 'Injected' }
+// @ts-expect-error Positional text is not a public content contract.
+const label8: NavBarProps = { label8: 'Injected' }
+
+void [
+  largeDesktopFalsenonedark,
+  largeDesktopFalsenonelight,
+  largeDesktopFalsecreditsdark,
+  largeDesktopFalsecreditslight,
+  largeDesktopFalsecreditsManadark,
+  largeDesktopFalsecreditsManalight,
+  largeDesktopTruenonedark,
+  largeDesktopTruenonelight,
+  largeDesktopTruecreditsdark,
+  largeDesktopTruecreditslight,
+  largeDesktopTruecreditsManadark,
+  largeDesktopTruecreditsManalight,
+  desktopFalsenonedark,
+  desktopFalsenonelight,
+  desktopFalsecreditsdark,
+  desktopFalsecreditslight,
+  desktopFalsecreditsManadark,
+  desktopFalsecreditsManalight,
+  desktopTruenonedark,
+  desktopTruenonelight,
+  desktopTruecreditsdark,
+  desktopTruecreditslight,
+  desktopTruecreditsManadark,
+  desktopTruecreditsManalight,
+  mobileFalsenonedark,
+  mobileFalsenonelight,
+  mobileFalsecreditsdark,
+  mobileFalsecreditslight,
+  mobileFalsecreditsManadark,
+  mobileFalsecreditsManalight,
+  mobileTruenonedark,
+  mobileTruenonelight,
+  mobileTruecreditsdark,
+  mobileTruecreditslight,
+  mobileTruecreditsManadark,
+  mobileTruecreditsManalight,
+  defaults,
+  credits,
+  missingSignIn,
+  actions,
+  label,
+  label2,
+  label3,
+  label4,
+  label5,
+  label6,
+  label7,
+  label8
+]
+
+// Foundation exports remain available through the package entry.
+export { theme } from '@dcl/one-ui'
+// @ts-expect-error NavBar is internal until its product contracts are complete.
+export { NavBar } from '@dcl/one-ui'
+// @ts-expect-error Internal NavBar props are not part of the public package API.
+export type { NavBarProps } from '@dcl/one-ui'
+// @ts-expect-error The package export map does not expose internal component subpaths.
+export { NavBar as DeepNavBar } from '@dcl/one-ui/components/NavBar/NavBar'

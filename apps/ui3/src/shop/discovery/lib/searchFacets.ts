@@ -2,10 +2,10 @@
 // A query that is exactly a category or rarity name (an explicit alias, never a substring) also offers
 // that category or rarity, as the sidebar would. Local, no request.
 
-import type { IconName } from "../components/Icon";
+import type { IconName } from "@shop/discovery/lib/iconName";
 import { SHOP_BASE } from "../../routes";
-import { CATEGORIES } from "./categories";
-import { RARITIES } from "./rarity";
+import { CATEGORIES } from "@shop/discovery/lib/categories";
+import { RARITIES } from "@shop/discovery/lib/rarity";
 export type Facet =
   | {
       kind: "category"

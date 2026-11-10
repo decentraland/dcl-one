@@ -1,11 +1,11 @@
 // The page's cards and item panel: the Shop UI (./ui) fed from the HUD — the creator's profile, the item's
 // entity (description, hides), its price as the web Shop's card rule sets it and its category glyph.
 
-import { cardPrice } from '../../../shop/discovery/cardPrice'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { MAX_SUPPLY } from '../../../shop/discovery/lib/rarity'
-import { saleDiscountPct } from '../../../shop/discovery/lib/sale'
-import { SIGNED_OUT } from '../../../shop/model/settlement'
+import { cardPrice } from '@shop/discovery/cardPrice'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
+import { MAX_SUPPLY } from '@shop/discovery/lib/rarity'
+import { saleDiscountPct } from '@shop/discovery/lib/sale'
+import { SIGNED_OUT } from '@shop/model/settlement'
 import { MaskIcon } from '../../design'
 import { shortAddr, userColor } from '../../lib/identity'
 import emotesIcon from '../../assets/backpack/icon-emotes.webp'

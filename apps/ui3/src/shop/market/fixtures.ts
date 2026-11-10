@@ -9,8 +9,8 @@ import type { Collection } from "@catalyst-api/market/Collection";
 import type { FavoriteList } from "@catalyst-api/market/FavoriteList";
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { Sale } from "@catalyst-api/market/Sale";
-import { CHAIN } from "../model/chain";
-import { BOOK } from "../payment/fixtures";
+import { CHAIN } from "@shop/model/chain";
+import { BOOK } from "@shop/payment/fixtures";
 import { DEFAULT_LIST_ID } from "./lib/favorites";
 import type { CollectorRank, CreatorRank, ItemRank, VolumeData } from "./lib/api";
 

@@ -2,7 +2,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { sessionAccount, SIGNED_OUT, type Session } from "../model/settlement";
+import { sessionAccount, SIGNED_OUT, type Session } from "@shop/model/settlement";
 import { shopCart, type CartStore } from "../cart/store";
 import { isUserRejection, readChainId, requestChainSwitch, subscribeWallet } from "./chain";
 import { applyWalletReturn } from "./returnTo";

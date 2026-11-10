@@ -192,7 +192,7 @@ export const WEB_PARAMS: WebParam[] = [
     "name": "gpuBytesPerFrame",
     "kind": "number",
     "delivery": "launch",
-    "doc": "Cap per-frame gpu uploads"
+    "doc": "Cap per-frame gpu uploads; absent = the saved setting (10 MB by default), 0 = unlimited"
   },
   {
     "name": "computeThreads",

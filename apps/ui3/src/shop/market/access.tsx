@@ -12,9 +12,9 @@ import { REMOTE_FLAG, useRemoteFlagState } from "../discovery/lib/remoteFlags";
 import { shopPath } from "../routes";
 import { useShopCapabilities } from "../seller/lib/featureFlags";
 import { useShopWallet } from "../wallet/context";
-import { marketplaceAccess, marketplaceSession, type MarketplaceAccess } from "./access-rule";
+import { marketplaceAccess, marketplaceSession, type MarketplaceAccess } from "@shop/market/access-rule";
 
-export { marketplaceAccess, needsMarketplace, type MarketplaceAccess } from "./access-rule";
+export { marketplaceAccess, needsMarketplace, type MarketplaceAccess } from "@shop/market/access-rule";
 
 export function useMarketplaceAccess(): MarketplaceAccess {
   // A host (the native shop, a journey) may declare the switch itself; the web3 session is still required.
