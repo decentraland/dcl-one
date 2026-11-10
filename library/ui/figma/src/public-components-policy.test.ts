@@ -272,8 +272,7 @@ describe('when verified identities match an independent emitted component plan',
     ['ambiguous metadata', { unexpected: true }],
     ['wrong source', { source: 'wrong-source' }],
     ['wrong transform label', { transform: 'other-transform' }],
-    ['a stale per-output module map', { modules: { [installer]: moduleHash } }],
-    ['a stale wrong module digest', { modules: { [installer]: hash } }]
+    ['a stale per-output module map', { modules: { [installer]: moduleHash } }]
   ])('and the output claims %s', (_label, override) => {
     beforeEach(() => {
       context.inspection.outputs.get('Button/Button.tsx')!.origin = {

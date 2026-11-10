@@ -85,8 +85,8 @@
     },
     {
       "path": "library/ui/figma/public-components-policy.mjs",
-      "sha256": "ba09350e24bd54aeba9f7b35825662dec3bf755a7337f561c2fecc01c999634d",
-      "indexBlobSha": "7b1915efc2968c7cad48daa71d196aef949b3392"
+      "sha256": "41643c28472b172749094a9f0d9cc55e0cd1062ac15d491d87dce8e0ac0f9d4c",
+      "indexBlobSha": "c400ccc452edc0442aacf972d2f7017f8f71b77c"
     },
     {
       "path": "library/ui/figma/public-components.mjs",

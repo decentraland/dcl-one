@@ -781,7 +781,7 @@
             "component-install-integrity",
             "single-component-module-pin"
           ],
-          "sha256": "5fe06313cb6de96fd753b9f83cab6f1ea900e69622172e497ea69feafda4f196"
+          "sha256": "41643c28472b172749094a9f0d9cc55e0cd1062ac15d491d87dce8e0ac0f9d4c"
         },
         "library/ui/figma/public-components.mjs": {
           "fds": null,
@@ -789,7 +789,7 @@
             "component-install-integrity",
             "single-component-module-pin"
           ],
-          "sha256": "ecc882d1995767f005b6cecc9b667409ef4ff106cb244d955b51ea9396769839"
+          "sha256": "211de9d8c19353f727cdb9c3d9d24cdb46cd742039562d38bffced65789d7a18"
         },
         "library/ui/figma/public-foundations.mjs": {
           "fds": null,
@@ -3470,7 +3470,7 @@
             "component-install-integrity",
             "single-component-module-pin"
           ],
-          "sha256": "aa4b0e72b81213619fd10a29d9f03b90adc60788675a28a797065adb32d3ae40"
+          "sha256": "7804763520b5dfe036cf88125e08c5f892352180b9af393253e589baaff84314"
         },
         "library/ui/figma/src/public-components.test.ts": {
           "fds": null,
@@ -3479,7 +3479,7 @@
             "port-input-binding",
             "single-component-module-pin"
           ],
-          "sha256": "79a051e9e33f9c9ae22b4e96fa8adc8ea96470c879d8498e4f5023016107e7e4"
+          "sha256": "3188e755a9b30dd7cb844b54ce84a9e91e2f4432d181d1f152c78b838b51473d"
         },
         "library/ui/figma/src/public-foundations.test.ts": {
           "fds": null,
@@ -4546,7 +4546,7 @@
         }
       },
       "generation.json": {
-        "sha256": "a5f0fefeb5fc1cd322cebbdb1c3faa9a6cc545a2fc20e5571a2907234d3c24b5",
+        "sha256": "66cd7a525e25599ab4b660f03615d6e7a8a563a4c252e9e2d9eaa9cb8f7f1b6a",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
