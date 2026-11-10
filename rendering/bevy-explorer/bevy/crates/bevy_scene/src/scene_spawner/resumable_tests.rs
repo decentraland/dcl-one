@@ -464,12 +464,8 @@ fn lifting_the_deadline_mid_spawn_finishes_the_instance_in_one_run() {
     assert_eq!(nodes(&mut app), [0, 1, 2, 3]);
 }
 
-#[test]
-fn a_scene_whose_hierarchy_misses_entities_is_still_written_in_full_in_slices() {
-    let mut app = app();
-    record_writes(&mut app);
-    one_entity_per_run(&mut app);
-    // the children name their parent, but the parent lists none of them
+/// [`tree`] `(0, 3)`, but the children name their parent and the parent lists none of them.
+fn unlisted_children_scene(app: &mut App) -> Handle<Scene> {
     let registry = app.world().resource::<AppTypeRegistry>().clone();
     let mut world = World::new();
     world.insert_resource(registry.clone());
@@ -480,7 +476,39 @@ fn a_scene_whose_hierarchy_misses_entities_is_still_written_in_full_in_slices() 
         .extract_entities(entities.into_iter())
         .build();
     let scene = Scene::from_dynamic_scene(&dynamic, &registry).unwrap();
-    let scene = app.world_mut().resource_mut::<Assets<Scene>>().add(scene);
+    app.world_mut().resource_mut::<Assets<Scene>>().add(scene)
+}
+
+#[test]
+fn a_ready_entity_whose_parent_is_despawned_before_it_is_written_goes_too() {
+    let mut app = app();
+    one_entity_per_run(&mut app);
+    let scene = unlisted_children_scene(&mut app);
+    let parent = app.world_mut().spawn_empty().id();
+    let instance = spawner(&mut app).spawn_as_child(scene, parent);
+    // the root; then both children are made ready, since the root does not list them, and one
+    // is written
+    app.update();
+    app.update();
+    let root = children(&app, parent)[0];
+
+    app.world_mut().entity_mut(root).despawn();
+    for _ in 0..5 {
+        app.update();
+    }
+
+    // the child written before the root went stays, as with a whole spawn; the other is never
+    // written under a parent that is gone
+    assert!(is_ready(&app, instance));
+    assert_eq!(nodes(&mut app).len(), 1);
+}
+
+#[test]
+fn a_scene_whose_hierarchy_misses_entities_is_still_written_in_full_in_slices() {
+    let mut app = app();
+    record_writes(&mut app);
+    one_entity_per_run(&mut app);
+    let scene = unlisted_children_scene(&mut app);
     let parent = app.world_mut().spawn_empty().id();
     let instance = spawner(&mut app).spawn_as_child(scene, parent);
 

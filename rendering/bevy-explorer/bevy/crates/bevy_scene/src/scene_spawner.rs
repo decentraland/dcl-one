@@ -246,6 +246,17 @@ impl SceneInProgress {
                 world.despawn(entity);
                 return Ok(true);
             }
+            let parent_gone = scene
+                .world
+                .get::<ChildOf>(unwritten.source)
+                .and_then(|child_of| self.entity_map.get(&child_of.parent()))
+                .is_some_and(|parent| world.get_entity(*parent).is_err());
+            if parent_gone {
+                // its parent was despawned by others since it was made ready: it goes too, as
+                // `unstick` would have despawned it
+                world.despawn(entity);
+                return Ok(true);
+            }
 
             scene.write_entity_to_world(
                 world,
