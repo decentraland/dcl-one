@@ -86,7 +86,11 @@ WITH r AS (
 }
 
 /// The parcel (`x,y`) a rented token stands for and whether it is an
-/// estate of several, over the period rows `p`.
+/// estate of several, over the period rows `p`. An estate's parcel comes
+/// from the land-authz estate links, read without its readiness gate since
+/// it only describes the notice: while a registry switch replays
+/// (`land_authz::indexer::begin_replay` deletes the links, and the new
+/// registries' fold rebuilds them), an estate's notice names no parcel.
 const PLACE: &str = "
     CASE WHEN p.contract_address = $2
          THEN land_authz.token_x(p.token_id) || ',' || land_authz.token_y(p.token_id)
