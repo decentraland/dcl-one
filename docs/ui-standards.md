@@ -39,8 +39,9 @@ The current contributor guides reflect the standards in production. This documen
 - Applies to every current and future web app under `apps/` and to
   `rendering/bevy-explorer/source/react-web`. The Explorer HUD, in both
   `react-web` and its Sites adaptation `apps/ui3/src/play`, keeps its own
-  design primitives and tokens until the shared library is integrated, and the
-  Sites adaptation is not migrated until Sites is; see
+  design primitives and tokens until they move to the shared library, which
+  `react-web` already imports, and the Sites adaptation is not migrated until
+  Sites is; see
   [Explorer HUD transition](#explorer-hud-transition).
 - Required for all new component styles and for existing styles when they are
   migrated. Existing global stylesheets do not have to be migrated all at once.
@@ -307,11 +308,12 @@ The Explorer HUD ships from two copies:
 - `apps/ui3/src/play` is its adaptation for Sites, served under `/play`, with
   its own compiler profile (`apps/ui3/tsconfig.play.json`).
 
-Both carry the same `design/` primitives and `styles/tokens.css`. In both, the
+Both carry the same `design/` primitives and `styles/tokens.css`. `react-web`
+imports the shared library (see [Integration](#integration)); in both, the
 existing primitives and local tokens remain in use, under
-`rendering/bevy-explorer/source/react-web/AGENTS.md`, until the shared library
-integration is reviewed and implemented. Sites will be migrated as a whole
-later; until then its HUD adaptation in `apps/ui3/src/play` stays as it is. A
+`rendering/bevy-explorer/source/react-web/AGENTS.md`, until they move to it.
+Sites will be migrated as a whole later; until then its HUD adaptation in
+`apps/ui3/src/play` stays as it is and does not load the shared foundations. A
 future migration must preserve HUD behavior in both.
 
 ### Integration
@@ -328,3 +330,17 @@ import '@dcl/one-ui/foundations.css'
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.
+
+`rendering/bevy-explorer/source/react-web` is set up this way:
+
+- `vite.shared.ts` holds the aliases and the React deduplication, and
+  `tsconfig.json` maps the same entries;
+- `src/main.tsx` loads `@dcl/one-ui/foundations.css` once;
+- `tooling/play-artifact.py` (`HUD_SHARED`) makes `library/ui/index.ts` and
+  `library/ui/foundations/` inputs of the HUD artifact and of its CI selection.
+  A test walks what the HUD imports from `library/ui` and fails on any file
+  outside them.
+- Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
+  `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
+  `foundations/typography/font-source.json` pins
+  (`src/test/sharedUi.test.tsx` checks them).
