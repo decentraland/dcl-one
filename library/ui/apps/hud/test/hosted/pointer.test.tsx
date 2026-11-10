@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { renderSession, enterAsGuest } from '../harness'
 import { Pointer } from '../../features/pointer/Pointer'
-import type { HoverAction, ProximityTip } from '../../engine/protocol'
+import type { HoverAction, ProximityTip } from '@explorer-core/engine/protocol'
 
 // DOMAIN: pointer — the world-entity hover/cursor-lock/proximity streams (scene → page only).
 describe('pointer domain', () => {

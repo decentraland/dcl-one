@@ -1,4 +1,4 @@
-import type { BootMode } from '@hud/hostContract'
+import type { BootMode } from '@explorer-core/hostContract'
 import { isLoopbackHost } from './loopbackHost'
 
 // The interrelated "how does this page boot" decisions, derived from the entry URL in ONE
@@ -20,7 +20,7 @@ import { isLoopbackHost } from './loopbackHost'
 // The engine-bound params (?portables=, ?imposterSource=, ?pulseServer=, …) are not boot-mode
 // decisions: they come from the engine's web param table (lib/webParams.ts) and are handed over
 // as-is by EngineHost.
-export type { BootMode } from '@hud/hostContract'
+export type { BootMode } from '@explorer-core/hostContract'
 
 /** The HUD is hosted by the native (CEF) client: a native build entered with ?native=1. */
 export function isNativeHud(): boolean {

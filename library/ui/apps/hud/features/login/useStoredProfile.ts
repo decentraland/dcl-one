@@ -4,8 +4,8 @@
 // → fetch works under credentialless).
 
 import { useEffect, useState } from 'react'
-import type { AvatarLook } from '../../engine/avatarEquip'
-import type { Color3 } from '../../engine/generated'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import type { Color3 } from '@explorer-core/engine/generated'
 import { nativeProfileImage, serviceUrl } from '@hud-host'
 
 type LookColor = { color?: Color3 }

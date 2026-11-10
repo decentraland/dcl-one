@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import type { PhotoModeSnapshot } from '../../engine/protocol'
+import type { PhotoModeSnapshot } from '@explorer-core/engine/protocol'
 import type { PhotoModeState } from '../../features/session/useEngineSession'
 import { PhotoModeOverlay } from '../../features/photoMode/PhotoModeOverlay'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'

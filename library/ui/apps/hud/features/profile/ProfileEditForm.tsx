@@ -4,15 +4,15 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button, DateField, FieldLabel, Select, TextArea, TextInput, Trash } from '../../design'
-import type { Profile, ProfileEdit, ProfileInfo } from '../../engine/protocol'
-import { FIELD_OPTIONS } from './profileFieldOptions'
+import type { Profile, ProfileEdit, ProfileInfo } from '@explorer-core/engine/protocol'
+import { FIELD_OPTIONS } from '@explorer-core/features/profile/profileFieldOptions'
 import {
   DESCRIPTION_MAX,
   LINK_TITLE_MAX,
   MAX_LINKS,
   PROFILE_FIELDS,
   isValidLinkUrl
-} from './profileFields'
+} from '@explorer-core/features/profile/profileFields'
 import passportStyles from './ProfilePassport.module.css'
 import styles from './ProfileEditForm.module.css'
 

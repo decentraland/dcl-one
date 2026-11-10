@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EngineDriver, NO_SHELL_FOR_LOCAL_GUEST } from '../engine/EngineDriver'
-import { EngineRpc } from '@hud/engine/engineRpc'
-import { sessionId } from '@hud/lib/analytics'
+import { EngineRpc } from '@explorer-core/engine/engineRpc'
+import { sessionId } from '@explorer-core/lib/analytics'
 
 describe('EngineDriver', () => {
   it('launches with the page analytics session id beside the host options', () => {
@@ -17,16 +17,16 @@ describe('EngineDriver', () => {
   })
 
   describe('loginLocalGuest', () => {
-    afterEach(() => vi.doUnmock('@hud/lib/shell'))
+    afterEach(() => vi.doUnmock('@explorer-core/lib/shell'))
 
     it('asks the shell for the guest and signs in with its public identity', async () => {
       vi.resetModules()
       const identity = { ephemeralIdentity: { address: '0xe', publicKey: '0x04' }, expiration: '2099-01-01T00:00:00.000Z', authChain: [] }
       const shellRequest = vi.fn(async () => ({ address: '0xabc', identity, guest: true }))
-      const actual = await vi.importActual<typeof import('@hud/lib/shell')>('@hud/lib/shell')
-      vi.doMock('@hud/lib/shell', () => ({ ...actual, inShell: true, shellRequest }))
+      const actual = await vi.importActual<typeof import('@explorer-core/lib/shell')>('@explorer-core/lib/shell')
+      vi.doMock('@explorer-core/lib/shell', () => ({ ...actual, inShell: true, shellRequest }))
       const { EngineDriver: InShell } = await import('../engine/EngineDriver')
-      const { EngineRpc: Rpc } = await import('@hud/engine/engineRpc')
+      const { EngineRpc: Rpc } = await import('@explorer-core/engine/engineRpc')
       const rpc = new Rpc()
       const command = vi.spyOn(rpc, 'command').mockResolvedValue('logged in with identity')
       const driver = new InShell(rpc)

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { SceneLoadingOverlay } from '../features/session/SceneLoadingOverlay'
 import { TIP_ROTATE_MS } from '../features/session/loadingTips'
-import { countLaunch } from '../lib/launchCount'
+import { countLaunch } from '@explorer-core/lib/launchCount'
 
 const loading = (over: Partial<{ realmConnected: boolean; pendingAssets: number | null }> = {}) => ({
   visible: true,

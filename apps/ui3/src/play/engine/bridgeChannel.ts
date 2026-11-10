@@ -15,7 +15,7 @@
 // re-send it to the newcomer.
 
 import { PAGE_DIR } from '../lib/publicUrl'
-import type { Envelope, PageToScene, SceneToPage } from '@hud/engine/protocol'
+import type { Envelope, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 const HELLO_INTERVAL_MS = 250
 

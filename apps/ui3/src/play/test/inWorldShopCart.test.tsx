@@ -10,7 +10,7 @@ const shell = vi.hoisted(() => ({
   handlers: new Map<string, (message: Record<string, unknown>) => void>(),
   request: vi.fn()
 }))
-vi.mock('@hud/lib/shell', () => ({
+vi.mock('@explorer-core/lib/shell', () => ({
   inShell: true,
   postToShell: vi.fn(),
   shellRequest: (method: string, params?: unknown) => shell.request(method, params),
@@ -23,9 +23,9 @@ vi.mock('@hud/lib/shell', () => ({
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
 import { inWorldCart } from '../features/shop/cartStore'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { dispatchCancelLayer } from '@hud/lib/cancelLayers'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
-import type { Wearable } from '@hud/engine/protocol'
+import type { Wearable } from '@explorer-core/engine/protocol'
 import { fakeProfileState } from '@hud/test/harness'
 import { PopupHost, resetPopups, ToastHost } from '@hud/design'
 

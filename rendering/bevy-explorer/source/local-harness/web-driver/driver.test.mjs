@@ -8,7 +8,7 @@
 // in both, through different CDP calls, so both are proven.
 //
 // They are skipped when no Chrome is installed, unless DCL_WEB_DRIVER_REQUIRE_CHROME=1 (CI sets
-// it), and the ones that load the real HUD commands (library/ui/apps/hud/lib/hudAutomation.ts, with
+// it), and the ones that load the real HUD commands (library/explorer-core/lib/hudAutomation.ts, with
 // its types stripped as each request is served) need a Node with module.stripTypeScriptTypes.
 
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ import { acceptsBinding, findChrome, launch, redact, secretOf } from './driver.m
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
-const HUD_SOURCE = path.resolve(HERE, '../../../../../library/ui/apps/hud/lib/hudAutomation.ts');
+const HUD_SOURCE = path.resolve(HERE, '../../../../../library/explorer-core/lib/hudAutomation.ts');
 
 const chrome = findChrome();
 const noChrome =
@@ -290,7 +290,7 @@ for (const isolated of [true, false]) {
     });
   });
 
-  // The page's own commands (library/ui/apps/hud/lib/hudAutomation.ts) with the driver answering them.
+  // The page's own commands (library/explorer-core/lib/hudAutomation.ts) with the driver answering them.
   describe(`HUD commands, ${kind}`, { skip: noChrome || noStrip }, () => {
     const page = openPage({ isolated, mode: 'hud' });
     beforeEach(() => reset(page.driver));

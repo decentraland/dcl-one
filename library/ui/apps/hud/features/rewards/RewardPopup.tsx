@@ -4,7 +4,7 @@
 // arrive together open one after another. Imperative like the toasts: queueRewardPopups() from
 // the session; the popup renders through the shared popup layer.
 
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@explorer-core/engine/protocol'
 import { Button, openPopup, rarityTile, type Rarity } from '../../design'
 import { nativeProfileImage } from '@hud-host'
 import { CategoryIcon } from '../backpack/categoryIcons'

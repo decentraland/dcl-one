@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@explorer-core/engine/protocol'
 import { PopupHost, closeTopPopup, resetPopups } from '../../design'
 import { clearRewardPopups, queueRewardPopups, rewardOf } from '../../features/rewards/RewardPopup'
 

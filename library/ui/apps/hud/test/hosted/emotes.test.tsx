@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { Emote } from '../../engine/protocol'
+import type { Emote } from '@explorer-core/engine/protocol'
 import { renderSession, enterAsGuest } from '../harness'
 
 // DOMAIN: emotes — equipped 10-slot wheel, play (trigger) an emote.

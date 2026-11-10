@@ -5,10 +5,10 @@
 
 import { useEffect, useState } from 'react'
 import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
-import { nameColor, splitName } from '../../lib/identity'
-import { relationshipOf, type Relationship } from '../../lib/relationship'
+import { nameColor, splitName } from '@explorer-core/lib/identity'
+import { relationshipOf, type Relationship } from '@explorer-core/lib/relationship'
 import { knownUserColor } from '../session/profileStore'
-import { isMemberRole, memberActions, roleLabel } from './roles'
+import { isMemberRole, memberActions, roleLabel } from '@explorer-core/features/communities/roles'
 import { useSession } from '../session/SessionContext'
 import { openCommunityEditModal } from './CommunityCreateModal'
 import { openPassport } from '../profile/Passport'
@@ -25,7 +25,7 @@ import type {
   CommunityPhoto,
   CommunityPlace,
   CommunityPost
-} from '../../engine/protocol'
+} from '@explorer-core/engine/protocol'
 import styles from './CommunityModal.module.css'
 import { siteUrl } from '@hud-host'
 

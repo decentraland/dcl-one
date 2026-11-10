@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { NotificationsPanel } from '../../features/notifications/NotificationsPanel'
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { NotificationsState } from '../../features/session/useEngineSession'
 
 function panel(list: AppNotification[]): NotificationsState {

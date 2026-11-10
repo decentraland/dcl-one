@@ -3,12 +3,14 @@
 This app is the React DOM port of the Decentraland in-world HUD. UI here is built from
 the design system: tokens plus the design primitives.
 
-The HUD UI shared with the Sites `/play` host lives in `library/ui/apps/hud` and is imported
-as `@hud/*`: the primitives (`@hud/design`), the tokens (`@hud/styles/tokens.css`), the
-assets, the wire protocol and bindings (`@hud/engine/*`) and the features moved so far. Write
-shared code there, not in `src/`. It imports nothing from a host: a behaviour the hosts do
+The HUD shared with the Sites `/play` host lives in two layers. The UI is
+`library/ui/apps/hud` (`@hud/*`): the primitives (`@hud/design`), the tokens
+(`@hud/styles/tokens.css`), the assets, the features and the session. The Explorer page's core is
+`library/explorer-core` (`@explorer-core/*`), with no React: the wire protocol and bindings
+(`@explorer-core/engine/*`), the drivers' contract, sign-in, shell messaging, analytics and server
+reads. Write shared code there, not in `src/`; the core never imports the UI. It imports nothing from a host: a behaviour the hosts do
 differently comes from `@hud-host` (`src/host.ts` here, implementing
-`library/ui/apps/hud/hostContract.ts`). These guidelines apply to it as to `src/`, and
+`library/explorer-core/hostContract.ts`). These guidelines apply to it as to `src/`, and
 `npm run typecheck` checks it. See `docs/ui-standards.md`, "Explorer HUD transition".
 
 Design source of truth: the checked-in tokens and design primitives, together with the Explorer design system supplied through authorized project context. Keep private design-file identifiers outside this public tree.

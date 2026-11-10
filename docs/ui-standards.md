@@ -192,9 +192,7 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 App-specific UI is used by one app only: its layouts, app chrome and feature
 components, with their styles. It lives in `library/ui/apps/<app>/`, apart from
 the shared foundations and components. The app itself, under `apps/<app>`,
-keeps its pages, routes and data wiring and imports its UI from there (the
-Explorer HUD, whose two hosts share their data wiring, is the exception; see
-[Explorer HUD transition](#explorer-hud-transition)). Until
+keeps its pages, routes and data wiring and imports its UI from there. Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
 Until `library/ui` is implemented, Sites imports some UI source through the
@@ -308,12 +306,21 @@ The Explorer HUD has two hosts:
 - `apps/ui3/src/play` is the host for Sites, served under `/play`, with its
   own compiler profile (`apps/ui3/tsconfig.play.json`).
 
-The HUD UI both hosts share lives once, in `library/ui/apps/hud`, and both
-import it as `@hud/*`. It keeps the hosts' folder layout (`design/`,
-`styles/tokens.css`, `assets/`, `engine/`, `features/`, `lib/`). It includes the
-page-engine wire protocol (`engine/protocol.ts`) and the tracked bindings
-generated from the Explorer's Rust structs (`engine/generated`, written by
-`rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh`).
+What both hosts share lives once, in two layers
+([ADR](adr/2026-11-10-shared-explorer-hud-ui.md)), both keeping the hosts'
+folder layout:
+
+- `library/ui/apps/hud` (`@hud/*`): the HUD UI. Components, styles, assets
+  (`design/`, `styles/tokens.css`, `assets/`, `features/`) and the React state
+  around the core, the session (`features/session/useEngineSession.ts`)
+  included.
+- `library/explorer-core` (`@explorer-core/*`): the Explorer page's core, with
+  no React. The page-engine protocol and the tracked bindings generated from
+  the Explorer's Rust structs (`engine/`, written by
+  `rendering/bevy-explorer/source/scripts/gen-ts-bindings.sh`), the drivers'
+  contract, sign-in, shell messaging, analytics, server reads and the host
+  contract. The UI is built on it, never the other way round
+  (`library/explorer-core/boundary.test.ts`).
 
 Each host keeps only what is its own:
 
@@ -336,17 +343,17 @@ either host had, for both.
 
 Shared HUD code imports nothing from a host. Where the hosts behave
 differently, it imports the behavior from `@hud-host`, which each host maps
-to its own module implementing `library/ui/apps/hud/hostContract.ts`
+to its own module implementing `library/explorer-core/hostContract.ts`
 (`react-web/src/host.ts`, `apps/ui3/src/play/host.ts`). The mapping is a
 build-time alias, so code one host leaves out stays out of its bundle.
 
-The shared HUD keeps the conventions of `react-web`, under
+Both layers keep the conventions of `react-web`, under
 `rendering/bevy-explorer/source/react-web/AGENTS.md`: `react-web` type-checks
-it, tests included, under its compiler profile, and `library/ui`'s lint and
-formatting skip it. Its tests live beside it: `react-web`'s Vitest runs all
-of them, and `library/ui`'s `hud` project runs those that need no package only
-the hosts install (all but `apps/hud/test/hosted/`) against a web host
-(`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites host does not load the shared
+them, tests included, under its compiler profile, and `library/ui`'s lint and
+formatting skip `apps/hud`. Their tests live beside them: `react-web`'s Vitest
+runs all of them, and `library/ui`'s `hud` project runs the UI tests that need
+no package only the hosts install (all but `apps/hud/test/hosted/`) against a
+web host (`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites host does not load the shared
 foundations yet.
 
 ### Integration
@@ -369,20 +376,21 @@ include the shared sources so that changes invalidate the affected artifacts.
 - `vite.shared.ts` holds the aliases and the React deduplication, and
   `tsconfig.json` maps the same entries;
 - `src/main.tsx` loads `@dcl/one-ui/foundations.css` once;
-- `vite.shared.ts` also maps `@hud` to `library/ui/apps/hud` and `@hud-host`
-  to `src/host.ts`; the bridge scene (`react-web/bridge-scene/tsconfig.json`)
-  maps `@hud/*` too, for the wire protocol;
+- `vite.shared.ts` also maps `@hud` to `library/ui/apps/hud`, `@explorer-core`
+  to `library/explorer-core` and `@hud-host` to `src/host.ts`; the bridge scene
+  (`react-web/bridge-scene/tsconfig.json`) maps `@explorer-core/*` too, for the
+  wire protocol;
 - `tooling/play-artifact.py` (`HUD_SHARED`) makes `library/ui/index.ts`,
-  `library/ui/foundations/` and `library/ui/apps/hud/` inputs of the HUD
-  artifact and of its CI selection. A test walks what the HUD imports from
+  `library/ui/foundations/`, `library/ui/apps/hud/` and `library/explorer-core/`
+  inputs of the HUD artifact and of its CI selection. A test walks what the HUD imports from
   `library/ui` and fails on any file outside them.
 - Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
   `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
   `foundations/typography/font-source.json` pins
   (`src/test/sharedUi.test.tsx` checks them).
 
-The Sites host maps `@hud` and `@hud-host` the same way, with React
-deduplicated and `library/ui/apps/hud` allowed to its dev servers:
+The Sites host maps `@hud`, `@explorer-core` and `@hud-host` the same way,
+with React deduplicated and both folders allowed to its dev servers:
 `apps/ui3/tsconfig.json` and `apps/ui3/vitest.config.ts` for the `/play`
 type check and tests, `apps/sites/tsconfig.json` and
 `apps/sites/vite.config.ts` for the Sites build.

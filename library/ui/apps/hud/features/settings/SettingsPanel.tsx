@@ -6,7 +6,7 @@
 import { memo, useMemo, useState } from 'react'
 import { Select, Slider, Tabs, Toggle, Tooltip, showConfirm } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import type { Setting } from '../../engine/protocol'
+import type { Setting } from '@explorer-core/engine/protocol'
 import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'
 import { clearAutoTranslate, setAutoTranslateDefault, useTranslationPrefs } from '../chat/translation'

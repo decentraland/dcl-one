@@ -7,7 +7,7 @@ import {
   placeIsFeatured,
   placePlayers,
   type DiscoverPlace
-} from './placesApi'
+} from '@explorer-core/features/places/placesApi'
 import { useCreatorName } from './useCreatorName'
 
 export function PlaceCard({ place, onClick }: { place: DiscoverPlace; onClick: () => void }): React.JSX.Element {

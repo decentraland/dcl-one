@@ -8,10 +8,10 @@ import { resolveDefsByUrn, thumbnailUrl } from './collections'
 import { resolveShopUrls } from './marketplace'
 import { itemUrn, tokenUrnOf } from './urns'
 import type { Ctx } from '../bridge'
-import type { Wearable } from '@hud/engine/protocol'
+import type { Wearable } from '@explorer-core/engine/protocol'
 import { currentLook, editLook } from './avatarDraft'
-import { bodyShapesOf, splitBodyShape } from '@hud/engine/bodyShape'
-import { itemHides, type HideData } from '@hud/engine/avatarHides'
+import { bodyShapesOf, splitBodyShape } from '@explorer-core/engine/bodyShape'
+import { itemHides, type HideData } from '@explorer-core/engine/avatarHides'
 import { identity } from '../identity'
 
 type CatalogElement = {

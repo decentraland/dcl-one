@@ -5,14 +5,14 @@
 //     from the super-user bridge scene over the `bevy-ui-bridge` BroadcastChannel
 //     and are delivered through ONE generic `on(msg => …)` subscription.
 
-import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '@hud/features/auth/sso'
-import { trackGuestWalletCreation } from '@hud/features/auth/guestWalletEvent'
-import { attachEngine, launchAnalytics } from '@hud/lib/analytics'
-import { inShell, shellRequest } from '@hud/lib/shell'
-import { newAccountFlags, type LoginDriver, type NewAccountPick } from '@hud/engine/driver'
-import type { EngineRpc, LaunchHostOptions } from '@hud/engine/engineRpc'
+import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '@explorer-core/features/auth/sso'
+import { trackGuestWalletCreation } from '@explorer-core/features/auth/guestWalletEvent'
+import { attachEngine, launchAnalytics } from '@explorer-core/lib/analytics'
+import { inShell, shellRequest } from '@explorer-core/lib/shell'
+import { newAccountFlags, type LoginDriver, type NewAccountPick } from '@explorer-core/engine/driver'
+import type { EngineRpc, LaunchHostOptions } from '@explorer-core/engine/engineRpc'
 import { BridgeChannel } from './bridgeChannel'
-import { bridgeChannelName, type PageToScene, type SceneToPage } from '@hud/engine/protocol'
+import { bridgeChannelName, type PageToScene, type SceneToPage } from '@explorer-core/engine/protocol'
 
 // Two thirdweb round-trips.
 const CREATE_GUEST_TIMEOUT_MS = 30_000

@@ -26,7 +26,7 @@ wasm: ts-bindings
     cd react-web && npm run dev -- --open
 
 # regenerate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
-# structs in crates/system_api_types, into library/ui/apps/hud/engine/generated (+ a barrel index.ts).
+# structs in crates/system_api_types, into library/explorer-core/engine/generated (+ a barrel index.ts).
 ts-bindings:
     {{justfile_directory()}}/scripts/gen-ts-bindings.sh
 
@@ -46,7 +46,7 @@ _bundle-native-if-stale:
     stamp=target/.bundle-native-stamp
     if [ -f "$stamp" ] && [ -f assets/react-hud/app.html ] \
        && [ -f assets/bridge-scene/BevyExplorerUI/about ] \
-       && [ -z "$(find react-web crates/system_api_types ../../../library/shop ../../../library/catalyst-api ../../../library/ui/index.ts ../../../library/ui/foundations ../../../library/ui/apps/hud -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
+       && [ -z "$(find react-web crates/system_api_types ../../../library/shop ../../../library/catalyst-api ../../../library/ui/index.ts ../../../library/ui/foundations ../../../library/ui/apps/hud ../../../library/explorer-core -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
         echo "HUD sources unchanged; skipping bundle (just bundle-native to force)"
     else
         just bundle-native

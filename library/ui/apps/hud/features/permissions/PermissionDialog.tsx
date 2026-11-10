@@ -10,7 +10,7 @@
 
 import { useState } from 'react'
 import { Button, openPopup } from '../../design'
-import type { PermissionLevelChoice, PermissionRequestMessage, PermissionRuleLevel } from '../../engine/protocol'
+import type { PermissionLevelChoice, PermissionRequestMessage, PermissionRuleLevel } from '@explorer-core/engine/protocol'
 import type { PermissionSubject } from '../session/useEngineSession'
 import styles from './PermissionDialog.module.css'
 

@@ -12,7 +12,7 @@
 // HUD has already switched reporting off (see `useHudInsetReport`) by the time it is measured.
 
 import { useLayoutEffect } from 'react'
-import { subscribeHudScale } from './hudScale'
+import { subscribeHudScale } from '@explorer-core/lib/hudScale'
 
 /** Insets from each window edge, in CSS pixels. */
 export interface InteractableArea {

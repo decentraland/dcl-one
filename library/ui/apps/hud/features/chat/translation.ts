@@ -5,10 +5,10 @@
 // nothing here is stored with the DM history. A failed request just leaves the original.
 
 import { useSyncExternalStore } from 'react'
-import { LANGUAGES } from '../../engine/generated'
-import type { Setting } from '../../engine/protocol'
+import { LANGUAGES } from '@explorer-core/engine/generated'
+import type { Setting } from '@explorer-core/engine/protocol'
 import { serviceUrl } from '@hud-host'
-import { PREF, getPref, setPref } from '../../lib/prefs'
+import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
 import { parseMessage } from './chatText'
 
 /** The server language for a BCP 47 tag ("pt-BR", "zh-TW", "de-AT"), or null if it has none. */

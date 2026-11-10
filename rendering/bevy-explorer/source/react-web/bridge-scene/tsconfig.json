@@ -5,9 +5,9 @@
     "resolveJsonModule": true,
     "strict": true,
     "baseUrl": ".",
-    // The shared HUD UI (library/ui/apps/hud), which the page's wire protocol and bindings live in; the
+    // The Explorer page's core (library/explorer-core), where the page's wire protocol and bindings live; the
     // react-web sources this scene compiles reach it under the same name (react-web/tsconfig.json).
-    "paths": { "@hud/*": ["../../../../../library/ui/apps/hud/*"] }
+    "paths": { "@explorer-core/*": ["../../../../../library/explorer-core/*"] }
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "assets/images/atlas/*.json"],
   "extends": "@dcl/sdk/types/tsconfig.ecs7.json"

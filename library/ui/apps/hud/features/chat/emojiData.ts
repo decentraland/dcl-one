@@ -3,7 +3,7 @@
 // it for the grid picker and for ":shortcode:" autocomplete in the chat input.
 
 import data from './emojis_complete.json'
-import { getPref, PREF, setPref } from '../../lib/prefs'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 
 export interface Emoji {
   code: string

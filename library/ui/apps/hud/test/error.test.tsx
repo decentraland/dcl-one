@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { CrashModal } from '../features/error/CrashModal'
 import { openRealmError } from '../features/error/RealmErrorModal'
 import { ErrorBoundary } from '../features/error/ErrorBoundary'
-import { isInputLocked } from '../lib/inputLock'
+import { isInputLocked } from '@explorer-core/lib/inputLock'
 import { PopupHost, closeTopPopup, resetPopups } from '../design'
 
 afterEach(resetPopups)

@@ -1,7 +1,7 @@
 // The avatar look the Backpack edits, and the setAvatar deploy built from it. Shared with the bridge
 // scene (like protocol.ts); pure, so react-web's vitest covers it.
 
-import type { Color3, SetAvatarData } from './generated'
+import type { Color3, SetAvatarData } from './generated/index'
 
 export interface AvatarLook {
   bodyShape: string

@@ -4,13 +4,13 @@
 // embedding page's to set, never a link's) and this page's own switches — the user-facing ones
 // with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
 
-import { AUTH_RETURN_PARAM } from '@hud/features/auth/authReturn'
-import type { AcceptedParam } from '@hud/hostContract'
-import { WEB_PARAMS } from '@hud/engine/generated'
-import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@hud/lib/analytics'
+import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/authReturn'
+import type { AcceptedParam } from '@explorer-core/hostContract'
+import { WEB_PARAMS } from '@explorer-core/engine/generated'
+import { ANALYTICS_SESSION_PARAM, isAttributionParam } from '@explorer-core/lib/analytics'
 import { BENCHMARK_PARAMS } from './bootMode'
 
-export type { AcceptedParam } from '@hud/hostContract'
+export type { AcceptedParam } from '@explorer-core/hostContract'
 
 // The page's own user-facing params — read by App / bootMode, never handed to the engine.
 const PAGE_PARAMS: Record<string, string> = {

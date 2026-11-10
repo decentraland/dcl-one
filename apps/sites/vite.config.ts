@@ -11,6 +11,7 @@ const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.m
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
 // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
+const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
 const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
 // copies. Only these specifiers: a dependency of this app keeps an older @noble of its own.
@@ -248,7 +249,7 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui/apps/hud"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui/apps/hud", "../../library/explorer-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
@@ -262,6 +263,7 @@ export default defineConfig({
       "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
       "@noble/hashes/utils.js": noble("hashes/utils.js"),
       "@hud": hud,
+      "@explorer-core": explorerCore,
       "@": src,
       "monaco-editor": monaco,
       three,

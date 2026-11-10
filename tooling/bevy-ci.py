@@ -16,7 +16,7 @@ PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Sm
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
-                      'library/ui/apps/hud/engine/generated/serviceTable.ts')
+                      'library/explorer-core/engine/generated/serviceTable.ts')
 # Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
 _ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
 _artifact = importlib.util.module_from_spec(_ARTIFACT)
@@ -41,7 +41,7 @@ INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'lib
 # also an input of the Test Suite.
 HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
                      'rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts',
-                     'library/ui/apps/hud/lib/hudAutomation.ts')
+                     'library/explorer-core/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',

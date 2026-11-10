@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfilePassport } from '../features/profile/ProfilePassport'
-import type { Emote, Profile, Wearable } from '../engine/protocol'
+import type { Emote, Profile, Wearable } from '@explorer-core/engine/protocol'
 
 const profile: Profile = {
   address: '0xkurd000000000000000000000000000000006b635',

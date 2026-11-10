@@ -10,8 +10,8 @@ import {
   rootAddress,
   storeGuestLogin,
   type StoredLogin
-} from '@hud/features/auth/sso'
-import { personalSign } from '@hud/shell/sign'
+} from '@explorer-core/features/auth/sso'
+import { personalSign } from '@explorer-core/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it

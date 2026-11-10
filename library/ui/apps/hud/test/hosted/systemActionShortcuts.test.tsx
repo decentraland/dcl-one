@@ -6,8 +6,8 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from '../harness'
 import { openPopup, resetPopups, PopupHost } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import { lockInput } from '../../lib/inputLock'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { lockInput } from '@explorer-core/lib/inputLock'
 
 async function world(): Promise<Harness> {
   const h = renderSession({ userId: null })

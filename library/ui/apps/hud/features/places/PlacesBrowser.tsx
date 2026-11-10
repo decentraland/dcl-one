@@ -12,7 +12,7 @@ import { BrowseControl, BrowseLoading, BrowsePanel, BrowseToolbar, Button, Disco
 import { PlaceCard } from './PlaceCard'
 import { FeaturedCarousel } from './FeaturedCarousel'
 import { usePlaces, type PlacesSection, type PlacesSort } from './usePlaces'
-import { isHiddenPlace, placePlayers, type DiscoverPlace } from './placesApi'
+import { isHiddenPlace, placePlayers, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import styles from './PlacesPage.module.css'
 
 const SECTIONS: TabItem<PlacesSection>[] = [

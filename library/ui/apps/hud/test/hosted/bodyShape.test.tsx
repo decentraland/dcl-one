@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { WearableCard } from '../../design'
 import { BackpackPage } from '../../features/backpack/BackpackPage'
-import { isCompatible, splitBodyShape, bodyShapesOf } from '../../engine/bodyShape'
+import { isCompatible, splitBodyShape, bodyShapesOf } from '@explorer-core/engine/bodyShape'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from '../harness'
 
 const MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'

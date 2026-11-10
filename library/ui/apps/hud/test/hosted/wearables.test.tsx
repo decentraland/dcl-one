@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { Wearable } from '../../engine/protocol'
+import type { Wearable } from '@explorer-core/engine/protocol'
 import { renderSession, enterAsGuest } from '../harness'
 
 // DOMAIN: wearables (backpack) — catalog fetch, preview (non-persisting), equip.

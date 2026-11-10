@@ -3,7 +3,7 @@
 // guards the port (compiles AND renders).
 import { act, render, screen } from '@testing-library/react'
 import { describe, it, expect } from 'vitest'
-import { dispatchCancelLayer } from '../lib/cancelLayers'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import {
   Modal,
   ModalTitle,

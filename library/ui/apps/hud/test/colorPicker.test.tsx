@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { ColorPicker } from '../design'
-import { dispatchCancelLayer } from '../lib/cancelLayers'
-import { color3ToHex, hexToColor3, hexToHsv, hsvToHex } from '../lib/color'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { color3ToHex, hexToColor3, hexToHsv, hsvToHex } from '@explorer-core/lib/color'
 
 describe('color conversions', () => {
   it('round-trips hex through HSV', () => {

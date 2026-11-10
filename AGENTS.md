@@ -115,7 +115,7 @@ State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web
 
 The end-to-end suite in `apps/bevy-explorer/e2e` and the Explorer's console surface it drives
 (`rendering/bevy-explorer/source`: `src/automation.rs`, `src/world_state.rs`,
-`library/ui/apps/hud/lib/hudAutomation.ts`, `local-harness/web-driver`, documented in the readme's
+`library/explorer-core/lib/hudAutomation.ts`, `local-harness/web-driver`, documented in the readme's
 "Agents and tests") read the code they test, so a change to that code updates them in the same
 change. That is any of: a HUD control's role, accessible name, placeholder, `aria-*` state or
 visibility; a page's heading or tablist; a key binding; a console command's name, arguments or

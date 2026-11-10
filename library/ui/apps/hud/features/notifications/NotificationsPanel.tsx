@@ -3,7 +3,7 @@
 // Mark-all-read clears the badge and persists through the bridge's signed PUT.
 
 import { ControlButton } from '../../design'
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { FriendsState, NotificationsState } from '../session/useEngineSession'
 import { ago, friendshipTarget, summarize } from './summary'
 import styles from './NotificationsPanel.module.css'

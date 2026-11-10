@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { SceneLoadingOverlay } from '../../features/session/SceneLoadingOverlay'
-import { createLoadingProgress, type LoadingInput } from '../../features/session/loadingProgress'
+import { createLoadingProgress, type LoadingInput } from '@explorer-core/features/session/loadingProgress'
 import { enterAsGuest, renderSession } from '../harness'
 
 const scene = (pendingAssets: number | null, visible = true, realmConnected = true) => ({ visible, realmConnected, title: '', pendingAssets })

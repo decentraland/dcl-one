@@ -3,11 +3,11 @@
 // it is decided here, because trust is a property of the host: the editor app trusts its editor
 // scene, this app trusts its bundled bridge scene and Decentraland's own deployments.
 
-import { SERVICES, type ServiceDef } from '@hud/engine/generated'
+import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
 import { BASE_DOMAIN, hostBaseDomain, isTrustedBaseDomain, normaliseServiceUrl } from './baseDomain'
 import { bootMode } from './bootMode'
 import { isTrustedSystemScene } from './systemScene'
-import { webParam } from '@hud/lib/webParams'
+import { webParam } from '@explorer-core/lib/webParams'
 import type { UntrustedParam } from '@hud/features/gate/UntrustedLaunchGate'
 
 export type { UntrustedParam }

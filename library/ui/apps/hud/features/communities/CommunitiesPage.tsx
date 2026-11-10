@@ -7,11 +7,11 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, Button, SearchField, Spinner, Tooltip } from '../../design'
-import { nameColor } from '../../lib/identity'
+import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { openCommunityModal } from './CommunityModal'
 import { openCommunityCreateModal } from './CommunityCreateModal'
-import type { Community } from '../../engine/protocol'
+import type { Community } from '@explorer-core/engine/protocol'
 import type { CommunitiesState, ProfileState } from '../session/useEngineSession'
 import styles from './CommunitiesPage.module.css'
 

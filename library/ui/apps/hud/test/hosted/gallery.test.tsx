@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { GalleryPhoto } from '../../engine/protocol'
+import type { GalleryPhoto } from '@explorer-core/engine/protocol'
 import { renderSession, enterAsGuest } from '../harness'
 
 // DOMAIN: gallery (camera reel) — fetch the reel, lazy per-photo metadata, delete.

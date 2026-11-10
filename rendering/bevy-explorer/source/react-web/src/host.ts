@@ -1,6 +1,6 @@
 // The HUD host module (`@hud-host`, vite.shared.ts) for the Explorer's own HUD: the shared HUD in
 // library/ui/apps/hud reads these through the contract in its hostContract.ts.
-import type { HudHost, UnattendedRun } from '@hud/hostContract'
+import type { HudHost, UnattendedRun } from '@explorer-core/hostContract'
 import { BASE_DOMAIN, DEFAULT_REALM, nativeProfileImage, serviceUrl } from './lib/baseDomain'
 import { bootMode, isNativeHud } from './lib/bootMode'
 import type { AutopilotDriver } from './engine/autopilot'

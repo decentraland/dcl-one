@@ -18,7 +18,7 @@ let
       # The HUD's shared sources (HUD_SHARED in tooling/play-artifact.py, which leaves the
       # HUD_UNREAD files under them unhashed).
       /library/shop /library/catalyst-api /library/ui/index.ts /library/ui/foundations
-      /library/ui/apps/hud
+      /library/ui/apps/hud /library/explorer-core
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml

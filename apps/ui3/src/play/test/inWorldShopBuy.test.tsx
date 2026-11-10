@@ -12,7 +12,7 @@ const shell = vi.hoisted(() => ({
   handlers: new Map<string, (message: Record<string, unknown>) => void>(),
   request: vi.fn()
 }))
-vi.mock('@hud/lib/shell', () => ({
+vi.mock('@explorer-core/lib/shell', () => ({
   inShell: true,
   postToShell: vi.fn(),
   shellRequest: (method: string, params?: unknown) => shell.request(method, params),
@@ -26,7 +26,7 @@ import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop
 import shopStyles from '../features/shop/InWorldShop.module.css'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
 import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
-import type { Wearable } from '@hud/engine/protocol'
+import type { Wearable } from '@explorer-core/engine/protocol'
 import { fakeProfileState } from '@hud/test/harness'
 import { PopupHost, resetPopups } from '@hud/design'
 

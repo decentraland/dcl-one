@@ -4,7 +4,7 @@
 // KEEP IN SYNC with deploy/web/index.html: the store/Chrome URLs and the Apple/Google/Chrome SVGs are
 // duplicated there (the engine loader gates before react-web mounts, so it can't import from here).
 
-import { mobilePlatform } from '../../lib/isMobile'
+import { mobilePlatform } from '@explorer-core/lib/isMobile'
 import { publicUrl } from '@hud-host'
 import { Button, Spinner } from '../../design'
 import { FlagStep } from './FlagStep'

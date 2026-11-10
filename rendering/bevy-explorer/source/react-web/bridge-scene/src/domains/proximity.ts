@@ -5,9 +5,9 @@ import { PointerEventType, Transform, UiCanvasInformation, engine } from '@dcl/s
 import { BevyApi, type HoverEntry, type Vec3 } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { HoverAction, ProximityTip } from '@hud/engine/protocol'
+import type { HoverAction, ProximityTip } from '@explorer-core/engine/protocol'
 import { projectToScreen, createFovTracker, type Quat } from './project'
-import { proximityKey } from '@hud/engine/pointerKeys'
+import { proximityKey } from '@explorer-core/engine/pointerKeys'
 
 function toActions(entries: HoverEntry[]): HoverAction[] {
   return entries

@@ -3,8 +3,8 @@
 // (clickable → profile viewer; highlighted when they mention you). Parsing is a pure
 // function so it's unit-testable; <MessageText> renders the tokens with handlers.
 
-import { MENTION_PATTERN, mentionName, mentionsName } from '../../engine/mention'
-import type { NearbyMember } from '../../engine/protocol'
+import { MENTION_PATTERN, mentionName, mentionsName } from '@explorer-core/engine/mention'
+import type { NearbyMember } from '@explorer-core/engine/protocol'
 
 export type Token =
   | { type: 'text'; value: string }

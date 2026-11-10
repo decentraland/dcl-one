@@ -4,9 +4,9 @@
 // hover stream (relayed by the bridge's pointer domain) — InputAction → key label is mapped here.
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { CameraIcon, WalkIcon } from '../../design'
-import type { HoverAction, ProximityTip } from '../../engine/protocol'
+import type { HoverAction, ProximityTip } from '@explorer-core/engine/protocol'
 import { bindingsForAction, labelForInput, useBindingsSnapshot } from '../../lib/bindingLabels'
-import { subscribeCursor, getCursor, setCursorNotify } from './cursorStore'
+import { subscribeCursor, getCursor, setCursorNotify } from '@explorer-core/features/pointer/cursorStore'
 import styles from './Pointer.module.css'
 
 // `button` is the scene InputAction id — map it to the engine action name, then to its live

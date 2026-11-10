@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import type { AvatarLook } from '@hud/engine/avatarEquip'
-import type { PageToScene } from '@hud/engine/protocol'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import type { PageToScene } from '@explorer-core/engine/protocol'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 
 // The real wearables domain, so an owned pick goes through accumulateTokens and deployableUrn.

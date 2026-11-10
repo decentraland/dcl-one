@@ -6,7 +6,7 @@ import { render, screen, act } from '@testing-library/react'
 import { PopupHost, resetPopups } from '../../design'
 import { setBindingsSnapshot } from '../../lib/bindingLabels'
 import { KeyBindingsTab } from '../../features/settings/KeyBindingsTab'
-import type { BindingEntry } from '../../engine/protocol'
+import type { BindingEntry } from '@explorer-core/engine/protocol'
 import type { BindingsState } from '../../features/session/useEngineSession'
 
 afterEach(() => {

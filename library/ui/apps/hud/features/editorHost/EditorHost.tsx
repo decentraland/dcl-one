@@ -1,14 +1,14 @@
 // The scene editor's host and Create page: a chunk of its own, loaded only once Create is wanted.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { bridgeChannelName } from '../../engine/protocol'
+import { bridgeChannelName } from '@explorer-core/engine/protocol'
 import { BASE_DOMAIN, DEFAULT_REALM } from '@hud-host'
 import { PAGE_DIR } from '@hud-host'
-import { getLogin, rootAddress } from '../auth/sso'
+import { getLogin, rootAddress } from '@explorer-core/features/auth/sso'
 import type { EngineSession } from '../session/useEngineSession'
 import { CreatePage } from './CreatePage'
 import { confirmDeployment, confirmUndeploy } from './DeployConfirm'
-import { bridgeScene, bridgeTravel } from './host/bridge'
+import { bridgeScene, bridgeTravel } from '@explorer-core/features/editorHost/host/bridge'
 import { guardUrlSync, loadEditor, type EditorPackage } from './host/host'
 import { editorFeatures } from './config'
 import { editorEntry, editorSource, hasEditor, type EditorSource } from './source'

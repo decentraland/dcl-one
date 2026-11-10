@@ -5,8 +5,8 @@
 // presets, so per-category toggles stay a UI change rather than a data change.
 
 import { Check } from '../../design'
-import { ALL_MARKER_CATEGORIES } from './minimapPrefs'
-import type { MinimapRotation, MinimapStyle } from '../../engine/protocol'
+import { ALL_MARKER_CATEGORIES } from '@explorer-core/features/minimap/minimapPrefs'
+import type { MinimapRotation, MinimapStyle } from '@explorer-core/engine/protocol'
 import styles from './MinimapSettings.module.css'
 
 const ROTATION_LABELS: Array<{ value: MinimapRotation; label: string }> = [

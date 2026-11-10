@@ -4,7 +4,7 @@
 // plain strings.
 
 import { useEffect, useRef, useState } from 'react'
-import { registerCancelLayer } from '../lib/cancelLayers'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './Dropdown.module.css'
 
 export interface DropdownProps {

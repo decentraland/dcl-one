@@ -10,8 +10,8 @@ import { createUnsafeIdentity } from '../../bridge-scene/node_modules/@dcl/crypt
 import { PopupHost } from '@hud/design'
 import { useEditorHost } from '@hud/features/editorHost/EditorHost'
 import type { DclEditorHostV1 } from '@hud/features/editorHost/host/host'
-import { localSigner, signDeployment, signFetch } from '@hud/features/editorHost/host/sign'
-import type { Signer } from '@hud/features/editorHost/host/signer'
+import { localSigner, signDeployment, signFetch } from '@explorer-core/features/editorHost/host/sign'
+import type { Signer } from '@explorer-core/features/editorHost/host/signer'
 import { fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {

@@ -5,7 +5,7 @@
 
 import { Button } from '../../design'
 import { PlacesBrowser } from './PlacesBrowser'
-import { placeTeleport, type DiscoverPlace } from './placesApi'
+import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { Destination } from '../session/useEngineSession'
 import styles from './PlacesPicker.module.css'
 

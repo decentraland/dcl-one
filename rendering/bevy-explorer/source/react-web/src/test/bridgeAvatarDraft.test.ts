@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { SceneToPage } from '@hud/engine/protocol'
+import type { SceneToPage } from '@explorer-core/engine/protocol'
 
 // The bridge's Backpack draft (bridge-scene/src/domains/avatarDraft): a commit that a later
 // setAvatar replaced ("cancelled") is settled by that save's outcome.

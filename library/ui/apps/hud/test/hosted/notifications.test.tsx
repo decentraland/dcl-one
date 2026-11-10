@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@explorer-core/engine/protocol'
 import { renderSession, enterAsGuest } from '../harness'
 
 // DOMAIN: notifications — list (fetched on entry + on open), unread badge, mark-read.

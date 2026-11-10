@@ -26,6 +26,7 @@
       "@dcl/one-ui/foundations.css": ["../../../../library/ui/foundations/foundations.css"],
       "@dcl/one-ui/text-styles.module.css": ["../../../../library/ui/foundations/typography/text-styles.module.css"],
       "@hud/*": ["../../../../library/ui/apps/hud/*"],
+      "@explorer-core/*": ["../../../../library/explorer-core/*"],
       "@hud-host": ["./src/host.ts"],
       "viem": ["./node_modules/viem"],
       "viem/*": ["./node_modules/viem/*"],
@@ -41,8 +42,8 @@
       "@testing-library/*": ["./node_modules/@testing-library/*"]
     }
   },
-  // The shared HUD UI is type-checked here, under the compiler profile it was written for, tests included.
-  "include": ["src", "vite.config.ts", "vite.shared.ts", "../../../../library/ui/apps/hud"],
+  // The shared HUD UI and the Explorer page's core are type-checked here, under the compiler profile it was written for, tests included.
+  "include": ["src", "vite.config.ts", "vite.shared.ts", "../../../../library/ui/apps/hud", "../../../../library/explorer-core"],
   // Loads bridge domains that need the scene SDK's ~system types; the bridge build checks those.
   // The signing test loads @dcl/crypto out of the bridge scene's tree, installed after this check.
   "exclude": ["src/test/bridgeSession.test.ts", "src/test/bridgeFriends.test.ts", "src/test/bridgeNotifications.test.ts", "src/test/bridgeCommunities.test.ts", "src/test/bridgeEditor.test.ts", "src/test/bridgeRandomizer.test.ts", "src/test/bridgeRandomizerTokens.test.ts", "src/test/bridgeAvatarDraft.test.ts", "src/test/editorHostSigning.test.tsx"]

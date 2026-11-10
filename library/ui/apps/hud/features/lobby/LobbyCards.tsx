@@ -5,7 +5,7 @@ import players from '../../assets/lobby/players.png'
 import { Avatar, Button, MaskIcon, VerifiedBadge } from '../../design'
 import type { DclEvent } from '../events/eventsApi'
 import { useCreatorName } from '../places/useCreatorName'
-import type { Friend } from '../../engine/protocol'
+import type { Friend } from '@explorer-core/engine/protocol'
 import styles from './LobbyCards.module.css'
 
 function OnlineCounter({ count }: { count: number }): React.JSX.Element {

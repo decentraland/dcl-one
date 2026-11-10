@@ -4,7 +4,7 @@
 //   to: AudioSource on an entity per clip
 import { AudioSource, engine, type Entity } from '@dcl/sdk/ecs'
 import type { Ctx } from '../bridge'
-import type { UiSound } from '@hud/engine/protocol'
+import type { UiSound } from '@explorer-core/engine/protocol'
 
 const CLIPS: Record<UiSound, string> = {
   chatMessage: 'sounds/chat_message_receive.wav',

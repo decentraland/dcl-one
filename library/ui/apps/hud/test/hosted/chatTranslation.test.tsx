@@ -15,7 +15,7 @@ import {
   systemLanguage,
   translateText
 } from '../../features/chat/translation'
-import { PREF, getPref } from '../../lib/prefs'
+import { PREF, getPref } from '@explorer-core/lib/prefs'
 import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../../features/chat/ping'
 import { fakeProfileState, fakeSession } from '../harness'
 

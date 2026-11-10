@@ -19,7 +19,7 @@ BEVY = 'rendering/bevy-explorer/bevy/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
 # The ts-rs bindings both HUD hosts compile (scripts/gen-ts-bindings.sh writes them; tracked).
-BINDINGS = 'library/ui/apps/hud/engine/generated'
+BINDINGS = 'library/explorer-core/engine/generated'
 # Sources the HUD compiles from outside react-web: its aliases (react-web/vite.shared.ts, with the
 # matching tsconfig.json paths). A trailing slash names a tree, anything else one file. They build into
 # the HUD, never the engine. They are not part of the Sites HUD review (`hud_inputs`) either: they are
@@ -27,7 +27,7 @@ BINDINGS = 'library/ui/apps/hud/engine/generated'
 # infra/packages/play.nix lists them too, and tests keep it, the HUD's aliases and library/ui's import
 # graph together with this.
 HUD_SHARED = ('library/shop/', 'library/catalyst-api/', 'library/ui/index.ts', 'library/ui/foundations/',
-              'library/ui/apps/hud/')
+              'library/ui/apps/hud/', 'library/explorer-core/')
 # Inside those, what the HUD never reads, so no input: library/ui's Inter files. They are Git LFS objects,
 # which a checkout without LFS holds as pointers and a `git+file:.?lfs=1` Nix source as their bytes, so
 # hashing them would key one tree two ways. The HUD takes the same faces from its own

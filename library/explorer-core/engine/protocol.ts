@@ -7,7 +7,7 @@
 // Domain types mirror scene/src/bevy-api/interface.ts so the bridge scene can
 // forward SystemApi results verbatim.
 
-import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, WelcomeState } from './generated'
+import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, WelcomeState } from './generated/index'
 import type { AvatarLook } from './avatarEquip'
 
 export const BRIDGE_CHANNEL = 'bevy-ui-bridge'
@@ -532,7 +532,7 @@ export interface DmDeleteRequest {
 /** Mirrors the engine's ExplorerSetting (BevyApi.getSettings). A setting is a
  *  Select when it has namedVariants, otherwise a numeric Slider; a 2-variant or
  *  0..1 setting renders as a Toggle. */
-import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated'
+import type { SettingInfo as Setting, NamedVariant as SettingVariant } from './generated/index'
 export type { Setting, SettingVariant }
 
 export interface SettingsMessage {

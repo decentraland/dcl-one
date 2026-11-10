@@ -1,6 +1,6 @@
 // Hex / HSV / engine Color3 (0–1 floats) conversions for the avatar color pickers.
 
-import type { Color3 } from '../engine/generated'
+import type { Color3 } from '../engine/generated/index'
 
 export type Hsv = { h: number; s: number; v: number }
 

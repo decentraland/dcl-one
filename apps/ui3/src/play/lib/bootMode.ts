@@ -12,9 +12,9 @@
 // The engine-bound params (?portables=, ?imposterSource=, ?pulseServer=, …) are not boot-mode
 // decisions: they come from the engine's web param table (lib/webParams.ts) and are handed over
 // as-is by EngineHost.
-export type { BootMode } from '@hud/hostContract'
+export type { BootMode } from '@explorer-core/hostContract'
 
-import type { BootMode } from '@hud/hostContract'
+import type { BootMode } from '@explorer-core/hostContract'
 // Upstream's `vite build --mode native` defines __NATIVE_HUD__ for the HUD bundled into the
 // native client. Sites only builds the web HUD; the native shell here (apps/desktop) is a webview
 // around /play, not a CEF overlay, so there is no native build and ?native=1 is never honoured.

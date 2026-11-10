@@ -3,10 +3,10 @@
 // SceneLoadingScreenView: a top bar with LOADING N% over a progress line, and a tips carousel.
 
 import { useEffect, useMemo, useState } from 'react'
-import type { SceneLoadingState } from '../../engine/protocol'
+import type { SceneLoadingState } from '@explorer-core/engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
-import { launchCount } from '../../lib/launchCount'
-import { bugReportUrl } from '../../lib/bugReport'
+import { launchCount } from '@explorer-core/lib/launchCount'
+import { bugReportUrl } from '@explorer-core/lib/bugReport'
 import { Icon } from '../../design'
 import logoIcon from '../../assets/loading/logo-icon.webp'
 import wordmark from '../../assets/loading/wordmark.webp'
@@ -14,7 +14,7 @@ import { TIP_ROTATE_MS, tipsFor, type LoadingTip } from './loadingTips'
 import prevTip from '../../assets/loading/prev-tip.webp'
 import nextTip from '../../assets/loading/next-tip.webp'
 import styles from './SceneLoadingOverlay.module.css'
-import { getPref, PREF, setPref } from '../../lib/prefs'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 
 const FADE_MS = 300
 

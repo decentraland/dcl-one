@@ -5,7 +5,7 @@
 
 import { useState } from 'react'
 import { Button, TextInput, openPopup } from '../../design'
-import type { WorldPasswordRequestMessage } from '../../engine/protocol'
+import type { WorldPasswordRequestMessage } from '@explorer-core/engine/protocol'
 import styles from './WorldPasswordDialog.module.css'
 
 function LockIcon(): React.JSX.Element {

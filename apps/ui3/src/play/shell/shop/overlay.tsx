@@ -11,7 +11,7 @@ import { MaskIcon } from '@hud/design'
 import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
 import { CategoryIcon } from '@hud/features/backpack/categoryIcons'
 import { ShopPurchaseDialog, type ShopPurchaseItem, type ShopPurchaseStep } from '../../features/shop/ui'
-import { installHudScale } from '@hud/lib/hudScale'
+import { installHudScale } from '@explorer-core/lib/hudScale'
 import type { ShellPurchaseHandlers, ShellPurchaseItem, ShellPurchaseView, ShellShopUi } from './purchase'
 import styles from './overlay.module.css'
 

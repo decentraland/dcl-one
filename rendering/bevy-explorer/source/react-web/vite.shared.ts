@@ -7,7 +7,8 @@ import type { Alias } from 'vite'
 const here = dirname(fileURLToPath(import.meta.url))
 
 // Sources the HUD compiles from library/: the in-world Shop's logic, the catalyst's DTOs, the shared UI
-// foundations and the HUD UI itself (library/ui/apps/hud, shared with the Sites /play adaptation). library/
+// foundations, the HUD UI itself (library/ui/apps/hud) and the Explorer page's core (library/explorer-core), both
+// shared with the Sites /play host. library/
 // has no node_modules, so the packages they import resolve to this app's copies
 // (`SHARED_DEDUPE`), and the bundle holds one viem, zod, React, React Query and @noble. tsconfig.json maps the same
 // paths for the type check. tooling/play-artifact.py hashes these trees with the HUD (`HUD_SHARED`); a test
@@ -21,7 +22,9 @@ export const SHARED_SOURCES: Record<string, string> = {
   '@dcl/one-ui/text-styles.module.css': resolve(here, '../../../../library/ui/foundations/typography/text-styles.module.css'),
   '@dcl/one-ui': resolve(here, '../../../../library/ui/index.ts'),
   '@hud': resolve(here, '../../../../library/ui/apps/hud'),
-  // The behaviours this host supplies to the shared HUD (library/ui/apps/hud/hostContract.ts).
+  // The Explorer page's core both HUD hosts share: engine contract, drivers, sign-in, server reads.
+  '@explorer-core': resolve(here, '../../../../library/explorer-core'),
+  // The behaviours this host supplies to the shared HUD (library/explorer-core/hostContract.ts).
   '@hud-host': resolve(here, 'src/host.ts')
 }
 
@@ -31,7 +34,8 @@ export const SHARED_TREES = [
   SHARED_SOURCES['@catalyst-api'],
   SHARED_SOURCES['@dcl/one-ui'],
   resolve(here, '../../../../library/ui/foundations'),
-  SHARED_SOURCES['@hud']
+  SHARED_SOURCES['@hud'],
+  SHARED_SOURCES['@explorer-core']
 ]
 
 export const SHARED_DEDUPE = ['react', 'react-dom', 'viem', 'zod', '@tanstack/react-query', '@noble/curves', '@noble/hashes']

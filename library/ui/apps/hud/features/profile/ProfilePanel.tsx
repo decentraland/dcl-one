@@ -2,7 +2,7 @@
 // getProfile relay (getPlayer + cached profile). Built on the design system.
 
 import { Avatar, ControlButton } from '../../design'
-import { shortAddr, splitName, userColor } from '../../lib/identity'
+import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import type { ProfileState } from '../session/useEngineSession'
 import styles from './ProfilePanel.module.css'
 

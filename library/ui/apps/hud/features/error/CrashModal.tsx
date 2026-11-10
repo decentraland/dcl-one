@@ -8,8 +8,8 @@ import { useEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { ModalShell, Button } from '../../design'
 import { useFocusTrap } from '../../lib/useFocusTrap'
-import { lockInput } from '../../lib/inputLock'
-import type { CrashSource } from './fatalError'
+import { lockInput } from '@explorer-core/lib/inputLock'
+import type { CrashSource } from '@explorer-core/features/error/fatalError'
 import styles from './CrashModal.module.css'
 
 const COPY: Record<CrashSource, { title: string; subtitle: string }> = {

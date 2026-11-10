@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
-import type { Wearable } from '@hud/engine/protocol'
+import type { Wearable } from '@explorer-core/engine/protocol'
 import { SAVE_FAILED_MESSAGE } from '@hud/features/session/useEngineSession'
 import { enterAsGuest, renderSession } from '@hud/test/harness'
 

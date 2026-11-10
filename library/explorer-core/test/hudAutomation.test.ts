@@ -18,8 +18,8 @@ import {
   pressKey,
   trustedInputAvailable,
   waitForControl
-} from '../../lib/hudAutomation'
-import { installCefNativeBridge } from '../../lib/cefNativeBridge'
+} from '../lib/hudAutomation'
+import { installCefNativeBridge } from '../lib/cefNativeBridge'
 
 // jsdom lays nothing out: give elements boxes by hand, and say what is under a point.
 const boxes = new WeakMap<Element, DOMRect>()

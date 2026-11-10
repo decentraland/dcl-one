@@ -56,7 +56,10 @@ export default defineConfig({
         // the host behaviours (`@hud-host`) of a web host.
         extends: true,
         resolve: {
-          alias: { '@hud-host': fileURLToPath(new URL('apps/hud/test/host.ts', import.meta.url)) }
+          alias: {
+            '@hud-host': fileURLToPath(new URL('apps/hud/test/host.ts', import.meta.url)),
+            '@explorer-core': fileURLToPath(new URL('../explorer-core', import.meta.url))
+          }
         },
         test: {
           name: 'hud',

@@ -13,7 +13,7 @@
 // prettified code name is the fallback elsewhere.
 
 import { useSyncExternalStore } from 'react'
-import type { ActionWire, BindingEntry, InputIdentifierWire } from '../engine/protocol'
+import type { ActionWire, BindingEntry, InputIdentifierWire } from '@explorer-core/engine/protocol'
 
 export interface BindingsSnapshot {
   bindings: BindingEntry[]

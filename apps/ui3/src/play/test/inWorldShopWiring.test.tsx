@@ -7,9 +7,9 @@ import type { EngineSession } from '@hud/features/session/useEngineSession'
 
 vi.mock('@hud/features/session/useEngineSession', async (original) => ({ ...await original<typeof import('@hud/features/session/useEngineSession')>(), useEngineSession: vi.fn() }))
 vi.mock('../features/engine/EngineHost', () => ({ EngineHost: () => null }))
-vi.mock('@hud/engine/engineRpc', () => ({ EngineRpc: class {} }))
-vi.mock('@hud/lib/isMobile', async (original) => ({ ...await original<typeof import('@hud/lib/isMobile')>(), isMobile: () => false, isChromiumBased: () => true }))
-vi.mock('@hud/lib/gpu', () => ({ probeGpu: async () => ({ usable: true, adapter: null }) }))
+vi.mock('@explorer-core/engine/engineRpc', () => ({ EngineRpc: class {} }))
+vi.mock('@explorer-core/lib/isMobile', async (original) => ({ ...await original<typeof import('@explorer-core/lib/isMobile')>(), isMobile: () => false, isChromiumBased: () => true }))
+vi.mock('@explorer-core/lib/gpu', () => ({ probeGpu: async () => ({ usable: true, adapter: null }) }))
 // The new Shop reads server data, so it needs the HUD's query client: useQueryClient throws without one.
 vi.mock('../features/shop/InWorldShop', () => ({
   default: () => {

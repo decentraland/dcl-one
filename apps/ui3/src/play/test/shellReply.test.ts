@@ -3,8 +3,8 @@
 // keeps the shell's code, so the app tells a busy shell by its code, never by its message.
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { shellRequest } from '@hud/lib/shell'
-import { isShellError, ShellError, shellResponse } from '@hud/lib/shellReply'
+import { shellRequest } from '@explorer-core/lib/shell'
+import { isShellError, ShellError, shellResponse } from '@explorer-core/lib/shellReply'
 import { SHOP_BUSY, shopBusy } from '../lib/shopProtocol'
 
 /** The shell's side: each request the app posts runs `run`, and its response comes back as postMessage carries it. */

@@ -9,10 +9,10 @@
 // it is mounted, so a chat line on screen keeps its sender resolved however long ago they left; an
 // entry nobody has shown for a while is swept. The engine announces profile changes (the
 // `profileChanged` stream); an entry someone is still showing is re-read, the rest forget their copy.
-import { looksClaimed } from '../../engine/mention'
+import { looksClaimed } from '@explorer-core/engine/mention'
 import { useCallback, useSyncExternalStore } from 'react'
-import type { Profile } from '../../engine/protocol'
-import { userColor } from '../../lib/identity'
+import type { Profile } from '@explorer-core/engine/protocol'
+import { userColor } from '@explorer-core/lib/identity'
 
 /** Addresses are matched lowercased: the same wallet reaches the page in either case. */
 export const profileKey = (address: string): string => address.toLowerCase()

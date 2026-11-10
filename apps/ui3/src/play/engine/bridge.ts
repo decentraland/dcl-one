@@ -6,10 +6,10 @@
 // `on(msg => …)` subscription; only request/response (login) is correlated by id.
 
 import { createGuestIdentity } from '../features/auth/guest'
-import { encodeIdentity, type AuthIdentity } from '@hud/features/auth/sso'
-import type { GuestWallet } from '@hud/features/auth/thirdweb'
+import { encodeIdentity, type AuthIdentity } from '@explorer-core/features/auth/sso'
+import type { GuestWallet } from '@explorer-core/features/auth/thirdweb'
 import { BridgeChannel } from './bridgeChannel'
-import { newAccountFlags, type LoginDriver, type NewAccountPick } from '@hud/engine/driver'
+import { newAccountFlags, type LoginDriver, type NewAccountPick } from '@explorer-core/engine/driver'
 import {
   bridgeChannelName,
   type LoginPreviousResult,
@@ -18,7 +18,7 @@ import {
   type RpcMethod,
   type RpcRequest,
   type SceneToPage
-} from '@hud/engine/protocol'
+} from '@explorer-core/engine/protocol'
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; timer?: ReturnType<typeof setTimeout> }
 

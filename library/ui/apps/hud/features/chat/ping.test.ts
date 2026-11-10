@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { PREF, getPref, setPref } from '../../lib/prefs'
+import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
 import { clearPingMode, pingModeFor, resetPingPrefs, setPingDefault, setPingMode, shouldPing } from './ping'
 
 // DOMAIN: the chat notification ping — per-conversation All / Mentions Only / None, a default for

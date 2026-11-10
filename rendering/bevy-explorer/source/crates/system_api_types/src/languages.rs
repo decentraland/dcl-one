@@ -2,7 +2,7 @@
 //! with its English name and its name in itself (CLDR), so a player finds theirs without reading
 //! English. Kept as a table rather than asked of `Intl.DisplayNames`: Chromium's trimmed locale
 //! data lacks some. The engine's Language setting offers them; the HUD translates into them.
-//! scripts/gen-ts-bindings.sh writes the table into library/ui/apps/hud/engine/generated as
+//! scripts/gen-ts-bindings.sh writes the table into library/explorer-core/engine/generated as
 //! `languageTable.ts`.
 
 use serde::Serialize;

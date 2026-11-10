@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import * as auth from '../features/auth/sso'
+import * as auth from '@explorer-core/features/auth/sso'
 import { PlacesBrowser } from '../features/places/PlacesBrowser'
-import { clearPlacesCache, type DiscoverPlace } from '../features/places/placesApi'
+import { clearPlacesCache, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 
 const place = (id: string, title: string, extra: Partial<DiscoverPlace> = {}): DiscoverPlace => ({
   id,

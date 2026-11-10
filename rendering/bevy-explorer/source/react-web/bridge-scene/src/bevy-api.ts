@@ -2,7 +2,7 @@
 // inside the super-user (--system-scene) scene sandbox. This is the ENGINE-side surface (raw shapes);
 // the wire shapes React sees live in the shared protocol. Only the methods the domains use
 // are declared — extend as needed.
-import type { ActionWire, Setting } from '@hud/engine/protocol'
+import type { ActionWire, Setting } from '@explorer-core/engine/protocol'
 import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
@@ -34,7 +34,7 @@ import type {
   Vector3,
   WelcomeState,
   WorldAccessEvent
-} from '@hud/engine/generated'
+} from '@explorer-core/engine/generated'
 
 // --- raw social-service shapes (BevyApi.social.*), generated from the Rust structs ---
 export type { FriendData, FriendStatusData, FriendRequestData }

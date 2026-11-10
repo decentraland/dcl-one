@@ -1,6 +1,6 @@
 // The benchmark autopilot's part of react-web's engine drivers: what the shared LoginDriver leaves out,
 // because only this host runs the benchmark (src/host.ts, `unattendedRun`).
-import type { LoginDriver } from '@hud/engine/driver'
+import type { LoginDriver } from '@explorer-core/engine/driver'
 
 /** `/autopilot_fail` with the reason as one line of plain words: the console splits on spaces and
  *  takes quotes as syntax. */

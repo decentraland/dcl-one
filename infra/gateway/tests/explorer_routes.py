@@ -21,9 +21,9 @@ def check(rows, root):
         import { resolve } from 'node:path';
         const root = process.argv[1];
         const play = resolve(root, 'apps/ui3/src/play');
-        const generated = resolve(root, 'library/ui/apps/hud/engine/generated');
+        const generated = resolve(root, 'library/explorer-core/engine/generated');
         registerHooks({ resolve(specifier, context, next) {
-            if (specifier === '@hud/engine/generated') {
+            if (specifier === '@explorer-core/engine/generated') {
                 return { url: pathToFileURL(resolve(generated, 'serviceTable.ts')).href, shortCircuit: true };
             }
             return next(specifier, context);

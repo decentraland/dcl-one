@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { Chat } from '../../features/chat/Chat'
 import { openProfileCard } from '../../features/profileCard/ProfileCard'
 import type { ChatLine, ChatState } from '../../features/session/useEngineSession'
-import type { NearbyMember } from '../../engine/protocol'
+import type { NearbyMember } from '@explorer-core/engine/protocol'
 import { fakeSession } from '../harness'
 import { seedProfiles } from '../../features/session/profileStore'
 

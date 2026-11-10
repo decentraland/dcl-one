@@ -1,7 +1,7 @@
 // OptionMenu — a light popover list of single-choice sections (e.g. SORT BY / VIEW), each option
 // marked with a check when chosen. Closes on an outside click or Cancel.
 import { useEffect, useRef } from 'react'
-import { registerCancelLayer } from '../lib/cancelLayers'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { MaskIcon } from './MaskIcon'
 import checkIcon from '../assets/backpack/icon-check.webp'
 import styles from './OptionMenu.module.css'

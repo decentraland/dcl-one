@@ -8,13 +8,13 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
-import { shortAddr, splitName, userColor } from '../../lib/identity'
-import { looksClaimed, mentionName } from '../../engine/mention'
+import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
+import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
 import { peekProfile } from '../session/profileStore'
-import type { Relationship } from '../../lib/relationship'
+import type { Relationship } from '@explorer-core/lib/relationship'
 import styles from './ProfileCard.module.css'
 
-export type { Relationship } from '../../lib/relationship'
+export type { Relationship } from '@explorer-core/lib/relationship'
 
 export interface ChatUser {
   address: string

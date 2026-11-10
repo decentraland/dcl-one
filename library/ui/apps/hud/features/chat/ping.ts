@@ -5,7 +5,7 @@
 // `community:<id>`); closing a tab leaves its setting alone.
 
 import { useSyncExternalStore } from 'react'
-import { PREF, getPref, setPref } from '../../lib/prefs'
+import { PREF, getPref, setPref } from '@explorer-core/lib/prefs'
 
 export type PingMode = 'all' | 'mentions' | 'none'
 

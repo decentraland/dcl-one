@@ -3,7 +3,7 @@
 // while a full-screen page is open.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getPref, PREF, setPref } from '../../lib/prefs'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 
 export const AUTO_HIDE_DELAY_MS = 300
 

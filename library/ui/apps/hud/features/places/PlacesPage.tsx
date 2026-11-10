@@ -5,7 +5,7 @@
 
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { PlacesBrowser } from './PlacesBrowser'
-import { placeTeleport, type DiscoverPlace } from './placesApi'
+import { placeTeleport, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import type { ProfileState } from '../session/useEngineSession'
 
 export interface PlacesState {

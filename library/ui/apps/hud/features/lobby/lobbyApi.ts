@@ -3,8 +3,8 @@
 
 import { serviceUrl } from '@hud-host'
 import { EVENTS_API, type DclEvent } from '../events/eventsApi'
-import { LIVE_FEED_ARGS, fetchDestinations, isHiddenPlace, placePlayers, type DiscoverPlace } from '../places/placesApi'
-import { getPref, PREF, setPref } from '../../lib/prefs'
+import { LIVE_FEED_ARGS, fetchDestinations, isHiddenPlace, placePlayers, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
+import { getPref, PREF, setPref } from '@explorer-core/lib/prefs'
 
 const PLACES_API = `${serviceUrl('places')}/api`
 const RECENTS_MAX = 20

@@ -3,7 +3,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { MaskIcon, Slider, Toggle } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import hearIcon from '../../assets/voice/hear.webp'
 import speakerIcon from '../../assets/voice/speaker.webp'
 import speakIcon from '../../assets/voice/speak.webp'

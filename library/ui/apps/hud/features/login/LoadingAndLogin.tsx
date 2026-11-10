@@ -5,7 +5,7 @@
 
 import { useEffect, useState } from 'react'
 import { Button } from '../../design'
-import { prefetchPlaces } from '../places/placesApi'
+import { prefetchPlaces } from '@explorer-core/features/places/placesApi'
 import type { LoginFlow, LoginStatus } from '../session/useEngineSession'
 import styles from './LoadingAndLogin.module.css'
 

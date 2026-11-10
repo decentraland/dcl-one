@@ -4,7 +4,7 @@
 import { useRef } from 'react'
 import { Close, HeaderButton } from '../../design'
 import { useSession } from '../session/SessionContext'
-import { holeClip } from '../../lib/holeClip'
+import { holeClip } from '@explorer-core/lib/holeClip'
 import styles from './BackpackModal.module.css'
 
 export function BackpackModal({ onClose, children }: { onClose: () => void; children: React.ReactNode }): React.JSX.Element {

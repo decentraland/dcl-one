@@ -3,7 +3,7 @@
 // On hover the creator row is replaced by a JUMP IN button; white-glow lift like the big card.
 
 import { useState } from 'react'
-import { placeCoords, placeCreator, type DiscoverPlace } from './placesApi'
+import { placeCoords, placeCreator, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { useCreatorName } from './useCreatorName'
 import styles from './FeaturedCard.module.css'
 

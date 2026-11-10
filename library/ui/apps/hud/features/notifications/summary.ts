@@ -1,11 +1,11 @@
 // How a notification reads: title, body and image derived from its type-specific metadata, its
 // age, and where clicking it leads. Shared by the panel and the new-notification toast.
 
-import type { AppNotification } from '../../engine/protocol'
+import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { FriendsState } from '../session/useEngineSession'
 import { nativeProfileImage } from '@hud-host'
-import { notificationTimeMs } from '../../lib/notificationTime'
-import { relationshipOf } from '../../lib/relationship'
+import { notificationTimeMs } from '@explorer-core/lib/notificationTime'
+import { relationshipOf } from '@explorer-core/lib/relationship'
 import { openPassport } from '../profile/Passport'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 

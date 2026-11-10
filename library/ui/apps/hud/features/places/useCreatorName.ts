@@ -1,4 +1,4 @@
-import { isAddress, shortAddr } from '../../lib/identity'
+import { isAddress, shortAddr } from '@explorer-core/lib/identity'
 import { useProfile } from '../session/profileStore'
 
 /** A place's creator for display: a bare owner address becomes that wallet's profile name. */

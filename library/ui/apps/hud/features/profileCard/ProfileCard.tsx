@@ -3,14 +3,14 @@
 // useEngineSession); because <PopupHost/> is mounted inside Hud's <SessionProvider>, the popup can
 // read the session with useSession() even though it renders through a portal.
 import { openPopup } from '../../design'
-import { relationshipOf } from '../../lib/relationship'
+import { relationshipOf } from '@explorer-core/lib/relationship'
 import { useSession } from '../session/SessionContext'
 import { useProfile } from '../session/profileStore'
 import { openPassport } from '../profile/Passport'
 import { ProfileCardPresentation, type CardAction, type ChatUser, type MenuContext } from '../chat/ProfileCardPresentation'
 import { confirmBlock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
-import { splitName } from '../../lib/identity'
+import { splitName } from '@explorer-core/lib/identity'
 
 export function ProfileCard({
   userId,

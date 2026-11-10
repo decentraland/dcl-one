@@ -394,7 +394,7 @@ export function start(options = {}) {
   console.log(`[Main JS] launching with ${JSON.stringify(options)}`);
   hideHeader();
 
-  // Page commands: the HUD's test commands (library/ui/apps/hud/lib/hudAutomation.ts) register in
+  // Page commands: the HUD's test commands (library/explorer-core/lib/hudAutomation.ts) register in
   // window.__dclPageCommands, and the console RPC runs them in this page instead of in the engine,
   // which cannot reach the HUD's DOM.
   const pageCommand = (line) => {

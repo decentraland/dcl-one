@@ -1,7 +1,7 @@
 // HintsButton — a dark square button that toggles a popover of control hints above it (icon +
 // text rows). Closes on an outside click or Cancel.
 import { useEffect, useRef, useState } from 'react'
-import { registerCancelLayer } from '../lib/cancelLayers'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { MaskIcon } from './MaskIcon'
 import keyboardIcon from '../assets/backpack/icon-keyboard.webp'
 import styles from './HintsButton.module.css'

@@ -1,7 +1,7 @@
 import { act, cleanup, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import * as auth from '../../features/auth/sso'
-import { clearPlacesCache, fetchDestinations, type DiscoverPlace } from '../../features/places/placesApi'
+import * as auth from '@explorer-core/features/auth/sso'
+import { clearPlacesCache, fetchDestinations, type DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import { usePlaces, type UsePlaces } from '../../features/places/usePlaces'
 
 beforeEach(clearPlacesCache)

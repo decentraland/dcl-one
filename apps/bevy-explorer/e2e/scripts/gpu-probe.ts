@@ -47,7 +47,7 @@ const GPU_PAGE_TEXT = `(() => {
   return parts.join('')
 })()`
 
-/** The page's side: the app's gate asks for an adapter the same way (`library/ui/apps/hud/lib/gpu.ts`). */
+/** The page's side: the app's gate asks for an adapter the same way (`library/explorer-core/lib/gpu.ts`). */
 const PROBE = `(async () => {
   if (!navigator.gpu) return 'navigator.gpu is absent'
   const adapter = await navigator.gpu.requestAdapter()

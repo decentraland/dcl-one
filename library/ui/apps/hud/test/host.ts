@@ -1,6 +1,6 @@
 // The `@hud-host` module the library's own HUD tests run against: a web host on decentraland.org,
 // with images as given and no Shop page of its own.
-import type { AcceptedParam, BootMode, HudHost } from '../hostContract'
+import type { AcceptedParam, BootMode, HudHost } from '@explorer-core/hostContract'
 
 export const BASE_DOMAIN = 'decentraland.org'
 export const nativeProfileImage: HudHost['nativeProfileImage'] = (raw) => raw

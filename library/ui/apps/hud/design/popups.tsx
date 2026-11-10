@@ -2,8 +2,8 @@ import { Component, useRef, useSyncExternalStore, type ReactNode } from 'react'
 import { ModalShell } from './Modal'
 import { Button } from './Button'
 import { useFocusTrap } from '../lib/useFocusTrap'
-import { isInputLocked, subscribeInputLock } from '../lib/inputLock'
-import { nextLayerOrder } from '../lib/cancelLayers'
+import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
+import { nextLayerOrder } from '@explorer-core/lib/cancelLayers'
 import styles from './popups.module.css'
 
 /** A popup is a render function given its own `close` callback; it returns the overlay to render. */

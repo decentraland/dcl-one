@@ -10,7 +10,7 @@
 // listed: it means "any scene button" and is handled in code, not a binding of its own.
 import { useEffect } from 'react'
 import { ModalShell, openPopup } from '../../design'
-import type { ActionWire, BindingEntry, InputIdentifierWire } from '../../engine/protocol'
+import type { ActionWire, BindingEntry, InputIdentifierWire } from '@explorer-core/engine/protocol'
 import {
   bindingsForAction,
   getBindingsSnapshot,
@@ -18,7 +18,7 @@ import {
   sameAction,
   useBindingsSnapshot
 } from '../../lib/bindingLabels'
-import { isForwarded, markForwarded } from '../../lib/canvasForward'
+import { isForwarded, markForwarded } from '@explorer-core/lib/canvasForward'
 import type { BindingsState } from '../session/useEngineSession'
 import styles from './KeyBindingsTab.module.css'
 

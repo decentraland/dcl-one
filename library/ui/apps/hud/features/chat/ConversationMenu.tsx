@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { ContextMenu, ControlButton, Kebab, type ContextMenuItem } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { PING_MODES, clearPingMode, setPingMode, usePingPrefs } from './ping'
 import styles from './Chat.module.css'
 

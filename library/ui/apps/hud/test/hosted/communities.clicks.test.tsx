@@ -6,7 +6,7 @@ import { CommunityModal, openCommunityModal } from '../../features/communities/C
 import { openCommunityCreateModal, openCommunityEditModal, readCommunityPicture } from '../../features/communities/CommunityCreateModal'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { PopupHost, ToastHost, closeTopPopup, resetPopups } from '../../design'
-import type { Community, CommunityDetailMessage, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '../../engine/protocol'
+import type { Community, CommunityDetailMessage, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '@explorer-core/engine/protocol'
 import type { CommunitiesState, CommunitySave } from '../../features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from '../harness'
 import type { CardAction } from '../../features/chat/ProfileCardPresentation'

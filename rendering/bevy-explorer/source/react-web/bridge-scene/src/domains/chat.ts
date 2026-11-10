@@ -10,9 +10,9 @@ import { httpOrUndef, profileKey } from './profile'
 import { retextChatBubble, setChatBubble } from './nametags'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { NearbyMember } from '@hud/engine/protocol'
-import { mentionName, mentionsName } from '@hud/engine/mention'
-import { communityIdOf } from '@hud/engine/communityChannel'
+import type { NearbyMember } from '@explorer-core/engine/protocol'
+import { mentionName, mentionsName } from '@explorer-core/engine/mention'
+import { communityIdOf } from '@explorer-core/engine/communityChannel'
 import { communityName } from './communities'
 
 // The local player's claimed-name flag, from the engine's profile (unknown until it loads).

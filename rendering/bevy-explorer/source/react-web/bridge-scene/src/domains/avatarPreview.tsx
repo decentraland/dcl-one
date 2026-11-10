@@ -13,10 +13,10 @@ import { Color4, Quaternion, Vector3 } from '@dcl/sdk/math'
 import { getPlayer } from '@dcl/sdk/players'
 import type { Entity } from '@dcl/ecs'
 import type { Ctx } from '../bridge'
-import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@hud/engine/protocol'
+import { PREVIEW_MAX_ZOOM, type PreviewFocus } from '@explorer-core/engine/protocol'
 import { currentLook } from './avatarDraft'
-import type { AvatarLook } from '@hud/engine/avatarEquip'
-import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '@hud/engine/lobbyStage'
+import type { AvatarLook } from '@explorer-core/engine/avatarEquip'
+import { BACKDROP_EDGE_FADE, FLOOR, FLOOR_SHADE_STOPS, backdropRect, floorShadeAt } from '@explorer-core/engine/lobbyStage'
 import { BevyApi } from '../bevy-api'
 
 type Rect = { x: number; y: number; width: number; height: number }

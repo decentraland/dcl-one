@@ -14,7 +14,7 @@
 
 import { useState } from 'react'
 import { Button, DclLogo, ModalShell } from '../../design'
-import { inShell, postToShell } from '../../lib/shell'
+import { inShell, postToShell } from '@explorer-core/lib/shell'
 import styles from './UntrustedLaunchGate.module.css'
 import { siteUrl } from '@hud-host'
 

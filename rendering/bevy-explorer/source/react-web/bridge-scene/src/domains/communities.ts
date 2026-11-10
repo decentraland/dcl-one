@@ -14,7 +14,7 @@ import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { Community, CommunityAction, CommunityBrowseMessage, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPlaceOption, CommunityPlaceOptionsMessage, CommunityPost, CommunitySaveResultMessage } from '@hud/engine/protocol'
+import type { Community, CommunityAction, CommunityBrowseMessage, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPlaceOption, CommunityPlaceOptionsMessage, CommunityPost, CommunitySaveResultMessage } from '@explorer-core/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
 // live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT

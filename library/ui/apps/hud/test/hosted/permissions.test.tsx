@@ -6,7 +6,7 @@ import { PermissionDialog } from '../../features/permissions/PermissionDialog'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { PopupHost, resetPopups } from '../../design'
 import { fakeSession } from '../harness'
-import type { PermissionRequestMessage, PermissionUsedMessage } from '../../engine/protocol'
+import type { PermissionRequestMessage, PermissionUsedMessage } from '@explorer-core/engine/protocol'
 import type { PermissionSubject } from '../../features/session/useEngineSession'
 
 const REQ: PermissionRequestMessage = {

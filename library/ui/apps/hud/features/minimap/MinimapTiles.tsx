@@ -5,7 +5,7 @@
 // CSS transforms, so this only re-renders when the *set* of tiles changes (crossing a chunk
 // boundary), which is every 40 parcels for satellite and every 16 for parcel.
 
-import { PARCELS_PER_TILE, PARCEL_METERS, atlasPx, tileUrl, type Chunk, type ParcelTile } from '../map/atlas'
+import { PARCELS_PER_TILE, PARCEL_METERS, atlasPx, tileUrl, type Chunk, type ParcelTile } from '@explorer-core/features/map/atlas'
 import styles from './Minimap.module.css'
 
 /**

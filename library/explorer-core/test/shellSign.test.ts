@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { personalSign } from '../../shell/sign'
+import { personalSign } from '../shell/sign'
 
 describe('personalSign', () => {
   // web3.js docs: web3.eth.accounts.sign('Some data', key)

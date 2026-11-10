@@ -1,8 +1,8 @@
 // Who a chat line, tab or member row is: names, colours and the system sender, shared by the
 // chat panel's pieces.
 
-import { displayName } from '../../engine/mention'
-import type { NearbyMember } from '../../engine/protocol'
+import { displayName } from '@explorer-core/engine/mention'
+import type { NearbyMember } from '@explorer-core/engine/protocol'
 import { knownUserColor, useProfile } from '../session/profileStore'
 
 const ADDRESS_RE = /^0x[0-9a-fA-F]{6,}$/

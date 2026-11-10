@@ -5,16 +5,16 @@
 // live here now. Same-origin/same-document, so no postMessage or contentWindow plumbing.
 
 import { useEffect } from 'react'
-import type { EngineRpc } from '@hud/engine/engineRpc'
-import { bridgeChannelName } from '@hud/engine/protocol'
+import type { EngineRpc } from '@explorer-core/engine/engineRpc'
+import { bridgeChannelName } from '@explorer-core/engine/protocol'
 import { BASE_DOMAIN, SERVICE_OVERRIDES } from '../../lib/baseDomain'
 import { benchmarkSwitchesHonoured, bootMode } from '../../lib/bootMode'
 import { perfStreamPath } from '../../lib/entryParams'
 import { PAGE_DIR } from '../../lib/publicUrl'
-import { inShell, shellRequest } from '@hud/lib/shell'
+import { inShell, shellRequest } from '@explorer-core/lib/shell'
 // Moved to lib/systemScene.ts; whether a link may override it is lib/launchGate.ts's call.
 import { SYSTEM_SCENE } from '../../lib/systemScene'
-import { launchOptionsFromUrl, type LaunchOptions } from '@hud/lib/webParams'
+import { launchOptionsFromUrl, type LaunchOptions } from '@explorer-core/lib/webParams'
 
 // Engine media libs the wasm expects as globals (LivekitClient, Hls) — loaded from CDNs like the
 // old boot page did. Pinned with integrity hashes: they run in the app, which the shell signs for.

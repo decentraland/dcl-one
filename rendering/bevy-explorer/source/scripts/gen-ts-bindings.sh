@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Generate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
-# structs in crates/system_api_types, into library/ui/apps/hud/engine/generated (+ a barrel index.ts),
+# structs in crates/system_api_types, into library/explorer-core/engine/generated (+ a barrel index.ts),
 # the one tracked copy both HUD hosts (react-web and Sites /play) compile.
 # Also writes the web param TABLE (crates/system_api_types/src/web_params.rs → webParamTable.ts)
 # and the language table (languages.rs → languageTable.ts): the `export_` filter catches both
@@ -14,7 +14,7 @@ root="$(cd "$(dirname "$0")/.." && pwd)"
 case "$(uname -s)" in
 MINGW* | MSYS*) root="$(cd "$root" && pwd -W)" ;;
 esac
-out="$root/../../../library/ui/apps/hud/engine/generated"
+out="$root/../../../library/explorer-core/engine/generated"
 rm -rf "$out"
 mkdir -p "$out"
 TS_RS_EXPORT_DIR="$out" cargo test --manifest-path "$root/Cargo.toml" -p system_api_types export_

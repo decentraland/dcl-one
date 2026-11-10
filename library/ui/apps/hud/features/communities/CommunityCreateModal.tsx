@@ -9,7 +9,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { CharCounter, MaskIcon, Select, Spinner, TextArea, openPopup, showConfirm, showToast } from '../../design'
-import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '../../engine/protocol'
+import type { Community, CommunityPlaceOption, CommunityPlaceOptionsMessage } from '@explorer-core/engine/protocol'
 import closeIcon from '../../assets/backpack/icon-close.webp'
 import type { CommunitySave, CreateCommunityInput, UpdateCommunityInput } from '../session/useEngineSession'
 import { useSession } from '../session/SessionContext'

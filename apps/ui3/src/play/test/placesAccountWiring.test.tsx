@@ -5,9 +5,9 @@ import { useEngineSession, type EngineSession } from '@hud/features/session/useE
 
 vi.mock('@hud/features/session/useEngineSession', async (original) => ({ ...await original<typeof import('@hud/features/session/useEngineSession')>(), useEngineSession: vi.fn() }))
 vi.mock('../features/engine/EngineHost', () => ({ EngineHost: () => null }))
-vi.mock('@hud/engine/engineRpc', () => ({ EngineRpc: class {} }))
-vi.mock('@hud/lib/isMobile', async (original) => ({ ...await original<typeof import('@hud/lib/isMobile')>(), isMobile: () => false, isChromiumBased: () => true }))
-vi.mock('@hud/lib/gpu', () => ({ probeGpu: async () => ({ usable: true, adapter: null }) }))
+vi.mock('@explorer-core/engine/engineRpc', () => ({ EngineRpc: class {} }))
+vi.mock('@explorer-core/lib/isMobile', async (original) => ({ ...await original<typeof import('@explorer-core/lib/isMobile')>(), isMobile: () => false, isChromiumBased: () => true }))
+vi.mock('@explorer-core/lib/gpu', () => ({ probeGpu: async () => ({ usable: true, adapter: null }) }))
 vi.mock('@hud/features/places/PlacesPicker', () => ({ PlacesPicker: ({ account }: { account?: string }) => <div data-testid="picker-account">{account ?? 'pending'}</div> }))
 vi.mock('@hud/features/places/PlacesPage', () => ({ PlacesPage: ({ account }: { account?: string }) => <div data-testid="places-account">{account ?? 'pending'}</div> }))
 import { App } from '../App'

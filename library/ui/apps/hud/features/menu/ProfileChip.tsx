@@ -3,7 +3,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, HeaderButton } from '../../design'
-import { shortAddr } from '../../lib/identity'
+import { shortAddr } from '@explorer-core/lib/identity'
 import { knownUserColor } from '../session/profileStore'
 import styles from './ProfileChip.module.css'
 import { siteUrl } from '@hud-host'

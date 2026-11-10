@@ -8,8 +8,8 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Button, showConfirm } from '../../design'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import type { PermissionRuleItem, PermissionRuleLevel } from '../../engine/protocol'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import type { PermissionRuleItem, PermissionRuleLevel } from '@explorer-core/engine/protocol'
 import type { PermissionRules, PermissionSubject, TriggeredPermission, VisitAnswer } from '../session/useEngineSession'
 import { describePermission, openPermissionReview } from './PermissionDialog'
 import styles from './PermissionsPopover.module.css'

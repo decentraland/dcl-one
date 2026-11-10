@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ShopPage } from '../../features/shop/ShopPage'
-import { formatMana, shopItemPrice, type ShopItem } from '../../features/shop/shopApi'
+import { formatMana, shopItemPrice, type ShopItem } from '@explorer-core/features/shop/shopApi'
 import { fakeProfileState } from '../harness'
 
 const item = (over: Partial<ShopItem> = {}): ShopItem => ({

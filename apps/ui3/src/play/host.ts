@@ -1,6 +1,6 @@
 // The HUD host module (`@hud-host`) for the Sites /play host: the shared HUD in library/ui/apps/hud
 // reads these through the contract in its hostContract.ts.
-import type { HudHost } from '@hud/hostContract'
+import type { HudHost } from '@explorer-core/hostContract'
 import { BASE_DOMAIN, DEFAULT_REALM, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from './lib/baseDomain'
 import { bootMode, isNativeHud } from './lib/bootMode'
 import { acceptedEntryParams, entryRealm } from './lib/entryParams'

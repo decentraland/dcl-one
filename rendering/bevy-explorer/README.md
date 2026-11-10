@@ -18,12 +18,13 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 - `/play/engine/`, `/play/bridge-scene/`, `/play/service_worker.js`, `/play/preview_realm.js`: the
   web artifact imported by `tooling/fetch-play.py` into `.cache/play/<manifest-hash>` (production:
   `build/client/play`, described by `/play/sites-play.json`).
-- `library/ui/apps/hud/engine/generated`: bindings from `crates/system_api_types`, which both HUD
+- `library/explorer-core/engine/generated`: bindings from `crates/system_api_types`, which both HUD
   hosts compile; regenerate with `source/scripts/gen-ts-bindings.sh` and commit the result.
 
 ## The HUD
 
-The HUD UI both hosts share lives in `library/ui/apps/hud` (`@hud/*`); where they differ, it reads
+The HUD both hosts share lives in `library/ui/apps/hud` (`@hud/*`, the UI) and `library/explorer-core`
+(`@explorer-core/*`, the page's core with no React); where they differ, it reads
 the behaviour from `@hud-host`, each host's `host.ts` (`docs/ui-standards.md`, "Explorer HUD
 transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with these changes:
 
@@ -65,7 +66,7 @@ transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with
   bridge channel's `__engineExited` exemption (`engine/bridgeChannel.ts`; `boot.js` sets it only
   when the engine ends its own run under the autopilot, which `/play` never starts).
 
-Open: `library/ui/apps/hud/features/auth/sso.ts` expects the Foundation auth site's `/auth/login`, which Sites does not
+Open: `library/explorer-core/features/auth/sso.ts` expects the Foundation auth site's `/auth/login`, which Sites does not
 serve; guest sessions work.
 
 ## Forks and drift

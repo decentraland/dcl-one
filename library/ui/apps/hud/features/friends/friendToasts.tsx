@@ -1,6 +1,6 @@
 import { Avatar, showToast } from '../../design'
-import type { FriendAction } from '../../engine/protocol'
-import { shortAddr, splitName } from '../../lib/identity'
+import type { FriendAction } from '@explorer-core/engine/protocol'
+import { shortAddr, splitName } from '@explorer-core/lib/identity'
 import { knownUserColor, peekProfile } from '../session/profileStore'
 
 const VERB: Record<FriendAction, string> = {

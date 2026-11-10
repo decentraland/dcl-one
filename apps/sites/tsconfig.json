@@ -36,6 +36,7 @@
       "@shop/*": ["../../library/shop/*"],
       // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it.
       "@hud/*": ["../../library/ui/apps/hud/*"],
+      "@explorer-core/*": ["../../library/explorer-core/*"],
       "@hud-host": ["../ui3/src/play/host.ts"],
       // library/ui/apps/hud has no node_modules of its own: its packages resolve to this app's copy.
       "@noble/*": ["./node_modules/@noble/*"],

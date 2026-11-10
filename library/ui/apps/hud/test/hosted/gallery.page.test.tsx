@@ -2,10 +2,10 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { GalleryPage } from '../../features/gallery/GalleryPage'
-import { dispatchCancelLayer } from '../../lib/cancelLayers'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import type { GalleryState, ProfileState } from '../../features/session/useEngineSession'
 import { fakeProfileState } from '../harness'
-import type { GalleryPhoto } from '../../engine/protocol'
+import type { GalleryPhoto } from '@explorer-core/engine/protocol'
 
 const profile: ProfileState = fakeProfileState({
   data: { address: '0xme', name: 'Mojito', hasClaimedName: true, isGuest: false }

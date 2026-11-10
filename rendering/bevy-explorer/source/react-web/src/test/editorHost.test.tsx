@@ -14,9 +14,9 @@ import { editorEntry, editorSource } from '@hud/features/editorHost/source'
 import type { EngineSession } from '@hud/features/session/useEngineSession'
 import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
 import { Sidebar } from '@hud/features/sidebar/Sidebar'
-import { bridgeChannelName, type Envelope } from '@hud/engine/protocol'
+import { bridgeChannelName, type Envelope } from '@explorer-core/engine/protocol'
 import { PAGE_DIR } from '../lib/publicUrl'
-import { pending, sessionId } from '@hud/lib/analytics'
+import { pending, sessionId } from '@explorer-core/lib/analytics'
 import { renderSettled, fakeSession } from '@hud/test/harness'
 
 type HostWindow = Window & {

@@ -3,7 +3,7 @@
 // the card's place delete, the member menu's actions, and the browse grid's pages.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene, SceneToPage } from '@hud/engine/protocol'
+import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 let player: { userId: string; isGuest: boolean } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))

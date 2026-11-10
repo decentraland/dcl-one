@@ -7,8 +7,8 @@
 // blocks web pages from opening chrome:// targets (see FlagStep).
 
 import { openPopup, ModalShell, Button } from '../../design'
-import type { GpuAdapterInfo } from '../../lib/gpu'
-import { chromiumBrowser } from '../../lib/integratedGpu'
+import type { GpuAdapterInfo } from '@explorer-core/lib/gpu'
+import { chromiumBrowser } from '@explorer-core/lib/integratedGpu'
 import { FlagStep } from './FlagStep'
 import styles from './IntegratedGpuGuide.module.css'
 

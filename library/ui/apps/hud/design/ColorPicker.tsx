@@ -5,8 +5,8 @@
 // to the colour preview alone, for a control that sits inline beside other text.
 
 import { useEffect, useRef, useState } from 'react'
-import { registerCancelLayer } from '../lib/cancelLayers'
-import { hexToHsv, hsvToHex, type Hsv } from '../lib/color'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { hexToHsv, hsvToHex, type Hsv } from '@explorer-core/lib/color'
 import styles from './ColorPicker.module.css'
 
 // Arrow step; the bars run 0–1.

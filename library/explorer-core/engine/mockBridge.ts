@@ -27,7 +27,7 @@ import {
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
 import { mentionName } from './mention'
-import type { Color3 } from './generated'
+import type { Color3 } from './generated/index'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '@hud-host'
 

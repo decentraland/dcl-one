@@ -8,9 +8,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { Button, ModalShell, Select, Tabs, TextInput, openPopup, type TabItem } from '../../design'
 import { useSession } from '../session/SessionContext'
-import { splitName } from '../../lib/identity'
-import { NAME_MAX, isValidName } from './profileFields'
-import { addressSuffix } from '../../engine/profileEdit'
+import { splitName } from '@explorer-core/lib/identity'
+import { NAME_MAX, isValidName } from '@explorer-core/features/profile/profileFields'
+import { addressSuffix } from '@explorer-core/engine/profileEdit'
 import styles from './NameEditModal.module.css'
 import { siteUrl } from '@hud-host'
 

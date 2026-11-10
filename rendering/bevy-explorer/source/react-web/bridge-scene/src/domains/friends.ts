@@ -6,8 +6,8 @@ import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi, type FriendStatusData, type FriendRequestData } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { BlockedUser, Friend, FriendRequest } from '@hud/engine/protocol'
-import type { BlockedUserData } from '@hud/engine/generated'
+import type { BlockedUser, Friend, FriendRequest } from '@explorer-core/engine/protocol'
+import type { BlockedUserData } from '@explorer-core/engine/generated'
 
 const toFriend = (f: FriendStatusData): Friend => ({
   address: f.address,

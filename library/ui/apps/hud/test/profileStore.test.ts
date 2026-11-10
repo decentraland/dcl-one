@@ -12,7 +12,7 @@ import {
   subscribeProfile,
   useProfile
 } from '../features/session/profileStore'
-import type { Profile, Wearable } from '../engine/protocol'
+import type { Profile, Wearable } from '@explorer-core/engine/protocol'
 
 // STORE: the one address→identity map. Requests go out only for what's shown, once; a list's seed
 // never overwrites the engine's copy; the engine's change stream re-reads only what's still shown.

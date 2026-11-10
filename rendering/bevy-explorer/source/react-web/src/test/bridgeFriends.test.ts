@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { SceneToPage } from '@hud/engine/protocol'
+import type { SceneToPage } from '@explorer-core/engine/protocol'
 
 // The friends domain polls BevyApi.social and pushes a `friends` snapshot. These tests cover the
 // blocked-by list: who has blocked the local user, read from the engine's blocking status.

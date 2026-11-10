@@ -8,10 +8,10 @@
 
 import { render, renderHook, act, waitFor, type RenderHookResult } from '@testing-library/react'
 import { expect, vi } from 'vitest'
-import type { LoginDriver, NewAccountPick } from '../engine/driver'
-import type { AuthIdentity } from '../features/auth/sso'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
-import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
+import type { LoginDriver, NewAccountPick } from '@explorer-core/engine/driver'
+import type { AuthIdentity } from '@explorer-core/features/auth/sso'
+import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
+import { GENESIS_SATELLITE_VIEW } from '@explorer-core/features/map/atlas'
 import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
 
 export async function renderSettled(...args: Parameters<typeof render>): Promise<ReturnType<typeof render>> {

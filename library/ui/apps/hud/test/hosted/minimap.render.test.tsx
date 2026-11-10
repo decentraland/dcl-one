@@ -3,8 +3,8 @@ import { screen } from '@testing-library/react'
 import { Minimap } from '../../features/minimap/Minimap'
 import { fakeSession, renderSettled } from '../harness'
 
-vi.mock('../../features/minimap/minimapPlaces', async (original) => ({
-  ...await original<typeof import('../../features/minimap/minimapPlaces')>(),
+vi.mock('@explorer-core/features/minimap/minimapPlaces', async (original) => ({
+  ...await original<typeof import('@explorer-core/features/minimap/minimapPlaces')>(),
   loadMinimapPlaces: vi.fn(async () => [])
 }))
 

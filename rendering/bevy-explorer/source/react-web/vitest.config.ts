@@ -25,7 +25,7 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     css: false,
     sequence: { hooks: 'list' },
-    // The shared HUD UI's tests too (library/ui/apps/hud), including those that need this app's packages.
-    include: ['src/**/*.test.{ts,tsx}', '../../../../library/ui/apps/hud/**/*.test.{ts,tsx}']
+    // The shared HUD UI's and the Explorer page core's tests too, including those that need this app's packages.
+    include: ['src/**/*.test.{ts,tsx}', '../../../../library/ui/apps/hud/**/*.test.{ts,tsx}', '../../../../library/explorer-core/**/*.test.{ts,tsx}']
   }
 })

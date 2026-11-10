@@ -14,10 +14,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '../../design'
 import { EngineViewport } from '../engine/EngineViewport'
-import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '../map/atlas'
+import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
 import { pinForCategories } from '../map/mapArt'
 import { BASE_PX_PER_PARCEL, ParcelTiles, SatelliteTiles } from './MinimapTiles'
-import { loadMinimapPlaces, placesNear, type MinimapPlace } from './minimapPlaces'
+import { loadMinimapPlaces, placesNear, type MinimapPlace } from '@explorer-core/features/minimap/minimapPlaces'
 import {
   MAX_VISIBLE_METERS,
   MIN_VISIBLE_METERS,
@@ -32,10 +32,10 @@ import {
   saveRotation,
   saveStyle,
   saveZoom
-} from './minimapPrefs'
+} from '@explorer-core/features/minimap/minimapPrefs'
 import { MinimapSettings } from './MinimapSettings'
 import type { MapState, MinimapState } from '../session/useEngineSession'
-import type { MinimapStyle } from '../../engine/protocol'
+import type { MinimapStyle } from '@explorer-core/engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
 import styles from './Minimap.module.css'
 

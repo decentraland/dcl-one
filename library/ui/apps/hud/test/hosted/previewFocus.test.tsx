@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { BackpackPage } from '../../features/backpack/BackpackPage'
-import { previewFocusFor } from '../../features/backpack/previewFocus'
+import { previewFocusFor } from '@explorer-core/features/backpack/previewFocus'
 import { fakeProfileState, fakeSession } from '../harness'
 
 describe('avatar preview focus', () => {

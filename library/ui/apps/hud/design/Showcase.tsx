@@ -34,7 +34,7 @@ import { Icon, type IconName } from './icons'
 import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
 import { seedProfiles } from '../features/session/profileStore'
 import { EmoteSlot } from '../features/emotes/EmoteSlot'
-import { catalystThumbUrl } from '../lib/identity'
+import { catalystThumbUrl } from '@explorer-core/lib/identity'
 
 // A chat bubble resolves its sender through the profile store, so the demo line's author is seeded.
 const MOJITO = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'

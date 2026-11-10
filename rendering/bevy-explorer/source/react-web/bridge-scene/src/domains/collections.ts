@@ -2,7 +2,7 @@
 // address) resolved by item urn, for wearables and emotes alike.
 //   from: GET /lambdas/collections/wearables?wearableId=… and /lambdas/collections/emotes?emoteId=…
 import { getJson } from '../http'
-import type { HideData } from '@hud/engine/avatarHides'
+import type { HideData } from '@explorer-core/engine/avatarHides'
 
 export type ItemDef = {
   id: string

@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { renderSession, enterAsGuest } from '../harness'
 import { WorldPasswordDialog, openWorldPasswordDialog } from '../../features/worldAccess/WorldPasswordDialog'
 import { closeTopPopup, resetPopups } from '../../design'
-import type { WorldPasswordRequestMessage } from '../../engine/protocol'
+import type { WorldPasswordRequestMessage } from '@explorer-core/engine/protocol'
 
 const REQ: WorldPasswordRequestMessage = { kind: 'worldPasswordRequest', world: 'secret-garden.dcl.eth' }
 

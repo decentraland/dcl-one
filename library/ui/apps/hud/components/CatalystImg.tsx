@@ -2,7 +2,7 @@
 // (loads under the engine's COEP `credentialless` context — no proxy/blob needed). An
 // explicit `src` (e.g. a thumbnail the relay already provided) takes precedence.
 
-import { catalystThumbUrl } from '../lib/identity'
+import { catalystThumbUrl } from '@explorer-core/lib/identity'
 
 export function CatalystImg({
   urn,

@@ -4,7 +4,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { FeaturedCard } from './FeaturedCard'
-import type { DiscoverPlace } from './placesApi'
+import type { DiscoverPlace } from '@explorer-core/features/places/placesApi'
 import styles from './PlacesPage.module.css'
 
 function Chevron({ dir }: { dir: 'left' | 'right' }): React.JSX.Element {

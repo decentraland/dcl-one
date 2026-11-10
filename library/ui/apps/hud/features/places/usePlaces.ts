@@ -4,7 +4,7 @@
 // (we don't abort: placesApi shares cached promises across consumers).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { getLogin } from '../auth/sso'
+import { getLogin } from '@explorer-core/features/auth/sso'
 import {
   BROWSE_ARGS,
   FEATURED_ARGS,
@@ -15,7 +15,7 @@ import {
   type DiscoverPlace,
   type PlacesOrderBy,
   type PlacesResponse
-} from './placesApi'
+} from '@explorer-core/features/places/placesApi'
 
 export type PlacesSection = 'all' | 'favourites' | 'my'
 export type PlacesSort = 'most_active' | 'like_score_best' | 'created_at' | 'name'

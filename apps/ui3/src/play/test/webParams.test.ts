@@ -2,8 +2,8 @@
 // is filled from it — and this front-end's launch gate over those params (lib/launchGate.ts).
 
 import { describe, expect, it } from 'vitest'
-import { SERVICES, WEB_PARAMS } from '@hud/engine/generated'
-import { launchOptionsFromUrl, webParam } from '@hud/lib/webParams'
+import { SERVICES, WEB_PARAMS } from '@explorer-core/engine/generated'
+import { launchOptionsFromUrl, webParam } from '@explorer-core/lib/webParams'
 import { untrustedLaunchParams } from '../lib/launchGate'
 import { normaliseServiceUrl } from '../lib/baseDomain'
 

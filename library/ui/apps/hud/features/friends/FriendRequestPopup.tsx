@@ -3,10 +3,10 @@
 // friends service accepted the action, then close by themselves.
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, Button, ModalShell, Spinner, TextArea, openPopup } from '../../design'
-import { splitName, userColor } from '../../lib/identity'
+import { splitName, userColor } from '@explorer-core/lib/identity'
 import { useSession } from '../session/SessionContext'
 import { knownUserColor } from '../session/profileStore'
-import { onFriendEvent } from './friendEvents'
+import { onFriendEvent } from '@explorer-core/features/friends/friendEvents'
 import styles from './FriendRequestPopup.module.css'
 
 export type RequestMode = 'send' | 'received' | 'sent' | 'accept'

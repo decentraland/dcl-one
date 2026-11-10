@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { BackpackPage } from '../../features/backpack/BackpackPage'
-import { hexToColor3 } from '../../lib/color'
+import { hexToColor3 } from '@explorer-core/lib/color'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from '../harness'
 
 // Audit backpack-emotes-5: no skin/hair/eye color editing.
