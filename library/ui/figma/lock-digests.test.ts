@@ -200,6 +200,15 @@ describe('when the lock pins every tracked figma file', () => {
     expect(run()).toBe(0)
   })
 
+  it('should report a reason over 4000 characters as too long, not as missing', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes!['dcl-one-only'] = 'x'.repeat(4001)
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation code dcl-one-only has a reason longer than 4000 characters')
+    expect(out).not.toContain('has no reason')
+  })
+
   it('should refuse an integer-like code id, which a JS object can never keep in string order', async () => {
     await annotate((value) => {
       value.sources[0].deviationCodes = {

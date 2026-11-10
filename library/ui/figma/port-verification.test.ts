@@ -7,10 +7,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { blobDigests } from './lock-digests.mjs'
 import {
   REQUIRED_CHECKS,
+  exemptReferences,
   isRecordExempt,
   main,
   portInputHash,
   recordProblems,
+  scanProblems,
+  trackedBlobsAt,
   trackedFilesAt
 } from './port-verification.mjs'
 
@@ -110,25 +113,6 @@ const recordFor = (overrides: Record<string, unknown> = {}) => {
   }
 }
 const run = (base: string) => main(['--base', base], repo)
-const SCAN_EXCLUDED = [
-  'library/ui/figma/port-verification.mjs',
-  'library/ui/figma/port-verification.test.ts'
-]
-// Every single-, double- or back-quoted literal without escapes or interpolation.
-const pathLiterals = (text: string) =>
-  [...text.matchAll(/(['"`])((?:(?!\1)[^\\\n$])*)\1/g)].map((match) => match[2]!)
-const pointsAtExempt = (file: string, literal: string) => {
-  const target = literal.startsWith('.')
-    ? path.posix.normalize(path.posix.join(path.posix.dirname(file), literal))
-    : undefined
-  return Boolean(
-    (target && (isRecordExempt(target) || isRecordExempt(`${target}/x.ts`))) ||
-    /\.md$/.test(literal) ||
-    /^(?:test|fixtures|__tests__)$/.test(literal) ||
-    /(?:^|\/)(?:test|fixtures|__tests__)\//.test(literal)
-  )
-}
-
 let base: string
 beforeEach(async () => {
   repo = await mkdtemp(path.join(tmpdir(), 'port-verification-'))
@@ -497,48 +481,72 @@ describe('when deciding which files are port inputs', () => {
     expect(isRecordExempt(file)).toBe(false)
   })
 
-  // The exemption holds only while no port input names an exempt file. This scans every string literal of the tracked
-  // port inputs for a relative path, a bare directory name or a Markdown name that points at one. It does not see paths
-  // built at run time; the agent kit's readdir of its skills is one, and no check against the capture runs the kit.
-  it('should find no port input under library/ui/figma whose string literals point at an exempt file', () => {
+  // The validator runs this scan on every head in CI; this case keeps the tree it ships with clean.
+  it('should find no port input in this tree that names an exempt file', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..')
-    const files = execFileSync('git', ['-C', root, 'ls-files', '-z', '--', 'library/ui/figma'])
-      .toString('utf8')
-      .split('\0')
-      // The validator spells out the exempt roots, and this test names test paths on purpose and reads only its own
-      // temporary repositories; both are bound port inputs.
-      .filter(
-        (file) =>
-          /\.(?:[cm]?[jt]sx?|mts|cts)$/.test(file) &&
-          !isRecordExempt(file) &&
-          !SCAN_EXCLUDED.includes(file)
-      )
-    expect(files.length).toBeGreaterThan(100)
-    const offenders: string[] = []
-    for (const file of files) {
-      const text = execFileSync('git', ['-C', root, 'show', `:${file}`]).toString('utf8')
-      for (const literal of pathLiterals(text))
-        if (pointsAtExempt(file, literal)) offenders.push(`${file}: ${JSON.stringify(literal)}`)
-    }
-    expect(offenders).toEqual([])
+    const blobs = trackedBlobsAt(root, 'HEAD')
+    expect(Object.keys(blobs).length).toBeGreaterThan(100)
+    expect(scanProblems(blobs)).toEqual([])
   })
 
   it.each([
     ["import './test/setup.ts'", 'a side-effect import'],
     ["export * from './test'", 'a directory re-export'],
-    ["new URL('../test/data.json', import.meta.url)", 'a URL'],
+    ["new URL('../test/data.json', import.meta.url)", 'a URL into a test root'],
+    ["new URL('helpers.spec.mjs', import.meta.url)", 'a bare spec basename'],
+    ["path.join(dir, 'payload.SPEC.json')", 'a bare spec basename in another case'],
     ["path.join(root, 'fixtures', 'x.json')", 'a bare directory segment'],
+    ["path.join(root, 'Fixtures', 'x.json')", 'a directory segment in another case'],
     ['readFile(`notes/README.md`)', 'a Markdown name in a template literal'],
+    ["import notes from './notes.md?raw'", 'a Markdown import with a query'],
+    ["import a from './a.md#top'", 'a Markdown import with a fragment'],
+    ["glob('./**/*.{md,tsx}')", 'a glob that matches Markdown'],
     ["await import('./src/a.test.ts')", 'a dynamic import of a test']
   ])('should flag %s as %s', (code) => {
-    const file = 'library/ui/figma/tool.mjs'
-    expect(pathLiterals(code).some((literal) => pointsAtExempt(file, literal))).toBe(true)
+    expect(exemptReferences('library/ui/figma/tool.mjs', code)).not.toEqual([])
   })
 
   it('should not flag literals that only look like words', () => {
-    const file = 'library/ui/figma/tool.mjs'
     const code = "const label = 'testing'; const re = /test/; run('./src/a.ts'); log('mdx')"
-    expect(pathLiterals(code).filter((literal) => pointsAtExempt(file, literal))).toEqual([])
+    expect(exemptReferences('library/ui/figma/tool.mjs', code)).toEqual([])
+  })
+
+  it('should refuse a validator that imports anything beyond its two bound modules', () => {
+    const self = 'library/ui/figma/port-verification.mjs'
+    const ok = "import { a } from './lock-digests.mjs'\nimport path from 'node:path'\n"
+    expect(scanProblems({ [self]: Buffer.from(ok) })).toEqual([])
+    expect(
+      scanProblems({ [self]: Buffer.from(ok + "import { roots } from './test/rule.mjs'\n") })
+    ).toEqual([`${self} imports ./test/rule.mjs`])
+    expect(scanProblems({ [self]: Buffer.from("const r = await import('./rule.mjs')\n") })).toEqual(
+      [`${self} imports ./rule.mjs`]
+    )
+  })
+
+  it('should fail the check when a port input names an exempt file', async () => {
+    await put(
+      'library/ui/figma/a.ts',
+      "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
+    )
+    commit('reads an exempt file')
+
+    expect(run(base)).toBe(1)
+    expect(out).toContain('names the exempt path "helpers.spec.mjs"')
+  })
+})
+
+describe('when printing the port input hash', () => {
+  it('should print the hash a record must name, without needing a base', async () => {
+    await put('library/ui/figma/a.ts', 'export const a = 5\n')
+    const expected = recordFor().portInputHash
+    commit('head')
+
+    expect(main(['--print-hash'], repo)).toBe(0)
+    expect(out.trim()).toBe(expected)
+  })
+
+  it('should refuse --print-hash together with --base', () => {
+    expect(main(['--print-hash', '--base', base], repo)).toBe(2)
   })
 })
 

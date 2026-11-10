@@ -84,19 +84,17 @@ export function pinnedFiles(lock) {
       problems.push('the capture pin has no well-formed snapshot digest table')
   }
   const codes = source.deviationCodes ?? {}
-  if (!codes || typeof codes !== 'object' || Array.isArray(codes))
+  if (typeof codes !== 'object' || Array.isArray(codes))
     throw new Error('upstream.lock.json has a malformed deviationCodes table')
-  for (const [code, reason] of Object.entries(codes))
-    if (
-      code === 'note'
-        ? reason !== null
-        : typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 4000
-    )
-      problems.push(
-        code === 'note'
-          ? 'deviation code note must map to null; each file carries its own note'
-          : `deviation code ${code} has no reason`
-      )
+  for (const [code, reason] of Object.entries(codes)) {
+    if (code === 'note') {
+      if (reason !== null)
+        problems.push('deviation code note must map to null; each file carries its own note')
+    } else if (typeof reason !== 'string' || reason.trim().length === 0)
+      problems.push(`deviation code ${code} has no reason`)
+    else if (reason.length > 4000)
+      problems.push(`deviation code ${code} has a reason longer than 4000 characters`)
+  }
   const codeNames = Object.keys(codes)
   // An integer-like key always sorts first in a JS object, so it could never stay in string order.
   for (const code of codeNames)
@@ -144,6 +142,13 @@ export function pinnedFiles(lock) {
  * text is not the file, and pinning it would vouch for content nobody hashed.
  */
 export function blobDigests(root, listing) {
+  return Object.fromEntries(
+    Object.entries(readBlobs(root, listing)).map(([file, content]) => [file, sha256(content)])
+  )
+}
+
+/** The bytes of each blob in `listing`, keyed by repository path, with the same refusals as blobDigests. */
+export function readBlobs(root, listing) {
   if (listing.length === 0) return {}
   if (new Set(listing.map(({ file }) => file)).size !== listing.length)
     throw new Error('the listing names a path twice')
@@ -151,7 +156,7 @@ export function blobDigests(root, listing) {
     input: listing.map(({ oid }) => oid).join('\n') + '\n',
     maxBuffer: 1 << 30
   })
-  const digests = {}
+  const blobs = {}
   let offset = 0
   for (const { file, oid } of listing) {
     const end = output.indexOf(0x0a, offset)
@@ -161,10 +166,10 @@ export function blobDigests(root, listing) {
     const content = output.subarray(start, start + Number(size))
     if (content.subarray(0, LFS_POINTER.length).equals(LFS_POINTER))
       throw new Error(`${file} is a Git LFS pointer; ported files are plain git`)
-    digests[file] = sha256(content)
+    blobs[file] = content
     offset = start + Number(size) + 1
   }
-  return digests
+  return blobs
 }
 
 /** Modes of the files a port may hold: regular and executable files. Symlinks and submodules are refused. */
