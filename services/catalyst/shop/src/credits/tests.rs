@@ -4929,7 +4929,7 @@ async fn an_event_in_flight_holds_the_other_until_it_commits() {
         )
         .await
         .unwrap();
-    let MarkPaidOutcome::Granted { address, credits } = outcome else {
+    let MarkPaidOutcome::Granted(purchase) = outcome else {
         panic!("{outcome:?}");
     };
     state
@@ -4937,8 +4937,8 @@ async fn an_event_in_flight_holds_the_other_until_it_commits() {
         .admin_grant_credits_in_tx(
             &mut grant_tx,
             GrantRequest {
-                address: &address,
-                amount: &credits,
+                address: &purchase.address,
+                amount: &purchase.credits,
                 kind: "purchase",
                 reason: Some("stripe checkout purchase"),
                 actor: Some("stripe"),
@@ -7965,6 +7965,442 @@ async fn a_delayed_payment_failure_closes_an_abandoned_order_for_good() {
     assert_purchases_match_grants(&pool, &addr).await;
     cleanup(&pool, &addr).await;
     delete_events(&pool, "evt_closed").await;
+}
+
+/// The audited detail of each purchase grant to `addr`, oldest first (its
+/// `reason` included).
+async fn purchase_grant_details(pool: &PgPool, addr: &str) -> Vec<Value> {
+    sqlx::query_scalar(
+        "SELECT a.detail FROM credits.ledger l JOIN ops.admin_audit a ON a.id = l.admin_audit_id \
+         WHERE l.address = $1 AND l.kind = 'purchase' ORDER BY l.id",
+    )
+    .bind(addr)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn payment_intent_succeeded(event_id: &str, payment_intent: &str, amount: i64) -> String {
+    json!({
+        "id": event_id,
+        "type": "payment_intent.succeeded",
+        "data": { "object": { "id": payment_intent, "amount": amount, "currency": "usd" } },
+    })
+    .to_string()
+}
+
+async fn order_of_session(pool: &PgPool, session: &str) -> String {
+    sqlx::query_scalar("SELECT order_id FROM credits.purchases WHERE stripe_checkout_session = $1")
+        .bind(session)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_delayed_payment_credited_by_its_payment_intent_records_the_checkout_purchase() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let charge = Charge {
+        cents: 500,
+        currency: "usd",
+    };
+
+    // The debit clears, and `payment_intent.succeeded` lands before the
+    // session's own settled event.
+    let session = processing_order(&app, &state, &addr, "evt_pi_first").await;
+    let order_id = order_of_session(&pool, &session).await;
+    let pi = format!("pi_{session}");
+    let (status, out) = deliver(
+        &app,
+        &payment_intent_succeeded(&unique("evt_pi_first"), &pi, 500),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(balance_is(&pool, &addr, "50").await);
+    let details = purchase_grant_details(&pool, &addr).await;
+    assert_eq!(details.len(), 1, "{details:?}");
+    let detail = &details[0];
+    assert_eq!(detail["reason"], "stripe checkout purchase", "{detail}");
+    assert_eq!(detail["checkoutSession"], session.as_str(), "{detail}");
+    assert_eq!(detail["orderId"], order_id.as_str(), "{detail}");
+    assert_eq!(detail["paymentIntent"], pi.as_str(), "{detail}");
+    assert_eq!(detail["sku"], "settle-pack", "{detail}");
+
+    // The session's settled event then finds the order credited.
+    let (status, out) = deliver(
+        &app,
+        &session_event(
+            &unique("evt_pi_first"),
+            "checkout.session.async_payment_succeeded",
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(balance_is(&pool, &addr, "50").await);
+    assert_eq!(purchase_grants(&pool, &addr).await, 1);
+
+    // The flip tells a purchase an earlier event credited from a key no
+    // purchase has.
+    let mut tx = pool.begin().await.unwrap();
+    let outcome = state
+        .credits
+        .mark_purchase_paid_in_tx(&mut tx, &pi, "evt_pi_first-again", charge)
+        .await
+        .unwrap();
+    assert!(
+        matches!(&outcome, MarkPaidOutcome::NotSettleable { status } if status == "paid"),
+        "{outcome:?}"
+    );
+    let outcome = state
+        .credits
+        .mark_purchase_paid_in_tx(&mut tx, &unique("pi_unknown"), "evt_pi_first-none", charge)
+        .await
+        .unwrap();
+    assert!(
+        matches!(outcome, MarkPaidOutcome::NoPurchase),
+        "{outcome:?}"
+    );
+    tx.rollback().await.unwrap();
+
+    // A payment-intent purchase keeps its own reason, with no session or order.
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let direct = unique("pi_direct");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &direct)
+        .await
+        .unwrap();
+    let (status, out) = deliver(
+        &app,
+        &payment_intent_succeeded(&unique("evt_pi_first"), &direct, 500),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    let details = purchase_grant_details(&pool, &addr).await;
+    assert_eq!(details.len(), 2, "{details:?}");
+    let detail = &details[1];
+    assert_eq!(detail["reason"], "stripe purchase", "{detail}");
+    assert_eq!(detail["paymentIntent"], direct.as_str(), "{detail}");
+    assert_eq!(detail["sku"], "settle-pack", "{detail}");
+    assert!(
+        detail.get("checkoutSession").is_none() && detail.get("orderId").is_none(),
+        "{detail}"
+    );
+    assert!(balance_is(&pool, &addr, "100").await);
+    assert_reconciles(&pool, &addr, "after both settlement paths").await;
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_pi_first").await;
+}
+
+/// Until a backend of `pool` waits on a lock `holder` (a backend pid) holds.
+async fn wait_until_blocked_by(pool: &PgPool, holder: i32) {
+    for _ in 0..500 {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if blocked {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited on backend {holder}");
+}
+
+#[tokio::test]
+async fn a_settled_session_naming_no_payment_intent_applies_the_reversals_of_the_one_its_order_holds()
+ {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let mut reversed = Vec::new();
+
+    // A full refund lands while the order is processing; the session's
+    // settled event then names no payment intent.
+    let refunded = scratch_wallet().address;
+    let session = processing_order(&app, &state, &refunded, "evt_stored_pi").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    let (_, out) = deliver(&app, &refund_event(&unique("evt_stored_pi"), &pi, 500)).await;
+    assert_eq!(out["detail"], "processed");
+    let mut settled: Value = serde_json::from_str(&session_event(
+        &unique("evt_stored_pi"),
+        "checkout.session.async_payment_succeeded",
+        &session,
+        Some("paid"),
+        500,
+        "usd",
+    ))
+    .unwrap();
+    settled["data"]["object"]["payment_intent"] = Value::Null;
+    let (status, out) = deliver(&app, &settled.to_string()).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &refunded, "0").await,
+        "{} credited for refunded money",
+        available(&pool, &refunded).await
+    );
+    assert_eq!(session_order_row(&pool, &session).await.0, "refunded");
+    assert_stripe_ledger(
+        &pool,
+        &refunded,
+        "50",
+        "50",
+        "refund before a settlement naming no intent",
+    )
+    .await;
+
+    // A refund arriving while such a grant holds the order row: its own
+    // apply waits on that row, and finds the purchase paid once it commits.
+    let in_flight = scratch_wallet().address;
+    let session = processing_order(&app, &state, &in_flight, "evt_stored_pi").await;
+    let pi = format!("pi_{session}");
+    reversed.push(pi.clone());
+    let mut grant_tx = pool.begin().await.unwrap();
+    let grant_pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *grant_tx)
+        .await
+        .unwrap();
+    let outcome = state
+        .credits
+        .mark_order_paid_by_session_in_tx(
+            &mut grant_tx,
+            &session,
+            "evt_stored_pi-grant",
+            Charge {
+                cents: 500,
+                currency: "usd",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let MarkPaidOutcome::Granted(purchase) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(purchase.payment_intent.as_deref(), Some(pi.as_str()));
+    state
+        .credits
+        .admin_grant_credits_in_tx(
+            &mut grant_tx,
+            GrantRequest {
+                address: &purchase.address,
+                amount: &purchase.credits,
+                kind: "purchase",
+                reason: Some("stripe checkout purchase"),
+                actor: Some("stripe"),
+                idempotency_key: Some("evt_stored_pi-grant"),
+                detail: &json!({}),
+            },
+        )
+        .await
+        .unwrap();
+    let refund = {
+        let (app, body) = (
+            app.clone(),
+            refund_event(&unique("evt_stored_pi"), &pi, 500),
+        );
+        tokio::spawn(async move { deliver(&app, &body).await })
+    };
+    wait_until_blocked_by(&pool, grant_pid).await;
+    assert!(
+        state
+            .credits
+            .apply_recorded_reversals_in_tx(&mut grant_tx, &pi, "evt_stored_pi-grant")
+            .await
+            .unwrap()
+            .is_none(),
+        "the waiting refund is not committed yet"
+    );
+    grant_tx.commit().await.unwrap();
+    let (status, out) = refund.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert!(
+        balance_is(&pool, &in_flight, "0").await,
+        "{} credited for refunded money",
+        available(&pool, &in_flight).await
+    );
+    assert_eq!(session_order_row(&pool, &session).await.0, "refunded");
+    assert_stripe_ledger(&pool, &in_flight, "50", "50", "refund waiting on the grant").await;
+
+    cleanup(&pool, &refunded).await;
+    cleanup(&pool, &in_flight).await;
+    delete_reversals(&pool, &reversed).await;
+    delete_events(&pool, "evt_stored_pi").await;
+    sqlx::query("DELETE FROM credits.stripe_events WHERE event_id = 'evt_stored_pi-grant'")
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn a_processing_order_nothing_moves_is_reported_daily_and_left_as_it_is() {
+    // The report counts every order, so this runs on a database of its own.
+    let Some(own) = OwnDatabase::create("stale_processing").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let settled = |session: &str, amount: i64| {
+        session_event(
+            &unique("evt_stale"),
+            "checkout.session.async_payment_succeeded",
+            session,
+            Some("paid"),
+            amount,
+            "usd",
+        )
+    };
+
+    // Processing, and its settled payment did not match its amount.
+    let mismatched = processing_order(&app, &state, &addr, "evt_stale").await;
+    let (_, out) = deliver(&app, &settled(&mismatched, 400)).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(session_order_row(&pool, &mismatched).await.0, "pending");
+    // Processing, its outcome never delivered.
+    let lost = processing_order(&app, &state, &addr, "evt_stale").await;
+    // Processing, but recent: its debit may still be on its way.
+    let recent = processing_order(&app, &state, &addr, "evt_stale").await;
+    // Not processing: no payment intent yet, and credited.
+    let (_, unseen) = session_order_fixture(&state, &addr).await;
+    let credited = processing_order(&app, &state, &addr, "evt_stale").await;
+    deliver(&app, &settled(&credited, 500)).await;
+    assert_eq!(session_order_row(&pool, &credited).await.0, "paid");
+
+    let aged = vec![
+        mismatched.clone(),
+        lost.clone(),
+        unseen.clone(),
+        credited.clone(),
+    ];
+    sqlx::query(
+        "UPDATE credits.purchases SET created_at = created_at - interval '31 days' WHERE stripe_checkout_session = ANY($1)",
+    )
+    .bind(&aged)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let stale = state
+        .credits
+        .stale_processing_orders(super::orders::REPORT_PROCESSING_AFTER)
+        .await
+        .unwrap();
+    assert_eq!(
+        stale,
+        super::orders::StaleProcessing {
+            count: 2,
+            oldest_order: Some(order_of_session(&pool, &mismatched).await),
+        }
+    );
+
+    // The job reports once, then not again within a day.
+    let report = super::settlement::StaleProcessingReport::default();
+    let every = super::settlement::REPORT_STALE_PROCESSING_EVERY;
+    assert_eq!(report.run(&state.credits, every).await, Some(stale.clone()));
+    assert_eq!(report.run(&state.credits, every).await, None);
+    assert_eq!(
+        report.run(&state.credits, std::time::Duration::ZERO).await,
+        Some(stale)
+    );
+
+    // Reporting moves nothing, and the sweep still leaves them processing.
+    let retired = state
+        .credits
+        .abandon_stale_pack_orders(super::orders::ABANDON_AFTER)
+        .await
+        .unwrap();
+    assert_eq!(retired, 1, "only the order with no payment in flight");
+    for session in [&mismatched, &lost, &recent] {
+        assert_eq!(session_order_row(&pool, session).await.0, "pending");
+    }
+    assert_eq!(session_order_row(&pool, &unseen).await.0, "abandoned");
+
+    own.drop().await;
+}
+
+/// The daily report only reads: a settlement pass that fails still runs it,
+/// and one the restore stamps hold skips it, as it skips every write.
+#[tokio::test]
+async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_stamps() {
+    use super::settlement::{
+        REPORT_STALE_PROCESSING_EVERY, StaleProcessingReport, settlement_job_pass,
+    };
+    use crate::shared::writes::PassGate;
+    use crate::shared::writes::restore::{lab::StampLab, scoped};
+    let Some(own) = OwnDatabase::create("stale_report_pass").await else {
+        return;
+    };
+    let wallet = scratch_wallet();
+    sqlx::query(
+        "INSERT INTO credits.purchases (order_id, address, sku, credits, amount_cents, currency, stripe_checkout_session, stripe_payment_intent, method, status, created_at) \
+         VALUES ('ord-stuck', $1, 'test-pack', 10, 100, 'usd', 'cs_stuck', 'pi_stuck', 'card', 'pending', timezone('UTC', now()) - interval '31 days')",
+    )
+    .bind(&wallet.address)
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let credits = Credits::new(own.pool.clone());
+    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
+    let every = REPORT_STALE_PROCESSING_EVERY;
+
+    // Held by the restore stamps: no pass, and no report yet.
+    let held = StampLab::new();
+    let report = StaleProcessingReport::default();
+    let ran = scoped(
+        held.stamps.clone(),
+        settlement_job_pass(&credits, None, &gate, true, None, &report),
+    )
+    .await
+    .unwrap();
+    assert!(!ran);
+    assert!(
+        report.run(&credits, every).await.is_some(),
+        "the held pass reported"
+    );
+
+    // A pass whose sweep fails has still reported.
+    sqlx::raw_sql(
+        "CREATE FUNCTION credits.refuse_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'refused'; END $$; \
+         CREATE TRIGGER refuse_update BEFORE UPDATE ON credits.purchases FOR EACH STATEMENT EXECUTE FUNCTION credits.refuse_update();",
+    )
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let fresh = StampLab::fresh();
+    let report = StaleProcessingReport::default();
+    let failed = scoped(
+        fresh.stamps.clone(),
+        settlement_job_pass(&credits, None, &gate, true, None, &report),
+    )
+    .await;
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(
+        report.run(&credits, every).await,
+        None,
+        "the failed pass already reported today"
+    );
+    own.drop().await;
 }
 
 /// `w`'s request as the explorer signs it after a login: `w` (the root) signs a fresh

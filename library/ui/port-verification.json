@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "lockHash": "99002ac2e39cea24c5747c0805c7682d59514901f72890c2736bc2047a54d124",
+  "lockHash": "9557e6d41df53bbc10ba2121cb501dcc6ad97ab6904c50a7ff0027aaff5cb036",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "figmaTree": "e1fc092fc76117efee9e2362cc7e45e197b33f9a",
@@ -11,7 +11,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "450 tooling pins, 39 foundation origins and 10 component outputs pass the common guard"
+      "detail": "450 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
@@ -19,7 +19,7 @@
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "Fresh check passes with 0 public mappings for the internal NavBar"
+      "detail": "Fresh check passes with 1 public NavBar mapping and no diagnostics"
     },
     "review-manifest": {
       "result": "pass",
@@ -27,11 +27,11 @@
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "Fresh gallery build passes 19 bounds checks, source control holds remain"
+      "detail": "Public consumer4, foundations4 and gallery19 bounds pass with accepted bridge limitations unchanged"
     },
     "install": {
       "result": "pass",
-      "detail": "Private and canonical installs reproduce 39 foundation and 10 component files with no-op repeats"
+      "detail": "Private11 component outputs reproduced merged metadata with repeat no-op and prior39 foundations unchanged"
     }
   }
 }
