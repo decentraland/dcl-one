@@ -26,7 +26,7 @@ use tower::ServiceExt;
 
 use super::events::*;
 use super::indexer::{
-    self, Rpc, begin_replay, cursor, fold, insert_events, mark_folded, set_cursor,
+    self, ReplayStart, Rpc, begin_replay, cursor, fold, insert_events, mark_folded, set_cursor,
 };
 use super::routes::SOURCE_HEADER;
 use super::*;
@@ -2542,6 +2542,7 @@ async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dr
     };
 
     let mut folding = pool.begin().await.unwrap();
+    let fold_pid = backend_pid(&mut folding).await;
     let counts = indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
     assert_eq!(counts.estate_lands, 1);
     // The cursor's ordinary writers do not wait on a running fold (one left
@@ -2559,10 +2560,10 @@ async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dr
         let (pool, configured) = (pool.clone(), configured.clone());
         tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
     };
-    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    wait_until_blocked_by(pool, fold_pid).await;
     assert!(!rebind.is_finished(), "the rebind waits for the fold");
     folding.commit().await.unwrap();
-    assert!(rebind.await.unwrap().unwrap());
+    assert_eq!(rebind.await.unwrap().unwrap(), ReplayStart::Begun);
 
     // The rebind's deletion landed after the old link, and the old
     // registries can no longer fold.
@@ -2743,7 +2744,10 @@ async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_
     .execute(pool)
     .await
     .unwrap();
-    assert!(begin_replay(pool, &configured, START).await.unwrap());
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Begun
+    );
     let r = row().await;
     assert_eq!(
         (
@@ -2771,14 +2775,20 @@ async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_
         .execute(pool)
         .await
         .unwrap();
-    assert!(begin_replay(pool, &configured, START + 95).await.unwrap());
+    assert_eq!(
+        begin_replay(pool, &configured, START + 95).await.unwrap(),
+        ReplayStart::Begun
+    );
     assert_eq!(
         row().await.last_block,
         base - 1,
         "a later rewind skips no block"
     );
     set(pool, base + 500).await;
-    assert!(begin_replay(pool, &configured, START + 95).await.unwrap());
+    assert_eq!(
+        begin_replay(pool, &configured, START + 95).await.unwrap(),
+        ReplayStart::Begun
+    );
     assert_eq!(
         row().await.last_block,
         base + 94,
@@ -2787,7 +2797,10 @@ async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_
     assert!(timestamps_ready().await);
 
     // A partial rewind for other registries writes nothing.
-    assert!(!begin_replay(pool, &other, START + 95).await.unwrap());
+    assert_eq!(
+        begin_replay(pool, &other, START + 95).await.unwrap(),
+        ReplayStart::Refused
+    );
     let r = row().await;
     assert_eq!((r.land_registry.as_str(), r.last_block), (LAND, base + 94));
 
@@ -4014,4 +4027,233 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
         jobs.shutdown(std::time::Duration::from_secs(1)).await;
         db.drop().await;
     }
+}
+
+async fn backend_pid(conn: &mut sqlx::PgConnection) -> i32 {
+    sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(conn)
+        .await
+        .unwrap()
+}
+
+/// Until a backend of `pool` waits on a lock `holder` (a backend pid) holds.
+async fn wait_until_blocked_by(pool: &PgPool, holder: i32) {
+    for _ in 0..500 {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))",
+        )
+        .bind(holder)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        if blocked {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    panic!("nothing waited on backend {holder}");
+}
+
+/// A fold of the old registries left running (by a lost lease, say) holds
+/// their cursor row: a switch waits for it at most `REBIND_LOCK_TIMEOUT`,
+/// then defers without writing, and the pass ends without an error, so it
+/// is retried at the next interval, not after the error backoff. A rewind
+/// on the same registries never waits for the fold.
+#[tokio::test]
+async fn a_switch_defers_behind_a_fold_left_running_and_a_same_registries_rewind_never_waits() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        // Never asked: a deferred replay ends the pass before any request.
+        rpc_url: Some("http://127.0.0.1:9".into()),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM land_authz.estate_land")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let registries = || async {
+        let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+        (row.land_registry, row.estate_registry)
+    };
+    let old_registries = (old.land_registry.clone(), old.estate_registry.clone());
+
+    let mut folding = pool.begin().await.unwrap();
+    indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+
+    // A rewind on the same registries completes beside it.
+    let rewound = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        begin_replay(pool, &old, START + 5),
+    )
+    .await;
+    assert!(
+        matches!(rewound, Ok(Ok(ReplayStart::Begun))),
+        "the rewind waited on the fold: {rewound:?}"
+    );
+
+    // The switch gives up after the lock timeout and writes nothing.
+    let asked = std::time::Instant::now();
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Deferred
+    );
+    assert!(
+        asked.elapsed() < std::time::Duration::from_secs(30),
+        "{:?}",
+        asked.elapsed()
+    );
+    assert_eq!(registries().await, old_registries);
+
+    // A pass asked for that switch ends without an error and keeps the
+    // replay requested.
+    let state = state_over(pool.clone(), configured.clone(), None);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(!out.published && out.folded.is_none(), "{out:?}");
+    assert!(!state.replay_requested.load(Ordering::SeqCst));
+    assert_eq!(registries().await, old_registries);
+
+    // Once the fold commits, its link stands, and the switch goes through.
+    folding.commit().await.unwrap();
+    assert_eq!(links().await, 1);
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::Begun
+    );
+    assert_eq!(
+        registries().await,
+        (
+            configured.land_registry.clone(),
+            configured.estate_registry.clone()
+        )
+    );
+    assert_eq!(links().await, 0);
+    db.drop().await;
+}
+
+/// A rewind on the same registries takes no lock, so a switch can commit
+/// between its read and its write: the write then matches no row of its
+/// registries, and the switch, links deleted, is never undone.
+#[tokio::test]
+async fn a_same_registries_rewind_never_undoes_a_switch_committed_under_it() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let other = (
+        "0x00000000000000000000000000000000000000aa",
+        "0x00000000000000000000000000000000000000bb",
+    );
+    indexer::ensure_cursor(pool, &configured).await.unwrap();
+
+    let mut switching = pool.begin().await.unwrap();
+    let switch_pid = backend_pid(&mut switching).await;
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = $2, estate_registry = $3 WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(other.0)
+    .bind(other.1)
+    .execute(&mut *switching)
+    .await
+    .unwrap();
+    let rewind = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START + 95).await })
+    };
+    wait_until_blocked_by(pool, switch_pid).await;
+    switching.commit().await.unwrap();
+    assert_eq!(rewind.await.unwrap().unwrap(), ReplayStart::Deferred);
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.estate_registry.as_str()),
+        other
+    );
+    db.drop().await;
+}
+
+/// `estate_land` holds one network's links (it is keyed by the LAND token
+/// alone), so a switch refuses to run beside another network's cursor,
+/// whose links it would delete; the pass names why.
+#[tokio::test]
+async fn a_switch_refuses_a_database_shared_with_another_network() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        rpc_url: Some("http://127.0.0.1:9".into()),
+        index_enabled: true,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, full_replay_started) \
+         VALUES ($1, $2, $3, 1, false)",
+    )
+    .bind(NETWORK_SEPOLIA)
+    .bind("0x00000000000000000000000000000000000000cc")
+    .bind("0x00000000000000000000000000000000000000dd")
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        begin_replay(pool, &configured, START).await.unwrap(),
+        ReplayStart::SharedDatabase {
+            other: NETWORK_SEPOLIA.to_string()
+        }
+    );
+    let state = state_over(pool.clone(), configured.clone(), None);
+    let refused = indexer::run_pass(&state, &ctx).await.unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("shares this database"),
+        "{refused:#}"
+    );
+    assert!(!state.replay_requested.load(Ordering::SeqCst));
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.land_registry, old.land_registry);
+    let links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(links, 1, "the other network's links are kept");
+    db.drop().await;
 }
