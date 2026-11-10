@@ -15,7 +15,7 @@ The library owns the components. Your job is to find the mapped component, impor
 ## Workflow
 
 1. **Read the design.** Call `create_session` with the file key, then `get_metadata` / `get_design_context` for the node. Note, for every component instance, its main component node id and its variant properties (for example `Property 1=Terciary`, `Hover=No`).
-2. **Resolve each component.** Call `figma_resolve_component` with `nodeId` (preferred over `name`), `variantProperties` and `texts` (labels the design shows).
+2. **Resolve each component.** Call `figma_resolve_component` with `nodeId` (preferred over `name`), `variantProperties` and `texts` (labels the design shows). Without a capture (`--mapping-only`) only the component set id matches a mapping, so pass the set id rather than a variant id, and a name lookup is refused.
 3. **Read the answer.**
    - `ok: true`: import from `component.importSpecifier`, copy the props from `usage` and `propTranslation`. Read `warnings`; they are drift or unverified identity, not noise. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props.
    - `ok: false`: act on the code, never work around it.
@@ -37,6 +37,7 @@ The library owns the components. Your job is to find the mapped component, impor
 | `unmapped-figma-property`     | warning  | The mapping ignores a Figma property                                                 | Do not emulate it; mention it                                                 |
 | `figma-drift`                 | warning  | Mapping and captured component differ in some options                                | Use only mapped values; mention the drift                                     |
 | `export-unverifiable`         | warning  | The export cannot be confirmed statically                                            | Let the app typecheck confirm the import                                      |
+| `capture-revision-unknown`    | warning  | The library lock pins no readable capture revision                                   | Report without a revision; tell a maintainer                                  |
 | `figma-identity-unverified`   | warning  | Checked against the mapping only, without a capture                                  | Repeat it when you report the result                                          |
 
 4. **Compose the page** from the resolved components and the library's design tokens (CSS custom properties such as `var(--dcl-space-12)`). No hard-coded colors, spacing or fonts that a token covers. Public imports only: `import { X } from '<importSpecifier>'`, never a deep path.

@@ -37,7 +37,8 @@ const USAGE = `Usage:
 // Repeated "Key=Value" flags. A pair without "=", an empty key or a repeated key is refused, never guessed.
 function pairs(flag: string, entries: string[] | undefined): Record<string, string> | undefined {
   if (!entries?.length) return undefined
-  const result: Record<string, string> = {}
+  // No prototype: a key such as __proto__ is kept as data and its repeat is still detected.
+  const result: Record<string, string> = Object.create(null)
   for (const entry of entries) {
     const split = entry.indexOf('=')
     const key = split > 0 ? entry.slice(0, split) : ''

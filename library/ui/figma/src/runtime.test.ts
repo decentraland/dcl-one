@@ -306,7 +306,11 @@ describe('when resolving with --mapping-only next to a configured capture', () =
   })
 
   it('should default the mapping root to the library components directory', async () => {
-    const runtime = await createRuntime({ cwd: library.root, env: {}, mappingOnly: true })
+    const runtime = await createRuntime({
+      cwd: path.dirname(library.root),
+      env: {},
+      mappingOnly: true
+    })
     expect((await runtime.resolveContext()).mappingRoot).toBe(LIBRARY_MAPPING_ROOT)
     expect(LIBRARY_MAPPING_ROOT).toBe(path.resolve(import.meta.dirname, '../../components'))
   })
@@ -320,14 +324,59 @@ describe('when resolving with --mapping-only next to a configured capture', () =
     expect((await runtime.resolveContext()).mappingRoot).toBe(library.mappingRoot)
   })
 
-  it('should refuse an explicit Figma config', async () => {
-    await expect(
-      createRuntime({
-        cwd: library.root,
-        env: {},
-        mappingOnly: true,
-        configPath: 'figma.config.json'
+  describe.each([
+    ['the working directory', {}, undefined],
+    ['DCL_FIGMA_CONFIG', { DCL_FIGMA_CONFIG: 'figma.config.json' }, undefined],
+    ['--config', {}, 'figma.config.json']
+  ])('and the Figma config comes from %s', (_label, env, configPath) => {
+    it('should keep its contract mapping root and library range without touching the cache', async () => {
+      const before = await digest(cache)
+      const config = JSON.parse(
+        await readFile(path.join(library.root, 'figma.config.json'), 'utf8')
+      )
+      config.contract = { mappingRoot: 'src', libraryRange: '^9.0.0' }
+      await writeFile(path.join(library.root, 'figma.config.json'), JSON.stringify(config))
+
+      const runtime = await createRuntime({ cwd: library.root, env, configPath, mappingOnly: true })
+      const context = await runtime.resolveContext()
+
+      expect(context).toMatchObject({ mappingRoot: library.mappingRoot, libraryRange: '^9.0.0' })
+      expect(await resolveComponent(context, { nodeId: '1:1' })).toMatchObject({
+        ok: false,
+        errors: [
+          expect.objectContaining({
+            details: expect.objectContaining({ reason: 'library-version' })
+          })
+        ]
       })
-    ).rejects.toThrow('--mapping-only reads no Figma config')
+      expect(await digest(cache)).toBe(before)
+    })
+  })
+
+  it.each([
+    ['a non-string mapping root', { mappingRoot: 7 }],
+    ['a non-string library range', { mappingRoot: 'src', libraryRange: false }],
+    ['a contract that is not an object', 'src']
+  ])('should refuse a config contract with %s', async (_label, contract) => {
+    const config = JSON.parse(await readFile(path.join(library.root, 'figma.config.json'), 'utf8'))
+    config.contract = contract
+    await writeFile(path.join(library.root, 'figma.config.json'), JSON.stringify(config))
+
+    const runtime = await createRuntime({ cwd: library.root, env: {}, mappingOnly: true })
+
+    await expect(runtime.resolveContext()).rejects.toThrow(
+      'contract must hold a string mappingRoot'
+    )
+  })
+
+  it('should refuse an explicit config that does not exist', async () => {
+    const runtime = await createRuntime({
+      cwd: library.root,
+      env: {},
+      mappingOnly: true,
+      configPath: 'missing.json'
+    })
+
+    await expect(runtime.resolveContext()).rejects.toThrow('Figma config not found')
   })
 })

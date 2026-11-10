@@ -35,19 +35,38 @@ const DIAGNOSTICS = {
   'identity-not-found': {
     severity: 'error',
     audience: 'consumer',
-    action:
-      'The node or name is not a component of the captured library. Check that the instance comes from the library and pass its main component nodeId; this is an identity problem, not a missing mapping.'
+    action: {
+      name: 'No captured component has this name. Check the instance comes from the library and resolve again with its component set nodeId; this is an identity problem, not a missing mapping.',
+      node: 'The node is not a component of the captured library. Check the instance comes from the library and resolve again with its component set nodeId; this is an identity problem, not a missing mapping.',
+      'mapping-node':
+        'A mapping targets a node that is not in the capture. Point the mapping at the captured component set, or retire it.'
+    }
   },
   'identity-ambiguous': {
     severity: 'error',
     audience: 'consumer',
-    action:
-      'Several components or mappings match. Resolve again with a nodeId from details.candidates; never pick one yourself.'
+    action: {
+      name: 'Several captured components share this name. Resolve again with a nodeId from details.candidates; never pick one yourself.',
+      mappings: `Several mappings claim this node, which is a library defect. Do not pick one. ${REPORT}`,
+      'duplicate-node':
+        'Two mappings in the library target the same Figma node. Keep one mapping per component set.',
+      'duplicate-id':
+        'Two mappings in the library share a template id. Give each mapping its own id.'
+    }
   },
   'identity-uncertain': {
     severity: 'error',
     audience: 'consumer',
-    action: `No capture is available and no mapping names this node, so it cannot be established whether it is a library component. Do not treat it as a missing mapping and do not build a replacement. ${REPORT}`
+    action: {
+      name: 'Without a capture a component cannot be found by name. Resolve again with the component set nodeId from the design.',
+      node: `No capture is available and no mapping names this node, so it cannot be established whether it is a library component. Without a capture only a component set id matches a mapping: if you passed a variant id, resolve again with its component set id. Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`
+    }
+  },
+  'capture-revision-unknown': {
+    severity: 'warning',
+    audience: 'consumer',
+    action:
+      'The library lock pins no readable capture revision, so the result names none. Report the result without a capture revision and tell a maintainer that library/ui/upstream.lock.json is unreadable.'
   },
   'variant-unsupported': {
     severity: 'error',
