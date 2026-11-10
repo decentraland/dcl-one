@@ -55,7 +55,9 @@ more than its own share (`dcl_deno_ipc::MAX_SCENE_IPC_CHANNELS`), so an honest h
 scene, not its connection; only the per-host limit is the engine's. A response for a scene the
 host was not given, a `SystemApi` message from a host running no system scene, or IPC data from a
 host is dropped and counted (`dcl_deno_ipc::rejected_host_messages`), with one warning per
-connection. `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
+connection. The engine takes a host's connection only from the process it started; every host's
+responses share one bounded queue, which a host waits on rather than shedding into, so a flood
+holds back only the flooding host; a host that reads nothing for 10 s is ended. `crates/dcl_deno_ipc/src/engine_ipc_tests.rs`
 plays a scene host against the engine side of the pipe; cover every new `SceneToEngine` message
 there.
 

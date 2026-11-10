@@ -4348,6 +4348,7 @@ dependencies = [
  "futures-util",
  "http 1.5.0",
  "interprocess",
+ "libc",
  "mimalloc",
  "multihash-codetable",
  "once_cell",

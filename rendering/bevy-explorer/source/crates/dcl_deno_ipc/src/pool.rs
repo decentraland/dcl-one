@@ -38,6 +38,8 @@ const HOST_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const HOST_LOG_LINE_BYTES: usize = 4096;
 // lines over this many per second of one host stream are dropped and counted
 const HOST_LOG_LINES_PER_SECOND: u32 = 200;
+// and over this many per second of every host together
+const ALL_HOSTS_LOG_LINES_PER_SECOND: u32 = 1000;
 // how often a host whose scenes were all removed checks whether its grace period is over
 const RETIRE_POLL: Duration = Duration::from_millis(250);
 
@@ -228,6 +230,28 @@ impl Launch for ProcessLauncher {
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .kill_on_drop(true);
+            // descriptors the engine's libraries opened without close-on-exec stay out of the host
+            #[cfg(target_os = "linux")]
+            // SAFETY: only async-signal-safe calls between fork and exec
+            unsafe {
+                process.pre_exec(|| {
+                    const CLOSE_RANGE_CLOEXEC: libc::c_uint = 1 << 2;
+                    let closed = libc::syscall(
+                        libc::SYS_close_range,
+                        3 as libc::c_uint,
+                        libc::c_uint::MAX,
+                        CLOSE_RANGE_CLOEXEC,
+                    );
+                    if closed != 0 {
+                        // kernels before 5.11
+                        let max = libc::sysconf(libc::_SC_OPEN_MAX).clamp(0, 65536) as libc::c_int;
+                        for fd in 3..max {
+                            libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC);
+                        }
+                    }
+                    Ok(())
+                });
+            }
             // A console-subsystem child spawned by the GUI-subsystem app has no console to
             // inherit, so windows pops a visible one; suppress it.
             #[cfg(windows)]
@@ -246,16 +270,26 @@ impl Launch for ProcessLauncher {
                 tokio::spawn(log_host_output(stderr, pid));
             }
 
-            let stream = tokio::select! {
-                stream = listener.accept() => stream?,
-                status = child.wait() => {
-                    return Err(anyhow!("scene host exited before connecting: {}", status?));
+            // only the child's own connection is taken: another process that reaches the endpoint
+            // first is dropped
+            let deadline = tokio::time::sleep(HOST_CONNECT_TIMEOUT);
+            tokio::pin!(deadline);
+            let (inbound, outbound) = loop {
+                let stream = tokio::select! {
+                    stream = listener.accept() => stream?,
+                    status = child.wait() => {
+                        return Err(anyhow!("scene host exited before connecting: {}", status?));
+                    }
+                    () = &mut deadline => {
+                        return Err(anyhow!("scene host did not connect within {HOST_CONNECT_TIMEOUT:?}"));
+                    }
+                };
+                let (peer, halves) = peer_pid(stream);
+                if peer.is_some() && peer == child.id() {
+                    break halves;
                 }
-                () = tokio::time::sleep(HOST_CONNECT_TIMEOUT) => {
-                    return Err(anyhow!("scene host did not connect within {HOST_CONNECT_TIMEOUT:?}"));
-                }
+                warn!("dropping a connection to a scene host's endpoint from process {peer:?}");
             };
-            let (inbound, outbound) = stream.split();
             Ok(HostLink {
                 inbound: Box::pin(inbound),
                 outbound: Box::pin(outbound),
@@ -263,6 +297,51 @@ impl Launch for ProcessLauncher {
             })
         })
     }
+}
+
+/// The process that connected, if the platform tells, and the connection's two halves.
+fn peer_pid(
+    stream: interprocess::local_socket::tokio::Stream,
+) -> (
+    Option<u32>,
+    (
+        interprocess::local_socket::tokio::RecvHalf,
+        interprocess::local_socket::tokio::SendHalf,
+    ),
+) {
+    #[cfg(not(target_os = "macos"))]
+    let pid = {
+        use interprocess::local_socket::traits::StreamCommon;
+        stream
+            .peer_creds()
+            .ok()
+            .and_then(|creds| creds.pid())
+            .map(|pid| pid as u32)
+    };
+    let halves = stream.split();
+    #[cfg(target_os = "macos")]
+    let pid = {
+        use std::os::fd::{AsFd, AsRawFd};
+        #[allow(unreachable_patterns)]
+        let fd = match &halves.0 {
+            interprocess::local_socket::tokio::RecvHalf::UdSocket(half) => half.as_fd().as_raw_fd(),
+            _ => -1,
+        };
+        let mut pid: libc::pid_t = 0;
+        let mut len = std::mem::size_of::<libc::pid_t>() as libc::socklen_t;
+        // SAFETY: getsockopt writes at most `len` bytes into `pid`.
+        let ret = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_LOCAL,
+                libc::LOCAL_PEERPID,
+                (&raw mut pid).cast(),
+                &mut len,
+            )
+        };
+        (ret == 0 && pid > 0).then_some(pid as u32)
+    };
+    (pid, halves)
 }
 
 /// Forwards a host's output to the engine's log, a line per event, with control characters
@@ -309,7 +388,7 @@ fn emit_host_line(pid: u32, line: &[u8], window: &mut (tokio::time::Instant, u32
         }
         *window = (now, 0, 0);
     }
-    if window.1 >= HOST_LOG_LINES_PER_SECOND {
+    if window.1 >= HOST_LOG_LINES_PER_SECOND || !ALL_HOSTS_LOG_LINES.take(now) {
         window.2 += 1;
         return;
     }
@@ -326,6 +405,24 @@ fn emit_host_line(pid: u32, line: &[u8], window: &mut (tokio::time::Instant, u32
         .collect();
     info!(target: "scene_host", "[scene host {pid}] {text}");
 }
+
+// The lines every host together may log in the current second.
+struct LogBudget(Mutex<Option<(tokio::time::Instant, u32)>>);
+
+impl LogBudget {
+    fn take(&self, now: tokio::time::Instant) -> bool {
+        let mut window = self.0.lock().unwrap();
+        let (start, used) = window.get_or_insert((now, 0));
+        if now.duration_since(*start) >= Duration::from_secs(1) {
+            *start = now;
+            *used = 0;
+        }
+        *used += 1;
+        *used <= ALL_HOSTS_LOG_LINES_PER_SECOND
+    }
+}
+
+static ALL_HOSTS_LOG_LINES: LogBudget = LogBudget(Mutex::new(None));
 
 impl HostProcess for tokio::process::Child {
     fn id(&self) -> Option<u32> {

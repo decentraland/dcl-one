@@ -59,6 +59,35 @@ impl Host {
             next_id: 1,
         }));
         let (responses_sx, responses) = scene_response_channel();
+        Self::with_responses(
+            reader,
+            writer,
+            new_scene_sx,
+            scenes,
+            responses_sx,
+            responses,
+            ended,
+        )
+    }
+
+    /// A second host whose scenes respond into `first`'s channel, as every scene does in the
+    /// engine; its scene ids start after `first`'s.
+    fn connect_sharing_responses_with(first: &Host) -> Self {
+        let mut host = Self::connect();
+        host.responses_sx = first.responses_sx.clone();
+        host.next_entity = 1000;
+        host
+    }
+
+    fn with_responses(
+        reader: ReadHalf<DuplexStream>,
+        writer: WriteHalf<DuplexStream>,
+        new_scene_sx: UnboundedSender<NewSceneCommand>,
+        scenes: Arc<Mutex<HostScenes>>,
+        responses_sx: TaggedSceneResponseSender,
+        responses: SceneResponseReceiver,
+        ended: tokio::sync::oneshot::Receiver<()>,
+    ) -> Self {
         Self {
             reader,
             writer,
@@ -565,6 +594,61 @@ fn system_api_is_taken_only_while_the_system_scene_runs() {
 
     assert!(scenes.system_api().is_none());
     assert!(scenes.responses(1, now).is_some());
+}
+
+#[tokio::test]
+async fn a_host_flooding_the_shared_response_channel_holds_back_only_itself() {
+    let mut flooding = Host::connect();
+    let mut other = Host::connect_sharing_responses_with(&flooding);
+    let (flooded, _) = flooding.start_scene(false).await;
+    let (waiting, _) = other.start_scene(false).await;
+    // more than the channel holds
+    let flood = 1200;
+
+    for marker in 0..flood {
+        flooding.respond(flooded, marker).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    other.respond(waiting, 7).await;
+
+    let mut flooded_delivered = 0;
+    let mut waiting_delivered = false;
+    while flooded_delivered < flood || !waiting_delivered {
+        match flooding.delivered().await {
+            (scene, _) if scene == waiting => waiting_delivered = true,
+            _ => flooded_delivered += 1,
+        }
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), &mut flooding.ended)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn a_host_that_stops_reading_is_ended_and_a_removed_scene_counts_as_killed_at_once() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let renderer = host.renderer_channels.remove(&scene.0.to_bits()).unwrap();
+    // far more than the pipe holds, so the engine's writer waits on the host
+    for _ in 0..20_000 {
+        let _ = renderer.send(RendererResponse::GetCrdtSnapshot);
+    }
+
+    drop(renderer);
+
+    tokio::time::timeout(TIMEOUT, async {
+        while host.scenes.lock().unwrap().scenes[&scene.0.to_bits()]
+            .killed_at
+            .is_none()
+        {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the kill was not recorded");
+    assert!(host.connection_ends().await);
 }
 
 #[tokio::test]

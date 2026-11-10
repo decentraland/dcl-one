@@ -566,3 +566,36 @@ async fn capture_host_log(bytes: Vec<u8>) -> (Vec<String>, Vec<String>) {
         .collect();
     (logged, events)
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn only_the_launched_host_s_own_connection_is_taken() {
+    use interprocess::local_socket::{
+        tokio::Stream, traits::tokio::Stream as _, GenericFilePath, ToFsName,
+    };
+    let endpoint = ipc_socket_name();
+    let command = HostCommand {
+        program: "/bin/sh".into(),
+        args: vec!["-c".into(), "sleep 2".into()],
+    };
+    let launching = tokio::spawn(ProcessLauncher.launch(endpoint.clone(), command));
+
+    // another process of the same user reaches the endpoint first
+    let mut impostor = tokio::time::timeout(TIMEOUT, async {
+        loop {
+            let name = endpoint.as_str().to_fs_name::<GenericFilePath>().unwrap();
+            if let Ok(stream) = Stream::connect(name).await {
+                break stream;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+
+    let mut byte = [0u8; 1];
+    let read = tokio::time::timeout(TIMEOUT, impostor.read(&mut byte)).await;
+    assert!(matches!(read, Ok(Ok(0)) | Ok(Err(_))), "{read:?}");
+    let launched = launching.await.unwrap();
+    assert!(launched.is_err_and(|e| e.to_string().contains("exited before connecting")));
+}

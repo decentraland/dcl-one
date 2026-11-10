@@ -118,7 +118,7 @@ impl SceneChannels {
 
 /// Messages dropped from scene hosts: a scene response for a scene the host was not given, a
 /// `SystemApi` message from a host that runs no system scene, IPC data (the engine takes only
-/// `Closed` from a host), and on the headless server responses shed while the engine is behind.
+/// `Closed` from a host).
 pub fn rejected_host_messages() -> u64 {
     REJECTED_HOST_MESSAGES.load(Ordering::Relaxed)
 }
@@ -288,20 +288,24 @@ impl NewSceneCommand {
 /// after three host starts in a row fail.
 pub static EXIT_ON_SIDECAR_LOSS: AtomicBool = AtomicBool::new(false);
 
-// A fresh runtime is created for each test app. A 16-bit random suffix can
-// collide with a previous runtime that is still shutting down in this process.
-// The random starting point also separates endpoints after a PID is reused.
-static NEXT_IPC_ID: Lazy<AtomicU64> = Lazy::new(|| AtomicU64::new(fastrand::u64(..)));
+// A fresh runtime is created for each test app, so names are counted within the process.
+static NEXT_IPC_ID: AtomicU64 = AtomicU64::new(0);
 
+// The counter keeps names unique; the random part keeps another process from guessing the next
+// one, and separates endpoints after a pid is reused.
 fn ipc_socket_name() -> String {
+    use std::hash::{BuildHasher, Hasher};
     let process_id = std::process::id();
     let id = NEXT_IPC_ID.fetch_add(1, Ordering::Relaxed);
+    let mut random = std::collections::hash_map::RandomState::new().build_hasher();
+    random.write_u64(id);
+    let random = random.finish();
     if cfg!(windows) {
-        format!(r"\\.\pipe\dcl_ipc_{process_id:x}_{id:x}")
+        format!(r"\\.\pipe\dcl_ipc_{process_id:x}_{id:x}_{random:016x}")
     } else {
         // Keep the basename short enough for macOS's Unix socket path limit.
         std::env::temp_dir()
-            .join(format!("dcl_ipc_{process_id:x}_{id:x}.sock"))
+            .join(format!("dcl_ipc_{process_id:x}_{id:x}_{random:016x}.sock"))
             .to_string_lossy()
             .into_owned()
     }
@@ -437,7 +441,7 @@ async fn renderer_ipc_out(
                     loop {
                         match old_rx.try_recv() {
                             Ok(data) => {
-                                write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
+                                write_to_host(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
                             }
                             Err(tokio::sync::broadcast::error::TryRecvError::Lagged(count)) => {
                                 error!("global crdt state lagged, dropping {count} messages");
@@ -448,31 +452,31 @@ async fn renderer_ipc_out(
                 }
                 global_receivers.insert(presence_context, global_channel);
 
-                // spawn connector
+                // spawn connector; the kill counts from when the engine drops the scene, not from
+                // when the host has read everything queued for it
                 let renderer_sender = renderer_sx.clone();
+                let connector_scenes = scenes.clone();
                 tokio::spawn(async move {
                     while let Some(renderer_response) = renderer_channel.recv().await {
                         let _ = renderer_sender.send(EngineToScene::SceneUpdate(id, renderer_response));
                     }
+                    connector_scenes.lock().unwrap().kill(id, Instant::now());
                     let _ = renderer_sender.send(EngineToScene::KillScene(id));
                 });
 
-                write_msg(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await?;
+                write_to_host(&mut stream, &EngineToScene::NewScene(id, Box::new(info))).await?;
             }
             renderer_update = renderer_rx.recv() => {
                 let Some(engine_to_scene) = renderer_update else {
                     warn!("renderer_ipc_out exit on inbound closed");
                     return Ok(());
                 };
-                if let EngineToScene::KillScene(id) = &engine_to_scene {
-                    scenes.lock().unwrap().kill(*id, Instant::now());
-                }
-                write_msg(&mut stream, &engine_to_scene).await?;
+                write_to_host(&mut stream, &engine_to_scene).await?;
             }
             (presence_context, received) = next_global_update(&mut global_receivers) => {
                 match received {
                     Ok(data) => {
-                        write_msg(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
+                        write_to_host(&mut stream, &EngineToScene::GlobalUpdate(presence_context, data)).await?;
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
                         error!("global crdt state lagged, dropping {count} messages");
@@ -494,9 +498,30 @@ async fn renderer_ipc_out(
                         ctx.as_mut().unwrap().ipc_channel_registry.remove(&ipc.0)
                     });
                 }
-                write_msg(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await?;
+                write_to_host(&mut stream, &EngineToScene::IpcMessage(ipc.0, ipc.1)).await?;
             }
         }
+    }
+}
+
+// A host that takes longer than this to read one frame is ended: the queues behind the writer
+// grow with the engine's ticks.
+const HOST_WRITE_TIMEOUT: Duration = if cfg!(test) {
+    Duration::from_secs(1)
+} else {
+    Duration::from_secs(10)
+};
+
+async fn write_to_host<T: Serialize>(
+    stream: &mut (impl AsyncWrite + Unpin),
+    message: &T,
+) -> anyhow::Result<()> {
+    match tokio::time::timeout(HOST_WRITE_TIMEOUT, write_msg(stream, message)).await {
+        Ok(written) => Ok(written?),
+        Err(_) => Err(Rejected(format!(
+            "the scene host read nothing for {HOST_WRITE_TIMEOUT:?}"
+        ))
+        .into()),
     }
 }
 
@@ -574,30 +599,25 @@ async fn renderer_ipc_in(
 
         match msg {
             SceneToEngine::SceneResponse(id, scene_response) => {
-                let mut scenes = scenes.lock().unwrap();
-                let Some(sender) = scenes.responses(id.0.to_bits(), Instant::now()) else {
-                    reject_host_message(
-                        &mut scenes,
-                        format_args!(
-                            "a response for scene {id:?}, which this scene host does not run"
-                        ),
-                    );
-                    continue;
-                };
-                // HEADLESS-ONLY: EXIT_ON_SIDECAR_LOSS marks the orchestrated headless server,
-                // where every scene shares one engine. There, ending this connection ends every
-                // scene of the host, and with shared placement the whole engine. So
-                // shed the response instead: a scene that outruns the bevy-side drain only
-                // stalls itself. Desktop and tests (flag unset) end the connection.
-                if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
-                    if let Err(e) = sender.try_send((id, scene_response)) {
+                let sender = {
+                    let mut scenes = scenes.lock().unwrap();
+                    let sender = scenes.responses(id.0.to_bits(), Instant::now()).cloned();
+                    if sender.is_none() {
                         reject_host_message(
                             &mut scenes,
-                            format_args!("a scene response: renderer channel unavailable ({e})"),
+                            format_args!(
+                                "a response for scene {id:?}, which this scene host does not run"
+                            ),
                         );
                     }
-                } else if let Err(e) = sender.try_send((id, scene_response)) {
-                    bail!("renderer channel unavailable ({e})");
+                    sender
+                };
+                // Every host's responses share one bounded channel. Waiting for room stalls only
+                // this host's reader (each host has its own thread), and waiting senders are
+                // served in turn, so a host that floods it cannot crowd out another's.
+                let Some(sender) = sender else { continue };
+                if sender.send((id, scene_response)).await.is_err() {
+                    bail!("renderer channel closed");
                 }
             }
             SceneToEngine::IpcMessage(id, ipc_message) => {
