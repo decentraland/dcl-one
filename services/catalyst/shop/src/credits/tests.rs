@@ -4637,6 +4637,70 @@ async fn assert_purchases_match_grants(pool: &PgPool, addr: &str) {
 }
 
 #[tokio::test]
+async fn a_delayed_payment_settled_by_its_payment_intent_credits_once() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+
+    // When a bank debit clears, Stripe sends both `payment_intent.succeeded`
+    // and `checkout.session.async_payment_succeeded`, in either order. The
+    // unpaid completion recorded the payment intent on the order, so either
+    // one finds it; whichever lands first credits it, and the other adds
+    // nothing.
+    for intent_first in [true, false] {
+        let (_, session) = session_order_fixture(&state, &addr).await;
+        let (status, out) = deliver(
+            &app,
+            &session_event(
+                &unique("evt_pi_settle"),
+                "checkout.session.completed",
+                &session,
+                Some("unpaid"),
+                500,
+                "usd",
+            ),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+        let before = purchase_grants(&pool, &addr).await;
+
+        let intent_succeeded = json!({
+            "id": unique("evt_pi_settle"),
+            "type": "payment_intent.succeeded",
+            "data": { "object": { "id": format!("pi_{session}"), "amount": 500, "currency": "usd" } },
+        })
+        .to_string();
+        let session_succeeded = session_event(
+            &unique("evt_pi_settle"),
+            "checkout.session.async_payment_succeeded",
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        );
+        let (first, second) = if intent_first {
+            (intent_succeeded, session_succeeded)
+        } else {
+            (session_succeeded, intent_succeeded)
+        };
+        for (n, event) in [first, second].into_iter().enumerate() {
+            let (status, out) = deliver(&app, &event).await;
+            assert_eq!(status, StatusCode::OK, "{out}");
+            assert_eq!(out["detail"], "processed");
+            assert_eq!(
+                purchase_grants(&pool, &addr).await,
+                before + 1,
+                "intent first: {intent_first}, after event {n}"
+            );
+        }
+        assert_eq!(session_order_row(&pool, &session).await.0, "paid");
+    }
+    assert_eq!(available(&pool, &addr).await, "100");
+    assert_purchases_match_grants(&pool, &addr).await;
+}
+
+#[tokio::test]
 async fn a_charge_must_name_its_currency_and_match_it() {
     let Some(pool) = pool().await else { return };
     let state = webhook_state(&pool);
