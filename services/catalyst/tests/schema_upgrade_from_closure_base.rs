@@ -1404,6 +1404,19 @@ const LOGS_PERMISSIONS_RETIRED: &str = include_str!(concat!(
     "/schemas/releases/worlds-logs-permissions-retired.sql"
 ));
 
+/// Runs a release that drops indexes concurrently as psql does: each
+/// blank-line-separated statement on its own, outside a transaction,
+/// stopping at the first error.
+async fn release_statements(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    for statement in sql.split("\n\n").filter(|s| !s.trim().is_empty()) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.to_owned()))
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
+}
+
 #[tokio::test]
 async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_the_old_one() {
     let Some(old) = prepared_v2(None).await else {
@@ -1432,7 +1445,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
         );
     }
     // Before the object pass creates the decoded function it refuses and changes nothing.
-    assert!(release_result(pool, &release).await.is_err());
+    assert!(release_statements(pool, &release).await.is_err());
     assert!(has_function("worlds.logs_permissions(text)").await);
     schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
         .await
@@ -1443,7 +1456,22 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
             "the object pass keeps {index}"
         );
     }
-    release_result(pool, &release).await.unwrap();
+    // An invalid decoded index, as a failed concurrent build leaves, is refused.
+    let set_valid = |valid: bool| async move {
+        sqlx::query(
+            "UPDATE pg_index SET indisvalid = $1
+             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+        )
+        .bind(valid)
+        .execute(pool)
+        .await
+        .unwrap();
+    };
+    set_valid(false).await;
+    assert!(release_statements(pool, &release).await.is_err());
+    assert!(has_function("worlds.logs_permissions(text)").await);
+    set_valid(true).await;
+    release_statements(pool, &release).await.unwrap();
     assert!(!has_function("worlds.logs_permissions(text)").await);
     for index in old_objects {
         assert!(!has_relation(pool, index).await, "{index} is dropped");
@@ -1457,7 +1485,7 @@ async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_
         )
         .await
     );
-    release_result(pool, &release)
+    release_statements(pool, &release)
         .await
         .expect("a second run notes the function is gone");
     old.drop().await;

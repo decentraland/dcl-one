@@ -129,13 +129,17 @@ Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
 The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
 carrying `\u0000` or a surrogate escape (no address), so no stored JSON value
-can fail an insert through an index. A database stamped before it keeps the
+can fail an insert through an index. It reads the escapes as Unicode, so the database
+must use the `UTF8` server encoding (the one `catalyst` supports): under another
+encoding a non-ASCII escape would fail the insert or the index build. A database stamped before it keeps the
 superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
 status` does not report, until their release drops them. Run it once, with the
 administrative role, after `catalyst schema migrate` created the decoded function
 and every replica runs a binary that queries it (an older `serve` calls the old
 function from its storage grant and `GET /collaborator`, which fail after the
-drop); it refuses a database without the decoded function and both its indexes:
+drop); it refuses a database without the decoded function and both its indexes
+built and valid, and drops the old indexes concurrently, outside a transaction
+(rerun it if interrupted):
 
 ```sh
 psql "$DATABASE_URL" -X -f schemas/releases/worlds-logs-permissions-retired.sql
