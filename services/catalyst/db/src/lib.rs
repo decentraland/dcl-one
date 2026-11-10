@@ -589,6 +589,31 @@ mod tests {
         );
     }
 
+    /// `schema migrate --release` runs RELEASE_SQL on a database one version
+    /// behind; a version bump without its own release must fail here.
+    #[test]
+    fn release_sql_takes_the_previous_version_to_this_one() {
+        let accepts = format!("IS DISTINCT FROM {} THEN", SCHEMA_VERSION - 1);
+        assert_eq!(
+            RELEASE_SQL.matches(&accepts).count(),
+            1,
+            "the release requires the previous version"
+        );
+        let stamps = format!("UPDATE meta.schema SET version = {SCHEMA_VERSION},");
+        assert_eq!(
+            RELEASE_SQL.matches(&stamps).count(),
+            1,
+            "the release stamps this version"
+        );
+        assert!(!RELEASE_SQL.contains("BEGIN;") && !RELEASE_SQL.contains("COMMIT;"));
+        assert!(
+            RELEASE_SQL
+                .lines()
+                .all(|line| !line.trim_start().starts_with('\\')),
+            "no psql meta-command reaches the migrator"
+        );
+    }
+
     #[test]
     fn schema_sql_is_the_rendering_of_every_domain_file() {
         for domain in [

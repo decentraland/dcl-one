@@ -76,8 +76,8 @@ fn main() {
 /// (`schemas/releases/v3-private-voice-pending.sql`) as statements
 /// `schema migrate --release` runs inside its own transaction: each `\ir` is
 /// replaced by the file it names, and the psql-only `\set ON_ERROR_STOP on`,
-/// `BEGIN;` and `COMMIT;` lines are dropped. Any other psql meta-command
-/// fails the build.
+/// `BEGIN;` and `COMMIT;` lines are dropped. Any other psql meta-command, in
+/// the release or in a file it includes, fails the build.
 fn render_release() -> String {
     let dir = &root().join("schemas/releases");
     let path = dir.join("v3-private-voice-pending.sql");
@@ -87,13 +87,19 @@ fn render_release() -> String {
     let mut out = String::new();
     let mut dropped = Vec::new();
     for line in source.lines() {
-        match line.trim_end() {
-            "\\set ON_ERROR_STOP on" | "BEGIN;" | "COMMIT;" => dropped.push(line.trim_end()),
+        match line.trim() {
+            "\\set ON_ERROR_STOP on" | "BEGIN;" | "COMMIT;" => dropped.push(line.trim()),
             include if include.starts_with("\\ir ") => {
                 let included = dir.join(include["\\ir ".len()..].trim());
                 println!("cargo:rerun-if-changed={}", included.display());
                 let body = fs::read_to_string(&included)
                     .unwrap_or_else(|e| panic!("reading {}: {e}", included.display()));
+                if let Some(meta) = body.lines().find(|l| l.trim_start().starts_with('\\')) {
+                    panic!(
+                        "{}: psql meta-command {meta:?} has no SQL equivalent",
+                        included.display()
+                    )
+                }
                 out.push_str(body.trim_end_matches('\n'));
                 out.push('\n');
             }

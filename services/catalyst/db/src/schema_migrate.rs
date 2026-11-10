@@ -857,10 +857,11 @@ pub enum MigrateError {
     },
     #[error(
         "the release to version {version} needs every other session of this database closed (stop every \
-         writer, poller and administrative path first); connected: {0}. Nothing was applied.",
+         writer, poller and administrative path first); {count} connected, applications: {applications}. \
+         Nothing was applied.",
         version = crate::SCHEMA_VERSION
     )]
-    SessionsConnected(String),
+    SessionsConnected { count: usize, applications: String },
     #[error(
         "the database has these tables without columns this binary's schema.sql declares, and no step of \
          schemas/migrations/ adds them: {0}. `schema migrate` only creates missing objects and applies the recorded \
@@ -922,13 +923,16 @@ fn release_pending(stamp: &Option<(String, i32)>) -> bool {
         if identity == crate::SCHEMA_IDENTITY && *version == crate::SCHEMA_VERSION - 1)
 }
 
-/// Every other client session of this database, as `role application address`.
+/// The application name of every other client session of this database
+/// (`-` when unset or hidden). PostgreSQL hides `backend_type` (NULL) for a
+/// session of a role the caller is not a member of, unless the caller has
+/// `pg_read_all_stats`; such a row counts as a client session.
 async fn other_sessions(conn: &mut sqlx::PgConnection) -> sqlx::Result<Vec<String>> {
     sqlx::query_scalar(
-        "SELECT concat_ws(' ', coalesce(usename::text, '?'), coalesce(nullif(application_name, ''), '-'), \
-                coalesce(host(client_addr), 'local')) \
+        "SELECT coalesce(nullif(application_name, ''), '-') \
          FROM pg_stat_activity \
-         WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend' \
+         WHERE datname = current_database() AND pid <> pg_backend_pid() \
+           AND coalesce(backend_type, 'client backend') = 'client backend' \
          ORDER BY 1",
     )
     .fetch_all(conn)
@@ -1097,10 +1101,20 @@ async fn migrate_in_one(
     if let Some(release) = release
         && release_pending(&stamp)
     {
-        let sessions = other_sessions(&mut tx).await?;
+        let mut sessions = other_sessions(&mut tx).await?;
         if !sessions.is_empty() {
-            return Err(MigrateError::SessionsConnected(sessions.join(", ")));
+            let count = sessions.len();
+            sessions.dedup();
+            return Err(MigrateError::SessionsConnected {
+                count,
+                applications: sessions.join(", "),
+            });
         }
+        // The release backfills and builds indexes; the pool's per-statement
+        // limit is for serving, not for this.
+        sqlx::query("SET LOCAL statement_timeout = 0")
+            .execute(&mut *tx)
+            .await?;
         sqlx::raw_sql(sqlx::AssertSqlSafe(release.to_owned()))
             .execute(&mut *tx)
             .await?;

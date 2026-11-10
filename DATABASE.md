@@ -515,16 +515,23 @@ preparation.
 The Social voice release accepts shipped main version 2 without historical step
 `0020_social_voice_notifications` or its retired objects, and genuinely prepared
 version 2 with that step's matching real receipt and complete legacy layout.
-`catalyst schema status` exits 5 on such a database. With every writer stopped,
-the version-3 binary applies the release and the additive steps in one transaction:
+`catalyst schema status` exits 5 on such a database. After verifying a backup
+restore and with every writer stopped, the version-3 binary applies the release
+and the additive steps in one transaction, with no statement timeout:
 
 ```sh
 catalyst schema migrate --release
 catalyst schema status
 ```
 
-`--release` refuses while any other client session is connected to the database
-and changes nothing then; a database already at version 3 takes the plain migrate.
+`--release` refuses while any other client session is connected to the database,
+including sessions of roles whose activity the migrator cannot read, and reports
+their count and application names; it changes nothing then. It is a best-effort
+guard: the release locks its own tables, not every table. A connection pooler or
+monitoring agent that holds sessions open also blocks it. Exit 5 reflects the
+stamp only; the release's own checks (mixed layout, receipts, destination,
+pending wallets) can still refuse it inside the transaction. A database already
+at version 3 takes the plain migrate.
 The binary embeds `schemas/releases/v3-private-voice-pending.sql` with its includes
 (`db::RELEASE_SQL`). The same file still runs through psql, followed by
 `catalyst schema migrate`:
