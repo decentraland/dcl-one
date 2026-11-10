@@ -24,6 +24,7 @@ use deno_core::{
     ToJsBuffer,
 };
 use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
     sync::{mpsc, Notify},
     task::JoinHandle,
@@ -31,8 +32,13 @@ use tokio::{
 use tokio_tungstenite::{
     tungstenite::{
         self,
-        protocol::{frame::coding::CloseCode, CloseFrame, WebSocketConfig},
-        ClientRequestBuilder, Message,
+        handshake::{
+            client::{generate_key, Response},
+            derive_accept_key,
+            machine::TryParse,
+        },
+        protocol::{frame::coding::CloseCode, CloseFrame, Role, WebSocketConfig},
+        Message,
     },
     MaybeTlsStream, WebSocketStream,
 };
@@ -47,11 +53,18 @@ const MESSAGE_OVERHEAD: usize = 64;
 /// socket before the payload is buffered.
 const MAX_INBOUND_MESSAGE_BYTES: usize = 1024 * 1024;
 /// Received events waiting for the scene to read them. The reader stops reading the socket
-/// while this is full, so a fast peer cannot grow the sidecar heap past it.
-const INBOUND_QUEUE: usize = 4;
+/// while this is full, so a socket holds at most this many decoded messages plus the one
+/// waiting to be queued.
+const INBOUND_QUEUE: usize = 1;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(15);
-/// How long a closing socket waits for the peer's close frame before it is dropped.
+/// Response heads larger than this fail the handshake.
+const MAX_RESPONSE_HEAD_BYTES: usize = 64 * 1024;
+/// How long a socket waits for the peer's close frame, from when its own close frame is
+/// written or the peer's arrives, before it is dropped.
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long `close()` waits for queued sends and the close frame to be written before the
+/// socket is dropped, so a peer that stops reading still frees the slot.
+const CLOSE_DRAIN_TIMEOUT: Duration = Duration::from_secs(60);
 const MAX_URL_BYTES: usize = 8 * 1024;
 const MAX_PROTOCOLS_BYTES: usize = 4 * 1024;
 const USER_AGENT: &str = "DCLExplorer/0.1";
@@ -115,6 +128,7 @@ pub(super) struct WsNet {
     pub resolver: Rc<dyn WsResolver>,
     pub handshake_timeout: Duration,
     pub close_timeout: Duration,
+    pub close_drain_timeout: Duration,
 }
 
 impl Default for WsNet {
@@ -123,6 +137,7 @@ impl Default for WsNet {
             resolver: Rc::new(PublicResolver),
             handshake_timeout: HANDSHAKE_TIMEOUT,
             close_timeout: CLOSE_TIMEOUT,
+            close_drain_timeout: CLOSE_DRAIN_TIMEOUT,
         }
     }
 }
@@ -328,7 +343,7 @@ struct WsResource {
     outbound: RefCell<Option<mpsc::UnboundedSender<Outbound>>>,
     inbound: AsyncRefCell<Option<mpsc::Receiver<Inbound>>>,
     inbound_cancel: CancelHandle,
-    closing: Arc<Notify>,
+    draining: Arc<Notify>,
     close_requested: Cell<bool>,
     backlog: Arc<Backlog>,
     pump: RefCell<Option<JoinHandle<()>>>,
@@ -435,7 +450,7 @@ fn create(state: &mut OpState, url: &str, protocols: &str) -> Result<ResourceId,
         outbound: RefCell::new(None),
         inbound: AsyncRefCell::new(None),
         inbound_cancel: CancelHandle::new(),
-        closing: Arc::new(Notify::new()),
+        draining: Arc::new(Notify::new()),
         close_requested: Cell::new(false),
         backlog: Arc::default(),
         pump: RefCell::new(None),
@@ -486,24 +501,108 @@ async fn dial(
         None => MaybeTlsStream::Plain(tcp),
     };
 
-    let mut request = ClientRequestBuilder::new(target.uri).with_header("User-Agent", USER_AGENT);
-    for protocol in target.protocols {
-        request = request.with_sub_protocol(protocol);
+    upgrade(stream, &target).await.map_err(failed)
+}
+
+/// The client side of the opening handshake (RFC 6455 section 4). A server that selects none
+/// of the requested subprotocols is accepted, and the scene sees an empty `protocol`.
+async fn upgrade(
+    mut stream: MaybeTlsStream<TcpStream>,
+    target: &WsTarget,
+) -> Result<Connected, AnyError> {
+    let key = generate_key();
+    let path = target.uri.path_and_query().map_or("/", |p| p.as_str());
+    let host = target
+        .uri
+        .authority()
+        .ok_or_else(|| anyhow!("WebSocket URL has no host"))?;
+    // the path is URL-serialized and the protocols are checked tokens, so neither holds CR or LF
+    let mut request = format!(
+        "GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\
+         Sec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\nUser-Agent: {USER_AGENT}\r\n"
+    );
+    if !target.protocols.is_empty() {
+        request.push_str(&format!(
+            "Sec-WebSocket-Protocol: {}\r\n",
+            target.protocols.join(", ")
+        ));
     }
+    request.push_str("\r\n");
+    stream.write_all(request.as_bytes()).await?;
+    stream.flush().await?;
+
+    let mut buf = Vec::new();
+    let (head_len, response) = loop {
+        if let Some(parsed) = Response::try_parse(&buf)? {
+            break parsed;
+        }
+        if buf.len() > MAX_RESPONSE_HEAD_BYTES {
+            anyhow::bail!("WebSocket handshake response is too large");
+        }
+        let mut chunk = [0u8; 4096];
+        let read = stream.read(&mut chunk).await?;
+        if read == 0 {
+            anyhow::bail!("WebSocket server closed the connection during the handshake");
+        }
+        buf.extend_from_slice(&chunk[..read]);
+    };
+    let protocol = verify_response(&response, &key, &target.protocols)?;
     let config = WebSocketConfig::default()
         .max_message_size(Some(MAX_INBOUND_MESSAGE_BYTES - 1))
         .max_frame_size(Some(MAX_INBOUND_MESSAGE_BYTES - 1));
-    let (socket, response) =
-        tokio_tungstenite::client_async_with_config(request, stream, Some(config))
-            .await
-            .map_err(|e| failed(e.into()))?;
-    let protocol = response
-        .headers()
-        .get("sec-websocket-protocol")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default()
-        .to_owned();
+    let tail = buf.split_off(head_len);
+    let socket =
+        WebSocketStream::from_partially_read(stream, tail, Role::Client, Some(config)).await;
     Ok(Connected { socket, protocol })
+}
+
+/// Checks the server's handshake response and returns the subprotocol it selected, or "".
+fn verify_response(
+    response: &Response,
+    key: &str,
+    requested: &[String],
+) -> Result<String, AnyError> {
+    if response.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        anyhow::bail!("WebSocket handshake failed: HTTP {}", response.status());
+    }
+    let headers = response.headers();
+    let single = |name: &str| -> Result<Option<&str>, AnyError> {
+        let mut values = headers.get_all(name).iter();
+        let value = values.next();
+        if values.next().is_some() {
+            anyhow::bail!("WebSocket handshake response repeats {name}");
+        }
+        value
+            .map(|v| {
+                v.to_str()
+                    .map_err(|_| anyhow!("WebSocket handshake response has an invalid {name}"))
+            })
+            .transpose()
+    };
+    if !single("upgrade")?.is_some_and(|v| v.eq_ignore_ascii_case("websocket")) {
+        anyhow::bail!("WebSocket handshake response does not upgrade to websocket");
+    }
+    let connection = headers
+        .get_all("connection")
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(','))
+        .any(|token| token.trim().eq_ignore_ascii_case("upgrade"));
+    if !connection {
+        anyhow::bail!("WebSocket handshake response does not upgrade the connection");
+    }
+    if single("sec-websocket-accept")? != Some(derive_accept_key(key.as_bytes()).as_str()) {
+        anyhow::bail!("WebSocket handshake response has the wrong accept key");
+    }
+    // no extensions are offered, so any in the response was not requested
+    if headers.contains_key("sec-websocket-extensions") {
+        anyhow::bail!("WebSocket server selected an extension that was not requested");
+    }
+    match single("sec-websocket-protocol")? {
+        None => Ok(String::new()),
+        Some(protocol) if requested.iter().any(|r| r == protocol) => Ok(protocol.to_owned()),
+        Some(_) => anyhow::bail!("WebSocket server selected a subprotocol that was not requested"),
+    }
 }
 
 /// One connector for every socket, so the system roots are loaded once.
@@ -571,17 +670,18 @@ pub async fn op_ws_connect(
     let handle = tokio::runtime::Handle::try_current()?;
     let (outbound_sx, outbound_rx) = mpsc::unbounded_channel();
     let (inbound_sx, inbound_rx) = mpsc::channel(INBOUND_QUEUE);
-    let close_timeout = state
+    let net = state
         .borrow()
         .try_borrow::<WsNet>()
-        .map_or(CLOSE_TIMEOUT, |net| net.close_timeout);
+        .cloned()
+        .unwrap_or_default();
     let pump = handle.spawn(pump(
         connected.socket,
         outbound_rx,
         inbound_sx,
         resource.backlog.clone(),
-        resource.closing.clone(),
-        close_timeout,
+        resource.draining.clone(),
+        (net.close_timeout, net.close_drain_timeout),
         slot,
     ));
     *resource.pump.borrow_mut() = Some(pump);
@@ -592,25 +692,32 @@ pub async fn op_ws_connect(
 }
 
 /// Moves frames between the socket and the resource until the connection ends, the resource
-/// goes away, or a close handshake outlives `close_timeout`. Dropping it drops the socket.
+/// goes away, a close handshake outlives `close_timeout`, or `close()` outlives
+/// `close_drain_timeout`. Dropping it drops the socket.
 async fn pump(
     socket: Socket,
     outbound: mpsc::UnboundedReceiver<Outbound>,
     inbound: mpsc::Sender<Inbound>,
     backlog: Arc<Backlog>,
-    closing: Arc<Notify>,
-    close_timeout: Duration,
+    draining: Arc<Notify>,
+    (close_timeout, close_drain_timeout): (Duration, Duration),
     _slot: Arc<SlotGuard>,
 ) {
     let (sink, stream) = socket.split();
+    let closing = Notify::new();
     let linger = async {
         closing.notified().await;
         tokio::time::sleep(close_timeout).await;
+    };
+    let drain = async {
+        draining.notified().await;
+        tokio::time::sleep(close_drain_timeout).await;
     };
     tokio::select! {
         _ = read(stream, inbound.clone(), &closing) => {}
         _ = write(sink, outbound, inbound, backlog, &closing) => {}
         _ = linger => {}
+        _ = drain => {}
     }
 }
 
@@ -655,8 +762,9 @@ async fn write(
                 result
             }
             Outbound::Close(frame) => {
+                let result = sink.send(Message::Close(frame)).await;
                 closing.notify_one();
-                sink.send(Message::Close(frame)).await
+                result
             }
         };
         match result {
@@ -789,7 +897,7 @@ pub fn op_ws_close(
             reason: reason.into(),
         }),
     };
-    resource.closing.notify_one();
+    resource.draining.notify_one();
     let _ = outbound.send(Outbound::Close(frame));
     Ok(())
 }
