@@ -7,7 +7,15 @@ import { promisify } from 'node:util'
 import { execFile } from 'node:child_process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { portInputHash, recordProblems, trackedFilesAt } from '../port-verification.mjs'
-import { PREPARE_ORDER, StageError, portPrepare, portVerify, type Stage } from './port.js'
+import {
+  PREPARE_ORDER,
+  StageError,
+  contentSnapshot,
+  portPrepare,
+  portVerify,
+  prepareStages,
+  type Stage
+} from './port.js'
 
 const REQUIRED = [
   'fetch-source',
@@ -242,4 +250,121 @@ describe('when the CLI receives a port command it does not know', () => {
     },
     30_000
   )
+})
+
+describe('when the second sync of a refresh is compared with the first', () => {
+  let repository: string
+  const run = (command: string, args: string[], cwd: string) => {
+    try {
+      return { code: 0, stdout: execFileSync(command, args, { cwd, encoding: 'utf8' }), stderr: '' }
+    } catch (error) {
+      const failure = error as { status: number | null; stdout?: string; stderr?: string }
+      return { code: failure.status, stdout: failure.stdout ?? '', stderr: failure.stderr ?? '' }
+    }
+  }
+  const at = (file: string) => path.join(repository, 'library/ui/figma', file)
+  const snapshot = () =>
+    contentSnapshot(run, {
+      figma: path.join(repository, 'library/ui/figma'),
+      ui: path.join(repository, 'library/ui'),
+      repository
+    })
+
+  beforeEach(() => {
+    repository = mkdtempSync(path.join(tmpdir(), 'port-snapshot-'))
+    mkdirSync(path.dirname(at('review/X.tsx')), { recursive: true })
+    writeFileSync(at('review/X.tsx'), 'v1\n')
+    execFileSync('git', ['init', '--quiet'], { cwd: repository })
+    execFileSync('git', ['add', '-A'], { cwd: repository })
+    execFileSync(
+      'git',
+      [
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@example.com',
+        'commit',
+        '--quiet',
+        '--no-gpg-sign',
+        '-m',
+        'base'
+      ],
+      { cwd: repository }
+    )
+  })
+
+  afterEach(() => rmSync(repository, { recursive: true, force: true }))
+
+  it('should see an already modified file rewritten with different bytes', () => {
+    writeFileSync(at('review/X.tsx'), 'v2\n')
+    const first = snapshot()
+    writeFileSync(at('review/X.tsx'), 'v3\n')
+
+    expect(snapshot()).not.toBe(first)
+  })
+
+  it('should stay equal when the second sync writes the same bytes', () => {
+    writeFileSync(at('review/X.tsx'), 'v2\n')
+    writeFileSync(at('review/New.tsx'), 'new\n')
+    const first = snapshot()
+    writeFileSync(at('review/X.tsx'), 'v2\n')
+    writeFileSync(at('review/New.tsx'), 'new\n')
+
+    expect(snapshot()).toBe(first)
+  })
+
+  it('should see a file the second sync deletes or adds', () => {
+    writeFileSync(at('review/X.tsx'), 'v2\n')
+    const first = snapshot()
+    rmSync(at('review/X.tsx'))
+    expect(snapshot()).not.toBe(first)
+
+    writeFileSync(at('review/X.tsx'), 'v2\n')
+    writeFileSync(at('review/Extra.tsx'), 'x\n')
+    expect(snapshot()).not.toBe(first)
+  })
+
+  it('should fail closed when git status fails', () => {
+    rmSync(path.join(repository, '.git'), { recursive: true, force: true })
+    expect(() => snapshot()).toThrow('git status failed')
+  })
+})
+
+describe('when prepare reseals the lock digests', () => {
+  const p = { figma: '/repo/library/ui/figma', ui: '/repo/library/ui', repository: '/repo' }
+  const recorder = (addCode: number) => {
+    const calls: string[] = []
+    const run = (command: string, args: string[]) => {
+      calls.push([command === process.execPath ? 'node' : command, ...args].join(' '))
+      const add = command === 'git' && args.includes('add')
+      return {
+        code: add ? addCode : 0,
+        stdout: '',
+        stderr: add && addCode ? 'fatal: index.lock exists' : ''
+      }
+    }
+    return { calls, run }
+  }
+
+  it('should stage library/ui before lock-digests reads the index', () => {
+    const { calls, run } = recorder(0)
+
+    expect(prepareStages(run, p)['lock-digests']!()).toEqual({
+      name: 'lock-digests',
+      detail: 'staged library/ui and rewrote the lock digests'
+    })
+    expect(calls).toEqual([
+      'git -C /repo add -A -- library/ui',
+      'node /repo/library/ui/figma/lock-digests.mjs --write'
+    ])
+  })
+
+  it('should stop before resealing when staging fails', () => {
+    const { calls, run } = recorder(128)
+
+    expect(() => prepareStages(run, p)['lock-digests']!()).toThrow(
+      'git add failed: fatal: index.lock exists'
+    )
+    expect(calls).toEqual(['git -C /repo add -A -- library/ui'])
+  })
 })

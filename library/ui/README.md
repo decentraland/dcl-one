@@ -69,7 +69,7 @@ pnpm figma diff              # generated output matches the capture (exit 1 if n
 pnpm figma check-mappings    # every *.figma.ts matches the library and the capture
 ```
 
-`fetch-source` fetches exactly the pinned commit over SSH into a temporary repository, rewrites each file into the keyless form this tree reads, and accepts it only when every file matches the digest table in the lock and every ported file's recorded counterpart matches the pinned commit; the raw objects are deleted before it returns. Every command that reads the capture fails, naming `pnpm figma fetch-source`, when the cache is missing, stale or edited. A port bumps the pinned revision, runs `pnpm figma fetch-source --seal` and `node figma/lock-digests.mjs --write`, runs the checks above and commits their record. Promotion and the fidelity evidence belong to FDS.
+`fetch-source` fetches exactly the pinned commit over SSH into a temporary repository, rewrites each file into the keyless form this tree reads, and accepts it only when every file matches the digest table in the lock and every ported file's recorded counterpart matches the pinned commit; the raw objects are deleted before it returns. Every command that reads the capture fails, naming `pnpm figma fetch-source`, when the cache is missing, stale or edited. A port bumps the pinned revision, runs `pnpm figma fetch-source --seal`, stages `library/ui` and runs `node figma/lock-digests.mjs --write` (it reads the index), runs the checks above and commits their record. Promotion and the fidelity evidence belong to FDS.
 
 ## The Figma file key is private
 

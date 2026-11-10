@@ -5,7 +5,8 @@
 // port inputs and that every result is `pass`; it is not proof that the checks ran, an independent review, an
 // attestation or evidence of live Figma parity.
 import { spawnSync } from 'node:child_process'
-import { readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import {
   REQUIRED_CHECKS,
@@ -82,6 +83,46 @@ function changes(run: Run, p: Paths): string {
   )
   if (result.code !== 0) throw new Error(`git status failed: ${firstLine(result.stderr)}`)
   return result.stdout
+}
+
+/**
+ * The uncommitted state of library/ui by content: each changed or untracked path with the sha256 of its bytes (or
+ * "deleted"). Unlike the `git status` text, it changes when a file that is already modified is rewritten with different
+ * bytes, which is what a second, unstable sync does on a refresh.
+ */
+function contentSnapshot(run: Run, p: Paths): string {
+  const result = run(
+    'git',
+    [
+      '-C',
+      p.repository,
+      'status',
+      '--porcelain=v1',
+      '-z',
+      '--untracked-files=all',
+      '--no-renames',
+      '--',
+      path.relative(p.repository, p.ui),
+      `:!${path.relative(p.repository, path.join(p.ui, 'node_modules'))}`,
+      `:!${path.relative(p.repository, path.join(p.figma, 'node_modules'))}`,
+      `:!${path.relative(p.repository, path.join(p.ui, '.agent-work'))}`
+    ],
+    p.ui
+  )
+  if (result.code !== 0) throw new Error(`git status failed: ${firstLine(result.stderr)}`)
+  return result.stdout
+    .split('\0')
+    .filter(Boolean)
+    .map((entry) => entry.slice(3))
+    .sort()
+    .map((file) => {
+      const absolute = path.join(p.repository, file)
+      const digest = existsSync(absolute)
+        ? createHash('sha256').update(readFileSync(absolute)).digest('hex')
+        : 'deleted'
+      return `${file}\t${digest}`
+    })
+    .join('\n')
 }
 
 const count = (directory: string): number =>
@@ -274,9 +315,10 @@ function prepareStages(run: Run, p: Paths): Record<string, () => Stage> {
       return { name: 'sync', detail: 'generated the Review previews from the capture' }
     },
     'sync-again': () => {
-      const before = changes(run, p)
+      const before = contentSnapshot(run, p)
       cliStage(run, p, ['sync'], 'second sync')
-      if (changes(run, p) !== before) fail('a second sync changed files: generation is not stable')
+      if (contentSnapshot(run, p) !== before)
+        fail('a second sync changed files: generation is not stable')
       return { name: 'sync-again', detail: 'a second sync changed nothing' }
     },
     'install-foundations': () => {
@@ -288,13 +330,21 @@ function prepareStages(run: Run, p: Paths): Record<string, () => Stage> {
       return { name: 'install-components', detail: 'installed the components' }
     },
     'lock-digests': () => {
+      // lock-digests reads the index, so what sync and install just wrote is staged first; otherwise it would pin the
+      // previous bytes and leave new generated files unpinned.
+      const staged = run(
+        'git',
+        ['-C', p.repository, 'add', '-A', '--', path.relative(p.repository, p.ui)],
+        p.ui
+      )
+      if (staged.code !== 0) fail(`git add failed: ${firstLine(staged.stderr)}`)
       const result = run(
         process.execPath,
         [path.join(p.figma, 'lock-digests.mjs'), '--write'],
         p.ui
       )
       if (result.code !== 0) fail(`lock-digests --write failed: ${firstLine(result.stdout)}`)
-      return { name: 'lock-digests', detail: 'rewrote the lock digests' }
+      return { name: 'lock-digests', detail: 'staged library/ui and rewrote the lock digests' }
     }
   }
 }
@@ -330,9 +380,9 @@ function portPrepare(
   return {
     ok: true,
     stages: results,
-    next: 'Record the deviations of changed files in upstream.lock.json, commit, then run `pnpm figma port verify`.'
+    next: 'Record a deviation code for every changed file in upstream.lock.json, stage library/ui again, rerun `node figma/lock-digests.mjs --write` (it reads the index), commit, then run `pnpm figma port verify`.'
   }
 }
 
-export { PREPARE_ORDER, StageError, portPrepare, portVerify }
+export { PREPARE_ORDER, StageError, contentSnapshot, portPrepare, portVerify, prepareStages }
 export type { PrepareResult, Run, Stage, VerifyResult }

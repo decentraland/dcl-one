@@ -244,6 +244,28 @@ def client(args):
             result = request(public, path, vhost=vhost)
             assert result[0] == 400, ("ambiguous path", vhost, path, result)
     hit("/about?x=a%3Fb", "apis")
+    # Encoded `/` and `?` in a storage key reach the service as sent.
+    for path, vhost, target, original in [
+        ("/values/a%2Fb%3Fc?x=1", "storage.example.test", "/world-storage/values/a%2Fb%3Fc?x=1",
+         "/values/a%2Fb%3Fc?x=1"),
+        ("/players/0xa/values/k%2F1%3F2", "world-storage.example.test",
+         "/world-storage/players/0xa/values/k%2F1%3F2", "/players/0xa/values/k%2F1%3F2"),
+        ("/storage/values/a%2Fb", "gateway.example.test", "/world-storage/values/a%2Fb", "/values/a%2Fb"),
+        ("/world-storage/values/a%2Fb%3Fc", "example.test", None, "/world-storage/values/a%2Fb%3Fc"),
+    ]:
+        data = hit(path, "apis", vhost=vhost, target=target)
+        assert data["headers"]["x-original-path"] == original, (vhost, path, data)
+    assert request(public, "/__gateway_storage_raw", vhost="example.test")[0] == 404
+    import gateway
+    too_large = gateway.STORAGE_BODY_CAP_BYTES + 1
+    for path, vhost, body in [
+        ("/world-storage/values/k", "example.test", b"x" * too_large),
+        ("/values/a%2Fb", "storage.example.test", b"x" * too_large),
+        # No Content-Length: http.client sends an iterable body chunked.
+        ("/world-storage/values/k", "example.test", iter([b"x" * too_large])),
+    ]:
+        status, answer = request(public, path, vhost=vhost, method="PUT", body=body)
+        assert (status, json.loads(answer)) == (413, gateway.STORAGE_TOO_LARGE), (path, vhost, status, answer)
     for path, host in [("/", "admin.example.test"), ("/admin/api/jobs", "gateway.example.test")]:
         assert request(public, path, vhost=host, headers=forged)[0] == 403
     for path, host in [("/pulse/x.data", "internal.example.test"),

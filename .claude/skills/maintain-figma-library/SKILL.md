@@ -16,11 +16,13 @@ Before any work, report the `needs-manual` flags and their reasons for the compo
 
 ## 2. Prepare
 
+For a capture refresh, first point the lock at the new capture: set `revision` and `snapshot.revision` of the figma-design-system source in `upstream.lock.json` to the new FDS commit, then run `pnpm figma fetch-source --seal`, which fetches that commit and writes its digest table. Skip this when you only regenerate from the capture already pinned. Without it, `port prepare` verifies against the old digest table and either fails at fetch-source or prepares the old capture again.
+
 ```sh
 pnpm figma port prepare
 ```
 
-It runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write`, in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), rerun `node figma/lock-digests.mjs --write`, and commit.
+It runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write` (it stages `library/ui` first, because lock-digests reads the index), in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), stage `library/ui` again (`git add -A -- library/ui`), rerun `node figma/lock-digests.mjs --write` (it reads the index), and commit.
 
 ## 3. Verify
 

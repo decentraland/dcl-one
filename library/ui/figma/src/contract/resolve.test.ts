@@ -1,7 +1,12 @@
 import { rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
-import { checkMappings, resolveComponent, type ResolveContext } from './resolve.js'
+import {
+  checkMappings,
+  checkMappingsReport,
+  resolveComponent,
+  type ResolveContext
+} from './resolve.js'
 import { buttonSet, makeLibrary, mappingSource } from './test-fixtures.js'
 
 const created: string[] = []
@@ -753,6 +758,28 @@ describe('resolveComponent', () => {
       ).toMatchObject({
         text: 'Caption'
       })
+    })
+  })
+
+  describe.each([
+    [
+      'a directory that does not exist inside the package',
+      (root: string) => path.join(root, 'src/missing')
+    ],
+    ['a file', (root: string) => path.join(root, 'src/Button.tsx')]
+  ])('when the mapping root is %s', (_label, rootOf) => {
+    it('should report mapping-root-not-configured from resolve and check-mappings, never a raw error', async () => {
+      const { root } = await library()
+      const ctx = context(rootOf(root))
+
+      expect(codes(await resolveComponent(ctx, { nodeId: '1:1' }))).toEqual([
+        'mapping-root-not-configured'
+      ])
+      expect(await checkMappingsReport(ctx)).toMatchObject({
+        ok: false,
+        errors: [expect.objectContaining({ code: 'mapping-root-not-configured' })]
+      })
+      expect(await checkMappings(ctx)).toEqual([])
     })
   })
 

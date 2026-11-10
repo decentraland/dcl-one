@@ -9,14 +9,27 @@ pub fn has_nul(s: &str) -> bool {
     s.contains('\0') || s.to_ascii_lowercase().contains("%00")
 }
 
+fn refused() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({ "error": "request path or query contains a NUL byte" })),
+    )
+        .into_response()
+}
+
 pub async fn nul_guard_middleware(req: Request, next: Next) -> Response {
     let uri = req.uri();
     if has_nul(uri.path()) || uri.query().map(has_nul).unwrap_or(false) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": "request path or query contains a NUL byte" })),
-        )
-            .into_response();
+        return refused();
+    }
+    next.run(req).await
+}
+
+/// The query half of [`nul_guard_middleware`], for a router whose handlers
+/// refuse a NUL in each path parameter themselves, after authentication.
+pub async fn nul_query_guard_middleware(req: Request, next: Next) -> Response {
+    if req.uri().query().map(has_nul).unwrap_or(false) {
+        return refused();
     }
     next.run(req).await
 }
@@ -56,6 +69,25 @@ mod tests {
     #[tokio::test]
     async fn rejects_uppercase_encoded_nul() {
         assert_eq!(status("/x?q=%00").await, StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn the_query_guard_leaves_the_path_to_the_handler() {
+        let app = Router::new()
+            .route("/x/{p}", get(|| async { "ok" }))
+            .layer(axum::middleware::from_fn(nul_query_guard_middleware));
+        for (uri, expected) in [
+            ("/x/a%00b", StatusCode::OK),
+            ("/x/a?q=%00", StatusCode::BAD_REQUEST),
+        ] {
+            let status = app
+                .clone()
+                .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap()
+                .status();
+            assert_eq!(status, expected, "{uri}");
+        }
     }
 
     #[tokio::test]

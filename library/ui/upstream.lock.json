@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "70955bd6175886dae0aee6e8b2a5d702b3c1909848e666aa5b7d50f3c7114b38",
+          "sha256": "1dbe86ef08ad643809b5b1c91cf1b45b32414fd1afc88c3dc72dd1c70bc73e2f",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -679,7 +679,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "3ceef92a756d8f194c801859aa0f812d871a492a51e1907e0df0fb710285f9aa",
+          "sha256": "0aad7f4a990c8f2d3c3eb911655c37e2392e3e5fb9044fd5043ac0d0e2f8799f",
           "fds": null,
           "deviation": [
             "port-command"
@@ -768,7 +768,7 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/lock-digests.mjs": {
-          "sha256": "471cfcb2548c7248f022f010cca1a5de170ff35059f5b55e4bd0375670fe82ed",
+          "sha256": "cacebbcac5974b50223952da8e03d99751041de7016c9a380d8c1bfd2403ecce",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -2576,7 +2576,7 @@
           ]
         },
         "library/ui/figma/src/contract/resolve.test.ts": {
-          "sha256": "d9665873d19fb4ef7f6c87ff0ea880e65ed3768938a7063406f25f60bfab512e",
+          "sha256": "bc07842cb22fd622594492e109398468c11d37f6ad99822ae5ea3199a8f5e854",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.test.ts",
             "sha256": "d1b50c99ff3cf99f3e7dd425facf4ba9ad171fd8cbe214df0bc3a34bc1ee3bc5"
@@ -2589,7 +2589,7 @@
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
-          "sha256": "8bb0e5f2e2d6026cb0bcc7a2a7919d732b2ca6df689e0405c7dc5e79270f1f05",
+          "sha256": "835d7958e902fc6b2f956e60b5eaef9a2d5afd75c9a0707ec21242e4c1e0b2b5",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.ts",
             "sha256": "cac48b26148bef9db5d087d2857a7e9eaf89ae33745125d47957678de71dc596"
@@ -3541,14 +3541,14 @@
           }
         },
         "library/ui/figma/src/port.test.ts": {
-          "sha256": "c7e36c35c276773743243f23c44a62099a6869f7f2b4536f97378ce500e7b837",
+          "sha256": "c3c38588d44ae350121e130faf2b9e241ba18ff5edc6b3c5d53e5345bf9dd2fa",
           "fds": null,
           "deviation": [
             "port-command"
           ]
         },
         "library/ui/figma/src/port.ts": {
-          "sha256": "8d3f5efaa6e88dc479ad5a51d3ec4667110dc8c7a190f08d076a5d7e850365c9",
+          "sha256": "02fe0f46df2371847d61a7b473119b4d3a9c5146e3d712117248e652437f4034",
           "fds": null,
           "deviation": [
             "port-command"
@@ -4279,7 +4279,7 @@
         "predates": "These files differed from figma-design-system at the code base before this pull request and are byte-identical to 67a95f89: earlier ports, the keyless form and this tree's layout. This pull request does not change them; listing each file's older reason is a follow-up.",
         "public-foundations-integrity": "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests.",
         "request-scope-hardening": "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port.",
-        "resolver-contract": "One diagnostic registry (src/contract/diagnostics.ts) gives every code its severity, audience and action, with per-reason actions for contract-incompatible; diagnostics-docs.test.ts fails when the SKILL.md or MAINTENANCE.md table differs from it. The unused mapping-unreadable code is removed. mapping-missing is returned only for a captured library component and carries the contributor report context; an unmapped node without a capture is the new identity-uncertain, and a node outside the capture is identity-not-found. --mapping-only (CLI and MCP server) loads no Figma config beyond its contract block, never reads the capture cache and registers only figma_resolve_component and figma_check_mappings; its mapping root defaults to library/ui/components. The CLI gains --text for parity with the MCP texts input and refuses malformed or repeated Name=Value flags. Resolve provenance names the capture revision the tracked lock pins. The cache error names both routes: fetch-source for maintainers, --mapping-only for consumers. Review follow-up: identity codes carry a details.reason with their own action (a name lookup without a capture sends the caller back for a set node id; several mappings on one node and the check-mappings collisions are library defects with file details); an unreadable lock is the capture-revision-unknown warning instead of a thrown error; --mapping-only reads the contract block of the Figma config (argument, DCL_FIGMA_CONFIG or working directory) so its mapping root and library range still apply; record lookups use own keys only, so names such as __proto__ or toString never match inherited members. Second review follow-up: reasons only check-mappings emits carry the maintainer audience and reason names are checked at compile time; every failed resolve carries its library and capture context; with a capture a node outside it is identity-not-found even when a stale mapping targets it; without a capture an unread variant property or a non-boolean value is variant-unsupported and an unrendered text is a warning; check-mappings reports captureChecked and a warning when no capture was read; the capture revision comes from the same pin reader as fetch-source; flags are parsed before the runtime and a missing explicit config fails at startup; the documentation tables are read after a marker and per-reason rows must point at action. Third review follow-up: without a capture an unread property is the same unmapped-figma-property warning the capture path gives, booleans are checked in both modes, a mapping that targets a node outside the capture is identity-not-found stale-mapping with its files, check-mappings fails without a mapping source and reports a missing capture with the maintainer code capture-unchecked, usage without a capture or properties says basis unspecified, and the lock is named by package.",
+        "resolver-contract": "One diagnostic registry (src/contract/diagnostics.ts) gives every code its severity, audience and action, with per-reason actions for contract-incompatible; diagnostics-docs.test.ts fails when the SKILL.md or MAINTENANCE.md table differs from it. The unused mapping-unreadable code is removed. mapping-missing is returned only for a captured library component and carries the contributor report context; an unmapped node without a capture is the new identity-uncertain, and a node outside the capture is identity-not-found. --mapping-only (CLI and MCP server) loads no Figma config beyond its contract block, never reads the capture cache and registers only figma_resolve_component and figma_check_mappings; its mapping root defaults to library/ui/components. The CLI gains --text for parity with the MCP texts input and refuses malformed or repeated Name=Value flags. Resolve provenance names the capture revision the tracked lock pins. The cache error names both routes: fetch-source for maintainers, --mapping-only for consumers. Review follow-up: identity codes carry a details.reason with their own action (a name lookup without a capture sends the caller back for a set node id; several mappings on one node and the check-mappings collisions are library defects with file details); an unreadable lock is the capture-revision-unknown warning instead of a thrown error; --mapping-only reads the contract block of the Figma config (argument, DCL_FIGMA_CONFIG or working directory) so its mapping root and library range still apply; record lookups use own keys only, so names such as __proto__ or toString never match inherited members. Second review follow-up: reasons only check-mappings emits carry the maintainer audience and reason names are checked at compile time; every failed resolve carries its library and capture context; with a capture a node outside it is identity-not-found even when a stale mapping targets it; without a capture an unread variant property or a non-boolean value is variant-unsupported and an unrendered text is a warning; check-mappings reports captureChecked and a warning when no capture was read; the capture revision comes from the same pin reader as fetch-source; flags are parsed before the runtime and a missing explicit config fails at startup; the documentation tables are read after a marker and per-reason rows must point at action. Third review follow-up: without a capture an unread property is the same unmapped-figma-property warning the capture path gives, booleans are checked in both modes, a mapping that targets a node outside the capture is identity-not-found stale-mapping with its files, check-mappings fails without a mapping source and reports a missing capture with the maintainer code capture-unchecked, usage without a capture or properties says basis unspecified, and the lock is named by package. A mapping root that is unset, not an existing directory or outside a package is mapping-root-not-configured in resolve and check-mappings, never a raw file-system error.",
         "review-followup-2": "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "review-followup-3": "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
@@ -4679,7 +4679,7 @@
         }
       },
       "generation.json": {
-        "sha256": "5b67d7dabec4644efc9f65be9b8698cdb5ae338e82bf8850320cdea169e9c713",
+        "sha256": "d5e615015490590e7481fee199abbfdfb00cfa6361ee6214d344e46ffa0a3a4b",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
