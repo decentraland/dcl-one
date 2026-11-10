@@ -1,9 +1,9 @@
 // The browser host's choice of the Ethereum network the Shop's LAND and NAME flows run on. The networks themselves,
-// and everything read from them, take the chain as an argument (land/contracts.ts).
+// and everything read from them, take the chain as an argument (@shop/land/contracts).
 
 import { CHAIN, type ChainId } from "@shop/model/chain";
 import { ethereumChainId } from "../checkout/chain/config";
-import { LAND_NETWORKS } from "./contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 
 type ShopEnvWindow = Window & typeof globalThis & { __SHOP_ETHEREUM_CHAIN_ID__?: number };
 

@@ -11,7 +11,7 @@ import { encodeFunctionData, erc20Abi, parseAbi, type Abi, type Hex } from "viem
 import type { Eip1193Provider } from "../../data/auth/wallet";
 import { catalystBase } from "../../data/catalyst/client";
 import { requireChain } from "../wallet/chain";
-import { readContract, type ChainReader } from "./read";
+import { readContract, type ChainReader } from "@shop/land/read";
 
 export { readContract };
 export type { ChainReader };

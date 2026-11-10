@@ -6,7 +6,7 @@ import { REMOTE_FLAG, remoteFlagVariant } from "@ui/shop/discovery/lib/remoteFla
 import { serverShopApiMode } from "./mode";
 import { defaultShopSeo, shopMetaDescriptors } from "./pages";
 import { loadShopPage, serverShopClient } from "./pages.server";
-import { LAND_NETWORKS } from "@ui/shop/land/contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 
 const C = "0xabc0000000000000000000000000000000000001";
 

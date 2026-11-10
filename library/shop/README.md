@@ -14,8 +14,8 @@ endpoint map. Every Shop host imports it as `@shop/*`: the web Shop and the `/pl
   has no `node_modules`.
 - It reaches for no host. `tsconfig.json` compiles the modules against ES alone, plus the
   globals every host has (`globals.d.ts`: `console`, `TextEncoder`, `URL`, `URLSearchParams`,
-  and `AbortSignal` as a type only). So `window`, `document`, `fetch`, storage, `location`,
-  `WebSocket`, `process` or `import.meta.env` do not compile.
+  `AbortSignal` as a type only, and the `DOMException` constructor). So `window`, `document`,
+  `fetch`, storage, `location`, `WebSocket`, `process` or `import.meta.env` do not compile.
   Configuration, identity, signers and wallets stay in the hosts and are passed in.
 - `boundary.test.ts` checks the imports (static, side-effect, dynamic and `require`), that the
   compile profile stays ES only, and that every module loads in node with no DOM. Tests may also

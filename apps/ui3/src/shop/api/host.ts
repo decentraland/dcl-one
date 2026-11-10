@@ -1,4 +1,4 @@
-// The browser host's wiring for the Shop API. The client (api/client.ts, api/shop.ts) reads no configuration and
+// The browser host's wiring for the Shop API. The client (@shop/api/client, @shop/api/shop) reads no configuration and
 // reaches for no network or identity of its own; this module gives it each of them:
 // - where the API is: the configured mode and base, in their precedence, the base normalized (data/catalyst);
 // - how a request travels: fetch, or the Explorer's engine bridge;

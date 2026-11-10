@@ -15,7 +15,7 @@ import {
   landSortsFor,
 } from "./api";
 import { landChainId } from "./chain";
-import { landCategoryOf, landNetwork, LAND_NETWORKS } from "./contracts";
+import { landCategoryOf, landNetwork, LAND_NETWORKS } from "@shop/land/contracts";
 import { computeEstateFingerprint, isEstateListingAffectedByUpgrade, ESTATE_V2_FINGERPRINT_LISTING_CUTOFF } from "./estate";
 import { distanceText, estateProximity, parcelProximity, proximityIndex } from "./proximity";
 import { stubClient } from "./testkit";

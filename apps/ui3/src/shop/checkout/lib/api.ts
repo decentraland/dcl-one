@@ -4,7 +4,7 @@
 //       marketplace@f3956826:webapp/src/modules/activity/actions.ts (FETCH_USER_ACTIVITY_REQUEST),
 //       webapp/src/modules/sagas.ts (the Transak and Wert gateway calls). Marketplace UI: Apache-2.0,
 //       Copyright 2020 Metaverse Holdings Ltd.
-// The Shopping area's slice of upstream's `lib/api.ts`, on the ONE client (api/shop.ts): what the
+// The Shopping area's slice of upstream's `lib/api.ts`, on the ONE client (@shop/api/shop): what the
 // purchase rails, the receipts and the activity feed read. The shared `ui3/src/shop/lib/api.ts`
 // (Discovery's catalogue mappers) can re-export these under the same names.
 

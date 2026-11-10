@@ -88,7 +88,7 @@ function noChromeMessage(env) {
  *  (an ephemeral private key and a signed delegation valid for days), or undefined. The e2e
  *  suite's `driver/console.ts` has the same rule, which its tests keep in step. */
 export function secretOf(line) {
-  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position|profiles)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
+  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
   // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
   return token?.replace(/^["']|["']$/g, '');
 }

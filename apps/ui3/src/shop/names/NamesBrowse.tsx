@@ -16,7 +16,7 @@ import { reasonText } from "@shop/payment/copy";
 import { indexOutage } from "../land/api";
 import { useResource } from "../land/useResource";
 import { shopClient } from "../api/host";
-import { fetchNameResales, NAME_SORT_LABEL, nameOf, parsePriceBound, nameResaleQueryFromSearch, nameResaleQueryToSearch, NAMES_PAGE_SIZE, type NameResaleQuery } from "./api";
+import { fetchNameResales, NAME_SORT_LABEL, nameOf, parsePriceBound, nameResaleQueryFromSearch, nameResaleQueryToSearch, NAMES_PAGE_SIZE, type NameResaleQuery } from "@shop/names/api";
 import NameCard from "./NameCard";
 import "./names.css";
 

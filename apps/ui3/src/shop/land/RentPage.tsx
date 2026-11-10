@@ -19,7 +19,7 @@ import { optionStateText } from "@shop/payment/copy";
 import ManaGuidance, { type GuidanceRevalidation } from "../wallet/ManaGuidance";
 import { BackLink, LandTokenDetails, LandTokenHighlights, LandTokenMap } from "../detail/components/LandBranch";
 import { fetchNftResult, indexOutage, landData } from "./api";
-import { landCategoryOf, landNetwork } from "./contracts";
+import { landCategoryOf, landNetwork } from "@shop/land/contracts";
 import { erc20Abi, readContract, rpcReader, txHref, type ChainReader } from "./evm";
 import { Mana, shortDateText } from "./format";
 import { BUILDER_LAND_HREF } from "./ManageAsset";

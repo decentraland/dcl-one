@@ -12,7 +12,7 @@ import MapSurface, { GRID_PARCELS } from "../../explorer/components/MapSurface";
 import { landTokenId } from "../../data/catalyst/landListing";
 import { shortAddress } from "@shop/model/address";
 import { landChainId } from "./chain";
-import { landNetwork } from "./contracts";
+import { landNetwork } from "@shop/land/contracts";
 import { Mana } from "./format";
 import { coordsId, isTileInSelection, type Coord, type LandTile, type Tiles } from "./tiles";
 import "./land.css";

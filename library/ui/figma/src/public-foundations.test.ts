@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -162,6 +162,61 @@ describe('when public foundation provenance is checked', () => {
     }
     expect(publicFoundationProblems(root, lock)).toContain(
       'generated origin classification differs: colors/colors.ts'
+    )
+  })
+  it('should reject a malformed staged manifest without throwing', async () => {
+    await put('source.json', 'not-json')
+    git('add', relative + 'source.json')
+    lock.publicFoundations!.files['source.json']!.sha256 = digest('not-json')
+    expect(publicFoundationProblems(root, lock)).toContain('foundation manifests are malformed')
+  })
+
+  it('should reject symlinked foundation manifests without reading their target', async () => {
+    await rm(path.join(root, relative, 'source.json'))
+    await symlink(
+      path.join(root, relative, 'typography/font-source.json'),
+      path.join(root, relative, 'source.json')
+    )
+    expect(publicFoundationProblems(root, lock)).toContain(
+      'public output contains a symlink: source.json'
+    )
+  })
+
+  it('should reject a pointer with a correct digest but wrong byte size', () => {
+    git(
+      'update-index',
+      '--cacheinfo',
+      '100644,' +
+        execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+          input: `version https://git-lfs.github.com/spec/v1\noid sha256:${digest('font0')}\nsize 999\n`
+        })
+          .toString()
+          .trim() +
+        ',' +
+        relative +
+        'typography/fonts/font0.woff2'
+    )
+    expect(publicFoundationProblems(root, lock)).toContain(
+      'font LFS identity mismatch: typography/fonts/font0.woff2'
+    )
+  })
+
+  it('should reject a non-font index pointer even when its LFS digest matches', () => {
+    git(
+      'update-index',
+      '--cacheinfo',
+      '100644,' +
+        execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+          input: `version https://git-lfs.github.com/spec/v1\noid sha256:${digest('export const palette = {}')}\nsize 25\n`
+        })
+          .toString()
+          .trim() +
+        ',' +
+        relative +
+        'colors/colors.ts'
+    )
+    expect(publicFoundationProblems(root, lock)).toContain(
+      'public index bytes differ: colors/colors.ts'
     )
   })
 })

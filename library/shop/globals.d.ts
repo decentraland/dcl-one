@@ -6,12 +6,21 @@
 declare var console: { warn(...data: unknown[]): void };
 declare var TextEncoder: { new (): { encode(input?: string): Uint8Array } };
 // WHATWG URL: the client serializes a query with URLSearchParams (its encoding is the wire format) and signs the path
-// URL parses. Never fetch: the host's transport makes every request.
+// URL parses; the NAME browse reads its query back from a search string. Never fetch: the host's transport makes every
+// request.
 declare var URL: { new (url: string, base?: string): { readonly pathname: string } };
 declare var URLSearchParams: {
-  new (): { append(name: string, value: string): void; set(name: string, value: string): void; toString(): string };
+  new (init?: string): {
+    append(name: string, value: string): void;
+    set(name: string, value: string): void;
+    get(name: string): string | null;
+    toString(): string;
+  };
 };
-// A caller's signal, only ever handed on to the host's transport as it came: never built, read for more or replaced.
+// A caller's signal: handed on to the host's transport as it came, and asked only whether it has aborted (a read that
+// answers after its caller aborted is refused as an abort). Never built, read for more or replaced.
 declare interface AbortSignal {
   readonly aborted: boolean;
 }
+// That refusal, as fetch makes it: an Error named "AbortError". Only constructed, never inspected.
+declare var DOMException: { new (message?: string, name?: string): Error };

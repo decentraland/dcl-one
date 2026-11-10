@@ -1,9 +1,9 @@
 import { expectConsoleOutput } from './console'
 import { describe, it, expect } from 'vitest'
-import { act } from '@testing-library/react'
+import { act, waitFor } from '@testing-library/react'
 import type { Profile } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
-import { peekProfile, requestPassport } from '../features/session/profileStore'
+import { peekProfile, requestPassport, subscribeProfile } from '../features/session/profileStore'
 
 // DOMAIN: profile — the local player's passport, fetched on world entry.
 describe('profile domain', () => {
@@ -63,6 +63,51 @@ describe('profile domain', () => {
 
     act(() => h.session().profile.dismissSaveError())
     expect(h.session().profile.saveError).toBeNull()
+  })
+
+  it('puts a failed save back once, though the engine announced the edit and then its revert', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const before: Profile = { ...profile, version: 3 }
+    h.driver.emit({ kind: 'profile', profile: before })
+    // your own passport is open: what it shows, in order
+    const shown: (string | undefined)[] = []
+    subscribeProfile('0xme', () => shown.push(peekProfile('0xme')?.description))
+    act(() => requestPassport('0xme'))
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before })
+    shown.length = 0
+
+    act(() => h.session().profile.save({ description: 'gm from the beach' }))
+    // the engine applies the edit as version 4 and announces it; the store asks for that copy
+    h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 4 })
+    // the deploy fails: the save is answered, and the engine puts version 3 back and announces it
+    h.driver.emit({ kind: 'profileSaved', ok: false, error: 'failed to deploy to server.' })
+    h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 3 })
+    // the read of version 4 is answered only now, then the one made after the revert
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: { ...before, version: 4, description: 'gm from the beach' } })
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: before })
+
+    // the order is the check: a store without the revert mark shows the late read of the edit again;
+    // the session's own copy goes back either way
+    expect(shown).toEqual(['gm from the beach', 'hi', 'hi'])
+    expect(h.session().profile.data?.description).toBe('hi')
+  })
+
+  it('a sign-out leaves no announced version behind to hold back the next session\'s profile', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
+    // a chat line of yours keeps your profile shown
+    subscribeProfile('0xme', () => {})
+    // a Backpack edit is announced and read, and the account signs out before its deploy result
+    h.driver.emit({ kind: 'profileChanged', address: '0xme', version: 4 })
+    h.driver.emit({ kind: 'userProfile', address: '0xme', profile: { ...profile, version: 4, description: 'edited' } })
+    act(() => h.session().logout())
+    await waitFor(() => expect(h.session().phase).toBe('login'))
+    // the same account signs in again, and the engine loads the version the failed deploy left
+    await enterAsGuest(h)
+    h.driver.emit({ kind: 'profile', profile: { ...profile, version: 3 } })
+    expect(peekProfile('0xme')).toMatchObject({ version: 3, description: 'hi' })
   })
 
   it('keeps a successful edit and holds no error', async () => {

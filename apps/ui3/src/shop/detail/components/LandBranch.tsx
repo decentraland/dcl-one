@@ -20,7 +20,7 @@ import { landTokenId } from "../../../data/catalyst/landListing";
 import { EstateUpgradeWarning } from "../../land/LandSections";
 import { fetchNftResult, indexOutage, landData, landParcels, type LandNftData } from "../../land/api";
 import { landChainId } from "../../land/chain";
-import { landCategoryOf, landNetwork } from "../../land/contracts";
+import { landCategoryOf, landNetwork } from "@shop/land/contracts";
 import { isEstateListingAffectedByUpgrade } from "../../land/estate";
 import { dateText, epochMs, manaText } from "../../land/format";
 import { distanceText, estateProximity, parcelProximity, proximityIndex, type Proximity } from "../../land/proximity";
