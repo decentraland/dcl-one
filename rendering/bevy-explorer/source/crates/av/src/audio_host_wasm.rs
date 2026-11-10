@@ -7,8 +7,10 @@ use common::util::ReportErr;
 use futures_channel::mpsc::{unbounded, UnboundedSender};
 use futures_lite::StreamExt;
 use once_cell::sync::OnceCell;
+use wasm_bindgen::{closure::Closure, JsCast};
+use wasm_bindgen_futures::JsFuture;
 use web_sys::{
-    js_sys::Float32Array, AudioBuffer, AudioBufferSourceNode, AudioContext,
+    js_sys::Float32Array, AudioBuffer, AudioBufferSourceNode, AudioContext, AudioContextState,
     AudioScheduledSourceNode, GainNode, StereoPannerNode,
 };
 
@@ -68,6 +70,7 @@ pub fn audio_host_main() {
 
     wasm_bindgen_futures::spawn_local(async move {
         let context = AudioContext::new().unwrap();
+        resume_on_gesture(&context);
         let mut buffers: HashMap<AssetId<bevy_kira_audio::AudioSource>, AudioBuffer> =
             HashMap::default();
         let mut graphs: HashMap<InstanceId, Graph> = HashMap::default();
@@ -99,6 +102,7 @@ pub fn audio_host_main() {
                         debug!("audio {instance}: buffer {buffer:?} not loaded");
                         continue;
                     };
+                    resume_if_suspended(&context);
                     if let Some(graph) = Graph::start(&context, buffer, offset) {
                         if let Some(prev) = graphs.insert(instance, graph) {
                             prev.stop(context.current_time());
@@ -175,5 +179,38 @@ impl Graph {
             .report();
         let node: &AudioScheduledSourceNode = self.source_node.as_ref();
         node.stop_with_when(now + 0.01).report();
+    }
+}
+
+/// Autoplay policy: a context created before the page has had a user gesture starts `suspended`
+/// and stays silent. Chrome resumes it on the next source `start()` once the frame has a sticky
+/// activation; Firefox and Safari do not, and a reload that lands straight in-world (a saved
+/// session, `?guest=1`) creates the context before any gesture. So resume it explicitly: on the
+/// first pointer, key or touch in the page, and again whenever a sound starts while suspended.
+fn resume_on_gesture(context: &AudioContext) {
+    let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        return;
+    };
+    let context = context.clone();
+    let on_gesture = Closure::<dyn FnMut()>::new(move || resume_if_suspended(&context));
+    for event in ["pointerdown", "keydown", "touchend"] {
+        document
+            .add_event_listener_with_callback(event, on_gesture.as_ref().unchecked_ref())
+            .report();
+    }
+    on_gesture.forget();
+}
+
+/// `resume()` is a request: without a gesture the browser leaves its promise pending (Chrome) or
+/// rejects it, so the outcome is awaited and dropped rather than surfacing as an unhandled
+/// rejection.
+fn resume_if_suspended(context: &AudioContext) {
+    if context.state() != AudioContextState::Suspended {
+        return;
+    }
+    if let Ok(promise) = context.resume() {
+        wasm_bindgen_futures::spawn_local(async move {
+            let _ = JsFuture::from(promise).await;
+        });
     }
 }
