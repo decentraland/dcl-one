@@ -93,14 +93,12 @@ export function createSceneScope(context) {
   return { proxy, preamble };
 }
 
-// Remove an inherited property. Interface objects (BroadcastChannel, Worker) are own properties of
-// the global and go with a plain delete; attributes like navigator.storage live on a prototype, and
-// deleting them off the instance silently succeeds without removing anything.
+// Remove a property from the object and every prototype that holds it. Interface objects
+// (BroadcastChannel, Worker) are own properties of the global; attributes like navigator.storage
+// live on a prototype, and deleting them off the instance silently succeeds without removing
+// anything.
 function deleteFromPrototypeChain(obj, name) {
-  for (let o = obj; o != null; o = Object.getPrototypeOf(o)) {
-    if (Object.prototype.hasOwnProperty.call(o, name)) return delete o[name];
-  }
-  return false;
+  for (let o = obj; o != null; o = Object.getPrototypeOf(o)) delete o[name];
 }
 
 // Withhold from the worker global what scene code must not reach. Runs before any scene code.
@@ -136,6 +134,8 @@ export function scrubSceneGlobal() {
   deleteFromPrototypeChain(self.navigator, "serviceWorker");
   // the scene server's one-per-scene lock (headless.js) is held by name, which a scene could take
   deleteFromPrototypeChain(self.navigator, "locks");
+  // devices the origin was granted are no scene's business either
+  for (const name of ["usb", "hid", "serial"]) deleteFromPrototypeChain(self.navigator, name);
 
   // IndexedDB is same-origin too, and holds more than its own data: platform/src/web_save.js keeps
   // the FileSystemDirectoryHandle for the user's picked scene folder there (db `dcl-editor`, store

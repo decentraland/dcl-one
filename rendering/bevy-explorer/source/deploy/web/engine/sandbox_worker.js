@@ -14,7 +14,13 @@ const RealBroadcastChannel = self.BroadcastChannel;
 // postMessage carries killToken.
 const workerPostMessage = self.postMessage.bind(self);
 const workerClose = self.close.bind(self);
-self.fetch = createSceneFetch(self.fetch.bind(self));
+const nativeFetch = self.fetch.bind(self);
+// The native fetch lives on WorkerGlobalScope.prototype, where an own property would only shadow
+// it. WebTransport and fonts (FontFace) are other request paths around the scene fetch.
+for (const name of ["fetch", "WebTransport", "FontFace", "fonts"]) {
+  for (let o = self; o != null; o = Object.getPrototypeOf(o)) delete o[name];
+}
+self.fetch = createSceneFetch(nativeFetch);
 // Stack traces are only ever formatted the default way: scene code can't install a formatter.
 Object.defineProperty(Error, "prepareStackTrace", {
   get: () => undefined,
