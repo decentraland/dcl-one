@@ -25,6 +25,45 @@ impl Normalization {
     }
 }
 
+/// An integer component that `KHR_mesh_quantization` lets a position, normal, tangent or
+/// texture coordinate accessor hold in place of a float.
+trait Dequantize: Copy {
+    /// The float the component stands for: the component itself when the accessor is not
+    /// normalized, otherwise the value scaled to [0, 1] or [-1, 1] as the glTF specification
+    /// defines (a signed minimum maps to -1, so -128 and -127 both read as -1).
+    fn dequantize(self, normalization: Normalization) -> f32;
+}
+
+macro_rules! dequantize {
+    ($($ty:ty => $max:expr),* $(,)?) => {$(
+        impl Dequantize for $ty {
+            fn dequantize(self, normalization: Normalization) -> f32 {
+                if normalization.0 {
+                    (self as f32 / $max).max(-1.0)
+                } else {
+                    self as f32
+                }
+            }
+        }
+    )*};
+}
+
+dequantize! {
+    i8 => 127.0,
+    u8 => 255.0,
+    i16 => 32767.0,
+    u16 => 65535.0,
+}
+
+/// Reads an integer accessor as the floats it stands for.
+fn dequantized<T: Dequantize, const N: usize>(
+    it: impl Iterator<Item = [T; N]>,
+    normalization: Normalization,
+) -> Vec<[f32; N]> {
+    it.map(|element| element.map(|component| component.dequantize(normalization)))
+        .collect()
+}
+
 /// An error that occurs when accessing buffer data
 #[derive(Error, Debug)]
 pub(crate) enum AccessFailed {
@@ -93,6 +132,9 @@ enum VertexAttributeIter<'a> {
     // Additional on-disk formats used for RGB colors
     U16x3(gltf::accessor::Iter<'a, [u16; 3]>, Normalization),
     U8x3(gltf::accessor::Iter<'a, [u8; 3]>, Normalization),
+    // Additional on-disk formats used for quantized positions and normals
+    S16x3(gltf::accessor::Iter<'a, [i16; 3]>, Normalization),
+    S8x3(gltf::accessor::Iter<'a, [i8; 3]>, Normalization),
 }
 
 impl<'a> VertexAttributeIter<'a> {
@@ -127,6 +169,8 @@ impl<'a> VertexAttributeIter<'a> {
             (DataType::U8, Dimensions::Vec4) => acc.with_norm(VertexAttributeIter::U8x4),
             (DataType::U16, Dimensions::Vec3) => acc.with_norm(VertexAttributeIter::U16x3),
             (DataType::U8, Dimensions::Vec3) => acc.with_norm(VertexAttributeIter::U8x3),
+            (DataType::I16, Dimensions::Vec3) => acc.with_norm(VertexAttributeIter::S16x3),
+            (DataType::I8, Dimensions::Vec3) => acc.with_norm(VertexAttributeIter::S8x3),
             _ => Err(AccessFailed::UnsupportedFormat),
         }
     }
@@ -215,7 +259,8 @@ impl<'a> VertexAttributeIter<'a> {
         }
     }
 
-    /// Materializes texture coordinate values, converting compatible formats to Float32x2
+    /// Materializes texture coordinate values, converting compatible formats to Float32x2.
+    /// `KHR_mesh_quantization` allows every 8- and 16-bit integer type, normalized or not.
     fn into_tex_coord_values(self) -> Result<Values, AccessFailed> {
         match self {
             VertexAttributeIter::U8x2(it, Normalization(true)) => Ok(Values::Float32x2(
@@ -224,6 +269,32 @@ impl<'a> VertexAttributeIter<'a> {
             VertexAttributeIter::U16x2(it, Normalization(true)) => Ok(Values::Float32x2(
                 ReadTexCoords::U16(it).into_f32().collect(),
             )),
+            VertexAttributeIter::U8x2(it, n) => Ok(Values::Float32x2(dequantized(it, n))),
+            VertexAttributeIter::U16x2(it, n) => Ok(Values::Float32x2(dequantized(it, n))),
+            VertexAttributeIter::S8x2(it, n) => Ok(Values::Float32x2(dequantized(it, n))),
+            VertexAttributeIter::S16x2(it, n) => Ok(Values::Float32x2(dequantized(it, n))),
+            s => s.into_any_values(),
+        }
+    }
+
+    /// Materializes position or normal values, converting the integer formats
+    /// `KHR_mesh_quantization` allows for them to Float32x3
+    fn into_float3_values(self) -> Result<Values, AccessFailed> {
+        match self {
+            VertexAttributeIter::S8x3(it, n) => Ok(Values::Float32x3(dequantized(it, n))),
+            VertexAttributeIter::U8x3(it, n) => Ok(Values::Float32x3(dequantized(it, n))),
+            VertexAttributeIter::S16x3(it, n) => Ok(Values::Float32x3(dequantized(it, n))),
+            VertexAttributeIter::U16x3(it, n) => Ok(Values::Float32x3(dequantized(it, n))),
+            s => s.into_any_values(),
+        }
+    }
+
+    /// Materializes tangent values, converting the integer formats `KHR_mesh_quantization`
+    /// allows for them to Float32x4
+    fn into_float4_values(self) -> Result<Values, AccessFailed> {
+        match self {
+            VertexAttributeIter::S8x4(it, n) => Ok(Values::Float32x4(dequantized(it, n))),
+            VertexAttributeIter::S16x4(it, n) => Ok(Values::Float32x4(dequantized(it, n))),
             s => s.into_any_values(),
         }
     }
@@ -231,6 +302,8 @@ impl<'a> VertexAttributeIter<'a> {
 
 enum ConversionMode {
     Any,
+    Float3,
+    Float4,
     Rgba,
     JointIndex,
     JointWeight,
@@ -254,9 +327,9 @@ pub(crate) fn convert_attribute(
     custom_vertex_attributes: &HashMap<Box<str>, MeshVertexAttribute>,
 ) -> Result<(MeshVertexAttribute, Values), ConvertAttributeError> {
     if let Some((attribute, conversion)) = match &semantic {
-        gltf::Semantic::Positions => Some((Mesh::ATTRIBUTE_POSITION, ConversionMode::Any)),
-        gltf::Semantic::Normals => Some((Mesh::ATTRIBUTE_NORMAL, ConversionMode::Any)),
-        gltf::Semantic::Tangents => Some((Mesh::ATTRIBUTE_TANGENT, ConversionMode::Any)),
+        gltf::Semantic::Positions => Some((Mesh::ATTRIBUTE_POSITION, ConversionMode::Float3)),
+        gltf::Semantic::Normals => Some((Mesh::ATTRIBUTE_NORMAL, ConversionMode::Float3)),
+        gltf::Semantic::Tangents => Some((Mesh::ATTRIBUTE_TANGENT, ConversionMode::Float4)),
         gltf::Semantic::Colors(0) => Some((Mesh::ATTRIBUTE_COLOR, ConversionMode::Rgba)),
         gltf::Semantic::TexCoords(0) => Some((Mesh::ATTRIBUTE_UV_0, ConversionMode::TexCoord)),
         gltf::Semantic::TexCoords(1) => Some((Mesh::ATTRIBUTE_UV_1, ConversionMode::TexCoord)),
@@ -274,6 +347,8 @@ pub(crate) fn convert_attribute(
         let raw_iter = VertexAttributeIter::from_accessor(accessor.clone(), buffer_data);
         let converted_values = raw_iter.and_then(|iter| match conversion {
             ConversionMode::Any => iter.into_any_values(),
+            ConversionMode::Float3 => iter.into_float3_values(),
+            ConversionMode::Float4 => iter.into_float4_values(),
             ConversionMode::Rgba => iter.into_rgba_values(),
             ConversionMode::TexCoord => iter.into_tex_coord_values(),
             ConversionMode::JointIndex => iter.into_joint_index_values(),
@@ -297,5 +372,32 @@ pub(crate) fn convert_attribute(
         }
     } else {
         Err(ConvertAttributeError::UnknownName(semantic.to_string()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Dequantize, Normalization};
+
+    #[test]
+    fn normalized_integers_map_to_the_unit_range() {
+        let norm = Normalization(true);
+        assert_eq!(127i8.dequantize(norm), 1.0);
+        assert_eq!((-127i8).dequantize(norm), -1.0);
+        assert_eq!((-128i8).dequantize(norm), -1.0);
+        assert_eq!(255u8.dequantize(norm), 1.0);
+        assert_eq!(0u8.dequantize(norm), 0.0);
+        assert_eq!(32767i16.dequantize(norm), 1.0);
+        assert_eq!((-32768i16).dequantize(norm), -1.0);
+        assert_eq!(65535u16.dequantize(norm), 1.0);
+    }
+
+    #[test]
+    fn unnormalized_integers_keep_their_value() {
+        let raw = Normalization(false);
+        assert_eq!(8192u16.dequantize(raw), 8192.0);
+        assert_eq!((-300i16).dequantize(raw), -300.0);
+        assert_eq!(200u8.dequantize(raw), 200.0);
+        assert_eq!((-5i8).dequantize(raw), -5.0);
     }
 }

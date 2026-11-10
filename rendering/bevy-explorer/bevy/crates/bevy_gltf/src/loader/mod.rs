@@ -28,7 +28,7 @@ use bevy_math::{Mat4, Vec3};
 use bevy_mesh::{
     morph::{MeshMorphWeights, MorphAttributes, MorphTargetImage, MorphWeights},
     skinning::{SkinnedMesh, SkinnedMeshInverseBindposes},
-    Indices, Mesh, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues,
+    Indices, Mesh, MeshVertexAttribute, PrimitiveTopology,
 };
 #[cfg(feature = "pbr_transmission_textures")]
 use bevy_pbr::UvChannel;
@@ -49,7 +49,7 @@ use bevy_scene::Scene;
 use bevy_transform::components::Transform;
 
 use gltf::{
-    accessor::Iter,
+    accessor::{DataType, Iter},
     image::Source,
     mesh::{util::ReadIndices, Mode},
     Document, Material, Node, Semantic,
@@ -243,6 +243,49 @@ impl AssetLoader for GltfLoader {
     }
 }
 
+/// A validation report that an accessor has no `bufferView`.
+fn accessor_without_buffer_view(
+    path: &gltf::json::Path,
+    error: &gltf::json::validation::Error,
+) -> bool {
+    matches!(error, gltf::json::validation::Error::Missing)
+        && path.0.starts_with("accessors[")
+        && path.0.ends_with(".bufferView")
+}
+
+/// A validation report that the file requires `KHR_mesh_quantization`, which the gltf crate
+/// doesn't list among the extensions it knows.
+fn requires_mesh_quantization(
+    path: &gltf::json::Path,
+    error: &gltf::json::validation::Error,
+) -> bool {
+    matches!(error, gltf::json::validation::Error::Unsupported)
+        && path.0.starts_with("extensionsRequired[")
+        && path.0.ends_with("= \"KHR_mesh_quantization\"")
+}
+
+/// The bounds a primitive's position accessor declares, in the floats the vertex attributes
+/// are converted to. `KHR_mesh_quantization` lets the accessor hold normalized integers, whose
+/// declared `min` and `max` are the raw integers.
+fn primitive_bounds(primitive: &gltf::Primitive) -> gltf::mesh::BoundingBox {
+    let mut bounds = primitive.bounding_box();
+    if let Some(accessor) = primitive.get(&Semantic::Positions) {
+        let unit = match accessor.data_type() {
+            DataType::I8 => 127.0,
+            DataType::U8 => 255.0,
+            DataType::I16 => 32767.0,
+            DataType::U16 => 65535.0,
+            _ => return bounds,
+        };
+        if accessor.normalized() {
+            for component in bounds.min.iter_mut().chain(bounds.max.iter_mut()) {
+                *component = (*component / unit).max(-1.0);
+            }
+        }
+    }
+    bounds
+}
+
 /// Loads an entire glTF file.
 async fn load_gltf<'a, 'b, 'c>(
     loader: &GltfLoader,
@@ -258,11 +301,13 @@ async fn load_gltf<'a, 'b, 'c>(
         // already yield zeros in that case, so retry without validation when that is the
         // only kind of error reported. draco-compressed accessors also lack bufferViews but
         // their data is not readable, so keep failing for those.
+        // the crate also rejects a file that requires an extension it doesn't know, and it
+        // doesn't know KHR_mesh_quantization; `convert_attribute` reads the integer vertex
+        // formats the extension allows, so that report is tolerated too.
         Err(gltf::Error::Validation(errors))
             if errors.iter().all(|(path, error)| {
-                matches!(error, gltf::json::validation::Error::Missing)
-                    && path.0.starts_with("accessors[")
-                    && path.0.ends_with(".bufferView")
+                accessor_without_buffer_view(path, error)
+                    || requires_mesh_quantization(path, error)
             }) =>
         {
             let gltf = gltf::Gltf::from_slice_without_validation(bytes)?;
@@ -734,12 +779,10 @@ async fn load_gltf<'a, 'b, 'c>(
                 }
             }
 
-            if let Some(vertex_attribute) = reader
-                .read_tangents()
-                .map(|v| VertexAttributeValues::Float32x4(v.collect()))
-            {
-                mesh.insert_attribute(Mesh::ATTRIBUTE_TANGENT, vertex_attribute);
-            } else if mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some()
+            // the attribute loop above read any tangents the primitive carries, in whichever
+            // format it carries them
+            if mesh.attribute(Mesh::ATTRIBUTE_TANGENT).is_none()
+                && mesh.attribute(Mesh::ATTRIBUTE_NORMAL).is_some()
                 && needs_tangents(&primitive.material())
             {
                 tracing::debug!(
@@ -1700,7 +1743,7 @@ fn load_node(
                         mesh: mesh.index(),
                         primitive: primitive.index(),
                     };
-                    let bounds = primitive.bounding_box();
+                    let bounds = primitive_bounds(&primitive);
 
                     let mut mesh_entity = parent.spawn((
                         // TODO: handle missing label handle errors here?
