@@ -6,11 +6,13 @@
 //!   writable path. Where the kernel supports it,
 //!   signals and abstract Unix sockets are also scoped to the sandbox.
 //! - seccomp denies starting programs, reaching other processes (ptrace, memory access, pidfds,
-//!   signals to another pid), new sockets other than IPv4, IPv6 and route netlink, and kernel
-//!   interfaces a scene runtime never needs. Threads, futexes and executable memory for the JIT
-//!   stay allowed.
+//!   signals, signal ownership, limits, scheduling and memory policy of another pid), changing
+//!   file metadata, terminal input injection, new sockets other than IPv4, IPv6 and route netlink,
+//!   and kernel interfaces a scene runtime never needs. Threads, futexes and executable memory for
+//!   the JIT stay allowed.
 //!
-//! On other targets [`apply`] reports [`Landlock::Unsupported`] and [`probe`] runs no check.
+//! On other targets [`apply`] reports [`Landlock::Unsupported`], or fails for [`Mode::Require`],
+//! and [`probe`] runs no check.
 
 use serde::{Deserialize, Serialize};
 use std::net::TcpListener;
