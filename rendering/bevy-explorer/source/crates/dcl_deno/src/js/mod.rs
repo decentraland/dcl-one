@@ -70,12 +70,13 @@ pub fn create_runtime(
 
     let storage_digest = multihash_codetable::Code::Sha2_256.digest(storage_root.as_bytes());
     let storage_hash = BASE64_URL_SAFE_NO_PAD.encode(storage_digest.digest());
-    let storage_folder = project_directories()
-        .unwrap()
-        .data_local_dir()
-        .join("LocalStorage")
-        .join(storage_hash);
-    let webstorage = deno_webstorage::deno_webstorage::init_ops_and_esm(Some(storage_folder));
+    // none without a home directory, as in a sandboxed scene host started without HOME
+    let storage_folder = project_directories().map(|dirs| {
+        dirs.data_local_dir()
+            .join("LocalStorage")
+            .join(storage_hash)
+    });
+    let webstorage = deno_webstorage::deno_webstorage::init_ops_and_esm(storage_folder);
 
     let mut ops = vec![op_require(), op_log(), op_error()];
 
