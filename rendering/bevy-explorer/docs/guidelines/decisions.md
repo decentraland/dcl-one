@@ -81,6 +81,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   edit form) and delete on the places they own, asked first. A failed delete shows its message on
   the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
   PLACES tab button for owners and moderators is not ported.
+  On the card's Members tab, a row opens the member's passport and carries unity-explorer's
+  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, the owner's
+  and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove Member, Ban)
+  with unity-explorer's rules and confirmations, then Block and Report. Call, Gift and Invite to
+  Community are left out until private calls, gifting and invites exist (unity-explorer shows
+  Gift only behind its gifting flag). Chat is always offered in-world: unity-explorer greys it
+  only while its chat area is down. unity-explorer's row shows no presence, so neither does
+  this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
+  action shows its message on the card instead of as a toast, and the tab lists the first 100
+  members without unity-explorer's paging.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

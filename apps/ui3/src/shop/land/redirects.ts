@@ -1,4 +1,5 @@
 import { landTokenId } from "../../data/catalyst/landListing";
+import { landChainId } from "./chain";
 import { landNetwork } from "./contracts";
 
 export type LandRedirect = "lands" | "rent" | "transfer" | "operator" | "assign-ens";
@@ -8,7 +9,7 @@ type Identity = { contract: string; tokenId: string };
 const IDENTITY_KEYS = ["id", "landId", "contractAddress", "contract", "tokenId", "x", "y", "estateId", "category"];
 
 export function landIdentity(q: URLSearchParams, chainId?: number): Identity | null {
-  const net = landNetwork(chainId);
+  const net = landNetwork(chainId ?? landChainId());
   const contract = (q.get("contractAddress") ?? q.get("contract"))?.toLowerCase();
   const tokenId = q.get("tokenId");
   if (contract && /^0x[0-9a-f]{40}$/.test(contract) && tokenId && /^[0-9]+$/.test(tokenId)) return { contract, tokenId };

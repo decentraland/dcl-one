@@ -1,5 +1,5 @@
 // The client's signing and transport contracts. Who signs, and how a request travels, are the host's: the
-// browser's signers and transports are in api/host.ts.
+// browser's signers and transports are in ui3: api/host.ts.
 
 export type ShopSigner = {
   /** Lowercase address the requests are signed for. */

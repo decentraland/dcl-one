@@ -1,6 +1,6 @@
 // The Shop API client: the endpoint table over a transport, signed by a signer, at a base. All of them are given:
 // the client reads no configuration and reaches for no network or identity of its own. The browser host's wiring
-// (where the API is, fetch, who signs, the document's client) is api/host.ts.
+// (where the API is, fetch, who signs, the document's client) is the host's (ui3: api/host.ts).
 
 import { SHOP_API_PREFIX, templateParams, type Endpoint } from "./endpoints";
 import type { ShopSigner, ShopTransport, TransportRequest } from "./signer";

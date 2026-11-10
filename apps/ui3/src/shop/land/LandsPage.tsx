@@ -30,7 +30,7 @@ import {
   type LandFilters,
   type LandStatusFilter,
 } from "./api";
-import { landChainId } from "./contracts";
+import { landChainId } from "./chain";
 import LandCard from "./LandCard";
 import LandMap from "./LandMap";
 import LandPriceChart from "./LandPriceChart";
