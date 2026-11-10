@@ -142,7 +142,10 @@ function resolverControls(paths, inputs, physicalRoot) {
         const candidate = (directory === '.' ? '' : directory + '/') + name
         if (
           paths.has(candidate) ||
-          (physicalRoot && lstatSync(path.join(physicalRoot, candidate), { throwIfNoEntry: false }))
+          (physicalRoot &&
+            lstatSync(path.join(physicalRoot, candidate), {
+              throwIfNoEntry: false
+            }))
         )
           result.add(candidate)
       }
@@ -194,6 +197,7 @@ function identity(root, file, paths, expectedLfs) {
 /** Dev/native consumers read the same checked contract as CI, Nix and fingerprinting. */
 const namespaceExcluded = (name, kind) =>
   ['node_modules', '.git', '.agent-work'].includes(name) ||
+  (kind === 'regular' && name === '.DS_Store') ||
   (kind === 'directory' &&
     (name.startsWith('.consumer-foundations-') || name.startsWith('.consumer-ssr-')))
 function resolutionDirectoryPaths(files) {
@@ -222,7 +226,10 @@ function indexedNamespace(paths, directory) {
     if (namespaceExcluded(name, kind)) continue
     entries.set(name, kind)
   }
-  return sorted(entries.keys()).map((name) => ({ name, kind: entries.get(name) }))
+  return sorted(entries.keys()).map((name) => ({
+    name,
+    kind: entries.get(name)
+  }))
 }
 function physicalNamespace(root, directory) {
   if (!portable(directory)) throw Error('Unsafe resolution directory: ' + directory)
@@ -235,7 +242,11 @@ function physicalNamespace(root, directory) {
   }
   return readdirSync(current, { withFileTypes: true })
     .filter(
-      (entry) => !namespaceExcluded(entry.name, entry.isDirectory() ? 'directory' : 'regular')
+      (entry) =>
+        !namespaceExcluded(
+          entry.name,
+          entry.isDirectory() ? 'directory' : entry.isFile() ? 'regular' : 'unsafe'
+        )
     )
     .map((entry) => {
       if (
@@ -245,7 +256,10 @@ function physicalNamespace(root, directory) {
         (!entry.isFile() && !entry.isDirectory())
       )
         throw Error('Unsafe resolution namespace entry: ' + directory + '/' + entry.name)
-      return { name: entry.name, kind: entry.isDirectory() ? 'directory' : 'regular' }
+      return {
+        name: entry.name,
+        kind: entry.isDirectory() ? 'directory' : 'regular'
+      }
     })
     .sort((left, right) => Buffer.compare(Buffer.from(left.name), Buffer.from(right.name)))
 }
@@ -304,6 +318,7 @@ function validateResolutionDirectories(root, manifest, paths, strict) {
 
 export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
   if (!['strict', 'config'].includes(mode)) throw Error('Invalid HUD shared-input read mode')
+  root = path.resolve(realpathSync(root))
   const strict = mode === 'strict'
   if (globalThis[GENERATING] > 0) return []
   rejectAutomaticPostcss(root)
@@ -415,7 +430,7 @@ export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
 
 /** Uses the installed native compiler and Vite itself, never a second import resolver. */
 export async function generateSharedInputs({ root = REPOSITORY, filteredSource = false } = {}) {
-  root = realpathSync(root)
+  root = path.resolve(realpathSync(root))
   rejectAutomaticPostcss(root)
   if (!hasGit(root) && !filteredSource)
     throw Error('Writing a shared-input contract requires a Git source checkout')
@@ -534,6 +549,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
     )
       throw Error('Unresolved Vite dependency: ' + message)
   }
+  const originalNodeEnv = process.env.NODE_ENV
   const before = globalThis[GENERATING] ?? 0
   globalThis[GENERATING] = before + 1
   try {
@@ -561,6 +577,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
       await context.close()
     }
     for (const mode of ['production', 'native', 'test']) {
+      process.env.NODE_ENV = mode === 'test' ? 'test' : 'production'
       console.log('HUD Vite graph: ' + mode)
       let resolvedConfig
       const result = await build({
@@ -717,6 +734,8 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
       }
     }
   } finally {
+    if (originalNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = originalNodeEnv
     if (before === 0) delete globalThis[GENERATING]
     else globalThis[GENERATING] = before
   }

@@ -168,7 +168,7 @@ def resolver_controls(names, inputs):
 
 
 def namespace_excluded(name, kind):
-    return name in ('node_modules', '.git', '.agent-work') or (kind == 'directory' and name.startswith(('.consumer-foundations-', '.consumer-ssr-')))
+    return (kind == 'regular' and name == '.DS_Store') or name in ('node_modules', '.git', '.agent-work') or (kind == 'directory' and name.startswith(('.consumer-foundations-', '.consumer-ssr-')))
 
 
 def resolution_directory_paths(files):
@@ -215,7 +215,7 @@ def physical_namespace(tree, directory):
     entries = []
     for path in current.iterdir():
         mode = path.lstat().st_mode
-        if namespace_excluded(path.name, 'directory' if stat.S_ISDIR(mode) else 'regular'):
+        if namespace_excluded(path.name, 'directory' if stat.S_ISDIR(mode) else 'regular' if stat.S_ISREG(mode) else 'unsafe'):
             continue
         safe_path(path.name)
         if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):

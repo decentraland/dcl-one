@@ -1254,7 +1254,10 @@ class HudSharedSourcesTests(unittest.TestCase):
         self.assertIn('hud_shared_inputs.py', (root / contract.SOURCE / 'justfile').read_text())
         nix = (root / 'infra/packages/play.nix').read_text()
         self.assertIn('shared-inputs.json', nix)
-        self.assertIn('builtins.hashFile', nix)
+        self.assertIn('import ./hud-shared-inputs.nix', nix)
+        validator = (root / 'infra/packages/hud-shared-inputs.nix').read_text()
+        self.assertIn('hashFile "sha256"', validator)
+        self.assertLess(nix.index('checked = assert import'), nix.index('sharedFiles ='))
         self.assertNotIn('/library/ui/foundations', nix)
 
 

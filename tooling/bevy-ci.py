@@ -252,16 +252,16 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
-                      'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py',
-                      'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
+        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
             affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
             # wasm-pack; the macOS Test Suite, in the native matrix, links the flake's ffmpeg; scenes
             # install protoc with install-protoc.py.
             affected = (*LANES, 'native-matrix')
-        elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
+        elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')) or path in (
+                'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py',
+                'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
         elif path.startswith('infra/gateway/') or path in GATEWAY_HUD_INPUTS:

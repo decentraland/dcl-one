@@ -24,7 +24,7 @@ requires of `library/`. It is a TypeScript source library, not a Rust crate, so
 the crate rules there (`dcl-*` name, `[workspace.dependencies]`) do not apply.
 
 `library/ui/apps/<app>/` is an exception to that ADR's rule that `library/`
-holds only code several deliverables use: by owner decision, UI used by a
+holds only code several deliverables use: UI used by a
 single app lives there, beside the shared foundations and components it is
 built from. The exception covers only `library/ui/apps/`; when a second
 deliverable needs something from it, it moves to the shared `components/` or
@@ -36,19 +36,11 @@ The shared `figma install` command owns installation of public UI targets. Its f
 
 ## Consequences
 
-Applications and the Explorer HUD will consume shared UI from the same library
-after their integrations are reviewed and implemented. This change establishes
-the standard and template; it does not migrate consumers. The
-[Explorer HUD transition](../ui-standards.md#explorer-hud-transition) keeps the
-current source guidance in effect until that integration is ready. Migration is
-incremental, and replaced implementations are removed after consumers
-move. The library's integration must account for independent builds,
-asset resolution and artifact provenance. Existing behavior and applicable
-surface themes must be preserved during migration.
+The Explorer HUD consumes shared tokens and icons through the public foundations entry while retaining its local design primitives. Applications can consume the public foundations and component entries independently. Integrations preserve existing behavior and applicable themes, account for independent builds and asset resolution, and bind artifacts to their actual source inputs.
 
 ### Component installation and integrity
 
-The components target uses the same verified-cache source and atomic install transaction as foundations. A pure producer receives source data, configuration, a names-only visibility registry and the locked runtime; it cannot acquire data or publish files. The transaction owns and rechecks the complete input read-set. Public names receive mappings; internal names receive neither mappings nor package exports. Installation records source, configuration, dependency and complete generator-module identities alongside emitted output digests in `components/generation.json`. The common output inspector verifies the index and materialized bytes for both targets; the component policy derives origin classes from the emitted plan and fixed runtime inputs. Components never admit LFS pointers. The checked record establishes offline provenance consistency, not an authenticated claim of live Figma parity. By owner decision, NavBar is exposed as a public bridge for the Sites home, legal and blog pages with captured signed-in mock balances, notification counts and a placeholder avatar, empty mobile variants 7 and 8, pending semantic data and avatar contracts, and a 60px desktop and 48px mobile logo pending alignment to the 40px design.
+The components target uses the same verified-cache source and atomic install transaction as foundations. A pure producer receives source data, configuration, a names-only visibility registry and the locked runtime; it cannot acquire data or publish files. The transaction owns and rechecks the complete input read-set. Public names receive mappings; internal names receive neither mappings nor package exports. Installation records source, configuration, dependency and complete generator-module identities alongside emitted output digests in `components/generation.json`. The common output inspector verifies the index and materialized bytes for both targets; the component policy derives origin classes from the emitted plan and fixed runtime inputs. Components never admit LFS pointers. The checked record establishes offline provenance consistency, not an authenticated claim of live Figma parity. NavBar is exposed as a public bridge for the Sites home, legal and blog pages with captured signed-in mock balances, notification counts and a placeholder avatar, empty mobile variants 7 and 8, pending semantic data and avatar contracts, and a 60px desktop and 48px mobile logo pending alignment to the 40px design.
 
 ### HUD shared-source contract
 
@@ -60,8 +52,8 @@ Local Vite/Vitest configuration uses structural manifest inspection for its file
 
 ### Resolution namespace witnesses
 
-Manifest schema 2 adds `resolutionDirectories`: the exact set of ancestor directories of actually resolved shared files, bounded by the UI, Shop and Catalyst API library roots. Each witness records only sorted immediate names and regular-file or directory kinds. It never hashes unconsumed library bodies. The generator snapshots and rechecks these namespaces around actual compiler and Vite resolution, so a sibling file that would shadow a directory import cannot bypass source selection or artifact acceptance. Tracked additions require regeneration; unexpected physical candidates, symlinks and special entries are refused. Installed `node_modules`, Git metadata and named private output directories retain their existing separate contracts. Output-directory prefixes do not exclude regular source files with those prefixes.
+The manifest records `resolutionDirectories`: the exact set of ancestor directories of actually resolved shared files, bounded by the UI, Shop and Catalyst API library roots. Each witness records only sorted immediate names and regular-file or directory kinds. It never hashes unconsumed library bodies. The generator snapshots and rechecks these namespaces around actual compiler and Vite resolution, so a sibling file that would shadow a directory import cannot bypass source selection or artifact acceptance. Tracked additions require regeneration; unexpected physical candidates, symlinks and special entries are refused. Installed `node_modules`, Git metadata and named private output directories retain their existing separate contracts. Output-directory prefixes do not exclude regular source files with those prefixes.
 
-Git-backed readers verify exact indexed and physical namespaces. Nix verifies the full original flake source before filtering. A filtered archive may omit unconsumed witnessed names but must contain every selected file and control with its verified identity; any new unlisted entry is refused. This subset rule trusts the checked original-source namespace contract and does not adopt a new resolver input. Ordering uses UTF-8 byte order across readers. Schema 1 historical bases select a conservative web rebuild; a schema 1 head must migrate through the canonical generator. Generation can load an old checked contract while producing schema 2, without relaxing normal configuration or artifact checks.
+Git-backed readers verify exact indexed and physical namespaces. Nix verifies the full original flake source before filtering. A filtered archive may omit unconsumed witnessed names but must contain every selected file and control with its verified identity; any new unlisted entry is refused. This subset rule trusts the checked original-source namespace contract and does not adopt a new resolver input. Ordering uses UTF-8 byte order across readers. Unsupported historical contracts select a conservative web rebuild. Current heads require a contract produced by the canonical generator before strict artifact acceptance.
 
 The JS, Python and pure Nix validators share a malformed-manifest corpus. Metadata, domain, namespace and hash checks are compared; Python remains mandatory for binary payload lengths and artifact acceptance. Pure Nix never reads binary payloads as text. The image workflow evaluates the pure Nix corpus after installing Nix and before heavy builds. A local environment without Nix cannot claim that evaluation passed; the corresponding CI step remains a required gate.

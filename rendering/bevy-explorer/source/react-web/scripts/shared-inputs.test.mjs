@@ -118,6 +118,71 @@ beforeEach(() => {
 })
 afterEach(() => rmSync(root, { recursive: true, force: true }))
 describe('the actual compiler and Vite shared-source contract', () => {
+  it('normalizes caller roots and ignores only exact regular Finder metadata', async () => {
+    await save()
+    for (const alternate of [root + '/', path.join(root, 'library', '..')]) {
+      assert.deepEqual(readSharedPaths(alternate), readSharedPaths(root))
+    }
+    put('library/shop/.DS_Store', 'Finder metadata')
+    assert(readSharedPaths(root).length > 0)
+    assert(Object.keys(hashes()).length > 0)
+    await save()
+    put('library/shop/.DS_Store.ts', 'export {}')
+    assert.throws(() => readSharedPaths(root), /Untracked/)
+    rmSync(path.join(root, 'library/shop/.DS_Store'))
+    symlinkSync(path.join(root, 'library/shop/data.ts'), path.join(root, 'library/shop/.DS_Store'))
+    assert.throws(() => readSharedPaths(root), /Unsafe/)
+  })
+  it('isolates production environment from Vitest and restores the caller on failure', async () => {
+    const original = process.env.NODE_ENV
+    try {
+      delete process.env.NODE_ENV
+      const config = readFileSync(path.join(web, 'vite.config.ts'), 'utf8')
+      put(
+        WEB + '/vite.config.ts',
+        config.replace(
+          'resolve:{',
+          "plugins:[{name:'environment-check',buildStart(){if(mode!=='test'&&process.env.NODE_ENV!=='production')throw Error('wrong production environment')}}],resolve:{"
+        )
+      )
+      git('add', '.')
+      await save()
+      assert.equal(process.env.NODE_ENV, undefined)
+      process.env.NODE_ENV = 'caller-value'
+      put(
+        WEB + '/vite.config.ts',
+        config.replace(
+          'resolve:{',
+          "plugins:[{name:'fail-build',buildStart(){throw Error('intentional build failure')}}],resolve:{"
+        )
+      )
+      git('add', '.')
+      await assert.rejects(generateSharedInputs({ root }), /intentional build failure/)
+      assert.equal(process.env.NODE_ENV, 'caller-value')
+    } finally {
+      if (original === undefined) delete process.env.NODE_ENV
+      else process.env.NODE_ENV = original
+    }
+  })
+  it('executes the real check CLI and refuses stale bytes without rewriting the manifest', async () => {
+    await save()
+    const previous = readFileSync(path.join(root, MANIFEST))
+    const command = () =>
+      execFileSync(process.execPath, [path.join(web, 'scripts/shared-inputs.mjs'), '--check'], {
+        cwd: root,
+        stdio: 'pipe'
+      })
+    command()
+    put(
+      WEB + '/src/main.ts',
+      readFileSync(path.join(web, 'src/main.ts'), 'utf8') + '\n// changed owned input\n'
+    )
+    assert.throws(
+      command,
+      (error) => error.status === 1 && error.stderr.toString().includes('manifest is stale')
+    )
+    assert.deepEqual(readFileSync(path.join(root, MANIFEST)), previous)
+  })
   it('records type-only, literal dynamic and CSS asset dependencies without loading the public component root', async () => {
     const manifest = await save(),
       files = manifest.files.map((file) => file.path)
@@ -521,7 +586,10 @@ describe('the actual compiler and Vite shared-source contract', () => {
           manifest.resolutionDirectories = []
           break
         case 'extra-resolution-scope':
-          manifest.resolutionDirectories.push({ path: 'library/ui/unused', entries: [] })
+          manifest.resolutionDirectories.push({
+            path: 'library/ui/unused',
+            entries: []
+          })
           break
         case 'unsorted-namespace':
           manifest.resolutionDirectories[0].entries.reverse()
@@ -733,7 +801,11 @@ describe('the actual compiler and Vite shared-source contract', () => {
     git('add', file)
     const manifest = await save()
     const oid = createHash('sha256').update(pointer).digest('hex')
-    manifest.files.push({ path: file, sha256: oid, lfs: { oid, size: pointer.length } })
+    manifest.files.push({
+      path: file,
+      sha256: oid,
+      lfs: { oid, size: pointer.length }
+    })
     manifest.files.sort((a, b) => Buffer.compare(Buffer.from(a.path), Buffer.from(b.path)))
     put(MANIFEST, JSON.stringify(manifest))
     rmSync(path.join(root, '.git'), { recursive: true, force: true })
@@ -982,7 +1054,11 @@ describe('the actual compiler and Vite shared-source contract', () => {
         manifest.roots.push('../escape')
       },
       (manifest) => {
-        manifest.edges.push({ from: WEB + '/src/main.ts', to: 'missing', kind: 'test' })
+        manifest.edges.push({
+          from: WEB + '/src/main.ts',
+          to: 'missing',
+          kind: 'test'
+        })
       }
     ]) {
       const manifest = globalThis.structuredClone(original)

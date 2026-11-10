@@ -24,7 +24,7 @@ let
     && all (part: part != "" && part != "." && part != "..") (split value);
   reserved = name: elem name [ "node_modules" ".git" ".agent-work" ];
   outputName = name: prefix ".consumer-foundations-" name || prefix ".consumer-ssr-" name;
-  ignoredEntry = name: kind: reserved name || (kind == "directory" && outputName name);
+  ignoredEntry = name: kind: reserved name || (kind == "regular" && name == ".DS_Store") || (kind == "directory" && outputName name);
   domainFor = path: filter (domain: prefix (domain + "/") path) domains;
   firstParty = path: safe path && length (domainFor path) == 1
     && all (part: !(reserved part)) (split path)

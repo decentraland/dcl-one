@@ -559,6 +559,19 @@ class CheckedGraphTests(unittest.TestCase):
         (self.root / MANIFEST).write_text(json.dumps(baseline))
         reader.read_manifest(self.root)
 
+    def test_finder_metadata_is_not_a_resolution_candidate_but_unsafe_aliases_are_refused(self):
+        metadata = self.root / 'library/shop/.DS_Store'
+        metadata.parent.mkdir(parents=True, exist_ok=True)
+        # Use a witnessed directory rather than introducing a new source namespace.
+        metadata = self.root / Path(SHARED[0]).parent / '.DS_Store'
+        expected = reader.input_hashes(self.root)
+        metadata.write_text('Finder metadata')
+        self.assertEqual(reader.input_hashes(self.root), expected)
+        metadata.unlink()
+        metadata.symlink_to(self.root / SHARED[0])
+        with self.assertRaisesRegex(reader.ManifestError, 'Unsafe'):
+            reader.input_hashes(self.root)
+
     def test_namespace_shadow_blocks_old_artifact_and_cache_until_regeneration_without_engine_churn(self):
         source, calls, tools, recipe, env = self.native_recipe()
         for name in ci._artifact.INPUTS:

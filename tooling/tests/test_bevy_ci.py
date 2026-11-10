@@ -145,14 +145,14 @@ class SelectionTest(unittest.TestCase):
         self.git('commit', '-qm', 'fixture', '--allow-empty')
         return self.git('rev-parse', 'HEAD')
 
-    def test_reader_and_fixture_only_changes_select_the_web_lane(self):
+    def test_reader_changes_select_web_but_test_only_changes_do_not_build(self):
         for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
                      'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'reader input')
                 result = ci.select(before, self.commit())
-                self.assertTrue(result['web'])
+                self.assertEqual(result['web'], name == 'tooling/hud_shared_inputs.py')
                 self.assertFalse(any(result[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
     def test_shared_reader_only_change_selects_images_without_engine_lanes(self):
