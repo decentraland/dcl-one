@@ -48,7 +48,7 @@ describe('installKit', () => {
 
       const result = await installKit({ target })
 
-      expect(result.installed).toEqual(['implement-figma-design'])
+      expect(result.installed).toEqual(['implement-figma-design', 'maintain-figma-library'])
       expect(result.agentsLink).toBe('skipped')
       expect(await lstat(path.join(target, '.agents')).catch(() => undefined)).toBeUndefined()
     })
@@ -58,7 +58,7 @@ describe('installKit', () => {
 
       const result = await installKit({ target, linkAgents: true })
 
-      expect(result.installed).toEqual(['implement-figma-design'])
+      expect(result.installed).toEqual(['implement-figma-design', 'maintain-figma-library'])
       expect(result.agentsLink).toBe('created')
       const manifest = JSON.parse(
         await readFile(path.join(target, '.claude/skills/implement-figma-design/.kit.json'), 'utf8')
@@ -114,7 +114,10 @@ describe('installKit', () => {
 
       const result = await installKit({ target })
 
-      expect(result).toMatchObject({ installed: [], unchanged: ['implement-figma-design'] })
+      expect(result).toMatchObject({
+        installed: [],
+        unchanged: ['implement-figma-design', 'maintain-figma-library']
+      })
       expect(await snapshot()).toEqual(before)
     })
   })
@@ -188,7 +191,7 @@ describe('checkKit', () => {
 
       const result = await checkKit({ target })
 
-      expect(result.problems.map((p) => p.reason)).toEqual(['not-installed'])
+      expect(result.problems.map((p) => p.reason)).toEqual(['not-installed', 'not-installed'])
     })
   })
 
@@ -199,7 +202,7 @@ describe('checkKit', () => {
 
       const result = await checkKit({ target, kitRoot: await kitAtVersion(newerVersion) })
 
-      expect(result.problems.map((p) => p.reason)).toEqual(['stale'])
+      expect(result.problems.map((p) => p.reason)).toEqual(['stale', 'stale'])
     })
   })
 

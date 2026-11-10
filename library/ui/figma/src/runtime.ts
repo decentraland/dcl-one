@@ -6,11 +6,14 @@ import { fileURLToPath } from 'node:url'
 import { createApp, type App } from './app.js'
 import { resolveContractConfig } from './contract/config.js'
 import { contractSchema } from './config.js'
+import { z } from 'zod'
 import { buildFigmaIndex } from './contract/figma-index.js'
 import type { ResolveContext } from './contract/resolve.js'
 import { promotionExclusion } from './promotion/eligibility.js'
 import { loadSpecsFromSource } from './specs.js'
 import type { ComponentSpec } from './ir/components.js'
+
+const componentNamesSchema = z.record(z.string(), z.string()).optional()
 
 type RuntimeOptions = {
   cwd: string
@@ -61,17 +64,26 @@ async function syncedComponents(app: App): Promise<Map<string, string[]>> {
 // The library's own mapping directory, the default mapping root under --mapping-only.
 const LIBRARY_MAPPING_ROOT = fileURLToPath(new URL('../../components', import.meta.url))
 
-// Under --mapping-only only the `contract` block of the Figma config is read (its mapping root and library
-// range need no capture); the rest of the config, the app and the capture cache are never loaded.
+// Under --mapping-only only the `contract` block (mapping root, library range) and the `componentNames`
+// aliases of the Figma config are read; none needs a capture. The rest of the config, the app and the
+// capture cache are never loaded.
 async function contractBlock(
   configFile: string,
   explicit: boolean
-): Promise<{ dir: string; mappingRoot?: string; libraryRange?: string } | undefined> {
+): Promise<
+  | {
+      dir: string
+      mappingRoot?: string
+      libraryRange?: string
+      componentNames?: Record<string, string>
+    }
+  | undefined
+> {
   if (!existsSync(configFile)) {
     if (explicit) throw new Error(`Figma config not found: ${configFile}`)
     return undefined
   }
-  let raw: { contract?: unknown }
+  let raw: { contract?: unknown; componentNames?: unknown }
   try {
     raw = JSON.parse(await readFile(configFile, 'utf8'))
   } catch (error) {
@@ -82,7 +94,9 @@ async function contractBlock(
     throw new Error(
       `${configFile}: contract must hold a string mappingRoot and an optional string libraryRange`
     )
-  return { dir: path.dirname(configFile), ...parsed.data }
+  const names = componentNamesSchema.safeParse(raw?.componentNames)
+  if (!names.success) throw new Error(`${configFile}: componentNames must map names to names`)
+  return { dir: path.dirname(configFile), ...parsed.data, componentNames: names.data }
 }
 
 function mappingOnlyRuntime(
@@ -92,16 +106,18 @@ function mappingOnlyRuntime(
 ): Runtime {
   return {
     async resolveContext() {
+      const block = await contractBlock(configFile, explicit)
       const contract = resolveContractConfig({
         cwd: options.cwd,
         args: { mappingRoot: options.mappingRoot, libraryRange: options.libraryRange },
         env: options.env,
-        fileConfig: await contractBlock(configFile, explicit)
+        fileConfig: block
       })
       return {
         mappingRoot: contract.mappingRoot ?? LIBRARY_MAPPING_ROOT,
         libraryRange: contract.libraryRange,
-        figmaSets: []
+        figmaSets: [],
+        componentNames: block?.componentNames
       }
     }
   }
@@ -143,7 +159,8 @@ async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
         mappingRoot: contract.mappingRoot,
         libraryRange: contract.libraryRange,
         figmaSets,
-        loadSyncedComponents: app ? () => syncedComponents(app) : undefined
+        loadSyncedComponents: app ? () => syncedComponents(app) : undefined,
+        componentNames: app?.config.componentNames
       }
     }
   }

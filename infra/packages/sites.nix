@@ -58,6 +58,10 @@ let
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
       (root + /library/catalyst-api) (root + /library/shop)
+      (lib.fileset.maybeMissing (root + /library/ui/package.json))
+      (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
+      (lib.fileset.maybeMissing (root + /library/ui/foundations))
+      (lib.fileset.maybeMissing (root + /library/ui/apps/sites))
     ];
   };
   # A build whose Shop settles credits on one chain through one CreditsManager: the two VITE_*
@@ -87,6 +91,16 @@ in stdenv.mkDerivation ({
     runHook preBuild
     chmod -R u+w ..
     ln -s "$PWD/node_modules" ../node_modules
+    if grep -rIl '^version https://git-lfs.github.com/spec/v1$' ../../library/ui/apps/sites/assets ../../library/ui/foundations/typography/fonts; then
+      echo "Sites media or shared fonts contain Git LFS pointers. Run git lfs pull and build git+file:.?lfs=1#image-sites." >&2
+      exit 1
+    else
+      status=$?
+      if [ "$status" -ne 1 ]; then
+        echo "Unable to inspect Sites media and shared fonts." >&2
+        exit "$status"
+      fi
+    fi
     pnpm run build
     runHook postBuild
   '';

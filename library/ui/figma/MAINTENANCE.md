@@ -50,13 +50,14 @@ The contract is the library's Code Connect template files, read statically (neve
 | `figma-drift`                 | warning  | consumer             |
 | `export-unverifiable`         | warning  | consumer             |
 | `capture-revision-unknown`    | warning  | consumer             |
+| `identity-name-match`         | warning  | consumer             |
 | `figma-identity-unverified`   | warning  | consumer             |
 | `capture-unchecked`           | warning  | maintainer           |
 | `superseded-by-sync`          | warning  | maintainer           |
 | `superseded-pending`          | warning  | maintainer           |
 
 - `dcl-figma check-mappings` (and the test `src/contract/integrity.test.ts`) fails CI on any mapping error or Figma drift.
-- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`, `--mapping-only`; without a config, or with `--mapping-only`, it registers only `figma_resolve_component` and `figma_check_mappings`. `--mapping-only` reads only the `contract` block of the Figma config (mapping root and library range) and never the capture cache; without one the mapping root defaults to `library/ui/components`. Without a capture only a component set id matches a mapping. The CLI takes the same flags plus `--text "Layer=Value"` (the MCP `texts` input). Resolve results name the capture revision the tracked lock pins in `provenance.capture.revision`. See `library/ui/README.md`.
+- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`, `--mapping-only`; without a config, or with `--mapping-only`, it registers only `figma_resolve_component` and `figma_check_mappings`. `--mapping-only` reads only the `contract` block (mapping root and library range) and the `componentNames` aliases of the Figma config, never the capture cache; without one the mapping root defaults to `library/ui/components`. Without a capture a component set name resolves to a single mapping (its `component` header, its `id`, or the code name `componentNames` gives the Figma name) only when the instance's variant properties fit it, and always with the `identity-name-match` warning; the name-based fallback is temporary (`TODO(figma-identity)` in `src/contract/name-identity.ts`). Component keys are never stored. `resolve --batch <file|->` resolves a JSON list of instances in input order; an identical repeat shares the earlier answer, a failed entry exits 1 and an unreadable batch exits 2. The CLI takes the same flags plus `--text "Layer=Value"` (the MCP `texts` input). Resolve results name the capture revision the tracked lock pins in `provenance.capture.revision`. See `library/ui/README.md`.
 
 ## Data source: the fetched capture only
 
@@ -66,12 +67,12 @@ Unit tests read a hand-written synthetic capture in `figma/test/fixtures/synthet
 
 ## Refresh workflow
 
-The capture is refreshed in figma-design-system, which owns it and documents how a capture is taken. This tree then ports the new commit:
+The capture is refreshed in figma-design-system, which owns it and documents how a capture is taken. This tree then ports the new commit (the `maintain-figma-library` skill walks through it):
 
 1. Bump the pin in `upstream.lock.json`, then `pnpm figma fetch-source --seal`.
-2. `pnpm figma diff` shows what would change (exit 1 if not empty), then `pnpm figma sync`.
-3. Run `sync` a second time: the diff must be empty (idempotency is tested).
-4. `node figma/lock-digests.mjs --write`, then run the real-capture checks and commit their record (`port-verification.mjs`). A deviation reason goes in `deviationCodes` under a new stable id; `--write` keeps the codes sorted.
+2. `pnpm figma port prepare`: fetch-source, diff, sync, a second sync that must change nothing, install foundations and components, and `lock-digests --write` (after staging `library/ui`, since it reads the index), stopping at the first stage that fails. Record a deviation code for every changed file (a stable id in `deviationCodes`; `--write` keeps them sorted), stage `library/ui` again, rerun `node figma/lock-digests.mjs --write`, and commit.
+3. `pnpm figma port verify`: on a clean tree, runs the seven real-capture checks and only when all pass writes `library/ui/port-verification.json` from their own output; a failed check writes nothing. Commit the record. It states what the local run reported, not proof of execution, an attestation or live parity.
+4. A new public Figma URL lands in two pull requests: its `figma/key-guard-allow.json` entry merged to main first, then the URL; the key guard prints this hint when a URL fails.
 5. Checks (format, lint, typecheck, tests, build, lock digests, key guard) run in GitHub Actions (`.github/workflows/ui-library.yml`); push and read the CI result instead of running the full suite locally. Run locally only what is needed to debug a failure.
 6. `pnpm review:build` and `pnpm review:check-build` prove the gallery builds, navigates and renders. They do not prove visual parity: comparing a variant with Figma happens in figma-design-system. Never say a component "matches" Figma from this tree.
 

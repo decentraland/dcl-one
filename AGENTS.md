@@ -110,7 +110,8 @@ migrates), `library/ui/` or
 shared foundations and components, accessibility, migration and verification.
 To implement a Figma design, follow the `implement-figma-design` skill in
 `.claude/skills/`; it resolves each component to the library instead of
-recreating it.
+recreating it. To port a capture into `library/ui`, follow
+`maintain-figma-library`.
 
 State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 
