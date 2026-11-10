@@ -135,9 +135,11 @@ fn spawn_container(app: &mut App, root: Entity, nodes: &[&str]) -> (Entity, Inst
 
 /// From now on processing starts past its deadline each frame, so it processes one node.
 fn one_node_per_frame(app: &mut App) {
+    let past = Instant::now();
     app.world_mut()
         .resource_mut::<SceneSpawner>()
-        .set_spawn_deadline(Some(Instant::now()));
+        .set_spawn_deadline(Some(past));
+    app.insert_resource(ProcessingDeadline(Some(past)));
 }
 
 fn is_processed(app: &App, container: Entity) -> bool {

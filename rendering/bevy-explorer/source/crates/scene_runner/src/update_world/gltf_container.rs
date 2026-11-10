@@ -37,6 +37,7 @@ use serde::Deserialize;
 use crate::{
     initialize_scene::SceneEntityDefinitionHandle,
     renderer_context::RendererSceneContext,
+    scene_spawn_slice::ProcessingDeadline,
     update_world::{
         lights::LightSource,
         material::{
@@ -240,6 +241,9 @@ pub struct GltfProcessed {
 /// [`ContainerEntity`], which processing gives it first.
 #[derive(Component, Default)]
 pub(crate) struct GltfProcessing {
+    /// The instance's nodes before this position, in `iter_instance_entities` order, are
+    /// processed or gone: each frame resumes there.
+    next: usize,
     /// Collider indices handed out so far, per collider name.
     collider_counter: HashMap<Option<String>, u32>,
     has_animations: bool,
@@ -292,7 +296,7 @@ fn on_gltf_container_removed(
 ) {
     let entity = trigger.target();
     // a processed model goes with its GltfReady (clear_stale_instance); one still spawning or
-    // processing has none yet, and the nodes processed so far already collide
+    // processing has none yet, so it goes here
     if let Ok((GltfLoaded(Some(instance)), false)) = loaded.get(entity) {
         despawn_instance_non_recursive(
             &mut commands,
@@ -395,8 +399,8 @@ fn update_gltf(
     };
 
     for (ent, scene_ent, gltf, maybe_loaded, has_gltf_processed, source) in new_gltfs.iter() {
-        // the same value put again: a restart would leave a large model never finished, now that
-        // it takes several frames
+        // the value its model is loading or loaded for, put again (some scenes do it every
+        // tick): the model stays, rather than starting over each time
         if source.is_some_and(|source| source.0 == gltf.0) {
             continue;
         }
@@ -404,7 +408,7 @@ fn update_gltf(
 
         commands
             .entity(ent)
-            .try_insert(GltfSource(gltf.0.clone()))
+            .remove::<GltfSource>()
             .remove::<GltfLoaded>()
             .remove::<GltfProcessed>()
             .remove::<GltfProcessing>()
@@ -452,9 +456,11 @@ fn update_gltf(
         };
 
         set_state(scene_ent, LoadingState::Loading);
+        // recorded only once loading is under way: a value that could not start loading is
+        // tried again when put again
         commands
             .entity(ent)
-            .try_insert(GltfHandle(h_gltf))
+            .try_insert((GltfHandle(h_gltf), GltfSource(gltf.0.clone())))
             .remove::<GltfLoaded>();
     }
 
@@ -654,14 +660,15 @@ fn update_ready_gltfs(
     mut gltfs: ResMut<Assets<Gltf>>,
     animation_clips: Res<Assets<AnimationClip>>,
     mut name_cache: ResMut<GltfNameCache>,
+    processing_deadline: Option<Res<ProcessingDeadline>>,
 ) {
     let mut failed = Vec::default();
     // sources are dropped after the loop: `gltf` is borrowed from `gltfs` throughout it
     let mut drop_sources = Vec::default();
 
-    // nodes are processed until the frame's instantiation deadline, at least one a frame; the
-    // rest resume next frame, instances already in progress first
-    let deadline = scene_spawner.spawn_deadline();
+    // nodes are processed until the frame's processing deadline, at least one a frame; the rest
+    // resume next frame, instances already in progress first
+    let deadline = processing_deadline.and_then(|deadline| deadline.0);
     let has_time = |processed_any: bool| {
         !processed_any || deadline.is_none_or(|deadline| Instant::now() < deadline)
     };
@@ -734,12 +741,19 @@ fn update_ready_gltfs(
             let mut processed_now = 0;
             let mut complete = true;
 
-            for spawned_ent in scene_spawner.iter_instance_entities(instance) {
+            let resume = progress.next;
+            for (position, spawned_ent) in scene_spawner
+                .iter_instance_entities(instance)
+                .enumerate()
+                .skip(resume)
+            {
                 // processed nodes have a ContainerEntity, and lights are despawned
                 let Ok(false) = processed_nodes.get(spawned_ent) else {
                     continue;
                 };
                 if !has_time(processed_any) {
+                    // every node before this one is processed or gone
+                    progress.next = position;
                     complete = false;
                     break;
                 }

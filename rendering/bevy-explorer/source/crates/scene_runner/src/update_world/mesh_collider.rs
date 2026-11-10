@@ -1148,7 +1148,12 @@ fn update_colliders<T: ColliderType>(
     // add colliders
     // any entity with a mesh collider that we're not already using, or where the mesh collider has changed
     new_colliders: Query<
-        (Entity, &MeshCollider<T>, &ContainerEntity),
+        (
+            Entity,
+            &MeshCollider<T>,
+            &ContainerEntity,
+            Has<HasCollider<T>>,
+        ),
         Or<(Changed<MeshCollider<T>>, Without<HasCollider<T>>)>,
     >,
     // remove colliders
@@ -1166,9 +1171,14 @@ fn update_colliders<T: ColliderType>(
 
     // add colliders
     // any entity with a mesh collider that we're not using, or where the mesh collider has changed
-    for (ent, collider_def, container) in new_colliders.iter() {
-        // a glTF still being processed is hidden: its nodes collide once it shows
-        if gltfs_in_progress.contains(container.container) {
+    for (ent, collider_def, container, has_collider) in new_colliders.iter() {
+        // still unmatched by `Without<HasCollider>`, so it comes back next frame
+        if waits_for_reveal(
+            ent,
+            container,
+            has_collider,
+            gltfs_in_progress.contains(container.container),
+        ) {
             continue;
         }
         let collider = match &collider_def.shape {
@@ -1535,8 +1545,23 @@ fn render_debug_colliders<T: ColliderType>(
     }
 }
 
+/// Whether a collider waits for its glTF to be revealed: a new one on a node of a model still
+/// being processed, which is hidden. A change to a collider already registered, such as one of
+/// the old model shown meanwhile, and the container entity's own collider apply at once: a
+/// `Changed` skipped here would be lost.
+fn waits_for_reveal(
+    entity: Entity,
+    container: &ContainerEntity,
+    has_collider: bool,
+    model_in_progress: bool,
+) -> bool {
+    model_in_progress && !has_collider && entity != container.container
+}
+
 #[cfg(test)]
 mod ownership_tests;
+#[cfg(test)]
+mod reveal_tests;
 
 #[cfg(test)]
 mod tests {
