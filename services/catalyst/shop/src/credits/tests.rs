@@ -8327,3 +8327,67 @@ async fn a_processing_order_nothing_moves_is_reported_daily_and_left_as_it_is() 
 
     own.drop().await;
 }
+
+/// The daily report only reads: a settlement pass that fails still runs it,
+/// and one the restore stamps hold skips it, as it skips every write.
+#[tokio::test]
+async fn the_stale_processing_report_survives_a_failed_pass_and_waits_for_the_stamps() {
+    use super::settlement::{
+        REPORT_STALE_PROCESSING_EVERY, StaleProcessingReport, settlement_job_pass,
+    };
+    use crate::shared::writes::PassGate;
+    use crate::shared::writes::restore::{lab::StampLab, scoped};
+    let Some(own) = OwnDatabase::create("stale_report_pass").await else {
+        return;
+    };
+    let wallet = scratch_wallet();
+    sqlx::query(
+        "INSERT INTO credits.purchases (order_id, address, sku, credits, amount_cents, currency, stripe_checkout_session, stripe_payment_intent, method, status, created_at) \
+         VALUES ('ord-stuck', $1, 'test-pack', 10, 100, 'usd', 'cs_stuck', 'pi_stuck', 'card', 'pending', timezone('UTC', now()) - interval '31 days')",
+    )
+    .bind(&wallet.address)
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let credits = Credits::new(own.pool.clone());
+    let gate = PassGate::new("credits-settlement", crate::shared::writes::ops_refusal);
+    let every = REPORT_STALE_PROCESSING_EVERY;
+
+    // Held by the restore stamps: no pass, and no report yet.
+    let held = StampLab::new();
+    let report = StaleProcessingReport::default();
+    let ran = scoped(
+        held.stamps.clone(),
+        settlement_job_pass(&credits, None, &gate, true, None, &report),
+    )
+    .await
+    .unwrap();
+    assert!(!ran);
+    assert!(
+        report.run(&credits, every).await.is_some(),
+        "the held pass reported"
+    );
+
+    // A pass whose sweep fails has still reported.
+    sqlx::raw_sql(
+        "CREATE FUNCTION credits.refuse_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'refused'; END $$; \
+         CREATE TRIGGER refuse_update BEFORE UPDATE ON credits.purchases FOR EACH STATEMENT EXECUTE FUNCTION credits.refuse_update();",
+    )
+    .execute(&own.pool)
+    .await
+    .unwrap();
+    let fresh = StampLab::fresh();
+    let report = StaleProcessingReport::default();
+    let failed = scoped(
+        fresh.stamps.clone(),
+        settlement_job_pass(&credits, None, &gate, true, None, &report),
+    )
+    .await;
+    assert!(failed.is_err(), "{failed:?}");
+    assert_eq!(
+        report.run(&credits, every).await,
+        None,
+        "the failed pass already reported today"
+    );
+    own.drop().await;
+}
