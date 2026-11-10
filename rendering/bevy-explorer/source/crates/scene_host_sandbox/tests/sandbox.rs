@@ -9,9 +9,8 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 mod linux {
-    use scene_host_sandbox::{apply, probe, Landlock, Mode, Report, Status};
+    use scene_host_sandbox::{apply, Landlock, Mode, Probe, Report, Status};
     use serde::{Deserialize, Serialize};
-    use std::net::TcpListener;
     use std::process::Command;
 
     const CHILD: &str = "SCENE_HOST_SANDBOX_TEST_CHILD";
@@ -65,7 +64,7 @@ mod linux {
     }
 
     fn child(mode: &str) {
-        let loopback = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+        let probe = Probe::prepare().expect("prepare the probe");
         let result = match mode {
             "require" => apply(Mode::Require),
             "off" => apply(Mode::Off),
@@ -80,7 +79,7 @@ mod linux {
             other => panic!("unknown child mode {other}"),
         };
         let output = ChildOutput {
-            report: result.is_ok().then(|| probe(&loopback)),
+            report: result.is_ok().then(|| probe.run()),
             error: result.as_ref().err().map(|e| format!("{e:#}")),
             status: result.ok(),
             kernel: kernel_state(),
@@ -143,13 +142,22 @@ mod linux {
         let Report {
             cannot_spawn_program,
             cannot_replace_program,
+            cannot_execute_memfd,
             cannot_fork,
+            cannot_use_clone3,
             cannot_create_temp_file,
+            cannot_change_file_metadata,
             cannot_open_home,
-            cannot_read_init_environ,
+            cannot_read_other_process,
             cannot_open_unix_socket,
-            cannot_signal_parent,
-            cannot_ptrace_parent,
+            cannot_open_non_route_netlink,
+            cannot_signal_other_process,
+            cannot_signal_process_group,
+            cannot_set_signal_owner,
+            cannot_inject_terminal_input,
+            cannot_ptrace_other_process,
+            cannot_reschedule_other_process,
+            cannot_read_other_limits,
             can_run_thread: _,
             can_run_jit_code: _,
             can_connect_loopback_tcp: _,
@@ -160,26 +168,44 @@ mod linux {
         } = sandboxed();
         assert!(cannot_spawn_program);
         assert!(cannot_replace_program);
+        assert!(cannot_execute_memfd);
         assert!(cannot_fork);
+        assert!(cannot_use_clone3);
         assert!(cannot_create_temp_file);
+        assert!(cannot_change_file_metadata);
         assert!(cannot_open_home);
-        assert!(cannot_read_init_environ);
+        assert!(cannot_read_other_process);
         assert!(cannot_open_unix_socket);
-        assert!(cannot_signal_parent);
-        assert!(cannot_ptrace_parent);
+        assert!(cannot_open_non_route_netlink);
+        assert!(cannot_signal_other_process);
+        assert!(cannot_signal_process_group);
+        assert!(cannot_set_signal_owner);
+        assert!(cannot_inject_terminal_input);
+        assert!(cannot_ptrace_other_process);
+        assert!(cannot_reschedule_other_process);
+        assert!(cannot_read_other_limits);
     }
 
     fn a_sandboxed_process_can_still_run_threads_jit_and_tcp() {
         let Report {
             cannot_spawn_program: _,
             cannot_replace_program: _,
+            cannot_execute_memfd: _,
             cannot_fork: _,
+            cannot_use_clone3: _,
             cannot_create_temp_file: _,
+            cannot_change_file_metadata: _,
             cannot_open_home: _,
-            cannot_read_init_environ: _,
+            cannot_read_other_process: _,
             cannot_open_unix_socket: _,
-            cannot_signal_parent: _,
-            cannot_ptrace_parent: _,
+            cannot_open_non_route_netlink: _,
+            cannot_signal_other_process: _,
+            cannot_signal_process_group: _,
+            cannot_set_signal_owner: _,
+            cannot_inject_terminal_input: _,
+            cannot_ptrace_other_process: _,
+            cannot_reschedule_other_process: _,
+            cannot_read_other_limits: _,
             can_run_thread,
             can_run_jit_code,
             can_connect_loopback_tcp,
@@ -200,7 +226,11 @@ mod linux {
     fn require_mode_fails_when_applied_with_several_threads() {
         let output = run_child("require-with-a-thread");
         assert_eq!(output.status, None);
-        assert!(output.error.is_some());
+        let error = output.error.expect("an error");
+        assert!(
+            error.contains("must be applied while the process has one thread"),
+            "{error}"
+        );
         assert!(output.report.is_none());
         assert_eq!(output.kernel, kernel_state(), "nothing was applied");
     }
@@ -216,18 +246,27 @@ mod linux {
             })
         );
         assert_eq!(output.kernel, kernel_state());
-        // home, /proc/1 and ptrace also depend on the host's own permissions, so they are not
-        // asserted here
+        // home also depends on the host's own permissions, so it is not asserted here, and a
+        // container runtime's own filter may answer clone3 with ENOSYS too
         let Report {
             cannot_spawn_program,
             cannot_replace_program,
+            cannot_execute_memfd,
             cannot_fork,
+            cannot_use_clone3,
             cannot_create_temp_file,
+            cannot_change_file_metadata,
             cannot_open_home: _,
-            cannot_read_init_environ: _,
+            cannot_read_other_process,
             cannot_open_unix_socket,
-            cannot_signal_parent,
-            cannot_ptrace_parent: _,
+            cannot_open_non_route_netlink,
+            cannot_signal_other_process,
+            cannot_signal_process_group,
+            cannot_set_signal_owner,
+            cannot_inject_terminal_input,
+            cannot_ptrace_other_process,
+            cannot_reschedule_other_process,
+            cannot_read_other_limits,
             can_run_thread,
             can_run_jit_code,
             can_connect_loopback_tcp,
@@ -238,10 +277,23 @@ mod linux {
         } = output.report.expect("a report");
         assert!(!cannot_spawn_program);
         assert!(!cannot_replace_program);
+        assert!(!cannot_execute_memfd);
         assert!(!cannot_fork);
+        if output.kernel.seccomp_mode == 0 {
+            assert!(!cannot_use_clone3);
+        }
         assert!(!cannot_create_temp_file);
+        assert!(!cannot_change_file_metadata);
+        assert!(!cannot_read_other_process);
         assert!(!cannot_open_unix_socket);
-        assert!(!cannot_signal_parent);
+        assert!(!cannot_open_non_route_netlink);
+        assert!(!cannot_signal_other_process);
+        assert!(!cannot_signal_process_group);
+        assert!(!cannot_set_signal_owner);
+        assert!(!cannot_inject_terminal_input);
+        assert!(!cannot_ptrace_other_process);
+        assert!(!cannot_reschedule_other_process);
+        assert!(!cannot_read_other_limits);
         assert!(can_run_thread);
         assert!(can_run_jit_code);
         assert!(can_connect_loopback_tcp);
