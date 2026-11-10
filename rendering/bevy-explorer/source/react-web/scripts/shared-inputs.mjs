@@ -12,7 +12,8 @@ import {
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-export const WEB = 'rendering/bevy-explorer/source/react-web'
+const OWNED_SOURCE = 'rendering/bevy-explorer/source/'
+export const WEB = OWNED_SOURCE + 'react-web'
 export const MANIFEST = WEB + '/shared-inputs.json'
 const GENERATOR = WEB + '/scripts/shared-inputs.mjs'
 const GENERATING = Symbol.for('dcl.hud.shared-inputs.generating')
@@ -257,7 +258,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
   const controls = new Set([...roots, ...CONTROL_PATHS])
   const beforeInputs = new Map()
   for (const file of paths) {
-    if (!shared(file) && !file.startsWith(WEB + '/')) continue
+    if (!shared(file) && !file.startsWith(OWNED_SOURCE)) continue
     try {
       beforeInputs.set(file, sha256(regular(root, file)))
     } catch {
@@ -267,9 +268,30 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
   const files = new Set(),
     edges = new Map()
   const edge = (from, to, kind) => edges.set([from, to, kind].join('\0'), { from, to, kind })
+  const generated = [
+    WEB + '/src/engine/generated/',
+    'rendering/bevy-explorer/source/deploy/web/engine/pkg/',
+    'rendering/bevy-explorer/source/deploy/web/engine/pkg-scene/'
+  ]
   const include = (file) => {
-    if (!portable(file) || !shared(file)) return false
-    if (!paths.has(file)) throw Error('Untracked shared import target: ' + file)
+    // Installed packages and canonical engine producer outputs have separate input contracts.
+    if (
+      file.split('/').includes('node_modules') ||
+      generated.some((prefix) => file.startsWith(prefix))
+    )
+      return false
+    if (!portable(file) || (!shared(file) && !file.startsWith(OWNED_SOURCE)))
+      throw Error('Unsupported resolved first-party input: ' + file)
+    if (!paths.has(file))
+      throw Error(
+        (file.startsWith(WEB + '/')
+          ? 'Untracked HUD import target: '
+          : 'Untracked shared import target: ') + file
+      )
+    if (file.startsWith(OWNED_SOURCE)) {
+      controls.add(file)
+      return false
+    }
     files.add(file)
     return true
   }
@@ -301,7 +323,6 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
   for (const line of compiled.split(/\r?\n/)) {
     if (!path.isAbsolute(line.trim()) || !existsSync(line.trim())) continue
     const file = relative(root, realpathSync(line.trim()))
-    if (file.startsWith(WEB + '/') && paths.has(file)) controls.add(file)
     if (include(file)) edge(WEB + '/tsconfig.json', file, 'type')
   }
   console.log('HUD actual compiler graph ready: ' + files.size + ' shared inputs')
@@ -389,6 +410,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
               resolvedConfig = config
               for (const dependency of config.configFileDependencies) {
                 const file = relative(root, dependency)
+                include(file)
                 if (portable(file) && !file.split('/').includes('node_modules')) {
                   if (!paths.has(file))
                     throw Error('Untracked Vite configuration dependency: ' + file)
@@ -442,7 +464,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
               for (const id of this.getModuleIds()) {
                 const from = physical(id),
                   info = this.getModuleInfo(id)
-                if (from && shared(from)) include(from)
+                if (from) include(from)
                 if (from && from.endsWith('.css')) cssModules.add(from)
                 if (!from || !info) continue
                 for (const [kind, imports] of [
@@ -455,7 +477,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
                     if (
                       shared(from) ||
                       roots.includes(from) ||
-                      (paths.has(from) && from.startsWith(WEB + '/'))
+                      (paths.has(from) && from.startsWith(OWNED_SOURCE))
                     ) {
                       if (!shared(from)) controls.add(from)
                       edge(from, to, mode + ':' + kind)
@@ -471,7 +493,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
                 )
                 for (const dependency of result.deps ?? []) {
                   const to = relative(root, realpathSync(dependency))
-                  if (!shared(to) || !include(to)) continue
+                  if (!include(to)) continue
                   if (!shared(from)) controls.add(from)
                   edge(from, to, mode + ':css')
                 }
@@ -495,7 +517,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
             const target = path.isAbsolute(original) ? original : path.resolve(web, original)
             if (!existsSync(target)) continue
             const file = relative(root, realpathSync(target))
-            if (shared(file) && include(file)) edge(WEB + '/vite.config.ts', file, mode + ':asset')
+            if (include(file)) edge(WEB + '/vite.config.ts', file, mode + ':asset')
           }
         }
       }

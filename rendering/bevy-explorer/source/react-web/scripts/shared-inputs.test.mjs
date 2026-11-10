@@ -310,6 +310,68 @@ describe('the actual compiler and Vite shared-source contract', () => {
         assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
       }
     )
+  it('binds an actually consumed tracked engine source as a control and changes its fingerprint', async () => {
+    const source = 'rendering/bevy-explorer/source/deploy/web/audit-engine-helper.ts'
+    put(source, 'export const engineValue=73;')
+    put(
+      WEB + '/src/main.ts',
+      "import {engineValue} from '../../deploy/web/audit-engine-helper';export {engineValue};"
+    )
+    git('add', '.')
+    const manifest = await save(),
+      before = hashes()
+    assert(manifest.controls.some((entry) => entry.path === source))
+    assert(!manifest.files.some((entry) => entry.path === source))
+    put(source, 'export const engineValue=99;')
+    assert.throws(() => readSharedPaths(root), /Stale/)
+    git('add', source)
+    await save()
+    assert.notDeepEqual(hashes(), before)
+  })
+  for (const scenario of [
+    {
+      name: 'an untracked consumed HUD module',
+      target: WEB + '/src/audit-untracked.ts',
+      tracked: false,
+      error: 'Untracked HUD import target'
+    },
+    {
+      name: 'a tracked repository module outside the supported shared domains',
+      target: 'library/audit-extra/value.ts',
+      tracked: true,
+      error: 'Unsupported resolved first-party input'
+    }
+  ])
+    it('refuses ' + scenario.name + ' without replacing the previous manifest', async () => {
+      await save()
+      const previous = readFileSync(path.join(root, MANIFEST))
+      put(scenario.target, 'export const auditedValue=73;')
+      const specifier = path
+        .relative(path.join(web, 'src'), path.join(root, scenario.target.slice(0, -3)))
+        .split(path.sep)
+        .join('/')
+      put(
+        WEB + '/src/main.ts',
+        "import {auditedValue} from '" +
+          (specifier.startsWith('.') ? specifier : './' + specifier) +
+          "';export {auditedValue};"
+      )
+      git('add', WEB + '/src/main.ts')
+      if (scenario.tracked) git('add', scenario.target)
+      await assert.rejects(generateSharedInputs({ root }), new RegExp(scenario.error))
+      assert.throws(
+        () =>
+          execFileSync(process.execPath, [path.join(web, 'scripts/shared-inputs.mjs'), '--write'], {
+            cwd: root,
+            stdio: 'pipe'
+          }),
+        (error) => error.status === 1 && error.stderr.toString().includes(scenario.error)
+      )
+      assert.deepEqual(readFileSync(path.join(root, MANIFEST)), previous)
+      put(scenario.target, 'export const auditedValue=99;')
+      await assert.rejects(generateSharedInputs({ root }), new RegExp(scenario.error))
+      assert.deepEqual(readFileSync(path.join(root, MANIFEST)), previous)
+    })
   it('refuses an unresolved CSS asset instead of emitting an incomplete graph', async () => {
     put('library/ui/foundations/style.css', ".token{background:url('./missing.svg')}")
     git('add', 'library/ui/foundations/style.css')

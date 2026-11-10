@@ -14,8 +14,88 @@
       "sha256": "15597d3b37fc19ffc4376a874ed693a3d86c0370415a7a994a7281fffa2b2124"
     },
     {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
+      "sha256": "d48434bc9951feb8e10957d538f262f10f800dec2523db706be1e55421329129"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
+      "sha256": "41bb8c8c43bb0af3c9586dabe328f61116f49635348ab465f5a96ad004360213"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
+      "sha256": "b15771c2bc5f07879fda7739638d20f30df10bae6d58200895bc7fc3813fbac4"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/deploy/web/engine/sandbox_host.js",
+      "sha256": "c3dde5bf9d513b85bc441a731faf69ccbe032666950d64203689f98b6c3b2434"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/deploy/web/preview_realm.js",
+      "sha256": "f03bd837e1ad99448aaece086843f2493255473b24202bc14ec1b2b15aa25f37"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/app.html",
       "sha256": "a82ea107db8ccf8004e3ed3efb27b88c307452ba14713ba587d072718ed68bbb"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
+      "sha256": "d8854a4a9034a20e63ea176c4bbeff04bf1f65e217aaec80e7c9d2869de69bd9"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
+      "sha256": "48b1eb8c591d313e8b17a49a9a6f6b54decc21302a3513aa8bcf8ba3589ee5d4"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/collections.ts",
+      "sha256": "59ab1d6f08c95cd6718414873a0d33e2b8791353bf812c8feb7d25cde08d078b"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
+      "sha256": "e02f8c23becc3b584170aa218ebae4b24a59fe8f81f5175303a9609b8872b2b0"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
+      "sha256": "7fdc86ebf5a3970823e089a131c5e4656a78ba8ed3ca2f0c744017ab42362a68"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/emotes.ts",
+      "sha256": "42fb5c50ac97cc1dab32eb976aaab03224bcb7b6ac833fd9d4a81112955a553b"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/friends.ts",
+      "sha256": "d94a6b8c14c835a181f0153d41ee8fb713112ca0f8f63699444b05b05987d12d"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/marketplace.ts",
+      "sha256": "0f03d1ecb090d06c1c0a1bb5d7939677d22aa9e0f1d4be67ffccbf81818b8807"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/notifications.ts",
+      "sha256": "f6c8c1a503faad97e45e677dc597bb9a1ddc3d681f5b807bef21cf13ef5df4f1"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/profile.ts",
+      "sha256": "0dfaa4091e1283ed059dfa94d7e676708afbffc5af2f4b16bc93c105957e5a73"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/randomizer.ts",
+      "sha256": "82a48bcdfee3b0961beed5d4da414818aa86949f66696d8c33c6927d20bdea15"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/session.ts",
+      "sha256": "01b2c66a271517abcc9b1ebec2d2d74cb47efa3b8c09dae9b139694ac89c4ade"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
+      "sha256": "7ac89d5678a8529be8f254d085258633d6323c7ef027f85e5017455929d816ab"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
+      "sha256": "524da8e698a463e6a0f79a4e1e7ee33c9d532fef29c904bce028ff5c26871adf"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/http.ts",
+      "sha256": "113ee5318f490ccc3f9cf4622ed2a45a19bbd74db7b4971e30f6c3a4da427c1b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/identity.ts",
@@ -24,6 +104,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/relay.ts",
       "sha256": "750945b7d6516ba69f49dbc97d53e8f3cd0506d148d4684222f9b5f843a80b74"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/system-helpers.ts",
+      "sha256": "7c7db2b91fdf7f05597c8b64a6bb2c9c73a0f9a582d880906094782d12e867ad"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/index.html",
@@ -43,7 +127,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "8857796a962d36d565e06d3f504eb8a566a31777696876cd29bc935b01ec9d31"
+      "sha256": "df3842eca62ae24d9d9c576de1e77b869a98c67c0748f41c0eccec3af62bd4f9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
