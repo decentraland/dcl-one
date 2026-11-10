@@ -99,13 +99,18 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   social reconnect until the next snapshot (unity-explorer also resets only on the next
   `GetBlockingStatus`). The platform ban is read from the gatekeeper's public, unsigned
   `GET /users/{address}/bans` (unity-explorer signs the same request, which the endpoint does
-  not need), on sign-in, on a realm change, on `/ban_block_refresh` and every 300 s; a failed
-  check fails open, as there, and the state says so instead of guessing; a ban whose record the
-  gatekeeper withholds (a device match) is still a ban. The local user's scene ban is the refusal
-  of the scene adapter, read from its status and body (the gatekeeper's 403 for a platform or
-  scene ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats
-  any 401 or 403 as forbidden access; a platform-scoped refusal also marks the platform ban. The
-  player is not moved out of a scene that refused them, as there. Other players' scene bans and
+  not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
+  notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
+  push reaches an idle client here, and the period promises no freshness, as a failed check
+  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
+  so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
+  marks the platform ban, the endpoint's "not banned" does not lift it, and a later admission
+  does, back to unknown until the next check. The local user's scene ban is the refusal of the
+  scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
+  ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
+  or 403 as forbidden access. The player is not moved out of a scene that refused them, as
+  there. Other players' scene bans and
   the admins come from the room's metadata and count only while the room is connected, as there.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
