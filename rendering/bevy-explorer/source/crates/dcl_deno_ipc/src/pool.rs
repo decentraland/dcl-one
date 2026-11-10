@@ -49,7 +49,8 @@ const MEMORY_SAMPLE_PERIOD: Duration = Duration::from_secs(2);
 // V8's worker pool in a per-scene host, which runs one isolate
 const PER_SCENE_V8_THREADS: u32 = 2;
 /// The environment a per-scene host is started with: what the scene host and the libraries it
-/// links read (logging, the scene log budget, temporary files, TLS roots, HTTP proxies).
+/// links read (logging, the scene log budget, temporary files, TLS roots, HTTP proxies, the time
+/// zone and locale).
 pub(crate) const PER_SCENE_HOST_ENV: &[&str] = &[
     "RUST_LOG",
     "RUST_BACKTRACE",
@@ -70,6 +71,9 @@ pub(crate) const PER_SCENE_HOST_ENV: &[&str] = &[
     "https_proxy",
     "all_proxy",
     "no_proxy",
+    "TZ",
+    "LANG",
+    "LC_ALL",
     "SystemRoot",
 ];
 
@@ -196,7 +200,13 @@ impl Host {
 
     fn end(&self, reason: HostExitReason) {
         self.end_reason.lock().unwrap().get_or_insert(reason);
+        self.stop_taking_scenes();
         self.end.notify_one();
+    }
+
+    // An ending host is given no new scene; the ones it has are reported when it is gone.
+    fn stop_taking_scenes(&self) {
+        self.scenes.lock().unwrap().closed = true;
     }
 
     fn state(&self) -> HostState {
@@ -589,7 +599,9 @@ impl HostPool {
                 continue;
             };
             host.rss_bytes.store(*rss, Ordering::Relaxed);
-            if self.options.memory_cap.is_some_and(|cap| *rss > cap) {
+            // an idle spare runs no scene code, so only its fixed footprint counts
+            let idle = host.scenes.lock().unwrap().live().next().is_none();
+            if !idle && self.options.memory_cap.is_some_and(|cap| *rss > cap) {
                 error!("scene host at {rss} resident bytes is over its memory cap; ending it");
                 host.end(HostExitReason::Memory);
             }
@@ -778,13 +790,11 @@ impl HostThread {
                 () = self.host.end.notified() => Some(ConnectionEnd::Closed),
             }
         });
+        self.host.stop_taking_scenes();
         link.process.start_kill();
         let status = rt.block_on(link.process.wait()).unwrap_or_default();
         self.host.set_state(HostState::Lost);
         self.events.ready_hosts.fetch_sub(1, Ordering::SeqCst);
-        if ended.is_some() {
-            self.events.lost.fetch_add(1, Ordering::Relaxed);
-        }
 
         match self.placement {
             Placement::Shared => {
@@ -794,6 +804,9 @@ impl HostThread {
                 // running process — so exit hard and let the supervisor restart the whole engine.
                 // Desktop/tests leave the flag false and end quietly (tests build a fresh runtime
                 // per app, where this is a normal shutdown, not a crash).
+                if ended.is_some() {
+                    self.events.lost.fetch_add(1, Ordering::Relaxed);
+                }
                 if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
                     error!("dcl_deno_ipc runtime terminated (JS sidecar lost); exiting process");
                     std::process::exit(1);
@@ -807,18 +820,22 @@ impl HostThread {
                         ConnectionEnd::Closed => HostExitReason::Exit,
                         ConnectionEnd::Rejected => HostExitReason::Protocol,
                     });
-                    self.report_loss(status, reason, format!("scene host exited: {status}"));
+                    // an idle spare that ended lost no scene
+                    if self.report_loss(status, reason, format!("scene host exited: {status}")) {
+                        self.events.lost.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             }
         }
     }
 
     // Reports the host's live scenes as lost: the record first, so it is there by the time a
-    // scene is seen broken, then an error to each scene. Outside the runtime: it may wait.
-    fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) {
+    // scene is seen broken, then an error to each scene. Outside the runtime: it may wait. False
+    // when the host ran no scene.
+    fn report_loss(&self, status: HostStatus, reason: HostExitReason, message: String) -> bool {
         let lost = self.host.scenes.lock().unwrap().close();
         if lost.is_empty() {
-            return;
+            return false;
         }
         let scenes = lost
             .iter()
@@ -834,6 +851,7 @@ impl HostThread {
             // the channel is bounded; this message must not be shed
             let _ = responses.blocking_send((scene, SceneResponse::Error(message.clone())));
         }
+        true
     }
 }
 

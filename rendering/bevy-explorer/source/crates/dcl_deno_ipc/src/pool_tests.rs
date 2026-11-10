@@ -607,6 +607,57 @@ async fn an_ended_host_loses_only_its_scene_and_counts_as_lost() {
     assert!(!pool.end_host(ended_host.pid));
 }
 
+#[tokio::test]
+async fn an_ending_spare_is_given_no_scene_and_counts_as_no_loss() {
+    let (pool, mut launched, _, _) = pool_with(HostOptions {
+        placement: Placement::PerScene,
+        spares: 1,
+        memory_cap: None,
+    });
+    let pool = Arc::new(pool);
+    pool.start().unwrap();
+    let spare = tokio::time::timeout(TIMEOUT, launched.recv()).await;
+    let spare = spare.unwrap().unwrap();
+    eventually(|| pool.hosts().first().is_some_and(|h| h.pid.is_some())).await;
+    let (responses, mut receiver) = scene_response_channel();
+
+    assert!(pool.end_host(spare.pid));
+    let _scene = place(&pool, &responses, [1]);
+
+    let (started, host) = next_host(&mut launched).await;
+    assert_eq!(started, scene_id(1));
+    assert_ne!(host.pid, spare.pid);
+    eventually(|| spare.killed()).await;
+    assert!(nothing_delivered(&mut receiver).await);
+    assert!(pool.drain_exits().is_empty());
+    assert_eq!(pool.info().lost_hosts, 0);
+}
+
+#[tokio::test]
+async fn an_idle_spare_is_not_held_to_the_memory_cap() {
+    let (pool, mut launched, _, memory) = pool_with(HostOptions {
+        placement: Placement::PerScene,
+        spares: 1,
+        memory_cap: Some(1000),
+    });
+    let pool = Arc::new(pool);
+    pool.start().unwrap();
+    let spare = tokio::time::timeout(TIMEOUT, launched.recv()).await;
+    let spare = spare.unwrap().unwrap();
+    memory.0.lock().unwrap().insert(spare.pid, 5000);
+
+    eventually(|| {
+        pool.hosts()
+            .first()
+            .is_some_and(|h| h.rss_bytes == Some(5000))
+    })
+    .await;
+    tokio::time::sleep(QUIET).await;
+
+    assert!(!spare.killed());
+    assert_eq!(pool.info().lost_hosts, 0);
+}
+
 // set in the copy of this test binary that plays the engine
 #[cfg(unix)]
 const HOST_OUTPUT_ENGINE: &str = "DCL_DENO_IPC_HOST_OUTPUT_ENGINE";
