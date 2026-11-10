@@ -298,6 +298,19 @@ jobs:
           fi
           python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/native-test-artifacts.jsonl
           cargo test --all --profile ci-test --locked -- --test-threads=1
+      - name: Run the scene host and scene runner tests with the scene host sandbox required
+        if: runner.os == 'Linux'
+        env:
+          DCL_SCENE_HOST_SANDBOX: require
+        run: |
+          # the test binaries the native suite built, each from its package directory as Cargo runs it
+          jq -r 'select(.reason == "compiler-artifact" and .profile.test and .executable != null
+              and (.package_id | test("/crates/(scene_runner|dcl_deno_ipc)#")))
+              | "\(.manifest_path) \(.executable)"' target/native-test-artifacts.jsonl > target/sandboxed-tests.txt
+          [ "$(wc -l < target/sandboxed-tests.txt)" -ge 4 ] || { cat target/sandboxed-tests.txt; exit 1; }
+          while read -r manifest executable; do
+            (cd "$(dirname "$manifest")" && "$executable" --test-threads=1)
+          done < target/sandboxed-tests.txt
       - name: Use Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -409,12 +422,14 @@ jobs:
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Strip the Linux distribution before testing
         run: strip ../../../apps/bevy-explorer/dist/headless/native/headless ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc
+      - name: Check the scene host sandbox
+        run: ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc --sandbox-self-test --require
       - name: Smoke test
         run: |
           set -o pipefail
           ../../../apps/bevy-explorer/dist/headless/native/headless \
             --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests \
-            --location 52,-52 --server-mode --preview --timeout 90 2>&1 | tee smoke.log
+            --location 52,-52 --server-mode --preview --scene-host-sandbox require --timeout 90 2>&1 | tee smoke.log
       - name: Assert scenes ticked
         run: |
           if ! grep -q "first tick reached" smoke.log; then
@@ -435,6 +450,46 @@ jobs:
             exit 1
           fi
           echo "ok: ticks advanced $first -> $last"
+      - name: Smoke test the orchestrated server with its default scene host sandbox
+        run: |
+          python3 - ../../../apps/bevy-explorer/dist/headless/native/headless <<'EOF'
+          import json, subprocess, sys, threading, urllib.request
+          realm = "https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests"
+          about = json.load(urllib.request.urlopen(realm + "/about", timeout=30))
+          urn = about["configurations"]["scenesUrn"][0]
+          add = {"type": "add-scene", "sceneId": urn.split(":")[3].split("?")[0], "urn": urn,
+                 "realm": "scene-explorer-tests"}
+          engine = subprocess.Popen([sys.argv[1], "--orchestrated", "--preview", "--realm", realm],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, bufsize=1)
+          watchdog = threading.Timer(180, engine.kill)
+          watchdog.start()
+          def add_scene():
+              engine.stdin.write(json.dumps(add) + "\n")
+              engine.stdin.flush()
+          events = {}
+          for line in engine.stdout:
+              if not line.startswith("@bevy-ctl "):
+                  continue
+              event = json.loads(line.removeprefix("@bevy-ctl "))
+              print(event, flush=True)
+              events.setdefault(event["type"], event)
+              # an add-scene right after starting is refused before preview mode is known
+              if event["type"] == "starting":
+                  threading.Timer(5, add_scene).start()
+              # a scene still ticking and not broken a few seconds after it went live
+              ticking = event["type"] == "scene-status" and event["tick"] >= 60 and not event["broken"]
+              if ticking or event["type"] == "scene-broken":
+                  break
+          engine.stdin.close()
+          engine.wait(timeout=30)
+          watchdog.cancel()
+          assert events["starting"]["sceneHostSandbox"] == {"mode": "require"}, events
+          sandbox = events["scene-host-sandbox"]
+          assert sandbox["mode"] == "require" and sandbox["seccomp"] and sandbox["noNewPrivs"], sandbox
+          assert sandbox["landlock"] in ("fullyEnforced", "partiallyEnforced"), sandbox
+          assert "scene-live" in events and "scene-broken" not in events, events
+          assert "scene-host-exited" not in events, events
+          EOF
       - name: Upload smoke log
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
