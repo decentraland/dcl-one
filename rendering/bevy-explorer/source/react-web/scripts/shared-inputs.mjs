@@ -187,7 +187,9 @@ function identity(root, file, paths, expectedLfs) {
 }
 
 /** Dev/native consumers read the same checked contract as CI, Nix and fingerprinting. */
-export function readSharedPaths(root = REPOSITORY) {
+export function readSharedPaths(root = REPOSITORY, { mode = 'strict' } = {}) {
+  if (!['strict', 'config'].includes(mode)) throw Error('Invalid HUD shared-input read mode')
+  const strict = mode === 'strict'
   if (globalThis[GENERATING] > 0) return []
   rejectAutomaticPostcss(root)
   const manifest = JSON.parse(regular(root, MANIFEST).toString())
@@ -207,29 +209,71 @@ export function readSharedPaths(root = REPOSITORY) {
   const required = CONTROL_PATHS
   if (required.some((file) => !manifest.controls.some((entry) => entry.path === file)))
     throw Error('Missing HUD resolver control')
-  if (JSON.stringify(rootInventory(paths)) !== JSON.stringify(manifest.roots))
+  if (strict && JSON.stringify(rootInventory(paths)) !== JSON.stringify(manifest.roots))
     throw Error('Stale HUD shared-input root inventory; regenerate shared-inputs.json')
+  if (
+    JSON.stringify(rootInventory(new Set(manifest.roots))) !== JSON.stringify(manifest.roots) ||
+    manifest.roots.some((file) => !portable(file))
+  )
+    throw Error('Invalid HUD declared root inventory')
   const declaredControls = new Set(manifest.controls.map((entry) => entry.path))
   for (const file of resolverControls(
     paths,
     [...manifest.roots, ...manifest.files.map((entry) => entry.path)],
     hasGit(root) ? undefined : root
   ))
-    if (!declaredControls.has(file))
+    if (strict && !declaredControls.has(file))
       throw Error('New HUD resolver control; regenerate shared-inputs.json: ' + file)
+  for (const group of ['controls', 'files']) {
+    if (
+      manifest[group].some((entry) => !entry || typeof entry !== 'object' || Array.isArray(entry))
+    )
+      throw Error('Invalid HUD shared-input record')
+    const names = manifest[group].map((entry) => entry.path)
+    if (JSON.stringify(sorted(new Set(names))) !== JSON.stringify(names))
+      throw Error('Invalid HUD shared-input list')
+  }
   const seen = new Set()
   for (const entry of [...manifest.controls, ...manifest.files]) {
     if (!portable(entry.path) || !/^[a-f0-9]{64}$/.test(entry.sha256) || seen.has(entry.path))
       throw Error('Invalid HUD shared-input identity')
     seen.add(entry.path)
-    const actual = identity(root, entry.path, paths, entry.lfs)
-    if (actual.sha256 !== entry.sha256 || JSON.stringify(actual.lfs) !== JSON.stringify(entry.lfs))
-      throw Error('Stale HUD shared-input bytes: ' + entry.path)
+    if (Object.keys(entry).some((key) => !['path', 'sha256', 'lfs'].includes(key)))
+      throw Error('Invalid HUD shared-input record')
+    if (
+      Object.hasOwn(entry, 'lfs') &&
+      (!entry.lfs ||
+        Object.keys(entry.lfs).sort().join(',') !== 'oid,size' ||
+        entry.lfs.oid !== entry.sha256 ||
+        !Number.isSafeInteger(entry.lfs.size) ||
+        entry.lfs.size < 0)
+    )
+      throw Error('Invalid HUD shared-input LFS identity')
+    if (strict) {
+      const actual = identity(root, entry.path, paths, entry.lfs)
+      if (
+        actual.sha256 !== entry.sha256 ||
+        JSON.stringify(actual.lfs) !== JSON.stringify(entry.lfs)
+      )
+        throw Error('Stale HUD shared-input bytes: ' + entry.path)
+    } else {
+      const bytes = regular(root, entry.path)
+      if (bytes.subarray(0, 43).toString().startsWith('version https://git-lfs.github.com/spec/'))
+        throw Error('Unmaterialized shared input: ' + entry.path)
+    }
   }
   for (const file of manifest.roots)
     if (!seen.has(file)) throw Error('Unbound HUD source root: ' + file)
   for (const edge of manifest.edges)
-    if (!seen.has(edge.from) || !seen.has(edge.to)) throw Error('Unbound HUD shared-input edge')
+    if (
+      !edge ||
+      Object.keys(edge).sort().join(',') !== 'from,kind,to' ||
+      typeof edge.kind !== 'string' ||
+      !edge.kind ||
+      !seen.has(edge.from) ||
+      !seen.has(edge.to)
+    )
+      throw Error('Unbound HUD shared-input edge')
   if (manifest.files.some((entry) => !shared(entry.path)))
     throw Error('HUD contract contains an unsupported shared domain')
   return manifest.files.map((entry) => path.join(root, entry.path))

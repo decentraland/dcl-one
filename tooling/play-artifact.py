@@ -25,9 +25,6 @@ shared_inputs = importlib.util.module_from_spec(_SPEC)
 _SPEC.loader.exec_module(shared_inputs)
 
 
-def hud_shared(path, root=ROOT, revision=None):
-    return path in shared_inputs.input_hashes(root, revision)
-
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
 # Source is maintained here. Hash its tracked files directly, alongside the build tools and

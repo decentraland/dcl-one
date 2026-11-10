@@ -5,6 +5,7 @@ import io
 import json
 from pathlib import Path, PurePosixPath
 import re
+import stat
 import subprocess
 
 WEB = 'rendering/bevy-explorer/source/react-web/'
@@ -16,6 +17,10 @@ CONTROLS = tuple(WEB + name for name in ('package.json', 'package-lock.json', 't
 
 
 class ManifestError(ValueError):
+    pass
+
+
+class StaleManifestError(ManifestError):
     pass
 
 
@@ -128,8 +133,15 @@ def read_manifest(root, revision=None):
             or type(manifest['schema']) is not int or manifest['schema'] != 1):
         raise ManifestError('Unsupported HUD input manifest schema')
     roots = manifest['roots']
-    if not isinstance(roots, list) or roots != root_paths(tree.entries):
-        raise ManifestError('HUD root inventory changed; regenerate shared-inputs.json')
+    if not isinstance(roots, list) or any(not isinstance(name, str) for name in roots):
+        raise ManifestError('Invalid HUD root inventory')
+    for name in roots:
+        safe_path(name)
+    if roots != sorted(set(roots)) or roots != root_paths(roots):
+        raise ManifestError('Invalid HUD declared root inventory')
+    stale = []
+    if roots != root_paths(tree.entries):
+        stale.append('HUD root inventory changed; regenerate shared-inputs.json')
     if not all(isinstance(manifest[group], list) for group in ('controls', 'files')):
         raise ManifestError('Invalid HUD input lists')
     controls = {row.get('path') for row in manifest['controls']
@@ -138,7 +150,7 @@ def read_manifest(root, revision=None):
         raise ManifestError('Missing HUD resolver controls')
     candidate_inputs = roots + [row.get('path') for row in manifest['files'] if isinstance(row, dict) and isinstance(row.get('path'), str)]
     if not resolver_controls(tree.entries, candidate_inputs) <= controls:
-        raise ManifestError('New HUD resolver control; regenerate shared-inputs.json')
+        stale.append('New HUD resolver control; regenerate shared-inputs.json')
     tree.prefetch(row['path'] for group in ('controls', 'files') for row in manifest[group]
                   if isinstance(row, dict) and isinstance(row.get('path'), str))
     hashes = {}
@@ -168,7 +180,7 @@ def read_manifest(root, revision=None):
             else:
                 valid = not content.startswith(b'version https://git-lfs.github.com/spec/v1\n') and sha(content) == expected
             if not valid:
-                raise ManifestError('Stale HUD input: ' + name)
+                stale.append('Stale HUD input: ' + name)
             if name in hashes and hashes[name] != expected:
                 raise ManifestError('Conflicting HUD input identity: ' + name)
             hashes[name] = expected
@@ -190,6 +202,8 @@ def read_manifest(root, revision=None):
         ordering.append((edge['from'], edge['to'], edge['kind']))
     if ordering != sorted(set(ordering)):
         raise ManifestError('Unsorted or duplicate HUD edges')
+    if stale:
+        raise StaleManifestError(stale[0])
     return manifest
 
 
@@ -203,13 +217,28 @@ def main():
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--newer-than', type=Path)
     args = parser.parse_args()
-    paths = input_hashes(args.root)
-    paths[MANIFEST] = ''
-    if args.newer_than:
-        if not args.newer_than.is_file() or any((args.root / p).stat().st_mtime > args.newer_than.stat().st_mtime for p in paths):
-            raise SystemExit(1)
-    else:
-        print(json.dumps(sorted(paths)))
+    try:
+        paths = input_hashes(args.root)
+        paths[MANIFEST] = ''
+        if args.newer_than:
+            try:
+                stamp = args.newer_than.stat()
+            except FileNotFoundError:
+                raise SystemExit(1)
+            if not stat.S_ISREG(stamp.st_mode):
+                raise OSError('Native cache stamp is not a regular file')
+            if any((args.root / p).stat().st_mtime > stamp.st_mtime for p in paths):
+                raise SystemExit(1)
+        else:
+            print(json.dumps(sorted(paths)))
+    except StaleManifestError as error:
+        if not args.newer_than:
+            raise
+        parser.exit(1, str(error) + '\n')
+    except (ManifestError, OSError, subprocess.SubprocessError) as error:
+        if not args.newer_than:
+            raise
+        parser.exit(2, str(error) + '\n')
 
 
 if __name__ == '__main__':

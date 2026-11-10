@@ -1,5 +1,6 @@
 """Engine selection uses committed inputs; publication requires explicit producers."""
 import importlib.util
+import fnmatch
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,17 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+            block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
+            patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
+            for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
+                         'tooling/tests/hud_manifest_fixture.py'):
+                with self.subTest(event=event, path=name):
+                    self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns))
+        self.assertIn("-p 'test_hud_shared_inputs.py' -v", workflow)
+
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         lines = workflow.split('\nconcurrency:\n', 1)[1].splitlines(True)
@@ -99,6 +111,16 @@ class SelectionTest(unittest.TestCase):
         self.git('add', '.')
         self.git('commit', '-qm', 'fixture', '--allow-empty')
         return self.git('rev-parse', 'HEAD')
+
+    def test_reader_and_fixture_only_changes_select_the_web_lane(self):
+        for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
+                     'tooling/tests/hud_manifest_fixture.py'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'reader input')
+                result = ci.select(before, self.commit())
+                self.assertTrue(result['web'])
+                self.assertFalse(any(result[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
     def test_sites_hud_review_does_not_select_engine_builds(self):
         self.write('rendering/bevy-explorer/upstream.lock.json', json.dumps({'hud_source_sha256': 'e' * 64}))

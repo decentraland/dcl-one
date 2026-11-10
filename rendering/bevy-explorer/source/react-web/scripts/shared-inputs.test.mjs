@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, it } from 'node:test'
 import { generateSharedInputs, readSharedPaths, WEB, MANIFEST } from './shared-inputs.mjs'
 const here = path.dirname(fileURLToPath(import.meta.url)),
@@ -310,6 +310,84 @@ describe('the actual compiler and Vite shared-source contract', () => {
         assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
       }
     )
+  for (const change of ['hud', 'new-root', 'config', 'lock'])
+    it(
+      'loads the actual Vite configuration after a local ' +
+        change +
+        ' edit while strict validation refuses it',
+      async () => {
+        put(
+          WEB + '/vite.shared.ts',
+          "import {readSharedPaths} from './scripts/shared-inputs.mjs';export const paths=readSharedPaths(" +
+            JSON.stringify(root) +
+            ",{mode:'config'});"
+        )
+        const config = WEB + '/vite.config.ts'
+        put(config, "import './vite.shared';\n" + readFileSync(path.join(root, config)))
+        git('add', '.')
+        await save()
+        if (change === 'hud')
+          put(
+            WEB + '/src/main.ts',
+            readFileSync(path.join(web, 'src/main.ts')) + '\n// local edit\n'
+          )
+        else if (change === 'new-root') {
+          put(WEB + '/src/local-added.ts', 'export const local=1;')
+          git('add', WEB + '/src/local-added.ts')
+        } else if (change === 'config')
+          put(config, readFileSync(path.join(root, config)) + '\n// local resolver edit\n')
+        else put(WEB + '/package-lock.json', '{"lockfileVersion":3,"localChange":true}')
+        const before = readFileSync(path.join(root, MANIFEST))
+        assert.throws(() => readSharedPaths(root), /Stale/)
+        assert(readSharedPaths(root, { mode: 'config' }).length > 0)
+        const { loadConfigFromFile } = await import(
+          pathToFileURL(path.join(web, 'node_modules/vite/dist/node/index.js')).href
+        )
+        assert(
+          await loadConfigFromFile(
+            { command: 'serve', mode: 'development' },
+            path.join(web, 'vite.config.ts'),
+            web
+          )
+        )
+        assert.deepEqual(readFileSync(path.join(root, MANIFEST)), before)
+      }
+    )
+  it('keeps malformed metadata and unsafe physical inputs closed in config mode despite owned-byte drift', async () => {
+    await save()
+    const original = JSON.parse(readFileSync(path.join(root, MANIFEST)))
+    put(WEB + '/src/main.ts', 'export const local=1;')
+    for (const mutate of [
+      (manifest) => {
+        manifest.schema = 99
+      },
+      (manifest) => {
+        manifest.files[0].path = '../escape'
+      },
+      (manifest) => {
+        manifest.files[0].lfs = null
+      },
+      (manifest) => {
+        manifest.roots.push('../escape')
+      },
+      (manifest) => {
+        manifest.edges.push({ from: WEB + '/src/main.ts', to: 'missing', kind: 'test' })
+      }
+    ]) {
+      const manifest = globalThis.structuredClone(original)
+      mutate(manifest)
+      put(MANIFEST, JSON.stringify(manifest))
+      assert.throws(() => readSharedPaths(root, { mode: 'config' }))
+    }
+    put(MANIFEST, JSON.stringify(original))
+    const token = 'library/ui/foundations/token.ts',
+      bytes = readFileSync(path.join(root, token))
+    rmSync(path.join(root, token))
+    assert.throws(() => readSharedPaths(root, { mode: 'config' }))
+    put('outside-token.ts', bytes)
+    symlinkSync(path.join(root, 'outside-token.ts'), path.join(root, token))
+    assert.throws(() => readSharedPaths(root, { mode: 'config' }), /Linked/)
+  })
   it('binds an actually consumed tracked engine source as a control and changes its fingerprint', async () => {
     const source = 'rendering/bevy-explorer/source/deploy/web/audit-engine-helper.ts'
     put(source, 'export const engineValue=73;')

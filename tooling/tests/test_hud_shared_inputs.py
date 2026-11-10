@@ -1,5 +1,8 @@
 """Checked graph validation and historical bootstrap contracts."""
 import importlib.util
+import os
+import shlex
+import time
 import json
 import shutil
 from pathlib import Path
@@ -116,6 +119,115 @@ class CheckedGraphTests(unittest.TestCase):
             self.assertTrue(ci.select(old, head)['web'])
             with self.assertRaises(ci._artifact.shared_inputs.MissingManifest):
                 ci.select(head, old)
+
+    def native_recipe(self):
+        source = self.root / WEB.rstrip('/').rsplit('/', 1)[0]
+        calls = self.root / 'native-calls'
+        tools = self.root / 'native-tools'
+        tools.mkdir(exist_ok=True)
+        executable = tools / 'just'
+        executable.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "$NATIVE_CALLS"\n')
+        executable.chmod(0o755)
+        for name in ('assets/react-hud/app.html', 'assets/bridge-scene/BevyExplorerUI/about'):
+            self.write(str(source.relative_to(self.root) / name), 'built fixture')
+        (source / 'crates/system_api_types').mkdir(parents=True, exist_ok=True)
+        stamp = source / 'target/.bundle-native-stamp'
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.touch()
+        os.utime(stamp, (time.time() + 30, time.time() + 30))
+        recipe = (Path(__file__).parents[2] / 'rendering/bevy-explorer/source/justfile').read_text()
+        recipe = recipe.split('_bundle-native-if-stale:\n', 1)[1].split('\n# build + run', 1)[0]
+        recipe = '\n'.join(line[4:] for line in recipe.splitlines())
+        recipe = recipe.replace('../../../tooling/hud_shared_inputs.py', shlex.quote(str(Path(__file__).parents[1] / 'hud_shared_inputs.py')))
+        env = {**os.environ, 'PATH': str(tools) + os.pathsep + os.environ['PATH'], 'NATIVE_CALLS': str(calls)}
+        return source, calls, tools, recipe, env
+
+    def test_native_cache_stale_identity_rebuilds_and_malformed_inputs_never_execute(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        run = lambda: subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(run().returncode, 0)
+        self.assertFalse(calls.exists())
+        self.write(WEB + 'src/main.ts', 'changed HUD without generation')
+        self.assertEqual(run().returncode, 0)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        calls.unlink()
+        seal(self.root)
+        self.write(WEB + 'package-lock.json', 'changed local dependency lock')
+        self.assertEqual(run().returncode, 0)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        calls.unlink()
+        for failure in ('malformed', 'unsafe', 'missing'):
+            with self.subTest(failure=failure):
+                seal(self.root)
+                if failure == 'malformed':
+                    self.manifest(lambda data: data.update(schema=99))
+                elif failure == 'unsafe':
+                    self.manifest(lambda data: data['files'].append({'path': '../escape', 'sha256': 'a' * 64}))
+                else:
+                    (self.root / MANIFEST).unlink()
+                result = run()
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(calls.exists())
+
+    def test_native_git_failure_aborts_instead_of_rebuilding(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        executable = tools / 'git'
+        executable.write_text('#!/bin/sh\nexit 42\n')
+        executable.chmod(0o755)
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(calls.exists())
+
+    def test_native_freshness_io_failure_is_not_a_stale_identity(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        original = reader.input_hashes
+        def changed_after_validation(root):
+            result = original(root)
+            (self.root / SHARED[0]).unlink()
+            return result
+        with patch.object(reader, 'input_hashes', side_effect=changed_after_validation), \
+                patch('sys.argv', ['hud_shared_inputs.py', '--root', str(self.root), '--newer-than', str(source / 'target/.bundle-native-stamp')]):
+            with self.assertRaises(SystemExit) as error:
+                reader.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(calls.exists())
+
+    def test_native_stamp_io_failure_aborts_instead_of_becoming_a_cache_miss(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        stamp = source / 'target/.bundle-native-stamp'
+        original = reader.Path.stat
+        def denied(path, *args, **kwargs):
+            if path == stamp:
+                raise PermissionError('stamp access denied')
+            return original(path, *args, **kwargs)
+        with patch.object(reader.Path, 'stat', denied), \
+                patch('sys.argv', ['hud_shared_inputs.py', '--root', str(self.root), '--newer-than', str(stamp)]):
+            with self.assertRaises(SystemExit) as error:
+                reader.main()
+        self.assertEqual(error.exception.code, 2)
+        self.assertFalse(calls.exists())
+
+    def test_unavailable_historical_proof_rebuilds_but_the_same_invalid_head_fails(self):
+        for failure in ('missing', 'schema', 'malformed', 'stale', 'required-control'):
+            with self.subTest(failure=failure):
+                seal(self.root)
+                if failure == 'missing':
+                    (self.root / MANIFEST).unlink()
+                elif failure == 'schema':
+                    self.manifest(lambda data: data.update(schema=2))
+                elif failure == 'malformed':
+                    (self.root / MANIFEST).write_text('{invalid')
+                elif failure == 'stale':
+                    self.write(SHARED[0], 'changed historical source ' + failure)
+                else:
+                    self.manifest(lambda data: data.update(controls=data['controls'][1:]))
+                invalid = self.commit()
+                seal(self.root)
+                head = self.commit()
+                with patch.object(ci, 'ROOT', self.root):
+                    self.assertTrue(ci.plan('local', invalid, head, 'unused')['web'])
+                    with self.assertRaises(ci._artifact.shared_inputs.ManifestError):
+                        ci.plan('local', head, invalid, 'unused')
 
     def test_unsafe_paths_and_unresolved_edges_fail_closed(self):
         for name in ('../escape', '/absolute', 'library//ui/file', 'library/./file', 'library\\escape'):

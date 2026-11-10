@@ -123,11 +123,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.d.mts",
-      "sha256": "1c85d23318a51c51626a87c911ce5b792494b20e77d063fcd793be651eee6694"
+      "sha256": "e46c3ca1e704f9148ef5f3dbc474ed5522cb2b7dba0ff7ac5f91f24083c7fcef"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "df3842eca62ae24d9d9c576de1e77b869a98c67c0748f41c0eccec3af62bd4f9"
+      "sha256": "3dcdcb1b1bb1286503b95ffce3671c9a0ff5233e8c6a207f80b6350953ec2f55"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
@@ -2899,7 +2899,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
-      "sha256": "55d6dc5470362cd21c5b671ae8048277e79cb990c9c60c18f05148238b89a24c"
+      "sha256": "82a1e8817748cad25f284243425cfc3e0e68ab25e092ee7875067465aeb23955"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vitest.config.ts",

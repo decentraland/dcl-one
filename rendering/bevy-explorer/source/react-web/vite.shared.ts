@@ -23,7 +23,7 @@ export const SHARED_SOURCES: Record<string, string> = {
 }
 
 // What the dev server may serve from outside this app: the trees behind those entries.
-export const SHARED_TREES = readSharedPaths(resolve(here, '../../../..'))
+export const SHARED_TREES = readSharedPaths(resolve(here, '../../../..'), { mode: 'config' })
 
 export const SHARED_DEDUPE = ['react', 'react-dom', 'viem', 'zod', '@tanstack/react-query']
 

@@ -12,6 +12,9 @@
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
+      - tooling/hud_shared_inputs.py
+      - tooling/tests/test_hud_shared_inputs.py
+      - tooling/tests/hud_manifest_fixture.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-*.yml
@@ -45,6 +48,9 @@
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
+      - tooling/hud_shared_inputs.py
+      - tooling/tests/test_hud_shared_inputs.py
+      - tooling/tests/hud_manifest_fixture.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-*.yml
@@ -99,6 +105,7 @@ jobs:
       - name: Check publication and selection guards
         run: |
           python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_hud_shared_inputs.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
       - name: Check the CI status comment scripts

@@ -340,10 +340,7 @@ include the shared sources so that changes invalidate the affected artifacts.
 - `vite.shared.ts` holds the aliases and the React deduplication, and
   `tsconfig.json` maps the same entries;
 - `src/main.tsx` loads `@dcl/one-ui/foundations.css` once;
-- `tooling/play-artifact.py` (`HUD_SHARED`) makes `library/ui/index.ts` and
-  `library/ui/foundations/` inputs of the HUD artifact and of its CI selection.
-  A test walks what the HUD imports from `library/ui` and fails on any file
-  outside them.
+- `shared-inputs.json` records the actual compiler/Vite shared dependency closure. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public foundation entry, so generated components stay outside that closure.
 - Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
   `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
   `foundations/typography/font-source.json` pins

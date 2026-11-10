@@ -28,7 +28,7 @@ TOOLS_INPUTS = ('flake.nix', 'flake.lock', 'infra/packages/default.nix', 'infra/
 INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
           'infra/gateway', *GATEWAY_HUD_INPUTS, *TOOLS_INPUTS,
           'tooling/bevy-ci.py', 'tooling/hud_shared_inputs.py', 'tooling/ci_paths.py', 'tooling/bevy-mtimes.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
-          'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
+          'tooling/tests/test_bevy_*.py', 'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
@@ -230,7 +230,7 @@ def select(base, head):
     bootstrap = False
     try:
         previous = _artifact.shared_inputs.input_hashes(ROOT, base)
-    except _artifact.shared_inputs.MissingManifest:
+    except _artifact.shared_inputs.ManifestError:
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
     paths = changed_inputs(base, head, (*INPUTS, *sorted(shared_paths)))
@@ -247,7 +247,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
-        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py'):
+        elif path in ('tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
+                      'tooling/tests/test_hud_shared_inputs.py', 'tooling/tests/hud_manifest_fixture.py'):
             affected = ('web',)
         elif path in TOOLS_INPUTS or path.startswith('.github/actions/bevy-explorer-tools/'):
             # The Linux lanes compile with the flake's protoc and build the web engine with its
