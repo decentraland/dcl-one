@@ -1662,9 +1662,7 @@ fn send_scene_messages(
     mut events: EventReader<RpcCallEvent>,
     transports: Query<(&Transport, &SceneRoom, Option<&SceneRoomModeration>)>,
     scenes: Query<&RendererSceneContext>,
-    wallet: Res<Wallet>,
-    realm: Res<CurrentRealm>,
-    admission: Res<SceneAdmission>,
+    (wallet, realm, admission): (Res<Wallet>, Res<CurrentRealm>, Res<SceneAdmission>),
     time: Res<Time<bevy::time::Real>>,
     mut publish_budgets: Local<HashMap<Entity, TopicPublishBudget>>,
 ) {
@@ -1685,14 +1683,13 @@ fn send_scene_messages(
         if banned_scene == Some(hash.as_ref()) {
             continue;
         }
-        let Some(data) = outgoing_scene_message(
+        let Some((data, is_topic)) = outgoing_scene_message(
             data,
             publish_budgets.entry(*scene).or_default(),
             time.elapsed(),
         ) else {
             continue;
         };
-        let is_topic = data[0] == dcl_types::CommsMessageType::Topic as u8;
         let message = rfc4::Packet {
             message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
                 scene_id: hash.to_string(),

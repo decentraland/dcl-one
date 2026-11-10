@@ -29,7 +29,7 @@ pub fn filter_scene_crdt(payload: &[u8], trusted: bool) -> Option<Cow<'_, [u8]>>
     let mut copy_start = 0;
     while !remaining.is_empty() {
         let declared = read_word(remaining, 0)? as usize;
-        // The old network-delete writer declared only one of its two body words.
+        // A legacy network delete includes two body words despite its declared length.
         let legacy_delete =
             declared == 12 && read_word(remaining, 4) == Some(DELETE_ENTITY_NETWORK);
         let length = if legacy_delete { 16 } else { declared };

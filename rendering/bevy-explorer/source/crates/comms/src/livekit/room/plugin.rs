@@ -648,17 +648,13 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
     }
 }
 
-fn try_reconnect(
-    mut commands: Commands,
-    rooms: Populated<
-        Entity,
-        (
-            With<Disconnected>,
-            Without<RoomPaused>,
-            Without<crate::SceneRoomRemoved>,
-        ),
-    >,
-) {
+type ReconnectableRoom = (
+    With<Disconnected>,
+    Without<RoomPaused>,
+    Without<crate::SceneRoomRemoved>,
+);
+
+fn try_reconnect(mut commands: Commands, rooms: Populated<Entity, ReconnectableRoom>) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints
         // them with a five-minute TTL), so a re-dial can only be refused. The room stays
