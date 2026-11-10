@@ -828,11 +828,11 @@ function createWebStorageProxy(ops) {
         }
 
         // Handle direct property access like `localStorage.myKey`
-        return ops.op_storage_get(String(prop));
+        return ops.op_webstorage_get(String(prop));
       },
 
       set(_target, prop, value, _receiver) {
-        ops.op_storage_set(String(prop), String(value));
+        ops.op_webstorage_set(String(prop), String(value));
         return true;
       },
 
