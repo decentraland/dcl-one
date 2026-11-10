@@ -191,7 +191,7 @@ function advisoryTable(f){
 function advisories(){
   const all = D.advisories.findings || []; const q = state.q;
   const f = all.filter(x => !q || [x.crate, x.id, x.title, ...(x.aliases||[])].join(' ').toLowerCase().includes(q));
-  return `<h2>RustSec advisories</h2><p class="muted">${D.advisories.crates_with_entries.length} crates in the lock have advisory-db entries; ${all.filter(x=>x.affected).length} entries affect the pinned versions (informational entries such as unmaintained notices included).</p>${advisoryTable(f.sort((a,b)=>(b.affected-a.affected)||(b.date>a.date?1:-1)))}`;
+  return `<h2>RustSec advisories</h2><p class="muted">${D.advisories.crates_with_entries.length} crates in the lock have advisory-db entries; ${all.filter(x=>x.affected).length} entries affect the pinned versions (informational entries such as unmaintained notices included).${(D.advisories.withdrawn||[]).length ? ` ${D.advisories.withdrawn.length} withdrawn entries skipped.` : ''}${(D.advisories.unreadable||[]).length ? ` <span class="badge b-security">${D.advisories.unreadable.length} entries could not be read</span>: ${esc(D.advisories.unreadable.map(u => `${u.crate} (${u.reason})`).join(', '))}.` : ''}</p>${advisoryTable(f.sort((a,b)=>(b.affected-a.affected)||(b.date>a.date?1:-1)))}`;
 }
 let depSort = 'gap';
 function dependencies(){

@@ -298,6 +298,7 @@ def parse_advisory(markdown):
     return {'id': adv.get('id'), 'package': adv.get('package'), 'date': adv.get('date'), 'aliases': adv.get('aliases', []),
             'categories': adv.get('categories', []), 'keywords': adv.get('keywords', []), 'informational': adv.get('informational'),
             'url': adv.get('url'), 'title': (title.group(1).strip() if title else adv.get('id')),
+            'withdrawn': adv.get('withdrawn'),
             'patched': versions.get('patched', []), 'unaffected': versions.get('unaffected', [])}
 
 
@@ -331,20 +332,28 @@ def collect_advisories(lock_pkgs):
     for p in lock_pkgs:
         by_name.setdefault(p['name'], set()).add(p['version'])
     hits = sorted(set(files_by_crate) & set(by_name))
-    findings = []
+    findings, withdrawn, unreadable = [], [], []
     for name in hits:
         for sha in files_by_crate[name]:
             blob = gh(f'repos/rustsec/advisory-db/git/blobs/{sha}')
             if not blob:
+                unreadable.append({'crate': name, 'sha': sha, 'reason': 'blob not found'})
                 continue
             advisory = parse_advisory(base64.b64decode(blob['content']).decode('utf-8', 'replace'))
             if not advisory:
+                unreadable.append({'crate': name, 'sha': sha, 'reason': 'front matter does not parse'})
+                continue
+            if advisory['withdrawn']:
+                withdrawn.append(advisory['id'])
                 continue
             for version in sorted(by_name[name]):
                 findings.append({**advisory, 'crate': name, 'version': version, 'affected': affected(version, advisory),
                                  'rustsec_url': f'https://rustsec.org/advisories/{advisory["id"]}.html'})
-    print(f'  advisories: {len(hits)} crate(s) in the lock have entries, {sum(1 for f in findings if f["affected"])} affecting the pinned versions', file=sys.stderr)
-    return {'crates_with_entries': hits, 'findings': findings}
+    print(f'  advisories: {len(hits)} crate(s) in the lock have entries, {sum(1 for f in findings if f["affected"])} affecting the pinned versions, '
+          f'{len(withdrawn)} withdrawn skipped, {len(unreadable)} unreadable', file=sys.stderr)
+    for entry in unreadable:
+        print(f'  advisory {entry["crate"]} {entry["sha"]}: {entry["reason"]}', file=sys.stderr)
+    return {'crates_with_entries': hits, 'findings': findings, 'withdrawn': withdrawn, 'unreadable': unreadable}
 
 
 # ---------------------------------------------------------------- direct deps vs crates.io

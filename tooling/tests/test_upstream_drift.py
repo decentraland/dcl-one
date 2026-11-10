@@ -1,8 +1,10 @@
 """The drift collector's parsing and version logic, and the site's markdown rendering."""
+import base64
 import importlib.util
 from pathlib import Path
 import textwrap
 import unittest
+from unittest.mock import patch
 
 TOOLING = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('upstream_drift', TOOLING / 'upstream-drift.py')
@@ -79,6 +81,28 @@ class VersionLogicTests(unittest.TestCase):
     def test_advisory_files_refuses_a_missing_tree(self):
         with self.assertRaisesRegex(RuntimeError, 'could not be fetched'):
             drift.advisory_files(None)
+
+    def test_collect_advisories_skips_withdrawn_and_reports_unreadable_entries(self):
+        def advisory(id_, extra=''):
+            text = f'```toml\n[advisory]\nid = "{id_}"\npackage = "ring"\ndate = "2025-01-01"\n{extra}\n[versions]\npatched = [">= 0.17.12"]\n```\n# {id_}\n'
+            return {'content': base64.b64encode(text.encode()).decode()}
+        tree = {'truncated': False, 'tree': [
+            {'path': f'crates/ring/RUSTSEC-2025-000{i}.md', 'type': 'blob', 'sha': f'b{i}'} for i in range(1, 5)]}
+        responses = {
+            'repos/rustsec/advisory-db/git/trees/main?recursive=1': tree,
+            'repos/rustsec/advisory-db/git/blobs/b1': advisory('RUSTSEC-2025-0001'),
+            'repos/rustsec/advisory-db/git/blobs/b2': advisory('RUSTSEC-2025-0002', 'withdrawn = "2025-02-22"'),
+            'repos/rustsec/advisory-db/git/blobs/b3': None,
+            'repos/rustsec/advisory-db/git/blobs/b4': {'content': base64.b64encode(b'no front matter').decode()},
+        }
+        with patch.object(drift, 'gh', side_effect=responses.__getitem__):
+            result = drift.collect_advisories([{'name': 'ring', 'version': '0.17.8'}])
+        self.assertEqual([f['id'] for f in result['findings']], ['RUSTSEC-2025-0001'])
+        self.assertEqual(result['withdrawn'], ['RUSTSEC-2025-0002'])
+        self.assertEqual(result['unreadable'], [
+            {'crate': 'ring', 'sha': 'b3', 'reason': 'blob not found'},
+            {'crate': 'ring', 'sha': 'b4', 'reason': 'front matter does not parse'},
+        ])
 
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))
