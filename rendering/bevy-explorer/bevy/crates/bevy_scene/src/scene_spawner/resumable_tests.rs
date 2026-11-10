@@ -271,19 +271,130 @@ fn a_spawner_can_spawn_into_another_world() {
     assert!(spawner.instance_is_ready(instance));
 }
 
-#[test]
-#[should_panic(expected = "part-written in another World")]
-fn a_spawner_will_not_finish_an_instance_in_another_world() {
+/// `run` panics because the spawner has an instance part-written in another world.
+fn refused_in_another_world(run: impl FnOnce()) {
+    let payload = std::panic::catch_unwind(core::panic::AssertUnwindSafe(run))
+        .expect_err("the spawner ran on another world");
+    let message = payload
+        .downcast_ref::<&str>()
+        .map(ToString::to_string)
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_default();
+    assert!(
+        message.contains("part-written in another World"),
+        "{message}"
+    );
+}
+
+/// Two worlds, an instance of a three-node tree part-written in the first, and as many entities in
+/// the second, which its entity ids would hit there.
+fn part_written_in_first(parent: bool) -> (App, App, InstanceId, Vec<Entity>) {
     let mut first = app();
     let mut second = app();
     let scene = add_scene(&mut first, tree(0, 3));
-    let mut spawner = SceneSpawner::default();
-    spawner.set_spawn_deadline(Some(Instant::now()));
-    spawner.spawn(scene);
-    spawner.spawn_queued_scenes(first.world_mut()).unwrap();
+    let bystanders = (0..8)
+        .map(|_| second.world_mut().spawn_empty().id())
+        .collect();
+    one_entity_per_run(&mut first);
+    let instance = if parent {
+        let parent = first.world_mut().spawn_empty().id();
+        spawner(&mut first).spawn_as_child(scene, parent)
+    } else {
+        spawner(&mut first).spawn(scene)
+    };
+    first.update();
+    assert_eq!(nodes(&mut first), [0]);
+    (first, second, instance, bystanders)
+}
+
+fn all_alive(app: &App, entities: &[Entity]) -> bool {
+    entities
+        .iter()
+        .all(|entity| app.world().get_entity(*entity).is_ok())
+}
+
+#[test]
+fn a_spawner_will_not_finish_an_instance_in_another_world() {
+    let (mut first, mut second, instance, bystanders) = part_written_in_first(false);
+    let mut spawner = first.world_mut().remove_resource::<SceneSpawner>().unwrap();
+    // a dynamic scene queued for the second world waits as well
+    let mut source = World::new();
+    source.insert_resource(second.world().resource::<AppTypeRegistry>().clone());
+    tree(10, 2)(&mut source);
+    let dynamic = second
+        .world_mut()
+        .resource_mut::<Assets<DynamicScene>>()
+        .add(DynamicScene::from_world(&source));
+    spawner.spawn_dynamic(dynamic);
+    let entities_before = second.world().entities().len();
 
     // its entity ids mean nothing there
-    let _ = spawner.spawn_queued_scenes(second.world_mut());
+    refused_in_another_world(|| {
+        let _ = spawner.spawn_queued_scenes(second.world_mut());
+    });
+
+    assert_eq!(second.world().entities().len(), entities_before);
+    assert_eq!(spawner.dynamic_scenes_to_spawn.len(), 1);
+    assert!(all_alive(&second, &bystanders));
+    spawner.set_spawn_deadline(None);
+    spawner.spawn_queued_scenes(first.world_mut()).unwrap();
+    assert!(spawner.instance_is_ready(instance));
+    assert_eq!(nodes(&mut first), [0, 1, 2]);
+}
+
+#[test]
+fn a_spawner_will_not_despawn_an_instance_part_written_in_another_world() {
+    let (mut first, mut second, instance, bystanders) = part_written_in_first(false);
+
+    refused_in_another_world(|| {
+        spawner(&mut first).despawn_instance_sync(second.world_mut(), &instance);
+    });
+
+    assert!(all_alive(&second, &bystanders));
+    first
+        .world_mut()
+        .resource_scope(|world, mut spawner: bevy_ecs::world::Mut<SceneSpawner>| {
+            spawner.despawn_instance_sync(world, &instance);
+        });
+    assert!(nodes(&mut first).is_empty());
+}
+
+#[test]
+fn an_unregistered_instance_is_despawned_only_in_its_world() {
+    let (mut first, mut second, instance, bystanders) = part_written_in_first(true);
+    spawner(&mut first).unregister_instance(instance);
+
+    refused_in_another_world(|| {
+        spawner(&mut first).despawn_queued_instances(second.world_mut());
+    });
+
+    assert!(all_alive(&second, &bystanders));
+    first.update();
+    assert!(nodes(&mut first).is_empty());
+}
+
+#[test]
+fn the_spawner_system_will_not_run_on_another_world_mid_spawn() {
+    let (mut first, mut second, instance, bystanders) = part_written_in_first(true);
+    let spawner = first.world_mut().remove_resource::<SceneSpawner>().unwrap();
+    // the instance's parent is not in the second world: it would look despawned
+    let parent = spawner.instance_parents[&instance];
+    second.world_mut().despawn(parent);
+    let bystanders: Vec<Entity> = bystanders.into_iter().filter(|e| *e != parent).collect();
+    second.world_mut().insert_resource(spawner);
+
+    refused_in_another_world(|| super::scene_spawner_system(second.world_mut()));
+
+    assert!(all_alive(&second, &bystanders));
+    let spawner = second
+        .world_mut()
+        .remove_resource::<SceneSpawner>()
+        .unwrap();
+    first.world_mut().insert_resource(spawner);
+    first.update();
+    first.update();
+    assert!(is_ready(&first, instance));
+    assert_eq!(nodes(&mut first), [0, 1, 2]);
 }
 
 #[test]
@@ -731,11 +842,7 @@ fn dynamic_scenes_still_spawn_whole() {
     let mut app = app();
     one_entity_per_run(&mut app);
     let mut world = World::new();
-    world.insert_resource(
-        app.world()
-            .resource::<bevy_ecs::reflect::AppTypeRegistry>()
-            .clone(),
-    );
+    world.insert_resource(app.world().resource::<AppTypeRegistry>().clone());
     tree(0, 3)(&mut world);
     let scene = app
         .world_mut()

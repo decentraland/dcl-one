@@ -357,6 +357,16 @@ impl SceneInProgress {
         self.hidden = true;
     }
 
+    /// Panics unless the instance is written into `world`: its entity ids mean nothing in
+    /// another, where they may well be live, unrelated entities.
+    fn assert_in(&self, world: WorldId) {
+        assert!(
+            self.world == world,
+            "this SceneSpawner has an instance part-written in another World: run it there \
+             until that instance completes"
+        );
+    }
+
     /// Despawns whatever of the instance exists. Entities not written yet are attached to
     /// nothing, so despawning the parent misses them.
     fn despawn(self, world: &mut World) {
@@ -669,9 +679,26 @@ impl SceneSpawner {
         self.keep_hidden.remove(&instance_id);
     }
 
-    fn take_in_progress(&mut self, instance_id: InstanceId) -> Option<SceneInProgress> {
+    /// Panics, before anything changes, if an instance is part-written in a world other than
+    /// `world`.
+    fn assert_in_world(&self, world: WorldId) {
+        if let Some(progress) = &self.scene_in_progress {
+            progress.assert_in(world);
+        }
+    }
+
+    /// The part-written instance, if it is `instance_id`; panics if it is written into another
+    /// world than `world`.
+    fn take_in_progress(
+        &mut self,
+        world: WorldId,
+        instance_id: InstanceId,
+    ) -> Option<SceneInProgress> {
         self.scene_in_progress
-            .take_if(|progress| progress.instance_id == instance_id)
+            .as_ref()
+            .filter(|progress| progress.instance_id == instance_id)?
+            .assert_in(world);
+        self.scene_in_progress.take()
     }
 
     /// Immediately despawns all instances of a dynamic scene.
@@ -690,8 +717,9 @@ impl SceneSpawner {
 
     /// Immediately despawns a scene instance, removing all its entities from the world.
     pub fn despawn_instance_sync(&mut self, world: &mut World, instance_id: &InstanceId) {
+        let in_progress = self.take_in_progress(world.id(), *instance_id);
         self.forget(*instance_id);
-        if let Some(progress) = self.take_in_progress(*instance_id) {
+        if let Some(progress) = in_progress {
             progress.despawn(world);
         }
         if let Some(instance) = self.spawned_instances.remove(instance_id) {
@@ -799,6 +827,14 @@ impl SceneSpawner {
 
     /// Immediately despawns all scene instances scheduled for despawn.
     pub fn despawn_queued_instances(&mut self, world: &mut World) {
+        // before any is despawned: a part-written one belongs to one world
+        if let Some(progress) = self
+            .scene_in_progress
+            .as_ref()
+            .filter(|progress| self.instances_to_despawn.contains(&progress.instance_id))
+        {
+            progress.assert_in(world.id());
+        }
         let instances_to_despawn = core::mem::take(&mut self.instances_to_despawn);
 
         for instance_id in instances_to_despawn {
@@ -808,6 +844,8 @@ impl SceneSpawner {
 
     /// Immediately spawns all scenes scheduled for spawn.
     pub fn spawn_queued_scenes(&mut self, world: &mut World) -> Result<(), SceneSpawnError> {
+        // before the dynamic scenes are written: the run goes on to the part-written instance
+        self.assert_in_world(world.id());
         let scenes_to_spawn = core::mem::take(&mut self.dynamic_scenes_to_spawn);
 
         for (handle, instance_id, parent) in scenes_to_spawn {
@@ -843,13 +881,6 @@ impl SceneSpawner {
     /// until the [spawn deadline](Self::set_spawn_deadline); without one, writes them whole.
     /// Instances whose scene is not loaded wait.
     fn spawn_queued_real_scenes(&mut self, world: &mut World) -> Result<(), SceneSpawnError> {
-        if let Some(progress) = &self.scene_in_progress {
-            assert!(
-                progress.world == world.id(),
-                "this SceneSpawner has an instance part-written in another World: run it there \
-                 until that instance completes"
-            );
-        }
         if self.scene_in_progress.is_none() && self.scenes_to_spawn.is_empty() {
             return Ok(());
         }
@@ -1085,6 +1116,9 @@ impl SceneSpawner {
 
 /// System that handles scheduled scene instance spawning and despawning through a [`SceneSpawner`].
 pub fn scene_spawner_system(world: &mut World) {
+    // before anything changes: a parent in the instance's own world would look despawned here
+    let world_id = world.id();
+    world.resource::<SceneSpawner>().assert_in_world(world_id);
     world.resource_scope(|world, mut scene_spawner: Mut<SceneSpawner>| {
         // forget any instances (loading or spawned) where parent is deleted
         let mut dead_instances = <HashSet<_>>::default();
@@ -1100,7 +1134,7 @@ pub fn scene_spawner_system(world: &mut World) {
         for instance in &dead_instances {
             scene_spawner.spawned_instances.remove(instance);
             scene_spawner.keep_hidden.remove(instance);
-            if let Some(progress) = scene_spawner.take_in_progress(*instance) {
+            if let Some(progress) = scene_spawner.take_in_progress(world_id, *instance) {
                 progress.despawn(world);
             }
         }

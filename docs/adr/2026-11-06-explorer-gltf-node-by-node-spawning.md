@@ -49,8 +49,9 @@ next frame, and a model stays hidden until both steps are done.
   no archetypes after the allocation, which is stock's own loop. When the instance completes,
   entities despawned before they were written are dropped from their written parent's `Children`,
   which writes fill without relationship hooks, and a `Children` left empty is removed, as Bevy's
-  hooks do. The instance is finished in the world it started in: running the spawner on another
-  world meanwhile panics, since the allocated ids mean nothing there.
+  hooks do. The instance is finished in the world it started in: continuing it, despawning it or
+  running the spawner's system on another world meanwhile panics before anything changes, since
+  the allocated ids mean nothing there.
 - **A part-written instance is hidden.** When a run leaves an instance part-written, its
   top-level entities are attached to the parent, in the order a whole spawn attaches them, and
   carry `Visibility::Hidden` until the instance is complete, with a `HiddenSceneRoot` component
