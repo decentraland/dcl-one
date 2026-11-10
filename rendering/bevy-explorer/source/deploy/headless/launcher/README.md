@@ -82,7 +82,7 @@ engine with `78`. A host that ends before its report for another reason (V8 fail
 was killed), or that does not report within 30 seconds of connecting, is a failed start
 (`reason: "spawn"`, engine exit status `1`). `--scene-host-sandbox off` runs hosts unsandboxed. The kernel needs Landlock (5.13 or later,
 enabled in the LSM list) and seccomp, and a container runtime whose seccomp profile allows
-`landlock_*` and `seccomp` (the default profile of Docker 29 does). macOS and Windows hosts are not
+`landlock_*` and `seccomp` (the default profiles of Docker 28.0 and 29.8 do). macOS and Windows hosts are not
 sandboxed: `require` refuses to start there.
 
 The `starting` event carries the mode, and the first host's report follows once (not with `off`):
