@@ -508,6 +508,19 @@ describe('when deciding which files are port inputs', () => {
     ["import.meta.glob('./**/*.ts')", 'a code glob that also loads tests'],
     ["@import './test/x.css';", 'a CSS import'],
     ['<script src="../test/main.tsx"></script>', 'an HTML script'],
+    ["read(`${'./test/a.json'}`)", 'a literal nested in a template interpolation'],
+    ["execSync('node ./test/run.mjs')", 'a command line with a path token'],
+    ["read('./test/rule set.json')", 'a path with a space'],
+    [
+      "const s = 'a=/'; read('./test/x.json'); const t = '/'",
+      'a literal after a string that looks like a regex'
+    ],
+    ["const r = total\n  / count; const p = './test/a.json'", 'a literal after a wrapped division'],
+    [
+      "f = (s) => /'/.test(s); read('./test/a.json')",
+      'a literal after a quote-bearing regex after an arrow'
+    ],
+    ["// don't do this\nread('./test/a.json')", 'a literal after a comment with an apostrophe'],
     ['readFile(`notes/README.md`)', 'a Markdown name in a template literal'],
     ["import notes from './notes.md?raw'", 'a Markdown import with a query'],
     ["import a from './a.md#top'", 'a Markdown import with a fragment'],
@@ -536,8 +549,11 @@ describe('when deciding which files are port inputs', () => {
     ])
   })
 
-  it('should scan the Figma tooling config, styles and markup, not other JSON', () => {
+  it('should scan the Figma tooling config, ledgers, catalog, styles and markup, not other JSON', () => {
     const blobs = {
+      'library/ui/figma/ledger/retirements.json': Buffer.from(
+        '{ "source": "test/fixtures/r.json" }'
+      ),
       'library/ui/figma/figma.config.json': Buffer.from(
         '{ "snapshotLock": "./test/fixtures/lock.json" }'
       ),
@@ -545,6 +561,7 @@ describe('when deciding which files are port inputs', () => {
       'library/ui/figma/tsconfig.json': Buffer.from('{ "exclude": ["test/fixtures"] }')
     }
     expect(scanProblems(blobs)).toEqual([
+      'library/ui/figma/ledger/retirements.json names the exempt path "test/fixtures/r.json"',
       'library/ui/figma/figma.config.json names the exempt path "./test/fixtures/lock.json"',
       'library/ui/figma/review/a.css names the exempt path "./../test/x.css"'
     ])

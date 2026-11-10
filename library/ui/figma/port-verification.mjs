@@ -56,14 +56,25 @@ const SELF_IMPORTS = [
 /** Literals of the validator itself that name exempt paths on purpose: the exemption rule's own declarations. */
 const SELF_LITERALS = ['test/', 'review/test/', '${SCOPE}/port-verification.test.ts']
 /** Port inputs whose text is scanned: code, styles, markup and the Figma tooling config. */
-const SCANNED = /\.(?:[cm]?[jt]sx?|mts|cts|css|html)$/
-const SCANNED_FILES = [`${SCOPE}/figma.config.json`]
+const SCANNED = /\.(?:[cm]?[jt]sx?|mts|cts|css|html|svg)$/
+/** Data the tooling reads, scanned although JSON: its config, the retirement and orphan ledgers, and the Review catalog. */
+const SCANNED_FILES = [
+  `${SCOPE}/figma.config.json`,
+  `${SCOPE}/ledger/orphaned-assets.json`,
+  `${SCOPE}/ledger/retirements.json`,
+  `${SCOPE}/review/src/review/catalog.json`
+]
+// A single-, double- or back-quoted literal on one line without escapes or interpolation; it also finds a literal
+// nested inside a template interpolation.
+const STATIC_LITERAL = /(['"`])((?:(?!\1)[^\\\n$])*)\1/g
 // A single-, double- or back-quoted literal on one line; escapes and interpolations stay inside it.
 const LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g
-// A regular expression literal after an operator or keyword, removed before pairing quotes so a quote inside it
-// cannot pair with a later literal.
+// A regular expression literal after an operator or keyword. A second pass removes it so a quote inside it cannot pair
+// with a later literal; the raw passes still run, so a false match here can only add candidates, never hide one.
+// Comments, removed in the same pass so an apostrophe in one cannot pair with a later quote.
+const COMMENTS = /\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/[^\n]*/g
 const REGEX_LITERAL =
-  /(^|[=(,:[!&|?;]|\breturn)(\s*)\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[dgimsuyv]*/gm
+  /(^|[=(,:[!&|?;>)}]|\b(?:return|typeof))(\s*)\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[dgimsuyv]*/gm
 
 /**
  * Whether a path under library/ui/figma has its bytes outside the port inputs: a file under TEST_ROOTS, a *.test or
@@ -81,10 +92,10 @@ export function isRecordExempt(file) {
   )
 }
 
-/** Whether one static piece of a literal names an exempt file, seen from `file`. */
-function namesExempt(file, piece, exemptNames) {
-  const bare = piece.replace(/[?#].*$/, '')
-  if (!bare || /\s/.test(bare)) return false
+/** Whether one token (a piece with no whitespace) names an exempt file, seen from `file`. */
+function tokenNamesExempt(file, token, exemptNames, markdown) {
+  const bare = token.replace(/[?#].*$/, '')
+  if (!bare) return false
   const pathLike = bare.startsWith('.') || bare.includes('/')
   const target = bare.startsWith('.')
     ? posix.normalize(posix.join(posix.dirname(file), bare))
@@ -94,7 +105,7 @@ function namesExempt(file, piece, exemptNames) {
     (target !== undefined && (isRecordExempt(target) || isRecordExempt(`${target}/x.ts`))) ||
     /\.(?:test|spec)\.[^/]+$/i.test(base) ||
     exemptNames.has(base) ||
-    (pathLike && /\.md$/i.test(bare)) ||
+    (markdown && pathLike && /\.md$/i.test(bare)) ||
     (/\*\*|\*\.[\w{]/.test(bare) && (pathLike || /\{[^}]*\bmd\b[^}]*\}/i.test(bare))) ||
     /^(?:test|fixtures|__tests__)$/.test(bare) ||
     (bare.includes('/') && /(?:^|\/)(?:test|fixtures|__tests__)(?:\/|$)/i.test(bare))
@@ -102,25 +113,50 @@ function namesExempt(file, piece, exemptNames) {
 }
 
 /**
+ * Whether one static piece of a literal names an exempt file: the whole piece (a path may contain spaces) or any of its
+ * whitespace-separated tokens (a command line). A Markdown name counts only in a single-token piece, since prose often
+ * mentions documents it never reads.
+ */
+function namesExempt(file, piece, exemptNames) {
+  const tokens = piece.split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return false
+  if (tokens.length === 1) return tokenNamesExempt(file, tokens[0], exemptNames, true)
+  return [piece.trim(), ...tokens].some((token) =>
+    tokenNamesExempt(file, token, exemptNames, false)
+  )
+}
+
+/**
  * The string literals in `text` (the source of `file`) that name an exempt file: a relative path into one, a test or
  * spec basename, the basename of a tracked exempt Markdown file, a path-like Markdown name, a path-like glob, or a test
  * directory segment. Query strings and fragments are ignored; each static piece of a template literal is checked on its
- * own. This is a tripwire, not a proof: a path built by concatenation or at run time is not seen.
+ * own. Literals are extracted four ways (with and without interpolations, each on the raw text and with regex literals
+ * removed) and every way only adds candidates. This is a tripwire, not a proof: a path built by concatenation or at run
+ * time is not seen, and an apostrophe in JSX text can still pair with a later quote on the same line.
  */
 export function exemptReferences(file, text, exemptNames = new Set()) {
-  const found = []
-  for (const match of text.replace(REGEX_LITERAL, '$1$2null').matchAll(LITERAL)) {
-    const literal = match[2]
-    const pieces = match[1] === '`' ? literal.split(/\$\{[^}]*\}/) : [literal]
-    if (pieces.some((piece) => namesExempt(file, piece, exemptNames))) found.push(literal)
-  }
-  return found
+  const found = new Set()
+  for (const source of [
+    text,
+    text.replace(COMMENTS, (comment, before = '') => before).replace(REGEX_LITERAL, '$1$2null')
+  ])
+    for (const [pattern, interpolated] of [
+      [STATIC_LITERAL, false],
+      [LITERAL, true]
+    ])
+      for (const match of source.matchAll(pattern)) {
+        const literal = match[2]
+        const pieces = interpolated && match[1] === '`' ? literal.split(/\$\{[^}]*\}/) : [literal]
+        if (pieces.some((piece) => namesExempt(file, piece, exemptNames))) found.add(literal)
+      }
+  return [...found]
 }
 
 /**
  * Problems with the exemption at a commit, from the bytes of every tracked file under the scope: a port input's code
- * that names an exempt file, or this validator importing anything beyond SELF_IMPORTS. The validator and its own test
- * spell out exempt paths on purpose and are bound, so they are not scanned for literals.
+ * that names an exempt file, or this validator importing anything beyond SELF_IMPORTS, loading modules with require or
+ * naming an exempt path outside SELF_LITERALS. Its own test spells out exempt paths on purpose and is bound, so it is not
+ * scanned for literals.
  */
 export function scanProblems(blobs) {
   const problems = []
