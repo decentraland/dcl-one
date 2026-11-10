@@ -337,33 +337,47 @@ impl ArrayBufferBudget {
     }
 }
 
+// V8 frees a backing store with the length it allocated, so the layout can be rebuilt
+fn layout(len: usize) -> Option<std::alloc::Layout> {
+    // a zero-length buffer still needs a unique pointer
+    std::alloc::Layout::from_size_align(len.max(1), 16).ok()
+}
+
 unsafe extern "C" fn allocate_zeroed(budget: &ArrayBufferBudget, len: usize) -> *mut c_void {
-    allocate_with(budget, len, |size| unsafe { libc::calloc(size, 1) })
+    // SAFETY: `layout` has a non-zero size
+    allocate_with(budget, len, |layout| unsafe {
+        std::alloc::alloc_zeroed(layout)
+    })
 }
 
 unsafe extern "C" fn allocate_uninitialized(budget: &ArrayBufferBudget, len: usize) -> *mut c_void {
-    allocate_with(budget, len, |size| unsafe { libc::malloc(size) })
+    // SAFETY: `layout` has a non-zero size
+    allocate_with(budget, len, |layout| unsafe { std::alloc::alloc(layout) })
 }
 
 fn allocate_with(
     budget: &ArrayBufferBudget,
     len: usize,
-    allocate: impl FnOnce(usize) -> *mut c_void,
+    allocate: impl FnOnce(std::alloc::Layout) -> *mut u8,
 ) -> *mut c_void {
+    let Some(layout) = layout(len) else {
+        return std::ptr::null_mut();
+    };
     if !budget.reserve(len) {
         return std::ptr::null_mut();
     }
-    // a zero-length buffer still needs a unique pointer
-    let data = allocate(len.max(1));
+    let data = allocate(layout);
     if data.is_null() {
         budget.release(len);
     }
-    data
+    data.cast()
 }
 
 unsafe extern "C" fn free(budget: &ArrayBufferBudget, data: *mut c_void, len: usize) {
-    // SAFETY: `data` came from `allocate_with`
-    unsafe { libc::free(data) };
+    if let Some(layout) = layout(len) {
+        // SAFETY: `data` came from `allocate_with` with this length
+        unsafe { std::alloc::dealloc(data.cast(), layout) };
+    }
     budget.release(len);
 }
 
