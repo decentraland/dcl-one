@@ -526,7 +526,7 @@ fn op_blob_remove_part(state: &mut OpState, #[string] id: &str) -> Result<(), Op
 }
 
 // Scenes share a process, so every clock they can read is coarsened against timing side
-// channels.
+// channels: these ops, and `Date`, `Temporal.Now` and `Intl.DateTimeFormat` in init.js.
 const CLOCK_GRANULARITY: std::time::Duration = std::time::Duration::from_millis(2);
 const CLOCK_GRANULARITY_MS: f64 = 2.0;
 

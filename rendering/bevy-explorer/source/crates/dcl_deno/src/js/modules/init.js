@@ -209,6 +209,82 @@ const performance = loadExtScript("ext:deno_web/15_performance.js");
 performance.setTimeOrigin();
 globalThis.performance = performance.performance;
 
+// `Date`, `Temporal.Now` and `Intl.DateTimeFormat` read the wall clock in V8, not through an
+// op; floor what they read to the ops' granularity (CLOCK_GRANULARITY in hardened_ops.rs).
+const NativeDate = Date;
+const nativeNow = Date.now;
+const ReflectConstruct = Reflect.construct;
+const coarseNow = () => {
+    const now = nativeNow();
+    return now - (now % 2);
+};
+const CoarseDate = function Date(...args) {
+    if (new.target === undefined) {
+        return new NativeDate(coarseNow()).toString();
+    }
+    return ReflectConstruct(NativeDate, args.length === 0 ? [coarseNow()] : args, new.target);
+};
+Object.defineProperties(CoarseDate, {
+    length: { value: NativeDate.length },
+    prototype: { value: NativeDate.prototype, writable: false },
+    now: { value: coarseNow, writable: true, configurable: true },
+    parse: { value: NativeDate.parse, writable: true, configurable: true },
+    UTC: { value: NativeDate.UTC, writable: true, configurable: true },
+});
+Object.defineProperty(NativeDate.prototype, "constructor", { value: CoarseDate });
+globalThis.Date = CoarseDate;
+
+const dateTimeFormat = Intl.DateTimeFormat.prototype;
+const nativeFormat = Object.getOwnPropertyDescriptor(dateTimeFormat, "format").get;
+const nativeFormatToParts = dateTimeFormat.formatToParts;
+const orNow = (date) => (date === undefined ? coarseNow() : date);
+const boundFormats = new WeakMap();
+Object.defineProperties(dateTimeFormat, {
+    format: {
+        get() {
+            let bound = boundFormats.get(this);
+            if (bound === undefined) {
+                const format = nativeFormat.call(this);
+                bound = (date) => format(orNow(date));
+                boundFormats.set(this, bound);
+            }
+            return bound;
+        },
+        configurable: true,
+    },
+    formatToParts: {
+        value: function formatToParts(date) {
+            return nativeFormatToParts.call(this, orNow(date));
+        },
+        writable: true,
+        configurable: true,
+    },
+});
+
+if (typeof Temporal === "object") {
+    const { Instant, Now } = Temporal;
+    const fromEpochMilliseconds = Instant.fromEpochMilliseconds;
+    const timeZoneId = Now.timeZoneId;
+    const toZonedDateTimeISO = Instant.prototype.toZonedDateTimeISO;
+    const ZonedDateTime = Temporal.ZonedDateTime.prototype;
+    const toPlainDateTime = ZonedDateTime.toPlainDateTime;
+    const toPlainDate = ZonedDateTime.toPlainDate;
+    const toPlainTime = ZonedDateTime.toPlainTime;
+    const instant = () => fromEpochMilliseconds(coarseNow());
+    const zoned = (timeZone) =>
+        toZonedDateTimeISO.call(instant(), timeZone === undefined ? timeZoneId() : timeZone);
+    const methods = {
+        instant,
+        zonedDateTimeISO: zoned,
+        plainDateTimeISO: (timeZone) => toPlainDateTime.call(zoned(timeZone)),
+        plainDateISO: (timeZone) => toPlainDate.call(zoned(timeZone)),
+        plainTimeISO: (timeZone) => toPlainTime.call(zoned(timeZone)),
+    };
+    for (const [name, method] of Object.entries(methods)) {
+        Object.defineProperty(Now, name, { value: method, writable: true, configurable: true });
+    }
+}
+
 // Native super-user bridge transport. The web super-user scene gets a real BroadcastChannel from the
 // browser; native deno has none, so expose one backed by host ops (op_bridge_to_page + the page->scene
 // stream). Defined unconditionally (the ops aren't attached to Deno.core.ops yet at this esm-entry

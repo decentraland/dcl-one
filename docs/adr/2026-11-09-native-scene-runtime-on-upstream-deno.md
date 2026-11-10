@@ -39,8 +39,8 @@ rest.
 - **Hardening:** an op never panics or exits on scene input (`security.md`). Upstream ops that do
   are overridden with ops of the same shape, structured arguments go through `Plain<T>`, and op
   results are ordinary objects (`JsPlain<T>`), replacing the fork's `toString` patch.
-- **Clocks:** `performance.now()`, the time origin and the timer clock are coarsened to 2 ms;
-  scenes share a process.
+- **Clocks:** `performance.now()`, the time origin, the timer clock, `Date`, `Temporal.Now` and
+  `Intl.DateTimeFormat`'s current time are coarsened to 2 ms; scenes share a process.
 - **V8 platform:** initialized once on the sidecar's main thread, before any scene thread
   exists, so every isolate thread descends from it, as Linux memory protection keys require.
   Only `dcl_deno`'s own tests use the unprotected platform, under `cfg(test)`, never through a

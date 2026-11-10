@@ -166,21 +166,100 @@ fn every_clock_has_two_millisecond_granularity() {
     let outcome = eval(
         &mut runtime,
         r#"
-        const samples = [];
+        const millisOf = (parts) => Number(parts.find((p) => p.type === "fractionalSecond").value);
+        const intl = new Intl.DateTimeFormat("en-US", { second: "numeric", fractionalSecondDigits: 3 });
+        const clocks = {
+            dateNow: () => Date.now(),
+            newDate: () => new Date().getTime(),
+            performanceNow: () => performance.now(),
+            timeOrigin: () => performance.timeOrigin,
+            timerNow: () => Deno.core.ops.op_timer_now(),
+            intlFormat: () => Number(intl.format().split(".")[1]),
+            intlFormatToParts: () => millisOf(intl.formatToParts()),
+            temporalInstant: () => Number(Temporal.Now.instant().epochNanoseconds % 1000000000n),
+            temporalZoned: () => Temporal.Now.zonedDateTimeISO("UTC").epochMilliseconds,
+            temporalPlainTime: () => {
+                const t = Temporal.Now.plainTimeISO("UTC");
+                return t.millisecond * 1000000 + t.microsecond * 1000 + t.nanosecond;
+            },
+        };
+        const samples = Object.fromEntries(Object.keys(clocks).map((name) => [name, []]));
         const until = Date.now() + 30;
         while (Date.now() < until) {
-            samples.push(performance.now(), Deno.core.ops.op_timer_now());
+            for (const [name, read] of Object.entries(clocks)) {
+                samples[name].push(read());
+            }
         }
-        samples.push(performance.timeOrigin);
+        const step = { temporalInstant: 2000000, temporalPlainTime: 2000000 };
+        JSON.stringify(Object.fromEntries(Object.entries(samples).map(([name, values]) => [
+            name,
+            values.every((t) => t % (step[name] ?? 2) === 0),
+        ])))
+        "#
+        .to_owned(),
+    )
+    .unwrap();
+    let outcome: std::collections::BTreeMap<String, bool> = serde_json::from_str(&outcome).unwrap();
+    assert!(outcome.len() == 10 && outcome.values().all(|coarse| *coarse), "{outcome:?}");
+    // the clocks still advance
+    let advanced = eval(
+        &mut runtime,
+        r#"(() => {
+            const read = () => [performance.now(), Date.now(), Deno.core.ops.op_timer_now()];
+            const first = read();
+            const until = Date.now() + 10;
+            while (Date.now() < until) {}
+            return JSON.stringify(read().map((t, i) => t > first[i]));
+        })()"#
+        .to_owned(),
+    )
+    .unwrap();
+    assert_eq!(advanced, "[true,true,true]");
+}
+
+/// The coarsened `Date` still behaves as the builtin for everything but the current time.
+#[test]
+fn date_keeps_its_contract() {
+    let mut runtime = client_runtime();
+    let outcome = eval(
+        &mut runtime,
+        r#"
+        class Later extends Date {}
+        const later = new Later(5);
         JSON.stringify({
-            coarse: samples.every((t) => t % 2 === 0),
-            advanced: samples[samples.length - 3] > samples[0],
+            explicit: new Date(5).getTime(),
+            parts: new Date(2020, 0, 2).getDate(),
+            invalid: Number.isNaN(new Date(undefined).getTime()),
+            called: typeof Date(),
+            instance: new Date() instanceof Date,
+            constructor: new Date().constructor === Date,
+            subclass: later instanceof Later && later instanceof Date && later.getTime() === 5,
+            name: Date.name,
+            length: Date.length,
+            parse: Date.parse("1970-01-01T00:00:00.010Z"),
+            utc: Date.UTC(1970, 0, 1, 0, 0, 0, 7),
         })
         "#
         .to_owned(),
     )
     .unwrap();
-    assert_eq!(outcome, r#"{"coarse":true,"advanced":true}"#);
+    let outcome: serde_json::Value = serde_json::from_str(&outcome).unwrap();
+    assert_eq!(
+        outcome,
+        serde_json::json!({
+            "explicit": 5,
+            "parts": 2,
+            "invalid": true,
+            "called": "string",
+            "instance": true,
+            "constructor": true,
+            "subclass": true,
+            "name": "Date",
+            "length": 7,
+            "parse": 10,
+            "utc": 7,
+        })
+    );
 }
 
 #[test]
