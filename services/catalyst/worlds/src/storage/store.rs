@@ -17,7 +17,8 @@
 //! freshness: `STORAGE_CACHE_TTL_SECONDS` from the write into the cache;
 //! bound: `STORAGE_CACHE_MAX` entries, least recently used evicted first;
 //! invalidation: every write and delete path in this process, per key or per
-//! scope prefix; rebuild: none, a miss re-reads; misses are never cached). On
+//! scope prefix; a generation check rejects fills racing an invalidation;
+//! rebuild: none, a miss re-reads; misses are never cached). On
 //! by default, as upstream (`STORAGE_CACHE_ENABLED=false` turns it off).
 //! Another process's write invalidates nothing here: with several
 //! storage-serving processes a read may be stale for up to the TTL after
@@ -194,7 +195,14 @@ fn player_scope_prefix(ns: &SceneNamespace, player: Option<&str>) -> String {
 
 pub struct StorageCache {
     cfg: StorageCacheConfig,
-    map: Mutex<LruCache<String, (Instant, Arc<str>)>>,
+    state: Mutex<CacheState>,
+}
+
+struct CacheState {
+    values: LruCache<String, (Instant, Arc<str>)>,
+    // A cache-wide generation avoids an unbounded map of invalidated keys.
+    // An unrelated write can discard a pending fill, but never an existing hit.
+    generation: u64,
 }
 
 impl StorageCache {
@@ -202,7 +210,10 @@ impl StorageCache {
         let capacity = usize::try_from(cfg.max_entries).unwrap_or(usize::MAX);
         Self {
             cfg,
-            map: Mutex::new(LruCache::new(capacity)),
+            state: Mutex::new(CacheState {
+                values: LruCache::new(capacity),
+                generation: 0,
+            }),
         }
     }
 
@@ -215,7 +226,8 @@ impl StorageCache {
         if !self.cfg.enabled {
             return None;
         }
-        let mut map = self.map.lock();
+        let mut state = self.state.lock();
+        let map = &mut state.values;
         let (at, value) = map.get(key)?;
         if at.elapsed() < self.ttl() {
             return Some(value.clone());
@@ -224,29 +236,46 @@ impl StorageCache {
         None
     }
 
-    /// At `STORAGE_CACHE_MAX` the least recently used entry is evicted.
-    pub fn insert(&self, key: String, value: Arc<str>) {
+    /// Capture before starting the SQL read.
+    fn generation(&self) -> u64 {
+        self.state.lock().generation
+    }
+
+    /// A raced invalidation discards the fill; otherwise evict the LRU at capacity.
+    fn insert_if_current(&self, key: String, value: Arc<str>, generation: u64) {
         if !self.cfg.enabled || value.len() > self.cfg.max_value_bytes {
             return;
         }
-        self.map.lock().insert(key, (Instant::now(), value));
+        let mut state = self.state.lock();
+        if state.generation == generation {
+            state.values.insert(key, (Instant::now(), value));
+        }
     }
 
     pub fn invalidate(&self, key: &str) {
         if self.cfg.enabled {
-            self.map.lock().remove(key);
+            let mut state = self.state.lock();
+            state.generation = state.generation.wrapping_add(1);
+            state.values.remove(key);
         }
     }
 
     pub fn invalidate_prefix(&self, prefix: &str) {
         if self.cfg.enabled {
-            self.map.lock().retain(|k, _| !k.starts_with(prefix));
+            let mut state = self.state.lock();
+            state.generation = state.generation.wrapping_add(1);
+            state.values.retain(|k, _| !k.starts_with(prefix));
         }
     }
 
     #[cfg(test)]
+    fn insert(&self, key: String, value: Arc<str>) {
+        self.insert_if_current(key, value, self.generation());
+    }
+
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
-        self.map.lock().len()
+        self.state.lock().values.len()
     }
 }
 
@@ -272,6 +301,7 @@ impl Store {
         if let Some(hit) = self.cache.get(&cache_key) {
             return Ok(Some(hit));
         }
+        let generation = self.cache.generation();
         let row = sqlx::query("SELECT value::text AS value FROM worlds.world_storage WHERE realm = $1 AND scene_namespace = $2 AND key = $3")
             .bind(ns.realm())
             .bind(ns.scene_namespace())
@@ -280,7 +310,8 @@ impl Store {
             .await?;
         let Some(row) = row else { return Ok(None) };
         let value: Arc<str> = Arc::from(row.get::<String, _>("value"));
-        self.cache.insert(cache_key, value.clone());
+        self.cache
+            .insert_if_current(cache_key, value.clone(), generation);
         Ok(Some(value))
     }
 
@@ -412,6 +443,7 @@ impl Store {
         if let Some(hit) = self.cache.get(&cache_key) {
             return Ok(Some(hit));
         }
+        let generation = self.cache.generation();
         let row = sqlx::query(
             "SELECT value::text AS value FROM worlds.player_storage
              WHERE realm = $1 AND scene_namespace = $2 AND player_address = $3 AND key = $4",
@@ -424,7 +456,8 @@ impl Store {
         .await?;
         let Some(row) = row else { return Ok(None) };
         let value: Arc<str> = Arc::from(row.get::<String, _>("value"));
-        self.cache.insert(cache_key, value.clone());
+        self.cache
+            .insert_if_current(cache_key, value.clone(), generation);
         Ok(Some(value))
     }
 
@@ -819,6 +852,27 @@ mod tests {
             !player_value_cache_key(&p1, "0xabcd", "k")
                 .starts_with(&player_scope_prefix(&p1, Some("0xabc")))
         );
+    }
+
+    #[test]
+    fn a_fill_started_before_invalidation_cannot_restore_stale_data() {
+        for prefix in [false, true] {
+            let cache = StorageCache::new(cache_cfg(true));
+            let key = "w:realm:scene:key".to_string();
+            let read_generation = cache.generation();
+            // The SQL read has captured the old value; a write or delete
+            // completes before that read gets around to filling the cache.
+            if prefix {
+                cache.invalidate_prefix("w:realm:scene:");
+            } else {
+                cache.invalidate(&key);
+            }
+            cache.insert_if_current(key.clone(), Arc::from("old"), read_generation);
+            assert_eq!(cache.get(&key), None, "a delete must stay invalidated");
+            cache.insert(key.clone(), Arc::from("new"));
+            cache.insert_if_current(key.clone(), Arc::from("old"), read_generation);
+            assert_eq!(cache.get(&key).as_deref(), Some("new"));
+        }
     }
 
     #[test]

@@ -5215,6 +5215,53 @@ async fn exports_stream_world_then_player_rows_gzipped_and_never_env() {
 }
 
 #[tokio::test]
+async fn export_query_timeout_is_separate_from_the_idle_budget_and_restored() {
+    let Some(pool) = scratch().await else { return };
+    let mut conn = pool.acquire().await.unwrap();
+    let previous: (String, String) = sqlx::query_as(
+        "SELECT current_setting('statement_timeout'), current_setting('idle_in_transaction_session_timeout')"
+    ).fetch_one(&mut *conn).await.unwrap();
+    for query_timeout in [Duration::from_millis(25), Duration::ZERO] {
+        let mut tx = sqlx::Connection::begin(&mut *conn).await.unwrap();
+        super::export::configure_timeouts(
+            &mut tx,
+            ExportSettings {
+                stream_query_timeout: query_timeout,
+                timeout: Duration::from_secs(2),
+                ..no_cooldown()
+            },
+        )
+        .await
+        .unwrap();
+        let configured: (String, String) = sqlx::query_as(
+            "SELECT current_setting('statement_timeout'), current_setting('idle_in_transaction_session_timeout')"
+        ).fetch_one(&mut *tx).await.unwrap();
+        assert_eq!(
+            configured,
+            (
+                if query_timeout.is_zero() { "0" } else { "25ms" }.into(),
+                "2s".into()
+            )
+        );
+        if !query_timeout.is_zero() {
+            let error = sqlx::query("SELECT pg_sleep(0.2)")
+                .execute(&mut *tx)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                error.as_database_error().unwrap().code().as_deref(),
+                Some("57014")
+            );
+        }
+        tx.rollback().await.unwrap();
+        let restored: (String, String) = sqlx::query_as(
+            "SELECT current_setting('statement_timeout'), current_setting('idle_in_transaction_session_timeout')"
+        ).fetch_one(&mut *conn).await.unwrap();
+        assert_eq!(restored, previous);
+    }
+}
+
+#[tokio::test]
 async fn exports_cap_the_scene_and_the_process_and_cool_down() {
     let Some(pool) = scratch().await else { return };
     let owner_key = random_key();

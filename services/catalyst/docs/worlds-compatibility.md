@@ -477,8 +477,11 @@ difference not listed here is a gap, not a decision.
   that depth on, where ajv's recursive validation and `JSON.stringify`
   exhaust Node's stack.
 - **Schema errors of deep values.** When the non-finite number that fails
-  the value's `anyOf` sits more than 128 containers deep, `data` holds only
-  the outermost `anyOf` error at `/value`. Upstream lists every level's
+  the value's `anyOf` sits more than 128 containers deep, or its error paths
+  exceed the 1 MiB budget, `data` holds only the outermost `anyOf` error at
+  `/value`. The budget counts six bytes per UTF-16 unit across seven path
+  copies per level, so a failing path over about 25,000 units also triggers
+  this fallback. Upstream lists every level's
   errors, a body that grows with the square of the depth (6.7 MB at 1,000
   levels).
 - **NUL in a query.** A `%00` in the query string (a list's `prefix`)
@@ -507,7 +510,10 @@ difference not listed here is a gap, not a decision.
 - **Exports.** Both row streams read one read-only repeatable-read
   snapshot through a pooled connection; upstream reads the world rows and
   the player rows as separate statements. Statuses, cooldown, timer,
-  caps, logging and the gzip stream otherwise follow upstream.
+  caps, logging and the gzip stream otherwise follow upstream. The SQL statement
+  timeout follows `PG_COMPONENT_STREAM_QUERY_TIMEOUT` (zero disables it).
+  The idle-transaction guard follows `EXPORT_TIMEOUT_SECONDS` independently,
+  clamped to 1–2,147,483,647 ms. Both settings are transaction-local.
 - **Metrics.** The worlds routes record `http_requests_total`,
   `http_request_duration_seconds` and `http_request_size_bytes` by
   `method`, `handler` and `code`, as upstream's defaults; `handler` is the
@@ -516,7 +522,10 @@ difference not listed here is a gap, not a decision.
   node's other routes. The logger and pg metric families are not exported.
 - **Cache staleness (shared with upstream).** The single-value LRU is per
   process; with several storage-serving processes, a read may be up to
-  `STORAGE_CACHE_TTL_SECONDS` stale after another process's write.
+  `STORAGE_CACHE_TTL_SECONDS` stale after another process's write. Within
+  one process, a generation check prevents an in-flight read from repopulating
+  a value invalidated by a completed write or delete. An unrelated invalidation
+  may also discard a pending fill; it does not evict unrelated cached values.
 - **Encryption key.** `ENCRYPTION_KEY` is required, as upstream. This node
   has no committed development key, so upstream's production refusal of
   that key has no counterpart.

@@ -131,7 +131,8 @@ The function decodes JSON escapes as `JSON.parse` does and leaves out an entry
 carrying `\u0000` or a surrogate escape (no address), so no stored JSON value
 can fail an insert through an index. It reads the escapes as Unicode, so the database
 must use the `UTF8` server encoding (the one `catalyst` supports): under another
-encoding a non-ASCII escape would fail the insert or the index build. A database stamped before it keeps the
+encoding a non-ASCII escape would fail the insert or the index build. `schema apply`
+and `schema migrate` check the server encoding before any schema changes. A database stamped before it keeps the
 superseded `worlds.logs_permissions` and its two indexes, which `catalyst schema
 status` does not report, until their release drops them. Run it once, with the
 administrative role, after `catalyst schema migrate` created the decoded function

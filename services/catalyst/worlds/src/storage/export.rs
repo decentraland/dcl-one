@@ -578,6 +578,34 @@ async fn produce(
     out.push(format.tail()).await
 }
 
+/// Query timeouts and idle snapshots have different budgets. Disabling the
+/// query timeout must not remove the idle guard; slow readers remain bounded
+/// by the overall export deadline. SET LOCAL restores pool settings on rollback.
+pub(super) async fn configure_timeouts(
+    conn: &mut sqlx::PgConnection,
+    settings: ExportSettings,
+) -> sqlx::Result<()> {
+    let statement_ms = settings
+        .stream_query_timeout
+        .as_millis()
+        .min(i32::MAX as u128)
+        .to_string();
+    let idle_ms = settings
+        .timeout
+        .as_millis()
+        .clamp(1, i32::MAX as u128)
+        .to_string();
+    sqlx::query(
+        "SELECT set_config('statement_timeout', $1, true),
+                set_config('idle_in_transaction_session_timeout', $2, true)",
+    )
+    .bind(statement_ms)
+    .bind(idle_ms)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
 /// The admitted export's response body. The producer owns the slot and, once
 /// acquired, one pooled connection holding a read-only snapshot. The
 /// completion channel distinguishes successful EOF from every failure,
@@ -610,21 +638,9 @@ pub(super) fn body(
                 .execute(&mut *tx_db)
                 .await
                 .map_err(Abort::Db)?;
-            // SET LOCAL resets on rollback, preserving both pool timeouts.
-            // Backpressure can leave the snapshot idle between row streams.
-            let millis = settings
-                .stream_query_timeout
-                .as_millis()
-                .min(i32::MAX as u128)
-                .to_string();
-            sqlx::query(
-                "SELECT set_config('statement_timeout', $1, true),
-                        set_config('idle_in_transaction_session_timeout', $1, true)",
-            )
-            .bind(millis)
-            .execute(&mut *tx_db)
-            .await
-            .map_err(Abort::Db)?;
+            configure_timeouts(&mut tx_db, settings)
+                .await
+                .map_err(Abort::Db)?;
             produce(
                 &mut tx_db,
                 &ns,
