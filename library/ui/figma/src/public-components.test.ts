@@ -1,8 +1,17 @@
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   componentConfigPath,
@@ -35,7 +44,11 @@ const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).dige
 describe('when the offline component guard checks a staged internal plan', () => {
   let root: string
   let source: Source
-  let lock: { sources: Source[]; publicComponents: { files: Table } }
+  let lock: {
+    sources: Source[]
+    publicComponents: { files: Table }
+    publicFoundations?: { files: Table }
+  }
   let files: Map<string, Buffer>
   let metadata: Buffer
   const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { stdio: 'pipe' })
@@ -65,9 +78,6 @@ describe('when the offline component guard checks a staged internal plan', () =>
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'dcl-component-guard-'))
     git('init', '--quiet')
-    mkdirSync(path.join(root, 'library/ui'), { recursive: true })
-    symlinkSync(path.resolve('node_modules'), path.join(root, 'library/ui/node_modules'))
-    put('.gitignore', 'node_modules/\n')
     source = {
       repository: 'https://github.com/decentraland/figma-design-system',
       revision: 'a'.repeat(40),
@@ -144,6 +154,109 @@ describe('when the offline component guard checks a staged internal plan', () =>
   })
   afterEach(() => {
     rmSync(root, { recursive: true, force: true })
+  })
+
+  describe('and a clean checkout runs the real offline lock entrypoint before dependency installation', () => {
+    let checkOutput: string
+    let foundationTable: Table
+    let fontFiles: string[]
+    beforeEach(() => {
+      // Copy only the dependency-free checker implementation into the isolated repository.
+      for (const name of [
+        'lock-digests.mjs',
+        'public-components.mjs',
+        'public-foundations.mjs',
+        'public-output.mjs',
+        'public-components-policy.mjs',
+        'component-generation.mjs',
+        'source-identity.mjs'
+      ]) {
+        const file = 'library/ui/figma/' + name
+        const bytes = readFileSync(fileURLToPath(new URL('../' + name, import.meta.url)))
+        put(file, bytes)
+        source.files[file] = { sha256: hash(bytes) }
+      }
+      Object.assign(source, {
+        changes: ['Synthetic dependency-free checker fixture.'],
+        deviationCodes: { fixture: 0 }
+      })
+      for (const entry of Object.values(source.files))
+        Object.assign(entry, { fds: null, deviation: 'fixture' })
+      foundationTable = JSON.parse(readFileSync(path.resolve('upstream.lock.json'), 'utf8'))
+        .publicFoundations.files as Table
+      fontFiles = Object.keys(foundationTable).filter((file) => file.endsWith('.woff2'))
+      for (const [file, entry] of Object.entries(foundationTable)) {
+        if (entry.origin.kind === 'generated') entry.origin.revision = source.snapshot.revision
+        const bytes = readFileSync(
+          file.endsWith('.woff2')
+            ? path.resolve('node_modules/@fontsource-variable/inter/files', path.basename(file))
+            : path.resolve('foundations', file)
+        )
+        expect(hash(bytes)).toBe(entry.sha256)
+        put('library/ui/foundations/' + file, bytes)
+      }
+      lock.publicFoundations = { files: foundationTable }
+      metadata = createComponentGeneration({
+        source,
+        files: new Map([...files].filter(([file]) => file !== 'generation.json')),
+        config: identity(componentConfigPath),
+        modules: componentModulePaths(source).map(identity),
+        dependencies: componentDependencyPaths.map(identity)
+      })
+      files.set('generation.json', metadata)
+      put(scope + 'generation.json', metadata)
+      lock.publicComponents.files = Object.fromEntries(
+        componentExpectedFiles(JSON.parse(metadata.toString()), hash(metadata))
+      )
+      put('library/ui/upstream.lock.json', JSON.stringify(lock))
+      git('add', '.')
+      for (const file of fontFiles) {
+        const relative = 'library/ui/foundations/' + file
+        const bytes = readFileSync(path.join(root, relative))
+        const pointer = `version https://git-lfs.github.com/spec/v1\noid sha256:${hash(bytes)}\nsize ${bytes.length}\n`
+        const oid = execFileSync('git', ['-C', root, 'hash-object', '-w', '--stdin'], {
+          input: pointer
+        })
+          .toString()
+          .trim()
+        git('update-index', '--cacheinfo', `100644,${oid},${relative}`)
+      }
+      checkOutput = execFileSync(process.execPath, ['library/ui/figma/lock-digests.mjs'], {
+        cwd: root,
+        encoding: 'utf8'
+      })
+    })
+    it('should accept all 39 foundations and 10 component files with seven materialized fonts and no node_modules', () => {
+      expect(Object.keys(foundationTable)).toHaveLength(39)
+      expect(fontFiles).toHaveLength(7)
+      expect(publicComponentsProblems(root, lock)).toEqual([])
+      expect(checkOutput).toContain('files match upstream.lock.json')
+      expect(existsSync(path.join(root, 'library/ui/node_modules'))).toBe(false)
+      expect(existsSync(path.join(root, 'node_modules'))).toBe(false)
+    })
+    it('should still refuse a package self-reference in the real checker with no dependencies installed', () => {
+      put(
+        'library/ui/figma/package.json',
+        '{"name":"postcss","exports":{".":"./audit-dependency/postcss.mjs"}}'
+      )
+      put('library/ui/figma/audit-dependency/postcss.mjs', 'throw new Error("must not evaluate")')
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'unexpected component resolver control: library/ui/figma/package.json'
+      ])
+      expect(() =>
+        execFileSync(process.execPath, ['library/ui/figma/lock-digests.mjs'], {
+          cwd: root,
+          encoding: 'utf8'
+        })
+      ).toThrow(
+        expect.objectContaining({
+          status: 1,
+          stdout: expect.stringContaining(
+            'PUBLIC unexpected component resolver control: library/ui/figma/package.json'
+          )
+        })
+      )
+    })
   })
 
   it('should accept the canonical staged plan, bindings and independently classified origins', () => {

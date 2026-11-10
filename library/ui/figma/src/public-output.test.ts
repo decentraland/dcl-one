@@ -7,7 +7,6 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -220,43 +219,11 @@ describe('when inspecting independently pinned public outputs and inputs', () =>
     git('add', '.')
     expect(inspect().problems).toEqual([])
   })
-  describe('and the component producer is part of the supplied read-set', () => {
-    beforeEach(() => {
-      put('library/ui/figma/src/install-components.ts', 'producer bytes')
-      inputFiles.set('library/ui/figma/src/install-components.ts', {
-        sha256: hash('producer bytes')
-      })
-      symlinkSync(path.resolve('node_modules'), path.join(root, 'library/ui/node_modules'))
-      put('.gitignore', 'node_modules/\n')
-      git('add', '.')
-    })
-    it('should accept the same production dependency resolution as the sanctioned UI installation', () => {
-      expect(inspect().problems).toEqual([])
-    })
-    it('should fail closed when the UI dependency installation is missing', () => {
-      unlinkSync(path.join(root, 'library/ui/node_modules'))
-      expect(inspect().problems).toContain(
-        'component production dependencies cannot be resolved within UI node_modules'
-      )
-    })
-    it('should reject a package self-reference resolving outside the installed UI dependencies', () => {
-      put(
-        'library/ui/package.json',
-        '{"name":"postcss","exports":{".":"./audit-dependency/postcss.mjs"}}'
-      )
-      put('library/ui/audit-dependency/postcss.mjs', 'export default {}')
-      expect(inspect().problems).toContain(
-        'component dependency is outside UI node_modules: postcss'
-      )
-    })
-    it('should reject dependency resolution differing from the UI package root', () => {
-      put('library/ui/figma/src/node_modules/postcss/package.json', '{"main":"index.cjs"}')
-      put('library/ui/figma/src/node_modules/postcss/index.cjs', 'module.exports = {}')
-      git('add', '-f', '--', 'library/ui/figma/src/node_modules')
-      expect(inspect().problems).toContain(
-        'component dependency resolution differs from UI: postcss at library/ui/figma/src'
-      )
-    })
+  it('should validate producer identities without requiring an installed dependency tree', () => {
+    put('library/ui/figma/src/install-components.ts', 'producer bytes')
+    inputFiles.set('library/ui/figma/src/install-components.ts', { sha256: hash('producer bytes') })
+    git('add', '.')
+    expect(inspect().problems).toEqual([])
   })
 
   describe.each([
