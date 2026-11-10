@@ -92,6 +92,47 @@ describe('when inspecting independently pinned public outputs and inputs', () =>
   })
 
   describe.each([
+    'library/ui/figma/component-generation.mts',
+    'library/ui/figma/component-generation.MTS',
+    'library/ui/figma/source-identity.cts',
+    'library/ui/figma/src/generators/components.tsx'
+  ])('and an executable override exists at %s', (shadow) => {
+    beforeEach(() => {
+      put(shadow, 'export const shadow = true')
+    })
+    it('should reject an untracked implementation outside the declared read-set', () => {
+      expect(inspect().problems).toEqual(['untracked component implementation: ' + shadow])
+    })
+    it('should reject the same implementation when Git ignores it', () => {
+      put('.gitignore', shadow + '\n')
+      expect(inspect().problems).toEqual(['untracked component implementation: ' + shadow])
+    })
+  })
+
+  it('should inventory tracked root alternatives independently from supplied input pins', () => {
+    const shadow = 'library/ui/figma/component-generation.mts'
+    put(shadow, 'export const shadow = true')
+    git('add', '--', shadow)
+    expect(inspect().indexPaths).toContain(shadow)
+  })
+
+  it('should reject a recursive source symlink without following it', () => {
+    const target = path.join(root, 'outside-source')
+    mkdirSync(target)
+    writeFileSync(path.join(target, 'shadow.mts'), 'export const hidden = true')
+    mkdirSync(path.join(root, 'library/ui/figma/src'), { recursive: true })
+    symlinkSync(target, path.join(root, 'library/ui/figma/src/external'))
+    expect(inspect().problems).toEqual([
+      'symlink component implementation: library/ui/figma/src/external'
+    ])
+  })
+
+  it('should not treat an ignored gallery build as executable component source', () => {
+    put('library/ui/figma/review/review-dist/assets/gallery.js', 'compiled gallery')
+    expect(inspect().problems).toEqual([])
+  })
+
+  describe.each([
     '../outside',
     '/absolute',
     'C:/drive',

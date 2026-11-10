@@ -169,6 +169,70 @@ describe('when the offline component guard checks a staged internal plan', () =>
     })
   })
 
+  describe.each([
+    'library/ui/figma/component-generation.mts',
+    'library/ui/figma/src/generators/components.tsx'
+  ])('and TSX could discover an untracked implementation at %s', (shadow) => {
+    beforeEach(() => {
+      put(shadow, 'export const override = true')
+    })
+    it('should refuse the otherwise valid manifest and output table', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'untracked component implementation: ' + shadow
+      ])
+    })
+  })
+
+  describe('and a root implementation is tracked without a source pin', () => {
+    beforeEach(() => {
+      put('library/ui/figma/component-generation.mts', 'export const override = true')
+      git('add', '.')
+    })
+    it('should require the independently inventoried alternative in the locked read-set', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'component implementation inventory differs from source lock'
+      ])
+    })
+  })
+
+  describe('and the last component has been retired', () => {
+    let previousRuntime: Table[string]
+    beforeEach(() => {
+      previousRuntime = lock.publicComponents.files['runtime/figma-view-state.ts']!
+      files.clear()
+      files.set('promotion.json', Buffer.from('{"components":[],"internal":[]}\n'))
+      metadata = createComponentGeneration({
+        source,
+        files,
+        config: identity(componentConfigPath),
+        modules: componentModulePaths(source).map(identity),
+        dependencies: componentDependencyPaths.map(identity)
+      })
+      files.set('generation.json', metadata)
+      lock.publicComponents.files = Object.fromEntries(
+        componentExpectedFiles(JSON.parse(metadata.toString()), hash(metadata))
+      )
+      rmSync(path.join(root, scope), { recursive: true })
+      for (const [file, bytes] of files) put(scope + file, bytes)
+      git('add', '-A')
+    })
+    it('should verify the registry and generation record without retaining unused runtime', () => {
+      expect(Object.keys(lock.publicComponents.files).sort()).toEqual([
+        'generation.json',
+        'promotion.json'
+      ])
+      expect(publicComponentsProblems(root, lock)).toEqual([])
+    })
+    it('should reject a stale runtime even when its previous origin and bytes are pinned', () => {
+      put(scope + 'runtime/figma-view-state.ts', 'export const state = true\n')
+      lock.publicComponents.files['runtime/figma-view-state.ts'] = previousRuntime
+      git('add', '.')
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'unexpected public component: runtime/figma-view-state.ts'
+      ])
+    })
+  })
+
   describe('and output bytes change without being staged', () => {
     beforeEach(() => {
       put(scope + 'NavBar/NavBar.tsx', 'changed\n')

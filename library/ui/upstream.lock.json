@@ -684,7 +684,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "6240b66345e186e5bbaf80b014f0027cea524d8832558af731a569e30d702814"
+          "sha256": "a7681b4016564ce7e029ed24a5f987ed9e1245d49637dbd6393277297c29f8f9"
         },
         "library/ui/figma/figma.config.json": {
           "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
@@ -823,7 +823,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "f2789eec46fc7dd7a7fce0b68bd1cc0cc84879fa8173dc163bf13bbb68ff82f4"
+          "sha256": "8146a5f8676b47bd7a1fb24582932dbb766f02eaed11341854f1ad7ba581cc4f"
         },
         "library/ui/figma/review/dcl-ui-review/index.html": {
           "sha256": "1637b3d7491fcd7deb7a1aa43396ba05289dce8fa94a51004298120eae8201d0",
@@ -2426,7 +2426,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "1f894ee69c8e6e6fddf3e2928f304d0c7569134bb8e8e2acc92734d78a553e6a"
+          "sha256": "1ee11397fd2cebb79346948f3d2963aaab5ae920b4406061a224a0c37ebcd1a3"
         },
         "library/ui/figma/src/config.ts": {
           "sha256": "dacda75ec0e35686c67adf7d1e76a0691cc8403ccba9a1e614cc610c761e8d27",
@@ -3201,7 +3201,7 @@
         },
         "library/ui/figma/src/install-components.test.ts": {
           "fds": null,
-          "sha256": "8ee9e3bf3565754c4f9792399a194d624916013114f320ac5837e3db47e78b5c",
+          "sha256": "8ad8f0e75dc296a94316e8151ad046d35a31e1d9e26fa21d0a7a5bad0badbf09",
           "deviation": [
             "local-components-plan",
             "internal-components",
@@ -3210,7 +3210,7 @@
         },
         "library/ui/figma/src/install-components.ts": {
           "fds": null,
-          "sha256": "9211d89a5ea9476e07e6bdc0fe86602c858a49ce6224d2fa479c33411670d9f6",
+          "sha256": "8c7e5d851ce23056158c88c0f177ec9cf6db109612d2503e2a4deb1e447451e4",
           "deviation": [
             "local-components-plan",
             "internal-components",
@@ -3226,7 +3226,7 @@
             "verified-install",
             "component-install-integrity"
           ],
-          "sha256": "1e9f9b00932d42e22df6347b9f9b7f23e932449526bceeba3945507818eba622"
+          "sha256": "a451e8c0e2c6783b4d1819bdc02bfc03164f8c93d62cc4269d07330b5b2edc82"
         },
         "library/ui/figma/src/install.ts": {
           "fds": null,
@@ -3237,7 +3237,7 @@
             "verified-install",
             "component-install-integrity"
           ],
-          "sha256": "394aced5e77b32c9c547d997e72e063355a0dd273051b55279cce40a1f92eeda"
+          "sha256": "2332f102cc68163ffcc74ed23da88c480fe721eff1930850cbae297563b8aa94"
         },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
@@ -3495,7 +3495,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "1f11e320bb034ab234301883a0da453eec9fdb3a24d54173de1bb9d8081fe423"
+          "sha256": "a85d81846ce7b5366a9747be56328736786cda4fc922980293b81060a1e651eb"
         },
         "library/ui/figma/src/public-foundations.test.ts": {
           "fds": null,
@@ -3510,7 +3510,7 @@
           "deviation": [
             "component-install-integrity"
           ],
-          "sha256": "ec5f5c80c1928602fbb56d6858cfccc628dcb00a1b678b93b3eaf78cb491fca3"
+          "sha256": "527213ada86cf084c201527aed28a73c7339e3d15bc2f89c9d0df12e1c3f8756"
         },
         "library/ui/figma/src/retirement-selection.test.ts": {
           "sha256": "8c5dbcf6e85932426d8bb3376330180c209ffc0abb3b769bdba4c5f047f755c1",

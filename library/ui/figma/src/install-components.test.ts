@@ -60,7 +60,6 @@ describe('when planning public components from verified installer inputs', () =>
       [],
       'DemoNav',
       { internal: ['DemoNav'] },
-      { components: [] },
       { components: ['DemoNav'], internal: null },
       { components: ['DemoNav'], internal: [3] }
     ].map((registry) => ({ registry }))
@@ -71,6 +70,39 @@ describe('when planning public components from verified installer inputs', () =>
       context.registry = registry as unknown as ComponentPlanContext['registry']
       await expect(planComponents(context)).rejects.toThrow('Component registry')
       expect(read).not.toHaveBeenCalled()
+    }
+  )
+
+  describe.each([{ components: [] }, { components: [], internal: [] }])(
+    'and the registry is legally empty: %j',
+    (registry) => {
+      beforeEach(() => {
+        context.registry = registry
+        context.source = new Proxy(context.source, {
+          get() {
+            throw new Error('Empty plans must not read source inputs')
+          }
+        })
+        context.runtime = new Proxy(context.runtime, {
+          get() {
+            throw new Error('Empty plans must not read runtime inputs')
+          }
+        })
+      })
+      it('should deterministically return only the normalized empty registry', async () => {
+        const first = await planComponents(context)
+        expect(first).toEqual({
+          components: [],
+          files: new Map([['promotion.json', Buffer.from('{\n  "components": []\n}\n')]])
+        })
+        expect(await planComponents(context)).toEqual(first)
+      })
+      it('should still enforce the configured raster policy before returning an empty plan', async () => {
+        context.config.imageFills = 'assets'
+        await expect(planComponents(context)).rejects.toThrow(
+          'Public component installation requires the placeholder raster policy'
+        )
+      })
     }
   )
 
@@ -185,11 +217,19 @@ describe('when planning public components from verified installer inputs', () =>
     expect(mapping.issues).toEqual([])
   })
 
-  it.each([[], ['DemoNav', 'DemoNav'], ['../DemoNav'], ['3D Card'], ['Missing']])(
-    'should reject invalid or unavailable registry names %j',
-    async (...components) => {
+  it.each([
+    {
+      components: ['DemoNav', 'DemoNav'],
+      error: 'Component registry must contain unique component names only'
+    },
+    { components: ['../DemoNav'], error: 'Invalid generated TypeScript identifier' },
+    { components: ['3D Card'], error: 'Invalid generated TypeScript identifier' },
+    { components: ['Missing'], error: 'Unknown component or missing dependency: Missing' }
+  ])(
+    'should reject invalid or unavailable registry names $components',
+    async ({ components, error }) => {
       context.registry = { components }
-      await expect(planComponents(context)).rejects.toThrow()
+      await expect(planComponents(context)).rejects.toThrow(error)
     }
   )
 

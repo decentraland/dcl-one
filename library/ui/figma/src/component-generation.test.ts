@@ -152,6 +152,40 @@ describe('when validating component generation as an offline consistency record'
     ).toEqual(config)
   })
 
+  it('should represent complete retirement with only registry output and generation metadata', () => {
+    files = new Map([['promotion.json', encode({ components: [] })]])
+    bytes = generate()
+    parsed = validateComponentGeneration(bytes, source)
+    expect(parsed.registry).toMatchObject({ components: [], internal: [] })
+    expect(parsed.output).toEqual([
+      { path: 'promotion.json', sha256: hash(files.get('promotion.json')!.toString()) }
+    ])
+    expect(parsed.modules).toEqual(modules)
+    expect(parsed.inputs.dependencies).toEqual(dependencies)
+    expect(componentOutputKind(componentGenerationFile, parsed.registry)).toBe('generated')
+    expect(componentOutputKind('promotion.json', parsed.registry)).toBe('source')
+  })
+
+  it.each([
+    'runtime/figma-module-runtime.tsx',
+    'runtime/figma-module-runtime.module.css.d.ts',
+    'Button/Button.tsx',
+    'assets/0123456789abcdef.svg'
+  ])('should reject stale output %s after complete retirement', (output) => {
+    files = new Map([['promotion.json', encode({ components: [] })]])
+    files.set(output, Buffer.from('stale'))
+    expect(generate).toThrow('Unexpected component output for empty registry')
+  })
+
+  it('should reject stale output claims in an otherwise canonical empty record', () => {
+    files = new Map([['promotion.json', encode({ components: [] })]])
+    parsed = validateComponentGeneration(generate(), source)
+    parsed.output.push({ path: 'runtime/figma-module-runtime.tsx', sha256: 'a'.repeat(64) })
+    expect(() => validateComponentGeneration(encode(parsed), source)).toThrow(
+      'Unexpected component output for empty registry'
+    )
+  })
+
   it('should classify only public mappings and independently fixed runtime paths', () => {
     expect(componentOutputKind('Button/Button.figma.ts', parsed.registry)).toBe('generated')
     expect(componentOutputKind('runtime/figma-module-runtime.tsx', parsed.registry)).toBe('runtime')
@@ -202,6 +236,24 @@ describe('when validating component generation as an offline consistency record'
     expect(() => validateComponentGeneration(encode(parsed), source)).toThrow(
       'Missing locked component implementation'
     )
+  })
+
+  it.each(['js', 'jsx', 'ts', 'tsx', 'mjs', 'mts', 'cjs', 'cts'])(
+    'should independently include tracked top-level .%s implementations',
+    (extension) => {
+      const file = prefix + 'extra-helper.' + extension
+      source.files[file] = { sha256: hash(file) }
+      expect(isComponentModulePath(file)).toBe(true)
+      expect(componentModulePaths(source)).toContain(file)
+      expect(() => validateComponentGeneration(bytes, source)).toThrow(
+        'Incomplete component module identities'
+      )
+    }
+  )
+
+  it('should exclude top-level tests and unrelated nested helper folders', () => {
+    expect(isComponentModulePath(prefix + 'helper.test.mts')).toBe(false)
+    expect(isComponentModulePath(prefix + 'other/helper.mts')).toBe(false)
   })
 
   it('should reject colliding locked module paths', () => {
@@ -310,17 +362,13 @@ describe('when validating component generation as an offline consistency record'
     )
   })
 
-  it.each(['duplicate', 'both', 'case', 'invalid', 'empty', 'extra-field'])(
+  it.each(['duplicate', 'both', 'case', 'invalid', 'extra-field'])(
     'should reject %s visibility names',
     (kind) => {
       if (kind === 'duplicate') parsed.registry.components.push('Button')
       if (kind === 'both') parsed.registry.internal.push('Button')
       if (kind === 'case') parsed.registry.internal.push('button')
       if (kind === 'invalid') parsed.registry.internal.push('../Unsafe')
-      if (kind === 'empty') {
-        parsed.registry.components = []
-        parsed.registry.internal = []
-      }
       if (kind === 'extra-field') Object.assign(parsed.registry, { captured: true })
       expect(() => validateComponentGeneration(encode(parsed), source)).toThrow()
     }

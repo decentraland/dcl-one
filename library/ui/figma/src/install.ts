@@ -352,6 +352,50 @@ async function lockedInputs(
   return inputs
 }
 
+/** Physical overrides must be checked independently of the helper they can shadow under TSX. */
+async function componentPhysicalInventory(
+  repository: string
+): Promise<{ files: string[]; executable: string[] }> {
+  const prefix = 'library/ui/figma'
+  const executable = (file: string) =>
+    /\.(?:js|jsx|ts|tsx|mjs|mts|cjs|cts)$/i.test(file) && !/\.(?:test|spec)\.[^.]+$/.test(file)
+  const files: string[] = []
+  const implementations: string[] = []
+  const add = (file: string) => {
+    assertInstallPath(file)
+    files.push(file)
+    if (executable(file)) implementations.push(file)
+  }
+  const walk = async (relative: string) => {
+    for (const entry of await readdir(await resolveContained(repository, relative), {
+      withFileTypes: true
+    })) {
+      const file = relative + '/' + entry.name
+      if (
+        /\/(?:fixtures|test|__tests__)(?:\/|$)/.test(file) ||
+        /\.(?:test|spec)\.[^.]+$/.test(file)
+      )
+        continue
+      if (entry.isSymbolicLink()) throw new Error('Component source inventory contains a symlink')
+      if (entry.isDirectory()) await walk(file)
+      else if (!entry.isFile())
+        throw new Error('Component source inventory contains a special file')
+      else add(file)
+    }
+  }
+  for (const entry of await readdir(await resolveContained(repository, prefix), {
+    withFileTypes: true
+  })) {
+    const file = prefix + '/' + entry.name
+    if (!executable(file)) continue
+    if (entry.isSymbolicLink() || !entry.isFile())
+      throw new Error('Component helper implementation is unsafe')
+    add(file)
+  }
+  await walk(prefix + '/src')
+  return { files, executable: implementations }
+}
+
 async function installComponents(
   app: App,
   outDir: string,
@@ -385,7 +429,23 @@ async function installComponents(
         'library/ui/figma'
       ])
     ).stdout
-    const inventory = [...new Set(listing.split('\0').filter(isComponentModulePath))].sort()
+    const tracked = new Set(listing.split('\0').filter(Boolean))
+    const physical = await componentPhysicalInventory(repository)
+    for (const file of physical.executable) {
+      if (!tracked.has(file))
+        throw new Error('Untracked or ignored component implementation override: ' + file)
+      if (!modulePaths.includes(file))
+        throw new Error('Component implementation is absent from the locked read-set: ' + file)
+    }
+    const scoped = (file: string) =>
+      file.startsWith('library/ui/figma/src/') || path.posix.dirname(file) === 'library/ui/figma'
+    const physicalModules = physical.files.filter(isComponentModulePath).sort()
+    const trackedPhysicalModules = [...tracked]
+      .filter((file) => scoped(file) && isComponentModulePath(file))
+      .sort()
+    if (JSON.stringify(physicalModules) !== JSON.stringify(trackedPhysicalModules))
+      throw new Error('Component physical source inventory differs from the committed source lock')
+    const inventory = [...tracked].filter(isComponentModulePath).sort()
     if (JSON.stringify(inventory) !== JSON.stringify([...modulePaths].sort()))
       throw new Error('Component module inventory differs from the committed source lock')
   }

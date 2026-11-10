@@ -115,6 +115,38 @@ function indexBlobs(root, entries) {
   return blobs
 }
 
+function componentImplementations(root, problems) {
+  const prefix = 'library/ui/figma'
+  const executable = (name) =>
+    /\.(?:[cm]?[jt]sx?)$/i.test(name) && !/\.(?:test|spec)\.[^.]+$/i.test(name)
+  const files = []
+  const visit = (relative, recursive) => {
+    const directory = path.join(root, relative)
+    const stat = lstatSync(directory, { throwIfNoEntry: false })
+    if (!stat) return false
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      problems.push('unsafe component implementation directory: ' + relative)
+      return false
+    }
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const file = relative + '/' + entry.name
+      if (entry.isSymbolicLink()) {
+        if (recursive || executable(entry.name))
+          problems.push('symlink component implementation: ' + file)
+      } else if (entry.isDirectory()) {
+        if (recursive) visit(file, true)
+        else if (executable(entry.name)) problems.push('unsafe component implementation: ' + file)
+      } else if (executable(entry.name)) {
+        if (entry.isFile()) files.push(file)
+        else problems.push('unsafe component implementation: ' + file)
+      }
+    }
+    return true
+  }
+  if (visit(prefix, false)) visit(prefix + '/src', true)
+  return files
+}
+
 /**
  * Inspect only independently supplied paths and pins. Origin claims never select filesystem inputs.
  * @param {string} root
@@ -185,9 +217,13 @@ export function inspectPublicOutput(
     }
     // Inventory executable source independently of a manifest's claimed input list.
     const sourceScope =
-      scope === 'library/ui/components' && inputFiles.size ? ['library/ui/figma/src'] : []
+      scope === 'library/ui/components' && inputFiles.size ? ['library/ui/figma'] : []
     const index = indexFiles(root, [scope, ...safeInputs, ...sourceScope])
     result.indexPaths = [...index.keys()].sort()
+    if (sourceScope.length) {
+      for (const file of componentImplementations(root, problems))
+        if (!index.has(file)) problems.push('untracked component implementation: ' + file)
+    }
     const blobs = indexBlobs(root, index)
     for (const file of result.actual)
       if (!Object.hasOwn(table, file)) problems.push('extra public file: ' + file)

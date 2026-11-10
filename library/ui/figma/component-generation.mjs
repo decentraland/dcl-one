@@ -48,6 +48,10 @@ export function isComponentModulePath(file) {
   return (
     typeof file === 'string' &&
     (MODULES.includes(file) ||
+      (file.startsWith(ROOT) &&
+        !file.slice(ROOT.length).includes('/') &&
+        /\.(?:js|jsx|ts|tsx|mjs|mts|cjs|cts)$/i.test(file) &&
+        !/\.(?:test|spec)\.[^.]+$/.test(file)) ||
       (file.startsWith(ROOT + 'src/') &&
         !/(?:\.(?:test|spec)\.[^.]+$|\/(?:fixtures|test|__tests__)\/)/.test(file)))
   )
@@ -102,7 +106,6 @@ function visibility(registry) {
     throw new Error('Invalid component visibility registry')
   const all = [...registry.components, ...(registry.internal ?? [])]
   if (
-    !all.length ||
     all.some(
       (name) => typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(name) || !safe(name)
     ) ||
@@ -127,6 +130,8 @@ export function componentOutputKind(file, registry) {
   if (!safe(file)) throw new Error('Unsafe component output path')
   if (file === 'promotion.json') return 'source'
   if (file === componentGenerationFile) return 'generated'
+  if (!registry.components.length && !registry.internal.length)
+    throw new Error('Unexpected component output for empty registry: ' + file)
   if (RUNTIME.some((name) => file === 'runtime/' + name)) return 'runtime'
   if (file === 'runtime/figma-module-runtime.module.css.d.ts') return 'generated'
   if (/^assets\/[a-f0-9]{16}\.svg$/.test(file)) return 'generated'
@@ -142,6 +147,7 @@ export function componentOutputKind(file, registry) {
 }
 
 function requiredOutputs(registry) {
+  if (!registry.components.length && !registry.internal.length) return ['promotion.json']
   return [
     'promotion.json',
     ...RUNTIME.map((file) => 'runtime/' + file),

@@ -7,7 +7,11 @@ import { createApp, type App } from './app.js'
 import { verifyFdsCache } from './sources/fds-source.js'
 import { runInstall } from './install.js'
 import { copySnapshot, pinTestCapture, testConfig } from '../test/snapshot.js'
-import { componentModulePaths, createComponentGeneration } from '../component-generation.mjs'
+import {
+  componentModulePaths,
+  createComponentGeneration,
+  isComponentModulePath
+} from '../component-generation.mjs'
 import { planComponents } from './install-components.js'
 import { runtimeFiles } from './promotion/eligibility.js'
 import { fixtureCommit, fixtureGit, initializeFixtureGit } from './guard/git-fixture.js'
@@ -27,6 +31,7 @@ vi.mock('../component-generation.mjs', async (original) => {
   return {
     ...actual,
     componentModulePaths: vi.fn(actual.componentModulePaths),
+    isComponentModulePath: vi.fn(actual.isComponentModulePath),
     createComponentGeneration: vi.fn(actual.createComponentGeneration)
   }
 })
@@ -405,6 +410,15 @@ describe('when component installation owns its verified input read-set and trans
       ...runtimeFiles.map((file) => 'library/ui/figma/review/src/components/' + file)
     ]
     vi.mocked(componentModulePaths).mockReset().mockReturnValue(modulePaths)
+    vi.mocked(isComponentModulePath)
+      .mockReset()
+      .mockImplementation(
+        (
+          await vi.importActual<typeof import('../component-generation.mjs')>(
+            '../component-generation.mjs'
+          )
+        ).isComponentModulePath
+      )
     await writeFile(path.join(repository, modulePath), 'export const fixtureGenerator = true\n')
     await mkdir(path.join(figma, 'ledger'), { recursive: true })
     await writeFile(path.join(repository, ledgerPath), '{"schema":1,"retired":[]}')
@@ -454,6 +468,78 @@ describe('when component installation owns its verified input read-set and trans
     expect(vi.mocked(createComponentGeneration).mock.calls[0]![0].modules).toHaveLength(
       modulePaths.length
     )
+  })
+
+  it('should retire the last component through the same canonical transaction and then no-op', async () => {
+    await runInstall(app, options)
+    await fixtureCommit(repository)
+    await writeFile(registryPath, '{"components":[]}')
+    await fixtureCommit(repository)
+    const retired = await runInstall(app, options)
+    expect(retired.changed).toBe(true)
+    expect(retired.files.map((file) => file.path)).toEqual(['generation.json', 'promotion.json'])
+    expect(await readdir(path.join(root, 'components'))).toEqual([
+      'generation.json',
+      'promotion.json'
+    ])
+    expect((await runInstall(app, options)).changed).toBe(false)
+    expect(await readFile(path.join(root, 'index.ts'), 'utf8')).toBe(
+      'export const foundationsOnly = true\n'
+    )
+  })
+
+  it('should reproduce empty retirement in a fresh immutable private stage and no-op', async () => {
+    await writeFile(registryPath, '{"components":[],"internal":[]}')
+    options.outDir = stage
+    const first = await runInstall(app, options)
+    expect(first.changed).toBe(true)
+    expect(first.files.map((file) => file.path)).toEqual(['generation.json', 'promotion.json'])
+    expect(await readdir(first.outDir)).toEqual(['generation.json', 'promotion.json'])
+    expect((await runInstall(app, options)).changed).toBe(false)
+    expect(await readFile(registryPath, 'utf8')).toBe('{"components":[],"internal":[]}')
+  })
+
+  it('should still refuse an unverified cache for an empty requested set and preserve old output', async () => {
+    await runInstall(app, options)
+    await fixtureCommit(repository)
+    await writeFile(registryPath, '{"components":[]}')
+    await fixtureCommit(repository)
+    await rm(path.join(figma, 'figma-snapshot/.fds-source.json'))
+    app = await createApp(figma, undefined, { unverifiedSnapshot: true })
+    await expect(runInstall(app, options)).rejects.toThrow('not materialized')
+    expect(await readdir(path.join(root, 'components'))).toEqual([
+      'DemoNav',
+      'generation.json',
+      'promotion.json',
+      'runtime'
+    ])
+    expect(await readFile(registryPath, 'utf8')).toBe('{"components":[]}')
+  })
+
+  it('should restore old component and runtime output when empty publication fails', async () => {
+    await runInstall(app, options)
+    await fixtureCommit(repository)
+    await writeFile(registryPath, '{"components":[]}')
+    await fixtureCommit(repository)
+    vi.mocked(rename)
+      .mockImplementationOnce(actualRename)
+      .mockRejectedValueOnce(new Error('empty publication failed'))
+    await expect(runInstall(app, options)).rejects.toThrow('empty publication failed')
+    expect(await readdir(path.join(root, 'components'))).toEqual([
+      'DemoNav',
+      'generation.json',
+      'promotion.json',
+      'runtime'
+    ])
+    expect(await readFile(registryPath, 'utf8')).toBe('{"components":[]}')
+    expect((await runInstall(app, options)).files.map((file) => file.path)).toEqual([
+      'generation.json',
+      'promotion.json'
+    ])
+    expect(await readdir(path.join(root, 'components'))).toEqual([
+      'generation.json',
+      'promotion.json'
+    ])
   })
 
   it('should clone producer buffers before passing through provenance and publication', async () => {
@@ -562,7 +648,9 @@ describe('when component installation owns its verified input read-set and trans
   it('should reject an omitted transitive source pin from the independent index inventory', async () => {
     await writeFile(path.join(figma, 'src/specs.ts'), 'export const transitive = true')
     await fixtureCommit(repository)
-    await expect(runInstall(app, options)).rejects.toThrow('module inventory differs')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'implementation is absent from the locked read-set'
+    )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
@@ -574,7 +662,71 @@ describe('when component installation owns its verified input read-set and trans
       await fixtureGit(repository, 'add', 'library/ui/figma/src/specs.ts')
       return plan
     })
-    await expect(runInstall(app, options)).rejects.toThrow('module inventory differs')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'implementation is absent from the locked read-set'
+    )
+    expect(await readFile(registryPath)).toEqual(originalRegistry)
+  })
+
+  it.each(['mts', 'MTS'])(
+    'should reject the Audit-style untracked .%s helper override without publication',
+    async (extension) => {
+      await writeFile(
+        path.join(figma, 'component-generation.' + extension),
+        "export * from './component-generation.original.mjs';\nexport function createComponentGeneration() { throw new Error('AUDIT_UNTRACKED_SHADOW') }\n"
+      )
+      vi.mocked(isComponentModulePath).mockReturnValue(false)
+      options.outDir = stage
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Untracked or ignored component implementation override'
+      )
+      expect(planComponents).not.toHaveBeenCalled()
+      expect(createComponentGeneration).not.toHaveBeenCalled()
+      await expect(readdir(path.join(root, '.agent-work'))).rejects.toThrow()
+      expect(await readFile(registryPath)).toEqual(originalRegistry)
+    }
+  )
+
+  it('should reject an ignored top-level shadow before planning', async () => {
+    await writeFile(path.join(repository, '.gitignore'), '*.mts\n')
+    await writeFile(path.join(figma, 'component-generation.mts'), 'export const ignored = true')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Untracked or ignored component implementation override'
+    )
+    expect(planComponents).not.toHaveBeenCalled()
+    expect(await readFile(registryPath)).toEqual(originalRegistry)
+  })
+
+  it('should reject ignored recursive source overrides without following Git exclusions', async () => {
+    await writeFile(path.join(repository, '.gitignore'), '*.tsx\n')
+    await mkdir(path.join(figma, 'src/nested'), { recursive: true })
+    await writeFile(path.join(figma, 'src/nested/helper.tsx'), 'export const ignored = true')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Untracked or ignored component implementation override'
+    )
+    expect(planComponents).not.toHaveBeenCalled()
+  })
+
+  it('should reject a shadow introduced during planning before any publication', async () => {
+    vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+      const plan = await actualPlan(context)
+      await writeFile(path.join(figma, 'component-generation.mts'), 'export const late = true')
+      return plan
+    })
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Untracked or ignored component implementation override'
+    )
+    expect(await readFile(registryPath)).toEqual(originalRegistry)
+    expect(await readdir(path.join(root, 'components'))).toEqual(['promotion.json'])
+  })
+
+  it('should reject a tracked top-level implementation omitted from the locked read-set', async () => {
+    await writeFile(path.join(figma, 'extra-helper.mts'), 'export const tracked = true')
+    await fixtureCommit(repository)
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'implementation is absent from the locked read-set'
+    )
+    expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
@@ -708,7 +860,7 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
-  it.each(['', '{}', '{"components":[]}'])(
+  it.each(['', '{}'])(
     'should propagate invalid registry %j without creating component output',
     async (registry) => {
       await writeFile(registryPath, registry)

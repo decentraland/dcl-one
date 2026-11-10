@@ -168,6 +168,16 @@ export default {
 `
 }
 
+function registryBytes(components: readonly string[], publicNames: ReadonlySet<string>): Buffer {
+  const visibility = {
+    components: components.filter((name) => publicNames.has(name)),
+    ...(components.some((name) => !publicNames.has(name))
+      ? { internal: components.filter((name) => !publicNames.has(name)) }
+      : {})
+  }
+  return Buffer.from(JSON.stringify(visibility, null, 2) + '\n')
+}
+
 /** Consumes verified inputs supplied by runInstall; it never verifies, publishes or writes files. */
 async function planComponents(context: ComponentPlanContext): Promise<ComponentInstallPlan> {
   const { source, config, registry, runtime } = context
@@ -184,13 +194,14 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
     throw new Error('Component registry must contain public and internal name lists only')
   const requested = [...registry.components, ...(registry.internal ?? [])]
   if (
-    !requested.length ||
     requested.some((name) => typeof name !== 'string') ||
     new Set(requested).size !== requested.length
   )
     throw new Error('Component registry must contain unique component names only')
   for (const name of requested) assertIdentifier(name)
   const publicNames = new Set(registry.components)
+  if (!requested.length)
+    return { components: [], files: new Map([['promotion.json', registryBytes([], publicNames)]]) }
   for (const file of runtimeFiles)
     if (!runtime.get(file)?.length) throw new Error(`Missing locked runtime input: ${file}`)
   const loaded = await loadSpecsFromSource(source, config, 'promotion')
@@ -281,13 +292,7 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
   for (const [file, bytes] of await cssDeclarations(files, textStyleModule.content))
     files.set(file, bytes)
   const components = specs.map((spec) => spec.name)
-  const visibility = {
-    components: components.filter((name) => publicNames.has(name)),
-    ...(components.some((name) => !publicNames.has(name))
-      ? { internal: components.filter((name) => !publicNames.has(name)) }
-      : {})
-  }
-  files.set('promotion.json', Buffer.from(JSON.stringify(visibility, null, 2) + '\n'))
+  files.set('promotion.json', registryBytes(components, publicNames))
   return { components, files }
 }
 
