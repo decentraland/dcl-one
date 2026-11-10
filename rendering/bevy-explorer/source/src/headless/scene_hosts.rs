@@ -1,6 +1,7 @@
 //! The orchestrator's view of the engine's scene hosts.
 
-use dcl_deno_ipc::HostExit;
+use bevy::{ecs::entity::Entity, platform::collections::HashMap};
+use dcl_deno_ipc::{HostExit, SceneHostInfo};
 
 /// The `scene-host-exited` control event for a lost host whose scenes have `hashes`.
 pub fn scene_host_exited_event(exit: &HostExit, hashes: &[&str]) -> serde_json::Value {
@@ -13,10 +14,20 @@ pub fn scene_host_exited_event(exit: &HostExit, hashes: &[&str]) -> serde_json::
     })
 }
 
+/// The sampled resident memory of the host each scene runs in, keyed by scene entity.
+pub fn host_rss_by_scene(hosts: &[SceneHostInfo]) -> HashMap<Entity, u64> {
+    hosts
+        .iter()
+        .filter_map(|host| Some((host.scenes.iter(), host.rss_bytes?)))
+        .flat_map(|(scenes, rss)| scenes.map(move |scene| (scene.0, rss)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dcl_deno_ipc::HostExitReason;
+    use dcl_deno_ipc::{HostExitReason, HostState};
+    use dcl_types::SceneId;
 
     #[derive(serde::Deserialize, Debug, PartialEq)]
     struct Event {
@@ -61,6 +72,7 @@ mod tests {
         for (reason, name) in [
             (HostExitReason::Exit, "exit"),
             (HostExitReason::Protocol, "protocol"),
+            (HostExitReason::Memory, "memory"),
             (HostExitReason::Spawn, "spawn"),
         ] {
             let exit = HostExit {
@@ -74,5 +86,21 @@ mod tests {
             assert_eq!(event.code, Some(1));
             assert!(scene_host_exited_event(&exit, &["bafy1"])["signal"].is_null());
         }
+    }
+
+    #[test]
+    fn each_scene_gets_the_memory_of_its_own_sampled_host() {
+        let host = |entity: u32, rss_bytes| SceneHostInfo {
+            pid: Some(entity),
+            state: HostState::Ready,
+            scenes: vec![SceneId(Entity::from_raw(entity))],
+            rss_bytes,
+        };
+
+        let rss = host_rss_by_scene(&[host(1, Some(10)), host(2, Some(20)), host(3, None)]);
+
+        assert_eq!(rss.get(&Entity::from_raw(1)), Some(&10));
+        assert_eq!(rss.get(&Entity::from_raw(2)), Some(&20));
+        assert_eq!(rss.get(&Entity::from_raw(3)), None);
     }
 }

@@ -108,6 +108,21 @@ struct Args {
     )]
     scene_hosts: SceneHosts,
 
+    /// Scene hosts kept started with no scene, so a new scene need not wait for one;
+    /// `--scene-hosts per-scene` only; absent = 1
+    #[arg(long, value_name = "n", help_heading = HEADLESS)]
+    scene_host_spares: Option<usize>,
+
+    /// End a scene host whose resident memory goes over this many MiB, as a lost host;
+    /// `--scene-hosts per-scene` only; absent = no cap
+    #[arg(
+        long,
+        value_name = "MiB",
+        value_parser = clap::value_parser!(u64).range(1..),
+        help_heading = HEADLESS
+    )]
+    scene_host_memory_mb: Option<u64>,
+
     /// Pulse realm to announce verbatim; `--server-mode` only, and optional there: absent, the
     /// engine derives the same key from a locally hosted scene's entity id once it loads, this
     /// just announces it sooner. Orchestrated servers host several realms at once and take one
@@ -203,6 +218,11 @@ fn parse_args() -> Args {
     // mirror hammurabi's worker env contract (PROCESS_STORAGE_DELEGATION)
     if args.storage_delegation.is_none() {
         args.storage_delegation = std::env::var("PROCESS_STORAGE_DELEGATION").ok();
+    }
+    if args.scene_hosts == SceneHosts::Shared
+        && (args.scene_host_spares.is_some() || args.scene_host_memory_mb.is_some())
+    {
+        usage_error("--scene-host-spares and --scene-host-memory-mb need --scene-hosts per-scene");
     }
     if args.pulse_realm.is_some() && args.orchestrated {
         usage_error(
@@ -372,6 +392,11 @@ fn main() -> AppExit {
     dcl_deno_ipc::EXIT_ON_SIDECAR_LOSS.store(true, std::sync::atomic::Ordering::SeqCst);
     init_runtime_with(HostOptions {
         placement: args.scene_hosts.placement(),
+        spares: match args.scene_hosts {
+            SceneHosts::Shared => 0,
+            SceneHosts::PerScene => args.scene_host_spares.unwrap_or(1),
+        },
+        memory_cap: args.scene_host_memory_mb.map(|mib| mib * 1024 * 1024),
     })
     .unwrap();
 
@@ -1309,6 +1334,7 @@ fn emit_scene_stats(
         return;
     }
     *last = elapsed;
+    let host_rss = webgpu_build::headless::host_rss_by_scene(&dcl_deno_ipc::scene_hosts());
 
     for (entity, ctx, previous) in scenes.iter_mut() {
         // Native scene threads publish counters after completed updates.
@@ -1319,9 +1345,13 @@ fn emit_scene_stats(
             .as_ref()
             .map(|previous| previous.0.clone())
             .unwrap_or_default();
-        let Some(sample) = scene_stats_sample(&ctx.hash, entity, cur, &base, cfg!(unix)) else {
+        let Some(mut sample) = scene_stats_sample(&ctx.hash, entity, cur, &base, cfg!(unix)) else {
             continue;
         };
+        // sampled only with --scene-hosts per-scene, where the host runs this scene alone
+        if let Some(rss) = host_rss.get(&entity) {
+            sample["host_rss_bytes"] = (*rss).into();
+        }
         println!("@scene-stats {sample}");
         if let Some(mut previous) = previous {
             previous.0 = cur.clone();

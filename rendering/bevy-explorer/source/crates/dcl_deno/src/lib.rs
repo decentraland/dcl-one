@@ -40,9 +40,17 @@ pub fn terminate_scene(scene_id: SceneId) {
     }
 }
 
-/// must be called from main thread on linux before any isolates are created
-pub fn init_runtime() {
+/// must be called from main thread on linux before any isolates are created.
+/// `v8_threads` fixes the size of V8's worker pool; without it V8 sizes the pool from the
+/// core count when the first scene starts.
+pub fn init_runtime(v8_threads: Option<u32>) {
     let _ = deno_core::v8::Platform::new(1, false);
+    if let Some(threads) = v8_threads {
+        // must stay the protected platform: the unprotected one gives up V8's thread-isolated
+        // allocations
+        let platform = deno_core::v8::new_default_platform(threads, false).make_shared();
+        deno_core::JsRuntime::init_platform(Some(platform), false);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

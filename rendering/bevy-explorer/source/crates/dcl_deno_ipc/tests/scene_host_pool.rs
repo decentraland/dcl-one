@@ -78,6 +78,7 @@ fn kill(pid: u32) {
 fn a_killed_scene_host_ends_only_its_scene() {
     init_runtime_with(HostOptions {
         placement: Placement::PerScene,
+        ..Default::default()
     })
     .unwrap();
     let (responses, mut receiver) = scene_response_channel();
@@ -114,6 +115,6 @@ fn a_killed_scene_host_ends_only_its_scene() {
     let (later, _later_renderer) = start_scene(3, &responses);
     let later_host = eventually("a host for a later scene", || ready_host_of(later));
     assert_ne!(later_host.pid, killed_host.pid);
-    assert_eq!(ready_host_of(kept), Some(kept_host));
+    assert_eq!(ready_host_of(kept).and_then(|host| host.pid), kept_host.pid);
     assert!(drain_host_exits().is_empty());
 }

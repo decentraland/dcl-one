@@ -45,9 +45,20 @@ fn main() -> Result<()> {
         .build()
         .unwrap();
 
-    // get the socket name from args
-    let name_str = env::args().nth(1).expect("No socket name provided");
+    let mut args = env::args().skip(1);
+    let name_str = args.next().expect("No socket name provided");
     let name = name_str.to_fs_name::<GenericFilePath>()?;
+    let mut v8_threads = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--v8-threads" => {
+                let threads = args.next().and_then(|n| n.parse::<u32>().ok());
+                let threads = threads.filter(|n| *n > 0);
+                v8_threads = Some(threads.expect("--v8-threads takes a positive count"));
+            }
+            _ => panic!("unknown argument {arg}"),
+        }
+    }
 
     // connect ipc stream
     let stream = rt.block_on(async move { Stream::connect(name).await.unwrap() });
@@ -55,7 +66,7 @@ fn main() -> Result<()> {
     let (recv_half, send_half) = stream.split();
 
     // init engine
-    dcl_deno::init_runtime();
+    dcl_deno::init_runtime(v8_threads);
 
     // init context
     let (close_sx, close_rx) = tokio::sync::mpsc::unbounded_channel();

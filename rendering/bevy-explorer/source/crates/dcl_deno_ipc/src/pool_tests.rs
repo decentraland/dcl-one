@@ -2,7 +2,11 @@ use super::pool::*;
 use super::*;
 use bevy::prelude::{Entity, Vec3};
 use dcl_types::{scene_response_channel, SceneResourceCounters, SceneResponseReceiver};
-use std::{collections::HashSet, sync::atomic::AtomicU32, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::AtomicU32,
+    time::Duration,
+};
 use tokio::{
     io::{DuplexStream, ReadHalf, WriteHalf},
     sync::mpsc::{unbounded_channel, UnboundedReceiver, UnboundedSender},
@@ -51,12 +55,14 @@ impl Launch for FakeLauncher {
         let (reader, writer) = tokio::io::split(host_end);
         let killed = Arc::new(AtomicBool::new(false));
         let host = FakeHost {
+            pid: 0,
             command,
             reader,
             writer,
             killed: killed.clone(),
         };
         let pid = self.next_pid.fetch_add(1, Ordering::SeqCst);
+        let host = FakeHost { pid, ..host };
         let launched = self.launched.send(host);
         Box::pin(async move {
             launched.map_err(|_| anyhow::anyhow!("the test stopped taking hosts"))?;
@@ -100,6 +106,7 @@ impl HostProcess for FakeProcess {
 
 /// The scene host's end of a fake host.
 struct FakeHost {
+    pid: u32,
     command: HostCommand,
     reader: ReadHalf<DuplexStream>,
     writer: WriteHalf<DuplexStream>,
@@ -180,9 +187,39 @@ fn scene_id(entity: u32) -> u64 {
     Entity::from_raw(entity).to_bits()
 }
 
-fn pool(placement: Placement) -> (HostPool, UnboundedReceiver<FakeHost>, Arc<FakeLauncher>) {
+/// Resident memory the test sets for each fake host's pid.
+#[derive(Clone, Default)]
+struct FakeMemory(Arc<Mutex<HashMap<u32, u64>>>);
+
+impl SampleMemory for FakeMemory {
+    fn sample(&mut self, pids: &[u32]) -> HashMap<u32, u64> {
+        let resident = self.0.lock().unwrap();
+        pids.iter()
+            .filter_map(|pid| Some((*pid, *resident.get(pid)?)))
+            .collect()
+    }
+}
+
+fn pool_with(
+    options: HostOptions,
+) -> (
+    HostPool,
+    UnboundedReceiver<FakeHost>,
+    Arc<FakeLauncher>,
+    FakeMemory,
+) {
     let (launcher, launched) = FakeLauncher::new();
-    let pool = HostPool::new(HostOptions { placement }, launcher.clone());
+    let memory = FakeMemory::default();
+    let mut pool = HostPool::new(options, launcher.clone(), Box::new(memory.clone()));
+    pool.sample_every = Duration::from_millis(20);
+    (pool, launched, launcher, memory)
+}
+
+fn pool(placement: Placement) -> (HostPool, UnboundedReceiver<FakeHost>, Arc<FakeLauncher>) {
+    let (pool, launched, launcher, _) = pool_with(HostOptions {
+        placement,
+        ..Default::default()
+    });
     (pool, launched, launcher)
 }
 
@@ -240,6 +277,7 @@ fn is_error_starting_with(response: &SceneResponse, prefix: &str) -> bool {
 #[tokio::test]
 async fn shared_placement_puts_every_scene_on_one_host() {
     let (pool, mut launched, _) = pool(Placement::Shared);
+    let pool = Arc::new(pool);
     std::thread::scope(|scope| scope.spawn(|| pool.start()).join().unwrap()).unwrap();
     let (responses, _receiver) = scene_response_channel();
 
@@ -441,6 +479,108 @@ async fn three_failed_spawns_with_no_host_running_report_the_pool_as_unavailable
     );
 }
 
+#[tokio::test]
+async fn a_new_scene_takes_the_warm_host_and_a_replacement_starts() {
+    let (pool, mut launched, _, _) = pool_with(HostOptions {
+        placement: Placement::PerScene,
+        spares: 1,
+        memory_cap: None,
+    });
+    let pool = Arc::new(pool);
+    pool.start().unwrap();
+    let spare = tokio::time::timeout(TIMEOUT, launched.recv()).await;
+    let mut spare = spare.unwrap().unwrap();
+    eventually(|| {
+        pool.hosts()
+            .first()
+            .is_some_and(|h| h.state == HostState::Ready)
+    })
+    .await;
+    let (responses, _receiver) = scene_response_channel();
+
+    let _scene = place(&pool, &responses, [1]);
+
+    assert_eq!(spare.started().await, scene_id(1));
+    let replacement = tokio::time::timeout(TIMEOUT, launched.recv()).await;
+    let replacement = replacement.unwrap().unwrap();
+    assert_ne!(replacement.pid, spare.pid);
+    eventually(|| pool.hosts().len() == 2).await;
+    let hosts = pool.hosts();
+    let running = hosts
+        .iter()
+        .find(|host| host.pid == Some(spare.pid))
+        .unwrap();
+    assert_eq!(running.scenes, [SceneId(Entity::from_raw(1))]);
+    let warm = hosts.iter().find(|host| host.pid == Some(replacement.pid));
+    assert!(warm.is_some_and(|host| host.scenes.is_empty()));
+    assert!(tokio::time::timeout(QUIET, launched.recv()).await.is_err());
+}
+
+#[tokio::test]
+async fn a_host_over_its_memory_cap_is_ended_and_reported() {
+    let (pool, mut launched, _, memory) = pool_with(HostOptions {
+        placement: Placement::PerScene,
+        spares: 0,
+        memory_cap: Some(1000),
+    });
+    let pool = Arc::new(pool);
+    pool.start().unwrap();
+    let (responses, mut receiver) = scene_response_channel();
+    let _over = place(&pool, &responses, [1]);
+    let (over, over_host) = next_host(&mut launched).await;
+    let _under = place(&pool, &responses, [2]);
+    let (under, under_host) = next_host(&mut launched).await;
+
+    memory
+        .0
+        .lock()
+        .unwrap()
+        .extend([(over_host.pid, 1001), (under_host.pid, 1000)]);
+
+    let (errored, response) = delivered(&mut receiver).await;
+    assert_eq!(errored, over);
+    assert!(is_error_starting_with(&response, "scene host exited"));
+    assert!(over_host.killed());
+    let exits = pool.drain_exits();
+    assert_eq!(exits.len(), 1);
+    assert_eq!(exits[0].reason, HostExitReason::Memory);
+    assert_eq!(exits[0].scenes, [SceneId(Entity::from_bits(over))]);
+    assert!(nothing_delivered(&mut receiver).await);
+    assert!(!under_host.killed());
+    let hosts = pool.hosts();
+    assert_eq!(hosts.len(), 1);
+    assert_eq!(hosts[0].scenes, [SceneId(Entity::from_bits(under))]);
+    assert_eq!(hosts[0].rss_bytes, Some(1000));
+}
+
+#[tokio::test]
+async fn per_scene_hosts_start_with_a_filtered_environment() {
+    assert!(std::env::var_os("PATH").is_some() || std::env::var_os("Path").is_some());
+    let (responses, _receiver) = scene_response_channel();
+    let (shared, mut shared_launched, _) = pool(Placement::Shared);
+    let shared = Arc::new(shared);
+    std::thread::scope(|scope| scope.spawn(|| shared.start()).join().unwrap()).unwrap();
+    let (per_scene, mut per_scene_launched, _) = pool(Placement::PerScene);
+    let _scene = place(&per_scene, &responses, [1]);
+
+    let shared_host = shared_launched.try_recv().unwrap();
+    let (_, per_scene_host) = next_host(&mut per_scene_launched).await;
+
+    assert_eq!(shared_host.command.env, None);
+    assert_eq!(shared_host.command.args.len(), 1);
+    let env = per_scene_host.command.env.as_ref().unwrap();
+    for (name, _) in env {
+        assert!(
+            PER_SCENE_HOST_ENV.iter().any(|allowed| name == allowed),
+            "{name:?}"
+        );
+    }
+    assert!(!env
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("PATH")));
+    assert_eq!(per_scene_host.command.args[1..], ["--v8-threads", "2"]);
+}
+
 // set in the copy of this test binary that plays the engine
 #[cfg(unix)]
 const HOST_OUTPUT_ENGINE: &str = "DCL_DENO_IPC_HOST_OUTPUT_ENGINE";
@@ -467,6 +607,7 @@ fn engine_with_a_printing_host() {
                 "-c".into(),
                 format!("echo '{FORGED}'; echo 'host stderr' >&2").into(),
             ],
+            env: None,
         };
         // the host exits without connecting
         assert!(ProcessLauncher

@@ -32,6 +32,10 @@ it is lost, so that its orchestrator restarts the engine and re-adds every scene
   The engine exits only after three host starts in a row fail while no other host is running:
   starts run concurrently, so the run alone says nothing about the hosts that work. A removed
   scene's host is ended after the scene's kill grace period.
+- **A per-scene host gets only what it needs.** It starts with a fixed V8 worker pool and an
+  environment filtered to the variables it reads; on Linux it dies with the engine. The pool keeps
+  warm spares so a new scene does not wait for a process, and it can end a host whose resident
+  memory goes over a cap (`--scene-host-memory-mb`), outside the per-isolate V8 heap limit.
 
 ## Rejected options
 
