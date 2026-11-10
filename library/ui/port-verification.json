@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "lockHash": "9557e6d41df53bbc10ba2121cb501dcc6ad97ab6904c50a7ff0027aaff5cb036",
+  "lockHash": "44153c466fabaa22be7955a8612322e98a34289fd5dd8b85bfc4147744886126",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "figmaTree": "e1fc092fc76117efee9e2362cc7e45e197b33f9a",
@@ -31,7 +31,7 @@
     },
     "install": {
       "result": "pass",
-      "detail": "Private11 component outputs reproduced merged metadata with repeat no-op and prior39 foundations unchanged"
+      "detail": "Verified private11 and canonical11 component outputs with new app config identities and repeat noops"
     }
   }
 }

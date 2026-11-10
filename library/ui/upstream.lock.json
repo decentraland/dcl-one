@@ -5552,7 +5552,7 @@
         }
       },
       "generation.json": {
-        "sha256": "f96f1094d40b83a343af6760b78df93c9dc3dd8ba501621eef463189d0ec98c0",
+        "sha256": "c2efaaac80c9f52359f385d64d9a239aee8e72531f09688d6471de5a4d1a120d",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",

@@ -21,6 +21,10 @@
           "kind": "regular"
         },
         {
+          "name": "apps",
+          "kind": "directory"
+        },
+        {
           "name": "components",
           "kind": "directory"
         },
@@ -276,7 +280,7 @@
     },
     {
       "path": "library/ui/tsconfig.json",
-      "sha256": "15597d3b37fc19ffc4376a874ed693a3d86c0370415a7a994a7281fffa2b2124"
+      "sha256": "4f02f403bdc71429948e20abcd797e1b7b56d33cacd14da0b871f0c81be601a1"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/boot.js",
