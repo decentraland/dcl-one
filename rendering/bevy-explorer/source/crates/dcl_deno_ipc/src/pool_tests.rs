@@ -624,8 +624,25 @@ async fn an_ending_spare_is_given_no_scene_and_counts_as_no_loss() {
     assert!(pool.end_host(spare.pid));
     let _scene = place(&pool, &responses, [1]);
 
-    let (started, host) = next_host(&mut launched).await;
-    assert_eq!(started, scene_id(1));
+    // a replacement spare may launch before the scene's host
+    let mut running = None;
+    eventually(|| {
+        running = pool
+            .hosts()
+            .into_iter()
+            .find(|h| h.scenes == [SceneId(Entity::from_raw(1))])
+            .and_then(|h| h.pid);
+        running.is_some()
+    })
+    .await;
+    let mut host = loop {
+        let host = tokio::time::timeout(TIMEOUT, launched.recv()).await;
+        let host = host.unwrap().unwrap();
+        if Some(host.pid) == running {
+            break host;
+        }
+    };
+    assert_eq!(host.started().await, scene_id(1));
     assert_ne!(host.pid, spare.pid);
     eventually(|| spare.killed()).await;
     assert!(nothing_delivered(&mut receiver).await);
