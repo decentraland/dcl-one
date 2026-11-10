@@ -8,6 +8,8 @@ all-features = true
 [advisories]
 version = 2
 yanked = "warn"
+# Unsound advisories default to direct dependencies only; check the whole graph like the others.
+unsound = "all"
 # Baseline of 2026-11-09: every advisory the lock already had, so the gate fails only on new ones.
 # Remove an entry once its crate is bumped or dropped; cargo deny warns about entries that no longer match.
 ignore = [
@@ -29,5 +31,5 @@ ignore = [
 [bans]
 multiple-versions = "allow"
 wildcards = "allow"
-# One V8 in the SDK7 scene host: a second v8 links two engines.
-deny = [{ crate = "v8", deny-multiple-versions = true }]
+# One V8 in the SDK7 scene host: a second v8, or the engine-agnostic v8x backend, links two engines.
+deny = [{ crate = "v8", deny-multiple-versions = true }, { crate = "v8x" }]
