@@ -256,17 +256,60 @@ describe('resolveComponent', () => {
       })
 
       expect(codes(result)).toEqual(['identity-uncertain'])
-      expect(!result.ok && result.errors[0]!.action).toMatch(/Do not treat it as a missing mapping/)
+      expect(!result.ok && result.errors[0]!.action).toMatch(
+        /do not treat it as a missing mapping/i
+      )
     })
 
     it('should report identity-uncertain for a name lookup without a capture', async () => {
-      const { mappingRoot } = await library()
-
-      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+      const { root } = await library()
+      await writeFile(path.join(root, 'upstream.lock.json'), lock('e'.repeat(40)))
+      const result = await resolveComponent(context(path.join(root, 'src'), { figmaSets: [] }), {
         name: 'Button'
       })
 
       expect(codes(result)).toEqual(['identity-uncertain'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toEqual({
+        reason: 'name',
+        name: 'Button',
+        captureRevision: 'e'.repeat(40)
+      })
+      // The action sends the caller back for a node id; it is not a missing-component report.
+      expect(error!.action).toMatch(/Resolve again with the component set nodeId/)
+      expect(error!.action).not.toMatch(/Report/)
+    })
+
+    it('should tell the caller that a variant id needs its set id without a capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:2'
+      })
+
+      expect(!result.ok && result.errors[0]!.action).toMatch(
+        /resolve again with its component set id/
+      )
+    })
+
+    it('should report several mappings claiming one node as a library defect to report', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource(),
+          'Copy.figma.ts': mappingSource({ id: 'copy' })
+        }
+      })
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(codes(result)).toEqual(['identity-ambiguous'])
+      const [error] = !result.ok ? result.errors : []
+      expect(error!.details).toMatchObject({
+        reason: 'mappings',
+        nodeId: '1:1',
+        files: ['src/Button.figma.ts', 'src/Copy.figma.ts']
+      })
+      expect(error!.action).toMatch(/library defect/)
     })
 
     it('should report identity-not-found for a node outside the capture with no mapping', async () => {
@@ -335,21 +378,66 @@ describe('resolveComponent', () => {
 
     it.each([
       ['a short revision', lock('abc')],
-      ['no figma-design-system source', JSON.stringify({ sources: [] })]
-    ])('should fail closed on a lock with %s', async (_label, text) => {
-      const { root, mappingRoot } = await library()
-      await writeFile(path.join(root, 'upstream.lock.json'), text)
+      ['no figma-design-system source', JSON.stringify({ sources: [] })],
+      ['text that is not JSON', '{not json']
+    ])(
+      'should resolve with a capture-revision-unknown warning on a lock with %s',
+      async (_label, text) => {
+        const { root, mappingRoot } = await library()
+        await writeFile(path.join(root, 'upstream.lock.json'), text)
 
-      await expect(resolveComponent(context(mappingRoot), { nodeId: '1-1' })).rejects.toThrow(
-        'pins no full figma-design-system capture revision'
-      )
+        const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+          nodeId: '1-1'
+        })
+
+        expect(result.ok).toBe(true)
+        expect(result.warnings.map((w) => w.code)).toContain('capture-revision-unknown')
+        expect(result.ok && 'capture' in result.resolved.provenance).toBe(false)
+      }
+    )
+  })
+
+  describe('when a request names an Object member', () => {
+    it.each(['toString', '__proto__', 'constructor'])(
+      'should refuse the variant value %s instead of rendering an inherited member',
+      async (value) => {
+        const { mappingRoot } = await library()
+
+        const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+          nodeId: '1:1',
+          variantProperties: JSON.parse(`{"Kind":${JSON.stringify(value)}}`)
+        })
+
+        expect(codes(result)).toEqual(['variant-unsupported'])
+      }
+    )
+
+    it('should refuse a Figma property named __proto__ against the capture', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot), {
+        nodeId: '1:1',
+        variantProperties: JSON.parse('{"__proto__":"x"}')
+      })
+
+      expect(codes(result)).toEqual(['variant-not-in-figma'])
     })
 
-    it('should fail closed on a lock that is not JSON', async () => {
-      const { root, mappingRoot } = await library()
-      await writeFile(path.join(root, 'upstream.lock.json'), '{not json')
+    it('should not take an inherited member as text for a text layer', async () => {
+      const { mappingRoot } = await library({
+        mappings: {
+          'Button.figma.ts': mappingSource({
+            body: "const labelLayer = instance.findText('toString')\nconst label = labelLayer.type === 'TEXT' ? labelLayer.textContent : ''"
+          }).replace('>Label</', '>${label}</')
+        }
+      })
 
-      await expect(resolveComponent(context(mappingRoot), { nodeId: '1-1' })).rejects.toThrow()
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        texts: {}
+      })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="">toString</Button>')
     })
   })
 
@@ -394,6 +482,53 @@ describe('checkMappings', () => {
       expect(results[0]!.diagnostics.map((d) => d.code)).toContain('identity-not-found')
     })
   })
+  describe('when two mappings collide', () => {
+    it.each([
+      [
+        'on the Figma node',
+        { 'Copy.figma.ts': mappingSource({ id: 'copy' }) },
+        { reason: 'duplicate-node', nodeId: '1:1' },
+        /one mapping per component set/
+      ],
+      [
+        'on the template id',
+        { 'Copy.figma.ts': mappingSource({ nodeId: '1-9' }) },
+        { reason: 'duplicate-id', id: 'button' },
+        /its own id/
+      ]
+    ])(
+      'should report %s with both files and a maintainer action',
+      async (_l, extra, details, action) => {
+        const { mappingRoot } = await library({
+          mappings: { 'Button.figma.ts': mappingSource(), ...extra }
+        })
+
+        const results = await checkMappings(context(mappingRoot, { figmaSets: [] }))
+        const found = results
+          .flatMap((r) => r.diagnostics)
+          .find((d) => d.code === 'identity-ambiguous')!
+
+        expect(found.details).toMatchObject({
+          ...details,
+          files: ['src/Button.figma.ts', 'src/Copy.figma.ts']
+        })
+        expect(found.action).toMatch(action)
+      }
+    )
+
+    it('should give a mapping outside the capture the maintainer action', async () => {
+      const { mappingRoot } = await library({
+        mappings: { 'Button.figma.ts': mappingSource({ nodeId: '9-9' }) }
+      })
+
+      const [result] = await checkMappings(context(mappingRoot))
+      const found = result!.diagnostics.find((d) => d.code === 'identity-not-found')!
+
+      expect(found.details).toMatchObject({ reason: 'mapping-node', file: 'src/Button.figma.ts' })
+      expect(found.action).toMatch(/Point the mapping at the captured component set/)
+    })
+  })
+
   describe('when a ready page under sync generates a component with the hand-written name', () => {
     it('should report the hand-written mapping as superseded instead of failing on its old node', async () => {
       const { mappingRoot } = await library({

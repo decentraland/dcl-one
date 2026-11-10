@@ -113,9 +113,15 @@ function nearestVariants(set: FigmaSet, requested: Record<string, string>) {
     .map((entry) => entry.name)
 }
 
+// Only own keys count: a Figma property or variant value named like an Object member ("toString",
+// "__proto__") must not match an inherited member of a parsed record.
+const own = <T>(record: Record<string, T>, key: string): T | undefined =>
+  Object.hasOwn(record, key) ? record[key] : undefined
+
 function identify(
   ctx: ResolveContext,
-  input: ResolveInput
+  input: ResolveInput,
+  captureRevision: string | undefined
 ): { errors: Diagnostic[]; set?: FigmaSet; setId?: string; variantId?: string } {
   if (!input.nodeId && !input.name) {
     return {
@@ -149,7 +155,10 @@ function identify(
         diagnostic(
           'identity-ambiguous',
           `"${input.name}" names ${matches.length} Figma components. Pass the nodeId instead.`,
-          { candidates: matches.map((m) => ({ nodeId: m.setId, name: m.name, page: m.page })) }
+          {
+            reason: 'name',
+            candidates: matches.map((m) => ({ nodeId: m.setId, name: m.name, page: m.page }))
+          }
         )
       ]
     }
@@ -161,14 +170,16 @@ function identify(
           ? diagnostic(
               'identity-uncertain',
               `No Figma capture is available to look up "${input.name}" by name. Pass the nodeId.`,
-              { name: input.name }
+              {
+                reason: 'name',
+                name: input.name,
+                ...(captureRevision ? { captureRevision } : {})
+              }
             )
           : diagnostic(
               'identity-not-found',
               `No captured Figma component is named "${input.name}".`,
-              {
-                name: input.name
-              }
+              { reason: 'name', name: input.name }
             )
       ]
     }
@@ -185,18 +196,21 @@ function renderUsage(
   const values = new Map<string, string>()
   for (const local of mapping.locals) {
     if (local.kind === 'enum') {
-      const picked = selection[local.figmaProperty]
-      values.set(local.local, picked !== undefined ? (local.values[picked] ?? '') : '')
+      const picked = own(selection, local.figmaProperty)
+      values.set(local.local, picked !== undefined ? (own(local.values, picked) ?? '') : '')
     } else if (local.kind === 'boolean') {
-      const picked = selection[local.figmaProperty]?.toLowerCase()
+      const picked = own(selection, local.figmaProperty)?.toLowerCase()
       values.set(
         local.local,
         ['true', 'yes', 'on'].includes(picked ?? '') ? local.whenTrue : local.whenFalse
       )
     } else if (local.kind === 'string') {
-      values.set(local.local, input.texts?.[local.figmaProperty] ?? local.figmaProperty)
+      values.set(
+        local.local,
+        (input.texts && own(input.texts, local.figmaProperty)) ?? local.figmaProperty
+      )
     } else {
-      values.set(local.local, input.texts?.[local.layer] ?? local.layer)
+      values.set(local.local, (input.texts && own(input.texts, local.layer)) ?? local.layer)
     }
   }
   const usage = mapping.example!.replace(/\$\{([^}]+)\}/g, (_, expression: string) => {
@@ -236,15 +250,15 @@ function translate(mapping: ParsedMapping, selection: Record<string, string>): P
   return mapping.locals.map((local): PropTranslation => {
     const codeProp = codePropOf(local, mapping.example ?? '')
     if (local.kind === 'enum') {
-      const picked = selection[local.figmaProperty]
+      const picked = own(selection, local.figmaProperty)
       return {
         figmaProperty: local.figmaProperty,
         figmaType: 'VARIANT',
         codeProp,
         values: Object.entries(local.values).map(([figma, code]) => ({ figma, code: code.trim() })),
         selected:
-          picked !== undefined && picked in local.values
-            ? { figma: picked, code: local.values[picked]!.trim() }
+          picked !== undefined && own(local.values, picked) !== undefined
+            ? { figma: picked, code: own(local.values, picked)!.trim() }
             : undefined,
         note: codeProp ? undefined : 'No prop name could be read from the example'
       }
@@ -297,10 +311,22 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
     )
   }
 
-  const identity = identify(ctx, input)
+  // The revision is provenance only: an unreadable lock is reported, never a reason to refuse the resolve.
+  let captureRevision: string | undefined
+  try {
+    captureRevision = await readCaptureRevision(library.rootDir)
+  } catch (error) {
+    warnings.push(
+      diagnostic(
+        'capture-revision-unknown',
+        `The library lock pins no readable capture revision: ${(error as Error).message}`
+      )
+    )
+  }
+
+  const identity = identify(ctx, input, captureRevision)
   if (identity.errors.length) return fail(identity.errors, warnings)
 
-  const captureRevision = await readCaptureRevision(library.rootDir)
   const mappings = await loadMappings(library, ctx.mappingRoot)
   const candidates = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
   if (candidates.length === 0) {
@@ -312,12 +338,16 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
             ? diagnostic(
                 'identity-uncertain',
                 `No Figma capture is available and no mapping names node ${identity.setId}, so it cannot be established whether it is a library component.`,
-                { nodeId: identity.setId, ...(captureRevision ? { captureRevision } : {}) }
+                {
+                  reason: 'node',
+                  nodeId: identity.setId,
+                  ...(captureRevision ? { captureRevision } : {})
+                }
               )
             : diagnostic(
                 'identity-not-found',
                 `Figma node ${identity.setId} is not a component of the captured library.`,
-                { nodeId: identity.setId }
+                { reason: 'node', nodeId: identity.setId }
               )
         ],
         warnings
@@ -358,7 +388,10 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
           'identity-ambiguous',
           `${candidates.length} mappings claim Figma node ${identity.setId}.`,
           {
-            candidates: candidates.map((m) => path.relative(library.rootDir, m.file))
+            reason: 'mappings',
+            nodeId: identity.setId,
+            files: candidates.map((m) => path.relative(library.rootDir, m.file)),
+            ...(captureRevision ? { captureRevision } : {})
           }
         )
       ],
@@ -395,7 +428,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
 
   if (set) {
     for (const [name, value] of Object.entries(selection)) {
-      const property = set.properties[name]
+      const property = own(set.properties, name)
       if (!property || (property.options && !property.options.includes(value))) {
         return fail(
           [
@@ -432,8 +465,8 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
 
   for (const local of mapping.locals) {
     if (local.kind !== 'enum') continue
-    const picked = selection[local.figmaProperty]
-    if (picked !== undefined && !(picked in local.values)) {
+    const picked = own(selection, local.figmaProperty)
+    if (picked !== undefined && own(local.values, picked) === undefined) {
       return fail(
         [
           diagnostic(
@@ -529,7 +562,8 @@ async function checkMappings(
         found.push(
           diagnostic(
             'identity-not-found',
-            `${rel}: Figma node ${mapping.figma.nodeId} is not in the capture`
+            `${rel}: Figma node ${mapping.figma.nodeId} is not in the capture`,
+            { reason: 'mapping-node', file: rel, nodeId: mapping.figma.nodeId }
           )
         )
       }
@@ -539,7 +573,8 @@ async function checkMappings(
         found.push(
           diagnostic(
             'identity-ambiguous',
-            `${rel} and ${previous} map the same Figma node ${mapping.figma.nodeId}`
+            `${rel} and ${previous} map the same Figma node ${mapping.figma.nodeId}`,
+            { reason: 'duplicate-node', files: [previous, rel], nodeId: mapping.figma.nodeId }
           )
         )
       }
@@ -551,7 +586,8 @@ async function checkMappings(
         found.push(
           diagnostic(
             'identity-ambiguous',
-            `${rel} and ${previous} share the template id "${mapping.id}"`
+            `${rel} and ${previous} share the template id "${mapping.id}"`,
+            { reason: 'duplicate-id', files: [previous, rel], id: mapping.id }
           )
         )
       }

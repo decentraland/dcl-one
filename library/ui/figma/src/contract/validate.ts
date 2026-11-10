@@ -115,7 +115,9 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
   for (const local of mapping.locals) {
     if (local.kind === 'text') continue
     read.add(local.figmaProperty)
-    const property = set.properties[local.figmaProperty]
+    const property = Object.hasOwn(set.properties, local.figmaProperty)
+      ? set.properties[local.figmaProperty]
+      : undefined
     if (!property) {
       found.push(
         incompatible(
@@ -127,7 +129,7 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
       continue
     }
     if (local.kind === 'enum' && property.options) {
-      const uncovered = property.options.filter((option) => !(option in local.values))
+      const uncovered = property.options.filter((option) => !Object.hasOwn(local.values, option))
       const stale = Object.keys(local.values).filter((key) => !property.options!.includes(key))
       if (uncovered.length > 0) {
         found.push(
@@ -152,7 +154,7 @@ function validateAgainstFigma(mapping: ParsedMapping, set: FigmaSet): Diagnostic
 
   for (const state of mapping.header.states) {
     read.add(state)
-    if (!set.properties[state]) {
+    if (!Object.hasOwn(set.properties, state)) {
       found.push(
         diagnostic(
           'figma-drift',

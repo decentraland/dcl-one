@@ -2424,7 +2424,8 @@
             "port:7ade025b",
             "port:30ca0608",
             "live-access-removed",
-            "live-read-restored"
+            "live-read-restored",
+            "resolver-contract"
           ]
         },
         "library/ui/figma/src/consumer.test.ts": {
@@ -3761,7 +3762,10 @@
           "fds": {
             "path": "dcl-mcp-figma/src/tools/contract.ts",
             "sha256": "0fd585ba8c1895767b3563571695edd4148c30db3196e0e7d3e0f3b954a2259b"
-          }
+          },
+          "deviation": [
+            "resolver-contract"
+          ]
         },
         "library/ui/figma/src/tools/icon-export.test.ts": {
           "sha256": "f8dde2b09bd65fbe51005a618f38118aba46778709f0f608ca04ed3d2e0a2fb9",
@@ -4182,7 +4186,7 @@
         "predates": "These files differed from figma-design-system at the code base before this pull request and are byte-identical to 67a95f89: earlier ports, the keyless form and this tree's layout. This pull request does not change them; listing each file's older reason is a follow-up.",
         "public-foundations-integrity": "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests.",
         "request-scope-hardening": "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port.",
-        "resolver-contract": "One diagnostic registry (src/contract/diagnostics.ts) gives every code its severity, audience and action, with per-reason actions for contract-incompatible; diagnostics-docs.test.ts fails when the SKILL.md or MAINTENANCE.md table differs from it. The unused mapping-unreadable code is removed. mapping-missing is returned only for a captured library component and carries the contributor report context; an unmapped node without a capture is the new identity-uncertain, and a node outside the capture is identity-not-found. --mapping-only (CLI and MCP server) loads no Figma config, never reads the capture cache and registers only figma_resolve_component and figma_check_mappings; its mapping root defaults to library/ui/components. The CLI gains --text for parity with the MCP texts input and refuses malformed or repeated Name=Value flags. Resolve provenance names the capture revision the tracked lock pins. The cache error names both routes: fetch-source for maintainers, --mapping-only for consumers.",
+        "resolver-contract": "One diagnostic registry (src/contract/diagnostics.ts) gives every code its severity, audience and action, with per-reason actions for contract-incompatible; diagnostics-docs.test.ts fails when the SKILL.md or MAINTENANCE.md table differs from it. The unused mapping-unreadable code is removed. mapping-missing is returned only for a captured library component and carries the contributor report context; an unmapped node without a capture is the new identity-uncertain, and a node outside the capture is identity-not-found. --mapping-only (CLI and MCP server) loads no Figma config, never reads the capture cache and registers only figma_resolve_component and figma_check_mappings; its mapping root defaults to library/ui/components. The CLI gains --text for parity with the MCP texts input and refuses malformed or repeated Name=Value flags. Resolve provenance names the capture revision the tracked lock pins. The cache error names both routes: fetch-source for maintainers, --mapping-only for consumers. Review follow-up: identity codes carry a details.reason with their own action (a name lookup without a capture sends the caller back for a set node id; several mappings on one node and the check-mappings collisions are library defects with file details); an unreadable lock is the capture-revision-unknown warning instead of a thrown error; --mapping-only reads the contract block of the Figma config (argument, DCL_FIGMA_CONFIG or working directory) so its mapping root and library range still apply; record lookups use own keys only, so names such as __proto__ or toString never match inherited members.",
         "review-followup-2": "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "review-followup-3": "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",

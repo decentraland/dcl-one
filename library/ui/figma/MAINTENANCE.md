@@ -47,12 +47,13 @@ The contract is the library's Code Connect template files, read statically (neve
 | `unmapped-figma-property`     | warning  | consumer   |
 | `figma-drift`                 | warning  | consumer   |
 | `export-unverifiable`         | warning  | consumer   |
+| `capture-revision-unknown`    | warning  | consumer   |
 | `figma-identity-unverified`   | warning  | consumer   |
 | `superseded-by-sync`          | warning  | maintainer |
 | `superseded-pending`          | warning  | maintainer |
 
 - `dcl-figma check-mappings` (and the test `src/contract/integrity.test.ts`) fails CI on any mapping error or Figma drift.
-- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`, `--mapping-only`; without a config, or with `--mapping-only`, it registers only `figma_resolve_component` and `figma_check_mappings`. `--mapping-only` loads no Figma config and never reads the capture cache; the mapping root defaults to `library/ui/components`. The CLI takes the same flags plus `--text "Layer=Value"` (the MCP `texts` input). Resolve results name the capture revision the tracked lock pins in `provenance.capture.revision`. See `library/ui/README.md`.
+- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`, `--mapping-only`; without a config, or with `--mapping-only`, it registers only `figma_resolve_component` and `figma_check_mappings`. `--mapping-only` reads only the `contract` block of the Figma config (mapping root and library range) and never the capture cache; without one the mapping root defaults to `library/ui/components`. Without a capture only a component set id matches a mapping. The CLI takes the same flags plus `--text "Layer=Value"` (the MCP `texts` input). Resolve results name the capture revision the tracked lock pins in `provenance.capture.revision`. See `library/ui/README.md`.
 
 ## Data source: the fetched capture only
 

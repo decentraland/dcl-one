@@ -5,6 +5,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { createApp, type App } from './app.js'
 import { resolveContractConfig } from './contract/config.js'
+import { contractSchema } from './config.js'
 import { buildFigmaIndex } from './contract/figma-index.js'
 import type { ResolveContext } from './contract/resolve.js'
 import { promotionExclusion } from './promotion/eligibility.js'
@@ -17,7 +18,7 @@ type RuntimeOptions = {
   configPath?: string
   mappingRoot?: string
   libraryRange?: string
-  // Resolve against the mappings only: no Figma config is loaded and the capture cache is never read.
+  // Resolve against the mappings only: of the Figma config only its contract block is read, never the capture.
   mappingOnly?: boolean
 }
 
@@ -60,15 +61,38 @@ async function syncedComponents(app: App): Promise<Map<string, string[]>> {
 // The library's own mapping directory, the default mapping root under --mapping-only.
 const LIBRARY_MAPPING_ROOT = fileURLToPath(new URL('../../components', import.meta.url))
 
-function mappingOnlyRuntime(options: RuntimeOptions): Runtime {
-  if (options.configPath)
-    throw new Error('--mapping-only reads no Figma config; drop --config or drop --mapping-only')
+// Under --mapping-only only the `contract` block of the Figma config is read (its mapping root and library
+// range need no capture); the rest of the config, the app and the capture cache are never loaded.
+async function contractBlock(
+  configFile: string,
+  explicit: boolean
+): Promise<{ dir: string; mappingRoot?: string; libraryRange?: string } | undefined> {
+  if (!existsSync(configFile)) {
+    if (explicit) throw new Error(`Figma config not found: ${configFile}`)
+    return undefined
+  }
+  const parsed = contractSchema
+    .optional()
+    .safeParse((JSON.parse(await readFile(configFile, 'utf8')) as { contract?: unknown })?.contract)
+  if (!parsed.success)
+    throw new Error(
+      `${configFile}: contract must hold a string mappingRoot and an optional string libraryRange`
+    )
+  return { dir: path.dirname(configFile), ...parsed.data }
+}
+
+function mappingOnlyRuntime(
+  options: RuntimeOptions,
+  configFile: string,
+  explicit: boolean
+): Runtime {
   return {
     async resolveContext() {
       const contract = resolveContractConfig({
         cwd: options.cwd,
         args: { mappingRoot: options.mappingRoot, libraryRange: options.libraryRange },
-        env: options.env
+        env: options.env,
+        fileConfig: await contractBlock(configFile, explicit)
       })
       return {
         mappingRoot: contract.mappingRoot ?? LIBRARY_MAPPING_ROOT,
@@ -80,13 +104,13 @@ function mappingOnlyRuntime(options: RuntimeOptions): Runtime {
 }
 
 async function createRuntime(options: RuntimeOptions): Promise<Runtime> {
-  if (options.mappingOnly) return mappingOnlyRuntime(options)
   const { cwd, env } = options
   const configFile = path.resolve(
     cwd,
     options.configPath ?? env.DCL_FIGMA_CONFIG ?? 'figma.config.json'
   )
   const explicit = Boolean(options.configPath ?? env.DCL_FIGMA_CONFIG)
+  if (options.mappingOnly) return mappingOnlyRuntime(options, configFile, explicit)
   if (explicit && !existsSync(configFile)) {
     throw new Error(`Figma config not found: ${configFile}`)
   }

@@ -201,7 +201,8 @@ describe('figma from a consuming project', () => {
       [['--text', '=Go'], '--text takes "Name=Value"'],
       [['--text', 'Label=a', '--text', 'Label=b'], '--text names "Label" twice'],
       [['--variant', 'Blocked'], '--variant takes "Name=Value"'],
-      [['--config', 'figma.config.json'], '--mapping-only reads no Figma config']
+      [['--text', '__proto__=a', '--text', '__proto__=b'], '--text names "__proto__" twice'],
+      [['--config', 'missing.json'], 'Figma config not found']
     ])(
       'should refuse %j without resolving',
       async (flags, message) => {
