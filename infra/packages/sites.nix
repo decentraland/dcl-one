@@ -1,4 +1,4 @@
-{ lib, stdenv, runCommand, linkFarm, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs_26, nodejs-slim_26, makeWrapper, playWeb }:
+{ lib, stdenv, runCommand, linkFarm, fetchPnpmDeps, pnpmConfigHook, pnpm, nodejs_26, nodejs-slim_26, makeWrapper, playWeb, shopSettlement ? null }:
 let
   nodejs = nodejs_26;
   pnpm' = pnpm.override { nodejs-slim = nodejs-slim_26; };
@@ -60,12 +60,29 @@ let
       (root + /library/catalyst-api) (root + /library/shop)
     ];
   };
-in stdenv.mkDerivation {
-  pname = "foundation-sites";
+  # A build whose Shop settles credits on one chain through one CreditsManager: the two VITE_*
+  # the Shop reads at build time (apps/ui3/src/shop/checkout/chain/config.ts), which apply only to
+  # the chain named here. Null is the plain build, unchanged.
+  settlement =
+    if shopSettlement == null then null
+    else
+      assert lib.assertMsg (builtins.elem shopSettlement.chainId [ 137 80002 ])
+        "shopSettlement.chainId must be 137 (Polygon) or 80002 (Amoy)";
+      assert lib.assertMsg (builtins.match "0x[0-9a-f]{40}" shopSettlement.creditsManager != null)
+        "shopSettlement.creditsManager must be a lowercase 0x-prefixed 20-byte address";
+      shopSettlement;
+  settlementSuffix = lib.optionalString (settlement != null) "-chain${toString settlement.chainId}-credits";
+in stdenv.mkDerivation ({
+  pname = "foundation-sites${settlementSuffix}";
   inherit version src pnpmDeps;
   sourceRoot = "${src.name}/apps/sites";
   nativeBuildInputs = [ nodejs pnpmConfigHook pnpm' makeWrapper ];
-  env.NODE_OPTIONS = "--max-old-space-size=4096";
+  env = {
+    NODE_OPTIONS = "--max-old-space-size=4096";
+  } // lib.optionalAttrs (settlement != null) {
+    VITE_SHOP_CHAIN_ID = toString settlement.chainId;
+    VITE_SHOP_CREDITS_MANAGER = settlement.creditsManager;
+  };
   buildPhase = ''
     runHook preBuild
     chmod -R u+w ..
@@ -94,6 +111,16 @@ in stdenv.mkDerivation {
     test -s "$out/content/docs/manifest.json"
     runHook postInstall
   '';
-  passthru = { inherit pnpmDeps runtimeDeps docsContent playWeb toolchain; };
+  passthru = { inherit pnpmDeps runtimeDeps docsContent playWeb toolchain; shopSettlement = settlement; };
   meta.mainProgram = "sites-server";
-}
+} // lib.optionalAttrs (settlement != null) {
+  # Names the settlement the build carries next to the build it shaped, and fails the build if the
+  # client bundle doesn't carry the manager: the VITE_* never reached it.
+  postInstall = ''
+    if ! grep -rqF ${settlement.creditsManager} "$out/build/client"; then
+      echo "the client bundle doesn't carry VITE_SHOP_CREDITS_MANAGER (${settlement.creditsManager})" >&2
+      exit 1
+    fi
+    printf '{"chainId":%s,"creditsManager":"%s"}\n' ${toString settlement.chainId} ${settlement.creditsManager} > "$out/shop-settlement.json"
+  '';
+})

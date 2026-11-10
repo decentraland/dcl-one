@@ -251,6 +251,11 @@ pub struct EconomyConfig {
     #[arg(long, env = "MAX_GAS_LIMIT", default_value_t = 1_500_000)]
     pub max_gas_limit: u64,
 
+    /// The highest fee per gas, in wei, the direct relay signer signs: EIP-1559
+    /// `max_fee_per_gas`, a legacy `gas_price`. Unset, no cap; required under CREDITS_TRIAL_MODE.
+    #[arg(long, env = "RELAYER_MAX_FEE_PER_GAS_WEI")]
+    pub relayer_max_fee_per_gas_wei: Option<u128>,
+
     #[arg(long, env = "OZ_RELAYER_URL")]
     pub oz_relayer_url: Option<String>,
 
@@ -438,6 +443,18 @@ pub struct ShopConfig {
     /// The CREDITS_REVOKER_ROLE signer of revokeCredits (`_FILE` only); unset, revocations queue in credits.revocations.
     #[arg(long, env = "CREDITS_REVOKER_KEY", hide_env_values = true)]
     pub credits_revoker_key: Option<String>,
+
+    /// A closed trial of on-chain credits: only CREDITS_TRIAL_BUYERS get new credit
+    /// authorizations, the MANA top-up routes refuse, and the node refuses to start with a card
+    /// rail, a mock card, a relay fallback, an uncapped relay or no revoker.
+    #[arg(long, env = "CREDITS_TRIAL_MODE", default_value_t = false, action = clap::ArgAction::Set)]
+    pub credits_trial_mode: bool,
+
+    /// The trial's buyers, comma-separated addresses (or `_FILE`): the root signer of a request's
+    /// auth chain must be one of them. Empty or unset under CREDITS_TRIAL_MODE: no new credit is
+    /// authorized.
+    #[arg(long, env = "CREDITS_TRIAL_BUYERS", hide_env_values = true)]
+    pub credits_trial_buyers: Option<String>,
 
     /// Empty: the Stripe Checkout order flow answers 503.
     #[arg(long, env = "CREDITS_CHECKOUT_SUCCESS_URL", default_value = "")]

@@ -115,6 +115,13 @@ pub struct Settings {
     pub max_gas_price_allowed_in_wei: Option<u128>,
     /// `MAX_GAS_LIMIT` (1500000): the direct signer's gas cap; 0 disables it.
     pub max_gas_limit: u64,
+    /// `RELAYER_MAX_FEE_PER_GAS_WEI`: the highest fee per gas the relay's collections-chain
+    /// signer signs (EIP-1559 `max_fee_per_gas`, a legacy `gas_price`); unset, no cap. The NAMEs
+    /// chain signer and the credits revoker keep their own fees.
+    pub relayer_max_fee_per_gas_wei: Option<u128>,
+    /// `CREDITS_TRIAL_MODE` (false): the relay broadcasts through its own direct signer
+    /// only, capped, on the collections chain alone (see [`Economy::new`]).
+    pub trial_mode: bool,
     /// `OZ_RELAYER_URL`, `OZ_RELAYER_ID`, `OZ_RELAYER_API_KEY` (`_FILE`): the OZ Defender relayer, active with all three.
     pub oz_relayer_url: Option<String>,
     pub oz_relayer_id: Option<String>,
@@ -163,6 +170,8 @@ impl Settings {
             polygon_rpc_url: None,
             max_gas_price_allowed_in_wei: None,
             max_gas_limit: 1_500_000,
+            relayer_max_fee_per_gas_wei: None,
+            trial_mode: false,
             oz_relayer_url: None,
             oz_relayer_id: None,
             oz_relayer_api_key: None,
@@ -212,6 +221,44 @@ impl Settings {
 
     pub fn has_rpc(&self) -> bool {
         Self::has(&self.polygon_rpc_url)
+    }
+
+    /// Under `CREDITS_TRIAL_MODE` the relay's one route is its own direct signer on the
+    /// collections chain, capped in gas and in fee per gas: any OZ or upstream setting, even
+    /// an incomplete one, is a second route and refuses the start, and so does a signer that
+    /// would not be built or would run uncapped. Names variables, never values.
+    pub fn refuse_an_open_trial_relay(&self) -> anyhow::Result<()> {
+        let fallbacks: Vec<&str> = [
+            ("OZ_RELAYER_URL", &self.oz_relayer_url),
+            ("OZ_RELAYER_ID", &self.oz_relayer_id),
+            ("OZ_RELAYER_API_KEY", &self.oz_relayer_api_key),
+            ("TRANSACTIONS_UPSTREAM_URL", &self.transactions_upstream_url),
+        ]
+        .into_iter()
+        .filter(|(_, value)| Self::has(value))
+        .map(|(name, _)| name)
+        .collect();
+        if !fallbacks.is_empty() {
+            anyhow::bail!(
+                "CREDITS_TRIAL_MODE relays through its own signer only: unset {}",
+                fallbacks.join(", ")
+            );
+        }
+        if !(self.meta_tx_broadcast_enabled
+            && Self::has(&self.relayer_private_key)
+            && self.has_rpc())
+        {
+            anyhow::bail!(
+                "CREDITS_TRIAL_MODE needs the direct signer: META_TX_BROADCAST_ENABLED=true, RELAYER_PRIVATE_KEY_FILE and RPC_ENDPOINT_POLYGON"
+            );
+        }
+        if self.max_gas_limit == 0 {
+            anyhow::bail!("CREDITS_TRIAL_MODE needs a positive MAX_GAS_LIMIT (0 is no cap)");
+        }
+        if !self.relayer_max_fee_per_gas_wei.is_some_and(|cap| cap > 0) {
+            anyhow::bail!("CREDITS_TRIAL_MODE needs a positive RELAYER_MAX_FEE_PER_GAS_WEI");
+        }
+        Ok(())
     }
 
     pub fn has_direct_broadcast(&self) -> bool {
@@ -300,6 +347,9 @@ impl State {
     /// The log lines name the mode and the relayer address, never a URL or
     /// a key.
     pub fn new(pool: PgPool, http: Outbound, settings: Settings) -> anyhow::Result<Self> {
+        if settings.trial_mode {
+            settings.refuse_an_open_trial_relay()?;
+        }
         let chain = settings
             .polygon_rpc_url
             .as_deref()
@@ -322,24 +372,29 @@ impl State {
             .as_deref()
             .map(str::trim)
             .filter(|k| !k.is_empty());
-        let build_signer =
-            |chain: &Arc<ChainComponent>, chain_id: u64| -> anyhow::Result<Arc<DirectSigner>> {
-                Ok(Arc::new(
-                    DirectSigner::new(
-                        chain.clone(),
-                        key.expect("a key gates the signer"),
-                        chain_id,
-                        settings.max_gas_limit,
-                        settings.receipt_poll_interval,
-                        settings.receipt_timeout,
-                    )
-                    .map_err(anyhow::Error::msg)?,
-                ))
-            };
+        let build_signer = |chain: &Arc<ChainComponent>,
+                            chain_id: u64,
+                            max_fee_per_gas: Option<u128>|
+         -> anyhow::Result<Arc<DirectSigner>> {
+            Ok(Arc::new(
+                DirectSigner::new(
+                    chain.clone(),
+                    key.expect("a key gates the signer"),
+                    chain_id,
+                    settings.max_gas_limit,
+                    settings.receipt_poll_interval,
+                    settings.receipt_timeout,
+                )
+                .map_err(anyhow::Error::msg)?
+                .with_max_fee_per_gas(max_fee_per_gas),
+            ))
+        };
         let signer = match (&chain, key, settings.meta_tx_broadcast_enabled) {
-            (Some(chain), Some(_), true) => {
-                Some(build_signer(chain, settings.collections_chain_id)?)
-            }
+            (Some(chain), Some(_), true) => Some(build_signer(
+                chain,
+                settings.collections_chain_id,
+                settings.relayer_max_fee_per_gas_wei,
+            )?),
             (None, Some(_), true) => {
                 anyhow::bail!(
                     "META_TX_BROADCAST_ENABLED=true and RELAYER_PRIVATE_KEY set, but RPC_ENDPOINT_POLYGON is empty"
@@ -355,6 +410,8 @@ impl State {
             .map(|url| {
                 UpstreamForwarder::new(http.clone(), url, settings.transactions_upstream_timeout)
             });
+        // A trial's relayer key signs on the collections chain alone: it is never reused as
+        // the NAMEs chain signer, whose ETH_RPC_URL a mirror always sets.
         let eth_signer = match (
             settings
                 .eth_rpc_url
@@ -364,10 +421,11 @@ impl State {
             key,
             settings.meta_tx_broadcast_enabled,
         ) {
+            _ if settings.trial_mode => None,
             (Some(url), Some(_), true) => {
                 let eth_chain =
                     Arc::new(ChainComponent::new(http.clone(), url, DEFAULT_RPC_TIMEOUT));
-                Some(build_signer(&eth_chain, settings.names_chain_id)?)
+                Some(build_signer(&eth_chain, settings.names_chain_id, None)?)
             }
             _ => None,
         };
