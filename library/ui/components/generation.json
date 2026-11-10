@@ -100,8 +100,8 @@
     },
     {
       "path": "library/ui/figma/public-output.mjs",
-      "sha256": "8146a5f8676b47bd7a1fb24582932dbb766f02eaed11341854f1ad7ba581cc4f",
-      "indexBlobSha": "68edcbc05a8bba9e1546f120729dd732d8877721"
+      "sha256": "167790e0961f1cfc6a0559522840be149e7f84c042da9e8d1620f132d7086542",
+      "indexBlobSha": "f4f2927ac737d3dc1ed9e5eed115191af29a9e8f"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-interactions.tsx",
@@ -415,8 +415,8 @@
     },
     {
       "path": "library/ui/figma/src/install.ts",
-      "sha256": "70ae052b2c0709b8f46cdff0e5042c4eeb7033da88ea46ee8b99522982d4222e",
-      "indexBlobSha": "bed8524a9614b387da768eafcf249b4051d28216"
+      "sha256": "cfbb7325dcf5a96d38c79113967fa14ea2a08f489dd0d8e7b6acecf37cd7eb08",
+      "indexBlobSha": "f79ddf50d920740b1508fe49791ff319598f0383"
     },
     {
       "path": "library/ui/figma/src/ir/components.ts",
