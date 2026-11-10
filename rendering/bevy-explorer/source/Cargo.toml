@@ -313,7 +313,10 @@ async-fs = "2.0"
 base64 = "0.22"
 # EXT_meshopt_compression pre-pass (src/meshopt_ext.rs): `extensions` reads the bufferView
 # extension objects, `utils` gives the tests the primitive reader
-gltf = { version = "1.4", default-features = false, features = ["extensions", "utils"] }
+gltf = { version = "1.4", default-features = false, features = [
+  "extensions",
+  "utils",
+] }
 meshopt = "=0.6.2"
 aes = "0.8"
 cbc = { version = "0.1", features = ["alloc"] }
