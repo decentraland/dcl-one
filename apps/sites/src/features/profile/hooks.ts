@@ -18,8 +18,22 @@ import {
 } from "@/data/lib/profile/queries";
 import { EMPTY_ASSETS, mapAssets, type ProfileAssets } from "@/data/lib/profile/view";
 
+import { isRouteFatal } from "./errors";
+
 export function useProfile(address: string) {
   return useQuery({ ...profileQuery(address), enabled: canReadProfile(address) });
+}
+
+/**
+ * The profile a profile page cannot render without. A failure with nothing cached reaches the route's
+ * boundary; a failed background refetch keeps the profile on screen.
+ */
+export function useRequiredProfile(address: string) {
+  return useQuery({
+    ...profileQuery(address),
+    enabled: canReadProfile(address),
+    throwOnError: (error, query) => query.state.data === undefined && isRouteFatal(error),
+  });
 }
 
 /** Creations are relabelled with the profile's display name, as the creator's own page shows them. */
@@ -69,5 +83,7 @@ export function useMyCommunities(identity: AuthIdentity | null, enabled = true) 
     queryKey: options?.queryKey ?? profileKeys.myCommunities(""),
     queryFn: identity && enabled ? myCommunitiesQuery(identity).queryFn : skipToken,
     staleTime: PROFILE_STALE_MS,
+    // A failed read is reported once; returning to the tab does not retry it on every focus.
+    refetchOnWindowFocus: false,
   });
 }
