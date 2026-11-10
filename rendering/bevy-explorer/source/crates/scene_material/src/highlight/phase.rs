@@ -40,9 +40,9 @@ use bevy::{
 };
 use nonmax::NonMaxU32;
 
-use super::Highlight;
+use super::{Highlight, HighlightCanvasScale};
 
-/// The mask the silhouettes are drawn into, blurred in and composited from.
+/// The masks the silhouettes are drawn into and the glow is blurred into.
 pub const MASK_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 
 /// The view key bits that choose the mesh view bind group layout.
@@ -368,6 +368,7 @@ pub fn queue_highlight_meshes(
     mut uniforms: ResMut<HighlightItemUniforms>,
     views: Query<(&ExtractedView, &RenderVisibleEntities)>,
     highlighted: Query<&Highlight>,
+    canvas_scale: Res<HighlightCanvasScale>,
 ) {
     uniforms.buffer.clear();
     if highlighted.is_empty() {
@@ -411,7 +412,7 @@ pub fn queue_highlight_meshes(
                 };
             let uniform_offset = uniforms.buffer.push(&HighlightItemUniform {
                 color: highlight.color.to_vec4(),
-                width_px: highlight.width_px,
+                width_px: highlight.width_px * canvas_scale.0,
             });
             phase.add(HighlightMaskItem {
                 sort_key: FloatOrd(rangefinder.distance_translation(&mesh_instance.translation)),

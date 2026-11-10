@@ -1,5 +1,6 @@
-//! The glow from the mask: blurred between its two masks, cut out where the meshes themselves are, and blended
-//! over the frame with no depth test (highlight_blur.wgsl, highlight_composite.wgsl).
+//! The glow from the mask: blurred into a target sized from the canvas, then blended over the
+//! frame with no depth test, except where the meshes themselves are (highlight_blur.wgsl,
+//! highlight_composite.wgsl).
 
 use bevy::{
     core_pipeline::fullscreen_vertex_shader::fullscreen_shader_vertex_state,
@@ -27,14 +28,23 @@ use bevy::{
 
 use super::{
     phase::{DrawHighlightPunch, HighlightMaskItem, MASK_FORMAT},
-    BLUR_ITERATIONS, BLUR_OFFSETS, BLUR_WEIGHTS,
+    HighlightCanvasScale, BLUR_OFFSETS, BLUR_WEIGHTS, GLOW_RESOLUTION,
 };
 
-/// The view's mask and the blur's intermediate target, at the view's size.
+/// The view's mask, at the view's size, and the blurred glow, at `GLOW_RESOLUTION` of the canvas.
 #[derive(Component)]
 pub struct HighlightTextures {
-    mask_a: CachedTexture,
-    mask_b: CachedTexture,
+    mask: CachedTexture,
+    glow: CachedTexture,
+}
+
+/// The glow target's size for a view of `viewport` render pixels: a share of the canvas, not of
+/// the render target, so the blur spreads as far on screen at every render scale.
+fn glow_size(viewport: UVec2, canvas_scale: f32) -> UVec2 {
+    (viewport.as_vec2() * GLOW_RESOLUTION / canvas_scale.max(0.01))
+        .ceil()
+        .as_uvec2()
+        .max(UVec2::ONE)
 }
 
 /// Masks for the views with something highlighted; none for the rest.
@@ -42,6 +52,7 @@ pub fn prepare_highlight_textures(
     mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
+    canvas_scale: Res<HighlightCanvasScale>,
     phases: Res<ViewSortedRenderPhases<HighlightMaskItem>>,
     views: Query<(Entity, &ExtractedView, Has<HighlightTextures>), With<ViewTarget>>,
 ) {
@@ -55,17 +66,17 @@ pub fn prepare_highlight_textures(
             }
             continue;
         }
-        let size = Extent3d {
-            width: view.viewport.z.max(1),
-            height: view.viewport.w.max(1),
-            depth_or_array_layers: 1,
-        };
-        let mut mask = |label| {
+        let viewport = view.viewport.zw().max(UVec2::ONE);
+        let mut texture = |label, size: UVec2| {
             texture_cache.get(
                 &device,
                 TextureDescriptor {
                     label: Some(label),
-                    size,
+                    size: Extent3d {
+                        width: size.x,
+                        height: size.y,
+                        depth_or_array_layers: 1,
+                    },
                     mip_level_count: 1,
                     sample_count: 1,
                     dimension: TextureDimension::D2,
@@ -76,8 +87,8 @@ pub fn prepare_highlight_textures(
             )
         };
         let textures = HighlightTextures {
-            mask_a: mask("highlight mask a"),
-            mask_b: mask("highlight mask b"),
+            mask: texture("highlight mask", viewport),
+            glow: texture("highlight glow", glow_size(viewport, canvas_scale.0)),
         };
         commands.entity(entity).insert(textures);
     }
@@ -135,6 +146,7 @@ impl FromWorld for HighlightPostPipelines {
                 (
                     texture_2d(TextureSampleType::Float { filterable: true }),
                     sampler(SamplerBindingType::Filtering),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
                 ),
             ),
         );
@@ -271,44 +283,31 @@ impl ViewNode for HighlightNode {
             return Ok(());
         };
         let view_entity = graph.view_entity();
-        let (mask_a, mask_b) = (&textures.mask_a.default_view, &textures.mask_b.default_view);
+        let (mask, glow) = (&textures.mask.default_view, &textures.glow.default_view);
 
         let device = render_context.render_device();
-        let blur_group = |source: &TextureView, axis: &Buffer| {
+        let blur_group = |axis: &Buffer| {
             device.create_bind_group(
                 Some("highlight blur"),
                 &pipelines.blur_layout,
-                &BindGroupEntries::sequential((
-                    source,
-                    &pipelines.sampler,
-                    axis.as_entire_binding(),
-                )),
+                &BindGroupEntries::sequential((mask, &pipelines.sampler, axis.as_entire_binding())),
             )
         };
-        // (target, across, down) for even and odd iterations, each reading the other mask
-        let ping_pong = [
-            (
-                mask_b,
-                blur_group(mask_a, &pipelines.horizontal),
-                blur_group(mask_a, &pipelines.vertical),
-            ),
-            (
-                mask_a,
-                blur_group(mask_b, &pipelines.horizontal),
-                blur_group(mask_b, &pipelines.vertical),
-            ),
-        ];
-        let glow = device.create_bind_group(
+        let (across, down) = (
+            blur_group(&pipelines.horizontal),
+            blur_group(&pipelines.vertical),
+        );
+        let composite_group = device.create_bind_group(
             Some("highlight composite"),
             &pipelines.composite_layout,
-            &BindGroupEntries::sequential((mask_a, &pipelines.sampler)),
+            &BindGroupEntries::sequential((glow, &pipelines.sampler, mask)),
         );
 
         // 1: the widened silhouettes
         {
             let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("highlight mask"),
-                color_attachments: &[Some(attachment(mask_a, true))],
+                color_attachments: &[Some(attachment(mask, Some(LinearRgba::NONE)))],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -318,37 +317,33 @@ impl ViewNode for HighlightNode {
             }
         }
 
-        // 2: unity's sequence (RenderFeature_ObjectHighlight.RenderPass_DrawObjects): each iteration
-        // blurs its source across into the other mask, then blurs the same source down over that.
-        // The two axes are not chained, so the glow spreads in a cross rather than a full gaussian,
-        // and an even count ends back in a.
-        for i in 0..BLUR_ITERATIONS as usize {
-            let (target, across, down) = &ping_pong[i % 2];
-            fullscreen_pass(
-                render_context,
-                "highlight blur horizontal",
-                target,
-                true,
-                blur_replace,
-                across,
-                None,
-            );
-            fullscreen_pass(
-                render_context,
-                "highlight blur vertical",
-                target,
-                false,
-                blur_blend,
-                down,
-                None,
-            );
-        }
+        // 2: the mask blurred across into the glow, then the same mask blurred down over that.
+        // The axes are not chained, so the glow spreads in a cross rather than a full gaussian.
+        fullscreen_pass(
+            render_context,
+            "highlight blur horizontal",
+            glow,
+            Some(LinearRgba::NONE),
+            blur_replace,
+            &across,
+            None,
+        );
+        fullscreen_pass(
+            render_context,
+            "highlight blur vertical",
+            glow,
+            None,
+            blur_blend,
+            &down,
+            None,
+        );
 
-        // 3: the meshes again, unwidened in no colour, so only the glow around them is left
+        // 3: the mask, now spent, becomes the cut-out: opaque, with the meshes drawn unwidened in no
+        // colour, at full size so the glow's inner edge stays sharp
         {
             let mut pass = render_context.begin_tracked_render_pass(RenderPassDescriptor {
                 label: Some("highlight punch"),
-                color_attachments: &[Some(attachment(mask_a, false))],
+                color_attachments: &[Some(attachment(mask, Some(LinearRgba::WHITE)))],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
@@ -369,14 +364,14 @@ impl ViewNode for HighlightNode {
             }
         }
 
-        // 4: the glow over the frame, through anything in front of it
+        // 4: the glow over the frame outside the cut-out, through anything in front of it
         fullscreen_pass(
             render_context,
             "highlight composite",
             view_target.main_texture_view(),
-            false,
+            None,
             composite,
-            &glow,
+            &composite_group,
             Some(view.viewport),
         );
 
@@ -384,15 +379,15 @@ impl ViewNode for HighlightNode {
     }
 }
 
-/// `clear` starts the target transparent, otherwise it keeps what is there
-fn attachment(view: &TextureView, clear: bool) -> RenderPassColorAttachment<'_> {
+/// `clear` starts the target in that colour, otherwise it keeps what is there
+fn attachment(view: &TextureView, clear: Option<LinearRgba>) -> RenderPassColorAttachment<'_> {
     RenderPassColorAttachment {
         view,
         resolve_target: None,
         ops: Operations {
             load: match clear {
-                true => LoadOp::Clear(default()),
-                false => LoadOp::Load,
+                Some(color) => LoadOp::Clear(color.into()),
+                None => LoadOp::Load,
             },
             store: StoreOp::Store,
         },
@@ -403,7 +398,7 @@ fn fullscreen_pass(
     render_context: &mut RenderContext,
     label: &str,
     target: &TextureView,
-    clear: bool,
+    clear: Option<LinearRgba>,
     pipeline: &RenderPipeline,
     bind_group: &BindGroup,
     viewport: Option<UVec4>,
@@ -424,4 +419,18 @@ fn fullscreen_pass(
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, bind_group, &[]);
     pass.draw(0..3, 0..1);
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn glow_target_follows_the_canvas() {
+        // full render scale: half the view
+        assert_eq!(glow_size(UVec2::new(1920, 1081), 1.0), UVec2::new(960, 541));
+        // half render scale: the view is half the canvas, so the glow is the view's size
+        assert_eq!(glow_size(UVec2::new(960, 540), 0.5), UVec2::new(960, 540));
+        assert_eq!(glow_size(UVec2::ZERO, 1.0), UVec2::ONE);
+    }
 }

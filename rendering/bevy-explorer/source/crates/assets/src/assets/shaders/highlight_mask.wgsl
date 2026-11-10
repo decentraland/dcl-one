@@ -74,7 +74,7 @@ fn vertex(vertex_no_morph: Vertex) -> @builtin(position) vec4<f32> {
         vertex_no_morph.instance_index
     );
 #endif
-    // unity: ObjectHighlight/HighlightInput.shader, the offset in pixels across the screen
+    // the offset in pixels across the screen
     let clip_normal = (view.clip_from_world * vec4<f32>(world_normal, 0.0)).xy;
     if any(clip_normal != vec2<f32>(0.0)) {
         clip += vec4<f32>(

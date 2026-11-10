@@ -8,6 +8,7 @@ use bevy::{
     prelude::*,
     render::{
         extract_component::{ExtractComponent, ExtractComponentPlugin},
+        extract_resource::{ExtractResource, ExtractResourcePlugin},
         render_graph::{RenderGraphApp, ViewNodeRunner},
         render_phase::{
             sort_phase_system, AddRenderCommand, DrawFunctions, SortedRenderPhasePlugin,
@@ -35,32 +36,43 @@ pub struct Highlight {
     pub width_px: f32,
 }
 
-/// unity: Interaction/Settings/InteractionSettingsData.asset
 pub const HIGHLIGHT_VALID: Color = Color::srgb(0.23843002, 0.8867924, 0.45072904);
 pub const HIGHLIGHT_INVALID: Color = Color::srgb(1.0, 0.17647058, 0.49867108);
+/// in canvas pixels, so the glow keeps its size at every render scale
 pub const HIGHLIGHT_WIDTH_PX: f32 = 4.0;
-/// unity: ObjectHighlight/HighlightBlur.Shader, its literals as written
 #[allow(clippy::excessive_precision)]
 pub const BLUR_OFFSETS: [f32; 3] = [0.0, 1.3846153846, 3.2307692308];
 #[allow(clippy::excessive_precision)]
 pub const BLUR_WEIGHTS: [f32; 3] = [0.2270270270, 0.3162162162, 0.0702702703];
-pub const BLUR_ITERATIONS: u32 = 4;
-const _: () = assert!(
-    BLUR_ITERATIONS.is_multiple_of(2),
-    "the blur ping-pongs and must end in mask a"
-);
+/// The glow is blurred at this share of the canvas's pixels. One blur at half the canvas spreads
+/// as far as four at full size, in a quarter of the pixels.
+pub const GLOW_RESOLUTION: f32 = 0.5;
+
+/// Render pixels per canvas pixel: below 1 while the world is drawn at a reduced render scale and
+/// stretched to the canvas. The glow's width and blur are scaled by it, so it looks the same at
+/// every render scale. Whoever applies the render scale keeps this in step.
+#[derive(Resource, Clone, Copy, Debug, PartialEq, ExtractResource)]
+pub struct HighlightCanvasScale(pub f32);
+
+impl Default for HighlightCanvasScale {
+    fn default() -> Self {
+        Self(1.0)
+    }
+}
 
 pub struct HighlightPlugin;
 
 impl Plugin for HighlightPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(HierarchyPropagatePlugin::<Highlight>::default());
+        app.add_plugins(HierarchyPropagatePlugin::<Highlight>::default())
+            .init_resource::<HighlightCanvasScale>();
         // headless apps have no renderer, and nothing to sync the component to
         if app.get_sub_app(RenderApp).is_none() {
             return;
         }
         app.add_plugins((
             ExtractComponentPlugin::<Highlight>::extract_visible(),
+            ExtractResourcePlugin::<HighlightCanvasScale>::default(),
             SortedRenderPhasePlugin::<HighlightMaskItem, HighlightBatch>::new(
                 RenderDebugFlags::default(),
             ),

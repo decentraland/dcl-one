@@ -801,6 +801,7 @@ pub fn update_render_scale(
     session: Res<SessionGraphics>,
     winit_windows: NonSend<WinitWindows>,
     mut last_scale: Local<Option<f32>>,
+    mut highlight_scale: ResMut<scene_material::highlight::HighlightCanvasScale>,
 ) {
     let scale = session
         .render_scale(&config)
@@ -809,6 +810,8 @@ pub fn update_render_scale(
         return;
     }
     *last_scale = Some(scale);
+    // the hover glow is sized in canvas pixels
+    highlight_scale.0 = scale;
     for window in winit_windows.windows.values() {
         window.set_render_scale(scale as f64);
     }
