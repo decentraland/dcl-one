@@ -26,7 +26,8 @@
 //!   (`pricing::LocalMarket`; a source that is unset or not ready answers 503,
 //!   a quote miss prices to `null`);
 //! - the packs, intents, orders and the Stripe webhook: local
-//!   (`credits.packs`, `purchases`, `stripe_events`) plus Stripe's API;
+//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`) plus
+//!   Stripe's API;
 //! - the MANA top-up, the fulfilment and the escrow ops: the economy module
 //!   (`escrow::EconomyBroker`, the old HTTP hops to `/v1/payments/verify`,
 //!   `/v1/broker/buy`, `/v1/escrow/{reclaim,release}` as handler calls with
@@ -1104,6 +1105,7 @@ mod schema_tests {
             "packs",
             "stripe_events",
             "purchases",
+            "payment_reversals",
             "carts",
             "cart_items",
             "checkouts",
