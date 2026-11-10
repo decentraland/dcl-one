@@ -45,6 +45,10 @@ pub const BLUR_OFFSETS: [f32; 3] = [0.0, 1.3846153846, 3.2307692308];
 #[allow(clippy::excessive_precision)]
 pub const BLUR_WEIGHTS: [f32; 3] = [0.2270270270, 0.3162162162, 0.0702702703];
 pub const BLUR_ITERATIONS: u32 = 4;
+const _: () = assert!(
+    BLUR_ITERATIONS.is_multiple_of(2),
+    "the blur ping-pongs and must end in mask a"
+);
 
 pub struct HighlightPlugin;
 

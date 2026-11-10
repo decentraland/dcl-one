@@ -1,4 +1,4 @@
-//! The glow from the mask: blurred in place, cut out where the meshes themselves are, and blended
+//! The glow from the mask: blurred between its two masks, cut out where the meshes themselves are, and blended
 //! over the frame with no depth test (highlight_blur.wgsl, highlight_composite.wgsl).
 
 use bevy::{
@@ -274,24 +274,30 @@ impl ViewNode for HighlightNode {
         let (mask_a, mask_b) = (&textures.mask_a.default_view, &textures.mask_b.default_view);
 
         let device = render_context.render_device();
-        let horizontal = device.create_bind_group(
-            Some("highlight blur horizontal"),
-            &pipelines.blur_layout,
-            &BindGroupEntries::sequential((
-                mask_a,
-                &pipelines.sampler,
-                pipelines.horizontal.as_entire_binding(),
-            )),
-        );
-        let vertical = device.create_bind_group(
-            Some("highlight blur vertical"),
-            &pipelines.blur_layout,
-            &BindGroupEntries::sequential((
+        let blur_group = |source: &TextureView, axis: &Buffer| {
+            device.create_bind_group(
+                Some("highlight blur"),
+                &pipelines.blur_layout,
+                &BindGroupEntries::sequential((
+                    source,
+                    &pipelines.sampler,
+                    axis.as_entire_binding(),
+                )),
+            )
+        };
+        // (target, across, down) for even and odd iterations, each reading the other mask
+        let ping_pong = [
+            (
                 mask_b,
-                &pipelines.sampler,
-                pipelines.vertical.as_entire_binding(),
-            )),
-        );
+                blur_group(mask_a, &pipelines.horizontal),
+                blur_group(mask_a, &pipelines.vertical),
+            ),
+            (
+                mask_a,
+                blur_group(mask_b, &pipelines.horizontal),
+                blur_group(mask_b, &pipelines.vertical),
+            ),
+        ];
         let glow = device.create_bind_group(
             Some("highlight composite"),
             &pipelines.composite_layout,
@@ -312,24 +318,28 @@ impl ViewNode for HighlightNode {
             }
         }
 
-        // 2: each iteration blurs across into b, then down and over a
-        for _ in 0..BLUR_ITERATIONS {
+        // 2: unity's sequence (RenderFeature_ObjectHighlight.RenderPass_DrawObjects): each iteration
+        // blurs its source across into the other mask, then blurs the same source down over that.
+        // The two axes are not chained, so the glow spreads in a cross rather than a full gaussian,
+        // and an even count ends back in a.
+        for i in 0..BLUR_ITERATIONS as usize {
+            let (target, across, down) = &ping_pong[i % 2];
             fullscreen_pass(
                 render_context,
                 "highlight blur horizontal",
-                mask_b,
+                target,
                 true,
                 blur_replace,
-                &horizontal,
+                across,
                 None,
             );
             fullscreen_pass(
                 render_context,
                 "highlight blur vertical",
-                mask_a,
+                target,
                 false,
                 blur_blend,
-                &vertical,
+                down,
                 None,
             );
         }
