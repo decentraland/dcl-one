@@ -623,6 +623,29 @@ async fn per_scene_hosts_start_with_a_filtered_environment() {
 }
 
 #[tokio::test]
+async fn a_sandboxed_shared_host_starts_with_the_filtered_environment() {
+    let (pool, mut launched, _, _) = pool_with(HostOptions {
+        placement: Placement::Shared,
+        sandbox: SandboxMode::On,
+        ..Default::default()
+    });
+    let pool = Arc::new(pool);
+    std::thread::scope(|scope| scope.spawn(|| pool.start()).join().unwrap()).unwrap();
+
+    let host = launched.try_recv().unwrap();
+
+    let env = host.command.env.as_ref().expect("a filtered environment");
+    for (name, _) in env {
+        assert!(
+            PER_SCENE_HOST_ENV.iter().any(|allowed| name == allowed),
+            "{name:?}"
+        );
+    }
+    assert!(!env.iter().any(|(name, _)| name == "HOME"));
+    assert_eq!(host.command.args[1..], ["--sandbox", "on"]);
+}
+
+#[tokio::test]
 async fn an_ended_host_loses_only_its_scene_and_counts_as_lost() {
     let (pool, mut launched, _) = pool(Placement::PerScene);
     let (responses, mut receiver) = scene_response_channel();

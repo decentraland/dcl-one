@@ -296,19 +296,22 @@ impl HostCommand {
         if sandbox != SandboxMode::Off {
             args.extend(["--sandbox".into(), sandbox.as_str().into()]);
         }
-        let mut env = None;
         if placement == Placement::PerScene {
             args.extend([
                 "--v8-threads".into(),
                 PER_SCENE_V8_THREADS.to_string().into(),
             ]);
+        }
+        // a sandboxed host, shared or not, can still open outbound connections, so it gets none
+        // of the engine's own settings
+        let env = (placement == Placement::PerScene || sandbox != SandboxMode::Off).then(|| {
             let inherited = std::env::vars_os().filter(|(name, _)| {
                 PER_SCENE_HOST_ENV
                     .iter()
                     .any(|allowed| name.as_os_str() == *allowed)
             });
-            env = Some(inherited.collect());
-        }
+            inherited.collect()
+        });
         Ok(Self { program, args, env })
     }
 }
