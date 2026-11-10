@@ -33,9 +33,10 @@ pub const INNER_RADIUS: f32 = 0.35;
 pub const OUTER_RADIUS: f32 = 1.0;
 /// the opacity range and the ground distances it follows: it rises over the first pair of
 /// distances and falls over the second (BlobShadow.mat `_Opacity_Range`,
-/// `_Opacity_Distance_Ranges`)
+/// `_Opacity_Distance_Ranges`). Divergence: the rise is over 0..0.2 m, not 0..1 m, so the blob
+/// stays visible until the player nearly lands
 pub const OPACITY_RANGE: Vec2 = Vec2::new(0.0, 0.9);
-pub const OPACITY_DISTANCES: Vec4 = Vec4::new(0.0, 1.0, 6.0, 10.0);
+pub const OPACITY_DISTANCES: Vec4 = Vec4::new(0.0, 0.2, 6.0, 10.0);
 /// the decal projector's fade factor, which scales the material's opacity
 /// (unity:Explorer/Assets/DCL/JumpIndicator/JumpIndicator.prefab, `m_FadeFactor`)
 pub const FADE_FACTOR: f32 = 0.5;
@@ -236,9 +237,11 @@ mod tests {
 
     #[test]
     fn marker_ramps_follow_the_material_ranges() {
-        // opacity rises 0 to 0.9 over 0..1 m and falls to 0 over 6..10 m, halved by the fade
+        // opacity rises 0 to 0.9 over 0..0.2 m and falls to 0 over 6..10 m, halved by the fade
         // factor
         assert_eq!(marker_opacity(0.0), 0.0);
+        assert!(marker_opacity(0.1) > 0.0 && marker_opacity(0.1) < 0.45);
+        assert!((marker_opacity(0.2) - 0.45).abs() < 1e-6);
         assert!((marker_opacity(1.0) - 0.45).abs() < 1e-6);
         assert!((marker_opacity(3.0) - 0.45).abs() < 1e-6);
         assert_eq!(marker_opacity(10.0), 0.0);
