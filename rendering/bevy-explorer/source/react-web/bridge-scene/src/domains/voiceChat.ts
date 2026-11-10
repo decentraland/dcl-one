@@ -108,8 +108,9 @@ export function registerVoiceChat(ctx: Ctx): void {
     void refreshActive()
   }
 
-  // The social service broadcasts a stream's start and end to everyone but the user who started or
-  // ended it, so the list is also re-read when the user's own community stream is entered or left.
+  // The social service leaves the starter out of its stream's start broadcast (the end reaches
+  // everyone), and neither broadcast carries counts, so the list is also re-read when the user's own
+  // community stream is entered or left: it lists the starter's stream and refreshes its counts.
   let inStream = ''
   relay('voiceChatState', async () => api.getStateStream(), (state) => {
     ctx.send({ kind: 'voiceChatState', state })

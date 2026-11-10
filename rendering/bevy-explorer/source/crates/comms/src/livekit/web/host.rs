@@ -501,7 +501,6 @@ fn build_room_options(room_options: &RoomOptions) -> JsValue {
     set(&object, "dynacast", room_options.dynacast);
     set(&object, "stopLocalTrackOnUnpublish", true);
     set(&object, "disconnectOnPageLeave", true);
-    set(&object, "webAudioMix", true);
     object.into()
 }
 

@@ -903,7 +903,7 @@ fn subscribe_voice_room_tracks(
 }
 
 /// On the web the page plays the room's audio through a pan/volume rig: a voice room track is
-/// centred and follows the voice volume setting (nearby voice is placed by `mic.rs`).
+/// centred and follows the voice chat volume setting (nearby voice is placed by `mic.rs`).
 #[cfg(target_arch = "wasm32")]
 fn apply_voice_room_volume(
     newly_subscribed: Query<
@@ -931,7 +931,7 @@ fn apply_voice_room_volume(
     };
     for track in tracks {
         if let Some(remote) = track.track() {
-            remote.pan_and_volume(CENTRE, settings.voice());
+            remote.pan_and_volume(CENTRE, settings.voice_chat());
         }
     }
 }

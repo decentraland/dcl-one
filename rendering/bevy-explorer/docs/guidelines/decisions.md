@@ -29,50 +29,57 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
-- **Voice chat (private calls and community streams)**, ported from `Assets/DCL/VoiceChat/`
-  with its statuses, guards, the 3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay
-  and the server's 60 s ring, differs where the engine does:
-  - The call microphone has no hold-to-talk: Unity's `T` (0.5 s hold threshold) opens the chat
-    here, so the `Microphone` key (`V`) toggles the call mic while a call is connected and the
-    nearby mic otherwise.
-  - The call mic goes up on a call's first connect for whoever may speak; Unity starts it from the
-    persisted mic setting. A re-dial keeps what the user chose since.
-  - Muting unpublishes the track instead of muting a published one (the engine's mic mechanism);
-    the server still gets `MuteSpeakerFromCommunityVoiceChat`, so everyone sees the same thing.
-  - Call playback follows the one `Voice` volume setting (Unity has a separate `VoiceChat_Volume`)
-    and there is no microphone device picker.
-  - The call tune is a one-shot clip re-triggered every 3.056 s (its length) while ringing, the
-    audio layer having no loop.
-  - The room joins with `auto_subscribe: false` like every other room and the voice module
-    subscribes to each microphone track itself.
-  - A call peer who is also nearby is heard through the call only; Unity's nearby voice plays
-    them a second time. Their spatial track is unsubscribed for the call's duration.
-  - The reconnection budget is spent regardless of remote participants (Unity skips the re-dial
-    when nobody else is in the room).
-  - The community chat's "Live Voice Stream" banner counts the backend's participants for the
-    stream; Unity's counts the user's own call room, which is wrong until the user is in it. The
-    banner is hidden, not just transparent, while the chat is unfocused, so it never catches a
-    click there.
-  - The social service does not broadcast a stream's start or end to the user who started or
-    ended it. Unity flips its live flags on those replies; the bridge re-reads the live list when
-    the user's own community stream is entered or left.
-  - Joining or starting a stream while a private call rings for the user refuses that call first;
-    Unity's hang-up skips a ringing call and starts the stream next to it a second later.
-  - A stream whose start succeeds after its creator left (or moved to another stream) is ended
-    with `EndCommunityVoiceChat`; Unity leaves it running with nobody in it.
-  - Hanging up a private call whose id is known ends it here at once and sends
-    `EndPrivateVoiceChat` behind it; Unity waits in `VoiceChatEndingCall` for the reply. With the
-    social link down the request waits for the reconnect (up to 30 s of backoff), and waiting in
-    the ending state would keep the nearby mic off and refuse new calls all that time. That
-    request is not retried if it fails, nor is a call ended at sign-out while its start is still
-    in flight. The server ends both anyway: leaving the room makes the gatekeeper delete a
-    private room, and a closed social socket ends that user's pending call (`social-service-ea`
-    `logic/subscriptions/lifecycle.ts`, mirrored by the catalyst).
-  - A call that rang while the social link dropped is rejected on reconnect, and the reconnect's
-    own report of that call does not ring it again: the server tells only the caller about a
-    reject, so a second ring would never be stopped.
-  - The "stream in this scene" banner is not shown to guests, who cannot join; Unity's
-    `SceneVoiceChatPresenter` shows it with no account check.
+- **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
+  3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
+  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
+    the call mic while a call is connected and the nearby mic otherwise. A community listener's
+    `V` does nothing, since a listener can't speak.
+  - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
+    whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
+    after a re-dial: what the user chose since then stands.
+  - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
+    user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
+    same state.
+  - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
+    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
+    microphone; a device picker is next work.
+  - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
+    re-triggered every 3.056 s (its length) while ringing.
+  - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
+    and the voice module subscribes to each microphone track itself.
+  - Don't also play someone the user shares a voice room with (a call or a stream) through
+    nearby voice: their spatial track is unsubscribed while they share it.
+  - Don't skip the re-dial when the user is alone in the room. A stream's creator before anyone
+    joins, or a caller whose partner is still connecting, would lose the call to a network blip.
+    A call that has really ended has its room deleted, and that disconnect ends the call without
+    a re-dial.
+  - Don't count the user's own call room for the community chat's "Live Voice Stream" banner: it
+    shows the backend's participant count for the stream (1 for a stream known only from its
+    start update, until the next read). Don't let it catch clicks while the chat is unfocused: it
+    is hidden, not just transparent.
+  - Don't wait for an update about the user's own stream. Expected: once the user's stream starts
+    it shows as live (rail icon, chat banner, sidebar badge, scene banner) with current counts.
+    Actual: the social service leaves the starter out of the stream's STARTED update, and neither
+    update carries counts; ENDED reaches everyone, the ender included. So the bridge re-reads the
+    live list when the user's own stream is entered or left.
+  - Don't let a ringing private call carry on next to a stream: joining or starting a stream
+    while one rings refuses it first, and the stream starts a second later.
+  - Don't leave a stream running with nobody in it: one whose start succeeds after its creator
+    left (or moved to another stream) is ended with `EndCommunityVoiceChat`.
+  - Don't hold a hung-up private call in an ending state. One whose id is known ends at once,
+    and `EndPrivateVoiceChat` is sent behind it. With the social link down the request waits for
+    the reconnect (up to 30 s of backoff), and an ending state would keep the nearby mic off and
+    refuse new calls all that time. That request is not retried if it fails. A call whose start
+    is still in flight at sign-out is not ended by the client either: its reply comes back after
+    the account's link is gone, so the end goes out on the next account's link, where the server
+    refuses it (only a party ends a call), or on none. The server ends both anyway: leaving the
+    room makes the gatekeeper delete a private room, and a closed social socket ends that user's
+    pending call (`social-service-ea` `logic/subscriptions/lifecycle.ts`, mirrored by the
+    catalyst).
+  - Don't ring a call again on reconnect. A call left ringing when the social link dropped is
+    rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
+    ignored: the server tells only the caller about a reject, so a second ring would never stop.
+  - Don't show the "stream in this scene" banner to guests: they can't join.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:

@@ -527,7 +527,7 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    // a call's voices follow the voice volume, casts and streams the scene's
+    // a call's voices follow the voice chat volume, casts and streams the scene's
     let in_voice_room = published_by
         .get(entity)
         .ok()
