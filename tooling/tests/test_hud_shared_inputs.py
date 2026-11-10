@@ -169,6 +169,40 @@ class CheckedGraphTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 2, result.stderr)
                 self.assertFalse(calls.exists())
 
+    def test_native_new_symlink_roots_and_controls_abort_before_rebuild(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        manifest = (self.root / MANIFEST).read_bytes()
+        destination = self.root / 'regular-target.ts'
+        destination.write_text('export const value = 1')
+        for name in (WEB + 'src/audit-new-link.ts', WEB + 'src/package.json'):
+            with self.subTest(path=name):
+                path = self.root / name
+                path.symlink_to(destination)
+                self.git('add', name)
+                result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertFalse(calls.exists())
+                self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+                self.git('rm', '--cached', name)
+                path.unlink()
+        shutil.rmtree(self.root / '.git')
+        path = self.root / (WEB + 'src/audit-new-link.ts')
+        path.symlink_to(destination)
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertFalse(calls.exists())
+        self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+
+    def test_native_new_regular_root_remains_a_cache_miss_without_repinning(self):
+        source, calls, tools, recipe, env = self.native_recipe()
+        manifest = (self.root / MANIFEST).read_bytes()
+        self.write(WEB + 'src/new-regular.ts', 'export const local = 1')
+        self.git('add', WEB + 'src/new-regular.ts')
+        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(calls.read_text().strip(), 'bundle-native')
+        self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+
     def test_native_git_failure_aborts_instead_of_rebuilding(self):
         source, calls, tools, recipe, env = self.native_recipe()
         executable = tools / 'git'

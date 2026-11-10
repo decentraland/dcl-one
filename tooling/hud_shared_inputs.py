@@ -64,7 +64,7 @@ class Tree:
                     self.entries[name.decode()] = (mode, 'blob', oid)
         else:
             self.entries = {p.relative_to(self.root).as_posix(): None
-                            for p in self.root.rglob('*') if p.is_file()
+                            for p in self.root.rglob('*') if (not p.is_dir() or p.is_symlink())
                             and not p.relative_to(self.root).as_posix().startswith(WEB + 'src/engine/generated/')
                             and 'node_modules' not in p.relative_to(self.root).parts}
 
@@ -140,19 +140,26 @@ def read_manifest(root, revision=None):
     if roots != sorted(set(roots)) or roots != root_paths(roots):
         raise ManifestError('Invalid HUD declared root inventory')
     stale = []
-    if roots != root_paths(tree.entries):
-        stale.append('HUD root inventory changed; regenerate shared-inputs.json')
     if not all(isinstance(manifest[group], list) for group in ('controls', 'files')):
         raise ManifestError('Invalid HUD input lists')
     controls = {row.get('path') for row in manifest['controls']
                 if isinstance(row, dict) and isinstance(row.get('path'), str)}
     if not set(CONTROLS) <= controls:
         raise ManifestError('Missing HUD resolver controls')
-    candidate_inputs = roots + [row.get('path') for row in manifest['files'] if isinstance(row, dict) and isinstance(row.get('path'), str)]
-    if not resolver_controls(tree.entries, candidate_inputs) <= controls:
+    current_roots = root_paths(tree.entries)
+    candidate_inputs = current_roots + [row.get('path') for row in manifest['files'] if isinstance(row, dict) and isinstance(row.get('path'), str)]
+    current_controls = resolver_controls(tree.entries, candidate_inputs)
+    candidates = set(current_roots) | current_controls
+    declared = {row['path'] for group in ('controls', 'files') for row in manifest[group]
+                if isinstance(row, dict) and isinstance(row.get('path'), str)}
+    tree.prefetch(candidates | declared)
+    # A cache miss may rebuild only after every newly discovered input is safe.
+    for name in sorted(candidates):
+        tree.read(name)
+    if roots != current_roots:
+        stale.append('HUD root inventory changed; regenerate shared-inputs.json')
+    if not current_controls <= controls:
         stale.append('New HUD resolver control; regenerate shared-inputs.json')
-    tree.prefetch(row['path'] for group in ('controls', 'files') for row in manifest[group]
-                  if isinstance(row, dict) and isinstance(row.get('path'), str))
     hashes = {}
     for group in ('controls', 'files'):
         rows = manifest[group]
