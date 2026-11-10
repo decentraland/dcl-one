@@ -1,6 +1,7 @@
 use std::{
     hash::{Hash, Hasher},
     sync::OnceLock,
+    time::Duration,
 };
 
 use bevy::{
@@ -284,6 +285,20 @@ impl Plugin for MaterialDefinitionPlugin {
         app.init_resource::<CachedMaterialOwners>();
     }
 }
+
+/// What an entity's first material costs the frame when the scene's cache already holds it.
+pub const MATERIAL_COST: Duration = Duration::from_micros(1);
+
+/// What an entity's first material costs the frame when it is created: mostly the render world
+/// preparing it. Measured with the same stress scene as
+/// [`PRIMITIVE_COST`](super::mesh_renderer::PRIMITIVE_COST).
+pub const NEW_MATERIAL_COST: Duration = Duration::from_micros(8);
+
+/// The entity's first material was paid for with its primitive (`update_mesh`): it is created
+/// in the same frame, without asking the slice again.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct MaterialPrepaid;
 
 #[derive(Component)]
 pub struct RetryMaterial(pub Vec<Handle<Image>>);

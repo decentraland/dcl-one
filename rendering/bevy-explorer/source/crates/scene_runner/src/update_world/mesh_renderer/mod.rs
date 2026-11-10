@@ -1,4 +1,4 @@
-use std::f32::consts::FRAC_PI_2;
+use std::{f32::consts::FRAC_PI_2, time::Duration};
 
 use bevy::{
     platform::collections::HashMap,
@@ -19,8 +19,13 @@ use dcl_types::interface::ComponentPosition;
 use scene_material::{SceneBound, SceneMaterial};
 
 use crate::{
-    gltf_resolver::GltfMeshResolver, renderer_context::RendererSceneContext,
-    update_world::material::MeshMaterial3dLoading, SceneEntity,
+    gltf_resolver::GltfMeshResolver,
+    renderer_context::RendererSceneContext,
+    scene_spawn_slice::InstantiationBudget,
+    update_world::material::{
+        MaterialPrepaid, MeshMaterial3dLoading, PbMaterialComponent, NEW_MATERIAL_COST,
+    },
+    SceneEntity,
 };
 
 use self::truncated_cone::TruncatedCone;
@@ -38,6 +43,20 @@ pub enum MeshDefinition {
     Sphere,
     Gltf { src: String, name: String },
 }
+
+/// What attaching an entity's first mesh (a shared default one) and the default material
+/// costs the frame, mostly after `update_mesh` returns: measured with a stress scene of 1,000
+/// primitives added in one tick (`docs/adr/2026-11-10-explorer-budgeted-primitives-and-materials.md`).
+pub const PRIMITIVE_COST: Duration = Duration::from_micros(7);
+
+/// On top of [`PRIMITIVE_COST`]: a mesh built for the entity (custom texture coordinates, a
+/// tapered cylinder) or a glTF mesh sent to the GPU.
+pub const NEW_MESH_COST: Duration = Duration::from_micros(10);
+
+/// The entity's first mesh waits for the next frame's instantiation slice.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct PendingPrimitive;
 
 #[derive(Resource)]
 pub struct MeshPrimitiveDefaults {
@@ -191,19 +210,41 @@ impl Plugin for MeshDefinitionPlugin {
 #[derive(Component)]
 pub struct RetryMeshDefinition;
 
+impl MeshDefinition {
+    /// Whether the entity gets a mesh of its own rather than a shared default one.
+    fn builds_own_mesh(&self) -> bool {
+        match self {
+            Self::Box { uvs } | Self::Plane { uvs } => !uvs.is_empty(),
+            Self::Cylinder {
+                radius_top,
+                radius_bottom,
+            } => *radius_bottom != 0.5 || *radius_top != 0.5,
+            Self::Sphere => false,
+            Self::Gltf { .. } => true,
+        }
+    }
+}
+
+type PrimitiveData = (
+    Entity,
+    &'static SceneEntity,
+    &'static MeshDefinition,
+    Option<&'static MeshMaterial3d<SceneMaterial>>,
+    Option<&'static MeshMaterial3dLoading>,
+    Option<&'static Mesh3d>,
+    Has<PbMaterialComponent>,
+);
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_mesh(
     mut commands: Commands,
+    pending_primitives: Query<PrimitiveData, With<PendingPrimitive>>,
     new_primitives: Query<
+        PrimitiveData,
         (
-            Entity,
-            &SceneEntity,
-            &MeshDefinition,
-            Option<&MeshMaterial3d<SceneMaterial>>,
-            Option<&MeshMaterial3dLoading>,
-            Option<&Mesh3d>,
+            Or<(Changed<MeshDefinition>, With<RetryMeshDefinition>)>,
+            Without<PendingPrimitive>,
         ),
-        Or<(Changed<MeshDefinition>, With<RetryMeshDefinition>)>,
     >,
     mut removed_primitives: RemovedComponents<MeshDefinition>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -213,11 +254,70 @@ pub fn update_mesh(
     scenes: Query<&RendererSceneContext>,
     config: Res<AppConfig>,
     mut gltf_mesh_resolver: GltfMeshResolver,
+    mut budget: InstantiationBudget,
 ) {
-    for (ent, scene_ent, prim, maybe_material, maybe_material_loading, maybe_existing_mesh) in
-        new_primitives.iter()
+    // removals first: a renderer removed and added again in one tick is attached below
+    for ent in removed_primitives.read() {
+        if let Ok(mut e) = commands.get_entity(ent) {
+            e.remove::<(Mesh3d, PendingPrimitive)>();
+        }
+    }
+
+    let mut gate = budget.gate();
+    for (
+        ent,
+        scene_ent,
+        prim,
+        maybe_material,
+        maybe_material_loading,
+        maybe_existing_mesh,
+        has_material,
+    ) in pending_primitives.iter().chain(new_primitives.iter())
     {
         commands.entity(ent).remove::<RetryMeshDefinition>();
+
+        let mut gltf_mesh = match prim {
+            MeshDefinition::Gltf { src, name } => {
+                let Ok(scene) = scenes.get(scene_ent.root) else {
+                    commands.entity(ent).remove::<PendingPrimitive>();
+                    continue;
+                };
+                let Ok(maybe_mesh) = gltf_mesh_resolver.resolve_mesh(src, &scene.hash, name) else {
+                    warn!("failed to load gltf for mesh");
+                    commands.entity(ent).remove::<PendingPrimitive>();
+                    continue;
+                };
+                let Some(h_mesh) = maybe_mesh else {
+                    commands.entity(ent).try_insert(RetryMeshDefinition);
+                    continue;
+                };
+                Some(h_mesh)
+            }
+            _ => None,
+        };
+
+        // only an entity's first mesh waits for the slice; a changed one is attached as before
+        if maybe_existing_mesh.is_none() {
+            // a new primitive and its first material come in one frame: it pays for both
+            let first_material =
+                has_material && maybe_material.is_none() && maybe_material_loading.is_none();
+            let mut cost = PRIMITIVE_COST;
+            if prim.builds_own_mesh() {
+                cost += NEW_MESH_COST;
+            }
+            if first_material {
+                cost += NEW_MATERIAL_COST;
+            }
+            if !gate.admit(cost) {
+                commands.entity(ent).try_insert(PendingPrimitive);
+                continue;
+            }
+            commands.entity(ent).remove::<PendingPrimitive>();
+            if first_material {
+                commands.entity(ent).try_insert(MaterialPrepaid);
+            }
+        }
+
         let handle = match prim {
             MeshDefinition::Box { uvs } => {
                 if uvs.is_empty() {
@@ -307,16 +407,9 @@ pub fn update_mesh(
                 }
             }
             MeshDefinition::Sphere => defaults.sphere.clone(),
-            MeshDefinition::Gltf { src, name } => {
-                let Ok(scene) = scenes.get(scene_ent.root) else {
-                    continue;
-                };
-                let Ok(maybe_mesh) = gltf_mesh_resolver.resolve_mesh(src, &scene.hash, name) else {
-                    warn!("failed to load gltf for mesh");
-                    continue;
-                };
-                let Some(h_mesh) = maybe_mesh else {
-                    commands.entity(ent).try_insert(RetryMeshDefinition);
+            MeshDefinition::Gltf { .. } => {
+                // resolved above, before the slice was asked
+                let Some(h_mesh) = gltf_mesh.take() else {
                     continue;
                 };
                 // the shared settings load MAIN_WORLD only, since the resolver's other
@@ -351,11 +444,9 @@ pub fn update_mesh(
         }
     }
 
-    for ent in removed_primitives.read() {
-        if let Ok(mut e) = commands.get_entity(ent) {
-            e.remove::<Mesh3d>();
-        }
-    }
-
     default_material.retain(|scene, _| scenes.get(*scene).is_ok());
+    gate.report("primitives");
 }
+
+#[cfg(test)]
+pub(crate) mod tests;
