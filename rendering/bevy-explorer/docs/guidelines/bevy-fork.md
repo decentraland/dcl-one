@@ -106,6 +106,12 @@ across workers:
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
 - Accessors with no `bufferView` are accepted (zero-filled per spec; Blender morph targets).
+- `KHR_mesh_quantization`: a file that requires it loads. Integer positions, normals, tangents
+  and texture coordinates are read as the floats they stand for (normalized to the unit range
+  or taken as they are, per the accessor), a primitive's declared bounds follow its position
+  accessor's normalization, and tangents are read only through the attribute conversion, so a
+  quantized tangent accessor is never read as floats. The gltf crate doesn't know the extension
+  and reports it as unsupported; that one report is tolerated like the missing `bufferView`.
 - Texture decode is skipped when `load_materials` is empty, with a 1x1 placeholder under the
   normal label: headless servers keep geometry without pixels.
 - `Rgba16Unorm` textures are converted to 8-bit, preserving sampler and sRGB (the web can't
