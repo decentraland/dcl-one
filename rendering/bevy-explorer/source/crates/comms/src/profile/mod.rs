@@ -563,13 +563,15 @@ impl ProfileManager<'_, '_> {
 
 /// Whether a profile received from a peer is that peer's own: every address it carries is
 /// the sender's. A peer speaks only for itself; a profile naming anyone else would be
-/// shown as theirs.
+/// shown as theirs. An address counts in any letter case, `0X` included, and an empty
+/// user id as none, so a sender's spelling alone never drops its profile.
 fn is_senders_own(sender: Address, content: &SerializedProfile) -> bool {
-    content.eth_address.as_h160() == Some(sender)
+    let is_sender = |address: &str| address.to_ascii_lowercase().as_h160() == Some(sender);
+    is_sender(&content.eth_address)
         && content
             .user_id
-            .as_ref()
-            .is_none_or(|id| id.as_h160() == Some(sender))
+            .as_deref()
+            .is_none_or(|id| id.is_empty() || is_sender(id))
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
@@ -2215,9 +2217,21 @@ mod tests {
         let sender = Address::repeat_byte(0xa1);
         let mut cache = ProfileCache::default();
 
-        let mut own = profile_of(sender, 3, "peer");
-        own.content.user_id = Some(format!("{sender:#x}").to_uppercase().replace("0X", "0x"));
-        assert!(cache.update_from_peer(sender, own));
+        // however the sender spells its address, and with or without a user id
+        let upper = format!("{sender:#x}").to_uppercase();
+        assert!(upper.starts_with("0XA1"));
+        let spellings = [
+            (format!("{sender:#x}"), None),
+            (upper.clone(), Some(upper)),
+            (format!("{sender:x}"), Some(String::new())),
+        ];
+        for (version, (eth_address, user_id)) in (1..).zip(spellings) {
+            let mut own = profile(version, "peer");
+            own.content.eth_address = eth_address;
+            own.content.user_id = user_id;
+            assert!(cache.update_from_peer(sender, own));
+            assert_eq!(cache.entries[&sender].profile().unwrap().version, version);
+        }
         assert_eq!(held_name(&cache.entries[&sender]), "peer");
         assert_eq!(cache.entries.len(), 1);
 
