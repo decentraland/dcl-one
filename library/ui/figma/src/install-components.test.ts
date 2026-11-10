@@ -1,5 +1,8 @@
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import { preprocessCSS, resolveConfig, type ResolvedConfig } from 'vite'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { planComponents, type ComponentPlanContext } from './install-components.js'
+import { planComponents, cssDeclarations, type ComponentPlanContext } from './install-components.js'
 import { runtimeFiles } from './promotion/eligibility.js'
 import * as eligibility from './promotion/eligibility.js'
 import * as specs from './specs.js'
@@ -121,8 +124,8 @@ describe('when planning public components from verified installer inputs', () =>
           @import url("./base.module.css");
           /* .commented-out { color: red } */
           @layer components.controls {
+            .node { composes: shared from global; }
             .node, .node:hover, .active::before {
-              composes: shared from "./shared.module.css";
               background: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'><path class='.fake' /></svg>");
               mask: url(https://example.org/icon.svg);
               content: ".quoted \\".escaped";
@@ -269,5 +272,106 @@ describe('when planning public components from verified installer inputs', () =>
   it('should propagate source read failures without returning a partial plan', async () => {
     vi.spyOn(context.source, 'getTokenCollections').mockRejectedValueOnce(new Error('read failed'))
     await expect(planComponents(context)).rejects.toThrow('read failed')
+  })
+})
+
+describe('when extracting CSS Module declarations through the in-memory stylesheet graph', () => {
+  let files: Map<string, Buffer>
+  let foundations: string
+  let config: ResolvedConfig
+  const keys = (declaration: Buffer) =>
+    [...declaration.toString().matchAll(/readonly ("(?:[^"\\]|\\.)*"): string/g)]
+      .map((match) => JSON.parse(match[1]!))
+      .sort()
+  beforeEach(async () => {
+    files = new Map()
+    foundations = '.body { color: red }'
+    config = await resolveConfig({ configFile: false, css: { transformer: 'postcss' } }, 'build')
+  })
+
+  describe.each(['NavBar/NavBar.module.css', 'runtime/figma-module-runtime.module.css'])(
+    'and reading the committed %s stylesheet',
+    (file) => {
+      let absolute: string
+      let content: string
+      beforeEach(async () => {
+        absolute = fileURLToPath(new URL('../../components/' + file, import.meta.url))
+        content = await readFile(absolute, 'utf8')
+        files.set(file, Buffer.from(content))
+        foundations = await readFile(
+          new URL('../../foundations/typography/text-styles.module.css', import.meta.url),
+          'utf8'
+        )
+      })
+      it('should declare exactly the keys Vite exports', async () => {
+        expect(keys((await cssDeclarations(files, foundations)).get(file + '.d.ts')!)).toEqual(
+          Object.keys((await preprocessCSS(content, absolute, config)).modules ?? {}).sort()
+        )
+      })
+    }
+  )
+
+  describe.each([
+    ':global(.global) {} .local :global .outside {} :local(.explicit) {}',
+    String.raw`.a\:hover {} .\31 23 {} .-dash {} .Ünï { color: red }`,
+    '@keyframes spin { to { opacity: 1 } } .animated { animation: spin 1s }',
+    '.k { grid-area: a ] b } .after {}'
+  ])('and processing %s', (content) => {
+    beforeEach(() => {
+      files.set('test.module.css', Buffer.from(content))
+    })
+    it('should match Vite exports without declaration tokens hiding later classes', async () => {
+      expect(
+        keys((await cssDeclarations(files, foundations)).get('test.module.css.d.ts')!)
+      ).toEqual(
+        Object.keys(
+          (await preprocessCSS(content, '/components/test.module.css', config)).modules ?? {}
+        ).sort()
+      )
+    })
+  })
+
+  describe('and a component composes from the generated foundations and another planned stylesheet', () => {
+    beforeEach(() => {
+      files.set(
+        'A/A.module.css',
+        Buffer.from(
+          '.root { composes: body from "../../foundations/typography/text-styles.module.css"; composes: shared from "../B/B.module.css"; }'
+        )
+      )
+      files.set('B/B.module.css', Buffer.from('.shared { color: red }'))
+    })
+    it('should resolve real exported names without reading the filesystem', async () => {
+      expect(keys((await cssDeclarations(files, foundations)).get('A/A.module.css.d.ts')!)).toEqual(
+        ['root']
+      )
+    })
+  })
+
+  describe.each([
+    [
+      'missing relative stylesheet',
+      '.root { composes: missing from "./missing.module.css" }',
+      'Unknown CSS module input'
+    ],
+    [
+      'package import',
+      '.root { composes: missing from "some-package" }',
+      'Unsupported CSS module import'
+    ],
+    [
+      'self composition import',
+      '.root { composes: root from "./test.module.css" }',
+      'Recursive CSS module composition'
+    ],
+    ['unclosed block', '.root { color: red', 'Unclosed block'],
+    ['invalid selector', '.root :global(.broken { color: red }', 'Unclosed bracket']
+  ])('and encountering %s', (_label, content, message) => {
+    beforeEach(() => {
+      files.set('test.module.css', Buffer.from(content))
+    })
+    it('should reject without returning a partial declarations map', async () => {
+      await expect(cssDeclarations(files, foundations)).rejects.toThrow(message)
+    })
   })
 })

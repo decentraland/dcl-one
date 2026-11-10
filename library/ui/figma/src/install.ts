@@ -17,8 +17,17 @@ import { promisify } from 'node:util'
 import type { App, SourceKind } from './app.js'
 import { generateFoundations } from './generators/tokens.js'
 import { generateIcons } from './generators/icons.js'
-import { isMissing, resolveContained, toPosix } from './guard/fs-safe.js'
+import { canonicalPath, isMissing, resolveContained, toPosix } from './guard/fs-safe.js'
 import { readFdsPin, verifyFdsCache } from './sources/fds-source.js'
+import { configSchema } from './config.js'
+import { planComponents } from './install-components.js'
+import { runtimeFiles } from './promotion/eligibility.js'
+import {
+  componentDependencyPaths,
+  componentModulePaths,
+  createComponentGeneration,
+  isComponentModulePath
+} from '../component-generation.mjs'
 
 const execute = promisify(execFile)
 const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex')
@@ -84,7 +93,8 @@ async function cleanTarget(
 
 /** One install boundary. Additional targets use this transaction rather than another CLI or generator. */
 async function runInstall(app: App, options: InstallOptions): Promise<InstallResult> {
-  if (options.target !== 'foundations') throw new Error('Unknown install target: ' + options.target)
+  if (options.target !== 'foundations' && options.target !== 'components')
+    throw new Error('Unknown install target: ' + options.target)
   if (options.source !== undefined && options.source !== 'snapshot')
     throw new Error('install accepts only the verified cache, never rest')
   if (!app.config.snapshotLock)
@@ -92,19 +102,35 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   const root = path.resolve(app.cwd, '..')
   const relative = options.outDir
     ? toPosix(path.relative(root, path.resolve(app.cwd, options.outDir)))
-    : 'foundations'
+    : options.target
   if (
-    relative !== 'foundations' &&
-    !/^\.agent-work\/figma-install\/[a-zA-Z0-9_-]+\/foundations$/.test(relative)
+    relative !== options.target &&
+    !new RegExp(`^\\.agent-work/figma-install/[a-zA-Z0-9_-]+/${options.target}$`).test(relative)
   )
-    throw new Error('Install output must be foundations or a named private foundations stage')
+    throw new Error(
+      `Install output must be ${options.target} or a named private ${options.target} stage`
+    )
   const outDir = await resolveContained(root, relative)
   const snapshot = path.resolve(app.cwd, app.config.snapshotDir)
   const lockPath = path.resolve(app.cwd, app.config.snapshotLock)
+  const configFile = path.resolve(app.configFile ?? path.join(app.cwd, 'figma.config.json'))
+  const readConfig = async () => readRegular(app.cwd, toPosix(path.relative(app.cwd, configFile)))
+  const configBytes = await readConfig()
+  const normalizedConfig = configurationIdentity(app.config)
+  if (
+    configurationIdentity(configSchema.parse(JSON.parse(configBytes.toString('utf8')))) !==
+    normalizedConfig
+  )
+    throw new Error('The loaded configuration differs from its file')
   const lockBytes = await readFile(lockPath)
   const assertLock = async () => {
     if (!lockBytes.equals(await readFile(lockPath)))
       throw new Error('The source lock changed during install')
+    if (
+      !configBytes.equals(await readConfig()) ||
+      configurationIdentity(app.config) !== normalizedConfig
+    )
+      throw new Error('The configuration changed during install')
   }
   const verifyCache = async () => {
     await verifyFdsCache(snapshot, lockPath)
@@ -113,12 +139,28 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
   await verifyCache()
   const lock = JSON.parse(lockBytes.toString('utf8')) as {
     publicFoundations?: { files: Record<string, { sha256: string; origin: { kind: string } }> }
+    sources: {
+      repository: string
+      files: Record<string, { sha256: string }>
+      [key: string]: unknown
+    }[]
   }
   const pin = readFdsPin(lock)
   const source = app.createSource('snapshot')
   if (source.name !== 'snapshot') throw new Error('install requires a snapshot source')
   await source.ready?.()
   await assertLock()
+  if (options.target === 'components')
+    return installComponents(
+      app,
+      outDir,
+      lock,
+      source,
+      configFile,
+      configBytes,
+      verifyCache,
+      assertLock
+    )
   const [collections, textStyles, gradients, icons] = await Promise.all([
     source.getTokenCollections(),
     source.getTextStyles(),
@@ -188,6 +230,239 @@ async function runInstall(app: App, options: InstallOptions): Promise<InstallRes
     }
   }
   return publishInstall(root, options.target, outDir, planned, verifyInputs)
+}
+
+function configurationIdentity(value: unknown): string {
+  return JSON.stringify(value, (_key, item: unknown) =>
+    item && typeof item === 'object' && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).sort(([a], [b]) => a.localeCompare(b, 'en')))
+      : item
+  )
+}
+
+function assertInstallPath(file: string): void {
+  if (
+    !file ||
+    /[\\<>:"|?*]/.test(file) ||
+    [...file].some(
+      (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+    ) ||
+    file
+      .split('/')
+      .some(
+        (part) =>
+          !part ||
+          part === '.' ||
+          part === '..' ||
+          /[. ]$/.test(part) ||
+          /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part)
+      )
+  )
+    throw new Error('Unsafe install input or output path')
+}
+
+async function readRegular(root: string, relative: string): Promise<Buffer> {
+  assertInstallPath(relative)
+  const file = await resolveContained(root, relative)
+  if (!(await lstat(file)).isFile())
+    throw new Error('Install input is not a regular file: ' + relative)
+  const bytes = await readFile(file)
+  if (bytes.subarray(0, POINTER.length - 1).equals(POINTER.subarray(0, POINTER.length - 1)))
+    throw new Error('Install input is an unmaterialized pointer: ' + relative)
+  return bytes
+}
+
+type LockedInput = { path: string; sha256: string; indexBlobSha: string; bytes: Buffer }
+type ComponentSource = {
+  repository: string
+  files: Record<string, { sha256: string }>
+  [key: string]: unknown
+}
+
+async function lockedInputs(
+  repository: string,
+  paths: string[],
+  source: ComponentSource,
+  maintained = new Set<string>()
+): Promise<Map<string, LockedInput>> {
+  for (const file of paths) {
+    assertInstallPath(file)
+    if (!maintained.has(file) && !/^[a-f0-9]{64}$/.test(source.files?.[file]?.sha256 ?? ''))
+      throw new Error('Missing locked component input: ' + file)
+  }
+  if (new Set(paths).size !== paths.length) throw new Error('Duplicate locked component input')
+  const git = (args: string[], input?: string) =>
+    execFileSync(
+      'git',
+      ['--no-replace-objects', '--literal-pathspecs', '-C', repository, ...args],
+      { input, maxBuffer: 1 << 28 }
+    )
+  if (
+    git(['status', '--porcelain', '--untracked-files=all', '--', ...paths])
+      .toString()
+      .trim()
+  )
+    throw new Error('Commit component source changes before installing their output')
+  const listing = git(['ls-files', '-s', '-z', '--', ...paths])
+    .toString()
+    .split('\0')
+    .filter(Boolean)
+  const index = new Map<string, string>()
+  for (const entry of listing) {
+    const [meta, file] = entry.split('\t')
+    const [mode, oid, stage] = meta!.split(' ')
+    if (
+      !file ||
+      !paths.includes(file) ||
+      stage !== '0' ||
+      !['100644', '100755'].includes(mode!) ||
+      index.has(file)
+    )
+      throw new Error('Unsafe or unmerged component input index')
+    index.set(file, oid!)
+  }
+  for (const file of paths)
+    if (!index.has(file)) throw new Error('Untracked component input: ' + file)
+  const oids = [...index.values()]
+  const batch = git(['cat-file', '--batch'], oids.join('\n') + '\n')
+  const inputs = new Map<string, LockedInput>()
+  let offset = 0
+  for (const [file, oid] of index) {
+    const end = batch.indexOf(0x0a, offset)
+    const [found, kind, size] = batch.subarray(offset, end).toString().split(' ')
+    const start = end + 1
+    const finish = start + Number(size)
+    if (
+      end < 0 ||
+      found !== oid ||
+      kind !== 'blob' ||
+      !/^\d+$/.test(size ?? '') ||
+      batch[finish] !== 0x0a
+    )
+      throw new Error('Invalid component input blob')
+    const bytes = await readRegular(repository, file)
+    if (
+      (!maintained.has(file) && digest(bytes) !== source.files[file]!.sha256) ||
+      !bytes.equals(batch.subarray(start, finish))
+    )
+      throw new Error('Unverified component input: ' + file)
+    inputs.set(file, { path: file, sha256: digest(bytes), indexBlobSha: oid, bytes })
+    offset = finish + 1
+  }
+  return inputs
+}
+
+async function installComponents(
+  app: App,
+  outDir: string,
+  lock: { sources: ComponentSource[] },
+  source: ReturnType<App['createSource']>,
+  configFile: string,
+  configBytes: Buffer,
+  verifyCache: () => Promise<void>,
+  assertLock: () => Promise<void>
+): Promise<InstallResult> {
+  const root = path.resolve(app.cwd, '..')
+  const repository = (
+    await execute('git', ['-C', root, 'rev-parse', '--show-toplevel'])
+  ).stdout.trim()
+  const pinned = lock.sources.find(
+    (entry) => entry.repository === 'https://github.com/decentraland/figma-design-system'
+  )
+  if (!pinned) throw new Error('Missing component source pin')
+  const configPath = toPosix(path.relative(repository, await canonicalPath(configFile)))
+  const modulePaths = componentModulePaths(pinned)
+  const assertInventory = async () => {
+    const listing = (
+      await execute('git', [
+        '--no-replace-objects',
+        '--literal-pathspecs',
+        '-C',
+        repository,
+        'ls-files',
+        '-z',
+        '--',
+        'library/ui/figma'
+      ])
+    ).stdout
+    const inventory = [...new Set(listing.split('\0').filter(isComponentModulePath))].sort()
+    if (JSON.stringify(inventory) !== JSON.stringify([...modulePaths].sort()))
+      throw new Error('Component module inventory differs from the committed source lock')
+  }
+  await assertInventory()
+
+  const dependencies = new Set<string>(componentDependencyPaths)
+  const paths = [...new Set([...modulePaths, configPath, ...dependencies])]
+  const initial = await lockedInputs(repository, paths, pinned, dependencies)
+  const configInput = initial.get(configPath)!
+  if (!configInput.bytes.equals(configBytes))
+    throw new Error('The configuration changed during install')
+  const registryFile = 'components/promotion.json'
+  const registryBytes = await readRegular(root, registryFile)
+  const registry = JSON.parse(registryBytes.toString('utf8')) as Parameters<
+    typeof planComponents
+  >[0]['registry']
+  const runtime = new Map<string, Buffer>()
+  for (const file of runtimeFiles) {
+    const key = 'library/ui/figma/review/src/components/' + file
+    if (!modulePaths.includes(key) || !initial.has(key))
+      throw new Error('Missing locked runtime input: ' + file)
+    runtime.set(file, Buffer.from(initial.get(key)!.bytes))
+  }
+  const plan = await planComponents({
+    source,
+    config: structuredClone(app.config),
+    registry: structuredClone(registry),
+    runtime
+  })
+  const planned = new Map([...plan.files].map(([file, bytes]) => [file, Buffer.from(bytes)]))
+  if (!planned.size || planned.has('generation.json'))
+    throw new Error('Invalid component install output')
+  const normalized = new Set<string>()
+  for (const [file, bytes] of planned) {
+    if (bytes.subarray(0, POINTER.length - 1).equals(POINTER.subarray(0, POINTER.length - 1)))
+      throw new Error('Component install output is an unmaterialized pointer')
+    assertInstallPath(file)
+    await resolveContained(outDir, file)
+    const key = file.normalize('NFC').toLowerCase()
+    if (normalized.has(key)) throw new Error('Colliding component install output paths')
+    normalized.add(key)
+  }
+  const modules = modulePaths.map((file) => {
+    const { path, sha256, indexBlobSha } = initial.get(file)!
+    return { path, sha256, indexBlobSha }
+  })
+  const { path: configName, sha256, indexBlobSha } = configInput
+  planned.set(
+    'generation.json',
+    Buffer.from(
+      createComponentGeneration({
+        source: pinned,
+        modules,
+        dependencies: [...dependencies].map((file) => {
+          const { path, sha256, indexBlobSha } = initial.get(file)!
+          return { path, sha256, indexBlobSha }
+        }),
+        config: { path: configName, sha256, indexBlobSha },
+        files: planned
+      })
+    )
+  )
+  const verifyInputs = async () => {
+    await verifyCache()
+    if (!registryBytes.equals(await readRegular(root, registryFile)))
+      throw new Error('The component registry changed during install')
+    await assertInventory()
+    const current = await lockedInputs(repository, paths, pinned, dependencies)
+    for (const [file, original] of initial) {
+      const latest = current.get(file)!
+      if (latest.indexBlobSha !== original.indexBlobSha || !latest.bytes.equals(original.bytes))
+        throw new Error('Component input changed during install: ' + file)
+    }
+    await assertLock()
+  }
+  await verifyInputs()
+  return publishInstall(root, 'components', outDir, planned, verifyInputs)
 }
 
 type FoundationSource = {
