@@ -351,19 +351,7 @@ async fn send_request(
     };
     let mut res = match request.send().await {
         Ok(res) => res,
-        Err(err) => {
-            let detail = err.to_string();
-            let mut cause: &dyn std::error::Error = &err;
-            while let Some(source) = cause.source() {
-                cause = source;
-            }
-            let cause = cause.to_string();
-            return Ok(FetchResponse {
-                url,
-                error: Some((detail, cause)),
-                ..Default::default()
-            });
-        }
+        Err(err) => return Ok(transport_failure(url, &err)),
     };
 
     let status = res.status();
@@ -403,12 +391,15 @@ async fn send_request(
                     collected.extend_from_slice(&c);
                 }
                 Ok(None) => break,
-                Err(err) => return Err(type_error(err.to_string())),
+                Err(err) => return Ok(transport_failure(url, &err)),
             }
         }
         collected.freeze()
     } else {
-        res.bytes().await?
+        match res.bytes().await {
+            Ok(bytes) => bytes,
+            Err(err) => return Ok(transport_failure(url, &err)),
+        }
     };
 
     state
@@ -436,6 +427,21 @@ async fn send_request(
         body_decoded: false,
         error: None,
     })
+}
+
+/// A request or response body that failed in transit; the fetch JS rejects with
+/// `TypeError("fetch failed")` and this as its cause.
+fn transport_failure(url: String, err: &reqwest::Error) -> FetchResponse {
+    let detail = err.to_string();
+    let mut cause: &dyn std::error::Error = err;
+    while let Some(source) = cause.source() {
+        cause = source;
+    }
+    FetchResponse {
+        url,
+        error: Some((detail, cause.to_string())),
+        ..Default::default()
+    }
 }
 
 /// Cached default client for a scene's own requests. Its connections follow the scene's

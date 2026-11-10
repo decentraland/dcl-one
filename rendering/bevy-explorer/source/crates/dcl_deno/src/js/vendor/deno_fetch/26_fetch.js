@@ -1,7 +1,7 @@
 // Copyright 2018-2026 the Deno authors. MIT license.
 // Modified from deno_fetch 0.284.0: `URL` is loaded rather than read from the global, a
-// redirect from https to http is refused, and the signed-fetch identity headers are dropped
-// on a cross-origin redirect.
+// redirect from https to http is refused, and the signed-fetch identity headers
+// (`x-identity-*`, `x-authoritative-scope`) are dropped on a cross-origin redirect.
 
 (function () {
 const { core, internals, primordials } = __bootstrap;
@@ -107,6 +107,7 @@ const REDIRECT_SENSITIVE_HEADER_NAMES = [
 
 function isRedirectSensitiveHeader(name) {
   return ArrayPrototypeIncludes(REDIRECT_SENSITIVE_HEADER_NAMES, name) ||
+    name === "x-authoritative-scope" ||
     StringPrototypeStartsWith(name, "x-identity-");
 }
 

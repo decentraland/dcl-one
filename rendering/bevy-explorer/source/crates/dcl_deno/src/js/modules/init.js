@@ -187,11 +187,20 @@ globalThis.Request = Request;
 const { fetch } = loadExtScript("ext:deno_fetch/26_fetch.js");
 // On the authoritative server a 3xx is never followed: the scene gets the redirect response
 // back and re-issues the request itself. Decided per call, as the scene context is not in
-// place while this module is evaluated.
-globalThis.fetch = (input, init) =>
-    isAuthoritativeServer()
-        ? fetch(input, { ...init, redirect: "manual" })
-        : fetch(input, init);
+// place while this module is evaluated. The Request is built first so an `init` read through
+// getters (a Request, a class instance) keeps its method, headers and body.
+globalThis.fetch = (input, init) => {
+    if (!isAuthoritativeServer()) {
+        return fetch(input, init);
+    }
+    let request;
+    try {
+        request = new Request(input, init);
+    } catch (e) {
+        return Promise.reject(e);
+    }
+    return fetch(request, { redirect: "manual" });
+};
 
 const timers = loadExtScript("ext:deno_web/02_timers.js");
 globalThis.setTimeout = timers.setTimeout;

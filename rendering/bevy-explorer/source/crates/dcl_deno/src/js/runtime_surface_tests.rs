@@ -1,4 +1,4 @@
-use super::{context, create_runtime, fetch_outcome, run_scene};
+use super::{context, create_runtime, fetch_outcome, recording_redirect_servers, run_scene};
 use deno_core::JsRuntime;
 use std::time::{Duration, Instant};
 
@@ -411,6 +411,99 @@ fn a_followed_redirect_reports_its_final_url() {
     );
 }
 
+/// Credentials and signed-fetch identity headers reach the redirect target only on the same
+/// origin; other headers always follow.
+#[test]
+fn a_cross_origin_redirect_drops_credentials_and_identity_headers() {
+    let (ports, received) = recording_redirect_servers();
+    let outcome = fetch_outcome(
+        false,
+        None,
+        format!(
+            r#"const headers = {{
+                authorization: "Bearer a",
+                "x-identity-metadata": "{{}}",
+                "x-authoritative-scope": "scope",
+                "x-kept": "1",
+            }};
+            const status = (r) => r.status;
+            Promise.all([
+                fetch("http://127.0.0.1:{port}/redirect", {{ headers }}).then(status),
+                fetch("http://127.0.0.1:{port}/same", {{ headers }}).then(status),
+            ]).then((s) => s.join(), (e) => `error ${{e}}`)
+            .then((s) => globalThis.__outcome = s);"#,
+            port = ports[0]
+        ),
+    );
+    assert_eq!(outcome, "200,200");
+    let received = received.lock().unwrap();
+    let target_on = |port: u16| {
+        let hops = received
+            .iter()
+            .filter(|r| r.port == port && r.head.starts_with("GET /target "))
+            .collect::<Vec<_>>();
+        assert_eq!(hops.len(), 1, "one /target request on {port}");
+        hops[0]
+            .head
+            .lines()
+            .skip(1)
+            .filter_map(|line| line.split_once(':'))
+            .map(|(name, _)| name.trim().to_ascii_lowercase())
+            .collect::<Vec<_>>()
+    };
+    let sensitive = ["authorization", "x-identity-metadata", "x-authoritative-scope"];
+    let cross = target_on(ports[1]);
+    for name in sensitive {
+        assert!(!cross.iter().any(|n| n == name), "{name} crossed origins: {cross:?}");
+    }
+    assert!(cross.iter().any(|n| n == "x-kept"), "{cross:?}");
+    let same = target_on(ports[0]);
+    for name in sensitive.into_iter().chain(["x-kept"]) {
+        assert!(same.iter().any(|n| n == name), "{name} dropped on the same origin: {same:?}");
+    }
+}
+
+/// On the server, an `init` whose fields are getters keeps them, and the redirect still comes
+/// back to the scene.
+#[test]
+fn the_server_keeps_an_init_read_through_getters() {
+    let (ports, received) = recording_redirect_servers();
+    let outcome = fetch_outcome(
+        true,
+        None,
+        format!(
+            r#"const url = "http://127.0.0.1:{port}/redirect";
+            class Init {{
+                get method() {{ return "POST"; }}
+                get headers() {{ return {{ "x-kept": "1" }}; }}
+                get body() {{ return "hello"; }}
+            }}
+            const asRequest = new Request(url, {{ method: "PUT", headers: {{ "x-kept": "1" }}, body: "hello" }});
+            Promise.all([fetch(url, new Init()), fetch(url, asRequest)])
+                .then((r) => r.map((r) => r.status).join(), (e) => `error ${{e}}`)
+                .then((s) => globalThis.__outcome = s);"#,
+            port = ports[0]
+        ),
+    );
+    assert_eq!(outcome, "302,302");
+    let received = received.lock().unwrap();
+    let mut methods = received
+        .iter()
+        .map(|r| {
+            assert_eq!(r.port, ports[0], "the redirect was followed");
+            let mut lines = r.head.lines();
+            let method = lines.next().unwrap().split(' ').next().unwrap().to_owned();
+            let kept = lines
+                .filter_map(|line| line.split_once(':'))
+                .any(|(name, value)| name.eq_ignore_ascii_case("x-kept") && value.trim() == "1");
+            assert!(kept, "x-kept lost: {}", r.head);
+            method
+        })
+        .collect::<Vec<_>>();
+    methods.sort();
+    assert_eq!(methods, ["POST", "PUT"]);
+}
+
 /// An https page redirecting to http is refused before the http server sees a request.
 #[test]
 fn a_redirect_from_https_to_http_is_refused() {
@@ -533,6 +626,33 @@ fn a_refused_connection_rejects_with_fetch_failed_and_its_cause() {
         ),
     );
     assert_eq!(outcome, "TypeError: fetch failed / true");
+}
+
+/// A body cut off before its declared length fails the same way as a refused connection.
+#[test]
+fn a_truncated_body_rejects_with_fetch_failed_and_its_cause() {
+    use std::io::{Read, Write};
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let mut stream = stream.unwrap();
+            let _ = stream.read(&mut [0u8; 4096]);
+            let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nshort");
+        }
+    });
+    for is_server in [false, true] {
+        let outcome = fetch_outcome(
+            is_server,
+            None,
+            format!(
+                r#"fetch("http://127.0.0.1:{port}/").then(() => "resolved",
+                    (e) => `${{e.name}}: ${{e.message}} / ${{e.cause instanceof Error}}`)
+                .then((s) => globalThis.__outcome = s);"#
+            ),
+        );
+        assert_eq!(outcome, "TypeError: fetch failed / true", "server: {is_server}");
+    }
 }
 
 #[test]

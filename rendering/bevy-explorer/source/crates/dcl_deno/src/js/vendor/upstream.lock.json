@@ -47,11 +47,11 @@
         {
           "path": "deno_fetch/26_fetch.js",
           "upstream_sha256": "f0b1453bd5dd41982016faea149ccfe588cc061a30ab0f032dceff4c2a0d679a",
-          "sha256": "202502adc71ede895368f2e8001dc30612e93ebcab755d9079c8edb9ff247c29",
+          "sha256": "8e6b77ed0d6ff2590bb0c23ed7d252c138729c09bc758a65094c46e5a482acce",
           "changes": [
             "Load URL from ext:deno_web/00_url.js instead of reading the global",
             "Refuse a redirect from https to http",
-            "Drop x-identity-* (signed fetch) headers on a cross-origin redirect, with the existing sensitive headers"
+            "Drop x-identity-* and x-authoritative-scope (signed fetch) headers on a cross-origin redirect, with the existing sensitive headers"
           ]
         },
         {

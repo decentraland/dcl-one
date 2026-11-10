@@ -949,6 +949,19 @@ mod tests {
     /// A local server on two listeners: `/redirect` answers a 302 to `/target` on the second,
     /// which answers 200 `arrived`. Returns both ports.
     fn redirect_servers() -> [u16; 2] {
+        recording_redirect_servers().0
+    }
+
+    /// One request as a server received it: its port, request line and headers.
+    pub(super) struct ReceivedRequest {
+        pub port: u16,
+        pub head: String,
+    }
+
+    /// [`redirect_servers`], plus `/same`, a 302 to `/target` on the same listener, and every
+    /// request each listener received, in arrival order.
+    pub(super) fn recording_redirect_servers(
+    ) -> ([u16; 2], Arc<std::sync::Mutex<Vec<ReceivedRequest>>>) {
         use std::io::{Read, Write};
         use std::net::TcpListener;
 
@@ -957,20 +970,27 @@ mod tests {
             TcpListener::bind("127.0.0.1:0").unwrap(),
         ];
         let ports = listeners.each_ref().map(|l| l.local_addr().unwrap().port());
+        let received = Arc::new(std::sync::Mutex::new(Vec::new()));
         for listener in listeners {
             let target_port = ports[1];
+            let received = received.clone();
             std::thread::spawn(move || {
+                let port = listener.local_addr().unwrap().port();
                 for stream in listener.incoming() {
                     let mut stream = stream.unwrap();
                     let mut buf = [0u8; 4096];
                     let n = stream.read(&mut buf).unwrap();
-                    let path = String::from_utf8_lossy(&buf[..n])
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or("/")
-                        .to_owned();
+                    let request = String::from_utf8_lossy(&buf[..n]).into_owned();
+                    let head = request.split("\r\n\r\n").next().unwrap_or("").to_owned();
+                    let path = head.split_whitespace().nth(1).unwrap_or("/").to_owned();
+                    received
+                        .lock()
+                        .unwrap()
+                        .push(ReceivedRequest { port, head });
                     let response = if path == "/redirect" {
                         format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{target_port}/target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+                    } else if path == "/same" {
+                        format!("HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{port}/target\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
                     } else {
                         "HTTP/1.1 200 OK\r\nContent-Length: 7\r\nConnection: close\r\n\r\narrived"
                             .to_owned()
@@ -979,7 +999,7 @@ mod tests {
                 }
             });
         }
-        ports
+        (ports, received)
     }
 
     /// Runs `script`, which must set `globalThis.__outcome`, in a preview scene (loopback needs

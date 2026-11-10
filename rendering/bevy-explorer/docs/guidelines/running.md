@@ -53,8 +53,9 @@ On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
 Ordinary and authoritative hosted scenes use their own address policies. Native scene Fetch
 follows a redirect by sending the next hop through the same permission, request budget and
-address checks as a new request; it refuses a redirect from `https` to `http`, drops the
-signed-fetch `x-identity-*` headers on a cross-origin hop, and on the authoritative server
+address checks as a new request; it refuses a redirect from `https` to `http`, drops
+credentials and the signed-fetch `x-identity-*` and `x-authoritative-scope` headers on a
+cross-origin hop, and on the authoritative server
 returns the redirect response instead of following it. Scenes cannot create custom HTTP
 clients, proxies or trust roots. Native scene
 WebSockets follow the same rule as native Fetch: preview, the bundled bridge and an
