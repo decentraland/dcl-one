@@ -143,11 +143,11 @@ fn op_arguments_that_run_js_while_read_are_refused() {
         ),
         (
             "Deno.core.ops.op_log_test_plan({ get tests() { throw new Error('x'); } })",
-            "reading the argument threw",
+            "getter or setter",
         ),
         (
             "const a = [['k', 'v']]; Object.defineProperty(a[0], 1, { get() { throw new Error('x'); } }); Deno.core.ops.op_url_stringify_search_params(a)",
-            "reading the argument threw",
+            "getter or setter",
         ),
         (
             "Deno.core.ops.op_log_test_plan({ tests: [new String('x')] })",
@@ -156,6 +156,19 @@ fn op_arguments_that_run_js_while_read_are_refused() {
     ] {
         assert_refused(script, needle);
     }
+    // a getter is refused without running, and an array hole never reads the prototype
+    run_scene(
+        false,
+        r#"
+        let ran = false;
+        try { Deno.core.ops.op_log_test_plan({ get tests() { ran = true; return []; } }); } catch {}
+        Object.defineProperty(Array.prototype, 1, { get() { ran = true; return "x"; }, configurable: true });
+        try { Deno.core.ops.op_url_stringify_search_params([["k", "v"], , ["a", "b"]]); } catch {}
+        delete Array.prototype[1];
+        if (ran) { throw new Error("a getter ran while an op read its argument"); }
+        "#,
+    )
+    .unwrap();
 }
 
 #[test]

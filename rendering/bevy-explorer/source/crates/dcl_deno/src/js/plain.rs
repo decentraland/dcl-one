@@ -7,7 +7,8 @@ use serde::de::DeserializeOwned;
 ///
 /// serde_v8 unwraps every property read, so a getter, proxy or `toString` that throws
 /// while it walks a value panics inside the op, which aborts the process. The copy is made
-/// with every read checked: own enumerable data only, null-prototype objects and arrays,
+/// with every read checked: own enumerable data properties only (no getter runs),
+/// null-prototype objects and arrays,
 /// and no symbols, boxed primitives, proxies, functions, or objects whose data lives in
 /// internal slots (`Date`, `Map`, `Set`, `RegExp`, ...). Buffers pass through uncopied
 /// and keep their prototype, so the decode itself still runs under `catch_unwind`.
@@ -119,7 +120,10 @@ fn plain_copy<'s>(
         }
         let mut items = Vec::with_capacity(length);
         for index in 0..length as u32 {
-            let item = array.get_index(scope, index).ok_or_else(threw)?;
+            let key = v8::Integer::new_from_unsigned(scope, index)
+                .to_string(scope)
+                .ok_or_else(threw)?;
+            let item = own_data(scope, array.into(), key.into())?;
             items.push(plain_copy(scope, item, depth + 1, budget)?);
         }
         let copy = v8::Array::new_with_elements(scope, &items);
@@ -148,12 +152,43 @@ fn plain_copy<'s>(
         let Ok(key) = v8::Local::<v8::Name>::try_from(key) else {
             return Err(threw());
         };
-        let item = object.get(scope, key.into()).ok_or_else(threw)?;
+        let item = own_data(scope, object, key)?;
         let item = plain_copy(scope, item, depth + 1, budget)?;
         copy.create_data_property(scope, key, item)
             .ok_or_else(threw)?;
     }
     Ok(copy.into())
+}
+
+/// The value of an own data property, read without running scene code: an accessor is
+/// refused and a missing property (an array hole) is undefined.
+fn own_data<'s>(
+    scope: &mut v8::PinScope<'s, '_>,
+    object: v8::Local<'s, v8::Object>,
+    key: v8::Local<'s, v8::Name>,
+) -> Result<v8::Local<'s, v8::Value>, PlainError> {
+    let threw = || PlainError("reading the argument threw".to_owned());
+    let descriptor = object
+        .get_own_property_descriptor(scope, key)
+        .ok_or_else(threw)?;
+    let Ok(descriptor) = v8::Local::<v8::Object>::try_from(descriptor) else {
+        return Ok(v8::undefined(scope).into());
+    };
+    let name = |scope: &mut v8::PinScope<'s, '_>,
+                name: &str|
+     -> Result<v8::Local<'s, v8::Name>, PlainError> {
+        Ok(v8::String::new(scope, name).ok_or_else(threw)?.into())
+    };
+    for accessor in ["get", "set"] {
+        let accessor = name(scope, accessor)?;
+        if descriptor.has_own_property(scope, accessor) != Some(false) {
+            return Err(PlainError(
+                "argument has a getter or setter, which cannot be passed to this op".to_owned(),
+            ));
+        }
+    }
+    let value = name(scope, "value")?;
+    descriptor.get(scope, value.into()).ok_or_else(threw)
 }
 
 /// Objects whose contents have no own properties, so a copy would silently be `{}`.
