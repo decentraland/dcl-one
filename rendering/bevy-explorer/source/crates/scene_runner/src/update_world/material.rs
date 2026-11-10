@@ -23,7 +23,8 @@ use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer};
 
 use crate::{
     gltf_resolver::GltfMaterialResolver, renderer_context::RendererSceneContext,
-    update_scene::pointer_results::ResolveCursor, ContainerEntity, SceneEntity, SceneSets,
+    scene_spawn_slice::InstantiationBudget, update_scene::pointer_results::ResolveCursor,
+    ContainerEntity, SceneEntity, SceneSets,
 };
 use dcl_component::{
     proto_components::{
@@ -39,7 +40,11 @@ use dcl_component::{
 use dcl_types::interface::{ComponentPosition, CrdtType};
 use scene_material::{SceneBound, SceneMaterial};
 
-use super::{mesh_renderer::update_mesh, scene_ui::UiTextureOutput, AddCrdtInterfaceExt};
+use super::{
+    mesh_renderer::{update_mesh, PendingPrimitive},
+    scene_ui::UiTextureOutput,
+    AddCrdtInterfaceExt,
+};
 
 pub struct MaterialDefinitionPlugin;
 
@@ -300,6 +305,12 @@ pub const NEW_MATERIAL_COST: Duration = Duration::from_micros(8);
 #[component(storage = "SparseSet")]
 pub struct MaterialPrepaid;
 
+/// The entity's first material waits: for the next frame's instantiation slice, for its
+/// primitive, or for a texture source.
+#[derive(Component)]
+#[component(storage = "SparseSet")]
+pub struct PendingMaterial;
+
 #[derive(Component)]
 pub struct RetryMaterial(pub Vec<Handle<Image>>);
 
@@ -514,24 +525,34 @@ fn init_cache(
     }
 }
 
-#[allow(clippy::type_complexity)]
+type MaterialData = (
+    Entity,
+    Ref<'static, PbMaterialComponent>,
+    &'static ContainerEntity,
+    Option<&'static SceneEntity>,
+    Option<&'static BaseMaterial>,
+    Option<&'static ShadowCasterOverride>,
+    Has<PendingMaterial>,
+    Has<MaterialPrepaid>,
+    Has<PendingPrimitive>,
+);
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_materials(
     mut commands: Commands,
-    mut new_materials: Query<
+    pending_materials: Query<MaterialData, With<PendingMaterial>>,
+    new_materials: Query<
+        MaterialData,
         (
-            Entity,
-            Ref<PbMaterialComponent>,
-            &ContainerEntity,
-            Option<&SceneEntity>,
-            Option<&BaseMaterial>,
-            Option<&ShadowCasterOverride>,
+            Or<(
+                Changed<PbMaterialComponent>,
+                Changed<BaseMaterial>,
+                With<RetryMaterial>,
+            )>,
+            Without<PendingMaterial>,
         ),
-        Or<(
-            Changed<PbMaterialComponent>,
-            Changed<BaseMaterial>,
-            With<RetryMaterial>,
-        )>,
     >,
+    mut removed_materials: RemovedComponents<PbMaterialComponent>,
     mut materials: ResMut<Assets<SceneMaterial>>,
     sourced: Query<(Entity, &MeshMaterial3d<SceneMaterial>, &MaterialSource)>,
     // ui-canvas atlas slot changes are applied to the material in place by
@@ -543,13 +564,45 @@ pub fn update_materials(
     config: Res<AppConfig>,
     mut gltf_resolver: GltfMaterialResolver,
     images: Res<Assets<Image>>,
+    mut budget: InstantiationBudget,
 ) {
     gltf_resolver.begin_frame();
 
-    for (ent, mat, container, maybe_scene_ent, base, shadow_override) in new_materials.iter_mut() {
+    for ent in removed_materials.read() {
+        if let Ok(mut e) = commands.get_entity(ent) {
+            e.remove::<(PendingMaterial, MaterialPrepaid)>();
+        }
+    }
+
+    let mut gate = budget.gate();
+    for (
+        ent,
+        mat,
+        container,
+        maybe_scene_ent,
+        base,
+        shadow_override,
+        pending,
+        prepaid,
+        primitive_pending,
+    ) in pending_materials.iter().chain(new_materials.iter())
+    {
         let Ok((mut scene, mut cache)) = scenes.get_mut(container.root) else {
+            commands
+                .entity(ent)
+                .remove::<(PendingMaterial, MaterialPrepaid)>();
             continue;
         };
+
+        // only an entity's first material waits for the slice; a changed one (a texture tween
+        // rewrites it every frame) is created as before. A prepaid one came with its primitive.
+        let first = mat.is_added() || pending || prepaid;
+        let gated = first && !prepaid;
+        if gated && primitive_pending {
+            // admitted together with its primitive, which pays for both
+            commands.entity(ent).try_insert(PendingMaterial);
+            continue;
+        }
 
         let hasher = &mut std::hash::DefaultHasher::new();
         mat.0.hash(hasher);
@@ -565,9 +618,17 @@ pub fn update_materials(
             });
 
         let (material, shadow_caster) = match cached_data {
-            Some(data) => data,
+            Some(data) => {
+                if gated && !gate.admit(MATERIAL_COST) {
+                    commands.entity(ent).try_insert(PendingMaterial);
+                    continue;
+                }
+                data
+            }
             None => {
                 let new_base;
+                // inserted only once the material is admitted, like the source and the cursor
+                let mut resolved_base = None;
                 let base = if let Some(gltf_def) = mat.0.gltf.as_ref() {
                     if base.is_some_and(|b| b.gltf == gltf_def.gltf_src && b.name == gltf_def.name)
                     {
@@ -587,6 +648,9 @@ pub fn update_materials(
                                 commands
                                     .entity(ent)
                                     .try_insert(RetryMaterial(Vec::default()));
+                                if first {
+                                    commands.entity(ent).try_insert(PendingMaterial);
+                                }
                                 continue;
                             }
                             Ok(Some(mat)) => {
@@ -595,7 +659,7 @@ pub fn update_materials(
                                     gltf: gltf_def.gltf_src.clone(),
                                     name: gltf_def.name.clone(),
                                 };
-                                commands.entity(ent).try_insert(new_base.clone());
+                                resolved_base = Some(new_base.clone());
                                 Some(&new_base)
                             }
                         }
@@ -629,32 +693,41 @@ pub fn update_materials(
                         commands
                             .entity(ent)
                             .try_insert(RetryMaterial(Vec::default()));
+                        if first {
+                            commands.entity(ent).try_insert(PendingMaterial);
+                        }
                         continue;
                     }
                 };
 
-                let mut can_cache = true;
-
-                if let Some(source) = textures
+                let source = textures
                     .iter()
                     .flatten()
                     .filter_map(|t| t.source_entity)
-                    .next()
-                {
-                    commands.entity(ent).try_insert(MaterialSource(source));
-                    can_cache = false;
-                }
+                    .next();
 
                 let [mut base_color_texture, emissive_texture, normal_map_texture]: [Option<
                     ResolvedTexture,
                 >;
                     3] = textures.try_into().unwrap();
 
-                if let Some(bct) = base_color_texture.as_mut() {
-                    if let Some(cursor) = bct.camera_target.take() {
-                        commands.entity(ent).try_insert(cursor);
-                        can_cache = false;
-                    }
+                let cursor = base_color_texture
+                    .as_mut()
+                    .and_then(|bct| bct.camera_target.take());
+                let can_cache = source.is_none() && cursor.is_none();
+
+                if gated && !gate.admit(NEW_MATERIAL_COST) {
+                    commands.entity(ent).try_insert(PendingMaterial);
+                    continue;
+                }
+                if let Some(new_base) = resolved_base {
+                    commands.entity(ent).try_insert(new_base);
+                }
+                if let Some(source) = source {
+                    commands.entity(ent).try_insert(MaterialSource(source));
+                }
+                if let Some(cursor) = cursor {
+                    commands.entity(ent).try_insert(cursor);
                 }
 
                 // ui-canvas atlas sub-rect transform (from the base-colour texture);
@@ -691,7 +764,7 @@ pub fn update_materials(
 
         let mut commands = commands.entity(ent);
         commands
-            .remove::<RetryMaterial>()
+            .remove::<(RetryMaterial, PendingMaterial, MaterialPrepaid)>()
             .try_insert(MeshMaterial3dLoading(material));
         if shadow_override.map_or(shadow_caster, |shadows| shadows.0) {
             commands.remove::<NotShadowCaster>();
@@ -733,6 +806,7 @@ pub fn update_materials(
                 .remove::<MaterialSource>();
         }
     }
+    gate.report("materials");
 }
 
 fn update_loading_materials(
@@ -1001,3 +1075,6 @@ mod test {
         assert!(app.world().resource::<CachedMaterialOwners>().0.is_empty());
     }
 }
+
+#[cfg(test)]
+mod tests;
