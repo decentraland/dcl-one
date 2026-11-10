@@ -43,7 +43,8 @@ deterministically — they have their own tiers (§3, §4).
 ## 1. The testing tiers (why three)
 
 Connectivity feedback is engine-owned. `src/test/connectivity.test.tsx` checks the shared
-console status/retry bridge, one Connection Lost alert dialog, Retry/Exit, automatic dismissal,
+console status/retry bridge, stable unchanged snapshots, one Connection Lost alert dialog,
+pending Retry/Exit controls, failed-retry recovery controls, automatic dismissal,
 and scoped access messages. Runtime verification reads `/connectivity_state`, uses
 `/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
 `Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
@@ -131,7 +132,10 @@ or when touching the bridge protocol.
 **Still tier-1-only** (a fresh guest can't reach them, so they can't round-trip here): accepting a
 friend request, leaving a community, marking notifications read, community chat (the tabs come
 from the communities the account is a member of; `src/test/communityChat*.test.tsx`, and
-`apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account) — these need seeded
+`apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
+and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
+that owns a LAND or a World with a deployed scene; `src/test/communities.clicks.test.tsx` covers the
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, and the member row and menu; acting on a member needs a second account in a community the first owns or moderates) — these need seeded
 data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.

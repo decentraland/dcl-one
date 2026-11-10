@@ -22,7 +22,9 @@ export function useConnectivity(driver: LoginDriver | null, active: boolean) {
       pending = true
       try {
         const next = JSON.parse(await driver.command!('/connectivity_state')) as ConnectivityState
-        if (!cancelled && typeof next.connectionLost === 'boolean' && typeof next.probing === 'boolean' && Array.isArray(next.rooms)) setState(next)
+        if (!cancelled && typeof next.connectionLost === 'boolean' && typeof next.probing === 'boolean' && Array.isArray(next.rooms)) {
+          setState(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
+        }
       } catch {
         // Console/engine startup errors are handled by the existing session crash path.
       } finally { pending = false }

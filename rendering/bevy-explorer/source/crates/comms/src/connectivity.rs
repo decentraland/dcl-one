@@ -44,6 +44,7 @@ impl Watchdog {
     }
 
     fn retry(&mut self, now: f64) {
+        self.connection_lost = false;
         self.next_poll = now;
         if self.ever_connected {
             self.lost_since = Some(now - 4.0);
@@ -110,12 +111,24 @@ mod tests {
         watchdog.finish_probe(false);
         assert!(watchdog.connection_lost);
         watchdog.retry(10.0);
+        assert!(!watchdog.connection_lost);
         assert!(watchdog.sample(10.0, false, false));
         assert!(!watchdog.sample(10.1, false, false));
         watchdog.sample(10.2, true, false);
         assert!(!watchdog.connection_lost);
         watchdog.finish_probe(false);
         assert!(!watchdog.connection_lost);
+    }
+
+    #[test]
+    fn failed_manual_retry_restores_the_offline_warning() {
+        let mut watchdog = lost();
+        watchdog.finish_probe(false);
+        watchdog.retry(10.0);
+        assert!(!watchdog.connection_lost);
+        assert!(watchdog.sample(10.0, false, false));
+        watchdog.finish_probe(false);
+        assert!(watchdog.connection_lost);
     }
 
     #[test]

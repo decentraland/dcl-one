@@ -298,7 +298,9 @@ Connectivity diagnostics use `explorer.connectivity()` (`/connectivity_state`) a
 `probing`, `everConnected`, `suppressed`, and `rooms` (`scope`, `state`, `retryAt`), without
 credentials or raw server responses. The HUD exposes one `alertdialog` named `Connection Lost`,
 with `Retry` and `Exit Application` buttons, and a `status` named `Multiplayer status` for scoped room
-degradation. Recovery retracts the dialog automatically; Exit follows session sign-out.
+degradation. Retry is disabled and `aria-busy` while its command is pending. The dialog
+follows engine state through retry, reopening or remaining available when a probe fails.
+Recovery retracts it automatically; Exit follows session sign-out.
 
 The On-demand voice debug section reads `/voice_room`: `active`, `session`, `phase`, `failure`,
 `blockStatusReady`, `proximitySuppressed`, and `microphoneCleanupPending`. Private voice playback

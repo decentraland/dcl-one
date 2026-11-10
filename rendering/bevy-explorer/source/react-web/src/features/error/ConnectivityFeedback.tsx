@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, ModalShell, Panel, openPopup } from '../../design'
 import type { ConnectivityState } from '../session/useConnectivity'
 import connectionLostIcon from './connection-lost.png'
@@ -12,6 +12,17 @@ const STATES: Record<string, string> = {
   reconnecting: 'reconnecting', paused: 'paused'
 }
 
+function RetryButton({ retry }: { retry: () => void | Promise<void> }) {
+  const [pending, setPending] = useState(false)
+  return <Button className={styles.retry} disabled={pending} aria-busy={pending} onClick={async () => {
+    if (pending) return
+    setPending(true)
+    try { await retry() }
+    catch { /* Keep Exit/Retry available if the engine cannot accept the request. */ }
+    finally { setPending(false) }
+  }}>Retry</Button>
+}
+
 /** The engine owns the dialog lifetime; recovery retracts it without signing out. */
 export function ConnectivityFeedback({ state, retry, exit }: { state: ConnectivityState | null; retry: () => void | Promise<void>; exit: () => void }) {
   const actions = useRef({ retry, exit })
@@ -19,8 +30,8 @@ export function ConnectivityFeedback({ state, retry, exit }: { state: Connectivi
   const lost = state?.connectionLost === true
   useEffect(() => {
     if (!lost) return
-    // Unity ErrorPopupWithRetry.prefab: 600×417 card, 396×277 centered content.
-    // The owner handle bypasses the Escape guard when Retry/Exit is chosen.
+    // Only engine state dismisses Retry: a fast failed probe can finish between HUD polls.
+    // The owner handle bypasses the Escape guard when Exit is chosen.
     const dismiss = openPopup(() => (
       <ModalShell width={600} className={styles.modal} bodyless role="alertdialog" ariaLabel="Connection Lost" closeButton={false}>
         <div className={styles.content}>
@@ -30,10 +41,7 @@ export function ConnectivityFeedback({ state, retry, exit }: { state: Connectivi
           <p className={styles.description}>You appear to be offline. Please check your internet connection and retry.</p>
           <div className={styles.actions}>
             <Button variant="secondary" className={styles.exit} onClick={() => { dismiss(); actions.current.exit() }}>Exit Application</Button>
-            <Button className={styles.retry} onClick={async () => {
-              try { await actions.current.retry(); dismiss() }
-              catch { /* Keep Exit/Retry available if the engine cannot accept the request. */ }
-            }}>Retry</Button>
+            <RetryButton retry={() => actions.current.retry()} />
           </div>
         </div>
       </ModalShell>

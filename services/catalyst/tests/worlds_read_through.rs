@@ -103,9 +103,11 @@ async fn fake_about(
     let Some(scenes) = st.worlds.get(&name).filter(|s| !s.is_empty()) else {
         return StatusCode::NOT_FOUND.into_response();
     };
+    // The newest scene only, as upstream's /about answers.
     let urns: Vec<String> = scenes
-        .iter()
+        .last()
         .map(|id| format!("urn:decentraland:entity:{id}?=&baseUrl={base}/contents/"))
+        .into_iter()
         .collect();
     Json(json!({
         "healthy": true, "acceptingUsers": true, "spawnCoordinates": "0,0",
@@ -910,10 +912,13 @@ async fn an_oversized_scene_chain_is_refused_before_anything_of_the_scene_is_fet
 
     let (status, _) = node.get("/world/heavy.dcl.eth/about").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
-    // One scene asked for by its id, and the entity never fetched.
+    // The world's listing, then its one scene asked for by its id, and the entity never fetched.
     assert_eq!(
         fake.lock().scenes_queries,
-        vec![format!("entity_id={id}&limit=1")]
+        vec![
+            "limit=20&offset=0".to_string(),
+            format!("entity_id={id}&limit=1")
+        ]
     );
     assert_eq!(content_calls(&fake, &id), 0);
     assert_eq!(content_calls(&fake, &file_hash), 0);

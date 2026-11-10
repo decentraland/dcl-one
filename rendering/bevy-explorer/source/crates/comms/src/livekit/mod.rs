@@ -95,8 +95,8 @@ pub struct LivekitAudioManager {
 pub enum ConnectionAvailability {
     #[default]
     Available,
-    /// Duplicate identity disables new connections until the client identity changes.
-    /// Room-scoped admission denials are held on that room's recovery component instead.
+    /// A world-room identity conflict disables new connections until the identity changes.
+    /// Private-room conflicts and admission denials stay on that room's recovery component.
     Unavailable,
 }
 

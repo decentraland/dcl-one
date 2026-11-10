@@ -12,8 +12,10 @@ content area and 70-pixel vertical padding. It has a 62×62 connection icon, a
 20-pixel semibold title, 16-pixel regular description and two 190×46 actions
 separated by 15 pixels. The card uses the prefab's purple surface, rounded
 background, black scrim, glow positions and original image textures. Retry requests
-engine recovery and closes once the command is accepted; a failed command leaves
-the controls available. Recovery also dismisses it.
+engine recovery and is disabled while the command is pending. The engine clears the
+offline warning when the retry begins and restores it if the probe fails. The dialog
+follows that state; a failure that finishes between HUD polls leaves the controls
+visible. A failed command also leaves them available. Recovery dismisses the dialog.
 Escape and backdrop clicks cannot dismiss it.
 
 The buttons read **Exit Application** and **Retry**. The message is:

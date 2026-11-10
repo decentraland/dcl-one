@@ -198,6 +198,9 @@ CREATE TABLE shop.items (
 
 -- /v1/items?creator= and the creators rail.
 CREATE INDEX items_creator_idx ON shop.items (creator);
+-- The badge recounts (a creator's items, creators in address order) and the
+-- routes filtering on lower(creator): the mirror lowercases, nothing checks.
+CREATE INDEX items_creator_lower_idx ON shop.items (lower(creator));
 -- /v3/catalog/items, the default sort: WHERE search_is_collection_approved
 -- ORDER BY created_at DESC LIMIT 24 (an index scan that stops at the LIMIT
 -- since the page dropped its COUNT(*) OVER(); METRICS.md Q9) and its total

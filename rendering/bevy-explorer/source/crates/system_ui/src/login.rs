@@ -273,11 +273,9 @@ fn update_profile_for_realm(
 ) {
     if realm.is_changed() && !wallet.is_guest() {
         if let Some(address) = wallet.address() {
-            *task = Some(IoTaskPool::get().spawn_compat(get_remote_profile(
-                address,
-                ipfas.ipfs().clone(),
-                None,
-            )));
+            *task = Some(
+                IoTaskPool::get().spawn_compat(get_remote_profile(address, ipfas.ipfs().clone())),
+            );
         }
     }
 
@@ -359,7 +357,6 @@ async fn get_profile_with_retry(
     address: Address,
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
-    endpoint: Option<String>,
 ) -> Result<Option<UserProfile>, String> {
     const ATTEMPTS: u32 = 5;
     let mut last_error = String::default();
@@ -367,7 +364,7 @@ async fn get_profile_with_retry(
         if attempt > 0 {
             async_std::task::sleep(std::time::Duration::from_secs(2)).await;
         }
-        match get_remote_profile(address, ipfs.clone(), endpoint.clone()).await {
+        match get_remote_profile(address, ipfs.clone()).await {
             Ok(maybe_profile) => return Ok(maybe_profile),
             Err(e) => last_error = e.to_string(),
         }
@@ -392,9 +389,8 @@ async fn login_profile(
     ipfs: std::sync::Arc<IpfsIo>,
     default_on_error: bool,
     pick: Option<NewAccountPick>,
-    endpoint: Option<String>,
 ) -> Result<LoginProfile, String> {
-    match get_profile_with_retry(root_address, ipfs.clone(), default_on_error, endpoint).await? {
+    match get_profile_with_retry(root_address, ipfs.clone(), default_on_error).await? {
         Some(profile) => Ok(LoginProfile::Deployed(profile)),
         None => Ok(LoginProfile::New(
             new_account_profile(root_address, ipfs, pick).await,
@@ -626,7 +622,7 @@ fn process_login_bridge(
             // the account can only change while the world is held (the lobby): once in
             // world, comms and scenes are bound to the wallet that entered
             SystemApi::LoginPrevious(_, sender)
-            | SystemApi::LoginWithIdentity(_, _, _, _, _, sender)
+            | SystemApi::LoginWithIdentity(_, _, _, _, sender)
                 if account_locked(&wallet, &world_hold) =>
             {
                 sender.send(Err(ACCOUNT_LOCKED.to_owned()));
@@ -670,8 +666,7 @@ fn process_login_bridge(
                     } = previous_login;
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, None, None).await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, None).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 rpc_result_sender.send(Err(e));
@@ -719,8 +714,7 @@ fn process_login_bridge(
                         };
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, None, None).await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, None).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 result_sender.send(Err(e));
@@ -743,7 +737,6 @@ fn process_login_bridge(
                 default_on_error,
                 guest_account,
                 pick,
-                profiles,
                 rpc_result_sender,
             ) => {
                 // The web page already holds a signed AuthIdentity (read from localStorage,
@@ -760,9 +753,7 @@ fn process_login_bridge(
                     };
 
                     let profile =
-                        match login_profile(root_address, ipfs, default_on_error, pick, profiles)
-                            .await
-                        {
+                        match login_profile(root_address, ipfs, default_on_error, pick).await {
                             Ok(profile) => profile,
                             Err(e) => {
                                 rpc_result_sender.send(Err(e));
@@ -808,7 +799,7 @@ fn process_login_bridge(
                             return Err(());
                         }
                     };
-                    let profile = match login_profile(root_address, ipfs, false, None, None).await {
+                    let profile = match login_profile(root_address, ipfs, false, None).await {
                         Ok(profile) => profile,
                         Err(e) => {
                             rpc_result_sender.send(Err(e));

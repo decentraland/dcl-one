@@ -529,10 +529,7 @@ fn route(target: &PrivateChatTarget) -> (String, NetworkMessageRecipient) {
 fn send_private_chats(
     mut chats: EventReader<ChatEvent>,
     player: Query<Entity, With<PrimaryUser>>,
-    mut room: Query<
-        (&RoomSender, &mut CommunityChatStats),
-        (With<PrivateChatRoom>, With<Connected>),
-    >,
+    mut room: Query<(&RoomSender, &mut CommunityChatStats), With<PrivateChatRoom>>,
     channels: Res<CommunityChannels>,
 ) {
     let Ok(player) = player.single() else {
@@ -587,10 +584,7 @@ fn send_private_chats(
 fn send_private_reactions(
     mut reactions: EventReader<ChatReactionEvent>,
     wallet: Res<Wallet>,
-    mut room: Query<
-        (&RoomSender, &mut CommunityChatStats),
-        (With<PrivateChatRoom>, With<Connected>),
-    >,
+    mut room: Query<(&RoomSender, &mut CommunityChatStats), With<PrivateChatRoom>>,
 ) {
     let Some(me) = wallet.address() else {
         reactions.clear();
@@ -869,6 +863,77 @@ mod tests {
     const ALICE: &str = "0x1111111111111111111111111111111111111111";
     const BOB: &str = "0x2222222222222222222222222222222222222222";
     const COMMUNITY: &str = "abc-1";
+
+    #[test]
+    fn outgoing_chats_wait_in_the_room_channel_while_not_connected() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, room) = world();
+        let player = world.spawn(PrimaryUser::default()).id();
+        world.init_resource::<Events<ChatEvent>>();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(10);
+        let (control, _control_receiver) = tokio::sync::mpsc::channel(1);
+        world
+            .entity_mut(room)
+            .insert(RoomSender { sender, control });
+        for channel in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            world.send_event(ChatEvent {
+                timestamp: 42.0,
+                sender: player,
+                channel,
+                message: "queued during reconnect".to_owned(),
+            });
+        }
+        world.run_system_once(send_private_chats).unwrap();
+        for topic in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            let queued = receiver.try_recv().expect("chat must survive reconnect");
+            assert_eq!(queued.topic.as_deref(), Some(topic.as_str()));
+            assert!(!queued.unreliable);
+            let bytes = queued.message.to_rfc4().unwrap();
+            let packet = rfc4::Packet::decode(bytes.as_slice()).unwrap();
+            let Some(rfc4::packet::Message::Chat(chat)) = packet.message else {
+                panic!("expected chat packet");
+            };
+            assert_eq!(chat.message, "queued during reconnect");
+            assert_eq!(chat.timestamp, 42.0);
+        }
+        assert!(receiver.try_recv().is_err());
+    }
+
+    #[test]
+    fn outgoing_reactions_wait_in_the_room_channel_while_not_connected() {
+        use bevy::ecs::system::RunSystemOnce;
+        let (mut world, room) = world();
+        let me = world.resource::<Wallet>().address().unwrap();
+        let (sender, mut receiver) = tokio::sync::mpsc::channel(10);
+        let (control, _control_receiver) = tokio::sync::mpsc::channel(1);
+        world
+            .entity_mut(room)
+            .insert(RoomSender { sender, control });
+        for channel in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            world.send_event(ChatReactionEvent {
+                channel,
+                message_id: format!("{ALICE}:42"),
+                emoji: "\u{1f44d}".to_owned(),
+                from: me,
+                remove: false,
+            });
+        }
+        world.run_system_once(send_private_reactions).unwrap();
+        for topic in [BOB.to_owned(), channel_for(COMMUNITY)] {
+            let queued = receiver
+                .try_recv()
+                .expect("reaction must survive reconnect");
+            assert_eq!(queued.topic.as_deref(), Some(topic.as_str()));
+            let bytes = queued.message.to_rfc4().unwrap();
+            let packet = rfc4::Packet::decode(bytes.as_slice()).unwrap();
+            let Some(rfc4::packet::Message::ChatReaction(reaction)) = packet.message else {
+                panic!("expected reaction packet");
+            };
+            assert_eq!(reaction.message_id, format!("{ALICE}:42"));
+            assert_eq!(reaction.emoji, "\u{1f44d}");
+        }
+        assert!(receiver.try_recv().is_err());
+    }
 
     /// A world with the private chat room and `participant_payload` listening on it, the local
     /// user listening to `COMMUNITY`.

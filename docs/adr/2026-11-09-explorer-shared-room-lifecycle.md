@@ -38,7 +38,9 @@ login includes the installation identifier only for HTTPS Decentraland endpoints
 
 The shared access-status contract lives in `common`. A denied admission stops
 automatic recovery for its scope without declaring a platform-wide ban. Identity
-changes and explicit access updates reset the applicable state. Existing social
+conflicts in voice and private chat also stop only that room; world-room identity
+conflicts retain the session gate. Identity changes and explicit access updates
+reset the applicable state. Existing social
 updates supply personal blocking in both directions. Private voice waits for a
 successful snapshot for the current identity, and stays muted after a social
 disconnect until that snapshot is available again. A snapshot raced by a newer
@@ -50,7 +52,8 @@ microphone publication immediately and keeps it suppressed during connection,
 failure and recovery. Explicit deactivation restores the prior proximity mute
 preference. Native and browser publication use the same eligibility policy and
 wait for publication cleanup before changing destinations. A failed publication
-does not retry every frame; a route or microphone state change permits a new attempt.
+retries only after acknowledged cleanup, using the shared backoff capped at five
+seconds. Known native publish denial suppresses attempts until permission returns.
 Browser playback uses one mixer, and room teardown disposes its remote handles and
 playback independently of asynchronous SDK disconnect events. Private chat remains data-only.
 

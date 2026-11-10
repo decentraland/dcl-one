@@ -16,10 +16,10 @@
 
 import { decodeAbiParameters, decodeFunctionData, getAbiItem, toFunctionSelector, type Hex } from 'viem'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from '../../../shop/checkout/chain/abi'
+import { COLLECTION_STORE_ABI, CREDITS_MANAGER_ABI, MARKETPLACE_ABI } from '@shop/checkout/chain/abi'
 import { chainIdSalt, DOMAIN_TYPE, metaTxType } from '../../../shop/checkout/chain/metatx'
 import { ASSET_TYPE } from '../../../shop/checkout/purchase/encoding'
-import type { ChainId } from '../../../shop/model/chain'
+import type { ChainId } from '@shop/model/chain'
 import { AMOY_ADD_PARAMS } from '../../../shop/wallet/chain'
 import type { TrustedManager } from './config'
 

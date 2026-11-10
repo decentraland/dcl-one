@@ -28,7 +28,8 @@ use crate::{
         LivekitRuntimeRes, LivekitTransport,
     },
     room_connection::{
-        AdmissionError, CredentialRequest, FailureKind, NeedsAdapter, RoomRecovery, RoomSuspended,
+        AdmissionError, CredentialRequest, FailureKind, NeedsAdapter, RoomAccessScope,
+        RoomRecovery, RoomSuspended,
     },
     NetworkMessageRecipient,
 };
@@ -221,10 +222,11 @@ fn process_room_events(
         &mut LivekitRoom,
         &mut UnannouncedParticipants,
         &mut RoomRecovery,
+        Option<&RoomAccessScope>,
     )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced, mut recovery) in livekit_rooms {
+    for (entity, mut livekit_room, mut unannounced, mut recovery, scope) in livekit_rooms {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -256,8 +258,7 @@ fn process_room_events(
                             // terminal so the headless supervisor reaps it and re-mints
                             commands.entity(entity).try_insert(ServerRoomTerminal);
                         } else if reason == DisconnectReason::DuplicateIdentity {
-                            recovery.failure = Some(FailureKind::IdentityConflict);
-                            commands.set_state(ConnectionAvailability::Unavailable);
+                            record_identity_conflict(&mut commands, &mut recovery, scope);
                         } else {
                             recovery.failure = Some(FailureKind::Denied);
                         }
@@ -623,6 +624,74 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
                 "Failed to close room {} before exiting due to '{err}'.",
                 room.name()
             );
+        }
+    }
+}
+
+fn record_identity_conflict(
+    commands: &mut Commands,
+    recovery: &mut RoomRecovery,
+    scope: Option<&RoomAccessScope>,
+) {
+    recovery.failure = Some(FailureKind::IdentityConflict);
+    if !matches!(
+        scope.map(|scope| &scope.0),
+        Some(
+            common::access_status::AccessScope::Voice(_)
+                | common::access_status::AccessScope::PrivateChat
+        )
+    ) {
+        commands.set_state(ConnectionAvailability::Unavailable);
+    }
+}
+
+#[cfg(test)]
+mod disconnect_tests {
+    use super::*;
+    use common::access_status::AccessScope;
+
+    #[test]
+    fn a_private_identity_conflict_stops_only_its_room() {
+        for scope in [AccessScope::Voice("call".into()), AccessScope::PrivateChat] {
+            let mut world = World::new();
+            world.init_resource::<NextState<ConnectionAvailability>>();
+            let mut recovery = RoomRecovery::default();
+            record_identity_conflict(
+                &mut world.commands(),
+                &mut recovery,
+                Some(&RoomAccessScope(scope)),
+            );
+            world.flush();
+            assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+            assert!(!recovery.can_retry(60.0));
+            assert!(matches!(
+                world.resource::<NextState<ConnectionAvailability>>(),
+                NextState::Unchanged
+            ));
+        }
+    }
+
+    #[test]
+    fn a_world_identity_conflict_keeps_the_session_gate() {
+        for scope in [
+            None,
+            Some(AccessScope::Realm("realm".into())),
+            Some(AccessScope::Scene("scene".into())),
+        ] {
+            let mut world = World::new();
+            world.init_resource::<NextState<ConnectionAvailability>>();
+            let mut recovery = RoomRecovery::default();
+            record_identity_conflict(
+                &mut world.commands(),
+                &mut recovery,
+                scope.map(RoomAccessScope).as_ref(),
+            );
+            world.flush();
+            assert_eq!(recovery.failure, Some(FailureKind::IdentityConflict));
+            assert!(matches!(
+                world.resource::<NextState<ConnectionAvailability>>(),
+                NextState::Pending(ConnectionAvailability::Unavailable)
+            ));
         }
     }
 }

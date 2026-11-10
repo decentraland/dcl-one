@@ -10,7 +10,7 @@ import { FakeDriver } from './harness'
 afterEach(() => { act(resetPopups); vi.useRealTimers() })
 
 describe('connectivity feedback', () => {
-  it('matches Unity copy, keeps one dialog, and closes immediately on Retry', async () => {
+  it('keeps one dialog and follows the engine through Retry and another failed probe', async () => {
     const retry = vi.fn()
     const exit = vi.fn()
     const lost = { connectionLost: true, probing: false, rooms: [] }
@@ -24,7 +24,7 @@ describe('connectivity feedback', () => {
     expect(screen.getAllByRole('alertdialog')).toHaveLength(1)
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(retry).toHaveBeenCalledTimes(1)
-    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByRole('alertdialog')).toBeVisible()
     rerender(<><PopupHost /><ConnectivityFeedback state={{ ...lost, connectionLost: false }} retry={retry} exit={exit} /></>)
     expect(screen.queryByRole('alertdialog')).toBeNull()
     rerender(<><PopupHost /><ConnectivityFeedback state={lost} retry={retry} exit={exit} /></>)
@@ -32,6 +32,30 @@ describe('connectivity feedback', () => {
     rerender(<><PopupHost /><ConnectivityFeedback state={{ ...lost, connectionLost: false }} retry={retry} exit={exit} /></>)
     expect(screen.queryByRole('alertdialog')).toBeNull()
     expect(exit).not.toHaveBeenCalled()
+  })
+
+  it('keeps recovery controls when Retry is accepted but the next snapshot is still offline', async () => {
+    const lost = { connectionLost: true, probing: false, rooms: [] }
+    const { rerender } = render(<><PopupHost /><ConnectivityFeedback state={lost} retry={async () => {}} exit={vi.fn()} /></>)
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    // A fast failed probe can complete between two HUD polls.
+    rerender(<><PopupHost /><ConnectivityFeedback state={{ ...lost }} retry={async () => {}} exit={vi.fn()} /></>)
+    expect(screen.getByRole('alertdialog', { name: 'Connection Lost' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
+    expect(screen.getByRole('button', { name: 'Exit Application' })).toBeEnabled()
+  })
+
+  it('does not submit Retry twice while the engine command is pending', async () => {
+    let finish!: () => void
+    const retry = vi.fn(() => new Promise<void>(resolve => { finish = resolve }))
+    render(<><PopupHost /><ConnectivityFeedback state={{ connectionLost: true, probing: false, rooms: [] }} retry={retry} exit={vi.fn()} /></>)
+    const button = screen.getByRole('button', { name: 'Retry' })
+    await userEvent.click(button)
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => finish())
+    expect(button).toBeEnabled()
   })
 
   it('exits through the session action and shows scoped denial separately', async () => {
@@ -81,5 +105,21 @@ describe('connectivity feedback', () => {
     rerender({ active: false })
     await act(async () => finish(JSON.stringify({ connectionLost: true, probing: false, rooms: [] })))
     expect(result.current.state).toBeNull()
+  })
+
+  it('retains the snapshot identity while polling unchanged engine state', async () => {
+    vi.useFakeTimers()
+    const driver = new FakeDriver()
+    let snapshot = { connectionLost: false, probing: false, rooms: [] as Array<{scope: string; state: string}> }
+    driver.commandReply = () => JSON.stringify(snapshot)
+    const { result } = renderHook(() => useConnectivity(driver, true))
+    await act(async () => {})
+    const initial = result.current.state
+    expect(initial).not.toBeNull()
+    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    expect(result.current.state).toBe(initial)
+    snapshot = { ...snapshot, rooms: [{ scope: 'voice', state: 'denied' }] }
+    await act(async () => vi.advanceTimersByTimeAsync(1000))
+    expect(result.current.state?.rooms).toEqual([{ scope: 'voice', state: 'denied' }])
   })
 })

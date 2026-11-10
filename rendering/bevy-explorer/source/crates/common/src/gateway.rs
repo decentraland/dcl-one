@@ -313,7 +313,6 @@ mod gateway_tests {
             (Service::CommsGatekeeper, "comms-gatekeeper"),
             (Service::PreviewGatekeeper, "comms-gatekeeper-local"),
             (Service::AuthApi, "auth-api"),
-            (Service::AssetBundleRegistry, "asset-bundle-registry"),
             (Service::SocialApi, "social-api"),
             (Service::MapApi, "api"),
             (Service::Opensea, "opensea"),

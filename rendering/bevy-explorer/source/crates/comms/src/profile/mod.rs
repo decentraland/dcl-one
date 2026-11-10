@@ -90,6 +90,7 @@ impl Plugin for UserProfilePlugin {
                     ("Mean batch size", "meanBatch"),
                     ("Batches in flight", "inFlight"),
                     ("Compact POSTs", "compact"),
+                    ("Compact source", "compactSource"),
                     ("Compact route missing", "compactUnsupported"),
                     ("Unresolved cached profiles", "unresolved"),
                     ("Own profile version", "ownVersion"),
@@ -320,8 +321,8 @@ pub struct ProfileCache {
     requests: ProfileRequestCounts,
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
-    /// the catalyst answered a compact POST as an unknown route: compact readers are served
-    /// from full profiles for the rest of the session
+    /// the compact source answered a compact POST as an unknown route: compact readers are
+    /// served from full profiles for the rest of the session
     compact_unsupported: bool,
 }
 
@@ -350,7 +351,8 @@ fn profile_requests(
         input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
             "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
             "unavailable": {"meanBatch": "No profile requests yet", "ownVersion": "Not signed in", "peerVersion": "Not signed in"},
-            "compact": counts.compact, "compactUnsupported": cache.compact_unsupported,
+            "compact": counts.compact, "compactSource": compact_source(&lambdas_url()),
+            "compactUnsupported": cache.compact_unsupported,
             "inFlight": cache.batches.len() + cache.compact_batches.len(),
             "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count(),
             "ownVersion": current.profile.as_ref().map(|profile| profile.version),
@@ -998,6 +1000,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         return;
     }
     let lambdas = lambdas_url();
+    let compact_base = compact_source(&lambdas);
     let ProfileCache {
         batches,
         compact_batches,
@@ -1023,7 +1026,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         compact_batches.push(CompactBatch {
             addresses: chunk.to_vec(),
             task: IoTaskPool::get().spawn_compat(fetch_compact_profiles(
-                lambdas.clone(),
+                compact_base.clone(),
                 chunk.to_vec(),
                 ipfs.ipfs().clone(),
             )),
@@ -1508,9 +1511,27 @@ async fn send_deployment(
     }
 }
 
-/// The lambdas of the base domain's catalyst, where every profile is read.
+/// The lambdas of the base domain's catalyst: where full profiles are read, and compact ones
+/// off Decentraland's own deployments ([`compact_source`]).
 fn lambdas_url() -> String {
     common::base_domain::url(common::base_domain::Service::Catalyst, "/lambdas")
+}
+
+/// Where compact profiles are read (`POST {source}/profiles/metadata`): the catalyst's lambdas,
+/// except when that catalyst is one of Decentraland's own deployments
+/// ([`common::base_domain::decentraland_domain`]), whose catalysts have no compact route. There
+/// the same deployment's asset-bundle registry serves the tier, as for unity-explorer with
+/// `USE_CENTRALIZED_PROFILES`. The decision follows the resolved catalyst, not the base domain:
+/// a dcl-one page or a `--gateway` launch keeps the default base domain with its own catalyst.
+///
+/// Temporary: the registry branch is to be removed once Decentraland's catalysts answer
+/// `POST /lambdas/profiles/metadata` (docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md,
+/// "Follow-ups"); compact reads then go to the catalyst everywhere.
+fn compact_source(lambdas: &str) -> String {
+    match common::base_domain::decentraland_domain(lambdas) {
+        Some(domain) => format!("https://asset-bundle-registry.{domain}"),
+        None => lambdas.trim_end_matches('/').to_owned(),
+    }
 }
 
 /// The content endpoint of the catalyst serving `lambdas`, which carries the profile's files.
@@ -1601,16 +1622,15 @@ fn profiles_from_lambdas(
         .collect()
 }
 
-/// One catalyst POST of the compact tier for a chunk of ids: the asked addresses, in
-/// order, each with what the catalyst holds for it. A catalyst without the route
-/// (Decentraland's answer 404; one whose `/profiles/{id}` takes the path, 405) is
-/// `Unsupported`.
+/// One POST of the compact tier to the [`compact_source`] for a chunk of ids: the asked
+/// addresses, in order, each with what the source holds for it. A source without the route
+/// (a catalyst answers 404, or 405 when its `/profiles/{id}` takes the path) is `Unsupported`.
 async fn fetch_compact_profiles(
-    lambdas: String,
+    source: String,
     addresses: Vec<Address>,
     ipfs: Arc<IpfsIo>,
 ) -> CompactAnswer {
-    let url = format!("{}/profiles/metadata", lambdas.trim_end_matches('/'));
+    let url = format!("{}/profiles/metadata", source.trim_end_matches('/'));
     let ids = addresses
         .iter()
         .map(|address| format!("{address:#x}"))
@@ -1737,17 +1757,14 @@ pub async fn get_default_look(
     fetch_catalyst_profile_by_id(lambdas_url(), format!("default{index}"), ipfs).await
 }
 
-/// Resolve one profile from the catalyst without the engine cache (used at login, before
-/// any player entities exist): `lambdas` is the sign-in's catalyst, else the centralized
-/// one. Ok(None) means the catalyst authoritatively has no profile, so callers can tell
-/// "no profile" from "couldn't fetch".
+/// Resolve one profile from the centralized catalyst without the engine cache (used at login,
+/// before any player entities exist). Ok(None) means the catalyst authoritatively has no
+/// profile, so callers can tell "no profile" from "couldn't fetch".
 pub async fn get_remote_profile(
     address: Address,
     ipfs: Arc<IpfsIo>,
-    lambdas: Option<String>,
 ) -> Result<Option<UserProfile>, anyhow::Error> {
-    let lambdas = lambdas.unwrap_or_else(lambdas_url);
-    fetch_profiles(lambdas, vec![address], ipfs)
+    fetch_profiles(lambdas_url(), vec![address], ipfs)
         .await
         .pop()
         .map_or(Ok(None), |(_, result)| result)
@@ -2184,6 +2201,48 @@ mod tests {
             Some("https://peer.example/content/contents/")
         );
         assert_eq!(content_base("https://peer.example/other"), None);
+    }
+
+    /// Full profiles come from the catalyst everywhere; compact ones from the same catalyst
+    /// except on Decentraland's own deployments, whose catalysts lack the route: there from the
+    /// same deployment's asset-bundle registry (temporary, see `compact_source`).
+    #[test]
+    fn compact_reads_use_the_registry_only_for_decentraland_catalysts() {
+        // the engine's own resolution: nothing overridden, so Decentraland's catalyst
+        assert_eq!(lambdas_url(), "https://peer.decentraland.org/lambdas");
+        assert_eq!(
+            compact_source(&lambdas_url()),
+            "https://asset-bundle-registry.decentraland.org"
+        );
+        for (lambdas, compact) in [
+            (
+                "https://peer.decentraland.zone/lambdas",
+                "https://asset-bundle-registry.decentraland.zone",
+            ),
+            (
+                "https://peer-ec1.decentraland.org/lambdas",
+                "https://asset-bundle-registry.decentraland.org",
+            ),
+            // a dcl-one node, a gateway or a local catalyst serves its own compact tier
+            (
+                "https://play.example.test/lambdas",
+                "https://play.example.test/lambdas",
+            ),
+            (
+                "https://gateway.example.test/mount/peer/lambdas/",
+                "https://gateway.example.test/mount/peer/lambdas",
+            ),
+            (
+                "http://127.0.0.1:5222/lambdas",
+                "http://127.0.0.1:5222/lambdas",
+            ),
+            (
+                "https://peer.decentraland.org.example.test/lambdas",
+                "https://peer.decentraland.org.example.test/lambdas",
+            ),
+        ] {
+            assert_eq!(compact_source(lambdas), compact, "{lambdas}");
+        }
     }
 
     fn compact(name: &str) -> CompactProfile {
