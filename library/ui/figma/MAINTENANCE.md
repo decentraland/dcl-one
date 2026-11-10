@@ -101,7 +101,7 @@ A component is flagged when the mapper cannot reproduce it confidently. Reasons 
 
 ## Rules
 
-- Follow CLAUDE.md's component architecture rules: custom browser primitives, no Base UI or other component kit, co-located CSS Modules instead of Emotion/styled-components, and TanStack only when shared state or data caching is needed. Apply changes to generated components through their templates.
+- Follow [`docs/ui-standards.md`](../../../docs/ui-standards.md) for component styling, shared foundations and reuse. Apply changes to generated components through their templates.
 - Everything in the repo is English: code, comments, tests, docs.
 - Dependencies: exact versions (`--save-exact`), `@dcl/*` and `decentraland-*` with caret. Install with `pnpm install --frozen-lockfile` in `library/ui`.
 - Never write a Figma token or any secret to a file or to chat: `FIGMA_TOKEN` and `FIGMA_FILE_KEY` are read from the environment only.
