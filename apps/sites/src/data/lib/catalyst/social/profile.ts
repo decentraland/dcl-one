@@ -87,6 +87,8 @@ export type ProfileVM = {
   hasClaimedName: boolean;
   nameColor: string;
   avatarUrl?: string;
+  /** The full-body snapshot, an http(s) URL or empty. */
+  bodyUrl: string;
   mutualCount: number;
   bio: string;
   accountUrl: string;
@@ -108,8 +110,10 @@ const INFO_FIELDS: { src: keyof Avatar; key: string; label: string; icon: string
   { src: "country", key: "country", label: "Country", icon: "globe" },
   { src: "language", key: "language", label: "Language", icon: "translate" },
   { src: "pronouns", key: "pronouns", label: "Pronouns", icon: "pronouns" },
+  { src: "relationshipStatus", key: "relationship_status", label: "Relationship status", icon: "heart" },
   { src: "gender", key: "gender", label: "Gender", icon: "gender" },
   { src: "profession", key: "profession", label: "Profession", icon: "games" },
+  { src: "realName", key: "real_name", label: "Real name", icon: "at" },
   { src: "hobbies", key: "favorite_hobby", label: "Favorite hobby", icon: "heart" },
 ];
 
@@ -120,6 +124,7 @@ export function emptyProfile(address: string): ProfileVM {
     name: addr,
     hasClaimedName: false,
     nameColor: DEFAULT_NAME_COLOR,
+    bodyUrl: "",
     mutualCount: 0,
     bio: "",
     accountUrl: addr ? siteUrl("/shop") : "",
@@ -157,6 +162,7 @@ export function mapProfile(avatar: Avatar, address: string): ProfileVM {
     hasClaimedName: Boolean(avatar.hasClaimedName),
     nameColor,
     avatarUrl: profileFaceUrl(avatar.avatar?.snapshots?.face256),
+    bodyUrl: /^https?:\/\//i.test(avatar.avatar?.snapshots?.body ?? "") ? (avatar.avatar?.snapshots?.body as string) : "",
     mutualCount: 0,
     bio: avatar.description ?? "",
     accountUrl: siteUrl("/shop"),
