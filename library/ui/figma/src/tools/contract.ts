@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { checkMappings, resolveComponent } from '../contract/resolve.js'
+import { checkMappingsReport, resolveComponent } from '../contract/resolve.js'
 import type { Runtime } from '../runtime.js'
 import { tool, type ToolDefinition } from './index.js'
 
@@ -42,15 +42,7 @@ function createContractTools(runtime: Runtime): ToolDefinition[] {
       description:
         'Validate every *.figma.ts mapping of the configured library: contract version, Figma file, library version range, import path, source and public export, and drift against the captured Figma component. Used by CI.',
       inputSchema: {},
-      handler: async () => {
-        const results = await checkMappings(await runtime.resolveContext())
-        const failing = results.filter((r) => r.diagnostics.some((d) => d.severity === 'error'))
-        return {
-          ok: failing.length === 0,
-          checked: results.length,
-          results
-        }
-      }
+      handler: async () => checkMappingsReport(await runtime.resolveContext())
     })
   ]
 }

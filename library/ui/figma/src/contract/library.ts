@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import { readFdsPin } from '../sources/fds-source.js'
 
 const packageSchema = z.object({
   name: z.string(),
@@ -67,10 +68,9 @@ async function findMappingFiles(mappingRoot: string): Promise<string[]> {
   return found.sort()
 }
 
-const FDS_REPOSITORY = 'https://github.com/decentraland/figma-design-system'
-
-// The capture revision the library's tracked lock pins, read without touching the capture itself. A library with
-// no lock has none; a lock that exists but pins no full capture revision is a broken checkout and throws.
+// The capture revision the library's tracked lock pins, read with the same pin reader fetch-source uses and
+// without touching the capture itself. A library with no lock has none; a lock that exists but does not pin
+// a capture is a broken checkout and throws.
 async function readCaptureRevision(rootDir: string): Promise<string | undefined> {
   let text: string
   try {
@@ -79,14 +79,7 @@ async function readCaptureRevision(rootDir: string): Promise<string | undefined>
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
-  const lock = JSON.parse(text) as {
-    sources?: { repository?: unknown; snapshot?: { revision?: unknown } }[]
-  }
-  const revision = lock.sources?.find((source) => source.repository === FDS_REPOSITORY)?.snapshot
-    ?.revision
-  if (typeof revision !== 'string' || !/^[0-9a-f]{40}$/.test(revision))
-    throw new Error('upstream.lock.json pins no full figma-design-system capture revision')
-  return revision
+  return readFdsPin(JSON.parse(text)).snapshotRevision
 }
 
 export { findMappingFiles, loadLibrary, readCaptureRevision }

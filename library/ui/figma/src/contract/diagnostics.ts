@@ -1,6 +1,8 @@
 type Severity = 'error' | 'warning'
 
-// `consumer` codes can come back from resolving a component; `maintainer` codes only from check-mappings.
+// Who acts on a diagnostic: `consumer` for what resolving a component can return, `maintainer` for what only
+// check-mappings reports. A code is `consumer` when any of its reasons can reach a consumer; the reasons only
+// check-mappings emits are listed in `maintainerReasons` and their diagnostics carry `maintainer`.
 type Audience = 'consumer' | 'maintainer'
 
 type DiagnosticSpec = {
@@ -8,10 +10,11 @@ type DiagnosticSpec = {
   audience: Audience
   // What the reader does next. A map is keyed by `details.reason` and must name every reason the code emits.
   action: string | Readonly<Record<string, string>>
+  maintainerReasons?: readonly string[]
 }
 
 const REPORT =
-  'Report the component name, its variant properties, this code and provenance (library version, capture revision) to the contributor; never include a Figma URL or key.'
+  'Report the component name, its variant properties, this code and the context of the result (library version, capture revision) to the contributor; never include a Figma URL or key.'
 
 // The single list of diagnostic codes. SKILL.md and MAINTENANCE.md are checked against it by
 // src/contract/diagnostics-docs.test.ts, so a new code fails until both documents list it.
@@ -40,7 +43,8 @@ const DIAGNOSTICS = {
       node: 'The node is not a component of the captured library. Check the instance comes from the library and resolve again with its component set nodeId; this is an identity problem, not a missing mapping.',
       'mapping-node':
         'A mapping targets a node that is not in the capture. Point the mapping at the captured component set, or retire it.'
-    }
+    },
+    maintainerReasons: ['mapping-node']
   },
   'identity-ambiguous': {
     severity: 'error',
@@ -52,7 +56,8 @@ const DIAGNOSTICS = {
         'Two mappings in the library target the same Figma node. Keep one mapping per component set.',
       'duplicate-id':
         'Two mappings in the library share a template id. Give each mapping its own id.'
-    }
+    },
+    maintainerReasons: ['duplicate-node', 'duplicate-id']
   },
   'identity-uncertain': {
     severity: 'error',
@@ -66,7 +71,7 @@ const DIAGNOSTICS = {
     severity: 'warning',
     audience: 'consumer',
     action:
-      'The library lock pins no readable capture revision, so the result names none. Report the result without a capture revision and tell a maintainer that library/ui/upstream.lock.json is unreadable.'
+      'The upstream.lock.json of the library (details.lock) pins no readable capture revision, so the result names none. Report the result without a capture revision and tell a maintainer the lock is unreadable.'
   },
   'variant-unsupported': {
     severity: 'error',
@@ -138,6 +143,14 @@ const DIAGNOSTICS = {
 
 type DiagnosticCode = keyof typeof DIAGNOSTICS
 
+// The reasons a per-reason code accepts, so a misspelt or unregistered reason fails to compile.
+type ReasonOf<C extends DiagnosticCode> = (typeof DIAGNOSTICS)[C]['action'] extends string
+  ? never
+  : keyof (typeof DIAGNOSTICS)[C]['action'] & string
+type DetailsOf<C extends DiagnosticCode> = [ReasonOf<C>] extends [never]
+  ? Record<string, unknown>
+  : Record<string, unknown> & { reason: ReasonOf<C> }
+
 type Diagnostic = {
   code: DiagnosticCode
   severity: Severity
@@ -157,12 +170,26 @@ function actionOf(code: DiagnosticCode, details?: Record<string, unknown>): stri
   return action[reason]!
 }
 
-function diagnostic(
-  code: DiagnosticCode,
+// The audiences a code can carry, in a stable order: what the documentation tables state.
+function audiencesOf(code: DiagnosticCode): Audience[] {
+  const spec = DIAGNOSTICS[code] as DiagnosticSpec
+  return spec.maintainerReasons?.length && spec.audience === 'consumer'
+    ? ['consumer', 'maintainer']
+    : [spec.audience]
+}
+
+function diagnostic<C extends DiagnosticCode>(
+  code: C,
   message: string,
-  details?: Record<string, unknown>
+  ...[details]: [ReasonOf<C>] extends [never] ? [details?: DetailsOf<C>] : [details: DetailsOf<C>]
 ): Diagnostic {
-  const { severity, audience } = DIAGNOSTICS[code]
+  const spec = DIAGNOSTICS[code] as DiagnosticSpec
+  const { severity } = spec
+  const reason = (details as { reason?: unknown } | undefined)?.reason
+  const audience: Audience =
+    typeof reason === 'string' && spec.maintainerReasons?.includes(reason)
+      ? 'maintainer'
+      : spec.audience
   const action = actionOf(code, details)
   return details
     ? { code, severity, audience, message, action, details }
@@ -171,5 +198,5 @@ function diagnostic(
 
 const hasErrors = (diagnostics: Diagnostic[]) => diagnostics.some((d) => d.severity === 'error')
 
-export { DIAGNOSTICS, diagnostic, hasErrors }
-export type { Audience, Diagnostic, DiagnosticCode, DiagnosticSpec, Severity }
+export { DIAGNOSTICS, audiencesOf, diagnostic, hasErrors }
+export type { Audience, Diagnostic, DiagnosticCode, DiagnosticSpec, ReasonOf, Severity }

@@ -195,6 +195,34 @@ describe('figma from a consuming project', () => {
     })
   })
 
+  describe('when the CLI checks mappings without a capture', () => {
+    it('should say the capture checks did not run', async () => {
+      const { stdout } = await cli([
+        'check-mappings',
+        '--mapping-only',
+        '--mapping-root',
+        path.join(libraryRoot, 'components')
+      ])
+
+      expect(JSON.parse(stdout)).toMatchObject({
+        ok: true,
+        captureChecked: false,
+        warnings: [expect.objectContaining({ code: 'figma-identity-unverified' })]
+      })
+    }, 30_000)
+  })
+
+  describe('when a malformed flag meets a configuration that cannot load', () => {
+    it('should report the flag before touching the runtime', async () => {
+      await expect(
+        cli(['resolve', '--config', 'missing.json', '--node-id', '20:1', '--text', 'Label'])
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('--text takes "Name=Value"')
+      })
+    }, 30_000)
+  })
+
   describe('when the CLI receives malformed resolve flags', () => {
     it.each([
       [['--text', 'Label'], '--text takes "Name=Value"'],
