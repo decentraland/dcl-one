@@ -1,9 +1,9 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { describe, it, expect } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import type { Profile } from '@explorer-core/engine/protocol'
-import { renderSession, enterAsGuest } from '@hud/test/harness'
-import { peekProfile, requestPassport, subscribeProfile } from '@hud/features/session/profileStore'
+import { renderSession, enterAsGuest } from '../harness'
+import { peekProfile, requestPassport, subscribeProfile } from '../../features/session/profileStore'
 
 // DOMAIN: profile — the local player's passport, fetched on world entry.
 describe('profile domain', () => {

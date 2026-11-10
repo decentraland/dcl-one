@@ -1,10 +1,10 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { LaunchHostOptions } from '@explorer-core/engine/engineRpc'
-import { SessionProvider } from '@hud/features/session/SessionContext'
-import { WelcomePage } from '@hud/features/welcome/WelcomePage'
-import { FakeDriver, fakeProfileState, fakeSession, renderSession, type Harness } from '@hud/test/harness'
+import { SessionProvider } from '../../features/session/SessionContext'
+import { WelcomePage } from '../../features/welcome/WelcomePage'
+import { FakeDriver, fakeProfileState, fakeSession, renderSession, type Harness } from '../harness'
 
 // The web engine: launched by the page, which reads the terms state before it does.
 class LaunchRecordingDriver extends FakeDriver {

@@ -1,21 +1,44 @@
+// The benchmark autopilot's part of react-web's drivers (engine/autopilot.ts); the shared drivers'
+// own tests are library/explorer-core/test/bridgeClient.test.ts and engineDriver.test.ts.
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { AutopilotEngineDriver as EngineDriver, NO_SHELL_FOR_LOCAL_GUEST } from '../engine/autopilot'
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
-import { sessionId } from '@explorer-core/lib/analytics'
+import { AutopilotBridgeClient, AutopilotEngineDriver as EngineDriver, NO_SHELL_FOR_LOCAL_GUEST, type AutopilotDriver } from '../engine/autopilot'
 
-describe('EngineDriver', () => {
-  it('launches with the page analytics session id beside the host options', () => {
-    const rpc = new EngineRpc()
-    const launch = vi.spyOn(rpc, 'launch').mockImplementation(() => {})
-    const driver = new EngineDriver(rpc)
-    driver.launch('realm', '1,2', { holdWorld: true })
-    driver.launch('realm')
-    expect(launch).toHaveBeenNthCalledWith(1, 'realm', '1,2', { holdWorld: true, sessionId: sessionId() })
-    expect(launch).toHaveBeenNthCalledWith(2, 'realm', undefined, { sessionId: sessionId() })
-    expect(sessionId()).toMatch(/^[0-9a-f-]{36}$/)
-    driver.dispose()
+type ConsoleWindow = Window & { engine_console_command?: (line: string) => Promise<string> }
+
+afterEach(() => {
+  delete (window as ConsoleWindow).engine_console_command
+})
+
+describe('AutopilotBridgeClient (desktop)', () => {
+  it('the autopilot\'s guest is the engine\'s own: one console command, no thirdweb calls', async () => {
+    const run = vi.fn<(line: string) => Promise<string>>().mockResolvedValue('logged in as the local guest')
+    ;(window as ConsoleWindow).engine_console_command = run
+    const fetchSpy = vi.spyOn(globalThis, 'fetch')
+    try {
+      const client: AutopilotDriver = new AutopilotBridgeClient('test-bridge-client')
+      await client.loginLocalGuest?.()
+      expect(run).toHaveBeenCalledExactlyOnceWith('/login_local_guest')
+      expect(fetchSpy).not.toHaveBeenCalled()
+      client.dispose()
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
+
+  it('the autopilot reports a failed sign-in as one plain-words console line', async () => {
+    const run = vi.fn<(line: string) => Promise<string>>().mockResolvedValue('run ended')
+    ;(window as ConsoleWindow).engine_console_command = run
+    const client: AutopilotDriver = new AutopilotBridgeClient('test-bridge-client')
+    await client.autopilotFailed?.("sign-in failed: thirdweb 403:\n{\"error\": 'origin not allowed'}")
+    expect(run).toHaveBeenCalledWith('/autopilot_fail sign-in failed: thirdweb 403: {error: origin not allowed}')
+    client.dispose()
+  })
+
+})
+
+describe('AutopilotEngineDriver', () => {
   describe('loginLocalGuest', () => {
     afterEach(() => vi.doUnmock('@explorer-core/lib/shell'))
 
@@ -53,12 +76,4 @@ describe('EngineDriver', () => {
     })
   })
 
-  it('the autopilot reports a failed sign-in to the engine as a console command', async () => {
-    const rpc = new EngineRpc()
-    const command = vi.spyOn(rpc, 'command').mockResolvedValue('run ended')
-    const driver = new EngineDriver(rpc)
-    await driver.autopilotFailed('no usable identity')
-    expect(command).toHaveBeenCalledWith('/autopilot_fail no usable identity')
-    driver.dispose()
-  })
 })

@@ -1,4 +1,4 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, FakeDriver } from '@hud/test/harness'

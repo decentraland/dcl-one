@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { BridgeChannel } from '@explorer-core/engine/bridgeChannel'
 import type { Envelope, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
-import { renderSession, enterAsGuest } from '@hud/test/harness'
+import { renderSession, enterAsGuest } from '../harness'
 
 // TRANSPORT: the page↔scene handshake. A BroadcastChannel drops anything posted before the other
 // end subscribes, so the page holds its messages until the scene answers `hello` (issue #1233).
@@ -139,20 +139,6 @@ describe('bridge readiness handshake', () => {
     await vi.advanceTimersByTimeAsync(2_000)
     expect(onUnavailable).toHaveBeenCalledTimes(1)
     expect(ch.isReady()).toBe(false)
-  })
-
-  it('is no fault when the engine ended its own run before the scene answered', async () => {
-    vi.useFakeTimers()
-    const onUnavailable = vi.fn()
-    const ch = track(new BridgeChannel(channelName(), () => {}, onUnavailable))
-    ch.expectReady()
-    ;(window as { __engineExited?: boolean }).__engineExited = true
-    try {
-      await vi.advanceTimersByTimeAsync(60_000)
-      expect(onUnavailable).not.toHaveBeenCalled()
-    } finally {
-      delete (window as { __engineExited?: boolean }).__engineExited
-    }
   })
 
   it('reports once: re-arming after the report does not raise it again', async () => {

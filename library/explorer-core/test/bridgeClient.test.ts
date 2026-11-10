@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { BridgeClient } from '@explorer-core/engine/bridge'
-import type { LoginDriver } from '@explorer-core/engine/driver'
+import { BridgeClient } from '../engine/bridge'
+import type { LoginDriver } from '../engine/driver'
 
 type ConsoleWindow = Window & { engine_console_command?: (line: string) => Promise<string> }
 

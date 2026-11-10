@@ -1,4 +1,4 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 // The scene editor host (features/editorHost): the page offers Create only where an editor is
 // available, loads it only when the Create page opens, and what it hands the editor keeps the
 // engine on a short leash. What it signs for the editor is in editorHostSigning.test.tsx.

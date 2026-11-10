@@ -8,8 +8,8 @@ import {
   webGuestBackend,
   webGuestBackendFor,
   type GuestBackend
-} from '@explorer-core/features/auth/guest'
-import { personalSign } from '@explorer-core/shell/sign'
+} from '../features/auth/guest'
+import { personalSign } from '../shell/sign'
 
 function personalHash(message: string): Uint8Array {
   const body = new TextEncoder().encode(message)
