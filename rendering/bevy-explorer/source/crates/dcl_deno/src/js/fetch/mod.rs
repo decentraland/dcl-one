@@ -337,13 +337,15 @@ async fn send_with_permission(
     };
     let _call = budget.track_call();
 
+    let origin = common::util::prompt_origin(&request.url)
+        .ok_or_else(|| type_error("fetch URL has no origin"))?;
     let (sx, rx) = RpcResultSender::channel();
     state
         .borrow_mut()
         .borrow_mut::<RpcCalls>()
         .push(RpcCall::RequestGenericPermission {
             ty: common::structs::PermissionType::Fetch,
-            message: Some(request.url.clone()),
+            message: Some(origin),
             response: sx,
         })?;
     let permit = rx.await?;
@@ -535,9 +537,11 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
 /// Shared base for every scene http client: connect timeout, native TLS, UA, and the
 /// resolver that refuses any non-public address at connect time, so the address that was
 /// checked is the address that is dialled. `allow_private` (preview or a native system
-/// scene) widens this to the local network but never to link-local / metadata.
+/// scene) widens this to the local network but never to link-local / metadata. System proxy
+/// variables are ignored: a proxy would resolve and dial the target outside that resolver.
 fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
     platform::http_client_builder()
+        .no_proxy()
         .connect_timeout(Duration::from_secs(5))
         .use_native_tls()
         .user_agent("DCLExplorer/0.1")

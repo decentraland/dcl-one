@@ -75,6 +75,10 @@ addresses selected after a redirect where the transport follows redirects. Keep 
 and metadata addresses blocked. State the scope for each transport and platform in the
 [running guide](running.md).
 
+Scene connections may reach `198.18.0.0/15`, because fake-IP proxies (Clash, sing-box, Surge)
+resolve every hostname into it. On a machine running one, the proxy resolves and dials the real
+target itself, so the address check covers only IP literals there.
+
 For signed service routing, verify the path the destination actually checks against the real
 proxy rewrite. Reject paths whose interpretation can shift the request to another service
 during URL normalisation or proxy decoding. Validate untrusted path parameters as single

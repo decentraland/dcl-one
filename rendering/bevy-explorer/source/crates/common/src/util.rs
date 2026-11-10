@@ -676,9 +676,19 @@ pub fn is_loopback_url(url: &str) -> bool {
     url::Url::parse(url).is_ok_and(|url| url.is_loopback())
 }
 
+/// `scheme://host:port` of a URL, for permission prompts; `None` without a host or port.
+pub fn prompt_origin(url: &str) -> Option<String> {
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?;
+    let port = url.port_or_known_default()?;
+    Some(format!("{}://{host}:{port}", url.scheme()))
+}
+
 /// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
 /// loopback, private RFC1918, CGNAT, link-local (incl. cloud metadata 169.254.169.254),
-/// unique-local/link-local v6, unspecified, and v4-mapped v6 forms of the above.
+/// IETF protocol assignments, reserved, multicast, unique-local/link-local/site-local v6,
+/// Teredo, benchmarking and documentation ranges, unspecified, and IPv6 addresses that carry a
+/// forbidden IPv4 address (see [`embedded_ipv4`]).
 pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
     match ip {
@@ -687,25 +697,58 @@ pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
             v4.is_loopback()
                 || v4.is_private()
                 || v4.is_link_local()
-                || v4.is_broadcast()
                 || v4.is_unspecified()
                 || v4.is_documentation()
+                || v4.is_multicast()
                 || o[0] == 0
+                // reserved 240.0.0.0/4, broadcast included
+                || o[0] >= 240
                 // carrier-grade NAT 100.64.0.0/10
                 || (o[0] == 100 && (o[1] & 0xc0) == 64)
+                // IETF protocol assignments 192.0.0.0/24, DS-Lite AFTR/B4 included
+                || o[..3] == [192, 0, 0]
         }
         IpAddr::V6(v6) => {
-            if let Some(mapped) = v6.to_ipv4_mapped() {
-                return is_forbidden_ip(&IpAddr::V4(mapped));
+            if let Some(v4) = embedded_ipv4(v6) {
+                return is_forbidden_ip(&IpAddr::V4(v4));
             }
             let seg = v6.segments();
             v6.is_loopback()
                 || v6.is_unspecified()
+                || v6.is_multicast()
                 // unique local fc00::/7
                 || (seg[0] & 0xfe00) == 0xfc00
                 // link local fe80::/10
                 || (seg[0] & 0xffc0) == 0xfe80
+                // local-use NAT64 64:ff9b:1::/48; where the IPv4 address sits is site-chosen
+                || seg[..3] == [0x64, 0xff9b, 1]
+                // Teredo 2001::/32, whatever client address it carries
+                || seg[..2] == [0x2001, 0]
+                // benchmarking 2001:2::/48
+                || seg[..3] == [0x2001, 2, 0]
+                // documentation 2001:db8::/32 and 3fff::/20
+                || seg[..2] == [0x2001, 0xdb8]
+                || (seg[0] & 0xfff0) == 0x3ff0
+                // deprecated site-local fec0::/10
+                || (seg[0] & 0xffc0) == 0xfec0
         }
+    }
+}
+
+/// The IPv4 address an IPv6 address carries to a translator or tunnel: v4-mapped
+/// `::ffff:0:0/96`, SIIT `::ffff:0:0:0/96`, v4-compatible `::/96`, NAT64 `64:ff9b::/96`
+/// and 6to4 `2002::/16`.
+fn embedded_ipv4(v6: &std::net::Ipv6Addr) -> Option<std::net::Ipv4Addr> {
+    let seg = v6.segments();
+    let o = v6.octets();
+    let low = || std::net::Ipv4Addr::new(o[12], o[13], o[14], o[15]);
+    match seg {
+        [0, 0, 0, 0, 0, 0xffff, ..]
+        | [0, 0, 0, 0, 0xffff, 0, ..]
+        | [0, 0, 0, 0, 0, 0, ..]
+        | [0x64, 0xff9b, 0, 0, 0, 0, ..] => Some(low()),
+        [0x2002, ..] => Some(std::net::Ipv4Addr::new(o[2], o[3], o[4], o[5])),
+        _ => None,
     }
 }
 
@@ -739,6 +782,8 @@ pub async fn assert_public_url(url_str: &str, allow_private: bool) -> Result<(),
 /// unique-local. Deliberately EXCLUDES link-local (`169.254/16`, `fe80::/10`) so cloud
 /// metadata (`169.254.169.254` and `fd00:ec2::254`) stays unreachable even where local
 /// network access is permitted. This is the set that `allow_private` opens up.
+/// Embedded IPv4 forms are not decoded: preview refuses them, and DNS64 never synthesizes
+/// the well-known prefix for private IPv4 (RFC 6052 §3.1).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
     use std::net::IpAddr;
@@ -912,6 +957,74 @@ mod tests {
         let pubip: IpAddr = "8.8.8.8".parse().unwrap();
         assert!(!is_private_lan(&pubip));
         assert!(!is_forbidden_ip(&pubip));
+    }
+
+    #[test]
+    fn special_purpose_ranges_are_forbidden() {
+        for address in [
+            // IETF protocol assignments, reserved, broadcast, multicast
+            "192.0.0.1",
+            "192.0.0.255",
+            "240.0.0.1",
+            "255.255.255.255",
+            "224.0.0.1",
+            "239.255.255.250",
+            "ff02::1",
+            "ff0e::1",
+            // NAT64 64:ff9b::/96 to private, loopback and metadata
+            "64:ff9b::a00:5",
+            "64:ff9b::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            // local-use NAT64, whatever the embedding
+            "64:ff9b:1::a00:5",
+            "64:ff9b:1:808:808::",
+            // SIIT
+            "::ffff:0:a00:5",
+            "::ffff:0:7f00:1",
+            "::ffff:0:a9fe:a9fe",
+            // v4-compatible
+            "::a00:5",
+            "::7f00:1",
+            "::a9fe:a9fe",
+            // 6to4 to private and metadata
+            "2002:a00:5::1",
+            "2002:a9fe:a9fe::",
+            "2002:c0a8:101::1",
+            // Teredo, here with an obfuscated loopback client
+            "2001:0:4136:e378:8000:63bf:80ff:fffe",
+            "2001::1",
+            // benchmarking, documentation, site-local
+            "2001:2::1",
+            "2001:db8::1",
+            "3fff::1",
+            "3fff:fff::1",
+            "fec0::1",
+            "feff::1",
+        ] {
+            let ip: std::net::IpAddr = address.parse().unwrap();
+            assert!(is_forbidden_ip(&ip), "{address} must be forbidden");
+        }
+        for address in [
+            "8.8.8.8",
+            // fake-IP proxies (Clash, sing-box, Surge) resolve every hostname here
+            "198.18.0.1",
+            "198.19.255.255",
+            "192.0.1.1",
+            "223.255.255.255",
+            "64:ff9b::808:808",
+            "::ffff:0:808:808",
+            "::808:808",
+            "2002:808:808::1",
+            "2001:4860:4860::8888",
+            "2001:1::1",
+            "2001:2:1::1",
+            "2001:db9::1",
+            "4000::1",
+            "2a00:1450::1",
+        ] {
+            let ip: std::net::IpAddr = address.parse().unwrap();
+            assert!(!is_forbidden_ip(&ip), "{address} is public");
+        }
     }
 
     /// End-to-end on the shared primitive both the fetch resolver and the WebSocket

@@ -51,6 +51,7 @@ integrated web client, Sites supplies its origin's service URLs at boot.
 On desktop, native HTTP Fetch from the bundled bridge or an operator-selected
 `--system-scene` can reach loopback and LAN services outside preview, including through
 an explicit HTTP service override. The HTTP client blocks link-local and metadata addresses.
+Scene requests ignore the `HTTP_PROXY`, `HTTPS_PROXY` and `ALL_PROXY` variables.
 Ordinary and authoritative hosted scenes use their own address policies. For native scene
 WebSockets, access to private resolved addresses is preview-only.
 
