@@ -46,15 +46,15 @@ the engine ended it over a message it could not accept) ends only its scenes. Th
 
 before the `scene-broken` line of each of those scenes, and keeps running; a later `add-scene`
 for the scene starts it in a new host. `reason` is `exit` when the process ended or closed its
-connection, `protocol` when the engine ended it over a message, `memory` when it went over
-`--scene-host-memory-mb`, and `spawn` when it could not be started. The engine exits with status
-1 only after three host starts in a row fail while no other host is running. A removed scene's
-host process is ended once the scene's 5-second kill grace period is over, and reported to
-nobody. A per-scene host starts with a fixed pool of two V8 worker threads and an environment
-holding only the variables it reads (logging, the scene log budget, temporary files, TLS roots,
-HTTP proxies, time zone and locale); on Linux it is killed when the engine exits. With the default `shared`, losing the
-one host process exits the engine with status 1, as before. The `starting` event names the mode
-in `sceneHosts`.
+connection, `protocol` when the engine ended it over a message or because it read nothing the
+engine sent for 10 seconds, `memory` when it went over `--scene-host-memory-mb`, and `spawn` when
+it could not be started. The engine exits with status 1 only after three host starts in a row
+fail while no other host is running. A removed scene's host process is ended once the scene's
+5-second kill grace period is over, and reported to nobody. A per-scene host starts with a fixed
+pool of two V8 worker threads and an environment holding only the variables it reads (logging,
+the scene log budget, temporary files, TLS roots, HTTP proxies, time zone and locale); on Linux
+it is killed when the engine exits. With the default `shared`, losing the one host process exits
+the engine with status 1, as before. The `starting` event names the mode in `sceneHosts`.
 
 Orchestrators that manage the process themselves can skip the CLI and resolve the engine
 path programmatically:
