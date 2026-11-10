@@ -41,6 +41,13 @@ use wallet::Wallet;
 
 pub struct SocialPlugin;
 
+/// The systems that move the social client's state: connecting and dropping the client and
+/// draining its updates.
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SocialSystems {
+    ApplyUpdates,
+}
+
 impl Plugin for SocialPlugin {
     fn build(&self, app: &mut bevy::prelude::App) {
         #[cfg(feature = "social")]
@@ -53,8 +60,10 @@ impl Plugin for SocialPlugin {
         app.init_resource::<SocialClient>();
         app.init_resource::<SocialConsumerRequested>();
         app.add_event::<SocialStateChanged>();
-        app.add_systems(PostUpdate, apply_social_updates);
-        app.add_systems(PostUpdate, init_social_client);
+        app.add_systems(
+            PostUpdate,
+            (apply_social_updates, init_social_client).in_set(SocialSystems::ApplyUpdates),
+        );
         app.add_systems(
             PostUpdate,
             (
@@ -90,7 +99,7 @@ impl Plugin for SocialPlugin {
 pub const SOCIAL_FEATURE: bool = cfg!(feature = "social");
 
 /// Drains the social client's channel into its state.
-pub fn apply_social_updates(
+fn apply_social_updates(
     mut client: ResMut<SocialClient>,
     mut changed: EventWriter<SocialStateChanged>,
 ) {
@@ -521,7 +530,11 @@ fn init_social_client(
         // connection so the old async task observes its channels closed and tears
         // down its WS, rather than overlapping with the new one.
         // the same account keeps its blocks across the rebuild
-        let carried = social.0.take().filter(|_| !wallet.is_changed());
+        let carried = social
+            .0
+            .take()
+            .filter(|_| !wallet.is_changed())
+            .map(|old| (old.blocked, old.blocked_by, old.has_snapshot));
         *friends = None;
         *connectivity = None;
         *block_updates = None;
@@ -563,8 +576,10 @@ fn init_social_client(
             },
         );
         social.0 = client;
-        if let (Some(client), Some(old)) = (social.0.as_mut(), carried) {
-            client.carry_blocks_from(old);
+        if let (Some(client), Some((blocked, blocked_by, has_snapshot))) =
+            (social.0.as_mut(), carried)
+        {
+            client.carry_blocks(blocked, blocked_by, has_snapshot);
         }
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);

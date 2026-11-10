@@ -209,11 +209,16 @@ impl SocialClientHandler {
         })
     }
 
-    /// Takes the block sets and their snapshot flag over from a handler being replaced.
-    pub fn carry_blocks_from(&mut self, old: Self) {
-        self.blocked = old.blocked;
-        self.blocked_by = old.blocked_by;
-        self.has_snapshot = old.has_snapshot;
+    /// Takes over the previous handler's block sets and whether it had a snapshot.
+    pub fn carry_blocks(
+        &mut self,
+        blocked: HashSet<Address>,
+        blocked_by: HashSet<Address>,
+        has_snapshot: bool,
+    ) {
+        self.blocked = blocked;
+        self.blocked_by = blocked_by;
+        self.has_snapshot = has_snapshot;
     }
 
     pub fn live(&self) -> bool {
