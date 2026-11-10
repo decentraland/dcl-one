@@ -492,6 +492,8 @@ jobs:
           EOF
       - name: Smoke test the headless image
         run: |
+          # the sandbox needs a runtime whose seccomp profile allows landlock_* and seccomp
+          echo "Docker $(docker version --format '{{.Server.Version}}')"
           context="$RUNNER_TEMP/headless-image"
           mkdir -p "$context/dist/headless"
           cp ../../../apps/bevy-explorer/dist/headless/native/{headless,dcl_deno_ipc,LICENSE} "$context/dist/headless/"
