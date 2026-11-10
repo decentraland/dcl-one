@@ -443,8 +443,7 @@ export function registerProfile(ctx: Ctx): void {
   })
 
   // A user's profile by address: the engine's copy alone for a name and a face (chat lines, the
-  // profile card), plus badges + equipped items when the passport asks (`extras`). The passport's
-  // Photos tab reads the camera reel itself (features/gallery/publicReels.ts).
+  // profile card), plus badges + equipped items when the passport asks (`extras`).
   ctx.on('getUserProfile', async (msg) => {
     if (msg.extras !== true) {
       const av = await fetchProfile(msg.address)

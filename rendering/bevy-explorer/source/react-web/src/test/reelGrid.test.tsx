@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { genericContextMenuHeight, genericContextMenuPosition, type GenericContextMenuItem } from '../design'
+import { anchoredMenuPosition } from '../design'
 import { ReelGrid, buildReelRows, type ReelGridLayout } from '../features/gallery/ReelGrid'
 import { reelFileName, shareToXUrl } from '../features/gallery/reelActions'
 import type { GalleryPhoto } from '../engine/protocol'
@@ -20,33 +20,24 @@ const FEB = '1707000000'
 const JAN = '1704600000'
 const reel = (n: number, dateTime = FEB): GalleryPhoto[] => Array.from({ length: n }, (_, i) => ({ id: `r${i}`, url: `https://img/${i}.jpg`, dateTime }))
 
-describe('GenericContextMenu placement (unity-explorer GetControlsPosition, BottomRight)', () => {
-  const items: GenericContextMenuItem[] = [
-    { kind: 'toggle', label: 'Set as Public', checked: false, onChange: () => {} },
-    { kind: 'separator' },
-    ...['Share on X', 'Copy Link', 'Download', 'Delete'].map((label): GenericContextMenuItem => ({ kind: 'button', label, icon: 'x.png', onClick: () => {} }))
-  ]
-  const size = { width: 186, height: genericContextMenuHeight(items) }
+describe('AnchoredMenu placement', () => {
+  const size = { width: 220, height: 207 }
   const screenSize = { width: 1920, height: 1080 }
 
-  it('is as tall as its rows, paddings and spacings: 34 + 8 + 4 x 36 + 4 + 12 + 5 x 1', () => {
-    expect(size.height).toBe(207)
-  })
-
   it('opens 11 right of the anchor with its top 18 above it', () => {
-    expect(genericContextMenuPosition({ x: 500, y: 400 }, size, screenSize)).toEqual({ left: 511, top: 382 })
+    expect(anchoredMenuPosition({ x: 500, y: 400 }, size, screenSize)).toEqual({ left: 511, top: 382 })
   })
 
   it('flips to the left near the right edge and above near the bottom', () => {
-    expect(genericContextMenuPosition({ x: 1800, y: 1000 }, size, screenSize)).toEqual({ left: 1800 - 11 - 186, top: 1000 + 18 - 207 })
+    expect(anchoredMenuPosition({ x: 1800, y: 1000 }, size, screenSize)).toEqual({ left: 1800 - 11 - 220, top: 1000 + 18 - 207 })
   })
 
   it('clamps to the screen when flipping is not enough', () => {
-    expect(genericContextMenuPosition({ x: 100, y: 5 }, size, { width: 250, height: 1080 })).toEqual({ left: 0, top: 0 })
+    expect(anchoredMenuPosition({ x: 100, y: 5 }, size, { width: 250, height: 1080 })).toEqual({ left: 0, top: 0 })
   })
 })
 
-describe('reel rows (unity-explorer ReelGalleryRow.Build)', () => {
+describe('reel rows', () => {
   it('pads, heads each month, and spaces rows 4, months 20 and the last row 0', () => {
     const photos = [...reel(7, FEB), ...reel(2, JAN).map((p) => ({ ...p, id: `j${p.id}` }))]
     const { rows, height } = buildReelRows(photos, LAYOUT, 230)

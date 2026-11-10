@@ -5,6 +5,7 @@ import { ProfilePassport } from '../features/profile/ProfilePassport'
 import type { Emote, GalleryPhoto, Profile, Wearable } from '../engine/protocol'
 import { setPublicReelFetcher } from '../features/gallery/publicReels'
 import type { PassportPhotoActions } from '../features/gallery/PassportPhotos'
+import { PopupHost } from '../design'
 
 afterEach(() => setPublicReelFetcher(null))
 
@@ -175,7 +176,7 @@ describe('profile passport', () => {
     expect(screen.getByText(/no details to show/i)).toBeInTheDocument()
   })
 
-  it('switches tabs (Photos shows unity-explorer\'s empty state)', async () => {
+  it('switches tabs (Photos shows its empty state)', async () => {
     setPublicReelFetcher(async () => ({ ok: true, photos: [], total: 0, max: 500 }))
     render(<ProfilePassport profile={profile} onClose={vi.fn()} />)
     await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
@@ -277,8 +278,6 @@ describe('passport equipped items', () => {
   })
 })
 
-// Photos tab — unity-explorer's passport gallery: the PUBLIC reel (read without signing), paged like the
-// Gallery; the options menu only on your own passport, without Delete; making a photo private drops it.
 describe('passport photos', () => {
   const reel: GalleryPhoto[] = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, url: `https://img/${i}.jpg`, thumbnailUrl: `https://img/${i}_t.jpg`, dateTime: '1707000000', isPublic: true }))
   const actions = (): PassportPhotoActions => ({
@@ -291,7 +290,12 @@ describe('passport photos', () => {
   async function openPhotos(isSelf: boolean, a = actions()): Promise<PassportPhotoActions> {
     const fetcher = vi.fn(async (_address: string, offset: number, limit: number) => ({ ok: true, photos: reel.slice(offset, offset + limit), total: reel.length, max: 500 }))
     setPublicReelFetcher(fetcher)
-    render(<ProfilePassport profile={profile} isSelf={isSelf} onClose={vi.fn()} photoActions={a} />)
+    render(
+      <>
+        <ProfilePassport profile={profile} isSelf={isSelf} onClose={vi.fn()} photoActions={a} />
+        <PopupHost />
+      </>
+    )
     await userEvent.click(screen.getByRole('tab', { name: 'PHOTOS' }))
     const buttons = await screen.findAllByRole('button', { name: 'Open photo' })
     for (const b of buttons) fireEvent.load(b.querySelector('img') as HTMLImageElement)
@@ -305,12 +309,22 @@ describe('passport photos', () => {
     expect(screen.queryByRole('button', { name: 'Photo options' })).toBeNull()
   })
 
-  it('your own photos have the options without Delete', async () => {
+  it('your own photos have every option, Delete included', async () => {
     await openPhotos(true)
     await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[0])
     const menu = screen.getByRole('menu', { name: 'Photo options' })
     expect(within(menu).getByRole('menuitemcheckbox', { name: 'Set as Public' })).toHaveAttribute('aria-checked', 'true')
-    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Share on X', 'Copy Link', 'Download'])
+    expect(within(menu).getAllByRole('menuitem').map((b) => b.textContent)).toEqual(['Share on X', 'Copy Link', 'Download', 'Delete'])
+  })
+
+  it('Delete from the grid asks first, then deletes and drops the photo', async () => {
+    const a = await openPhotos(true)
+    await userEvent.click(screen.getAllByRole('button', { name: 'Photo options' })[1])
+    await userEvent.click(within(screen.getByRole('menu', { name: 'Photo options' })).getByRole('menuitem', { name: 'Delete' }))
+    expect(a.remove).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'DELETE' }))
+    expect(a.remove).toHaveBeenCalledWith('p1')
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(2))
   })
 
   it('making a photo private takes it off the grid at once and closes its menu', async () => {

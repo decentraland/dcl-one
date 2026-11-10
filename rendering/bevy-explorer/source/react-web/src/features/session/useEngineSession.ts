@@ -349,13 +349,15 @@ export interface PhotoModeState {
   take: () => void
 }
 
-/** One page of a camera reel, newest first. `total` is how many photos the reel holds in all (what
- *  paging stops at), `max` the owner's storage limit; `ok` is false when the service failed. */
+/** One page of a camera reel, newest first. `total` is how many photos the reel holds in all, `max`
+ *  the owner's storage limit. `received` counts the images the service sent, url-less ones included
+ *  (`photos.length` when absent). */
 export interface ReelPage {
   ok: boolean
   photos: GalleryPhoto[]
   total: number
   max: number
+  received?: number
 }
 
 /** The outcome of a camera-reel write; a delete also reports the storage usage that follows it. */
@@ -706,9 +708,11 @@ const AUTH_PROFILE_WAIT_MS = 30_000
 const EXPECTED_LOOK = -1
 // how long that fetch is waited for before RANDOMIZE is let go again
 const EXPECTED_LOOK_MS = 15_000
-export const GALLERY_CALL_TIMEOUT_MS = 30_000
+export const BRIDGE_CALL_TIMEOUT_MS = 30_000
 // camera-reel-service deletes the photo and its thumbnail from S3 in turn, up to 15 s each.
 export const GALLERY_DELETE_TIMEOUT_MS = 60_000
+
+type BridgeReply = GalleryMessage | GalleryWriteMessage
 
 export type LoginStatus =
   | 'loading'
@@ -1231,9 +1235,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
   const [eventsOpen, setEventsOpen] = useState(false)
   const [shopOpen, setShopOpen] = useState(false)
-  // The reel itself lives in the page that shows it; the session only matches replies to requests.
-  const galleryRequestRef = useRef(0)
-  const galleryPendingRef = useRef(new Map<number, (msg: GalleryMessage | GalleryWriteMessage) => void>())
+  const bridgeRequestRef = useRef(0)
+  const bridgePendingRef = useRef(new Map<number, (msg: BridgeReply) => void>())
   const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
   const [galleryOpen, setGalleryOpen] = useState(false)
   const [photoMode, setPhotoMode] = useState<PhotoModeSnapshot | null>(null)
@@ -1955,8 +1958,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'gallery':
         case 'galleryWrite': {
-          const resolve = galleryPendingRef.current.get(msg.requestId)
-          galleryPendingRef.current.delete(msg.requestId)
+          const resolve = bridgePendingRef.current.get(msg.requestId)
+          bridgePendingRef.current.delete(msg.requestId)
           resolve?.(msg)
           break
         }
@@ -2515,47 +2518,56 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadGalleryPhoto = useCallback((id: string) => {
     driverRef.current?.send({ kind: 'getGalleryPhoto', id })
   }, [])
-  // A reply that never comes (the bridge scene reloaded mid-request) fails the call after
-  // `timeoutMs`, so a page never spins for good.
-  const galleryCall = useCallback(<M extends GalleryMessage | GalleryWriteMessage>(build: (requestId: number) => PageToScene, timeoutMs = GALLERY_CALL_TIMEOUT_MS): Promise<M | null> => {
-    const driver = driverRef.current
-    if (driver == null) return Promise.resolve(null)
-    const requestId = ++galleryRequestRef.current
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        galleryPendingRef.current.delete(requestId)
-        resolve(null)
-      }, timeoutMs)
-      galleryPendingRef.current.set(requestId, (msg) => {
-        clearTimeout(timer)
-        resolve(msg as M)
+  // A reply that never comes (the bridge scene reloaded mid-request) resolves null after
+  // `timeoutMs`, so a page never waits for good.
+  const bridgeCall = useCallback(
+    <K extends BridgeReply['kind']>(
+      kind: K,
+      build: (requestId: number) => PageToScene,
+      timeoutMs = BRIDGE_CALL_TIMEOUT_MS
+    ): Promise<Extract<BridgeReply, { kind: K }> | null> => {
+      const driver = driverRef.current
+      if (driver == null) return Promise.resolve(null)
+      const requestId = ++bridgeRequestRef.current
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }, timeoutMs)
+        bridgePendingRef.current.set(requestId, (msg) => {
+          clearTimeout(timer)
+          resolve(msg.kind === kind ? (msg as Extract<BridgeReply, { kind: K }>) : null)
+        })
+        try {
+          driver.send(build(requestId))
+        } catch (e) {
+          console.error(`[bridge] ${kind} request could not be sent`, e)
+          clearTimeout(timer)
+          bridgePendingRef.current.delete(requestId)
+          resolve(null)
+        }
       })
-      try {
-        driver.send(build(requestId))
-      } catch (e) {
-        console.error('[gallery] request could not be sent', e)
-        clearTimeout(timer)
-        galleryPendingRef.current.delete(requestId)
-        resolve(null)
-      }
-    })
-  }, [])
+    },
+    []
+  )
   const fetchGalleryPage = useCallback(
     async (offset: number, limit: number): Promise<ReelPage> => {
-      const msg = await galleryCall<GalleryMessage>((requestId) => ({ kind: 'getGallery', requestId, offset, limit }))
-      return msg == null ? { ok: false, photos: [], total: 0, max: 0 } : { ok: msg.ok, photos: msg.photos, total: msg.current, max: msg.max }
+      const msg = await bridgeCall('gallery', (requestId) => ({ kind: 'getGallery', requestId, offset, limit }))
+      return msg == null
+        ? { ok: false, photos: [], total: 0, max: 0 }
+        : { ok: msg.ok, photos: msg.photos, total: msg.current, max: msg.max, received: msg.received }
     },
-    [galleryCall]
+    [bridgeCall]
   )
   const setGalleryPhotoPublic = useCallback(
     async (id: string, isPublic: boolean): Promise<ReelWrite> =>
-      (await galleryCall<GalleryWriteMessage>((requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
-    [galleryCall]
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'setGalleryPhotoPublic', requestId, id, isPublic }))) ?? { ok: false },
+    [bridgeCall]
   )
   const removeGalleryPhoto = useCallback(
     async (id: string): Promise<ReelWrite> =>
-      (await galleryCall<GalleryWriteMessage>((requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }), GALLERY_DELETE_TIMEOUT_MS)) ?? { ok: false },
-    [galleryCall]
+      (await bridgeCall('galleryWrite', (requestId) => ({ kind: 'deleteGalleryPhoto', requestId, id }), GALLERY_DELETE_TIMEOUT_MS)) ?? { ok: false },
+    [bridgeCall]
   )
   const teleport = useCallback((x: number, y: number) => {
     setLobbyOpen(false)

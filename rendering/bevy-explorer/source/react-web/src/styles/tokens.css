@@ -65,8 +65,6 @@
 
   /* ---- surface washes / hairlines / text-on-dark ---- */
   --fill-1: rgba(255, 255, 255, 0.04);
-  --white-5: rgba(255, 255, 255, 0.051); /* a context-menu separator line */
-  --reel-loading: rgba(229, 184, 255, 0.051); /* a camera-reel thumbnail still loading (unity-explorer LoadingBright) */
   --fill-2: rgba(255, 255, 255, 0.06);
   --fill-3: rgba(255, 255, 255, 0.08);
   --fill-4: rgba(255, 255, 255, 0.1);
@@ -225,7 +223,6 @@
   --r-shop-cart-price: 6.221px; /* the Shop cart card's price */
   --r-sm: 8px;
   --r-button: 9.6px;
-  --r-option-button: 5.33px; /* unity-explorer's Container12 at a 4.5 pixels-per-unit multiplier (the camera-reel ⋮ button) */
   --r-md: 12px; /* light buttons and popups */
   --r-slot: 15px;
   --r-lg: 16px;

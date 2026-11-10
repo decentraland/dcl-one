@@ -1,20 +1,18 @@
-// The passport's Photos tab lists only PUBLIC photos, your own passport included: unity-explorer's
-// PassportController reads the reel unsigned.
+// The reel is read unsigned, so even your own passport lists only PUBLIC photos.
 
 import { useCallback, useState } from 'react'
 import { EmptyState, Spinner } from '../../design'
-import type { GalleryPhoto, GalleryPhotoMeta } from '../../engine/protocol'
+import type { GalleryPhotoMeta } from '../../engine/protocol'
 import type { ReelWrite } from '../session/useEngineSession'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import { PhotoDetail } from './PhotoDetail'
 import { fetchPublicReelPage } from './publicReels'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
-import { REEL_MESSAGES, confirmReelDelete, reelToast } from './reelActions'
+import { useOwnReelActions, type ReelWrites } from './useOwnReelActions'
 import styles from './PassportPhotos.module.css'
 
-// Unity's passport gallery (Plugin Settings, Passport prefab). The HUD's passport panel is narrower
-// than Unity's full-screen one, so the tiles keep 272:201 and share the width.
+// The passport panel is narrow, so four tiles share its width and keep a 272:201 shape.
 const PASSPORT_LAYOUT: ReelGridLayout = {
   columns: 4,
   tileWidth: 272,
@@ -42,27 +40,9 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
   const fetchPage = useCallback((offset: number, limit: number) => fetchPublicReelPage(key, offset, limit), [key])
   const list = useReelList(key, fetchPage)
   const [index, setIndex] = useState<number | null>(null)
-  const { remove: drop, restore, setPublic: mark } = list
-  const write = actions?.setPublic
-
-  const onSetPublic = useCallback(
-    async (photo: GalleryPhoto, isPublic: boolean): Promise<boolean> => {
-      if (write == null) return false
-      // Off the grid at once, as Unity's HideReelOnPrivateSet; back in its place if the write fails.
-      const at = isPublic ? -1 : drop(photo.id)
-      const r = await write(photo.id, isPublic)
-      if (!r.ok) {
-        if (at >= 0) restore(photo, at)
-        reelToast(REEL_MESSAGES.failure, 'error')
-        return false
-      }
-      mark(photo.id, isPublic)
-      reelToast(REEL_MESSAGES.updated)
-      return true
-    },
-    [write, drop, restore, mark]
-  )
-  const menu: ReelGridMenu | null = isSelf && write != null ? { showDelete: false, onSetPublic } : null
+  const writes = useOwnReelActions(actions ?? NO_WRITES, list, { publicOnly: true })
+  const menu: ReelGridMenu | null =
+    isSelf && actions != null ? { showDelete: true, onSetPublic: writes.setPublic, onDelete: (photo) => void writes.remove(photo) } : null
 
   const selected = index != null ? list.photos[index] : null
 
@@ -72,6 +52,8 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
         <div className={styles.center}>
           <Spinner size={34} />
         </div>
+      ) : list.error && list.photos.length === 0 ? (
+        <EmptyState variant="inline" tone="error" title="Photos couldn't be loaded" actions={[{ label: 'RETRY', onClick: list.retry }]} />
       ) : list.photos.length === 0 ? (
         <EmptyState
           variant="inline"
@@ -79,7 +61,15 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
           subtitle="✨ Set your photos as public to make them visible in your Profile & Communities ✨"
         />
       ) : (
-        <ReelGrid photos={list.photos} layout={PASSPORT_LAYOUT} menu={menu} onOpen={setIndex} onVisibleIndex={list.loadMore} aria-label="Photos" />
+        <ReelGrid
+          photos={list.photos}
+          layout={PASSPORT_LAYOUT}
+          menu={menu}
+          onOpen={setIndex}
+          onVisibleIndex={list.loadMore}
+          onRetry={list.error ? list.retry : undefined}
+          aria-label="Photos"
+        />
       )}
       {selected != null && index != null && (
         <PhotoDetail
@@ -98,19 +88,11 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
             actions?.onTeleport(x, y)
           }}
           onDelete={
-            isSelf && actions != null
+            menu != null
               ? (photo) =>
-                  void (async () => {
-                    if (!(await confirmReelDelete())) return
-                    const r = await actions.remove(photo.id)
-                    if (!r.ok) {
-                      reelToast(REEL_MESSAGES.failure, 'error')
-                      return
-                    }
-                    drop(photo.id)
-                    setIndex(null)
-                    reelToast(REEL_MESSAGES.deleted)
-                  })()
+                  void writes.remove(photo).then((removed) => {
+                    if (removed) setIndex(null)
+                  })
               : undefined
           }
           onViewPerson={actions?.onViewPerson}
@@ -121,3 +103,5 @@ export function PassportPhotos({ address, isSelf, actions }: { address: string; 
 }
 
 const noop = (): void => {}
+// Never called: without `actions` there is no menu.
+const NO_WRITES: ReelWrites = { setPublic: async () => ({ ok: false }), remove: async () => ({ ok: false }) }

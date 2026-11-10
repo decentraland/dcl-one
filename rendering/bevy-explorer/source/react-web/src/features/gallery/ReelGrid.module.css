@@ -1,5 +1,5 @@
-/* In canvas px (unity-explorer CameraReelGallery + ThumbnailElement). Rows are absolutely placed on
-   a canvas as tall as the whole reel; only the ones near the viewport exist. */
+/* In canvas px. Rows are absolutely placed on a canvas as tall as the whole reel; only the ones near
+   the viewport exist. */
 .scroll {
   position: relative;
   flex: 1;
@@ -10,6 +10,15 @@
 .canvas {
   position: relative;
   width: 100%;
+}
+
+.retry {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 30px;
+  color: var(--ink-7);
+  font-size: var(--type-14);
 }
 
 .month {
@@ -41,10 +50,9 @@
   overflow: hidden;
   cursor: pointer;
 }
-.open[aria-disabled='true'] {
+.open:disabled {
   cursor: default;
 }
-/* The brightness follows Unity's button tint: F5F5F5 highlighted, C8C8C8 pressed. */
 .image {
   display: block;
   width: 100%;
@@ -68,7 +76,7 @@
   position: absolute;
   inset: 0;
   overflow: hidden;
-  background: var(--reel-loading);
+  background: var(--fill-1);
 }
 .loading::after {
   content: '';
@@ -77,7 +85,7 @@
   bottom: 0;
   left: calc(50% - 136px);
   width: 272px;
-  background: linear-gradient(90deg, transparent, var(--white-5), transparent);
+  background: linear-gradient(90deg, transparent, var(--fill-2), transparent);
   animation: sweep var(--dur-shimmer) linear infinite;
 }
 @keyframes sweep {
@@ -105,8 +113,6 @@
   visibility: visible;
 }
 
-/* Its centre sits 20 px in from the right and 33 px down: Unity's OptionButtonPosition (-10, -10)
-   plus the button's own (-10, -23). */
 .options {
   position: absolute;
   right: 12px;
@@ -116,7 +122,7 @@
   justify-content: center;
   padding: 0;
   border: none;
-  border-radius: var(--r-option-button);
+  border-radius: var(--r-xs);
   background: var(--black-60);
   cursor: pointer;
   transition: background-color var(--dur-tap) linear;
@@ -137,15 +143,7 @@
   display: flex;
 }
 .optionsIcon {
-  width: 6.5px;
-  height: 24px;
-  background: var(--pearl);
-  mask-size: contain;
-  mask-repeat: no-repeat;
-  mask-position: center;
-  -webkit-mask-size: contain;
-  -webkit-mask-repeat: no-repeat;
-  -webkit-mask-position: center;
+  color: var(--pearl);
 }
 
 @media (prefers-reduced-motion: reduce) {

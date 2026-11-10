@@ -50,7 +50,7 @@ function renderPage(g: GalleryState, props: Partial<Parameters<typeof GalleryPag
   )
 }
 
-// A thumbnail answers clicks and hover once its image has loaded, as in unity-explorer.
+// A thumbnail answers clicks and hover once its image has loaded.
 async function loadThumbnails(): Promise<HTMLElement[]> {
   const buttons = await screen.findAllByRole('button', { name: 'Open photo' })
   for (const b of buttons) {
@@ -72,7 +72,7 @@ describe('GalleryPage', () => {
     expect(g.fetchPage).not.toHaveBeenCalled()
   })
 
-  it('shows unity-explorer\'s empty state when the reel is empty', async () => {
+  it('shows the empty state when the reel is empty', async () => {
     renderPage(gallery([]))
     expect(await screen.findByText('There are no photos yet')).toBeInTheDocument()
   })
@@ -97,9 +97,50 @@ describe('GalleryPage', () => {
     expect(await screen.findAllByRole('button', { name: 'Open photo' })).toHaveLength(230)
   })
 
-  it('a first page that fails (even by rejecting) shows the empty state, not a spinner', async () => {
-    renderPage(gallery(photos, { fetchPage: vi.fn(async () => Promise.reject(new Error('bridge gone'))) }))
-    expect(await screen.findByText('There are no photos yet')).toBeInTheDocument()
+  it('a first page that fails (even by rejecting) shows an error with Retry, not the empty reel', async () => {
+    let fail = true
+    const fetchPage = vi.fn(async (offset: number, limit: number): Promise<ReelPage> => {
+      if (fail) throw new Error('bridge gone')
+      return { ok: true, photos: photos.slice(offset, offset + limit), total: photos.length, max: 500 }
+    })
+    renderPage(gallery(photos, { fetchPage }))
+    expect(await screen.findByText("Your photos couldn't be loaded")).toBeInTheDocument()
+    expect(screen.queryByText('There are no photos yet')).toBeNull()
+    fail = false
+    await userEvent.click(screen.getByRole('button', { name: 'RETRY' }))
+    expect(await screen.findAllByRole('button', { name: 'Open photo' })).toHaveLength(2)
+    expect(fetchPage.mock.calls.map(([offset]) => offset)).toEqual([0, 0])
+  })
+
+  it('a later page that fails ends the grid with Retry, and paging waits for it', async () => {
+    const reel = Array.from({ length: 150 }, (_, i): GalleryPhoto => ({ id: `r${i}`, url: `https://img/${i}.jpg`, dateTime: FEB }))
+    let fail = true
+    const fetchPage = vi.fn(async (offset: number, limit: number): Promise<ReelPage> => {
+      if (offset > 0 && fail) return { ok: false, photos: [], total: 0, max: 0 }
+      return { ok: true, photos: reel.slice(offset, offset + limit), total: 150, max: 500 }
+    })
+    renderPage(gallery(reel, { fetchPage }))
+    expect(await screen.findByText("Couldn't load more photos.")).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(100)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    fail = false
+    await userEvent.click(screen.getByRole('button', { name: 'RETRY' }))
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Open photo' })).toHaveLength(150))
+    expect(screen.queryByText("Couldn't load more photos.")).toBeNull()
+    expect(fetchPage.mock.calls.map(([offset]) => offset)).toEqual([0, 100, 100])
+  })
+
+  it('a full page with photos dropped for lacking a url is not taken for the last one', async () => {
+    const reel = Array.from({ length: 150 }, (_, i): GalleryPhoto => ({ id: `r${i}`, url: `https://img/${i}.jpg`, dateTime: FEB }))
+    const fetchPage = vi.fn(
+      async (offset: number, limit: number): Promise<ReelPage> =>
+        offset === 0
+          ? { ok: true, photos: reel.slice(0, 98), received: 100, total: 150, max: 500 }
+          : { ok: true, photos: reel.slice(offset, offset + limit), total: 150, max: 500 }
+    )
+    renderPage(gallery(reel, { fetchPage }))
+    await waitFor(() => expect(fetchPage).toHaveBeenCalledTimes(2))
+    expect(fetchPage.mock.calls[1][0]).toBe(98)
   })
 
   it('a page that repeats a photo already held (the reel shifted) shows it once', async () => {
@@ -216,7 +257,7 @@ describe('GalleryPage', () => {
       return screen.getByRole('menu', { name: 'Photo options' })
     }
 
-    it('lists unity-explorer\'s options in order, the toggle showing the photo\'s visibility', async () => {
+    it('lists the options in order, the toggle showing the photo\'s visibility', async () => {
       renderPage(gallery(photos))
       const menu = await openMenu()
       expect(within(menu).getByRole('menuitemcheckbox', { name: 'Set as Public' })).toHaveAttribute('aria-checked', 'false')
@@ -242,7 +283,7 @@ describe('GalleryPage', () => {
       expect(screen.queryByRole('menu', { name: 'Photo options' })).toBeNull()
     })
 
-    it('Share on X opens the post intent with unity-explorer\'s text and copies it', async () => {
+    it('Share on X opens the post intent with its text and copies it', async () => {
       const open = vi.spyOn(window, 'open').mockReturnValue(null)
       renderPage(gallery(photos))
       const menu = await openMenu()
@@ -254,7 +295,7 @@ describe('GalleryPage', () => {
       open.mockRestore()
     })
 
-    it('Delete asks unity-explorer\'s question, then deletes and drops the photo', async () => {
+    it('Delete asks first, then deletes and drops the photo', async () => {
       const g = gallery(photos)
       renderPage(g)
       const menu = await openMenu()

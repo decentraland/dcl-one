@@ -1,6 +1,3 @@
-// Strings and behaviour follow unity-explorer's ReelCommonActions, CameraReelGalleryMessagesSettings
-// and CameraReelToastMessage.
-
 import { showConfirm, showToast } from '../../design'
 import { serviceUrl } from '../../lib/baseDomain'
 
@@ -21,7 +18,7 @@ export function reelToast(text: string, tone: 'default' | 'error' = 'default'): 
   showToast(text, { duration: TOAST_MS, tone, key: TOAST_KEY })
 }
 
-export function reelLink(id: string): string {
+function reelLink(id: string): string {
   return `${serviceUrl('reels')}/${id}`
 }
 
@@ -29,7 +26,7 @@ export function shareToXUrl(id: string): string {
   return `https://x.com/intent/post?text=${encodeURIComponent(REEL_MESSAGES.shareToX)}&url=${encodeURIComponent(reelLink(id))}`
 }
 
-/** As unity-explorer does, the intent url is also copied, and no toast shows. */
+/** The intent url is also copied, so the post can be pasted where the browser can't open it; no toast. */
 export function shareReelToX(id: string): void {
   const url = shareToXUrl(id)
   void navigator.clipboard?.writeText(url).catch(() => undefined)

@@ -1,13 +1,12 @@
-// Paging as unity-explorer's PagedCameraReelManager and CameraReelGalleryController do it, except the
-// offset: Unity's advances by the page size even after a delete, which skips a photo, so here the next
-// page starts at the number of photos held. A new `key` starts again from the top.
+// The next page starts at the number of photos held, not the last offset plus the page size: a
+// delete shifts the reel, and the fixed step would skip a photo.
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { GalleryPhoto } from '../../engine/protocol'
 import type { ReelPage } from '../session/useEngineSession'
 
-export const REEL_PAGE_SIZE = 100
-export const REEL_LOAD_MORE_THRESHOLD = 12
+const REEL_PAGE_SIZE = 100
+const REEL_LOAD_MORE_THRESHOLD = 12
 
 export interface ReelList {
   photos: GalleryPhoto[]
@@ -15,6 +14,9 @@ export interface ReelList {
   total: number
   max: number
   loaded: boolean
+  /** The last page asked for failed. Paging waits for `retry` rather than ask again on every scroll. */
+  error: boolean
+  retry: () => void
   loadMore: (lastVisibleIndex: number) => void
   /** Drop a photo (deleted, or made private on a public reel); returns where it was, or -1. */
   remove: (id: string) => number
@@ -30,10 +32,11 @@ export function useReelList(key: string | null, fetchPage: (offset: number, limi
   const [photos, setPhotos] = useState<GalleryPhoto[]>([])
   const [storage, setStorageState] = useState({ total: 0, max: 0 })
   const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState(false)
   // Read synchronously by loadMore, which the grid calls on every scroll. `ids` are the photos held:
   // a page that repeats one (the reel shifted under it) adds it once, and only new photos advance
   // the offset.
-  const state = useRef({ generation: 0, loading: false, done: false, count: 0, ids: new Set<string>() })
+  const state = useRef({ generation: 0, loading: false, done: false, failed: false, count: 0, ids: new Set<string>() })
   const fetchRef = useRef(fetchPage)
   fetchRef.current = fetchPage
 
@@ -41,6 +44,10 @@ export function useReelList(key: string | null, fetchPage: (offset: number, limi
     const s = state.current
     if (s.loading || s.done) return
     s.loading = true
+    s.failed = false
+    setError(false)
+    // A retried first page shows the spinner again, not the empty reel.
+    if (s.count === 0) setLoaded(false)
     const generation = s.generation
     const settle = (page: ReelPage): void => {
       if (generation !== s.generation) return
@@ -49,12 +56,14 @@ export function useReelList(key: string | null, fetchPage: (offset: number, limi
         const fresh = page.photos.filter((p) => !s.ids.has(p.id))
         for (const p of fresh) s.ids.add(p.id)
         s.count += fresh.length
-        s.done = s.count >= page.total || page.photos.length < REEL_PAGE_SIZE
+        // A short page is judged by what the service sent: photos it sent without a url are dropped,
+        // and would make a full page look like the last one.
+        s.done = s.count >= page.total || (page.received ?? page.photos.length) < REEL_PAGE_SIZE
         setPhotos((list) => [...list, ...fresh])
         setStorageState({ total: page.total, max: page.max })
-      } else if (s.count === 0) {
-        // The first page failed: show what there is (nothing) rather than spin forever.
-        s.done = true
+      } else {
+        s.failed = true
+        setError(true)
       }
       setLoaded(true)
     }
@@ -69,17 +78,20 @@ export function useReelList(key: string | null, fetchPage: (offset: number, limi
     s.generation += 1
     s.loading = false
     s.done = false
+    s.failed = false
     s.count = 0
     s.ids = new Set()
     setPhotos([])
     setStorageState({ total: 0, max: 0 })
     setLoaded(false)
+    setError(false)
     if (key != null) load()
   }, [key, load])
 
   const loadMore = useCallback(
     (lastVisibleIndex: number) => {
-      if (state.current.count - lastVisibleIndex >= REEL_LOAD_MORE_THRESHOLD) return
+      const s = state.current
+      if (s.failed || s.count - lastVisibleIndex >= REEL_LOAD_MORE_THRESHOLD) return
       load()
     },
     [load]
@@ -126,5 +138,5 @@ export function useReelList(key: string | null, fetchPage: (offset: number, limi
 
   const setStorage = useCallback((total: number, max: number) => setStorageState({ total, max }), [])
 
-  return { photos, total: storage.total, max: storage.max, loaded, loadMore, remove, restore, setPublic, setStorage }
+  return { photos, total: storage.total, max: storage.max, loaded, error, retry: load, loadMore, remove, restore, setPublic, setStorage }
 }

@@ -1395,12 +1395,14 @@ export interface GetGalleryRequest {
 }
 
 /** A page of the local player's camera-reel photos + storage usage: `current` is the total number of
- *  photos the player has, `max` the storage limit. `ok` is false when the service could not be read. */
+ *  photos the player has, `max` the storage limit. `received` counts the images the service sent,
+ *  url-less ones included, which `photos` drops. */
 export interface GalleryMessage {
   kind: 'gallery'
   requestId: number
   ok: boolean
   photos: GalleryPhoto[]
+  received: number
   current: number
   max: number
 }

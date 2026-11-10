@@ -1,8 +1,7 @@
-// unity-explorer's CameraReelGalleryController on a LoopListView2: rows have fixed heights, so only
-// the ones near the viewport are mounted and a reel of any length stays a handful of elements.
+// Rows have fixed heights, so only the ones near the viewport are mounted.
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { GenericContextMenu, type GenericContextMenuItem } from '../../design'
+import { AnchoredMenu, Button, MaskIcon, type ContextMenuItem } from '../../design'
 import { photoTime } from '../session/useEngineSession'
 import type { GalleryPhoto } from '../../engine/protocol'
 import { copyReelLink, downloadReel, shareReelToX } from './reelActions'
@@ -35,24 +34,24 @@ export interface ReelGridMenu {
   onDelete?: (photo: GalleryPhoto) => void
 }
 
-// ReelGalleryRow.ROW_SPACING / HEADER_SPACING; the header is one 18 px Inter line.
+// The header is one 18 px line.
 const GAP = 4
 const HEADER_SPACING = 20
 const HEADER_HEIGHT = 22
 const OVERSCAN = 600
+const OPTION_BUTTON_CENTRE_Y = 33
 
 type Row =
   | { kind: 'padding'; top: number; height: number }
   | { kind: 'header'; top: number; height: number; label: string }
   | { kind: 'thumbs'; top: number; height: number; start: number; count: number }
 
-export function reelMonthLabel(dateTime: string): string {
+function reelMonthLabel(dateTime: string): string {
   return new Date(photoTime(dateTime)).toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
 }
 
 type RowInit = Row extends infer R ? (R extends Row ? Omit<R, 'top'> : never) : never
 
-/** ReelGalleryRow.Build, with each row's top and its spacing folded into its height. */
 export function buildReelRows(photos: GalleryPhoto[], layout: ReelGridLayout, tileHeight: number): { rows: Row[]; height: number } {
   const rows: Row[] = []
   let top = 0
@@ -88,6 +87,7 @@ export function ReelGrid({
   menu,
   onOpen,
   onVisibleIndex,
+  onRetry,
   'aria-label': ariaLabel
 }: {
   photos: GalleryPhoto[]
@@ -96,6 +96,8 @@ export function ReelGrid({
   menu: ReelGridMenu | null
   onOpen: (index: number) => void
   onVisibleIndex: (index: number) => void
+  /** Set when the next page failed: the grid ends with a row that asks for it again. */
+  onRetry?: () => void
   'aria-label'?: string
 }): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -131,7 +133,6 @@ export function ReelGrid({
   }, [view.measured, lastOnScreen, photos.length, onVisibleIndex])
 
   const [menuFor, setMenuFor] = useState<{ photo: GalleryPhoto; anchor: { x: number; y: number }; trigger: HTMLElement } | null>(null)
-  // A photo that leaves the list (deleted, or made private on a public reel) takes its menu with it.
   const openPhoto = menuFor != null ? photos.find((p) => p.id === menuFor.photo.id) : undefined
   useEffect(() => {
     if (menuFor != null && openPhoto == null) setMenuFor(null)
@@ -146,7 +147,7 @@ export function ReelGrid({
         const el = e.currentTarget
         setView((v) => (v.top === el.scrollTop ? v : { ...v, top: el.scrollTop }))
         // The menu is placed once, at its ⋮: a scroll would leave it floating over another photo, or
-        // over none once the row unmounts. Unity closes it when the row is recycled.
+        // over none once the row unmounts.
         if (menuFor != null) setMenuFor(null)
       }}
     >
@@ -186,6 +187,14 @@ export function ReelGrid({
           )
         })}
       </div>
+      {onRetry != null && (
+        <div className={styles.retry} role="status" style={{ paddingLeft: layout.paddingLeft }}>
+          <span>Couldn't load more photos.</span>
+          <Button variant="secondary" size="sm" onClick={onRetry}>
+            RETRY
+          </Button>
+        </div>
+      )}
       {menu != null && menuFor != null && openPhoto != null && (
         <ReelMenu key={openPhoto.id} photo={openPhoto} anchor={menuFor.anchor} trigger={menuFor.trigger} menu={menu} onClose={() => setMenuFor(null)} />
       )}
@@ -214,14 +223,13 @@ function Thumbnail({
 }): React.JSX.Element {
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
-  // Clicks and hover wait for the image, as ReelThumbnailController's do.
   const ready = loaded && !failed
   return (
     <div
       className={`${styles.tile} ${ready ? styles.ready : ''} ${menuOpen ? styles.active : ''}`.trim()}
       style={{ width, height }}
     >
-      <button type="button" className={styles.open} aria-label="Open photo" aria-disabled={!ready} onClick={() => ready && onOpen()}>
+      <button type="button" className={styles.open} aria-label="Open photo" disabled={!ready} onClick={onOpen}>
         {!loaded && !failed && <span className={styles.loading} aria-hidden="true" />}
         <img
           className={styles.image}
@@ -237,13 +245,13 @@ function Thumbnail({
         <button
           type="button"
           className={styles.options}
-          style={{ height: optionButtonHeight, top: 33 - optionButtonHeight / 2 }}
+          style={{ height: optionButtonHeight, top: OPTION_BUTTON_CENTRE_Y - optionButtonHeight / 2 }}
           aria-label="Photo options"
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={(e) => onMenu(e.currentTarget)}
         >
-          <span className={styles.optionsIcon} style={{ maskImage: `url("${menuVerticalIcon}")`, WebkitMaskImage: `url("${menuVerticalIcon}")` }} />
+          <MaskIcon src={menuVerticalIcon} size={24} className={styles.optionsIcon} />
         </button>
       )}
     </div>
@@ -263,10 +271,9 @@ function ReelMenu({
   menu: ReelGridMenu
   onClose: () => void
 }): React.JSX.Element {
-  // The switch flips at once, as Unity's toggle does; the photo follows when the service agrees, and
-  // the switch flips back when it doesn't.
   const [isPublic, setIsPublic] = useState(photo.isPublic === true)
-  const items: GenericContextMenuItem[] = [
+  const icon = (src: string): React.JSX.Element => <MaskIcon src={src} size={18} />
+  const items: ContextMenuItem[] = [
     {
       kind: 'toggle',
       label: 'Set as Public',
@@ -279,13 +286,13 @@ function ReelMenu({
       }
     },
     { kind: 'separator' },
-    { kind: 'button', label: 'Share on X', icon: shareIcon, onClick: () => shareReelToX(photo.id) },
-    { kind: 'button', label: 'Copy Link', icon: linkIcon, onClick: () => copyReelLink(photo.id) },
-    { kind: 'button', label: 'Download', icon: downloadIcon, onClick: () => void downloadReel(photo.url) }
+    { label: 'Share on X', icon: icon(shareIcon), onClick: () => shareReelToX(photo.id) },
+    { label: 'Copy Link', icon: icon(linkIcon), onClick: () => copyReelLink(photo.id) },
+    { label: 'Download', icon: icon(downloadIcon), onClick: () => void downloadReel(photo.url) }
   ]
   if (menu.showDelete && menu.onDelete != null) {
     const onDelete = menu.onDelete
-    items.push({ kind: 'button', label: 'Delete', icon: deleteIcon, onClick: () => onDelete(photo) })
+    items.push({ label: 'Delete', icon: icon(deleteIcon), onClick: () => onDelete(photo) })
   }
-  return <GenericContextMenu anchor={anchor} items={items} onClose={onClose} ignore={trigger} aria-label="Photo options" />
+  return <AnchoredMenu anchor={anchor} items={items} onClose={onClose} ignore={trigger} aria-label="Photo options" />
 }

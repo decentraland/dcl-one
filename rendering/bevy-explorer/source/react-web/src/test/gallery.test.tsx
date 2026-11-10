@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act } from '@testing-library/react'
 import type { GalleryPhoto } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
-import { GALLERY_CALL_TIMEOUT_MS, GALLERY_DELETE_TIMEOUT_MS } from '../features/session/useEngineSession'
+import { BRIDGE_CALL_TIMEOUT_MS, GALLERY_DELETE_TIMEOUT_MS } from '../features/session/useEngineSession'
 
 // DOMAIN: gallery (camera reel) — paged reads, lazy per-photo metadata, visibility and delete writes,
 // each answered by the requestId it was sent with.
@@ -31,12 +31,12 @@ describe('gallery domain', () => {
     expect(sent).toMatchObject({ kind: 'getGallery', offset: 100, limit: 100 })
     const requestId = (sent as { requestId: number }).requestId
     // Another request's reply doesn't settle this one.
-    h.driver.emit({ kind: 'gallery', requestId: requestId + 99, ok: true, photos: [], current: 0, max: 0 })
-    h.driver.emit({ kind: 'gallery', requestId, ok: true, photos: [photo('old', '1000'), photo('new', '3000')], current: 230, max: 500 })
+    h.driver.emit({ kind: 'gallery', requestId: requestId + 99, ok: true, photos: [], received: 0, current: 0, max: 0 })
+    h.driver.emit({ kind: 'gallery', requestId, ok: true, photos: [photo('old', '1000'), photo('new', '3000')], received: 2, current: 230, max: 500 })
     await act(async () => {
       await pending
     })
-    expect(page).toEqual({ ok: true, photos: [photo('old', '1000'), photo('new', '3000')], total: 230, max: 500 })
+    expect(page).toEqual({ ok: true, photos: [photo('old', '1000'), photo('new', '3000')], received: 2, total: 230, max: 500 })
   })
 
   it('loadPhoto requests metadata and the stream fills the cache', async () => {
@@ -71,9 +71,9 @@ describe('gallery domain', () => {
     try {
       const page = h.session().gallery.fetchPage(0, 100)
       const sent = h.driver.last('getGallery') as { requestId: number }
-      vi.advanceTimersByTime(GALLERY_CALL_TIMEOUT_MS)
+      vi.advanceTimersByTime(BRIDGE_CALL_TIMEOUT_MS)
       await expect(page).resolves.toEqual({ ok: false, photos: [], total: 0, max: 0 })
-      h.driver.emit({ kind: 'gallery', requestId: sent.requestId, ok: true, photos: [photo('late', '1000')], current: 1, max: 500 })
+      h.driver.emit({ kind: 'gallery', requestId: sent.requestId, ok: true, photos: [photo('late', '1000')], received: 1, current: 1, max: 500 })
     } finally {
       vi.useRealTimers()
     }
@@ -86,7 +86,7 @@ describe('gallery domain', () => {
     try {
       const removed = h.session().gallery.remove('a')
       const sent = h.driver.last('deleteGalleryPhoto') as { requestId: number }
-      vi.advanceTimersByTime(GALLERY_CALL_TIMEOUT_MS)
+      vi.advanceTimersByTime(BRIDGE_CALL_TIMEOUT_MS)
       h.driver.emit({ kind: 'galleryWrite', requestId: sent.requestId, ok: true, current: 1, max: 500 })
       await expect(removed).resolves.toMatchObject({ ok: true, current: 1, max: 500 })
     } finally {

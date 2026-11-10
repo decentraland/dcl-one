@@ -324,24 +324,28 @@ owns the mode as a surface. Expectations:
 
 ## Gallery (camera reel)
 
-The Gallery page and the passport's Photos tab (`features/gallery`, bridge `domains/gallery.ts`),
-ported from unity-explorer's CameraReelGalleryController. Expectations:
+The Gallery page and the passport's Photos tab (`features/gallery`, bridge `domains/gallery.ts`).
+Expectations:
 
 - **Paging**: a reel is read 100 photos a page, the next page when fewer than 12 loaded photos remain
-  past the last one on screen, and paging stops once the reel's total is loaded or a page comes back
-  short (`useReelList`). Every Gallery open reads again from the top. Your own reel goes through the
-  bridge, signed (private photos included), its replies matched by `requestId`. The passport reads
-  the PUBLIC reel from the HUD itself, unsigned (`publicReels.ts`), since every bridge request is
-  signed; `?mock=1` swaps in the mock bridge's reels.
+  past the last one on screen, and paging stops once the reel's total is loaded or the service sends
+  a short page (counted before url-less images are dropped) (`useReelList`). Every Gallery open reads
+  again from the top. Your own reel goes through the bridge, signed (private photos included), its
+  replies matched by `requestId` (`bridgeCall`). The passport reads the PUBLIC reel from the HUD
+  itself, unsigned (`publicReels.ts`), since every bridge request is signed; `?mock=1` swaps in the
+  mock bridge's reels.
+- **Failures**: a failed first page shows an error with RETRY, never the empty reel; a failed later
+  page ends the grid with a RETRY row, and paging waits for it instead of asking on every scroll.
 - **The grid** (`ReelGrid`) mounts only the rows near the viewport; it reports what is on screen only
   once it has measured it. Gallery: 6 x 306x230 with month headers; passport: 4 columns at 272:201,
-  no headers. A thumbnail answers hover and clicks only once its image has loaded.
-- **The options menu** (`design/GenericContextMenu`, unity-explorer's GenericContextMenu): Set as
-  Public, Share on X, Copy Link, Download, Delete, in that order, with Unity's strings and toasts
-  (`reelActions.ts`). The passport offers it only on your own passport, without Delete, and making a
-  photo private there drops it at once. It is portaled with `--ui-scale` and placed as Unity's
-  BottomRight (11, 18) with its flip and clamp — check it visually near the screen edges.
+  no headers. A thumbnail is disabled until its image has loaded.
+- **The options menu** (`design/AnchoredMenu` around `ContextMenu`): Set as Public, Share on X, Copy
+  Link, Download, Delete, in that order (`reelActions.ts`, `useOwnReelActions.ts`). The passport offers
+  it only on your own passport, and making a photo private there drops it at once (back in place if
+  the write fails). It is portaled with `--ui-scale`, opens below-right of the ⋮ and flips or clamps
+  at the screen edges: check it visually near the edges. On native, Download needs the engine's CEF
+  download handler (`crates/cef_offscreen`), which saves to the Downloads folder.
 - Tests: `src/test/gallery.test.tsx` (the session calls), `src/test/gallery.page.test.tsx` (paging,
-  the menu and its actions), `src/test/profile.passport.test.tsx` (passport photos),
-  `src/test/reelGrid.test.tsx` (rows, virtualization, menu placement).
-
+  failures, the menu and its actions), `src/test/profile.passport.test.tsx` (passport photos),
+  `src/test/reelGrid.test.tsx` (rows, virtualization, menu placement), `src/test/bridgeGallery.test.ts`
+  (the bridge's requests and replies).

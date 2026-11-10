@@ -1,19 +1,15 @@
-// The camera-reel Gallery, unity-explorer's Camera Reel, read through the bridge's signed relay of
-// camera-reel-service (bridge-scene/domains/gallery).
-
-import { useCallback, useState } from 'react'
+import { useState } from 'react'
 import { EmptyState, Icon, Spinner } from '../../design'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { PhotoDetail } from './PhotoDetail'
 import { ReelGrid, type ReelGridLayout, type ReelGridMenu } from './ReelGrid'
 import { useReelList } from './useReelList'
-import { REEL_MESSAGES, confirmReelDelete, reelToast } from './reelActions'
+import { useOwnReelActions } from './useOwnReelActions'
 import type { GalleryState, ProfileState } from '../session/useEngineSession'
-import type { GalleryPhoto } from '../../engine/protocol'
 import type { ChatUser } from '../chat/ProfileCardPresentation'
 import styles from './GalleryPage.module.css'
 
-// Unity's CameraReelGallery (Plugin Settings, CameraReelGallery.prefab).
+// Six columns of 306x230 fill the 1920 canvas with its 30 px padding.
 const GALLERY_LAYOUT: ReelGridLayout = {
   columns: 6,
   tileWidth: 306,
@@ -24,43 +20,6 @@ const GALLERY_LAYOUT: ReelGridLayout = {
   paddingLeft: 30,
   monthSpacing: 20,
   optionButtonHeight: 41
-}
-
-export function useOwnReelActions(
-  gallery: GalleryState,
-  list: { remove: (id: string) => void; setPublic: (id: string, isPublic: boolean) => void; setStorage: (total: number, max: number) => void }
-): { setPublic: (photo: GalleryPhoto, isPublic: boolean) => Promise<boolean>; remove: (photo: GalleryPhoto) => Promise<boolean> } {
-  const { setPublic: write, remove: del } = gallery
-  const { remove: drop, setPublic: mark, setStorage } = list
-  const setPublic = useCallback(
-    (photo: GalleryPhoto, isPublic: boolean): Promise<boolean> =>
-      write(photo.id, isPublic).then((r) => {
-        if (!r.ok) {
-          reelToast(REEL_MESSAGES.failure, 'error')
-          return false
-        }
-        mark(photo.id, isPublic)
-        reelToast(REEL_MESSAGES.updated)
-        return true
-      }),
-    [write, mark]
-  )
-  const remove = useCallback(
-    async (photo: GalleryPhoto): Promise<boolean> => {
-      if (!(await confirmReelDelete())) return false
-      const r = await del(photo.id)
-      if (!r.ok) {
-        reelToast(REEL_MESSAGES.failure, 'error')
-        return false
-      }
-      drop(photo.id)
-      if (r.current != null && r.max != null) setStorage(r.current, r.max)
-      reelToast(REEL_MESSAGES.deleted)
-      return true
-    },
-    [del, drop, setStorage]
-  )
-  return { setPublic, remove }
 }
 
 export function GalleryPage({
@@ -79,8 +38,8 @@ export function GalleryPage({
   onViewProfile?: (user: ChatUser) => void
 }): React.JSX.Element | null {
   const [index, setIndex] = useState<number | null>(null)
-  // The page stays mounted while closed, so each open resets it: Unity's gallery reads the reel again
-  // from the top whenever it is shown.
+  // The page stays mounted while closed, so each open resets it and reads the reel from the top:
+  // photos taken since the last open show up.
   const [opened, setOpened] = useState(0)
   const [wasOpen, setWasOpen] = useState(gallery.open)
   if (gallery.open !== wasOpen) {
@@ -129,6 +88,14 @@ export function GalleryPage({
         <div className={styles.center}>
           <Spinner />
         </div>
+      ) : list.error && list.photos.length === 0 ? (
+        <EmptyState
+          variant="screen"
+          tone="error"
+          title="Your photos couldn't be loaded"
+          subtitle="Check your connection and try again."
+          actions={[{ label: 'RETRY', onClick: list.retry }]}
+        />
       ) : list.photos.length === 0 ? (
         <EmptyState
           variant="screen"
@@ -142,7 +109,15 @@ export function GalleryPage({
           }
         />
       ) : (
-        <ReelGrid photos={list.photos} layout={GALLERY_LAYOUT} menu={menu} onOpen={setIndex} onVisibleIndex={list.loadMore} aria-label="Photos" />
+        <ReelGrid
+          photos={list.photos}
+          layout={GALLERY_LAYOUT}
+          menu={menu}
+          onOpen={setIndex}
+          onVisibleIndex={list.loadMore}
+          onRetry={list.error ? list.retry : undefined}
+          aria-label="Photos"
+        />
       )}
 
       {selected && index != null && (

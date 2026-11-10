@@ -11,7 +11,8 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
-import { GenericContextMenu } from './GenericContextMenu'
+import { AnchoredMenu } from './AnchoredMenu'
+import { MaskIcon } from './MaskIcon'
 import reelShareIcon from '../assets/camera-reel/share-x.png'
 import reelLinkIcon from '../assets/camera-reel/copy-link.png'
 import reelDownloadIcon from '../assets/camera-reel/download.png'
@@ -154,7 +155,7 @@ function Swatch({ name, hex, token, dark }: { name: string; hex: string; token?:
   )
 }
 
-function GenericContextMenuDemo(): React.JSX.Element {
+function AnchoredMenuDemo(): React.JSX.Element {
   const [anchor, setAnchor] = useState<{ x: number; y: number; opener: Element } | null>(null)
   const [pub, setPub] = useState(true)
   return (
@@ -169,7 +170,7 @@ function GenericContextMenuDemo(): React.JSX.Element {
         Open the photo options
       </Button>
       {anchor != null && (
-        <GenericContextMenu
+        <AnchoredMenu
           anchor={anchor}
           ignore={anchor.opener}
           onClose={() => setAnchor(null)}
@@ -177,10 +178,10 @@ function GenericContextMenuDemo(): React.JSX.Element {
           items={[
             { kind: 'toggle', label: 'Set as Public', checked: pub, onChange: setPub },
             { kind: 'separator' },
-            { kind: 'button', label: 'Share on X', icon: reelShareIcon, onClick: () => {} },
-            { kind: 'button', label: 'Copy Link', icon: reelLinkIcon, onClick: () => {} },
-            { kind: 'button', label: 'Download', icon: reelDownloadIcon, onClick: () => {} },
-            { kind: 'button', label: 'Delete', icon: reelDeleteIcon, onClick: () => {} }
+            { label: 'Share on X', icon: <MaskIcon src={reelShareIcon} size={18} />, onClick: () => {} },
+            { label: 'Copy Link', icon: <MaskIcon src={reelLinkIcon} size={18} />, onClick: () => {} },
+            { label: 'Download', icon: <MaskIcon src={reelDownloadIcon} size={18} />, onClick: () => {} },
+            { label: 'Delete', icon: <MaskIcon src={reelDeleteIcon} size={18} />, onClick: () => {} }
           ]}
         />
       )}
@@ -520,8 +521,8 @@ export function Showcase(): React.JSX.Element {
         />
       </Section>
 
-      <Section title="GenericContextMenu (unity-explorer's, as the camera-reel photo options use it)">
-        <GenericContextMenuDemo />
+      <Section title="AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)">
+        <AnchoredMenuDemo />
       </Section>
 
       <Section title="HintsButton (opens upward)">

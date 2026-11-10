@@ -3268,6 +3268,7 @@ dependencies = [
  "bevy",
  "cef",
  "cef-dll-sys",
+ "directories",
  "libc",
  "objc",
  "raw-window-handle",

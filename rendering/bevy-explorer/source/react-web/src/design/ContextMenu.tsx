@@ -17,6 +17,7 @@ export type ContextMenuItem =
 
 interface ContextMenuProps {
   items: ContextMenuItem[]
+  'aria-label'?: string
 }
 
 function shortAddress(a: string): string {
@@ -24,11 +25,11 @@ function shortAddress(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`
 }
 
-export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
+export function ContextMenu({ items, 'aria-label': ariaLabel }: ContextMenuProps): React.JSX.Element {
   return (
-    <div className={styles.ctx} role="menu">
+    <div className={styles.ctx} role="menu" aria-label={ariaLabel}>
       {items.map((it, i) => {
-        if (it.kind === 'separator') return <div className={styles.sep} key={i} />
+        if (it.kind === 'separator') return <div className={styles.sep} role="separator" key={i} />
 
         if (it.kind === 'title') {
           return (
@@ -101,15 +102,22 @@ export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
 
 function ToggleItem({ item }: { item: Extract<ContextMenuItem, { kind: 'toggle' }> }): React.JSX.Element {
   const [on, setOn] = useState(!!item.checked)
+  // A new `checked` from the owner wins (a write that failed flips the switch back).
+  const [given, setGiven] = useState(item.checked)
+  if (item.checked !== given) {
+    setGiven(item.checked)
+    setOn(!!item.checked)
+  }
   const change = (next: boolean): void => {
     setOn(next)
     item.onChange?.(next)
   }
+  const name = typeof item.label === 'string' ? item.label : undefined
   return (
-    <label className={`${styles.item} ${styles.itemToggle}`} role="menuitemcheckbox" aria-checked={on}>
+    <label className={`${styles.item} ${styles.itemToggle}`} role="menuitemcheckbox" aria-checked={on} aria-label={name}>
       {item.icon != null && <span className={styles.icon}>{item.icon}</span>}
       <span className={styles.label}>{item.label}</span>
-      <Toggle checked={on} onChange={change} />
+      <Toggle checked={on} onChange={change} aria-label={name} />
     </label>
   )
 }

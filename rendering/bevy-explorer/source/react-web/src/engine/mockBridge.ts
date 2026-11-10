@@ -1143,7 +1143,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getGallery') {
       const page = mockGallery.slice(msg.offset, msg.offset + msg.limit)
-      setTimeout(() => reply({ kind: 'gallery', requestId: msg.requestId, ok: true, photos: page, current: mockGallery.length, max: 500 }), o.latency)
+      setTimeout(() => reply({ kind: 'gallery', requestId: msg.requestId, ok: true, photos: page, received: page.length, current: mockGallery.length, max: 500 }), o.latency)
       return
     }
     if (msg.kind === 'getGalleryPhoto') {

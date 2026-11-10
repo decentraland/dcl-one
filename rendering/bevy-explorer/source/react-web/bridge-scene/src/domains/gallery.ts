@@ -35,7 +35,7 @@ export function registerGallery(ctx: Ctx): void {
   ctx.on('getGallery', async (msg) => {
     const player = getPlayer()
     if (player == null) {
-      ctx.send({ kind: 'gallery', requestId: msg.requestId, ok: false, photos: [], current: 0, max: 0 })
+      ctx.send({ kind: 'gallery', requestId: msg.requestId, ok: false, photos: [], received: 0, current: 0, max: 0 })
       return
     }
     // Every failure, the service base included, still answers this request: the page waits on its
@@ -46,7 +46,8 @@ export function registerGallery(ctx: Ctx): void {
         console.error('[gallery] page fetch failed', e)
         return null
       })
-    const photos: GalleryPhoto[] = (r?.images ?? [])
+    const images = r?.images ?? []
+    const photos: GalleryPhoto[] = images
       .filter((i) => typeof i.url === 'string')
       .map((i) => ({
         id: i.id,
@@ -60,7 +61,8 @@ export function registerGallery(ctx: Ctx): void {
       requestId: msg.requestId,
       ok: r !== null,
       photos,
-      current: r?.currentImages ?? 0,
+      received: images.length,
+      current: r?.currentImages ?? photos.length,
       max: r?.maxImages ?? 0
     })
   })
