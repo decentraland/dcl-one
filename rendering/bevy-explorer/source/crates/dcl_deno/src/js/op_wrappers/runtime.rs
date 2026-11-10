@@ -1,9 +1,9 @@
 use crate::js::errors::OpError;
 use crate::js::plain::JsPlain;
-use common::rpc::ReadFileResponse;
 use dcl_component::proto_components::sdk::components::PbRealmInfo;
 use dcl_js::runtime::{SceneInfoResponse, WorldTime};
-use deno_core::{op2, OpDecl, OpState};
+use deno_core::{op2, OpDecl, OpState, ToJsBuffer};
+use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
 
 // list of op declarations
@@ -19,14 +19,23 @@ pub fn ops() -> Vec<OpDecl> {
     ]
 }
 
+/// The file's bytes arrive as a `Uint8Array`.
+#[derive(Serialize)]
+pub(crate) struct ReadFile {
+    pub content: ToJsBuffer,
+    pub hash: String,
+}
+
 #[op2]
 async fn op_read_file(
     op_state: Rc<RefCell<OpState>>,
     #[string] filename: String,
-) -> Result<JsPlain<ReadFileResponse>, OpError> {
-    Ok(JsPlain(
-        dcl_js::runtime::op_read_file(op_state, filename).await?,
-    ))
+) -> Result<JsPlain<ReadFile>, OpError> {
+    let file = dcl_js::runtime::op_read_file(op_state, filename).await?;
+    Ok(JsPlain(ReadFile {
+        content: file.content.into(),
+        hash: file.hash,
+    }))
 }
 
 #[op2]

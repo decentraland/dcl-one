@@ -161,6 +161,48 @@ fn nested_values_in_op_results_are_ordinary_objects() {
 }
 
 #[test]
+fn file_contents_reach_scenes_as_bytes() {
+    let mut runtime = client_runtime();
+    {
+        deno_core::scope!(scope, runtime);
+        let value = deno_core::ToV8::to_v8(
+            super::super::plain::JsPlain(super::super::op_wrappers::runtime::ReadFile {
+                content: vec![1, 2, 3].into(),
+                hash: "h".to_owned(),
+            }),
+            scope,
+        )
+        .unwrap();
+        let global = scope.get_current_context().global(scope);
+        let key = deno_core::v8::String::new(scope, "__value").unwrap();
+        global.set(scope, key.into(), value);
+    }
+    let outcome = eval(
+        &mut runtime,
+        r#"JSON.stringify([__value.content instanceof Uint8Array, Array.from(__value.content),
+            __value.hash, String(__value)])"#
+            .to_owned(),
+    )
+    .unwrap();
+    assert_eq!(outcome, r#"[true,[1,2,3],"h","[object Object]"]"#);
+}
+
+/// A `Date`, `Map` or `Set` has no own properties to copy, so an op refuses it rather than
+/// reading it as `{}`.
+#[test]
+fn ops_refuse_objects_whose_data_is_internal() {
+    let mut runtime = client_runtime();
+    for value in ["new Date(0)", "new Map([[1, 2]])", "new Set([1])", "/x/"] {
+        let err = eval(
+            &mut runtime,
+            format!("Deno.core.ops.op_url_stringify_search_params({value})"),
+        )
+        .unwrap_err();
+        assert!(err.contains("cannot be passed to this op"), "{value}: {err}");
+    }
+}
+
+#[test]
 fn every_clock_has_two_millisecond_granularity() {
     let mut runtime = client_runtime();
     let outcome = eval(

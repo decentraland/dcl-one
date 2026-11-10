@@ -6,7 +6,8 @@ use serde::de::DeserializeOwned;
 /// serde_v8 unwraps every property read, so a getter, proxy or `toString` that throws
 /// while it walks a value panics inside the op, which aborts the process. The copy is made
 /// with every read checked: own enumerable data only, null-prototype objects and arrays,
-/// and no symbols, boxed primitives, proxies or functions. Buffers pass through uncopied
+/// and no symbols, boxed primitives, proxies, functions, or objects whose data lives in
+/// internal slots (`Date`, `Map`, `Set`, `RegExp`, ...). Buffers pass through uncopied
 /// and keep their prototype, so the decode itself still runs under `catch_unwind`.
 pub struct Plain<T>(pub T);
 
@@ -81,6 +82,11 @@ fn plain_copy<'s>(
     {
         return Err(unsupported(scope, value));
     }
+    if let Some(kind) = slot_object_kind(&value) {
+        return Err(PlainError(format!(
+            "argument holds a {kind} that cannot be passed to this op"
+        )));
+    }
     v8::tc_scope!(let scope, scope);
     if let Ok(array) = v8::Local::<v8::Array>::try_from(value) {
         let length = array.length() as usize;
@@ -126,6 +132,21 @@ fn plain_copy<'s>(
     Ok(copy.into())
 }
 
+/// Objects whose contents have no own properties, so a copy would silently be `{}`.
+fn slot_object_kind(value: &v8::Value) -> Option<&'static str> {
+    [
+        (value.is_date(), "Date"),
+        (value.is_map(), "Map"),
+        (value.is_set(), "Set"),
+        (value.is_reg_exp(), "RegExp"),
+        (value.is_weak_map(), "WeakMap"),
+        (value.is_weak_set(), "WeakSet"),
+        (value.is_promise(), "Promise"),
+    ]
+    .into_iter()
+    .find_map(|(is, kind)| is.then_some(kind))
+}
+
 fn unsupported(scope: &mut v8::PinScope, value: v8::Local<v8::Value>) -> PlainError {
     let kind = value.type_of(scope).to_rust_string_lossy(scope);
     PlainError(format!(
@@ -136,7 +157,9 @@ fn unsupported(scope: &mut v8::PinScope, value: v8::Local<v8::Value>) -> PlainEr
 /// An op result handed to scene code as ordinary objects.
 ///
 /// serde_v8 builds every object with a null prototype, so `String(x)` and `"" + x` throw on
-/// it. Every object in the result gets `Object.prototype` instead.
+/// it. Every object in the result gets `Object.prototype` instead, down to [`MAX_DEPTH`];
+/// deeper objects keep the null prototype. Bytes belong in a buffer type (`ToJsBuffer`): a
+/// `Vec<u8>` becomes an array of numbers, one property per byte.
 pub struct JsPlain<T>(pub T);
 
 impl<'a, T: serde::Serialize> deno_core::ToV8<'a> for JsPlain<T> {
@@ -165,8 +188,10 @@ fn adopt_prototype<'s>(
     if depth > MAX_DEPTH || value.is_array_buffer() || value.is_array_buffer_view() {
         return;
     }
+    // a scope per item keeps the live handles bounded by the depth, not the size
     if let Ok(array) = v8::Local::<v8::Array>::try_from(value) {
         for index in 0..array.length() {
+            v8::scope!(let scope, scope);
             if let Some(item) = array.get_index(scope, index) {
                 adopt_prototype(scope, item, prototype, depth + 1);
             }
@@ -183,6 +208,7 @@ fn adopt_prototype<'s>(
         return;
     };
     for index in 0..keys.length() {
+        v8::scope!(let scope, scope);
         let Some(key) = keys.get_index(scope, index) else {
             continue;
         };
