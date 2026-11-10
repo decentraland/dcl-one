@@ -67,10 +67,7 @@ pub struct MaskMaterial {
     pub mask_texture: Handle<Image>,
     #[uniform(100)]
     pub bounds: SceneBoundData,
-    #[cfg_attr(
-        not(feature = "webgl2"),
-        storage(101, read_only, visibility(fragment))
-    )]
+    #[cfg_attr(not(feature = "webgl2"), storage(101, read_only, visibility(fragment)))]
     pub cells: Handle<ShaderStorageBuffer>,
 }
 
