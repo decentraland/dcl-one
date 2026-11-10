@@ -196,7 +196,7 @@
 /* Members — two columns. */
 .memberGrid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px 14px;
 }
 .member {
@@ -519,4 +519,72 @@
   margin: 4px auto 0;
   border-radius: var(--r-control);
   object-fit: cover;
+}
+
+/* A member row (unity-explorer's member card): the row opens the passport; the menu button shows on
+   hover, on keyboard focus, and while its menu is open. */
+.member:hover,
+.memberActive {
+  background: var(--white-10);
+}
+.memberMain {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.memberTag {
+  font-weight: 600;
+  color: var(--text-dim);
+}
+.memberMenu {
+  flex: none;
+  opacity: 0;
+}
+.member:hover .memberMenu,
+.memberActive .memberMenu,
+.memberMenu:focus-visible {
+  opacity: 1;
+}
+/* an action on this member is running: the button stays, dimmed, until the members come back */
+.memberMenu:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+/* Request Sent / Blocked: the button names the way back (Cancel Request / Unblock) on hover */
+.swap {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+.swapHover {
+  display: none;
+}
+.swap:hover .swapIdle,
+.swap:focus-visible .swapIdle {
+  display: none;
+}
+.swap:hover .swapHover,
+.swap:focus-visible .swapHover {
+  display: inline;
+}
+/* the transfer confirmation: the owner handing over to the member, then unity-explorer's warning */
+.confirmTransfer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.confirmFaces {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
