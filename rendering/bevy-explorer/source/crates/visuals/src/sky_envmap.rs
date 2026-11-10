@@ -886,12 +886,16 @@ mod tests {
             "{:?}",
             [r, g, b, a]
         );
-        // the -y face is mostly ground, still dominant at a corner
-        let [r, g, b, a] = texel(3, 0, 0);
-        assert!(r > g && r > b && b < 0.2 && a == 1.0, "{:?}", [r, g, b, a]);
-        // a side face's top row leans to the sky, its bottom row to the ground
+        // the -y face near its centre is about 2/3 ground and 1/3 equator, and no sky
+        let [r, g, b, a] = texel(3, 3, 3);
+        assert!(
+            (r - 4.0 / 3.0).abs() < 0.1 && (g - 2.0 / 3.0).abs() < 0.1 && b < 0.01 && a == 1.0,
+            "{:?}",
+            [r, g, b, a]
+        );
+        // a side face's top row takes far more sky than ground, its bottom row the reverse
         let (top, bottom) = (texel(0, 4, 0), texel(0, 4, AMBIENT_SIZE - 1));
-        assert!(top[2] > top[1] && top[2] > top[0], "{top:?}");
-        assert!(bottom[0] > bottom[1] && bottom[0] > bottom[2], "{bottom:?}");
+        assert!(top[2] > 0.5 && top[2] > 4.0 * top[0], "{top:?}");
+        assert!(bottom[0] > 0.5 && bottom[0] > 4.0 * bottom[2], "{bottom:?}");
     }
 }
