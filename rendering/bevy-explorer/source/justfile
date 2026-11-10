@@ -38,15 +38,15 @@ bundle-native: ts-bindings
     cd react-web && npm run bundle:native
     mkdir -p target && touch target/.bundle-native-stamp
 
-# bundle only if react-web or the Rust structs behind its generated types changed since the last
-# successful bundle
+# bundle only if react-web, the library sources it aliases (HUD_SHARED in tooling/play-artifact.py)
+# or the Rust structs behind its generated types changed since the last successful bundle
 _bundle-native-if-stale:
     #!/usr/bin/env sh
     set -eu
     stamp=target/.bundle-native-stamp
     if [ -f "$stamp" ] && [ -f assets/react-hud/app.html ] \
        && [ -f assets/bridge-scene/BevyExplorerUI/about ] \
-       && [ -z "$(find react-web crates/system_api_types -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
+       && [ -z "$(find react-web crates/system_api_types ../../../library/shop ../../../library/catalyst-api ../../../library/ui/index.ts ../../../library/ui/foundations -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
         echo "HUD sources unchanged; skipping bundle (just bundle-native to force)"
     else
         just bundle-native
