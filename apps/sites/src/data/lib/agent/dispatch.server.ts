@@ -1,6 +1,7 @@
 import type { EntryContext } from "react-router";
 
-import { LEGAL_DOCS } from "@ui/data/legalPageConfig";
+import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
+import { toAgentLegalDoc } from "@/data/legal/agent";
 
 import {
   blogIndexToMarkdown,
@@ -14,7 +15,6 @@ import {
   profileToMarkdown,
   shopPageToMarkdown,
   whatsOnToMarkdown,
-  type AgentLegalDoc,
   type AgentMarkdownKey,
 } from "./markdown";
 
@@ -29,7 +29,9 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   },
   legalDoc: (data) => {
     const d = data as { doc?: string } | undefined;
-    const doc = d?.doc ? (LEGAL_DOCS as Record<string, AgentLegalDoc>)[d.doc] : undefined;
+    const doc = d?.doc && Object.hasOwn(LEGAL_DOCS, d.doc)
+      ? toAgentLegalDoc(LEGAL_DOCS[d.doc as LegalKey])
+      : undefined;
     return doc ? legalDocToMarkdown(doc) : null;
   },
   placesIndex: (data) => {

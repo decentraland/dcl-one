@@ -2943,6 +2943,7 @@
           "values": [
             "brand",
             "content",
+            "credits",
             "ethics",
             "privacy",
             "referral",
@@ -2966,6 +2967,7 @@
           "values": [
             "brand",
             "content",
+            "credits",
             "ethics",
             "privacy",
             "referral",

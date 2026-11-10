@@ -21,6 +21,10 @@
           "kind": "regular"
         },
         {
+          "name": "apps",
+          "kind": "directory"
+        },
+        {
           "name": "components",
           "kind": "directory"
         },

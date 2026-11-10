@@ -92,8 +92,8 @@ jobs:
           fi
           df -h /
           free -m
-      - name: Fetch only the docs media from Git LFS
-        run: git config --global lfs.fetchinclude 'apps/sites/content/**'
+      - name: Fetch Sites docs and shared fonts from Git LFS
+        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/foundations/typography/fonts/**'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true

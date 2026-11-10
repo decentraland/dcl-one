@@ -58,6 +58,10 @@ let
       (ui + /src) (ui + /public) (ui + /scripts/gen-error-pages.mts)
       (ui + /vite.validate.js) (ui + /package.json)
       (root + /library/catalyst-api) (root + /library/shop)
+      (lib.fileset.maybeMissing (root + /library/ui/package.json))
+      (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
+      (lib.fileset.maybeMissing (root + /library/ui/foundations))
+      (lib.fileset.maybeMissing (root + /library/ui/apps/sites/legal))
     ];
   };
   # A build whose Shop settles credits on one chain through one CreditsManager: the two VITE_*

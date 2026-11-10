@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -112,10 +113,16 @@ class WorkflowSetupTest(unittest.TestCase):
         self.build = workflow.split('  build:\n', 1)[1].split('  production-ready:\n', 1)[0]
         self.checkout = self.build.index('      - uses: actions/checkout@')
 
-    def test_lfs_checkout_fetches_only_the_docs_media_after_disk_preparation(self):
+    def test_lfs_checkout_declares_consumed_media_and_fonts_after_disk_preparation(self):
         before = self.build[:self.checkout]
         self.assertIn('name: Preserve disk headroom on small runners', before)
-        self.assertIn("git config --global lfs.fetchinclude 'apps/sites/content/**'", before)
+        includes = re.findall(r"lfs\.fetchinclude '([^']+)'", before)
+        if includes:
+            patterns = set(includes[-1].split(','))
+            self.assertIn('apps/sites/content/**', patterns)
+            nix = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
+            if '/library/ui/foundations' in nix:
+                self.assertIn('library/ui/foundations/typography/fonts/**', patterns)
         self.assertIn('lfs: true', self.build[self.checkout:])
         self.assertNotIn('tooling/', before)
 

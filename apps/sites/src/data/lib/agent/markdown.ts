@@ -170,7 +170,7 @@ type AgentLegalSection = {
 
 export type AgentLegalDoc = {
   title: string;
-  intro?: string;
+  intro?: string | AgentLegalBlock[];
   sections: AgentLegalSection[];
 };
 
@@ -197,7 +197,9 @@ export function legalDocToMarkdown(doc: AgentLegalDoc): string {
 
   return joinBlocks([
     heading(1, doc.title),
-    doc.intro ? clean(doc.intro) : "",
+    typeof doc.intro === "string"
+      ? clean(doc.intro)
+      : joinBlocks((doc.intro ?? []).map(legalBlockToMarkdown)),
     ...sections,
   ]);
 }

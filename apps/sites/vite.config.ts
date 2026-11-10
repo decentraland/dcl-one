@@ -86,7 +86,7 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/dcl-lists": to(),
     "/media/": to(),
     // The operator plane (src/main.rs): credits, the relay and the imposter store.
-    "/credits": to(),
+    "^/credits(?:[/?]|$)": to(),
     "/rpc": to({ ws: true }),
     "/bvimposters": to(),
     // The web Explorer (/play) reaches the rest of the gateway's prefix table
@@ -242,12 +242,13 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui"] },
     proxy: nodeProxy(),
   },
   resolve: {
     alias: {
       ...validateAliasObject(),
+      "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@ui": ui,
       "@catalyst-api": catalystApi,
       "@shop": shopCore,
