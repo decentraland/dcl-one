@@ -38,9 +38,19 @@ rest.
   wrapped are not installed. No persistent storage of any kind.
 - **Hardening:** an op never panics or exits on scene input (`security.md`). Upstream ops that do
   are overridden with ops of the same shape, structured arguments go through `Plain<T>`, and op
-  results are ordinary objects (`JsPlain<T>`), replacing the fork's `toString` patch.
+  results are ordinary objects (`JsPlain<T>`), replacing the fork's `toString` patch. The V8
+  callbacks scene code reaches without an op are ours (`isolate_hooks.rs`): stack formatting
+  reads data properties only and runs no scene code, WebAssembly streaming compilation is
+  removed, and WebAssembly results are settled without assuming the isolate is still running.
+- **Memory per scene:** a 512 MiB V8 heap and 512 MiB of ArrayBuffers (a counting allocator);
+  past either the allocation fails or the scene ends. Native memory that ops hold has its own
+  caps: Blob parts 64 MiB, a scene-fed stream read whole 64 MiB, 256 open streams and sinks.
+  Not bounded per scene: resizable ArrayBuffers and WebAssembly memories, which V8 reserves
+  outside the allocator, and fetch request and response bodies on the client.
 - **Clocks:** `performance.now()`, the time origin, the timer clock, `Date`, `Temporal.Now` and
-  `Intl.DateTimeFormat`'s current time are coarsened to 2 ms; scenes share a process.
+  `Intl.DateTimeFormat`'s current time are coarsened to 2 ms; scenes share a process. This
+  limits resolution only: there is no jitter, so a scene that counts work between clock ticks
+  still measures finer intervals.
 - **V8 platform:** initialized once on the sidecar's main thread, before any scene thread
   exists, so every isolate thread descends from it, as Linux memory protection keys require.
   Only `dcl_deno`'s own tests use the unprotected platform, under `cfg(test)`, never through a
@@ -71,6 +81,8 @@ rest.
   overridden op.
 - `runtime_surface_tests.rs`: Intl, console, op results as ordinary objects, 2 ms clocks, Blob
   and BroadcastChannel isolation and the Blob cap, the fetch redirect contract.
+- `isolate_hooks_tests.rs`: the V8 callbacks and memory caps, each case that could end the
+  process run in a process of its own.
 - `embedded_upstream_scripts_match_the_locked_crates` and `every_runtime_script_is_compiled_in`;
   the scene tests also pass with the deno registry sources removed.
 - `websocket_tests.rs`: caps, slots, close and error ordering, address rules.
@@ -84,5 +96,7 @@ rest.
   time of writing). The nightly V8-age check reports it and opens an issue when we fall behind
   what deno_core accepts.
 - Scene-visible changes: fetch follows up to 20 redirects with a permission check per hop,
-  transport errors are `TypeError: fetch failed` with a `cause`, clocks are 2 ms granular, and
-  `String(opResult)` is `[object Object]`.
+  transport errors are `TypeError: fetch failed` with a `cause`, clocks are 2 ms granular,
+  `String(opResult)` is `[object Object]`, `Error.prepareStackTrace` is not called, and
+  `WebAssembly.compileStreaming`/`instantiateStreaming` are absent. New globals from V8 15:
+  `Temporal`, `DisposableStack`, `AsyncDisposableStack` and `SuppressedError`.

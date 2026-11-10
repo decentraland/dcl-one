@@ -137,9 +137,10 @@ deno_core accepts.
      a vendored script is stale or missing.
    - `runtime_surface_tests.rs`: Intl, console, clocks, per-scene Blob and BroadcastChannel,
      the fetch contract.
-6. **New upstream surface.** Read deno_core's and deno_web's changelogs for new ops, builtins and
-   globals. Anything a scene can reach must not panic, exit, share state across scenes or touch
-   disk; prefer disabling it.
+6. **New upstream surface.** Read deno_core's and deno_web's changelogs for new ops, builtins,
+   globals and the V8 callbacks deno_core installs on the isolate (stack formatting, WebAssembly,
+   module import). Anything a scene can reach must not panic, exit, share state across scenes or
+   touch disk; prefer disabling it. `isolate_hooks_tests.rs` covers the callbacks.
 7. **Measure.** Compare scene frame time against main with the [benchmark](benchmark.md) before
    merging.
 
