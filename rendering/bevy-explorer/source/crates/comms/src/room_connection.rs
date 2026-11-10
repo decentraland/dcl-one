@@ -332,7 +332,7 @@ fn finish_credentials(
         match result.and_then(|adapter| {
             let (kind, _) =
                 parse_adapter(&adapter).map_err(|_| AdmissionError::new(FailureKind::Invalid))?;
-            if !realm && kind != AdapterKind::Livekit {
+            if kind == AdapterKind::SignedLogin || (!realm && kind != AdapterKind::Livekit) {
                 return Err(AdmissionError::new(FailureKind::Invalid));
             }
             Ok(adapter)
@@ -426,6 +426,36 @@ mod tests {
         let event = events.iter_current_update_events().next().unwrap();
         assert_eq!(event.entity, entity);
         assert_eq!(event.context, None);
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn signed_login_result_cannot_start_another_signed_login() {
+        let mut app = completion_app();
+        let context = app.world_mut().spawn_empty().id();
+        let task = completed(
+            &app,
+            Ok("signed-login:https://rooms.example/login".to_owned()),
+        );
+        let entity = app
+            .world_mut()
+            .spawn((
+                RealmAdapter,
+                RoomContext(context),
+                RoomRecovery::default(),
+                NeedsAdapter,
+                task,
+            ))
+            .id();
+        app.update();
+
+        let recovery = app.world().get::<RoomRecovery>(entity).unwrap();
+        assert_eq!(recovery.failure, Some(FailureKind::Invalid));
+        assert!(!recovery.can_retry(60.0));
+        assert!(app
+            .world()
+            .resource::<Events<crate::signed_login::StartSignedLogin>>()
+            .is_empty());
     }
 
     #[cfg(feature = "livekit")]

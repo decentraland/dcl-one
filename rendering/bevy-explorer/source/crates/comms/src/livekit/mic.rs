@@ -13,6 +13,7 @@ use web_time::Instant;
 use {
     bevy::render::view::RenderLayers,
     common::{structs::AudioSettings, util::AsH160, util::VolumePanning},
+    livestream_manager::AudioTransmitterVolume,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -43,7 +44,7 @@ use crate::recovery::RetryState;
 use crate::{
     global_crdt::{ForeignAudioSource, ForeignPlayer, NearbyPanning, VoicePan},
     livekit::{
-        track::{Audio, LivekitTrack, Publishing, Subscribed},
+        track::{plugin::ProximityMicrophone, LivekitTrack, Publishing, Subscribed},
         web::{
             prompt_microphone_permission, setup_microphone_permission, AudioCaptureOptions,
             LocalAudioTrack, LocalTrack, MicrophoneStatus, Participant, TrackPublishOptions,
@@ -729,7 +730,10 @@ fn locate_foreign_streams(
     )>,
     participants: Query<(&LivekitParticipant, &Publishing, &HostedBy)>,
     proximity_rooms: Query<(), With<crate::Transport>>,
-    tracks: Query<&LivekitTrack, (With<Subscribed>, With<Audio>)>,
+    tracks: Query<
+        (&LivekitTrack, Option<&AudioTransmitterVolume>),
+        (With<Subscribed>, With<ProximityMicrophone>),
+    >,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
     panning_settings: Res<NearbyPanning>,
@@ -766,9 +770,9 @@ fn locate_foreign_streams(
                 pan.volume_and_panning(emitter_transform.translation(), render_layers);
             let volume = volume * settings.voice();
             let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
-            for livekit_track in tracks.iter_many(publishing) {
+            for (livekit_track, multiplier) in tracks.iter_many(publishing) {
                 if let Some(track) = livekit_track.track() {
-                    track.pan_and_volume(panning, volume);
+                    track.pan_and_volume(panning, volume * multiplier.map_or(1.0, |value| **value));
                 }
             }
         }

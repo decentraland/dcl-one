@@ -232,7 +232,12 @@ impl Plugin for ConnectivityPlugin {
             .init_resource::<ConnectivityStatus>()
             .add_systems(
                 Update,
-                (retry_connectivity, collect_probes, monitor_connectivity).chain(),
+                (
+                    retry_connectivity,
+                    collect_probes,
+                    sample_connectivity.pipe(start_probe),
+                )
+                    .chain(),
             )
             .add_console_command::<ConnectivityState, _>(connectivity_state)
             .add_console_command::<ConnectivityRetry, _>(connectivity_retry)
@@ -319,8 +324,7 @@ fn collect_probes(
 }
 
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn monitor_connectivity(
-    mut commands: Commands,
+fn sample_connectivity(
     time: Res<Time>,
     wallet: Res<Wallet>,
     realm: Res<CurrentRealm>,
@@ -339,10 +343,9 @@ fn monitor_connectivity(
         Option<&ConnectionHealth>,
     )>,
     #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
-    ipfs: IpfsAssetServer,
     mut monitor: ResMut<ConnectivityMonitor>,
     mut status: ResMut<ConnectivityStatus>,
-) {
+) -> bool {
     let now = time.elapsed_secs_f64();
     let (pulse_healthy, pulse_suppressed) = pulse
         .as_deref()
@@ -350,7 +353,6 @@ fn monitor_connectivity(
         .unwrap_or_default();
     let mut healthy = pulse_healthy;
     let mut required = pulse.is_some();
-    let mut terminal = pulse_suppressed;
     let mut room_statuses = Vec::new();
     for (entity, recovery, scope, realm_room, scene_room, island, suspended, socket) in &rooms {
         #[cfg(feature = "livekit")]
@@ -361,13 +363,12 @@ fn monitor_connectivity(
             false
         };
         let room_healthy = room_healthy || socket.is_some_and(ConnectionHealth::is_connected);
-        let is_required = realm_room || scene_room || island;
-        required |= is_required && !suspended;
-        healthy |= is_required && !suspended && room_healthy;
-        terminal |= is_required
-            && recovery
-                .failure
-                .is_some_and(|kind| kind != FailureKind::Transient);
+        let terminal = recovery
+            .failure
+            .is_some_and(|kind| kind != FailureKind::Transient);
+        let monitored = (realm_room || scene_room || island) && !suspended && !terminal;
+        required |= monitored;
+        healthy |= monitored && room_healthy;
         let scope = match scope.map(|scope| &scope.0) {
             Some(AccessScope::Scene(_)) => "scene",
             Some(AccessScope::PrivateChat) => "private_chat",
@@ -377,7 +378,7 @@ fn monitor_connectivity(
         };
         let state = if suspended {
             "paused"
-        } else if room_healthy {
+        } else if room_healthy && !terminal {
             "connected"
         } else {
             match recovery.failure {
@@ -410,8 +411,17 @@ fn monitor_connectivity(
         || hold.is_some()
         || disabled.is_some_and(|disabled| disabled.0)
         || offline
-        || terminal;
+        || pulse_suppressed;
     let start = monitor.0.sample(now, healthy, suppressed);
+    status.connection_lost = monitor.0.connection_lost;
+    status.probing = monitor.0.probe_deadline.is_some();
+    status.ever_connected = monitor.0.ever_connected;
+    status.suppressed = suppressed;
+    status.rooms = room_statuses;
+    start
+}
+
+fn start_probe(In(start): In<bool>, mut commands: Commands, ipfs: IpfsAssetServer) {
     if start {
         let client = ipfs.ipfs().client();
         let url = base_domain::url(Service::Catalyst, "/about");
@@ -428,9 +438,87 @@ fn monitor_connectivity(
             },
         )));
     }
-    status.connection_lost = monitor.0.connection_lost;
-    status.probing = monitor.0.probe_deadline.is_some();
-    status.ever_connected = monitor.0.ever_connected;
-    status.suppressed = suppressed;
-    status.rooms = room_statuses;
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+    use std::time::Duration;
+
+    fn monitor_world() -> World {
+        let mut world = World::new();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([7; 32]);
+        world.insert_resource(wallet);
+        world.init_resource::<Time>();
+        world.init_resource::<CurrentRealm>();
+        world.init_resource::<PreviewMode>();
+        world.init_resource::<ConnectivityMonitor>();
+        world.init_resource::<ConnectivityStatus>();
+        world
+    }
+
+    #[test]
+    fn denied_scene_does_not_mask_loss_of_a_required_room() {
+        let mut world = monitor_world();
+        let realm_health = ConnectionHealth::default();
+        realm_health.connected();
+        world.spawn((RealmRoom, RoomRecovery::default(), realm_health.clone()));
+        world.spawn((
+            SceneRoom("scene".into()),
+            RoomRecovery {
+                failure: Some(FailureKind::Denied),
+                ..Default::default()
+            },
+        ));
+
+        assert!(!world.run_system_once(sample_connectivity).unwrap());
+        let status = world.resource::<ConnectivityStatus>();
+        assert!(status.ever_connected);
+        assert!(!status.suppressed);
+        assert!(status.rooms.iter().any(|room| {
+            room.scope == "scene" && room.state == "denied" && room.retry_at.is_none()
+        }));
+
+        realm_health.disconnected();
+        for delta in [3, 3] {
+            world
+                .resource_mut::<Time>()
+                .advance_by(Duration::from_secs(delta));
+            assert!(!world.run_system_once(sample_connectivity).unwrap());
+        }
+        world
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(3));
+        assert!(world.run_system_once(sample_connectivity).unwrap());
+    }
+
+    #[test]
+    fn all_terminal_or_suspended_rooms_leave_nothing_to_monitor() {
+        let mut world = monitor_world();
+        let stale_health = ConnectionHealth::default();
+        stale_health.connected();
+        world.spawn((
+            RealmRoom,
+            RoomRecovery {
+                failure: Some(FailureKind::Invalid),
+                ..Default::default()
+            },
+            stale_health,
+        ));
+        world.spawn((
+            SceneRoom("scene".into()),
+            RoomRecovery::default(),
+            RoomSuspended,
+        ));
+
+        assert!(!world.run_system_once(sample_connectivity).unwrap());
+        let status = world.resource::<ConnectivityStatus>();
+        assert!(status.suppressed);
+        assert!(!status.ever_connected);
+        assert!(status.rooms.iter().any(|room| {
+            room.scope == "realm" && room.state == "invalid" && room.retry_at.is_none()
+        }));
+    }
 }

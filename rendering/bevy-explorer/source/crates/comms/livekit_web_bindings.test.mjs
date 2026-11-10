@@ -1,7 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { remote_track_pan_and_volume, room_connect, room_drop } from './livekit_web_bindings.js';
+import {
+  local_audio_track_set_enabled,
+  local_audio_track_stop,
+  remote_track_pan_and_volume,
+  room_connect,
+  room_drop,
+} from './livekit_web_bindings.js';
+
+test('capture enable toggles the underlying media track', () => {
+  const mediaStreamTrack = { enabled: false };
+  const track = { mediaStreamTrack };
+  local_audio_track_set_enabled(track, true);
+  assert.equal(mediaStreamTrack.enabled, true);
+  local_audio_track_set_enabled(track, false);
+  assert.equal(mediaStreamTrack.enabled, false);
+});
+
+test('stopping local capture disables the source before stopping the track', () => {
+  const mediaStreamTrack = { enabled: true };
+  const enabledAtStop = [];
+  local_audio_track_stop({
+    mediaStreamTrack,
+    stop() { enabledAtStop.push(mediaStreamTrack.enabled); },
+  });
+  assert.equal(mediaStreamTrack.enabled, false);
+  assert.deepEqual(enabledAtStop, [false]);
+});
 
 test('dropping a cancelled successful room disconnects it and releases listeners', () => {
   const operations = [];
@@ -153,4 +179,77 @@ test('dropping one room releases its playback before disconnect settles', async 
   room_drop(other);
   assert.equal(gains.size, 0);
   assert.equal(attached.size, 0);
+});
+
+test('repeat subscribe disposes the previous rig and streaming attachment', async (t) => {
+  const { room_connect, room_drop, remote_track_pan_and_volume } =
+    await import('./livekit_web_bindings.js?repeat-subscribe');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  class Room extends EventEmitter {
+    async connect() {}
+    async disconnect() {}
+  }
+  const previous = [globalThis.LivekitClient, globalThis.window, globalThis.MediaStream];
+  t.after(() => {
+    [globalThis.LivekitClient, globalThis.window, globalThis.MediaStream] = previous;
+  });
+  globalThis.LivekitClient = { Room, RoomEvent: roomEvent };
+  const connected = new Set();
+  const node = (properties = {}) => ({
+    ...properties,
+    connect() { connected.add(this); },
+    disconnect() { connected.delete(this); },
+  });
+  globalThis.window = { AudioContext: class {
+    destination = {};
+    createMediaStreamSource() { return node(); }
+    createStereoPanner() { return node({ pan: { value: 0 } }); }
+    createGain() { return node({ gain: { value: 1 } }); }
+  } };
+  globalThis.MediaStream = class {};
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  const attached = new Set();
+  const audioTrack = sid => ({
+    sid,
+    kind: 'audio',
+    mediaStreamTrack: {},
+    attach() {
+      const element = {
+        volume: 1,
+        playing: false,
+        removed: false,
+        play() { this.playing = true; },
+        pause() { this.playing = false; },
+        remove() { this.removed = true; },
+      };
+      attached.add(element);
+      return element;
+    },
+    detach(element) { attached.delete(element); },
+  });
+  const voice = audioTrack('voice');
+  const stream = audioTrack('stream');
+  const subscribe = (track, identity) => {
+    room.emit(roomEvent.TrackSubscribed, track, {}, { sid: identity, identity });
+  };
+  subscribe(voice, 'player');
+  subscribe(stream, 'stream:show');
+  const [oldVoice, oldStream] = attached;
+  const oldNodes = [...connected];
+  remote_track_pan_and_volume(voice, 0.5, 0.7);
+
+  subscribe(voice, 'player');
+  subscribe(stream, 'stream:show');
+  assert.equal(attached.size, 2);
+  assert.equal(attached.has(oldVoice), false);
+  assert.equal(oldVoice.playing, false);
+  assert.equal(attached.has(oldStream), false);
+  assert.equal(oldStream.removed, true);
+  assert.equal(connected.size, 3);
+  assert.ok(oldNodes.every(node => !connected.has(node)));
+  assert.deepEqual([...connected].flatMap(node => node.gain ? [node.gain.value] : []), [0]);
+
+  room_drop(room);
+  assert.equal(attached.size, 0);
+  assert.equal(connected.size, 0);
 });
