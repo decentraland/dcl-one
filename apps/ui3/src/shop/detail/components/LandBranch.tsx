@@ -45,8 +45,8 @@ import offerIcon from "./landbranch-assets/make_offer.svg";
 import plazaIcon from "./landbranch-assets/plaza.svg";
 import roadIcon from "./landbranch-assets/road.svg";
 import districtIcon from "./landbranch-assets/district.svg";
-import "./landbranch.css";
 import { shopClient } from "../../api/host";
+import "./landbranch.css";
 
 export function isLandToken(contractAddress: string | null | undefined, tokenId: string | null | undefined): boolean {
   return !!tokenId && !!contractAddress && !!landCategoryOf(contractAddress);

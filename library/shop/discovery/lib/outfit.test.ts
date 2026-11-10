@@ -1,5 +1,5 @@
 // from: shop@94584a5c:app/src/lib/outfit.spec.ts
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect } from "vitest"
 import {
   isWearable,
   slotOf,
@@ -10,10 +10,7 @@ import {
   outfitPreviewUrns,
   playingEmote
 } from "./outfit"
-import type { CatalogItem } from "@shop/discovery/lib/catalogItem"
-
-// itemUrn (via wornUrns) reads config.chainId — pin it so URNs are deterministic (amoy).
-vi.mock("~/config", () => ({ config: { chainId: 80002 } }))
+import type { CatalogItem } from "./catalogItem"
 
 function item(over: Partial<CatalogItem> & { id: string }): CatalogItem {
   return {

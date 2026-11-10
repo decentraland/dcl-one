@@ -7,7 +7,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useParams } from "react-router";
 
 import Button from "../../atoms/Button";
-import type { ShopClient } from "../api/shop";
+import type { ShopClient } from "@shop/api/shop";
 import { tokenAsset } from "@shop/model/asset";
 import { evmAddress } from "@shop/model/address";
 import { chainLabel } from "@shop/model/chain";

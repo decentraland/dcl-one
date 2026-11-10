@@ -8,8 +8,8 @@
 
 import { isShopApiError, type ShopApiError } from "../api/client";
 import { type ShopClient } from "../api/shop";
-import type { CreditAuthorization, CreditBatchAuthorization, CreditLineRequest } from "@shop/api/types";
-import { creditsFloor, parseUsdCents, ZERO_CENTS, type UsdCents } from "@shop/model/money";
+import type { CreditAuthorization, CreditBatchAuthorization, CreditLineRequest } from "../api/types";
+import { creditsFloor, parseUsdCents, ZERO_CENTS, type UsdCents } from "../model/money";
 
 /** A season/program credit as credits-server lists it (legacy MANA-denominated credits). */
 export type ServerCredit = {
@@ -127,7 +127,7 @@ export type CheckoutLine = CreditLineRequest;
  */
 export async function authorizeUsdCreditGroup(
   lines: CheckoutLine[],
-  source: "website" | "client" = "website",
+  source: "website" | "client",
   client: ShopClient,
 ): Promise<CreditBatchAuthorization> {
   return client.authorizations.authorizeGroup({ items: lines, source });

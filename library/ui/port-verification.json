@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "lockHash": "f2edd859612e390e02c1aa98e5c4de481ad4e956178be058af8849f9fbbf2011",
+  "lockHash": "6270c8edc012d540129cd4cae9ae2257a1edf8b9123ef424f73c708d60456007",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "bfa5a8b67f3f86a37849458282d9877f33198acb",
+  "figmaTree": "7ab825ed56c7aed6b8ff9425fbde021539ba10ea",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, 544 capture files fetched and match the pinned digest table"
+      "detail": "verified existing cache: 544 files match the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "run on this tree: 438 files match the lock, every difference names a code"
+      "detail": "run on this tree: 440 files match the lock, every difference names a code"
     },
     "diff": {
       "result": "pass",
@@ -19,19 +19,19 @@
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, ok true, 0 mappings checked"
+      "detail": "run on this tree: 0 public mappings, internal NavBar mapping omitted"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "run on this tree: exit 0, catalog unchanged after regeneration"
+      "detail": "run on this tree: 46 components, 561 variants, catalog unchanged"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "run on this tree: navbar-bounds build test passes, 19 of 19"
+      "detail": "run on this tree: 19 gallery bounds checks pass, internal source control holds remain"
     },
     "install": {
       "result": "pass",
-      "detail": "run on this tree: install foundations reports no change to the 39 tracked files"
+      "detail": "39 foundation files reproduced with no-op repeat, 9-file internal component plan is deterministic"
     }
   }
 }

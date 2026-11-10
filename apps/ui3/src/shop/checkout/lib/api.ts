@@ -8,13 +8,13 @@
 // purchase rails, the receipts and the activity feed read. The shared `ui3/src/shop/lib/api.ts`
 // (Discovery's catalogue mappers) can re-export these under the same names.
 
-import { isShopApiError } from "../../api/client";
-import { type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "@shop/model/money";
 import type { SaleRecord } from "../../history/activity";
-import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "../purchase/encoding";
-import { fetchPrimaryListingForItem } from "../../detail/api";
+import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./trade";
+import { fetchPrimaryListingForItem } from "@shop/detail/api";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
 export function usdWeiToCents(amount?: string | null): number {
@@ -70,7 +70,8 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
  * row naming a token is never taken: an item line buys a mint from its creator, never a resale in its place.
  */
 export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient): Promise<SignedTrade | null> {
-  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client });
+  // Only the listing's trade id is read here, which the creator-sales switch does not change.
+  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client, creatorSales: () => false });
   return listing?.tradeId ? fetchTrade(listing.tradeId, client) : null;
 }
 
@@ -232,7 +233,7 @@ export type WalletActivity = {
 };
 
 /** The connected wallet's activity. Signed with the marketplace signer metadata. */
-export async function fetchUserActivity(query: Record<string, string | number | undefined> = {}, client: ShopClient): Promise<{ items: WalletActivity[]; total: number }> {
+export async function fetchUserActivity(query: Record<string, string | number | undefined>, client: ShopClient): Promise<{ items: WalletActivity[]; total: number }> {
   const body = await client.market.activity<{ data?: WalletActivity[]; total?: number } | WalletActivity[]>(query);
   const items = Array.isArray(body) ? body : (body?.data ?? []);
   return { items, total: Array.isArray(body) ? items.length : (body?.total ?? items.length) };

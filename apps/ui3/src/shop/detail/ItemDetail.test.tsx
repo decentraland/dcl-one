@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { shopCart } from "../cart/store";
 import { invalidateShopQueries } from "../discovery/query";
 import { COLLECTION, ITEM_ID, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
-import type { TransportRequest } from "../api/signer";
+import type { TransportRequest } from "@shop/api/signer";
 import { encodeTokenId } from "./lib/token-id";
 import { createShopClient, type ShopClient } from "../api";
 import { BOOK } from "@shop/payment/fixtures";

@@ -2,7 +2,7 @@
 // outfit's page there; and a NAME's.
 
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
-import { itemUrn } from '../../../shop/detail/lib/urn'
+import { itemUrn } from '@shop/detail/lib/urn'
 import { landNetwork } from '../../../shop/land/contracts'
 import { CHAIN } from '@shop/model/chain'
 import { nameTokenIdOf } from '../../../shop/names/names'

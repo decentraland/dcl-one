@@ -2,7 +2,7 @@
 // Sidebar sub-category keys -> the on-chain categories the `wearableCategory` server filter takes, and
 // the category tree CategoryFilter renders. Keys are filter state (and URL values): never rename one.
 
-import type { IconName } from "../components/Icon";
+import type { IconName } from "./iconName";
 
 export const SUBCAT_MAP: Record<string, string[]> = {
   Head: ["head", "hair", "facial_hair", "eyes", "eyebrows", "mouth"],
