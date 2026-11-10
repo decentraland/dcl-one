@@ -185,7 +185,9 @@ pub struct Settings {
     /// timestamp-header and repair calls per pass, excluding head probes.
     pub requests_per_pass: usize,
     /// `LAND_AUTHZ_REPLAY_FROM_BLOCK`: rewind durably once at the first pass
-    /// (the start block for a full repair).
+    /// (the start block for a full repair, which may also switch registries).
+    /// Held per process: while it stays set, every restart replays again, so
+    /// unset it once the replay has published.
     pub replay_from_block: Option<u64>,
     /// `LAND_AUTHZ_STOP_BLOCK`: index no further (a development bound); an
     /// index held short of the head is never published.

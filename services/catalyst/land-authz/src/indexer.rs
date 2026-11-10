@@ -804,7 +804,8 @@ pub async fn ensure_cursor(pool: &PgPool, settings: &Settings) -> Result<Cursor,
     {
         bail!(
             "land_authz.index_cursor for {} was indexed from registries {}/{} but this node is configured with {}/{}: \
-             the log would mix two contracts; set LAND_AUTHZ_REPLAY_FROM_BLOCK={} to replay it from the start",
+             the log would mix two contracts; set LAND_AUTHZ_REPLAY_FROM_BLOCK={} to replay it from the start, \
+             and unset it once the replay has published (while it is set, every restart replays again)",
             settings.network,
             row.land_registry,
             row.estate_registry,
@@ -1123,7 +1124,12 @@ pub async fn fold(
 /// [`begin_replay`] (`FOR UPDATE` on the same row) wait, so the replay's
 /// deletion of the old links lands after it. A fold that starts after the
 /// rebind finds no row and writes nothing: `RowNotFound`, as
-/// [`set_cursor`] answers such a pass.
+/// [`set_cursor`] answers such a pass. The lock is `FOR KEY SHARE`, the
+/// weakest that `FOR UPDATE` still waits on: the cursor's ordinary writers
+/// (`set_cursor`, `mark_folded`, the timestamp repair) update non-key
+/// columns and never wait on a fold, even one left running by a lost lease.
+/// So a rebind must lock the row `FOR UPDATE` before it changes the
+/// registries, as [`begin_replay`] does.
 pub(crate) async fn fold_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     settings: &Settings,
@@ -1132,7 +1138,7 @@ pub(crate) async fn fold_in_tx(
     let since = since.unwrap_or(-1);
     let bound: Option<i32> = sqlx::query_scalar(
         "SELECT 1 FROM land_authz.index_cursor \
-         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 FOR SHARE",
+         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 FOR KEY SHARE",
     )
     .bind(&settings.network)
     .bind(&settings.land_registry)
@@ -1346,7 +1352,7 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         row = cursor(pool, &settings.network)
             .await?
             .context("cursor row after the replay rewind")?;
-        tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head");
+        tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
     }
     let rpc = Rpc::new(&state.http, rpc_url, settings);
     let head = rpc.head_block().await.context("eth_blockNumber")?;

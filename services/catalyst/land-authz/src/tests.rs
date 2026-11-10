@@ -2544,6 +2544,17 @@ async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dr
     let mut folding = pool.begin().await.unwrap();
     let counts = indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
     assert_eq!(counts.estate_lands, 1);
+    // The cursor's ordinary writers do not wait on a running fold (one left
+    // by a lost lease can run for many minutes).
+    let advanced = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut conn = pool.acquire().await.unwrap();
+        set_cursor(&mut conn, &old, (START + 20) as i64).await
+    })
+    .await;
+    assert!(
+        matches!(advanced, Ok(Ok(()))),
+        "set_cursor waited on the fold: {advanced:?}"
+    );
     let rebind = {
         let (pool, configured) = (pool.clone(), configured.clone());
         tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
