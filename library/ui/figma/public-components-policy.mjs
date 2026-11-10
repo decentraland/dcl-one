@@ -35,6 +35,8 @@ const exactKeys = (value, keys) =>
  * Pure policy over verified identities and an independently emitted plan. The caller must
  * acquire and verify inputs before calling; the opaque source identity is not a receipt.
  * Filesystem, index, LFS and public table verification belong to the common inspector.
+ * Precondition: `transformModules` comes from a validated generation.json whose digest the
+ * public table pins. This policy checks each listed module, not that the list is complete.
  *
  * @param {{inspection?: {problems: string[], outputs: ReadonlyMap<string, {sha256: string, indexBlobSha: string, origin: unknown}>, inputs: ReadonlyMap<string, {sha256: string, indexBlobSha: string}>}, expected?: ReadonlyMap<string, {sha256: string, origin: Record<string, unknown>}>, source?: string, sourceFiles?: Record<string, {sha256: string}>, transformModules?: ReadonlyMap<string, string>}} context
  * @returns {string[]}
@@ -54,7 +56,7 @@ export function publicComponentProblems(context = {}) {
   if (typeof source !== 'string' || !source.trim())
     problems.push('missing component source identity')
   if (!record(sourceFiles)) problems.push('missing locked component source files')
-  // The module map is pinned once, by the table's digest of generation.json; origins never repeat it.
+  // Origins never repeat the module map; its single pin is the caller's validated generation.json.
   const modulesValid =
     transformModules instanceof Map &&
     transformModules.size > 0 &&
