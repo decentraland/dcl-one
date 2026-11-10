@@ -1,6 +1,8 @@
 // The in-world Shop page in the web shell: the Credits pill, BUY and BUY ITEM asking the shell to buy (the
 // shell, faked here, owns the dialog and the wallet), and what the page does as the purchase moves on.
 import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -124,11 +126,12 @@ function renderShop(): InWorldShopProps {
   return props
 }
 
-/** The page's own stylesheet in the document, under the class names the module gives it. */
+/** The page's own stylesheet in the document, under the class names the module gives it. The path is this file's
+ *  (Vite rewrites a `new URL(…, import.meta.url)` in tests), so it holds wherever vitest starts. */
 function withShopStyles(): HTMLStyleElement {
   const sheet = document.createElement('style')
   const names = shopStyles as Record<string, string>
-  sheet.textContent = readFileSync('src/play/features/shop/InWorldShop.module.css', 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
+  sheet.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../features/shop/InWorldShop.module.css'), 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
   document.head.append(sheet)
   return sheet
 }
