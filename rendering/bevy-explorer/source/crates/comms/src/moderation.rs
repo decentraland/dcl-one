@@ -118,7 +118,7 @@ impl SceneAdmission {
 }
 
 /// The scene room's moderation lists, parsed from its LiveKit metadata. Lives on the room entity
-/// beside [`crate::SceneRoom`] and goes with it.
+/// beside [`crate::SceneRoom`].
 #[derive(Component, Debug, Clone, PartialEq, Eq, Default)]
 pub struct SceneRoomModeration {
     pub banned_addresses: HashSet<Address>,
@@ -201,7 +201,7 @@ mod tests {
                 ..
             }
         ));
-        // a 401 outside a world is a bad signature, not a ban
+        // a 401 outside a world is not read as a ban
         assert_eq!(
             refused(401, Some("You are banned from world \"x\"."), false),
             SceneAdmission::unknown()

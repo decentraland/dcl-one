@@ -204,9 +204,8 @@ impl PlatformBanStatus {
     }
 }
 
-/// True while a ban learnt from a scene-admission refusal is the one known and the admission
-/// still shows that refusal: a "not banned" from the endpoint, which matches the address only,
-/// does not replace it then.
+/// True while the known ban came from a scene-admission refusal and the admission still shows
+/// that refusal.
 fn refusal_outranks_not_banned(
     source: Option<PlatformBanSource>,
     admission: &SceneAdmission,

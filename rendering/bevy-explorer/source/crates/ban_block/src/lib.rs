@@ -3,9 +3,8 @@
 //! A facade over the crates that produce each fact. Social blocks live in the social client,
 //! the local user's scene admission and the scene room's ban and admin lists in comms, and the
 //! only state this crate owns is the platform-ban check. [`BanBlock`] reads them all as one
-//! system parameter. There are no events of its own: each source carries Bevy's change
-//! detection (`SceneAdmission` and `PlatformBanStatus` as resources, `SceneRoomModeration` as a
-//! component) and the social client writes `SocialStateChanged`.
+//! system parameter. There are no events of its own: every fact it answers from is a resource
+//! or a component.
 
 mod debug;
 mod platform_ban;

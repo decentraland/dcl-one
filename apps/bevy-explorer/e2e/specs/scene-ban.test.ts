@@ -2,7 +2,7 @@
 // current scene's room and the room's banned and admin lists, as the engine reads them. Not an
 // explorer-automation fixture; unity-explorer learns a scene ban from the same refusal
 // (`ConnectiveRoom.OnForbiddenAccess`) and the lists from the same room metadata
-// (`RoomMetadataCurrentScene`), and what it then does with them is consumer work.
+// (`RoomMetadataCurrentScene`).
 //
 // | Scenario                                                   | Class            |
 // | a scene room reports its admission and moderation lists    | New              |
@@ -71,7 +71,7 @@ scenario(
     assert.equal(state.sceneAdmission.scope, 'scene')
     assert.equal(state.sceneAdmission.message, 'User is banned from this scene')
     assert.equal(state.sceneRoom.state, 'not_connected')
-    // the player is not moved: Unity parity
+    // the player is not moved
     const world = await explorer.worldState()
     assert.ok(world.inWorld)
   },
