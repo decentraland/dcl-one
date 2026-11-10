@@ -5,6 +5,11 @@ import { pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { build, type Rolldown } from 'vite'
 
+function componentModules(modules: readonly string[], root: string): string[] {
+  const prefix = root.replaceAll('\\', '/') + '/components/'
+  return modules.filter((file) => file.replaceAll('\\', '/').startsWith(prefix))
+}
+
 describe('when a browser consumer imports the public foundation entries', () => {
   let files: Rolldown.OutputChunk[]
   let assets: Rolldown.OutputAsset[]
@@ -12,17 +17,15 @@ describe('when a browser consumer imports the public foundation entries', () => 
   let directory: string | undefined
   const root = path.resolve(import.meta.dirname, '..')
 
-  beforeEach(async () => {
-    modules = []
-    directory = undefined
-    const result = await build({
+  async function bundle(entry: string, record: (ids: string[]) => void) {
+    return build({
       configFile: false,
       root,
       plugins: [
         {
           name: 'foundation-module-closure',
           generateBundle() {
-            modules = [...this.getModuleIds()]
+            record([...this.getModuleIds()])
           }
         }
       ],
@@ -31,7 +34,7 @@ describe('when a browser consumer imports the public foundation entries', () => 
         write: false,
         minify: false,
         lib: {
-          entry: path.resolve(import.meta.dirname, 'foundations-consumer.ts'),
+          entry,
           formats: ['es']
         },
         rolldownOptions: {
@@ -39,6 +42,17 @@ describe('when a browser consumer imports the public foundation entries', () => 
         }
       }
     })
+  }
+
+  beforeEach(async () => {
+    modules = []
+    directory = undefined
+    const result = await bundle(
+      path.resolve(import.meta.dirname, 'foundations-consumer.ts'),
+      (ids) => {
+        modules = ids
+      }
+    )
     if (!Array.isArray(result) && !('output' in result)) {
       throw new Error('Expected a one-shot browser build')
     }
@@ -85,9 +99,7 @@ describe('when a browser consumer imports the public foundation entries', () => 
   })
 
   it('should never compile generated components, registration runtime or NavBar styles through foundations', () => {
-    expect(
-      modules.filter((file) => file.startsWith(path.join(root, 'components') + path.sep))
-    ).toEqual([])
+    expect(componentModules(modules, root)).toEqual([])
     const javascript = files.map((file) => file.code).join('\n')
     expect(javascript).not.toMatch(/registerComponent|NavBar has no captured view/)
     expect(
@@ -96,6 +108,21 @@ describe('when a browser consumer imports the public foundation entries', () => 
         .map((file) => file.source.toString())
         .join('\n')
     ).not.toMatch(/NavBar|figma-module-runtime/)
+  })
+
+  it('should detect actual public-root component modules and Windows module paths as a negative control', async () => {
+    let componentGraph: string[] = []
+    await bundle(path.resolve(import.meta.dirname, 'consumer/entry.tsx'), (ids) => {
+      componentGraph = ids
+    })
+    expect(componentModules(componentGraph, root)).toContain(
+      path.join(root, 'components/NavBar/NavBar.tsx').replaceAll('\\', '/')
+    )
+    expect(componentModules(['C:/ui/components/NavBar/NavBar.tsx'], 'C:\\ui')).toEqual([
+      'C:/ui/components/NavBar/NavBar.tsx'
+    ])
+    expect(componentModules(['C:\\ui\\components\\NavBar\\NavBar.tsx'], 'C:\\ui')).toHaveLength(1)
+    expect(componentModules(['C:/ui/components-other/source.ts'], 'C:\\ui')).toEqual([])
   })
 
   it('should embed seven materialized WOFF2 payloads in the browser CSS', () => {

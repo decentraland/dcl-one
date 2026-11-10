@@ -15,8 +15,8 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const SHARED_SOURCES: Record<string, string> = {
   '@shop': resolve(here, '../../../../library/shop'),
   '@catalyst-api': resolve(here, '../../../../library/catalyst-api'),
-  // @dcl/one-ui's public entries (library/ui/package.json "exports"). The subpaths come first: Vite takes the
-  // first alias that matches, and the bare name also matches any subpath.
+  // Public package entries match library/ui/package.json "exports". Keep the longer CSS
+  // subpath before the foundations entry because Vite uses the first matching alias.
   '@dcl/one-ui/foundations.css': resolve(here, '../../../../library/ui/foundations/foundations.css'),
   '@dcl/one-ui/text-styles.module.css': resolve(here, '../../../../library/ui/foundations/typography/text-styles.module.css'),
   '@dcl/one-ui/foundations': resolve(here, '../../../../library/ui/foundations/index.ts')

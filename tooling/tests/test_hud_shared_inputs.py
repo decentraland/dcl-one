@@ -375,6 +375,95 @@ class CheckedGraphTests(unittest.TestCase):
             with self.assertRaisesRegex(ci._artifact.shared_inputs.ManifestError, 'Stale'):
                 ci.plan('local', before, head, 'unused')
 
+    def test_stale_owned_head_keeps_ci_strict_and_explains_the_canonical_regeneration(self):
+        before = self.git('rev-parse', 'HEAD')
+        original = (self.root / MANIFEST).read_bytes()
+        self.write(WEB + 'src/main.ts', 'export {} // comment-only edit')
+        head = self.commit()
+        with patch.object(ci, 'ROOT', self.root):
+            with self.assertRaises(ci._artifact.shared_inputs.StaleManifestError) as raised:
+                ci.plan('local', before, head, 'unused')
+        self.assertIn('Stale HUD input: ' + WEB + 'src/main.ts', str(raised.exception))
+        self.assertIn('npm --prefix ' + WEB.rstrip('/') + ' run gen:shared-inputs', str(raised.exception))
+        self.assertIn('repository root', str(raised.exception))
+        self.assertEqual(original, (self.root / MANIFEST).read_bytes())
+
+    def test_missing_owned_html_rebuilds_but_unsafe_or_untracked_html_never_executes(self):
+        for name in ('app.html', 'index.html'):
+            self.write(WEB + name, '<main>HUD</main>')
+        seal(self.root)
+        self.commit()
+        source, calls, tools, recipe, env = self.native_recipe()
+        manifest = (self.root / MANIFEST).read_bytes()
+        for name in (WEB + 'app.html', WEB + 'index.html'):
+            with self.subTest(path=name):
+                path = self.root / name
+                original = path.read_bytes()
+                self.git('rm', name)
+                with self.assertRaises(reader.StaleManifestError):
+                    reader.read_manifest(self.root)
+                result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls.read_text().strip(), 'bundle-native')
+                self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+                calls.unlink()
+                path.write_bytes(original)
+                self.git('add', name)
+                for unsafe in ('symlink', 'untracked-present'):
+                    with self.subTest(unsafe=unsafe):
+                        if unsafe == 'symlink':
+                            path.unlink()
+                            path.symlink_to(self.root / 'missing-html-target')
+                        else:
+                            self.git('rm', '--cached', name)
+                        result = subprocess.run(['sh', '-c', recipe], cwd=source, env=env, capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 2, result.stderr)
+                        self.assertFalse(calls.exists())
+                        self.assertEqual(manifest, (self.root / MANIFEST).read_bytes())
+                        if path.is_symlink():
+                            path.unlink()
+                            path.write_bytes(original)
+                        self.git('add', name)
+
+    def test_windows_autocrlf_checkout_preserves_declared_controls_and_font_attributes(self):
+        repository = Path(__file__).parents[2]
+        attributes = (repository / '.gitattributes').read_text()
+        protected = ('library/ui/package.json', 'library/ui/tsconfig.json',
+                     'library/ui/foundations/typography/font-source.json', WEB + 'tsconfig.json')
+        for name in protected:
+            self.write(name, (repository / name).read_text())
+        seal(self.root)
+        self.manifest(lambda data: data['controls'].append({
+            'path': 'library/ui/tsconfig.json',
+            'sha256': reader.sha((self.root / 'library/ui/tsconfig.json').read_bytes())}))
+        self.manifest(lambda data: data['controls'].sort(key=lambda row: row['path']))
+        font = 'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2'
+        self.write('.gitattributes', attributes)
+        self.commit()
+        font_attributes = self.git('check-attr', 'filter', 'diff', 'merge', 'text', '--', font)
+        self.assertEqual(font_attributes.splitlines(), [font + ': filter: lfs', font + ': diff: lfs',
+                                                       font + ': merge: lfs', font + ': text: unset'])
+        expected = reader.input_hashes(self.root)
+        baseline = attributes.replace('library/ui/package.json text eol=lf\n', '').replace(
+            'library/ui/tsconfig.json text eol=lf\n', '')
+        for content, valid in ((baseline, False), (attributes, True)):
+            with self.subTest(protected=valid), tempfile.TemporaryDirectory() as temporary:
+                self.write('.gitattributes', content)
+                self.git('add', '.gitattributes')
+                checkout = Path(temporary)
+                self.git('-c', 'core.autocrlf=true', 'checkout-index', '--all', '--force',
+                         '--prefix=' + str(checkout) + os.sep)
+                for name in protected:
+                    expected_bytes = (self.root / name).read_bytes()
+                    actual_bytes = (checkout / name).read_bytes()
+                    should_match = valid or name not in protected[:2]
+                    self.assertEqual(actual_bytes == expected_bytes, should_match, name)
+                    self.assertEqual(reader.sha(actual_bytes) == reader.sha(expected_bytes), should_match, name)
+                self.assertEqual(font_attributes,
+                                 self.git('check-attr', 'filter', 'diff', 'merge', 'text', '--', font))
+                if valid:
+                    self.assertEqual(expected, reader.input_hashes(checkout))
+
     def test_unhashed_root_is_rejected(self):
         self.manifest(lambda data: data.update(files=[row for row in data['files']
                                                       if row['path'] != WEB + 'src/main.ts']))

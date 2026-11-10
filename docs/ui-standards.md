@@ -237,7 +237,7 @@ UI.
 
 Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths.
 
-The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. After changing HUD imports or resolver configuration, run `npm run gen:shared-inputs` from that HUD directory with its locked dependencies and canonical Rust-generated bindings available. `npm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. This does not change the separate engine-generated binding inputs or the Sites HUD adaptation review hash.
+The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. Any edit, addition, deletion or rename under `rendering/bevy-explorer/source/react-web/src`, `rendering/bevy-explorer/source/react-web/bridge-scene/src` or `rendering/bevy-explorer/source/deploy/web/engine`, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Changes to the HUD HTML roots, shared imports or resolver controls also require regeneration. From the repository root, run `npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest or review pin. `npm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. This does not change the separate engine-generated binding inputs or the Sites HUD adaptation review hash.
 
 ### Structure
 
@@ -326,7 +326,7 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { theme } from '@dcl/one-ui'
+import { theme } from '@dcl/one-ui/foundations'
 import '@dcl/one-ui/foundations.css'
 ```
 

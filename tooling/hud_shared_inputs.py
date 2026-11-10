@@ -173,8 +173,7 @@ def read_manifest(root, revision=None):
     tree.prefetch(candidates | declared)
     # A cache miss may rebuild only after every newly discovered input is safe.
     missing_owned = set()
-    owned_roots = {name for name in roots if name.startswith(WEB + 'src/')
-                   and PurePosixPath(name).name not in RESOLVER_FILES}
+    owned_roots = {name for name in roots if PurePosixPath(name).name not in RESOLVER_FILES}
     for name in sorted(candidates | owned_roots):
         if name in owned_roots and not tree.check_regular(name, allow_missing=True):
             missing_owned.add(name)
@@ -240,7 +239,8 @@ def read_manifest(root, revision=None):
     if ordering != sorted(set(ordering)):
         raise ManifestError('Unsorted or duplicate HUD edges')
     if stale:
-        raise StaleManifestError(stale[0])
+        raise StaleManifestError(stale[0] + '; run npm --prefix ' + WEB.rstrip('/')
+                                 + ' run gen:shared-inputs from the repository root')
     return manifest
 
 
