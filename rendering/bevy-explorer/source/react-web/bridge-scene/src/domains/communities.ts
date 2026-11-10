@@ -66,8 +66,42 @@ async function thumbnail(c: CommunityRaw): Promise<string> {
   return c.thumbnailUrl || `${await serviceBase('assetsCdn')}/social/communities/${encodeURIComponent(c.id)}/raw-thumbnail.png`
 }
 
-// unity-explorer's browse card shows the first three of the user's friends who are members.
+// The browse card shows the first three of the user's friends who are members.
 const CARD_FRIENDS = 3
+
+// The list and the GET by id carry no pending request, so the user's own join requests are read
+// and matched by community id: when the grid's first page loads and when a closed community's card
+// opens. A request's POST answers with the new request's id, which is kept so the card can cancel
+// it, and a cancel forgets it. Kept for the signed-in user only.
+const joinRequests = { owner: '', ids: new Map<string, string>() }
+const signedInAddress = (): string => (getPlayer()?.userId ?? '').toLowerCase()
+async function loadJoinRequests(): Promise<void> {
+  const owner = signedInAddress()
+  if (owner === '') return
+  const url = `${await serviceBase('socialApi')}/v2/members/${encodeURIComponent(owner)}/requests?type=request_to_join`
+  const res = await signed<{ results?: { id?: string; communityId?: string }[] }>(url)
+  const rows = res?.results
+  if (!Array.isArray(rows)) throw new Error('join requests answer has no results list')
+  const ids = new Map<string, string>()
+  for (const r of rows) if (typeof r.id === 'string' && typeof r.communityId === 'string') ids.set(r.communityId.toLowerCase(), r.id)
+  joinRequests.owner = owner
+  joinRequests.ids = ids
+}
+// A failed read keeps the requests known before it; the card still offers Request to Join.
+const tryLoadJoinRequests = async (): Promise<void> => {
+  await loadJoinRequests().catch((e: unknown) => console.error('[communities] join requests failed', e))
+}
+function setJoinRequest(communityId: string, requestId: string | undefined): void {
+  const owner = signedInAddress()
+  if (joinRequests.owner !== owner) joinRequests.ids = new Map()
+  joinRequests.owner = owner
+  if (requestId != null && requestId !== '') joinRequests.ids.set(communityId.toLowerCase(), requestId)
+  else joinRequests.ids.delete(communityId.toLowerCase())
+}
+function pendingRequestId(c: CommunityRaw): string | undefined {
+  const known = joinRequests.owner !== '' && joinRequests.owner === signedInAddress() ? joinRequests.ids.get(c.id.toLowerCase()) : undefined
+  return known ?? (c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined)
+}
 
 async function communities(raw: CommunityRaw[]): Promise<Community[]> {
   const friendsOf = (c: CommunityRaw): string[] => (Array.isArray(c.friends) ? c.friends.filter((a) => typeof a === 'string' && a !== '').slice(0, CARD_FRIENDS) : [])
@@ -84,23 +118,25 @@ async function communities(raw: CommunityRaw[]): Promise<Community[]> {
     ownerName: identity(c.ownerAddress ?? '').name,
     privacy: c.privacy,
     visibility: c.visibility,
-    pendingRequestId: c.pendingActionType === 'request_to_join' ? c.pendingInviteOrRequestId : undefined,
-    friends: friendsOf(c).map((address) => ({ address, ...identity(address) }))
+    pendingRequestId: pendingRequestId(c),
+    // a read without the friends list (the GET by id) leaves them unset, so the card keeps its own
+    friends: Array.isArray(c.friends) ? friendsOf(c).map((address) => ({ address, ...identity(address) })) : undefined
   }))
 }
 
-// My Communities: every community the user is a member of, as unity-explorer's sidebar reads it.
+// My Communities: every community the user is a member of.
 async function list(): Promise<Community[]> {
   return await communities(await memberOfRaw())
 }
 
-// The browse grid, as unity-explorer's GetUserCommunitiesAsync: 20 a page, the name searched on
+// The browse grid: 20 a page, the name searched on
 // the server, never only the user's own. An answer without a results list is a failed read.
 export const BROWSE_PAGE = 20
 async function browse(search: string, page: number): Promise<Omit<CommunityBrowseMessage, 'kind'>> {
   const offset = (Math.max(1, Math.floor(page)) - 1) * BROWSE_PAGE
   const url = `${await base('v2')}?search=${encodeURIComponent(search)}&onlyMemberOf=false&offset=${offset}&limit=${BROWSE_PAGE}`
-  const res = await signed<{ results?: CommunityRaw[]; total?: number }>(url)
+  // the grid's first page reads the user's join requests too; later pages match against those
+  const [res] = await Promise.all([signed<{ results?: CommunityRaw[]; total?: number }>(url), offset === 0 ? tryLoadJoinRequests() : undefined])
   const rows = res?.results
   if (!Array.isArray(rows)) throw new Error('browse answer has no results list')
   const listed = await communities(rows)
@@ -388,7 +424,7 @@ export function registerCommunities(ctx: Ctx): void {
     communities.forEach(remember)
     ctx.send({ kind: 'communities', communities })
   })
-  // A failed read answers too, so the page stops loading and shows unity-explorer's error.
+  // A failed read answers too, so the page stops loading and shows the error toast.
   ctx.on('browseCommunities', async (msg) => {
     const page = await browse(msg.search, msg.page).catch((e: unknown): Omit<CommunityBrowseMessage, 'kind'> => {
       console.error('[communities] browse failed', e)
@@ -404,6 +440,8 @@ export function registerCommunities(ctx: Ctx): void {
     })
     if (raw == null) return
     remember(raw)
+    // a community the user can't enter: is a join request of theirs pending?
+    if (raw.privacy === 'private' && raw.role === 'none') await tryLoadJoinRequests()
     const [community] = await communities([raw])
     if (community != null) ctx.send({ kind: 'community', community })
   })
@@ -431,7 +469,7 @@ export function registerCommunities(ctx: Ctx): void {
     ctx.send({ kind: 'communityChannels', communities: channels })
   }
   // The community a write changed, read again and sent alone, so the browse card, My Communities
-  // and an open card show its new role and buttons (unity-explorer refreshes the one card).
+  // and an open card show its new role and buttons without reloading the grid.
   const sendOne = async (id: string): Promise<void> => {
     const raw = await rawOne(id).catch((e: unknown) => {
       console.error('[communities] community fetch failed', e)
@@ -578,13 +616,15 @@ export function registerCommunities(ctx: Ctx): void {
   ctx.on('requestToJoinCommunity', async (msg) => {
     await write(msg.id, 'requestToJoin', async () => {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests`
-      return await signed(url, 'POST', { targetedAddress: getPlayer()?.userId ?? '', type: 'request_to_join' })
+      const res = await signed<{ id?: string }>(url, 'POST', { targetedAddress: getPlayer()?.userId ?? '', type: 'request_to_join' })
+      setJoinRequest(msg.id, typeof res?.id === 'string' ? res.id : undefined)
     })
   })
   ctx.on('cancelJoinRequest', async (msg) => {
     await write(msg.id, 'cancelJoinRequest', async () => {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests/${encodeURIComponent(msg.requestId)}`
-      return await signed(url, 'PATCH', { intention: 'cancelled' })
+      await signed(url, 'PATCH', { intention: 'cancelled' })
+      setJoinRequest(msg.id, undefined)
     })
   })
   ctx.on('leaveCommunity', async (msg) => {

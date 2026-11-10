@@ -1,6 +1,6 @@
 // React Communities — a full-screen page inside the shared MainMenuShell (matches the
 // Unity Communities screen): a left column with "My Communities" and a main browse grid
-// of community cards. The grid is unity-explorer's: 20 communities a page from the service,
+// of community cards. The grid reads 20 communities a page from the service,
 // the next page read when the grid's end scrolls into view, and the search run on the server
 // (a second after typing stops, or at once on Enter). Each card shows Public or Private and
 // offers Join, Request to Join or Cancel, the user's friends in it, and its description on hover.
@@ -15,7 +15,7 @@ import type { Community } from '../../engine/protocol'
 import type { CommunitiesState, ProfileState } from '../session/useEngineSession'
 import styles from './CommunitiesPage.module.css'
 
-/** unity-explorer's wait after the last keystroke before searching (SEARCH_AWAIT_TIME). */
+/** The wait after the last keystroke before searching, so typing sends one read. */
 export const SEARCH_DELAY_MS = 1000
 
 function isMember(role: string): boolean {
@@ -46,7 +46,7 @@ interface CardActions {
   onCancelRequest: (id: string, requestId: string) => void
 }
 
-// unity-explorer's SetActionButtonsState: a member views; anyone may join a public community; a
+// A member views; anyone may join a public community; a
 // private one takes a request, which can be cancelled while it waits.
 function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest }: CardActions & { c: Community; onOpen: () => void }): React.JSX.Element {
   const act = (run: () => void) => (e: React.MouseEvent): void => {
@@ -164,7 +164,7 @@ export function CommunitiesPage({
     if (searchTimer.current != null) clearTimeout(searchTimer.current)
     searchTimer.current = null
   }
-  // As unity-explorer's browser: every opening shows every community, with the search cleared.
+  // Every opening shows every community, with the search cleared.
   useEffect(() => {
     if (!communities.open) return
     setQuery('')
@@ -173,7 +173,7 @@ export function CommunitiesPage({
     return cancelSearch
   }, [communities.open, loadBrowse])
 
-  // unity-explorer's AwaitAndSendSearchAsync: the same text again does nothing; empty text lists
+  // The same text again does nothing; empty text lists
   // every community; a search always shows the grid, even from My Communities.
   const runSearch = (text: string): void => {
     cancelSearch()
@@ -200,7 +200,7 @@ export function CommunitiesPage({
   const searching = !showingMine && browse.search !== ''
   const gridList = showingMine ? mine : browse.items
   const actions: CardActions = { onJoin: communities.join, onRequestToJoin: communities.requestToJoin, onCancelRequest: communities.cancelRequest }
-  // unity-explorer's titles; the count is the service's total, blank while the first page loads
+  // The count is the service's total, blank while the first page loads
   const title = showingMine ? 'My Communities' : searching ? `Results for '${browse.search}'` : 'Browse Communities'
   const count = showingMine ? `(${mine.length})` : browse.loading || browse.failed === true ? '' : `(${browse.total})`
 

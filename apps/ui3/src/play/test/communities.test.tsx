@@ -183,7 +183,7 @@ describe('communities domain', () => {
     expect(h.session().communities.list[0].thumbnail).toBe('https://cdn/c1.png')
   })
 
-  // DOMAIN: the browse grid — unity-explorer's paged, server-searched list.
+  // DOMAIN: the browse grid — a paged, server-searched list.
   describe('browse grid', () => {
     const page = (n: number, from = 0): Community[] => Array.from({ length: n }, (_, i) => ({ ...community, id: `b${from + i}`, name: `B${from + i}` }))
 
@@ -221,7 +221,7 @@ describe('communities domain', () => {
       expect(h.session().communities.browse).toMatchObject({ search: 'zzzz', total: 1, loading: false })
     })
 
-    it("a failed read stops loading and shows unity-explorer's error", async () => {
+    it('a failed read stops loading and shows the error toast', async () => {
       render(<ToastHost />)
       const h = renderSession()
       await enterAsGuest(h)

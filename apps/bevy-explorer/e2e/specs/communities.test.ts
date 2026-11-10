@@ -31,6 +31,8 @@ const DETAIL = { name: 'Community sections', role: 'tablist' } as const
 const ANNOUNCEMENTS = { name: 'ANNOUNCEMENTS', role: 'tab' } as const
 const CARD_TAIL = /\s*(?:Public|Private)\s*·\s*\d+\s*Members\s+(?:Join|View|Request to Join|Cancel join request)$/
 const BACK = { name: 'Back to Browse Communities', role: 'button' } as const
+/** A card without its privacy, member count and button, which can change between two reads. */
+const cardKey = (card: string): string => card.replace(CARD_TAIL, '')
 /** Unity tries up to five cards until one opens. */
 const CARDS_TRIED = 5
 
@@ -96,7 +98,8 @@ scenario('searching communities filters the cards and emptying the search restor
 
   // the grid reads further pages as they scroll into view, so its first card stands for the rest
   await explorer.hud.fill(SEARCH, '')
-  await until(() => communityCards(explorer), (cards) => cards.includes(all[0]!), { timeoutMs: TEXT_TIMEOUT_MS, what: 'every community to return when the search is emptied' })
+  const first = cardKey(all[0]!)
+  await until(() => communityCards(explorer), (cards) => cards.some((card) => cardKey(card) === first), { timeoutMs: TEXT_TIMEOUT_MS, what: 'every community to return when the search is emptied' })
   assert.equal(await explorer.hud.value(SEARCH), '', 'the search field should be empty')
   assert.equal(await explorer.hud.isVisible(BACK), false, 'Browsing every community should offer no Back')
   await closePage(explorer, 'communities')

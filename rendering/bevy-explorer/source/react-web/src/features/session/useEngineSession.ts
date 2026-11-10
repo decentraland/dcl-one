@@ -250,7 +250,7 @@ export interface CommunityBrowse {
   failed?: boolean
 }
 
-/** unity-explorer's text when a browse page can't be read. */
+/** The toast when a browse page can't be read. */
 export const BROWSE_ERROR = 'There was an error loading Communities. Please try again.'
 
 const NO_BROWSE: CommunityBrowse = { search: '', items: [], total: 0, loading: false, loadingMore: false }
@@ -1828,7 +1828,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const pending = pendingCommunityPicture.current
           pendingCommunityPicture.current = null
           if (msg.mode === 'update' && msg.id != null && pending?.id === msg.id) showSavedPicture(pending.id, pending.picture)
-          // as unity-explorer reloads its browser after a save: a new or changed community may
+          // a save reloads the grid: a new or changed community may
           // join, leave or move in the grid
           if (msg.id != null && communityBrowsePage.current > 0) loadCommunityBrowse(communityBrowseRef.current.search)
           break

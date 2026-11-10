@@ -1104,8 +1104,8 @@ export interface Community {
   visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
-  /** The user's friends who are members, the first three, as unity-explorer's browse card shows
-   *  them. Only the paged browse read carries them. */
+  /** The first three of the user's friends who are members, for the browse card. Only the paged
+   *  browse read carries them. */
   friends?: CommunityFriend[]
 }
 
@@ -1140,7 +1140,7 @@ export interface GetCommunitiesRequest {
   kind: 'getCommunities'
 }
 
-/** One page of the browse grid, as unity-explorer reads it: 20 communities a page, by name on the
+/** One page of the browse grid: 20 communities a page, by name on the
  *  server when `search` is set (page → scene → social-api GET /v2/communities). */
 export interface BrowseCommunitiesRequest {
   kind: 'browseCommunities'

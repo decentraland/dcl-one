@@ -232,7 +232,7 @@
 .friend + .friend {
   margin-left: -6px;
 }
-/* The description opens on hover or keyboard focus, as unity-explorer's card grows on hover. */
+/* The description opens on hover or keyboard focus, so the grid stays compact. */
 .cardDesc {
   display: -webkit-box;
   max-height: 0;
