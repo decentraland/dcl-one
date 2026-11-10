@@ -103,14 +103,9 @@ function parseLocals(source: string, file: string, issues: Diagnostic[]): Mappin
     const values = parseEntries(m[4]!)
     if (!values) {
       issues.push(
-        diagnostic(
-          'unsupported-construct',
-          'error',
-          `${file}: getEnum values must be string literals`,
-          {
-            local: m[1]
-          }
-        )
+        diagnostic('unsupported-construct', `${file}: getEnum values must be string literals`, {
+          local: m[1]
+        })
       )
       continue
     }
@@ -129,7 +124,6 @@ function parseLocals(source: string, file: string, issues: Diagnostic[]): Mappin
       issues.push(
         diagnostic(
           'unsupported-construct',
-          'error',
           `${file}: getBoolean needs a { true, false } map of string literals`,
           { local: m[1] }
         )
@@ -174,7 +168,6 @@ function parseLocals(source: string, file: string, issues: Diagnostic[]): Mappin
     issues.push(
       diagnostic(
         'unsupported-construct',
-        'error',
         `${file}: template uses constructs this reader does not support${unsupported.length ? ` (${[...new Set(unsupported)].join(', ')})` : ' (a call outside a plain const declaration)'}`
       )
     )
@@ -183,7 +176,6 @@ function parseLocals(source: string, file: string, issues: Diagnostic[]): Mappin
     issues.push(
       diagnostic(
         'unsupported-construct',
-        'error',
         `${file}: only figma.selectedInstance and figma.tsx/code/html are supported`
       )
     )
@@ -201,7 +193,6 @@ function parseMappingSource(raw: string, file: string): ParsedMapping {
     issues.push(
       diagnostic(
         'unsupported-construct',
-        'error',
         `${file}: missing or unreadable "// url=" Figma link with a node-id`
       )
     )
@@ -214,9 +205,7 @@ function parseMappingSource(raw: string, file: string): ParsedMapping {
     : []
   const id = /\bid:\s*'([^']+)'/.exec(source)?.[1]
   if (example === undefined) {
-    issues.push(
-      diagnostic('unsupported-construct', 'error', `${file}: no figma.tsx/code example found`)
-    )
+    issues.push(diagnostic('unsupported-construct', `${file}: no figma.tsx/code example found`))
   }
 
   const locals = parseLocals(source, file, issues)
@@ -245,7 +234,6 @@ function parseMappingSource(raw: string, file: string): ParsedMapping {
       issues.push(
         diagnostic(
           'unsupported-construct',
-          'error',
           `${file}: text placeholders are supported only in JSX text or quoted attributes, not JavaScript expressions`
         )
       )

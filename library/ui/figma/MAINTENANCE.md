@@ -30,9 +30,33 @@ Figma file: PRUEBA-SKILL. Its key is private and never in a file; set `FIGMA_FIL
 The contract is the library's Code Connect template files, read statically (never executed) from `contract.mappingRoot` in `figma.config.json`, overridable with `--mapping-root`, `DCL_FIGMA_MAPPING_ROOT`, `--library-range`. Supported subset: header comments `url`, `source`, `component`, `contract`, `states`; `instance.getEnum/getBoolean/getString/findText`; `figma.tsx`/`code` example; `imports`; `id`. Anything else is reported as `unsupported-construct`.
 
 - Provenance comes from the mapping header (Figma file and node) plus the nearest `package.json` of the library (name, version). Names alone never identify a component.
-- Errors are coded and never guessed around: `mapping-missing`, `identity-ambiguous`, `identity-not-found`, `variant-unsupported`, `variant-not-in-figma`, `contract-incompatible` (with `details.reason`), `unsupported-construct`, `invalid-input`, `mapping-root-not-configured`. Warnings: `figma-drift`, `unmapped-figma-property`, `figma-identity-unverified`, `export-unverifiable`.
+- Diagnostics are coded and never guessed around. Each one carries its `severity`, `audience` and `action` from the single registry in `src/contract/diagnostics.ts`; `src/contract/diagnostics-docs.test.ts` fails when the codes, severities or audiences in this table or the consumer skill's table differ from it; the prose is not compared. `consumer` codes can come back from resolve; `maintainer` codes come only from check-mappings, and a code marked both has reasons that only check-mappings emits. The table after the `diagnostic-codes` marker is the one the test reads. `mapping-missing` is returned only when the node is a captured library component; without a capture an unmapped node is `identity-uncertain`.
+
+<!-- diagnostic-codes -->
+
+| Code                          | Severity | Audience             |
+| ----------------------------- | -------- | -------------------- |
+| `invalid-input`               | error    | consumer             |
+| `mapping-root-not-configured` | error    | consumer             |
+| `mapping-missing`             | error    | consumer             |
+| `identity-not-found`          | error    | consumer, maintainer |
+| `identity-ambiguous`          | error    | consumer, maintainer |
+| `identity-uncertain`          | error    | consumer             |
+| `variant-unsupported`         | error    | consumer             |
+| `variant-not-in-figma`        | error    | consumer             |
+| `contract-incompatible`       | error    | consumer             |
+| `unsupported-construct`       | error    | consumer             |
+| `unmapped-figma-property`     | warning  | consumer             |
+| `figma-drift`                 | warning  | consumer             |
+| `export-unverifiable`         | warning  | consumer             |
+| `capture-revision-unknown`    | warning  | consumer             |
+| `figma-identity-unverified`   | warning  | consumer             |
+| `capture-unchecked`           | warning  | maintainer           |
+| `superseded-by-sync`          | warning  | maintainer           |
+| `superseded-pending`          | warning  | maintainer           |
+
 - `dcl-figma check-mappings` (and the test `src/contract/integrity.test.ts`) fails CI on any mapping error or Figma drift.
-- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`; without a config it runs resolve-only. See `library/ui/README.md`.
+- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`, `--mapping-only`; without a config, or with `--mapping-only`, it registers only `figma_resolve_component` and `figma_check_mappings`. `--mapping-only` reads only the `contract` block of the Figma config (mapping root and library range) and never the capture cache; without one the mapping root defaults to `library/ui/components`. Without a capture only a component set id matches a mapping. The CLI takes the same flags plus `--text "Layer=Value"` (the MCP `texts` input). Resolve results name the capture revision the tracked lock pins in `provenance.capture.revision`. See `library/ui/README.md`.
 
 ## Data source: the fetched capture only
 
