@@ -677,7 +677,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "3ceef92a756d8f194c801859aa0f812d871a492a51e1907e0df0fb710285f9aa",
+          "sha256": "646b9c59e68091a08c93f0cdc07166305120061c9d4e9f94455c6336b7403b71",
           "fds": null,
           "deviation": [
             "port-command"
@@ -3531,14 +3531,14 @@
           }
         },
         "library/ui/figma/src/port.test.ts": {
-          "sha256": "c7e36c35c276773743243f23c44a62099a6869f7f2b4536f97378ce500e7b837",
+          "sha256": "f1ab5a87483619b1bae2aad68bb33783479fe00c6b561d03f953033363814145",
           "fds": null,
           "deviation": [
             "port-command"
           ]
         },
         "library/ui/figma/src/port.ts": {
-          "sha256": "8d3f5efaa6e88dc479ad5a51d3ec4667110dc8c7a190f08d076a5d7e850365c9",
+          "sha256": "5472b3bd5a6eae20b80f30b8fe20c92bca17f608498c89768dd0a25119f18272",
           "fds": null,
           "deviation": [
             "port-command"
@@ -4661,7 +4661,7 @@
         }
       },
       "generation.json": {
-        "sha256": "10ab74df1ad0ff5e4f2c1faf5e0bcd78a2e1a48e390ceb7c33a602e4f3a70fc1",
+        "sha256": "891ccf9bcdbbc69c32990696643a73c9a170d5164a95ec334a444dd1d7cd6d7e",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",

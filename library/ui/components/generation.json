@@ -500,8 +500,8 @@
     },
     {
       "path": "library/ui/figma/src/port.ts",
-      "sha256": "8d3f5efaa6e88dc479ad5a51d3ec4667110dc8c7a190f08d076a5d7e850365c9",
-      "indexBlobSha": "62e9881ac3153c7dcf859c91737296c578275eb2"
+      "sha256": "5472b3bd5a6eae20b80f30b8fe20c92bca17f608498c89768dd0a25119f18272",
+      "indexBlobSha": "265d66cec7d2664a8e96268b6b0d4925a3c64bd6"
     },
     {
       "path": "library/ui/figma/src/probe.ts",

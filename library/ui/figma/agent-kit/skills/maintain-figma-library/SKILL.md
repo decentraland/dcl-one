@@ -16,6 +16,8 @@ Before any work, report the `needs-manual` flags and their reasons for the compo
 
 ## 2. Prepare
 
+For a capture refresh, first point the lock at the new capture: set `revision` and `snapshot.revision` of the figma-design-system source in `upstream.lock.json` to the new FDS commit, then run `pnpm figma fetch-source --seal`, which fetches that commit and writes its digest table. Skip this when you only regenerate from the capture already pinned. Without it, `port prepare` verifies against the old digest table and either fails at fetch-source or prepares the old capture again.
+
 ```sh
 pnpm figma port prepare
 ```
