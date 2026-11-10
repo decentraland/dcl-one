@@ -39,6 +39,9 @@ const TOPIC_INBOX_CAPACITY: usize = 4096;
 const TOPIC_LENGTH_PREFIX_BYTES: usize = 2;
 /// Expired rate windows are pruned once this many are held, then at twice what is left.
 const RATE_WINDOW_PRUNE_MIN: usize = 64;
+/// Rate windows a scene may hold open at once; past it a publish to a topic with no window is
+/// dropped. Expired windows are pruned before the cap is applied, so it only binds within a window.
+pub const MAX_RATE_WINDOWS: usize = 1024;
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
 pub struct TopicMessage {
@@ -92,7 +95,7 @@ impl SceneTopics {
     }
 
     /// A publish that reaches the rate check spends the topic's budget even if its size then
-    /// drops it.
+    /// drops it. A publish to a new topic is dropped while [`MAX_RATE_WINDOWS`] windows are open.
     pub fn frame_publish(&mut self, topic: &str, data: &str, now: Instant) -> Option<Vec<u8>> {
         if data.is_empty() || topic.len() > MAX_TOPIC_BYTES || !self.spend_rate(topic, now) {
             return None;
@@ -120,11 +123,17 @@ impl SceneTopics {
                 }
                 *count += 1;
             }
-            _ => {
-                if self.rate_windows.len() >= self.prune_rate_windows_at.max(RATE_WINDOW_PRUNE_MIN)
-                {
+            Some(window) => *window = (1, now),
+            None => {
+                let prune_at = self
+                    .prune_rate_windows_at
+                    .clamp(RATE_WINDOW_PRUNE_MIN, MAX_RATE_WINDOWS);
+                if self.rate_windows.len() >= prune_at {
                     self.rate_windows.retain(|_, (_, start)| open(start));
                     self.prune_rate_windows_at = 2 * self.rate_windows.len();
+                }
+                if self.rate_windows.len() >= MAX_RATE_WINDOWS {
+                    return false;
                 }
                 self.rate_windows.insert(topic.to_owned(), (1, now));
             }
@@ -487,7 +496,13 @@ mod tests {
         for i in 0..=TOPIC_QUEUE_CAPACITY {
             assert!(topics.receive("0x1".to_owned(), &wire("t", i.to_string().as_bytes())));
         }
+        let queued: usize = topics.queues["t"].iter().map(TopicMessage::bytes).sum();
+        assert_eq!(
+            topics.queued_bytes, queued,
+            "the dropped message's bytes are freed"
+        );
         let messages = topics.consume("t");
+        assert_eq!(topics.queued_bytes, 0);
         assert_eq!(messages.len(), TOPIC_QUEUE_CAPACITY);
         assert_eq!(messages[0].data, "1");
         assert_eq!(
@@ -543,6 +558,44 @@ mod tests {
         let later = start + TOPIC_RATE_WINDOW;
         assert!(topics.frame_publish("new", "x", later).is_some());
         assert_eq!(topics.rate_windows.len(), 1);
+    }
+
+    #[test]
+    fn open_rate_windows_are_capped() {
+        let mut topics = SceneTopics::default();
+        let start = Instant::now();
+        let sent = (0..MAX_RATE_WINDOWS + 100)
+            .filter(|i| topics.frame_publish(&i.to_string(), "x", start).is_some())
+            .count();
+        assert_eq!(sent, MAX_RATE_WINDOWS);
+        assert_eq!(topics.rate_windows.len(), MAX_RATE_WINDOWS);
+        assert!(
+            topics.frame_publish("0", "x", start).is_some(),
+            "a topic with an open window still publishes"
+        );
+    }
+
+    #[test]
+    fn a_full_map_of_rate_windows_accepts_publishes_once_they_expire() {
+        let mut topics = SceneTopics::default();
+        let start = Instant::now();
+        // A prune at the cap that finds every window still open sets the next prune above it.
+        for i in 0..MAX_RATE_WINDOWS / 4 {
+            assert!(topics
+                .frame_publish(&format!("old{i}"), "x", start)
+                .is_some());
+        }
+        let later = start + Duration::from_millis(500);
+        for i in 0..MAX_RATE_WINDOWS {
+            topics.frame_publish(&format!("new{i}"), "x", later);
+        }
+        assert!(topics.prune_rate_windows_at > MAX_RATE_WINDOWS);
+        assert!(topics.frame_publish("blocked", "x", later).is_none());
+
+        let expired = later + TOPIC_RATE_WINDOW;
+        assert!(topics.frame_publish("new0", "x", expired).is_some());
+        assert!(topics.frame_publish("fresh", "x", expired).is_some());
+        assert!(topics.rate_windows.len() <= MAX_RATE_WINDOWS);
     }
 
     #[test]

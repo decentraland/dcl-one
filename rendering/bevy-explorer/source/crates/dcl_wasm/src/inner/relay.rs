@@ -17,14 +17,8 @@ use common::{
     rpc::{rmp_encode, IpcMessage, ResponseContext, RpcCall, RpcResultSender, ENGINE_IPC_CONTEXT},
     structs::GlobalCrdtStateUpdate,
 };
-use dcl_js::{
-    comms::{MAX_COMMS_MESSAGE_BYTES, MAX_SEND_MESSAGES_PER_TICK},
-    KillFlag,
-};
-use dcl_types::{
-    RendererResponse, SceneId, SceneResponse, SceneResponseSender, MAX_RPC_CALLS_PER_TICK,
-    MAX_TOPIC_MESSAGE_BYTES,
-};
+use dcl_js::KillFlag;
+use dcl_types::{RendererResponse, SceneId, SceneResponse, SceneResponseSender};
 use system_bridge::SystemApi;
 use tokio::sync::{broadcast, mpsc};
 use wasm_bindgen::prelude::*;
@@ -33,6 +27,7 @@ use super::{
     relay_proto::{RelayInit, ToEngine, ToScene},
     SceneInitializationData, SCENE_QUEUE,
 };
+use crate::tick_limits::tick_limit_broken;
 
 // swapped for the copy module's and B's exports in a relay worker (see relay_imports.js)
 #[wasm_bindgen(module = "/src/relay_imports.js")]
@@ -229,38 +224,6 @@ fn from_b() -> Result<Option<Vec<u8>>, &'static str> {
         s.bytes += len as f64;
     });
     Ok(Some(bytes))
-}
-
-// the scene runtime's per-tick rpc and message bus limits, which the engine relies on, checked
-// again here
-fn tick_limit_broken(calls: &[RpcCall]) -> Option<&'static str> {
-    if calls.len() > MAX_RPC_CALLS_PER_TICK {
-        return Some("too many rpc calls");
-    }
-    // message bus sends and topic publishes share the scene's per-tick send budget
-    let mut sends = 0;
-    for call in calls {
-        match call {
-            RpcCall::SendMessageBus { data, .. } => {
-                sends += 1;
-                // the message plus its one-byte type tag
-                if data.len() > MAX_COMMS_MESSAGE_BYTES + 1 {
-                    return Some("message bus send too large");
-                }
-            }
-            RpcCall::PublishSceneTopic { data } => {
-                sends += 1;
-                if data.len() > MAX_TOPIC_MESSAGE_BYTES {
-                    return Some("topic publish too large");
-                }
-            }
-            _ => (),
-        }
-    }
-    if sends > MAX_SEND_MESSAGES_PER_TICK {
-        return Some("too many message bus sends");
-    }
-    None
 }
 
 fn decode(bytes: &[u8]) -> Result<ToEngine, rmp_serde::decode::Error> {

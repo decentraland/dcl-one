@@ -4,6 +4,7 @@ use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin, RpcStreamSender},
+    sets::SceneSets,
     structs::{server_mode, CurrentRealm},
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
@@ -22,8 +23,9 @@ impl Plugin for SceneTopicsPlugin {
                 title: "Scene topic messages",
                 query: "/scene_topics",
                 fields: &[
-                    ("Scene room", "room"),
-                    ("Scene room running", "running"),
+                    ("Scene rooms", "sceneRooms"),
+                    ("First scene room", "room"),
+                    ("First scene room running", "running"),
                     ("Rooms isolated per scene", "isolated"),
                     ("Subscribed scenes", "subscribedScenes"),
                     ("Published", "published"),
@@ -47,8 +49,10 @@ pub(crate) struct SceneTopicsRoutingPlugin;
 
 impl Plugin for SceneTopicsRoutingPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<SceneTopicTraffic>()
-            .add_systems(Update, (subscribe_scene_topics, publish_scene_topics));
+        app.init_resource::<SceneTopicTraffic>().add_systems(
+            Update,
+            (subscribe_scene_topics, publish_scene_topics).in_set(SceneSets::RestrictedActions),
+        );
     }
 }
 
@@ -219,9 +223,11 @@ fn scene_topics_command(
     traffic: Res<SceneTopicTraffic>,
 ) {
     if let Some(Ok(_)) = input.take() {
+        // A client holds one scene room at a time; a headless server holds one per hosted scene.
         let room = rooms.iter().next();
         input.reply_ok(
             serde_json::json!({
+                "sceneRooms": rooms.iter().count(),
                 "room": room.map(|(room, _)| room.0.clone()),
                 "running": room.map(|(_, running)| is_running(running)),
                 "isolated": scene_rooms_isolated(&realm),
