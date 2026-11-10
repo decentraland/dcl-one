@@ -88,3 +88,12 @@
 .sm .input {
   font-size: var(--type-14);
 }
+/* The dark field's clear button: a light glyph on a faint fill. */
+.clearDark {
+  width: 22px;
+  height: 22px;
+  background: var(--white-10);
+}
+.clearDark .clearGlyph {
+  background: var(--text);
+}

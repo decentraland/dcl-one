@@ -43,9 +43,14 @@ class Upstream(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("Content-Length", "0")))
         if self.path in ("/content/contents/test", "/worlds-content-server/contents/test",
                          "/ipfs/test", "/ab-cdn/content/contents/test"):
+            # The headers content_file_headers() sends beside X-Accel-Redirect.
             self.send_response(200)
             self.send_header("X-Accel-Redirect", "/__protected_storage/0a/blob")
+            self.send_header("Content-Type", "image/png")
             self.send_header("ETag", '"gateway-fixture"')
+            self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -77,7 +82,11 @@ def request(host, path, *, vhost="example.test", headers=None, method="GET", bod
     response = conn.getresponse()
     result = response.status, response.read()
     if include_headers:
-        result += ({key.lower(): value for key, value in response.getheaders()},)
+        # Every value of a header, so a duplicate shows.
+        collected = {}
+        for key, value in response.getheaders():
+            collected.setdefault(key.lower(), []).append(value)
+        result += (collected,)
     conn.close()
     return result
 
@@ -258,11 +267,22 @@ def client(args):
     ]:
         status, body, headers = request(accel, path, vhost=vhost, include_headers=True)
         assert (status, body) == (200, b"authorized-blob"), (vhost, path, status, body)
+        # One value each: the app's Cache-Control, Content-Type and expose list reach
+        # the client as upstream sends them, and nginx adds no second copy.
         for key, value in {"x-content-type-options": "nosniff",
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
-                           "access-control-allow-origin": "*", "etag": '"gateway-fixture"'}.items():
-            assert headers.get(key) == value, (vhost, path, key, headers)
+                           "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-type": "image/png", "accept-ranges": "bytes",
+                           "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
+                           "access-control-expose-headers":
+                               "ETag, Content-Range, Accept-Ranges, Content-Length"}.items():
+            assert headers.get(key) == [value], (vhost, path, key, headers)
+        # A Range the app does not support reaches nginx as a whole-file GET; upstream
+        # answers it with the whole file, not nginx's multipart 206 or HTML 416.
+        for byte_range in ["bytes=0-1,3-4", "bytes=-"]:
+            ranged = request(accel, path, vhost=vhost, headers={"Range": byte_range})
+            assert ranged == (200, b"authorized-blob"), (vhost, path, byte_range, ranged)
     assert request(public, "/about", method="POST", body=b"x" * (1024 * 1024 + 1))[0] == 413
     deployed = request(public, "/entities", vhost="worlds-content-server.example.test", method="POST",
                        body=b"x" * (1024 * 1024 + 1))

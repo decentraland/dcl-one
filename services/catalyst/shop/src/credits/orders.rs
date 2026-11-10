@@ -8,7 +8,10 @@
 //! sweep that retires orders nobody paid within a session's lifetime. Every
 //! Stripe call runs outside a transaction; the state change is one guarded
 //! UPDATE (`status = 'pending'`), so a late webhook or a second click moves
-//! nothing twice.
+//! nothing twice. An order whose session completed with its payment still
+//! processing is never retired by these routes or the sweep, and a payment
+//! that settles after its order was retired still credits it
+//! (`packs::SETTLEABLE_STATUSES`).
 
 use sqlx::Row;
 
@@ -119,7 +122,9 @@ impl Credits {
     }
 
     /// Retires pending Checkout Session orders older than `after` (upstream
-    /// `markAbandonedCheckouts`); a paid one is never touched.
+    /// `markAbandonedCheckouts`); a paid one is never touched, and neither is
+    /// one whose payment is processing (its payment intent is recorded): a
+    /// bank debit outlives the session, and its outcome settles the order.
     pub async fn abandon_stale_pack_orders(
         &self,
         after: chrono::Duration,
@@ -127,7 +132,7 @@ impl Credits {
         let cutoff = super::store::now() - after;
         let res = sqlx::query(
             "UPDATE credits.purchases SET status = 'abandoned', failure_reason = COALESCE(failure_reason, 'checkout session lifetime elapsed'), updated_at = timezone('UTC', now()) \
-             WHERE status = 'pending' AND stripe_checkout_session IS NOT NULL AND created_at < $1",
+             WHERE status = 'pending' AND stripe_checkout_session IS NOT NULL AND stripe_payment_intent IS NULL AND created_at < $1",
         )
         .bind(cutoff)
         .execute(&self.pool)

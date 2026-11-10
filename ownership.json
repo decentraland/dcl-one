@@ -321,27 +321,6 @@
       ]
     },
     {
-      "id": "ui-provenance",
-      "description": "Provenance of the shared UI library: source and public pins, font origins, port verification and their checks; a change needs an approving code-owner review",
-      "owners": [
-        "@decentraland/web-applications"
-      ],
-      "paths": [
-        "/library/ui/upstream.lock.json",
-        "/library/ui/port-verification.json",
-        "/library/ui/figma/lock-digests.mjs",
-        "/library/ui/figma/port-verification.mjs",
-        "/library/ui/figma/public-foundations.mjs",
-        "/library/ui/figma/src/public-foundations.test.ts",
-        "/library/ui/test/foundations-source.test.ts",
-        "/library/ui/test/foundations.test.tsx",
-        "/library/ui/foundations/source.json",
-        "/library/ui/foundations/typography/font-source.json",
-        "/library/ui/figma/src/install.ts",
-        "/library/ui/figma/src/install.test.ts"
-      ]
-    },
-    {
       "id": "ui-library-workflow",
       "description": "The shared UI library CI workflow that runs the provenance checks; owned by the library team together with infra, which owns the other workflows",
       "owners": [

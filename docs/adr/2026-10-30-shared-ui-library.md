@@ -45,3 +45,7 @@ incremental, and replaced implementations are removed after consumers
 move. The library's integration must account for independent builds,
 asset resolution and artifact provenance. Existing behavior and applicable
 surface themes must be preserved during migration.
+
+### Component installation and integrity
+
+The components target uses the same verified-cache source and atomic install transaction as foundations. A pure producer receives source data, configuration, a names-only visibility registry and the locked runtime; it cannot acquire data or publish files. The transaction owns and rechecks the complete input read-set. Public names receive mappings; internal names receive neither mappings nor package exports. Installation records source, configuration, dependency and complete generator-module identities alongside emitted output digests in `components/generation.json`. The common output inspector verifies the index and materialized bytes for both targets; the component policy derives origin classes from the emitted plan and fixed runtime inputs. Components never admit LFS pointers. The checked record establishes offline provenance consistency, not an authenticated claim of live Figma parity. NavBar remains internal until its controls and semantic user-data contracts are ready.

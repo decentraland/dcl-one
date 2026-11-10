@@ -5,27 +5,21 @@
 
 ## Context
 
-unity-explorer reads profiles through one repository in two tiers. The full tier is the whole
-profile; the compact tier (`Profile.CompactInfo`: name, claimed-name flag, name colour, face
-thumbnail) serves lists: friends, chat, communities, notifications, place creators, avatar
-textures. Behind a feature flag (`USE_CENTRALIZED_PROFILES`) both tiers are batched POSTs to the
-asset-bundle registry (`/profiles`, `/profiles/metadata`); without it they go to a catalyst's
-lambdas, which have no compact route, so the tier is forced to full. A remote player's catalyst
-comes from their LiveKit metadata. Publishing its own profile, unity-explorer snapshots the
-current one, shows the edit in the world, deploys, reads the deployed version back, and either
-announces the new version to other players or puts the snapshot back.
+Avatar rendering needs full profiles, while friends, chat, communities, notifications,
+creator lists and avatar face textures need only names, claimed-name flags, name colors and
+face thumbnails. One cache
+must satisfy both sets of readers without letting fetch policy vary by caller.
 
-The Bevy Explorer had one tier. It batched full profiles to the registry of each owner's
-environment, judged by the lambdas endpoint the owner's peer announced in its LiveKit metadata,
-fell back to a single GET on that peer-named catalyst, then asked the peer. It announced a new
-version of its own profile before deploying it and kept a rejected edit; only the HUD's Revert
-button undid it, by deploying the old look again as a newer version.
+Every backend area in dcl-one is served by one catalyst. The asset-bundle registry routes are
+a read-through of Decentraland's registry and are empty on an `island` node; they cannot be the
+authority for profiles deployed to that node. Full profiles are read from the catalyst.
+Compact reads use the same source, except on Decentraland's own deployments: their registry
+serves the compact tier until their catalysts provide its route. Neither tier uses
+endpoints supplied by another player.
 
-In dcl-one every backend area is one catalyst. Its `asset-bundle-registry.<domain>` routes are a
-read-through of Decentraland's registry (empty on an `island` node), so a profile deployed to the
-node missed every batch, was fetched one address at a time and, never counting as final, was asked
-of the registry again every 30 s. The parity card A6 (Profiles) asked for the compact tier and for
-an engine-side revert of a failed publish.
+A local edit should appear immediately while it deploys, but peers must hear only a version
+the server holds. A failed publish must restore the confirmed profile without deploying the
+old content again or reusing a version that another peer may already have observed.
 
 ## Decision
 
@@ -84,44 +78,48 @@ an engine-side revert of a failed publish.
 ## Rejected
 
 - **Batching through `asset-bundle-registry.<domain>`.** On dcl-one it serves Decentraland's
-  registry, not the node's deployments, and nothing on an `island` node.
-- **Serving the node's own data from the registry routes instead of a lambdas route.** Those routes
-  are unity-explorer's boot reads of Decentraland's registry; the node's profiles already live at
-  `/lambdas/profiles`, and `{lambdas}/profiles/metadata` is the path unity-explorer's repository
-  builds for a catalyst's compact tier (`RealmProfileRepository.PostUrl`), though it forces the
-  full tier on catalysts today.
-- **A flag between a centralized service and a catalyst** (unity-explorer's
-  `USE_CENTRALIZED_PROFILES`). The catalyst is the centralized service; the registry stands in
-  only for the compact route Decentraland's catalysts lack, chosen by where the catalyst is.
+  registry, not the node's deployments, and nothing on an `island` node. The previous fetch
+  path tried a registry batch, then a single-address GET on a peer-named catalyst, then the
+  peer. A node-deployed profile missed the batch, fell back to the GET and remained non-final,
+  so it was asked of the registry again every 30 s.
+- **Serving the node's own data from the registry routes instead of a lambdas route.**
+  Registry routes serve Unity Explorer's boot reads of Decentraland's registry; the node's
+  deployed profiles already live at `/lambdas/profiles`. The compact projection belongs beside them at
+  `/lambdas/profiles/metadata`. Unity Explorer's `USE_CENTRALIZED_PROFILES` flag selects registry
+  `POST /profiles` and `/profiles/metadata`; otherwise it reads catalyst lambdas. Its
+  `RealmProfileRepository.PostUrl` constructs that compact-tier path for a catalyst, but it
+  currently forces full-profile reads there.
+- **A flag between a centralized service and a catalyst.** The catalyst is the centralized
+  service; the registry stands in only for the compact route Decentraland's catalysts lack,
+  chosen by where the catalyst is.
 - **The base domain as the registry switch.** A dcl-one page served from its own host, and a
   native `--gateway` launch, keep `decentraland.org` while their catalyst is a dcl-one node, whose
   deployments Decentraland's registry does not hold.
-- **Full profiles from the registry too** (unity-explorer with the flag on). The catalyst already
+- **Full profiles from the registry too** (Unity Explorer with the flag on). The catalyst already
   batches full profiles and is authoritative for the login's read and the read-back of our own
   deploy, which a registry lagging behind it could answer with an older version.
 - **The catalyst a peer announces in its LiveKit metadata.** Another player could make every
   client call a server of its choosing, and the metadata will not carry it.
-- **Fetch behaviour chosen per call** (unity-explorer's `FetchBehaviour` flags). The Explorer's
-  cache keeps one fetch policy, so the tier rules live in one place.
+- **Fetch behaviour chosen per call.** The Explorer's cache keeps one fetch policy, so the tier
+  rules live in one place.
 - **Reverting from the HUD by deploying the old look again** (the previous behaviour). It deployed
   old content as a newer version, the engine kept the rejected edit and carried it into the next
   save, and other players had already been told the rejected version.
 
 ## Consequences
 
-- Other players see a profile edit once it has deployed, as in unity-explorer, not the moment it is
-  made; the player sees it at once.
+- Other players see a profile edit once it has deployed; the player sees it at once.
 - Profiles deployed to a dcl-one node resolve in batches and settle; nothing re-probes them.
 - On Decentraland's deployments compact reads cost compact answers from their registry. Another
   catalyst without the route costs one 404 or 405, then full profiles.
 - A Decentraland profile's compact and full tiers come from different services. Right after a
   deploy the registry can lag the catalyst; a compact answer never replaces full data.
 - `asset-bundle-registry.<domain>/profiles*` keeps serving Decentraland's registry to
-  unity-explorer.
+  Unity Explorer.
+- A four-second deploy-coalescing window and identical-profile suppression remain unimplemented.
 
 ## Follow-ups
 
 - Remove the registry path once Decentraland's catalysts answer `POST /lambdas/profiles/metadata`:
   `compact_source`'s registry branch in the comms profile module and
   `common::base_domain::decentraland_domain`. Compact reads then go to the catalyst everywhere.
-- unity-explorer's four-second deploy window and its skip of an identical profile are not ported.

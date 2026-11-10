@@ -26,6 +26,10 @@ fn settings() -> Settings {
     }
 }
 
+/// Trigger DDL on one table can deadlock, so the tests that add and drop
+/// triggers on `social.user_badge_progress` take turns.
+static PROGRESS_TRIGGERS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 async fn state() -> Option<SharedState> {
     let pool = crate::db::scratch::pool(4).await?;
     Some(Arc::new(State::new(pool, settings())))
@@ -450,6 +454,7 @@ async fn a_database_error_fails_only_that_wallet() {
     let Some(state) = state().await else {
         return;
     };
+    let _serial = PROGRESS_TRIGGERS.lock().await;
     let pool = state.badges.pool();
     let (before, broken, after) = (fresh_address(), fresh_address(), fresh_address());
     let name = format!("backfill_fail_{}", &broken.as_str()[2..]);
@@ -507,6 +512,7 @@ async fn a_lost_database_fails_the_remaining_wallets_at_once() {
     let Some(state) = state().await else {
         return;
     };
+    let _serial = PROGRESS_TRIGGERS.lock().await;
     let pool = state.badges.pool();
     let (before, broken, after) = (fresh_address(), fresh_address(), fresh_address());
     let name = format!("backfill_lost_{}", &broken.as_str()[2..]);
