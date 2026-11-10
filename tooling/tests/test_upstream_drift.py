@@ -85,6 +85,12 @@ class VersionLogicTests(unittest.TestCase):
         self.assertEqual(drift.v8_findings(self.v8_state({'crate': '150.4.0', 'v8': '15.0', 'milestone': 150},
                                                          {'crate': '150.4.0', 'v8': '15.0', 'milestone': 150}, 157)), [])
 
+    def test_v8_findings_flag_a_newer_v8_within_deno_cores_requirement(self):
+        findings = drift.v8_findings(self.v8_state({'crate': '150.4.0', 'v8': '15.0.245.2', 'milestone': 150},
+                                                   {'crate': '150.5.0', 'v8': '15.0.250.1', 'milestone': 150}, 151))
+        self.assertEqual(findings, ["a newer v8 within deno_core's requirement: v8 150.4.0 (V8 15.0.245.2) is locked while "
+                                    "deno_core 0.413.0 accepts v8 150.5.0 (V8 15.0.250.1); a lock-only bump of v8 takes it"])
+
     def test_v8_findings_flag_an_unknown_version(self):
         findings = drift.v8_findings(self.v8_state({'crate': '0.1.0', 'v8': None, 'milestone': None}, None, 157))
         self.assertEqual(findings, ['cannot tell the V8 version of the locked v8 0.1.0'])
@@ -112,6 +118,24 @@ class VersionLogicTests(unittest.TestCase):
         self.assertIsNone(v8['locked'])
         self.assertEqual(v8['findings'], ['v8 outside crates.io, its age is not checked: 150.4.0 (path)'])
         self.assertIn('v8 outside crates.io', drift.v8_report_markdown(v8))
+
+    def test_collect_v8_keeps_the_crates_io_comparisons_without_chrome(self):
+        meta = {'v8': {'versions': [{'num': '0.105.1', 'created_at': '2024-10-01T00:00:00Z'}, {'num': '150.4.0', 'created_at': '2026-06-01T00:00:00Z'}],
+                       'crate': {'max_stable_version': '150.4.0'}},
+                'deno_core': {'crate': {'max_stable_version': '0.413.0'}}}
+        lock = [{'name': 'v8', 'version': '0.105.1', 'source': 'registry+https://github.com/rust-lang/crates.io-index'}]
+        readmes = {'0.105.1': 'V8 Version: 12.9.202.9\n', '150.4.0': 'V8 Version: 15.0.245.2\n'}
+        with patch.object(drift, 'crates_io', side_effect=meta.get), \
+             patch.object(drift, 'v8_requirement', return_value='^150.4.0'), \
+             patch.object(drift, 'rusty_v8_readme', side_effect=readmes.get), \
+             patch.object(drift, 'chrome_stable', side_effect=OSError('chromiumdash down')), \
+             patch('sys.stderr'):
+            v8 = drift.collect_v8(lock)
+        self.assertIsNone(v8['chrome'])
+        self.assertEqual(len(v8['findings']), 2)
+        self.assertTrue(v8['findings'][0].startswith('behind deno_core: v8 0.105.1'))
+        self.assertEqual(v8['findings'][1], 'Chrome stable could not be fetched, so the milestone gap is not checked')
+        self.assertIn('| Chrome stable | – | – | ? | unavailable |', drift.v8_report_markdown(v8))
 
     def test_collect_v8_or_error_stores_the_failure(self):
         lock = [{'name': 'v8', 'version': '0.105.1', 'source': 'registry+https://github.com/rust-lang/crates.io-index'}]
@@ -146,6 +170,13 @@ class VersionLogicTests(unittest.TestCase):
         findings = drift.catalyst_v8_findings(self.catalyst_state({'crate': '140.0.0', 'v8': '14.0', 'milestone': 140}, None, 157))
         self.assertEqual(findings, ['unable to resolve the newest rusty_v8 on crates.io',
                                     'M140 is 17 milestones behind Chrome stable M157 (limit 12)'])
+
+    def test_catalyst_v8_report_renders_without_chrome(self):
+        entry = {'crate': '152.2.0', 'v8': '15.2.124.1', 'milestone': 152}
+        state = {**self.catalyst_state(entry, entry, 157), 'chrome': None}
+        state['findings'] = drift.catalyst_v8_findings(state)
+        self.assertEqual(state['findings'], ['Chrome stable could not be fetched, so the milestone gap is not checked'])
+        self.assertIn('| Chrome stable | – | – | ? | unavailable |', drift.catalyst_v8_report_markdown(state))
 
     def test_collect_catalyst_v8_reads_the_direct_pin(self):
         meta = {'v8': {'versions': [{'num': '152.2.0', 'created_at': '2026-10-01T00:00:00Z'}, {'num': '153.0.0', 'created_at': '2026-11-02T00:00:00Z'}],
@@ -196,6 +227,13 @@ class VersionLogicTests(unittest.TestCase):
         self.assertIn("- unable to resolve the V8 freshness data: boom", body)
         self.assertIn('| pinned | 152.2.0 |', body)
 
+    def test_v8_report_flags_an_explorer_lock_without_v8(self):
+        entry = {'crate': '152.2.0', 'v8': '15.2', 'milestone': 152}
+        catalyst = {**self.catalyst_state(entry, entry, 157), 'findings': []}
+        code, body = self.write_report({'v8': None, 'catalyst_v8': catalyst})
+        self.assertEqual(code, 0)
+        self.assertIn('## Bevy Explorer scene runtime\n\nFindings:\n\n- no v8 crate in the lock', body)
+
     def test_v8_report_removes_the_body_when_both_are_current(self):
         entry = {'crate': '152.2.0', 'v8': '15.2', 'milestone': 152}
         catalyst = {**self.catalyst_state(entry, entry, 157), 'findings': []}
@@ -209,7 +247,8 @@ class VersionLogicTests(unittest.TestCase):
         issue = text.index('- name: Open, update or close the V8 freshness issue')
         self.assertGreater(issue, text.index('- name: Open or update the fork inventory pull request'))
         self.assertNotIn('--search', text[issue:])
-        self.assertIn('select(.title == env.TITLE)', text[issue:])
+        self.assertIn('select(.title == env.TITLE and .author.login == "app/github-actions")', text[issue:])
+        self.assertIn('gh issue close "$extra" --comment "Duplicate of #$keep."', text[issue:])
 
     def test_tag_helpers(self):
         self.assertEqual(drift.version_key('v0.16.1'), (0, 16, 1, 0))

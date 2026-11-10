@@ -158,7 +158,7 @@ function overview(){
     <td>${affecting(s) ? `<span class="badge b-security">${affecting(s)}</span>` : '0'}</td><td>${r ? `<span class="badge b-${esc(r.verdict)}">${esc(r.verdict)}</span><span class="muted">${esc(r.priority||'')}</span>` : '<span class="muted">–</span>'}</td></tr>`; }).join('')}</tbody></table>`;
 }
 function v8Panel(){
-  const v = D.v8; if (!v) return '';
+  const v = D.v8; if (!v) return '<h3>Scene runtime V8</h3><p class="empty">No v8 crate in the lock, so its V8 is not checked.</p>';
   if (v.error) return `<h3>Scene runtime V8</h3><p class="empty">Not collected: ${esc(v.error)}</p>`;
   return `<h3>Scene runtime V8</h3><p class="muted">The <code>v8</code> crate deno_core locks; RustSec has no V8 advisories, so its age is checked here. Chrome gap limit: ${v.chrome_gap_limit} milestones.</p>
   ${v8Table(v, [['locked', v.locked], [`newest deno_core (${v.deno_core.version}) accepts`, v.accepted, v.deno_core.v8_req], ['newest rusty_v8', v.newest]])}`;
@@ -173,7 +173,7 @@ function v8Table(v, rows){
   const row = (label, e, note) => `<tr><td>${esc(label)}</td><td>${e ? `<a href="https://crates.io/crates/v8/${esc(e.crate)}" target="_blank" rel="noreferrer">${esc(e.crate)}</a>` : '–'}</td><td>${esc(e?.v8 || '?')}</td><td>${e?.milestone ? 'M' + e.milestone : '?'}</td><td>${esc(e?.date || '')} <span class="muted">${esc(note || '')}</span></td></tr>`;
   return `<table><thead><tr><th></th><th>v8 crate</th><th>V8</th><th>Chrome</th><th>released</th></tr></thead><tbody>
   ${rows.map(r => row(...r)).join('')}
-  <tr><td>Chrome stable</td><td>–</td><td>–</td><td>M${v.chrome.milestone}</td><td>${esc(v.chrome.date)} <span class="muted">${esc(v.chrome.version)}</span></td></tr></tbody></table>
+  ${v.chrome ? `<tr><td>Chrome stable</td><td>–</td><td>–</td><td>M${v.chrome.milestone}</td><td>${esc(v.chrome.date)} <span class="muted">${esc(v.chrome.version)}</span></td></tr>` : '<tr><td>Chrome stable</td><td>–</td><td>–</td><td>?</td><td>unavailable</td></tr>'}</tbody></table>
   ${v.findings.length ? `<ul>${v.findings.map(f => `<li><span class="badge b-security">behind</span> ${esc(f)}</li>`).join('')}</ul>` : '<p class="empty">V8 is current.</p>'}`;
 }
 function catList(obj){

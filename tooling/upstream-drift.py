@@ -450,6 +450,15 @@ def chrome_stable():
             'date': datetime.datetime.fromtimestamp(release['time'] / 1000, datetime.UTC).date().isoformat()}
 
 
+def chrome_stable_or_none():
+    """Chrome stable, or None: only the milestone gap needs it, so its outage keeps the crates.io comparisons."""
+    try:
+        return chrome_stable()
+    except Exception as error:
+        print(f'  chrome stable: {error!r}', file=sys.stderr)
+        return None
+
+
 def v8_lock_findings(v8):
     """Findings on the lock itself, and whether the locked V8 is known well enough to age-check."""
     locked = v8['locked']
@@ -468,7 +477,9 @@ def v8_lock_findings(v8):
 
 def chrome_gap_findings(v8):
     locked, chrome = v8['locked'], v8['chrome']
-    if chrome and chrome['milestone'] - locked['milestone'] >= CHROME_GAP_LIMIT:
+    if not chrome:
+        return ['Chrome stable could not be fetched, so the milestone gap is not checked']
+    if chrome['milestone'] - locked['milestone'] >= CHROME_GAP_LIMIT:
         return [f"M{locked['milestone']} is {chrome['milestone'] - locked['milestone']} milestones behind Chrome stable "
                 f"M{chrome['milestone']} (limit {CHROME_GAP_LIMIT})"]
     return []
@@ -488,6 +499,11 @@ def v8_findings(v8):
         findings.append(f"behind deno_core: v8 {locked['crate']} (V8 {locked['v8']}, M{locked['milestone']}) is locked while "
                         f"deno_core {v8['deno_core']['version']} accepts v8 {accepted['crate']} (V8 {accepted['v8']}, M{accepted['milestone']}); "
                         'bump deno_core, deno_web and deno_webidl together')
+    elif parse_version(locked['crate'])[0] < parse_version(accepted['crate'])[0]:
+        # Patch releases inside a milestone carry V8's security fixes.
+        findings.append(f"a newer v8 within deno_core's requirement: v8 {locked['crate']} (V8 {locked['v8']}) is locked while "
+                        f"deno_core {v8['deno_core']['version']} accepts v8 {accepted['crate']} (V8 {accepted['v8']}); "
+                        'a lock-only bump of v8 takes it')
     return findings + chrome_gap_findings(v8)
 
 
@@ -535,11 +551,11 @@ def collect_v8(lock_pkgs):
           'locked': describe(locked_versions[0] if locked_versions else None),
           'deno_core': {'version': deno_core, 'v8_req': req},
           'accepted': describe(newest_matching(v8_meta['versions'], req) if req else None),
-          'newest': describe(v8_meta['crate']['max_stable_version']), 'chrome': chrome_stable(),
+          'newest': describe(v8_meta['crate']['max_stable_version']), 'chrome': chrome_stable_or_none(),
           'chrome_gap_limit': CHROME_GAP_LIMIT}
     v8['findings'] = v8_findings(v8)
     print(f"  v8: locked {(v8['locked'] or {}).get('crate')} (M{(v8['locked'] or {}).get('milestone')}), deno_core {deno_core} accepts "
-          f"{(v8['accepted'] or {}).get('crate')}, newest {v8['newest']['crate']}, Chrome stable M{v8['chrome']['milestone']}: "
+          f"{(v8['accepted'] or {}).get('crate')}, newest {v8['newest']['crate']}, Chrome stable M{(v8['chrome'] or {}).get('milestone')}: "
           f"{len(v8['findings'])} finding(s)", file=sys.stderr)
     return v8
 
@@ -553,11 +569,11 @@ def collect_catalyst_v8(lock_pkgs):
     describe = v8_describer(v8_meta)
     v8 = {'locked_versions': locked_versions, 'unregistered': unregistered,
           'locked': describe(locked_versions[0] if locked_versions else None),
-          'newest': describe(v8_meta['crate']['max_stable_version']), 'chrome': chrome_stable(),
+          'newest': describe(v8_meta['crate']['max_stable_version']), 'chrome': chrome_stable_or_none(),
           'chrome_gap_limit': CHROME_GAP_LIMIT}
     v8['findings'] = catalyst_v8_findings(v8)
     print(f"  catalyst v8: pinned {(v8['locked'] or {}).get('crate')} (M{(v8['locked'] or {}).get('milestone')}), "
-          f"newest {(v8['newest'] or {}).get('crate')}, Chrome stable M{v8['chrome']['milestone']}: "
+          f"newest {(v8['newest'] or {}).get('crate')}, Chrome stable M{(v8['chrome'] or {}).get('milestone')}: "
           f"{len(v8['findings'])} finding(s)", file=sys.stderr)
     return v8
 
@@ -571,19 +587,23 @@ def collect_v8_or_error(lock_pkgs, collect=None):
         return {'error': repr(error)}
 
 
+def chrome_row(chrome):
+    if not chrome:
+        return '| Chrome stable | – | – | ? | unavailable |'
+    return f"| Chrome stable | – | – | M{chrome['milestone']} | {chrome['date']} ({chrome['version']}) |"
+
+
 def v8_report_markdown(v8):
     def row(label, entry, note=''):
         if not entry:
             return f'| {label} | – | – | – | {note} |'
         return f"| {label} | {entry.get('crate', '–')} | {entry.get('v8') or '?'} | M{entry.get('milestone') or '?'} | {entry.get('date') or ''} {note}".rstrip() + ' |'
-    chrome = v8['chrome']
     lines = ['The native scene runtime embeds V8 through the `v8` crate (rusty_v8), locked transitively by deno_core in '
              '`rendering/bevy-explorer/source/Cargo.lock`. RustSec has no V8 advisories, so this is the only check on its age.', '',
              '| | v8 crate | V8 | Chrome | released |', '| --- | --- | --- | --- | --- |',
              row('locked', v8['locked']),
              row(f"newest deno_core ({v8['deno_core']['version']}) accepts", v8['accepted'], f"(`{v8['deno_core']['v8_req'] or '?'}`)"),
-             row('newest rusty_v8', v8['newest']),
-             f"| Chrome stable | – | – | M{chrome['milestone']} | {chrome['date']} ({chrome['version']}) |", '']
+             row('newest rusty_v8', v8['newest']), chrome_row(v8['chrome']), '']
     if v8['findings']:
         lines += ['Findings:', ''] + [f'- {f}' for f in v8['findings']]
     else:
@@ -596,13 +616,11 @@ def catalyst_v8_report_markdown(v8):
         if not entry:
             return f'| {label} | – | – | – | |'
         return f"| {label} | {entry['crate']} | {entry.get('v8') or '?'} | M{entry.get('milestone') or '?'} | {entry.get('date') or ''} |"
-    chrome = v8['chrome']
     lines = ['The catalyst hosts SDK7 world scenes on V8 through a direct `v8` pin (rusty_v8) in '
              '`services/catalyst/Cargo.toml`, locked in `services/catalyst/Cargo.lock`. No deno_core bounds it, so any '
              'newer rusty_v8 is a bump to take.', '',
              '| | v8 crate | V8 | Chrome | released |', '| --- | --- | --- | --- | --- |',
-             row('pinned', v8['locked']), row('newest rusty_v8', v8['newest']),
-             f"| Chrome stable | – | – | M{chrome['milestone']} | {chrome['date']} ({chrome['version']}) |", '']
+             row('pinned', v8['locked']), row('newest rusty_v8', v8['newest']), chrome_row(v8['chrome']), '']
     if v8['findings']:
         lines += ['Findings:', ''] + [f'- {f}' for f in v8['findings']]
     else:
@@ -610,16 +628,23 @@ def catalyst_v8_report_markdown(v8):
     return '\n'.join(lines) + '\n'
 
 
-# data.json key, section title, renderer
-V8_WORKSPACES = [('v8', 'Bevy Explorer scene runtime', v8_report_markdown),
-                 ('catalyst_v8', 'Catalyst SDK7 scene host', catalyst_v8_report_markdown)]
+# data.json key, section title, renderer, whether the lock must have a v8 (the Explorer always embeds V8)
+V8_WORKSPACES = [('v8', 'Bevy Explorer scene runtime', v8_report_markdown, True),
+                 ('catalyst_v8', 'Catalyst SDK7 scene host', catalyst_v8_report_markdown, False)]
 
 
 def v8_report(body_path):
     data = json.loads(DATA.read_text())
     sections, findings, collected, errors = [], [], 0, 0
-    for key, title, render in V8_WORKSPACES:
+    for key, title, render, required in V8_WORKSPACES:
         v8 = data.get(key)
+        if not v8 and required:
+            # A missing v8 is a lock or collector problem, not a current V8.
+            collected += 1
+            finding = 'no v8 crate in the lock, so its V8 is not checked'
+            sections.append(f'## {title}\n\nFindings:\n\n- {finding}\n')
+            findings.append((title, finding))
+            continue
         if not v8:
             sections.append(f'## {title}\n\nNo v8 crate in the lock.\n')
             continue
