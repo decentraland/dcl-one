@@ -65,16 +65,20 @@ next frame, and a model stays hidden until both steps are done.
   `despawn_instance` and `unregister_instance` despawn every entity the instance allocated, and
   drop it if it is still queued. A scene replaced (another `World`) or removed mid-spawn starts
   its instance over; a removed one waits for its scene to load again. If no entity is marked while
-  some are still unwritten: a top-level entity despawned by others cancels the instance; otherwise
-  (an entity despawned by others, a scene changed in place) it starts over, still in slices, and
-  only if that gets stuck too, which a hierarchy that does not reach every entity does, is it
-  written whole.
+  some are still unwritten and a top-level entity was despawned by others, what was never written
+  goes and the instance completes with what is left, so its ready event fires, as a whole spawn
+  whose root was despawned afterwards would. Otherwise (an entity despawned by others, a scene
+  changed in place) it starts over, still in slices, and only if that gets stuck too, which a
+  hierarchy that does not reach every entity does, is it written whole. An instance that fails to
+  write (an unregistered component) is despawned and forgotten before the error is returned.
 - **Hidden until revealed.** `spawn_as_child_hidden` keeps an instance hidden after it has
   spawned, until `reveal_instance_sync`. The Explorer spawns glTF containers that way and reveals
   them when processing is done, so Bevy's own materials and a model's collider meshes never show,
-  even while processing waits for textures or for later frames. Hiding covers rendering only:
-  processing adds colliders and triggers node by node, so for those frames a hidden model already
-  blocks the player and takes pointer events where its processed nodes are.
+  even while processing waits for textures or for later frames. Colliders and triggers wait too:
+  `update_colliders` skips the nodes of a container still processing, so a hidden model neither
+  blocks the player nor takes pointer events. A collider is removed only by the entity that holds
+  it: a model's replacement registers its colliders under the same ids (container, mesh name,
+  index) while the old model is still shown, and despawning the old one must not remove them.
 - **Resumable processing.** `update_ready_gltfs` processes a model's nodes until the same
   deadline (`SceneSpawnerPlus::spawn_deadline`). A node is processed once it has a
   `ContainerEntity`, which processing gives it first, so each frame takes the model's nodes that
@@ -82,7 +86,10 @@ next frame, and a model stays hidden until both steps are done.
   counter, the animation flag and the named nodes). Models already in progress go first; at least
   one node is processed a frame, and containers with nothing to process finish whatever the
   deadline. Resetting or removing the container drops the progress and despawns a model not
-  processed yet; a container put again with the same value keeps its model.
+  processed yet; a container put again with the same value keeps its model. Each resumed frame
+  looks through the model's nodes again for those still to do: a model of n nodes processed over
+  f frames costs about n·f component lookups, tens of microseconds a frame for thousands of nodes,
+  which keeps the progress on the nodes rather than in a cursor.
 - **The Explorer's slice.** `scene_runner::scene_spawn_slice` sets the deadline 4 ms after it runs
   each frame (`SpawnScene`, before `scene_spawner_system`), shared by spawning and processing, and
   none while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
