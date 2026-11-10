@@ -1,3 +1,4 @@
+import { stat } from 'node:fs/promises'
 import path from 'node:path'
 import { diagnostic, type Diagnostic } from './diagnostics.js'
 import { normalizeNodeId, type FigmaSet } from './figma-index.js'
@@ -290,24 +291,32 @@ async function loadMappings(library: LibraryInfo, mappingRoot: string) {
   return Promise.all(files.map((file) => readMappingFile(file)))
 }
 
+// The mapping root as a coded answer: unset, not an existing directory, or outside an npm package are each
+// mapping-root-not-configured, never a raw file-system error.
+async function mappingSource(
+  mappingRoot: string | undefined
+): Promise<{ library: LibraryInfo; mappingRoot: string } | { error: Diagnostic }> {
+  const refuse = (message: string) => ({
+    error: diagnostic('mapping-root-not-configured', message)
+  })
+  if (!mappingRoot)
+    return refuse(
+      'No mapping source configured. Set --mapping-root, DCL_FIGMA_MAPPING_ROOT or contract.mappingRoot in figma.config.json.'
+    )
+  const directory = await stat(mappingRoot).catch(() => undefined)
+  if (!directory?.isDirectory()) return refuse(`${mappingRoot} is not an existing directory.`)
+  const library = await loadLibrary(mappingRoot)
+  if (!library)
+    return refuse(
+      `${mappingRoot} is not inside an npm package, so the library version and name cannot be established.`
+    )
+  return { library, mappingRoot }
+}
+
 async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promise<ResolveResult> {
-  if (!ctx.mappingRoot) {
-    return fail([
-      diagnostic(
-        'mapping-root-not-configured',
-        'No mapping source configured. Set --mapping-root, DCL_FIGMA_MAPPING_ROOT or contract.mappingRoot in figma.config.json.'
-      )
-    ])
-  }
-  const library = await loadLibrary(ctx.mappingRoot)
-  if (!library) {
-    return fail([
-      diagnostic(
-        'mapping-root-not-configured',
-        `${ctx.mappingRoot} is not inside an npm package, so the library version and name cannot be established.`
-      )
-    ])
-  }
+  const root = await mappingSource(ctx.mappingRoot)
+  if ('error' in root) return fail([root.error])
+  const { library } = root
 
   const warnings: Diagnostic[] = []
   if (ctx.figmaSets.length === 0) {
@@ -342,7 +351,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   if (identity.errors.length) return failure(identity.errors)
 
   // With a capture, a node outside it is not a library component, even if a stale mapping still targets it.
-  const mappings = await loadMappings(library, ctx.mappingRoot)
+  const mappings = await loadMappings(library, root.mappingRoot)
   if (ctx.figmaSets.length > 0 && !identity.set) {
     // A mapping that still targets the node is a stale mapping: a library defect to report, not a retry.
     const stale = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
@@ -581,10 +590,11 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
 async function checkMappings(
   ctx: ResolveContext
 ): Promise<{ file: string; diagnostics: Diagnostic[] }[]> {
-  if (!ctx.mappingRoot) return []
-  const library = await loadLibrary(ctx.mappingRoot)
-  if (!library) return []
-  const mappings = await loadMappings(library, ctx.mappingRoot)
+  // checkMappingsReport turns an unusable root into mapping-root-not-configured; callers of this list get none.
+  const root = await mappingSource(ctx.mappingRoot)
+  if ('error' in root) return []
+  const { library } = root
+  const mappings = await loadMappings(library, root.mappingRoot)
   const results: { file: string; diagnostics: Diagnostic[] }[] = []
   const seenNodes = new Map<string, string>()
   const seenIds = new Map<string, string>()
@@ -659,20 +669,14 @@ async function checkMappings(
 // The check-mappings answer for the CLI and the MCP tool. Without a capture the node, drift and
 // supersession checks cannot run, and the report says so instead of passing silently.
 async function checkMappingsReport(ctx: ResolveContext) {
-  // No mapping root, or one outside a package, is a failure here too, never an empty pass.
-  if (!ctx.mappingRoot || !(await loadLibrary(ctx.mappingRoot)))
+  // A missing, absent or unpackaged mapping root is a failure here too, never an empty pass.
+  const root = await mappingSource(ctx.mappingRoot)
+  if ('error' in root)
     return {
       ok: false,
       checked: 0,
       captureChecked: false,
-      errors: [
-        diagnostic(
-          'mapping-root-not-configured',
-          ctx.mappingRoot
-            ? `${ctx.mappingRoot} is not inside an npm package.`
-            : 'No mapping source configured.'
-        )
-      ],
+      errors: [root.error],
       warnings: [],
       results: []
     }

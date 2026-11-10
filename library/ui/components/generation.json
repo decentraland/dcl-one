@@ -200,8 +200,8 @@
     },
     {
       "path": "library/ui/figma/src/contract/resolve.ts",
-      "sha256": "749801dc001239d0cfe202c81aeca31e5a2482a1425a97eb52dc394296034833",
-      "indexBlobSha": "78345ffce4cdd32c71aaecf927319b0a32a85c69"
+      "sha256": "45a9843b1221adedc3fe4d5acf5dcba0c1e082f63fc0738fa7cc9d1dbf07c9cd",
+      "indexBlobSha": "370c6b2649df82e5c48fbd45b2917a7c20ed7b5f"
     },
     {
       "path": "library/ui/figma/src/contract/test-fixtures.ts",
