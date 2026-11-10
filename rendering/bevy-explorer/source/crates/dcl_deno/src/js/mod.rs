@@ -827,6 +827,72 @@ mod tests {
         .unwrap();
     }
 
+    /// The server seal does not depend on built-ins scene code can replace: `require` hands
+    /// the internals to `~system/*` modules without passing them through any of them.
+    #[test]
+    fn the_seal_holds_when_the_scene_replaces_builtins() {
+        run_scene(
+            true,
+            r#"
+            const RA = Reflect.apply;
+            const reached = [];
+            const internal = (v) => {
+                if (v === null || (typeof v !== "object" && typeof v !== "function")) { return false; }
+                return "core" in v || "ops" in v
+                    || (typeof v.name === "string" && v.name.startsWith("op_"));
+            };
+            const check = (self, args) => {
+                if (internal(self)) { reached.push("this"); }
+                for (let i = 0; i < args.length; i++) {
+                    if (internal(args[i])) { reached.push(`argument ${i}`); }
+                }
+            };
+            const wrap = (target, key) => {
+                const original = target[key];
+                target[key] = function (...args) {
+                    check(this, args);
+                    return RA(original, this, args);
+                };
+            };
+            const bind = Function.prototype.bind;
+            Function.prototype.call = function (self, ...args) {
+                check(self, args);
+                return RA(this, self, args);
+            };
+            Function.prototype.apply = function (self, args) {
+                check(self, args || []);
+                return RA(this, self, args || []);
+            };
+            Function.prototype.bind = function (self, ...args) {
+                check(self, args);
+                return RA(bind, this, [self].concat(args));
+            };
+            Reflect.apply = function (f, self, args) {
+                check(self, args);
+                return RA(f, self, args);
+            };
+            const iterator = Array.prototype[Symbol.iterator];
+            Array.prototype[Symbol.iterator] = function () {
+                check(this, this);
+                return RA(iterator, this, []);
+            };
+            wrap(String.prototype, "replace");
+            wrap(String.prototype, "substring");
+            wrap(RegExp.prototype, Symbol.replace);
+            wrap(RegExp.prototype, "exec");
+
+            const engine = require("~system/EngineApi");
+            const testing = require("~system/Testing");
+            if (typeof engine.crdtSendToRenderer !== "function" || typeof testing.plan !== "function") {
+                throw new Error("a system module did not load");
+            }
+            if (reached.length > 0) { throw new Error(`internals reached scene code: ${reached}`); }
+            if (typeof Deno !== "undefined") { throw new Error("`Deno` is reachable"); }
+            "#,
+        )
+        .unwrap();
+    }
+
     /// The seal is scoped to the authoritative server on purpose: the desktop client runs on
     /// the user's own machine, and narrowing the change keeps preview and every deployed
     /// scene behaving exactly as they do today. Pinned so the scoping is a decision rather
