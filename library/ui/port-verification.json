@@ -1,37 +1,37 @@
 {
   "schema": 1,
-  "lockHash": "3bb2c85dc8a49465f0bfc4cee02276047f323b2a9e90065cf33fda437eb66ad2",
+  "lockHash": "128bbded958995f59d83fe26d7036de8ee87b64c7174373353df4373f224ce04",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "7e1bf46247d289dadbe6ff4e38fef602eafa35b6",
+  "figmaTree": "5d0d59dd2f5c5224223f9a4c882c738e9bc61fa8",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "verified existing cache: 544 files match the pinned revision and digest table"
+      "detail": "verified 544 cache files against the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "439 tooling files and 39 public foundation files match pinned bytes and origins"
+      "detail": "449 tooling pins, 39 foundation origins and 10 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
-      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "run on this tree: 0 added, 0 changed, 0 removed and no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "run on this tree: 0 public mappings, internal NavBar mapping omitted"
+      "detail": "run on this tree: 0 public mappings for the internal NavBar"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "run on this tree: 46 components, 561 variants, catalog unchanged"
+      "detail": "run on this tree: 46 components and 561 variants, catalog byte-identical"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "run on this tree: 19 gallery bounds checks pass, internal source control holds remain"
+      "detail": "run on this tree: 19 gallery bounds checks pass, source control holds remain"
     },
     "install": {
       "result": "pass",
-      "detail": "39 foundation files reproduced with no-op repeat, 9-file internal component plan is deterministic"
+      "detail": "39 foundation files byte-identical, 10 component files reproduce with no-op repeat"
     }
   }
 }
