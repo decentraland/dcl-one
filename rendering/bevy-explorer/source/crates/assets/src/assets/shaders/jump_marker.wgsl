@@ -1,8 +1,6 @@
-// The jump landing marker (avatar/src/jump_marker.rs): a soft black blob on a ground-aligned quad,
-// after unity:Explorer/Assets/DCL/JumpIndicator/Jump Indicator.shadergraph with the blob type and
-// small-to-large height scaling BlobShadow.mat selects. Unlit and transparent. The opacity and the
-// blob's scale follow the player's distance to the ground through two ramps each; the constants
-// come from Rust as shader defs.
+// The jump landing marker (avatar/src/jump_marker.rs): a soft black blob on a ground-aligned quad.
+// Unlit and transparent. The opacity and the blob's scale follow the player's distance to the
+// ground through two ramps each; the constants come from Rust as shader defs.
 
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},

@@ -1,12 +1,6 @@
 //! The jump landing marker: a soft dark blob on the ground under the player while airborne,
-//! showing where they will land. It follows
-//! `unity:Explorer/Assets/DCL/JumpIndicator/JumpIndicatorSystem.cs`, which enables a decal
-//! projector (`JumpIndicator.prefab`, 2 x 1.5 m, 10 m deep) under the avatar and feeds its
-//! material the distance to the ground; `BlobShadow.mat` selects the black blob variant of
-//! `unity:Explorer/Assets/DCL/JumpIndicator/Jump Indicator.shadergraph`, whose ramps are in
-//! jump_marker.wgsl. Divergence: a ground-aligned quad instead of a decal projector, because
-//! bevy's forward decal needs the depth prepass, and the marker should not tie the camera to it.
-//! Only the primary player gets one.
+//! showing where they will land. A ground-aligned quad under the primary player, faded and
+//! scaled by the distance to the ground; jump_marker.wgsl draws the blob from the constants here.
 
 use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver},
@@ -19,34 +13,30 @@ use bevy::{
         },
     },
 };
+use bevy_console::ConsoleCommand;
 use common::{
     sets::{PostUpdateSets, SetupSets},
     structs::{AvatarDynamicState, PrimaryUser},
 };
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 
-/// the decal's footprint on the ground, in metres
-/// (unity:Explorer/Assets/DCL/JumpIndicator/JumpIndicator.prefab, `m_Size`)
+/// the marker's footprint on the ground, in metres
 pub const MARKER_SIZE: Vec2 = Vec2::new(2.0, 1.5);
 /// the blob is opaque inside the inner radius and fades out to the outer one, as fractions of
-/// the footprint's half extent (unity:Explorer/Assets/DCL/JumpIndicator/BlobShadow.mat)
+/// the footprint's half extent
 pub const INNER_RADIUS: f32 = 0.35;
 pub const OUTER_RADIUS: f32 = 1.0;
 /// the opacity range and the ground distances it follows: it rises over the first pair of
-/// distances and falls over the second (BlobShadow.mat `_Opacity_Range`,
-/// `_Opacity_Distance_Ranges`). Divergence: the rise is over 0..0.2 m, not 0..1 m, so the blob
-/// stays visible until the player nearly lands
+/// distances, so the blob fades in only just above the ground, and falls over the second
 pub const OPACITY_RANGE: Vec2 = Vec2::new(0.0, 0.9);
 pub const OPACITY_DISTANCES: Vec4 = Vec4::new(0.0, 0.2, 6.0, 10.0);
-/// the decal projector's fade factor, which scales the material's opacity
-/// (unity:Explorer/Assets/DCL/JumpIndicator/JumpIndicator.prefab, `m_FadeFactor`)
+/// scales the whole opacity range, keeping the blob a light cue rather than a hole in the ground
 pub const FADE_FACTOR: f32 = 0.5;
-/// the blob's scale range and the distances it follows (BlobShadow.mat `_Height_Scaling_Range`,
-/// `_Height_Scaling_Distance_Ranges`). The material's "small to large" scaling inverts the
-/// shadergraph's ramp, which is one over the first pair of distances and falls over the second,
-/// so the blob is small near the ground and reaches full size at the last distance
+/// the blob's scale range and the distances it follows: small near the ground, reaching full
+/// size at the last distance
 pub const HEIGHT_SCALE_RANGE: Vec2 = Vec2::new(0.4, 1.0);
 pub const HEIGHT_SCALE_DISTANCES: Vec4 = Vec4::new(0.0, 0.0, 4.0, 8.0);
-/// the decal's depth, and the ground probe's range: farther from the ground there is no marker
+/// the ground probe's range: farther from the ground there is no marker
 pub const MAX_GROUND_DISTANCE: f32 = 10.0;
 /// below this distance to the ground the player is standing, not airborne
 const GROUNDED_EPSILON: f32 = 0.05;
@@ -62,15 +52,14 @@ fn ramp(from: f32, to: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// the shadergraph's two ramps over `distances`: one over the first pair, back to zero over the
-/// second
+/// one over the first pair of `distances`, back to zero over the second
 fn rise_and_fall(distances: Vec4, ground_distance: f32) -> f32 {
     ramp(distances.x, distances.y, ground_distance)
         - ramp(distances.z, distances.w, ground_distance)
 }
 
-/// Opacity of the blob for a ground distance in metres (the shadergraph's two four-point ramps:
-/// rises over the first pair, falls over the second), scaled by the projector's fade factor.
+/// Opacity of the blob for a ground distance in metres: rises over the first pair of distances,
+/// falls over the second, scaled by the fade factor.
 pub fn marker_opacity(ground_distance: f32) -> f32 {
     FADE_FACTOR
         * (OPACITY_RANGE.x
@@ -81,7 +70,6 @@ pub fn marker_opacity(ground_distance: f32) -> f32 {
 /// Scale of the blob for a ground distance in metres: small near the ground, growing over the
 /// second pair of distances.
 pub fn marker_scale(ground_distance: f32) -> f32 {
-    // the shadergraph's "small to large" branch: one minus the ramp
     HEIGHT_SCALE_RANGE.x
         + (HEIGHT_SCALE_RANGE.y - HEIGHT_SCALE_RANGE.x)
             * (1.0 - rise_and_fall(HEIGHT_SCALE_DISTANCES, ground_distance))
@@ -156,10 +144,28 @@ pub struct JumpMarkerPlugin;
 impl Plugin for JumpMarkerPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<JumpMarkerMaterial>::default());
+        app.insert_resource(JumpMarkerEnabled(true))
+            .add_console_command::<JumpMarkerCommand, _>(jump_marker_command)
+            .add_debug_section(DebugSection {
+                title: "Jump marker",
+                query: "/jump_marker",
+                fields: &[
+                    ("Shown", "shown"),
+                    ("Ground distance (m)", "ground_distance"),
+                    ("Opacity", "opacity"),
+                    ("Blob scale", "scale"),
+                ],
+                actions: &[],
+                inputs: &[DebugInput {
+                    label: "Enable jump marker",
+                    field: "enabled",
+                    command: "/jump_marker {value}",
+                    kind: DebugInputKind::Toggle,
+                }],
+            });
         app.add_systems(Startup, spawn_jump_marker.in_set(SetupSets::Main));
         // after the movement writes this frame's position and ground distance, before the
-        // transforms propagate: in `Update` the quad would sit at last frame's distance under
-        // this frame's player, below the ground (and hidden by it) while falling
+        // transforms propagate, so the quad sits on the ground the player is over this frame
         app.add_systems(
             PostUpdate,
             update_jump_marker
@@ -167,6 +173,46 @@ impl Plugin for JumpMarkerPlugin {
                 .before(PostUpdateSets::CameraUpdate),
         );
     }
+}
+
+/// Whether the marker shows while the player is airborne.
+#[derive(Resource)]
+pub struct JumpMarkerEnabled(pub bool);
+
+/// Read the jump marker's state, or enable or disable it.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/jump_marker")]
+struct JumpMarkerCommand {
+    enabled: Option<bool>,
+}
+
+fn jump_marker_command(
+    mut cmd: ConsoleCommand<JumpMarkerCommand>,
+    mut enabled: ResMut<JumpMarkerEnabled>,
+    player: Query<&AvatarDynamicState, With<PrimaryUser>>,
+    marker: Query<&Visibility, With<JumpMarker>>,
+) {
+    let Some(Ok(request)) = cmd.take() else {
+        return;
+    };
+    if let Some(value) = request.enabled {
+        enabled.0 = value;
+    }
+    let ground_distance = player.single().ok().map(|state| state.ground_height);
+    let shown = marker
+        .single()
+        .is_ok_and(|visibility| *visibility == Visibility::Visible);
+    cmd.reply_ok(
+        serde_json::json!({
+            "enabled": enabled.0,
+            "shown": shown,
+            "ground_distance": ground_distance,
+            "opacity": ground_distance.map(marker_opacity),
+            "scale": ground_distance.map(marker_scale),
+            "unavailable": { "": "no primary player" },
+        })
+        .to_string(),
+    );
 }
 
 fn spawn_jump_marker(
@@ -205,18 +251,20 @@ fn update_jump_marker(
         (With<JumpMarker>, Without<PrimaryUser>),
     >,
     mut materials: ResMut<Assets<JumpMarkerMaterial>>,
+    enabled: Res<JumpMarkerEnabled>,
 ) {
     let state = player.into_inner();
     let (mut transform, mut visibility, material) = marker.into_inner();
 
     let ground_distance = state.ground_height;
     let airborne = ground_distance > GROUNDED_EPSILON && ground_distance < MAX_GROUND_DISTANCE;
-    visibility.set_if_neq(if airborne {
+    let shown = enabled.0 && airborne;
+    visibility.set_if_neq(if shown {
         Visibility::Visible
     } else {
         Visibility::Hidden
     });
-    if !airborne {
+    if !shown {
         return;
     }
 
@@ -265,6 +313,7 @@ mod tests {
                 AvatarDynamicState::default(),
             ))
             .id();
+        app.insert_resource(JumpMarkerEnabled(true));
         app.add_systems(Startup, spawn_jump_marker);
         app.add_systems(Update, update_jump_marker);
         app.update();
@@ -332,6 +381,14 @@ mod tests {
         // landed; the producer clamps the distance to the player's height near y=0
         set_ground_distance(&mut app, 0.03);
         assert_eq!(marker_state(&mut app).0, Visibility::Hidden);
+
+        // disabled from the debug panel: hidden while airborne, back once enabled
+        app.world_mut().resource_mut::<JumpMarkerEnabled>().0 = false;
+        set_ground_distance(&mut app, 3.0);
+        assert_eq!(marker_state(&mut app).0, Visibility::Hidden);
+        app.world_mut().resource_mut::<JumpMarkerEnabled>().0 = true;
+        app.update();
+        assert_eq!(marker_state(&mut app).0, Visibility::Visible);
     }
 
     /// The marker's shader compiles on this machine's adapter, in a renderer with no window: the
@@ -375,7 +432,13 @@ mod tests {
                     close_when_requested: false,
                 }),
         );
-        app.add_plugins((assets::EmbedAssetsPlugin, JumpMarkerPlugin));
+        app.add_plugins((
+            console::ConsolePlugin {
+                add_bevy_console: false,
+            },
+            assets::EmbedAssetsPlugin,
+            JumpMarkerPlugin,
+        ));
         app.finish();
         app.cleanup();
 
