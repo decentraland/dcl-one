@@ -1376,10 +1376,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "/events-notifier",
             shop::market::tips::router(market.clone()),
         )
-        .nest(
-            "/asset-bundle-registry",
-            shop::market::profiles::registry::router(market.clone()),
-        )
+        .merge(registry_profiles(market.clone()))
         .nest("/marketplace-api", shop::market::market_router(market))
         .merge(land_authz::router(land))
         .merge(economy_routes(&economy_state))
@@ -2131,6 +2128,120 @@ fn referral_settings(config: &Config) -> communities::referral::Settings {
         .into_iter()
         .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
         .collect(),
+    }
+}
+
+/// Catalyst's own half of `/asset-bundle-registry` (profiles); the Registry
+/// gateway's reads join it under the same prefix through `explore::api::router`.
+fn registry_profiles(market: shop::market::SharedState) -> axum::Router {
+    axum::Router::new().nest(
+        "/asset-bundle-registry",
+        shop::market::profiles::registry::router(market),
+    )
+}
+
+#[cfg(test)]
+mod registry_mount_tests {
+    use std::sync::Arc;
+
+    use axum::body::{Body, to_bytes};
+    use axum::http::{Request, StatusCode};
+    use serde_json::{Value, json};
+    use tower::ServiceExt;
+
+    use super::registry_profiles;
+    use crate::content::{ContentState, Settings as ContentSettings};
+    use crate::http::Outbound;
+
+    /// Both halves of `/asset-bundle-registry` as `serve` composes them:
+    /// building the app panics on an overlapping route, and each half still
+    /// answers its own paths.
+    #[tokio::test]
+    async fn the_registry_prefix_serves_profiles_and_gateway_reads_together() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let files = std::env::temp_dir().join(format!(
+            "catalyst-registry-mount-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        let storage = Arc::new(crate::storage::Storage::from_config(&files).await.unwrap());
+        let content = Arc::new(ContentState::new(
+            pool.clone(),
+            ContentSettings::for_tests(),
+            storage,
+        ));
+        let sources = crate::explore::api::Sources {
+            registry: String::new(),
+            ..crate::explore::api::Sources::defaults()
+        };
+        let mut settings = crate::explore::api::Settings::for_tests(sources);
+        settings.mirrors_enabled = false;
+        settings.ab_cdn_enabled = false;
+        settings.ab_cdn_cache_dir = files.join("ab-cdn");
+        let api =
+            crate::explore::api::State::new(settings, pool.clone(), Outbound::for_tests(), content)
+                .await
+                .unwrap();
+        let market = Arc::new(crate::shop::market::MarketplaceState::new(
+            pool,
+            Outbound::for_tests(),
+            crate::shop::market::Settings::for_tests(),
+        ));
+        let app = registry_profiles(market).merge(crate::explore::api::router(api));
+        for (method, path, body, expected) in [
+            (
+                "POST",
+                "/asset-bundle-registry/profiles",
+                r#"{"ids":[]}"#,
+                json!([]),
+            ),
+            (
+                "POST",
+                "/asset-bundle-registry/profiles/metadata",
+                r#"{"ids":[]}"#,
+                json!([]),
+            ),
+            (
+                "POST",
+                "/asset-bundle-registry/entities/active",
+                r#"{"pointers":["0,0"]}"#,
+                json!([]),
+            ),
+            (
+                "POST",
+                "/asset-bundle-registry/entities/versions",
+                r#"{"pointers":["0,0"]}"#,
+                json!([]),
+            ),
+            (
+                "GET",
+                "/asset-bundle-registry/health",
+                "",
+                json!({"status": "ok"}),
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("content-type", "application/json")
+                        .body(Body::from(body))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{method} {path}");
+            let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(
+                serde_json::from_slice::<Value>(&body).unwrap(),
+                expected,
+                "{method} {path}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&files);
     }
 }
 
