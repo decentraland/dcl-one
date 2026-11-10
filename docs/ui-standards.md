@@ -192,7 +192,9 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 App-specific UI is used by one app only: its layouts, app chrome and feature
 components, with their styles. It lives in `library/ui/apps/<app>/`, apart from
 the shared foundations and components. The app itself, under `apps/<app>`,
-keeps its pages, routes and data wiring and imports its UI from there. Until
+keeps its pages, routes and data wiring and imports its UI from there (the
+Explorer HUD, whose two hosts share their data wiring, is the exception; see
+[Explorer HUD transition](#explorer-hud-transition)). Until
 `library/ui` is implemented, app-specific UI stays where it is in the app.
 
 Until `library/ui` is implemented, Sites imports some UI source through the

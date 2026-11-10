@@ -13,9 +13,15 @@ few presentation details, such as the native HUD routing profile images through 
 
 ## Decision
 
-Place the HUD UI the two hosts share in `library/ui/apps/hud`, as the
-[shared UI library ADR](2026-10-30-shared-ui-library.md) places app-specific UI. Both hosts
+Place the Explorer HUD the two hosts share in `library/ui/apps/hud`, the app-specific folder the
+[shared UI library ADR](2026-10-30-shared-ui-library.md) gives a single app's UI. Both hosts
 import it as `@hud/*`.
+
+This is an exception to that ADR's rule that an app keeps its own data wiring. The HUD's two hosts
+run one session against one engine, so its data wiring is shared like its UI and lives beside it:
+the session (`features/session/useEngineSession.ts`), the page-engine protocol and bindings, sign-in
+(`features/auth/sso.ts`) and the HUD's server reads (`features/*/…Api.ts`). Each host keeps only the
+wiring that is its own: entry points, page shell, host module, engine drivers and engine host.
 
 - **No host imports.** Shared HUD code imports only itself and the packages the hosts already
   pin. A behavior the hosts implement differently comes from the module `@hud-host`, which each
