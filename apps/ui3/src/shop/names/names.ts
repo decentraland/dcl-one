@@ -50,15 +50,12 @@ export {
   NAME_INVALID_TEXT,
   NAME_MAX_LENGTH,
   NAME_MIN_LENGTH,
-  NAME_PRICE_IN_WEI,
   NAME_PRICE_WEI,
   nameTokenIdOf,
   registrarAbi,
   sanitizeNameInput,
   validateName,
   type NameAvailability,
-  type NameInvalidReason,
-  type NameValidation,
 } from "@shop/names/name";
 
 export const controllerAbi = parseAbi([

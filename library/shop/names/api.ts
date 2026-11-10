@@ -2,12 +2,11 @@
 // webapp/src/components/NamesPage/NamesPage.tsx (the ENS section of the browse), shop@94584a5c:app/src/lib/names.ts
 // Copyright 2020 Metaverse Holdings Ltd. Licensed under the Apache License, Version 2.0.
 // NAME reads: the DAO's banned-names list (explore's `/dcl-lists/banned-names`, not a Shop route),
-// NAMEs on resale (`/shop-api/v1/nfts?category=ens`, MANA only), the account's own NAMEs and a NAME's credits
-// quote. The host gives the node's base, the transport and the Shop client (ui3: names/reads.ts).
+// NAMEs on resale (`/shop-api/v1/nfts?category=ens`, MANA only) and a NAME's credits quote. The host gives the node's
+// base, the transport and the Shop client (ui3: names/reads.ts).
 
 import type { NftResult } from "@catalyst-api/market/NftResult";
 import type { NftsResponseBody } from "@catalyst-api/market/NftsResponseBody";
-import type { ProfileName } from "@catalyst-api/market/ProfileName";
 import { isShopApiError } from "../api/client";
 import { type ShopClient } from "../api/shop";
 import { centsFromCredits, parseManaInput, type UsdCents } from "../model/money";
@@ -112,19 +111,6 @@ export async function fetchNameResales(q: NameResaleQuery, opts: { client: ShopC
   if (min || max) query.isOnSale = true;
   const body = await client.market.nfts<NftsResponseBody>(query, { signal: opts.signal });
   return { results: body?.data ?? [], total: body?.total ?? 0 };
-}
-
-/** The NAMEs an account owns (`/shop-api/v1/users/{address}/names`). */
-export async function fetchOwnedNames(address: string, opts: { client: ShopClient; signal?: AbortSignal }): Promise<ProfileName[]> {
-  const { client } = opts;
-  const body = await client.market.userAssets<{ data?: { elements?: ProfileName[] } } | { elements?: ProfileName[] }>(
-    address,
-    "names",
-    { pageNum: 1, pageSize: 100 },
-    { signal: opts.signal },
-  );
-  const envelope = body as { data?: { elements?: ProfileName[] }; elements?: ProfileName[] };
-  return envelope.data?.elements ?? envelope.elements ?? [];
 }
 
 /** `name.dcl.eth` of a NAME NFT (its ENS subdomain), or its display name. */
