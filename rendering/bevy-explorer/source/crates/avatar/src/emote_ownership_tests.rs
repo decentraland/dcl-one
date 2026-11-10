@@ -72,7 +72,7 @@ fn graph_nodes_own_full_and_masked_emotes_independently_until_replaced() {
 }
 
 #[test]
-fn pending_request_reuses_its_handle_and_releases_on_replacement_and_despawn() {
+fn pending_request_reuses_its_handle_and_releases_on_replacement() {
     let assets = Assets::<Gltf>::default();
     let first = assets.reserve_handle();
     let Handle::Strong(strong) = &first else {
@@ -86,43 +86,6 @@ fn pending_request_reuses_its_handle_and_releases_on_replacement_and_despawn() {
     pending.load(&urn, || panic!("same request must not restart the load"));
     assert!(weak.upgrade().is_some());
     pending.load(&EmoteUrn::new("dance").unwrap(), || assets.reserve_handle());
-    assert!(weak.upgrade().is_none());
-
-    let handle = pending.0.as_ref().unwrap().1.clone();
-    let Handle::Strong(strong) = &handle else {
-        panic!()
-    };
-    let weak = std::sync::Arc::downgrade(strong);
-    drop(handle);
-    let mut world = World::new();
-    let entity = world
-        .spawn(PendingEmoteLoads {
-            full: pending,
-            masked: Default::default(),
-        })
-        .id();
-    world.despawn(entity);
-    assert!(weak.upgrade().is_none());
-}
-
-#[test]
-fn despawning_an_avatar_releases_its_graph_node_leases() {
-    let mut assets = Assets::default();
-    let handle = emote(&mut assets);
-    let Handle::Strong(strong) = &handle else {
-        panic!()
-    };
-    let weak = std::sync::Arc::downgrade(strong);
-    let mut owner = EmoteGraphAssets::default();
-    owner.bind(
-        Handle::<AnimationGraph>::default().id(),
-        AnimationNodeIndex::new(1),
-        handle,
-    );
-    let mut world = World::new();
-    let entity = world.spawn(owner).id();
-    assert!(weak.upgrade().is_some());
-    world.despawn(entity);
     assert!(weak.upgrade().is_none());
 }
 

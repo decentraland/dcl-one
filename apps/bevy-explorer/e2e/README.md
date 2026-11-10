@@ -306,10 +306,11 @@ checks mutation denial when `controlsAvailable` is false; the release scenario
 explicitly skips that non-preview session. Run mutations against a native preview client using
 `DCL_E2E_NATIVE_ARGS="--preview"` (plus the usual native transport/binary options).
 The normal browser CI session exercises mutation denial, not this preview-only
-scenario. Cache release and scene-emote recovery also run as native library
-regressions in the Explorer CI Test Suite (`cargo test --all --profile ci-test
---locked -- --test-threads=1`), including real Bevy asset tracking and the
-collectible manager.
+scenario. The registered command's preview gate, numeric validation and atomic
+settings changes run as root-crate unit tests in the Explorer CI Test Suite
+(`cargo test --all --profile ci-test --locked -- --test-threads=1`). Cache release
+and scene-emote recovery also run there as native library regressions, including
+real Bevy asset tracking and the collectible manager.
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
