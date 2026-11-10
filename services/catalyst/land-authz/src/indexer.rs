@@ -1541,7 +1541,19 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
             return Ok(PassOutcome::default());
         }
     }
-    let mut row = ensure_cursor(pool, settings).await?;
+    let mut row = match ensure_cursor(pool, settings).await {
+        // A new cursor waits on another pass's admission past the lock
+        // timeout: the pass ends as a deferred replay does, without the
+        // error backoff.
+        Err(e)
+            if e.downcast_ref::<sqlx::Error>()
+                .is_some_and(lock_not_available) =>
+        {
+            tracing::info!(network = %settings.network, "land-authz: the cursor waits on another pass admitting one; retrying next pass");
+            return Ok(PassOutcome::default());
+        }
+        row => row?,
+    };
     if let Some(from) = replay {
         if full.is_none() {
             let started = begin_replay(pool, settings, from)

@@ -4266,11 +4266,11 @@ async fn cursor_networks(pool: &PgPool) -> Vec<String> {
         .unwrap()
 }
 
-/// Until a backend waits on an advisory lock.
+/// Until a backend of this test's database waits on an advisory lock.
 async fn wait_until_an_advisory_lock_is_awaited(pool: &PgPool) {
     for _ in 0..500 {
         let waiting: bool = sqlx::query_scalar(
-            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND wait_event = 'advisory')",
+            "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock' AND wait_event = 'advisory')",
         )
         .fetch_one(pool)
         .await
@@ -4400,5 +4400,40 @@ async fn the_first_cursor_of_an_empty_database_admits_one_network() {
         cursor_networks(pool).await,
         vec![NETWORK_MAINNET.to_string()]
     );
+    db.drop().await;
+}
+
+/// A pass whose network has no cursor yet waits on another pass's
+/// admission at most the lock timeout, then ends without an error (no
+/// error backoff), and creates the cursor once the admission is free.
+#[tokio::test]
+async fn a_pass_whose_new_cursor_waits_on_the_admission_ends_without_an_error() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings {
+        // Never asked: the pass ends before any request.
+        rpc_url: Some("http://127.0.0.1:9".into()),
+        index_enabled: true,
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+    let mut admitting = pool.begin().await.unwrap();
+    assert_eq!(
+        indexer::admit_network(&mut admitting, NETWORK_MAINNET)
+            .await
+            .unwrap(),
+        None
+    );
+
+    let state = state_over(pool.clone(), configured.clone(), None);
+    let out = indexer::run_pass(&state, &ctx).await.unwrap();
+    assert!(!out.published && out.folded.is_none(), "{out:?}");
+    assert!(cursor(pool, NETWORK_MAINNET).await.unwrap().is_none());
+
+    admitting.rollback().await.unwrap();
+    let row = indexer::ensure_cursor(pool, &configured).await.unwrap();
+    assert_eq!(row.land_registry, configured.land_registry);
     db.drop().await;
 }
