@@ -200,12 +200,14 @@ impl FromWorld for HighlightPostPipelines {
                 &composite_shader,
                 Vec::new(),
                 format,
-                BlendState::ALPHA_BLENDING,
+                BlendState::PREMULTIPLIED_ALPHA_BLENDING,
             )
         };
+        // the blurred mask is premultiplied: it starts transparent black, so a texel half covered
+        // holds half the colour. Straight alpha blending would scale that again and darken the edge.
         let (blur_replace, blur_blend, composite, composite_hdr) = (
             blur(BlendState::REPLACE),
-            blur(BlendState::ALPHA_BLENDING),
+            blur(BlendState::PREMULTIPLIED_ALPHA_BLENDING),
             composite(TextureFormat::bevy_default()),
             composite(ViewTarget::TEXTURE_FORMAT_HDR),
         );
