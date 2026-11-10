@@ -100,8 +100,8 @@
     },
     {
       "path": "library/ui/figma/public-output.mjs",
-      "sha256": "167790e0961f1cfc6a0559522840be149e7f84c042da9e8d1620f132d7086542",
-      "indexBlobSha": "f4f2927ac737d3dc1ed9e5eed115191af29a9e8f"
+      "sha256": "b44cf70b664330f33cfbb3f778edc366d14d31d79e4375a7b427eb920d7c8081",
+      "indexBlobSha": "5c5b2c06d574136536a7a80e4d46c1e5c964ea01"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-interactions.tsx",
