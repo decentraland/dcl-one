@@ -7728,6 +7728,28 @@ async fn a_reservation_under_one_operation_key_takes_one_set_of_lines() {
     db.drop().await;
 }
 
+/// The ledger for `addr`'s Stripe purchases, compared in NUMERIC: the Credits
+/// purchases granted, and the Credits Stripe reversals took back.
+async fn assert_stripe_ledger(pool: &PgPool, addr: &str, granted: &str, reversed: &str, ctx: &str) {
+    let (matches, actual_granted, actual_reversed): (bool, String, String) = sqlx::query_as(
+        "WITH s AS ( \
+             SELECT COALESCE(SUM(amount) FILTER (WHERE kind = 'purchase'), 0) AS granted, \
+                    COALESCE(SUM(amount) FILTER (WHERE kind = 'consume' AND tx_ref LIKE 'stripe:%'), 0) AS reversed \
+             FROM credits.ledger WHERE address = $1 \
+         ) SELECT granted = $2::numeric AND reversed = $3::numeric, granted::text, reversed::text FROM s",
+    )
+    .bind(addr)
+    .bind(granted)
+    .bind(reversed)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        matches,
+        "{ctx}: granted {actual_granted} and reversed {actual_reversed}, expected {granted} and {reversed}"
+    );
+}
+
 /// Retires a session order as the stale-order sweep or the buyer's cancel
 /// does, before Stripe has said anything about its payment.
 async fn abandon_order(pool: &PgPool, session: &str) {
@@ -7736,6 +7758,128 @@ async fn abandon_order(pool: &PgPool, session: &str) {
             .await
             .unwrap()
     );
+}
+
+/// The states a card order can be in when a refund for its charge arrives
+/// before anything credited it.
+#[derive(Clone, Copy, Debug)]
+enum Uncredited {
+    /// Still pending, its payment intent not recorded yet.
+    Pending,
+    /// Retired by the sweep or a cancel, its payment intent not recorded.
+    Abandoned,
+    /// Completed unpaid: pending, with its payment intent recorded.
+    Processing,
+}
+
+#[tokio::test]
+async fn a_refund_before_an_uncredited_order_is_credited_is_applied_with_its_grant() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let mut reversed = Vec::new();
+
+    for shape in [
+        Uncredited::Pending,
+        Uncredited::Abandoned,
+        Uncredited::Processing,
+    ] {
+        let ctx = format!("{shape:?}");
+        let addr = scratch_wallet().address;
+        let session = match shape {
+            Uncredited::Processing => {
+                processing_order(&app, &state, &addr, "evt_early_refund").await
+            }
+            _ => session_order_fixture(&state, &addr).await.1,
+        };
+        let payment_intent = format!("pi_{session}");
+        reversed.push(payment_intent.clone());
+        let before = match shape {
+            Uncredited::Pending => ("pending".to_string(), None, None),
+            Uncredited::Abandoned => {
+                abandon_order(&pool, &session).await;
+                ("abandoned".to_string(), None, None)
+            }
+            Uncredited::Processing => ("pending".to_string(), None, Some(payment_intent.clone())),
+        };
+        assert_eq!(session_order_row(&pool, &session).await, before, "{ctx}");
+
+        // The refund is kept against its payment intent, with nothing to revoke yet.
+        let refund = refund_event(&unique("evt_early_refund"), &payment_intent, 500);
+        let (status, out) = deliver(&app, &refund).await;
+        assert_eq!(status, StatusCode::OK, "{ctx}: {out}");
+        assert_eq!(out["detail"], "processed", "{ctx}");
+        let kept: (i64, bool) = sqlx::query_as(
+            "SELECT refunded_cents, disputed FROM credits.payment_reversals WHERE payment_intent = $1",
+        )
+        .bind(&payment_intent)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kept, (500, false), "{ctx}");
+        assert_stripe_ledger(&pool, &addr, "0", "0", &ctx).await;
+
+        // The intent's success credits only an order that already holds the
+        // intent; the paid completion credits the others. Either way the
+        // recorded refund is applied in the grant's transaction, so the
+        // Credits are never spendable.
+        let intent_succeeded = json!({
+            "id": unique("evt_early_refund"),
+            "type": "payment_intent.succeeded",
+            "data": { "object": { "id": payment_intent, "amount": 500, "currency": "usd" } },
+        })
+        .to_string();
+        let (status, out) = deliver(&app, &intent_succeeded).await;
+        assert_eq!(status, StatusCode::OK, "{ctx}: {out}");
+        let completed = session_event(
+            &unique("evt_early_refund"),
+            "checkout.session.completed",
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        );
+        if !matches!(shape, Uncredited::Processing) {
+            assert_stripe_ledger(&pool, &addr, "0", "0", &ctx).await;
+            let (status, out) = deliver(&app, &completed).await;
+            assert_eq!(status, StatusCode::OK, "{ctx}: {out}");
+        }
+        assert!(
+            balance_is(&pool, &addr, "0").await,
+            "{ctx}: {}",
+            available(&pool, &addr).await
+        );
+        assert_stripe_ledger(&pool, &addr, "50", "50", &ctx).await;
+        let (status, _, recorded_intent) = session_order_row(&pool, &session).await;
+        assert_eq!(status, "refunded", "{ctx}");
+        assert_eq!(
+            recorded_intent.as_deref(),
+            Some(payment_intent.as_str()),
+            "{ctx}"
+        );
+
+        // Replays, and the session's other success events, change nothing.
+        let async_succeeded = session_event(
+            &unique("evt_early_refund"),
+            "checkout.session.async_payment_succeeded",
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        );
+        for event in [&refund, &completed, &intent_succeeded, &async_succeeded] {
+            let (status, out) = deliver(&app, event).await;
+            assert_eq!(status, StatusCode::OK, "{ctx}: {out}");
+        }
+        assert!(balance_is(&pool, &addr, "0").await, "{ctx}");
+        assert_stripe_ledger(&pool, &addr, "50", "50", &ctx).await;
+        assert_eq!(purchase_grants(&pool, &addr).await, 1, "{ctx}");
+        assert_reconciles(&pool, &addr, &ctx).await;
+        assert_purchases_match_grants(&pool, &addr).await;
+        cleanup(&pool, &addr).await;
+    }
+    delete_reversals(&pool, &reversed).await;
+    delete_events(&pool, "evt_early_refund").await;
 }
 
 #[tokio::test]
