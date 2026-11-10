@@ -1,0 +1,42 @@
+{
+ "page": {"id":"10:7","name":"Demo: Legacy Bars"},
+ "components": [
+  {
+   "kind": "component",
+   "id": "51:1",
+   "name": "LegacyBar",
+   "section": [],
+   "x": 0,
+   "y": 0,
+   "properties": {},
+   "base": {
+    "id": "51:1",
+    "name": "LegacyBar",
+    "props": {},
+    "tree": {
+     "type": "COMPONENT",
+     "name": "LegacyBar",
+     "w": 320,
+     "h": 48,
+     "layout": {"mode":"HORIZONTAL","pad":[8,16,8,16],"gap":8,"main":"SPACE_BETWEEN","cross":"CENTER"},
+     "fills": [{"type":"SOLID","hex":"#161518","token":"Primitives/Neutral/Dark"}],
+     "children": [
+      {
+       "type": "TEXT",
+       "name": "Label",
+       "w": 48,
+       "h": 21,
+       "sizing": ["HUG","HUG"],
+       "text": "Legacy",
+       "textStyle": "body/sm",
+       "font": "Inter Regular",
+       "fontSize": 14,
+       "fills": [{"type":"SOLID","hex":"#fcfcfc","token":"Primitives/Neutral/White"}]
+      }
+     ]
+    }
+   },
+   "others": []
+  }
+ ]
+}

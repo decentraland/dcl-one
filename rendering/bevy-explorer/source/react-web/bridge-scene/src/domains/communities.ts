@@ -13,7 +13,7 @@ import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
+import type { Community, CommunityAction, CommunityChannel, CommunityEvent, CommunityMember, CommunityPhoto, CommunityPlace, CommunityPlaceOption, CommunityPlaceOptionsMessage, CommunityPost, CommunitySaveResultMessage } from '../../../src/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
 // live on the camera-reel service (mirrors /api/users/{a}/images). Community thumbnails are NOT
@@ -36,14 +36,22 @@ type CommunityRaw = {
 }
 
 // The v2 rows are FLAT and address-only: no name, face, or claimed-name flag on any of them.
-type MemberRaw = { memberAddress?: string; role?: string; friendshipStatus?: number }
+type MemberRaw = { memberAddress?: string; role?: string }
 type PostRaw = { id: string; authorAddress?: string; content?: string; createdAt?: string; likesCount?: number }
-type PlaceRaw = { id: string; title?: string; name?: string; image?: string; base_position?: string; positions?: string[]; like_rate?: number; likeRate?: number }
+type PlaceRaw = {
+  id: string
+  title?: string
+  name?: string
+  image?: string
+  base_position?: string
+  positions?: string[]
+  world_name?: string | null
+  like_rate?: number
+  likeRate?: number
+  owner?: string | null
+}
 type EventRaw = { id: string; name?: string; image?: string; next_start_at?: string; start_at?: string }
 type PhotoRaw = { id: string; url?: string; thumbnailUrl?: string }
-
-// FriendshipStatus enum: request_sent=0 … friend=3 … none=7. Hide "Add Friend" once friends.
-const FRIEND = 3
 
 // Reads take the v2 endpoints, which answer with addresses instead of embedding a profile the
 // service had to resolve per row. Writes (and /places, which carries no profile) have no v2.
@@ -153,8 +161,7 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
     name,
     role: m.role ?? 'member',
     picture,
-    hasClaimedName,
-    isFriend: m.friendshipStatus === FRIEND
+    hasClaimedName
   }
 }
 
@@ -195,13 +202,31 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
       likes: p.likesCount ?? 0
     }
   })
-  const places: CommunityPlace[] = (placesRes?.results ?? []).map((pl) => ({
-    id: pl.id,
-    title: pl.title ?? pl.name ?? '',
-    thumbnail: pl.image,
-    positions: pl.base_position ?? pl.positions?.[0],
-    likeRate: pl.like_rate ?? pl.likeRate
-  }))
+  // As unity-explorer's card: the community's place ids, then each place from the places service
+  // (title, picture, owner). The social service's own row is the fallback when that read fails.
+  const placeRows = placesRes?.results ?? []
+  const destinations =
+    placeRows.length > 0
+      ? await serviceBase('places')
+          .then((b) => signed<PlaceRaw[]>(`${b}/api/destinations`, 'POST', placeRows.map((pl) => pl.id)))
+          .catch((e: unknown) => {
+            console.error('[communities] places details failed', e)
+            return undefined
+          })
+      : undefined
+  const byId = new Map((destinations ?? []).map((d) => [d.id, d]))
+  const me = (getPlayer()?.userId ?? '').toLowerCase()
+  const places: CommunityPlace[] = placeRows.map((row) => {
+    const pl = byId.get(row.id) ?? row
+    return {
+      id: pl.id,
+      title: pl.title ?? pl.name ?? '',
+      thumbnail: pl.image,
+      positions: (pl.world_name ?? '') !== '' ? (pl.world_name ?? undefined) : (pl.base_position ?? pl.positions?.[0]),
+      likeRate: pl.like_rate ?? pl.likeRate,
+      isMine: me !== '' && (pl.owner ?? '').toLowerCase() === me
+    }
+  })
   const events: CommunityEvent[] = (eventsRes?.data?.events ?? []).map((e) => ({
     id: e.id,
     name: e.name ?? '',
@@ -214,6 +239,109 @@ async function detail(id: string): Promise<{ members: CommunityMember[]; posts: 
     thumbnail: ph.thumbnailUrl ?? ph.url
   }))
   return { members, posts, places, events, photos }
+}
+
+// The form's places picker, as unity-explorer's CommunityCreationEditionController: the places
+// the user owns or operates (one destinations read by owner), and, when editing, the community's
+// linked places (their ids from the social service, their details from the places service by id).
+// Each is labelled "title (world name)" or "title (x,y)" and carries its owner's name.
+type DestinationRaw = { id: string; title?: string; world_name?: string | null; base_position?: string; owner?: string | null }
+
+const GET_PLACES_ERROR = 'There was an error getting places. Please try again.'
+const GET_OWNERS_NAMES_ERROR = 'There was an error getting owners names. Please try again.'
+const GET_COMMUNITY_PLACES_ERROR = 'There was an error getting the community places. Please try again.'
+
+/** The owners' names by address (lowercased), or null when the profile read found none, which
+ *  unity-explorer reports as an error and shows the places without names. */
+async function ownerNames(rows: DestinationRaw[]): Promise<Map<string, string> | null> {
+  const owners = [...new Set(rows.map((r) => (r.owner ?? '').toLowerCase()).filter((a) => a !== ''))]
+  if (owners.length === 0) return new Map()
+  const found = await BevyApi.getCompactProfiles(owners).catch(() => [])
+  if (found.length === 0) return null
+  return new Map(found.map((p) => [p.pointer.toLowerCase(), p.name]))
+}
+
+function placeOptions(rows: DestinationRaw[], names: Map<string, string> | null): CommunityPlaceOption[] {
+  return rows.map((r) => {
+    const isWorld = (r.world_name ?? '') !== ''
+    return {
+      id: r.id,
+      isWorld,
+      label: `${r.title ?? ''} (${isWorld ? r.world_name : (r.base_position ?? '')})`,
+      ownerName: names?.get((r.owner ?? '').toLowerCase()) ?? ''
+    }
+  })
+}
+
+/** The places the user owns or operates, one read as unity-explorer's. Never without an owner: the
+ *  service reads an empty one as no filter at all, and every place would be offered as the user's.
+ *  (`signed` answers with the envelope's `data`: here the list itself.) */
+async function ownedPlaces(destinations: string, me: string): Promise<DestinationRaw[]> {
+  if (me === '') throw new Error('no signed-in user')
+  return (await signed<DestinationRaw[]>(`${destinations}?owner=${encodeURIComponent(me)}`)) ?? []
+}
+
+// The services' page cap, and how many pages of a community's places are read before giving up.
+const PAGE = 100
+const LINKED_PAGES = 10
+
+/** Every place id the community links, a page at a time. Throws when the list does not end within
+ *  the pages read, so the form never takes a partial list for the whole one. */
+async function linkedPlaceIds(communityId: string): Promise<string[]> {
+  const url = `${await base('v1')}/${encodeURIComponent(communityId)}/places`
+  const ids: string[] = []
+  for (let page = 0; page < LINKED_PAGES; page++) {
+    const res = await signed<{ results?: { id: string }[]; total?: number }>(`${url}?limit=${PAGE}&offset=${page * PAGE}`)
+    const rows = res?.results ?? []
+    ids.push(...rows.map((r) => r.id))
+    if (rows.length < PAGE || (res?.total != null && ids.length >= res.total)) return ids
+  }
+  throw new Error(`more than ${PAGE * LINKED_PAGES} linked places`)
+}
+
+/** The places' details by id, a page at a time. A place the service does not return (a disabled
+ *  one, say) is left out. */
+async function destinationsByIds(destinations: string, ids: string[]): Promise<DestinationRaw[]> {
+  const rows: DestinationRaw[] = []
+  for (let i = 0; i < ids.length; i += PAGE) rows.push(...((await signed<DestinationRaw[]>(destinations, 'POST', ids.slice(i, i + PAGE))) ?? []))
+  return rows
+}
+
+async function placeOptionsFor(communityId: string | undefined): Promise<CommunityPlaceOptionsMessage> {
+  const errors: string[] = []
+  const destinations = `${await serviceBase('places')}/api/destinations`
+  let owned: CommunityPlaceOption[] = []
+  try {
+    const rows = await ownedPlaces(destinations, getPlayer()?.userId ?? '')
+    const names = await ownerNames(rows)
+    if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
+    owned = placeOptions(rows, names)
+  } catch (e) {
+    console.error('[communities] owned places failed', e)
+    errors.push(GET_PLACES_ERROR)
+  }
+  let linked: CommunityPlaceOption[] = []
+  let hiddenLinkedIds: string[] = []
+  let linkedFailed = false
+  if (communityId != null) {
+    try {
+      const ids = await linkedPlaceIds(communityId)
+      const rows = ids.length > 0 ? await destinationsByIds(destinations, ids) : []
+      const shown = new Set(rows.map((r) => r.id))
+      // linked, but not returned by the places service: the form keeps them on every save
+      hiddenLinkedIds = ids.filter((id) => !shown.has(id))
+      if (rows.length > 0) {
+        const names = await ownerNames(rows)
+        if (names == null) errors.push(GET_OWNERS_NAMES_ERROR)
+        linked = placeOptions(rows, names)
+      }
+    } catch (e) {
+      console.error('[communities] community places failed', e)
+      linkedFailed = true
+      errors.push(GET_COMMUNITY_PLACES_ERROR)
+    }
+  }
+  return { kind: 'communityPlaceOptions', communityId, owned, linked, hiddenLinkedIds, linkedFailed, errors }
 }
 
 /** A refused create or update as the form shows it. As in unity-explorer, every HTTP 400 is the
@@ -326,7 +454,14 @@ export function registerCommunities(ctx: Ctx): void {
       msg.thumbnail != null
         ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
         : []
-    const fields = { name: msg.name, description: msg.description, privacy: msg.privacy, visibility: msg.discoverable ? 'all' : 'unlisted' }
+    const fields = {
+      name: msg.name,
+      description: msg.description,
+      privacy: msg.privacy,
+      visibility: msg.discoverable ? 'all' : 'unlisted',
+      // as unity-explorer, always sent on create, `[]` when no place is linked
+      placeIds: JSON.stringify(msg.placeIds)
+    }
     // the service url is resolved inside the chain, so a failure there is a reported error too
     const result = await base('v1')
       .then((b) => signedForm<{ id?: string }>(b, 'POST', fields, files))
@@ -346,6 +481,8 @@ export function registerCommunities(ctx: Ctx): void {
     if (msg.description != null) fields.description = msg.description
     if (msg.privacy != null) fields.privacy = msg.privacy
     if (msg.discoverable != null) fields.visibility = msg.discoverable ? 'all' : 'unlisted'
+    // the whole new set; the service keeps the current one when the field is absent
+    if (msg.placeIds != null) fields.placeIds = JSON.stringify(msg.placeIds)
     const files =
       msg.thumbnail != null
         ? [{ name: 'thumbnail', filename: 'thumbnail.png', contentType: 'image/png', bytes: dataUrlBytes(msg.thumbnail) }]
@@ -365,6 +502,14 @@ export function registerCommunities(ctx: Ctx): void {
     if (raw != null) {
       const [community] = await communities([raw])
       if (community != null) ctx.send({ kind: 'community', community })
+    }
+    // the card stays open behind the form: its Places tab shows the places just saved
+    if (msg.placeIds != null) {
+      const fresh = await detail(msg.id).catch((e: unknown) => {
+        console.error('[communities] detail after update failed', e)
+        return undefined
+      })
+      if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
     }
     await refreshLists()
   })
@@ -427,6 +572,75 @@ export function registerCommunities(ctx: Ctx): void {
       if (me == null || me === '') throw new Error('Not signed in')
       return await signed(`${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(me)}`, 'DELETE')
     })
+  })
+  // The card's delete, as unity-explorer's: DELETE /v1/communities/{id}/places/{placeId}; then the
+  // card's places are read again. A failure is shown on the card.
+  ctx.on('removeCommunityPlace', async (msg) => {
+    const removed = await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/places/${encodeURIComponent(msg.placeId)}`, 'DELETE'))
+      .then(
+        () => true,
+        (e: unknown) => {
+          console.error('[communities] remove place failed', e)
+          ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'removePlace', message: e instanceof Error ? e.message : String(e) })
+          return false
+        }
+      )
+    if (!removed) return
+    const fresh = await detail(msg.id).catch(() => undefined)
+    if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
+  })
+  // The card's member menu, as unity-explorer's MembersListController: promote and demote set the
+  // member's role, a transfer sets it to owner (the service makes the old owner a moderator), a
+  // kick removes the member and a ban bans them. A failure (the service url included) is shown on
+  // the card; on success the card's members are read again. A kick, a ban or a transfer also
+  // changes the community (its member count, or the user's own role), so the community and the
+  // lists are read again too.
+  ctx.on('communityMemberAction', async (msg) => {
+    const run = async (): Promise<unknown> => {
+      const member = `${await base('v1')}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}`
+      switch (msg.action) {
+        case 'promote':
+          return await signed(member, 'PATCH', { role: 'moderator' })
+        case 'demote':
+          return await signed(member, 'PATCH', { role: 'member' })
+        case 'transfer':
+          return await signed(member, 'PATCH', { role: 'owner' })
+        case 'kick':
+          return await signed(member, 'DELETE')
+        case 'ban':
+          return await signed(`${member}/bans`, 'POST')
+        default: {
+          const unknown: never = msg.action
+          throw new Error(`unknown member action ${String(unknown)}`)
+        }
+      }
+    }
+    const done = await run().then(
+      () => true,
+      (e: unknown) => {
+        console.error(`[communities] ${msg.action} failed`, e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: msg.action, message: e instanceof Error ? e.message : String(e) })
+        return false
+      }
+    )
+    if (!done) return
+    const fresh = await detail(msg.id).catch(() => undefined)
+    if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
+    if (msg.action === 'promote' || msg.action === 'demote') return
+    const raw = await rawOne(msg.id).catch(() => undefined)
+    const [community] = raw != null ? await communities([raw]) : []
+    if (community != null) ctx.send({ kind: 'community', community })
+    await refreshLists()
+  })
+  ctx.on('getCommunityPlaceOptions', async (msg) => {
+    const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {
+      // the places service could not even be located: nothing could be read
+      console.error('[communities] place options failed', e)
+      const errors = [GET_PLACES_ERROR, ...(msg.communityId != null ? [GET_COMMUNITY_PLACES_ERROR] : [])]
+      return { kind: 'communityPlaceOptions', communityId: msg.communityId, owned: [], linked: [], hiddenLinkedIds: [], linkedFailed: msg.communityId != null, errors }
+    })
+    ctx.send(options)
   })
   ctx.on('getCommunityDetail', async (msg) => {
     const { members, posts, places, events, photos } = await detail(msg.id).catch(() => ({ members: [], posts: [], places: [], events: [], photos: [] }))

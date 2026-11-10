@@ -1,0 +1,365 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { renderToString } from 'react-dom/server'
+import { NavBar, type NavBarProps } from '../components/NavBar/NavBar'
+import { navBarCases } from '../components/NavBar/NavBar'
+
+// Generated component tests live outside the generated directory.
+// NavBar's semantics come from figma.config.json (components.NavBar).
+const signedIn = {
+  viewport: 'largeDesktop',
+  balances: 'none',
+  theme: 'dark',
+  signedIn: true
+} as const
+const signedOut = {
+  viewport: 'largeDesktop',
+  balances: 'none',
+  theme: 'dark',
+  signedIn: false
+} as const
+const tabs = ['Discover', 'Shop', 'Create', 'Learn']
+
+describe('NavBar', () => {
+  describe.each(navBarCases.map((item) => [item.key, item] as const))(
+    'when rendering %s',
+    (_, item) => {
+      it('should render a navigation landmark named Main', () => {
+        render(<NavBar {...item.props} />)
+
+        expect(screen.getByRole('navigation', { name: 'Main' })).toBeInTheDocument()
+      })
+    }
+  )
+
+  // This interaction contract is authored independently of generated views and semantic metadata.
+  // The two mobile/no-balance signed-in views remain source-blocked and are listed separately.
+  const controlsContract = [
+    {
+      props: { viewport: 'largeDesktop', signedIn: false, balances: 'none', theme: 'dark' },
+      buttons: ['Sign In']
+    },
+    {
+      props: { viewport: 'largeDesktop', signedIn: false, balances: 'none', theme: 'light' },
+      buttons: ['Sign In']
+    },
+    {
+      props: { viewport: 'desktop', signedIn: false, balances: 'none', theme: 'dark' },
+      buttons: ['Sign In']
+    },
+    {
+      props: { viewport: 'desktop', signedIn: false, balances: 'none', theme: 'light' },
+      buttons: ['Sign In']
+    },
+    {
+      props: { viewport: 'mobile', signedIn: false, balances: 'none', theme: 'dark' },
+      buttons: ['Sign In']
+    },
+    {
+      props: { viewport: 'mobile', signedIn: false, balances: 'none', theme: 'light' },
+      buttons: ['Sign In']
+    },
+    {
+      props: { viewport: 'largeDesktop', signedIn: true, balances: 'none', theme: 'dark' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'largeDesktop', signedIn: true, balances: 'none', theme: 'light' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'largeDesktop', signedIn: true, balances: 'credits', theme: 'dark' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'largeDesktop', signedIn: true, balances: 'creditsMana', theme: 'dark' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'desktop', signedIn: true, balances: 'none', theme: 'dark' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'desktop', signedIn: true, balances: 'none', theme: 'light' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'desktop', signedIn: true, balances: 'credits', theme: 'dark' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'desktop', signedIn: true, balances: 'creditsMana', theme: 'dark' },
+      buttons: ['Discover', 'Shop', 'Create', 'Learn', 'Notifications', 'Profile']
+    },
+    {
+      props: { viewport: 'mobile', signedIn: true, balances: 'credits', theme: 'dark' },
+      buttons: ['Profile', 'Menu']
+    },
+    {
+      props: { viewport: 'mobile', signedIn: true, balances: 'creditsMana', theme: 'dark' },
+      buttons: ['Profile', 'Menu']
+    }
+  ] as const
+
+  describe.each(controlsContract)(
+    'when rendering the known controls of $props',
+    ({ props, buttons }) => {
+      it('should expose exactly the expected named buttons without link targets', () => {
+        render(<NavBar {...props} />)
+
+        expect(screen.queryAllByRole('link')).toHaveLength(0)
+        expect(screen.getAllByRole('button')).toHaveLength(buttons.length)
+        for (const name of buttons) expect(screen.getByRole('button', { name })).toBeInTheDocument()
+      })
+    }
+  )
+
+  describe.each(['dark', 'light'] as const)(
+    'when signed in on mobile without balances in the %s theme',
+    () => {
+      it.todo('should expose the source-authored controls after variants 7/8 are corrected')
+    }
+  )
+
+  describe.each(['credits', 'creditsMana'] as const)(
+    'when signed in on mobile with %s',
+    (balances) => {
+      it('should expose the menu trigger as a named button reachable with Tab and activated with Enter or Space', async () => {
+        const onMenu = vi.fn()
+        const user = userEvent.setup()
+        render(
+          <NavBar viewport="mobile" balances={balances} theme="dark" signedIn onMenu={onMenu} />
+        )
+
+        const menu = screen.getByRole('button', { name: 'Menu' })
+        for (let press = 0; press < 5 && document.activeElement !== menu; press += 1)
+          await user.tab()
+        expect(menu).toHaveFocus()
+        await user.keyboard('{Enter}')
+        await user.keyboard(' ')
+        expect(onMenu).toHaveBeenCalledTimes(2)
+      })
+    }
+  )
+
+  describe('when signed in with link targets', () => {
+    const hrefs = {
+      logoHref: '/',
+      labelHref: '/discover',
+      label2Href: '/shop',
+      label3Href: '/create',
+      label4Href: '/learn'
+    }
+
+    it('should expose the logo and the tabs as named links in a list', () => {
+      render(<NavBar {...signedIn} {...hrefs} />)
+
+      expect(screen.getByRole('link', { name: 'Decentraland' })).toHaveAttribute('href', '/')
+      const list = screen.getByRole('list')
+      const items = within(list).getAllByRole('listitem')
+      expect(items).toHaveLength(4)
+      tabs.forEach((name, index) =>
+        expect(within(items[index]!).getByRole('link', { name })).toHaveAttribute(
+          'href',
+          Object.values(hrefs)[index + 1]
+        )
+      )
+    })
+
+    it('should reach every control with Tab, in reading order', async () => {
+      const user = userEvent.setup()
+      render(<NavBar {...signedIn} {...hrefs} />)
+
+      const expected = [
+        screen.getByRole('link', { name: 'Decentraland' }),
+        ...tabs.map((name) => screen.getByRole('link', { name })),
+        screen.getByRole('button', { name: 'Notifications' }),
+        screen.getByRole('button', { name: 'Profile' })
+      ]
+      for (const control of expected) {
+        await user.tab()
+        expect(control).toHaveFocus()
+      }
+    })
+
+    it('should keep the focus-visible outline of the controls in the runtime stylesheet', () => {
+      const css = readFileSync(
+        path.resolve(import.meta.dirname, '../components/runtime/figma-module-runtime.module.css'),
+        'utf8'
+      )
+      expect(css).toMatch(/\.action:focus-visible\s*{[^}]*outline: 2px solid/)
+    })
+  })
+
+  describe('when signed in without link targets', () => {
+    it('should render the tabs as buttons and the logo as plain content', () => {
+      render(<NavBar {...signedIn} />)
+
+      expect(screen.queryByRole('link')).not.toBeInTheDocument()
+      tabs.forEach((name) => expect(screen.getByRole('button', { name })).toBeInTheDocument())
+    })
+
+    it('should activate notifications and profile from the keyboard', async () => {
+      const onNotifications = vi.fn()
+      const onProfile = vi.fn()
+      const user = userEvent.setup()
+      render(<NavBar {...signedIn} onNotifications={onNotifications} onProfile={onProfile} />)
+
+      screen.getByRole('button', { name: 'Notifications' }).focus()
+      await user.keyboard('{Enter}')
+      screen.getByRole('button', { name: 'Profile' }).focus()
+      await user.keyboard(' ')
+      expect(onNotifications).toHaveBeenCalledTimes(1)
+      expect(onProfile).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('when signed out', () => {
+    it('should offer a Sign In button that works from the keyboard', async () => {
+      const onSignIn = vi.fn()
+      const user = userEvent.setup()
+      render(<NavBar {...signedOut} logoHref="/" onSignIn={onSignIn} />)
+
+      await user.tab()
+      expect(screen.getByRole('link', { name: 'Decentraland' })).toHaveFocus()
+      await user.tab()
+      expect(screen.getByRole('button', { name: 'Sign In' })).toHaveFocus()
+      await user.keyboard('{Enter}')
+      expect(onSignIn).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('when rendered', () => {
+    it('should never nest an interactive element inside another', () => {
+      const { container } = render(<NavBar {...signedIn} logoHref="/" labelHref="/d" />)
+
+      expect(container.querySelector('a a, a button, button a, button button')).toBeNull()
+    })
+  })
+})
+
+function selectionError(selection: Record<string, unknown>): Error {
+  const {
+    viewport = 'largeDesktop',
+    balances = 'none',
+    theme = 'dark',
+    signedIn = false
+  } = selection
+  return new Error(
+    `NavBar has no captured view for viewport=${JSON.stringify(viewport)}, balances=${JSON.stringify(balances)}, theme=${JSON.stringify(theme)}, signedIn=${JSON.stringify(signedIn)}`
+  )
+}
+
+function combinations() {
+  return ['largeDesktop', 'desktop', 'mobile'].flatMap((viewport) =>
+    [false, true].flatMap((signedIn) =>
+      ['none', 'credits', 'creditsMana'].flatMap((balances) =>
+        ['dark', 'light'].map((theme) => ({
+          viewport,
+          signedIn,
+          balances,
+          theme
+        }))
+      )
+    )
+  )
+}
+
+describe.each(combinations())('when a JavaScript caller requests %j', (selection) => {
+  let props: NavBarProps
+  beforeEach(() => {
+    props = selection as NavBarProps
+  })
+  if (selection.balances === 'none' || (selection.signedIn && selection.theme === 'dark')) {
+    it('should server-render the captured navigation', () => {
+      expect(renderToString(<NavBar {...props} />)).toContain('aria-label="Main"')
+    })
+  } else {
+    it('should reject the uncaptured tuple instead of rendering a default', () => {
+      expect(() => renderToString(<NavBar {...props} />)).toThrowError(selectionError(selection))
+    })
+  }
+})
+
+describe.each([
+  { signedIn: 'true' },
+  { signedIn: null },
+  { signedIn: 1 },
+  { viewport: '' },
+  { viewport: null },
+  { viewport: 'tablet' },
+  { balances: '' },
+  { balances: null },
+  { balances: 'unknown' },
+  { theme: '' },
+  { theme: null },
+  { theme: 'unknown' }
+])('when JavaScript spreads malformed selection %j', (selection) => {
+  let props: NavBarProps
+  beforeEach(() => {
+    props = selection as unknown as NavBarProps
+  })
+  it('should reject the invalid axis during server rendering', () => {
+    expect(() => renderToString(<NavBar {...props} />)).toThrowError(selectionError(selection))
+  })
+})
+
+describe('when JavaScript spreads suppressed text and public action props', () => {
+  let props: NavBarProps
+  let onNotifications: ReturnType<typeof vi.fn>
+  let user: ReturnType<typeof userEvent.setup>
+  beforeEach(() => {
+    onNotifications = vi.fn()
+    user = userEvent.setup()
+    props = {
+      signedIn: true,
+      label: 'Injected1',
+      label2: 'Injected2',
+      label3: 'Injected3',
+      label4: 'Injected4',
+      label5: 'Injected5',
+      label6: 'Injected6',
+      label7: 'Injected7',
+      label8: 'Injected8',
+      labelHref: '/discover',
+      label2Href: '/shop',
+      label3Href: '/create',
+      label4Href: '/learn',
+      logoHref: '/',
+      onNotifications,
+      suppressed: [],
+      suppressedProps: [],
+      'data-consumer': 'preserved'
+    } as unknown as NavBarProps
+  })
+  it('should omit all suppressed labels throughout the DOM and retain captured text', () => {
+    render(<NavBar {...props} />)
+    expect(
+      document.querySelector(
+        '[label], [label2], [label3], [label4], [label5], [label6], [label7], [label8]'
+      )
+    ).toBeNull()
+    expect(screen.queryByText(/Injected/)).not.toBeInTheDocument()
+    expect(screen.getByRole('navigation', { name: 'Main' })).toHaveAttribute(
+      'data-consumer',
+      'preserved'
+    )
+  })
+  it('should preserve each existing destination and captured accessible name', () => {
+    render(<NavBar {...props} />)
+    expect(screen.getByRole('link', { name: 'Decentraland' })).toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: 'Discover' })).toHaveAttribute('href', '/discover')
+    expect(screen.getByRole('link', { name: 'Shop' })).toHaveAttribute('href', '/shop')
+    expect(screen.getByRole('link', { name: 'Create' })).toHaveAttribute('href', '/create')
+    expect(screen.getByRole('link', { name: 'Learn' })).toHaveAttribute('href', '/learn')
+  })
+  it('should preserve keyboard activation of the notification action', async () => {
+    render(<NavBar {...props} />)
+    screen.getByRole('button', { name: 'Notifications' }).focus()
+    await user.keyboard('{Enter}')
+    expect(onNotifications).toHaveBeenCalledTimes(1)
+  })
+})

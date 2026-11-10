@@ -1,0 +1,56 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+
+@layer dcl.components {
+.v0nroot {
+display: flex;
+box-sizing: border-box;
+flex-direction: row;
+justify-content: flex-start;
+align-items: center;
+gap: var(--dcl-space-4);
+padding: var(--dcl-space-8) var(--dcl-space-16) var(--dcl-space-8) var(--dcl-space-16);
+width: 112px;
+height: 40px;
+border-radius: var(--dcl-radius-md);
+opacity: 1;
+&:hover:not(:disabled):not([data-interaction-mode='controlled']) [data-n='0'], &[data-force-state='hover'] [data-n='0'] {
+  display: none;
+}
+&:hover:not(:disabled):not([data-interaction-mode='controlled']), &[data-force-state='hover'] {
+  width: 108px;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-white-10);
+}
+&:hover:not(:disabled):not([data-interaction-mode='controlled']) [data-n='1000'], &[data-force-state='hover'] [data-n='1000'] {
+  display: block;
+}
+}
+
+.v0n0 {
+composes: text626f64792f6d64 from '../../tokens/text-styles.module.css';
+display: block;
+min-height: 24px;
+width: 80px;
+color: var(--dcl-neutrals-gray);
+white-space: nowrap;
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 24px;
+opacity: 1;
+}
+
+.v0n1000 {
+composes: text626f64792f6d642d7374726f6e67 from '../../tokens/text-styles.module.css';
+display: none;
+min-height: 24px;
+width: 76px;
+color: var(--dcl-neutrals-white);
+white-space: nowrap;
+text-transform: none;
+letter-spacing: 0px;
+text-align: left;
+line-height: 24px;
+opacity: 1;
+}
+}

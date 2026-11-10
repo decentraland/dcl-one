@@ -7,7 +7,7 @@
 // reaches these routes. Pure, so the SSR loaders and the Explorer's native runtime share it.
 
 import { landIdentity, landRedirectTarget } from "@ui/shop/land/redirects";
-import { isNameRegistrar, landCategoryOf } from "@ui/shop/land/contracts";
+import { isNameRegistrar, landCategoryOf } from "@shop/land/contracts";
 import { aliasTarget, resolveShopAlias, SHOP_BASE } from "@ui/shop/routes";
 
 const ADDRESS = /^0x[0-9a-fA-F]{40}$/;

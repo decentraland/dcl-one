@@ -8,11 +8,11 @@
 import { useId, useState } from "react";
 
 import Button from "../../atoms/Button";
-import { shortAddress } from "../model/address";
-import { chainLabel, gasTokenSymbol } from "../model/chain";
-import { formatMana, type ManaWei } from "../model/money";
-import type { Reason, WalletGuidance } from "../model/settlement";
-import { reasonText } from "../payment/copy";
+import { shortAddress } from "@shop/model/address";
+import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
+import { formatMana, type ManaWei } from "@shop/model/money";
+import type { Reason, WalletGuidance } from "@shop/model/settlement";
+import { reasonText } from "@shop/payment/copy";
 import type { CartAddInput } from "../cart/store";
 import { stashWalletReturn } from "./returnTo";
 import "./managuidance.css";

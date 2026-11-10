@@ -209,6 +209,9 @@ export type PageToScene =
   | GetCommunityRequest
   | CreateCommunityRequest
   | UpdateCommunityRequest
+  | GetCommunityPlaceOptionsRequest
+  | RemoveCommunityPlaceRequest
+  | CommunityMemberActionRequest
   | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
@@ -1145,6 +1148,8 @@ export interface CreateCommunityRequest {
   /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
    *  `thumbnail` file part. */
   thumbnail?: string
+  /** The linked places (lands first, then worlds), sent as the form's `placeIds` JSON array. */
+  placeIds: string[]
 }
 
 /** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
@@ -1159,6 +1164,43 @@ export interface UpdateCommunityRequest {
   discoverable?: boolean
   /** A new picture as a data URL (same limits as on create). */
   thumbnail?: string
+  /** The whole new set of linked places (lands first, then worlds), when it changed; absent keeps
+   *  the current set. */
+  placeIds?: string[]
+}
+
+/** A LAND or World the form can link, or one already linked (unity-explorer's CommunityPlace). */
+export interface CommunityPlaceOption {
+  id: string
+  isWorld: boolean
+  /** "title (world name)" or "title (x,y)". */
+  label: string
+  /** The place owner's name, or empty when it could not be read. */
+  ownerName: string
+}
+
+/** The form opened (page → scene): read the places the user owns or operates, and, when editing,
+ *  the community's linked places. */
+export interface GetCommunityPlaceOptionsRequest {
+  kind: 'getCommunityPlaceOptions'
+  /** The community being edited; absent on create. */
+  communityId?: string
+}
+/** The places for the form (scene → page). */
+export interface CommunityPlaceOptionsMessage {
+  kind: 'communityPlaceOptions'
+  communityId?: string
+  /** The places the user owns or operates: the picker's options. */
+  owned: CommunityPlaceOption[]
+  /** The community's linked places (edit only). */
+  linked: CommunityPlaceOption[]
+  /** Linked places the places service did not return (a disabled one, say): never shown, but kept
+   *  on every save so the form cannot unlink them. */
+  hiddenLinkedIds: string[]
+  /** The linked places could not be read (edit only): the form must not replace them. */
+  linkedFailed: boolean
+  /** unity-explorer's messages for the reads that failed, each shown as a toast. */
+  errors: string[]
 }
 
 /** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
@@ -1214,7 +1256,20 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete'
+/** What an owner or moderator can do to a member from the card's member menu (unity-explorer's
+ *  MembersListView): promote to moderator, demote to member, hand over ownership, remove, ban. */
+export type CommunityMemberAction = 'promote' | 'demote' | 'transfer' | 'kick' | 'ban'
+
+/** A member action from the card's member menu (page → scene → signed social-api write). */
+export interface CommunityMemberActionRequest {
+  kind: 'communityMemberAction'
+  id: string
+  /** The member acted on. */
+  address: string
+  action: CommunityMemberAction
+}
+
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace' | CommunityMemberAction
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1232,8 +1287,6 @@ export interface CommunityMember {
   role: string
   picture?: string
   hasClaimedName?: boolean
-  /** the local user already follows them (hides "Add Friend"). */
-  isFriend?: boolean
 }
 
 /** A place shared by a community (Places tab). */
@@ -1241,10 +1294,19 @@ export interface CommunityPlace {
   id: string
   title: string
   thumbnail?: string
-  /** e.g. "-66,56" */
+  /** e.g. "-66,56", or the world's name for a World */
   positions?: string
   /** 0..1 like rate. */
   likeRate?: number
+  /** The signed-in user owns the place: an owner or moderator may unlink it from the card. */
+  isMine?: boolean
+}
+
+/** Unlink a place from a community (page → scene → signed DELETE to the social-api). */
+export interface RemoveCommunityPlaceRequest {
+  kind: 'removeCommunityPlace'
+  id: string
+  placeId: string
 }
 
 /** An announcement post (Announcements tab). */
@@ -1921,6 +1983,7 @@ export type SceneToPage =
   | VoiceActivityMessage
   | CommunityActionFailedMessage
   | CommunitySaveResultMessage
+  | CommunityPlaceOptionsMessage
   | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
