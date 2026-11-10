@@ -30,6 +30,9 @@
       "react-dom": ["./node_modules/@types/react-dom"],
       "react-dom/*": ["./node_modules/@types/react-dom/*"],
       "@ui/*": ["../ui3/src/*"],
+      "@dcl/one-ui/*": ["../../library/ui/*"],
+      "react-dom": ["./node_modules/@types/react-dom/index.d.ts"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with ui3.
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with ui3.

@@ -5,7 +5,7 @@ import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
-import { SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
+import { INTER_FILES, SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 
 // Dev-only: run the bridge scene's live preview (`sdk-commands start` on :8100 — the engine's
 // default systemScene in dev, with scene hot-reload) alongside vite, so `npm run dev` is the ONE
@@ -239,7 +239,7 @@ export default defineConfig(({ command, mode }) => ({
     // domain keeps Vite's DNS-rebinding protection on for everything else.
     allowedHosts: ['.trycloudflare.com'],
     // The shared sources live outside this app (vite.shared.ts).
-    fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES] },
+    fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES, INTER_FILES] },
     // Proxy the auth dapp so it is served same-origin on localhost — sign in locally against
     // zone and the signed AuthIdentity lands in this origin's localStorage (the marketplace
     // does the same). Because it's same-origin, the auth site also accepts our localhost

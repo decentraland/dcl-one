@@ -22,7 +22,7 @@
     "paths": {
       "@shop/*": ["../../../../library/shop/*"],
       "@catalyst-api/*": ["../../../../library/catalyst-api/*"],
-      "@dcl/one-ui": ["../../../../library/ui/index.ts"],
+      "@dcl/one-ui/foundations": ["../../../../library/ui/foundations/index.ts"],
       "@dcl/one-ui/foundations.css": ["../../../../library/ui/foundations/foundations.css"],
       "@dcl/one-ui/text-styles.module.css": ["../../../../library/ui/foundations/typography/text-styles.module.css"],
       "@hud/*": ["../../../../library/ui/apps/hud/*"],

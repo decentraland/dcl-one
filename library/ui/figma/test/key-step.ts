@@ -28,8 +28,9 @@ type KeyStepTemplate = {
   run: string
   // Where the job's single checkout lands ('' for the workspace root), as the template's --root reads it.
   checkout: string
-  // The only paths download-artifact may write in the job.
-  downloads: string[]
+  // The only artifacts the job may download: each path with its one artifact name and the run it comes from
+  // (runId absent: this workflow run's own artifact, which the unprivileged job uploaded).
+  downloads: { path: string; name: string; runId?: string }[]
   // The data variables the run reads, each with the only expressions its value may be.
   data: Record<string, string[]>
 }
@@ -57,7 +58,14 @@ export const KEY_STEP_TEMPLATES: KeyStepTemplate[] = [
       check
     ].join('\n'),
     checkout: 'trusted',
-    downloads: ['${{ runner.temp }}/key-scan-input', '${{ runner.temp }}/pr-artifact'],
+    downloads: [
+      { path: '${{ runner.temp }}/key-scan-input', name: 'key-scan-input' },
+      {
+        path: '${{ runner.temp }}/pr-artifact',
+        name: 'ui-review-${{ needs.prepare.outputs.head }}',
+        runId: '${{ github.event.workflow_run.id }}'
+      }
+    ],
     data: {
       HEAD_SHA: ['${{ needs.prepare.outputs.head }}'],
       BASE: ['${{ needs.prepare.outputs.base }}'],
@@ -74,7 +82,13 @@ export const KEY_STEP_TEMPLATES: KeyStepTemplate[] = [
       check
     ].join('\n'),
     checkout: '',
-    downloads: ['.preview/input'],
+    downloads: [
+      {
+        path: '.preview/input',
+        name: 'web-preview-reviewer',
+        runId: '${{ github.event.workflow_run.id }}'
+      }
+    ],
     data: {}
   }
 ]

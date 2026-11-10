@@ -12,9 +12,7 @@ export default defineConfig({
     // The scene runtime supplies this virtual module. Tests provide its methods with vi.mock.
     resolveId(id) { return id === '~system/RestrictedActions' ? id : null }
   }],
-  // The shared HUD UI's tests import the testing packages too; library/ has no node_modules of its own in CI,
-  // so they resolve to this app's copies, beside its React.
-  resolve: { alias: SHARED_ALIASES, dedupe: [...SHARED_DEDUPE, '@testing-library/react', '@testing-library/user-event', '@testing-library/dom', '@testing-library/jest-dom'] },
+  resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   // The shared sources live outside this app (vite.shared.ts), like in vite.config.ts.
   server: { fs: { allow: [searchForWorkspaceRoot(process.cwd()), ...SHARED_TREES] } },
   test: {

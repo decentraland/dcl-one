@@ -1,6 +1,11 @@
 { lib, runCommand, python3 }:
 let
   root = ../..;
+  manifestPath = "rendering/bevy-explorer/source/react-web/shared-inputs.json";
+  manifest = builtins.fromJSON (builtins.readFile (root + "/${manifestPath}"));
+  # Validate the original flake source before filtering away unconsumed shared names.
+  checked = assert import ./hud-shared-inputs.nix { inherit root manifest; }; manifest;
+  sharedFiles = map (row: root + "/${row.path}") (checked.controls ++ checked.files);
   supplied = builtins.getEnv "PLAY_WEB_DIR";
   artifact = if supplied == "" then null else builtins.path {
     path = /. + supplied;
@@ -10,23 +15,20 @@ let
   # build output. Verify the first-party source directly without a snapshot pin.
   contract = lib.fileset.toSource {
     inherit root;
-    fileset = lib.fileset.unions (map (p: lib.fileset.maybeMissing (root + p)) [
+    fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
       /rendering/bevy-explorer/upstream.lock.json
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/bevy
       /library/protocol/proto
-      # The HUD's shared sources (HUD_SHARED in tooling/play-artifact.py, which leaves the
-      # HUD_UNREAD files under them unhashed).
-      /library/shop /library/catalyst-api /library/ui/index.ts /library/ui/foundations
-      /library/ui/apps/hud /library/explorer-core
       /apps/bevy-explorer/build-web.py /apps/bevy-explorer/install-linux-deps.py
       /apps/bevy-explorer/install-web-tools.py
       /apps/bevy-explorer/install-tools.sh /.github/actions/bevy-explorer-tools/action.yml
       /flake.lock /infra/packages/default.nix /infra/packages/tools.nix
-      /tooling/play-artifact.py
+      /tooling/play-artifact.py /tooling/hud_shared_inputs.py
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
-    ]);
+      /library/explorer-core/engine/generated
+    ]));
   };
 in runCommand "foundation-built-play-web" {
   src = artifact;

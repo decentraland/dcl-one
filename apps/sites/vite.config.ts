@@ -14,7 +14,8 @@ const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url))
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
 const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
 // library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
-// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own.
+// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
+// to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
 const noble = (path: string) => fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url));
 
 function watchUi3(ui3Src: string): Plugin {
@@ -249,13 +250,14 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui/apps/hud", "../../library/explorer-core"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
+      "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@catalyst-api": catalystApi,
       "@shop": shopCore,
       "@hud-host": hudHost,

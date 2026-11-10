@@ -61,6 +61,16 @@ describe.each([
   {
     registry: JSON.stringify({ components: ['Button'], internal: ['Button'] }),
     error: 'Invalid or duplicate library component registry name'
+  },
+  {
+    registry: JSON.stringify({ components: [{ name: 'Button', limits: [] }] }),
+    error: 'Invalid library component registry'
+  },
+  {
+    registry: JSON.stringify({
+      components: [{ name: 'Button', limits: [{ id: 'gap', text: 'See https://x.test' }] }]
+    }),
+    error: 'Invalid library component registry'
   }
 ])('when retirement encounters malformed registry $registry', ({ registry, error }) => {
   let root: string
@@ -81,5 +91,55 @@ describe.each([
     await expect(removeLibraryEntries(root, owned)).rejects.toThrow(error)
     expect(await readFile(path.join(root, 'index.ts'), 'utf8')).toBe(index)
     expect(await readFile(path.join(root, 'components/promotion.json'), 'utf8')).toBe(registry)
+  })
+})
+
+describe('when retirement removes promotion entries', () => {
+  const limits = [{ id: 'logo-size', text: 'The logo size is pending.' }]
+  let root: string
+  const read = async () =>
+    JSON.parse(await readFile(path.join(root, 'components/promotion.json'), 'utf8'))
+  beforeEach(async () => {
+    root = await mkdtemp(path.join(tmpdir(), 'dcl-library-retirement-'))
+    await mkdir(path.join(root, 'components'))
+    await writeFile(
+      path.join(root, 'components/promotion.json'),
+      JSON.stringify({
+        schema: 1,
+        components: ['Button', { name: 'NavBar', limits }, { name: 'Card', limits }],
+        internal: ['Icon']
+      })
+    )
+  })
+  afterEach(async () => {
+    await rm(root, { recursive: true, force: true })
+  })
+  describe('and the retired entry carries accepted limits', () => {
+    it('should remove that entry and keep the other entries with their limits', async () => {
+      expect(
+        await removeLibraryEntries(root, ['components/promotion.json#component:NavBar'])
+      ).toEqual(['components/promotion.json#component:NavBar'])
+      expect(await read()).toEqual({
+        schema: 1,
+        components: ['Button', { name: 'Card', limits }],
+        internal: ['Icon']
+      })
+    })
+  })
+  describe('and the retired entries are bare names', () => {
+    it('should remove the public and the internal names', async () => {
+      await removeLibraryEntries(root, [
+        'components/promotion.json#component:Button',
+        'components/promotion.json#component:Icon'
+      ])
+      expect(await read()).toEqual({
+        schema: 1,
+        components: [
+          { name: 'NavBar', limits },
+          { name: 'Card', limits }
+        ],
+        internal: []
+      })
+    })
   })
 })

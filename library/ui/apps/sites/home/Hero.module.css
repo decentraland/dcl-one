@@ -1,0 +1,140 @@
+.root {
+  --sites-hero-purple: #39055c;
+  text-size-adjust: 100%;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  min-height: 100vh;
+  min-height: 100svh;
+  overflow: hidden;
+  color: var(--dcl-text-primary);
+  background: var(--sites-hero-purple);
+}
+
+.background {
+  position: absolute;
+  inset: 0;
+}
+
+.media {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The still image stays underneath as the first paint; the video fades in over it. */
+.video {
+  animation: fade-in 600ms ease-out both;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.shadeTop {
+  position: absolute;
+  inset: 0 0 auto;
+  height: 24.3%;
+  background: linear-gradient(180deg, var(--dcl-neutrals-black) 0%, transparent 100%);
+}
+
+/* The live Sites hero owns this purple treatment; it has no shared semantic token. */
+.shadeBottom {
+  position: absolute;
+  inset: auto 0 0;
+  height: 85%;
+  background: linear-gradient(
+    0deg,
+    var(--sites-hero-purple) 0%,
+    var(--sites-hero-purple) 30%,
+    #39055c00 100%
+  );
+}
+
+/* Source centers the title and actions at the bottom of the hero, 120px up on desktop
+   (96 + 24 here) and 64px up on phones. */
+.content {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-24);
+  width: 100%;
+  max-width: 393px;
+  box-sizing: border-box;
+  padding: 0 var(--dcl-space-24) var(--dcl-space-64);
+  text-align: center;
+}
+
+.layout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-24);
+  width: 100%;
+}
+
+.title {
+  composes: text68656164696e672f786c from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  font-size: 40px;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.00938em;
+  color: var(--dcl-neutrals-white);
+}
+
+.subtitle {
+  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+  letter-spacing: 0.00938em;
+  color: var(--dcl-neutrals-white);
+  text-shadow: 0 1px var(--dcl-space-4) var(--dcl-transparencies-black-40);
+}
+
+/* breakpoints.desktop in foundations/layout (custom properties cannot be media conditions). */
+@media (min-width: 1024px) {
+  .content {
+    width: auto;
+    max-width: none;
+    padding: 0 0 calc(var(--dcl-space-96) + var(--dcl-space-24));
+  }
+
+  .shadeBottom {
+    height: 60%;
+    background: linear-gradient(0deg, var(--sites-hero-purple) 0%, transparent 100%);
+  }
+
+  .narrowOnly {
+    display: none;
+  }
+
+  .title {
+    margin-bottom: 36px;
+    font-size: 60px;
+    font-weight: 600;
+    font-family: 'Inter', Helvetica, Arial, sans-serif;
+    letter-spacing: -0.5px;
+  }
+}
+
+/* Below breakpoints.desktop the narrow layout replaces the wide one. */
+@media not all and (min-width: 1024px) {
+  .wideOnly {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video {
+    animation: none;
+  }
+}

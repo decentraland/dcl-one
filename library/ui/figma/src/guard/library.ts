@@ -1,3 +1,7 @@
+import {
+  componentRegistryEntries,
+  componentRegistryEntryName
+} from '../../component-generation.mjs'
 import { componentOwnerById, componentIdOfFile } from './component-identity.js'
 import path from 'node:path'
 import { exportStatements, publicExportSet, removePublicExports } from './exports.js'
@@ -7,24 +11,46 @@ import type { Ownership } from './ownership.js'
 const LIBRARY_GENERATED = 'components/'
 const LIBRARY_INDEX = 'index.ts'
 const LIBRARY_PROMOTION = 'components/promotion.json'
-type LibraryComponentEntry = { name: string; visibility: 'public' | 'internal' }
+type AcceptedLimit = { id: string; text: string }
+type LibraryComponentEntry = {
+  name: string
+  visibility: 'public' | 'internal'
+  limits?: AcceptedLimit[]
+}
 function libraryComponentEntries(value: unknown): LibraryComponentEntry[] {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid library component registry')
   const data = value as { components?: unknown; internal?: unknown }
+  if (
+    (data.components !== undefined && !Array.isArray(data.components)) ||
+    (data.internal !== undefined && !Array.isArray(data.internal))
+  )
+    throw new Error('Invalid library component registry name list')
+  // Names and accepted limits are validated once, by the same reader the installer uses.
+  let parsed: { components: string[]; internal: string[]; limits: Record<string, AcceptedLimit[]> }
+  try {
+    // Other keys of the registry document are the guard's concern (aggregates keeps them), not entries.
+    parsed = componentRegistryEntries({
+      components: data.components ?? [],
+      ...(data.internal === undefined ? {} : { internal: data.internal })
+    })
+  } catch (error) {
+    throw new Error('Invalid library component registry: ' + (error as Error).message, {
+      cause: error
+    })
+  }
   const entries: LibraryComponentEntry[] = []
   const names = new Set<string>()
-  for (const [key, visibility] of [
-    ['components', 'public'],
-    ['internal', 'internal']
+  for (const [list, visibility] of [
+    [parsed.components, 'public'],
+    [parsed.internal, 'internal']
   ] as const) {
-    const list = data[key] === undefined ? [] : data[key]
-    if (!Array.isArray(list)) throw new Error('Invalid library component registry name list')
     for (const name of list) {
       if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(name) || names.has(name))
         throw new Error('Invalid or duplicate library component registry name')
       names.add(name)
-      entries.push({ name, visibility })
+      const limits = Object.hasOwn(parsed.limits, name) ? parsed.limits[name] : undefined
+      entries.push(limits ? { name, visibility, limits } : { name, visibility })
     }
   }
   return entries
@@ -94,20 +120,15 @@ async function removeLibraryEntries(root: string, owned: string[]): Promise<stri
     else {
       const data = JSON.parse(text)
       libraryComponentEntries(data)
+      // Entries are names or { name, limits }; match by the registry's own entry name, never the raw value.
+      const kept = (entries: unknown[]) =>
+        entries.filter((entry) => !keys.includes(`component:${componentRegistryEntryName(entry)}`))
       next =
         JSON.stringify(
           {
             ...data,
-            components: (data.components ?? []).filter(
-              (name: string) => !keys.includes(`component:${name}`)
-            ),
-            ...(data.internal === undefined
-              ? {}
-              : {
-                  internal: data.internal.filter(
-                    (name: string) => !keys.includes(`component:${name}`)
-                  )
-                })
+            components: kept(data.components ?? []),
+            ...(data.internal === undefined ? {} : { internal: kept(data.internal) })
           },
           null,
           2

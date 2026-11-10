@@ -1,5 +1,5 @@
 import { renderToString } from 'react-dom/server'
-import { NavBar, type NavBarProps } from '../../components/NavBar/NavBar'
+import { NavBar, type NavBarProps } from '@dcl/one-ui'
 
 export function renderNavigationRoute(props: NavBarProps, onError: (error: unknown) => string) {
   try {
