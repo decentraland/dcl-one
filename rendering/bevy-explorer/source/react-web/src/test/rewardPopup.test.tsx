@@ -3,7 +3,7 @@ import { act, render, screen, waitFor } from '@testing-library/react'
 import type { AppNotification } from '@hud/engine/protocol'
 import { PopupHost, resetPopups } from '@hud/design'
 import { clearRewardPopups } from '@hud/features/rewards/RewardPopup'
-import { clearNotificationToasts } from '../features/notifications/NotificationToast'
+import { clearNotificationToasts } from '@hud/features/notifications/NotificationToast'
 import { renderSession, enterAsGuest } from './harness'
 
 // The popup itself is tested with the shared HUD (library/ui/apps/hud/test/rewardPopup.test.tsx); this

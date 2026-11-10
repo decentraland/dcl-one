@@ -6,7 +6,7 @@
 import { secp256k1 } from '@noble/curves/secp256k1.js'
 import { bytesToHex, hexToBytes } from '@noble/hashes/utils.js'
 import { newEphemeralDelegation, publicKeyAddress, signedIdentity } from '../features/auth/guest'
-import type { AuthIdentity } from '../features/auth/sso'
+import type { AuthIdentity } from '@hud/features/auth/sso'
 import { personalSign } from '@hud/shell/sign'
 
 // The root key of the autopilot's local guest, which signs each of its identities. Shell-only, like the

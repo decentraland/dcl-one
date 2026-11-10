@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MapPage } from '../features/map/MapPage'
-import type { MapState } from '../features/session/useEngineSession'
+import { MapPage } from '@hud/features/map/MapPage'
+import type { MapState } from '@hud/features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 
 function renderMap(): MapState {

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EngineDriver, NO_SHELL_FOR_LOCAL_GUEST } from '../engine/EngineDriver'
 import { EngineRpc } from '@hud/engine/engineRpc'
-import { sessionId } from '../lib/analytics'
+import { sessionId } from '@hud/lib/analytics'
 
 describe('EngineDriver', () => {
   it('launches with the page analytics session id beside the host options', () => {

@@ -1,16 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Chat } from '../features/chat/Chat'
-import { openProfileCard } from '../features/profileCard/ProfileCard'
-import type { ChatLine, ChatState } from '../features/session/useEngineSession'
+import { Chat } from '@hud/features/chat/Chat'
+import { openProfileCard } from '@hud/features/profileCard/ProfileCard'
+import type { ChatLine, ChatState } from '@hud/features/session/useEngineSession'
 import type { NearbyMember } from '@hud/engine/protocol'
 import { fakeSession } from './harness'
 import { seedProfiles } from '@hud/features/session/profileStore'
 
 // Chat opens the shared profile card via openProfileCard (the card itself is covered by the container
 // + presentational tests). Stub it so we can assert the trigger + the resolved address.
-vi.mock('../features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
+vi.mock('@hud/features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
 afterEach(() => vi.mocked(openProfileCard).mockClear())
 
 const line = (message: string, sender = '0xsender'): ChatLine => ({

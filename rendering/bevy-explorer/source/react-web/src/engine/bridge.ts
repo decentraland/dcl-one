@@ -6,10 +6,11 @@
 // `on(msg => …)` subscription; only request/response (login) is correlated by id.
 
 import { createGuestIdentity } from '../features/auth/guest'
-import { encodeIdentity, type AuthIdentity } from '../features/auth/sso'
+import { encodeIdentity, type AuthIdentity } from '@hud/features/auth/sso'
 import type { GuestWallet } from '@hud/features/auth/thirdweb'
 import { BridgeChannel } from './bridgeChannel'
-import { autopilotFailCommand, newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
+import { newAccountFlags, type NewAccountPick } from '@hud/engine/driver'
+import { autopilotFailCommand, type AutopilotDriver } from './autopilot'
 import {
   bridgeChannelName,
   type LoginPreviousResult,
@@ -33,7 +34,7 @@ const QUICK_RPC_TIMEOUT_MS: Partial<Record<RpcMethod, number>> = {
 // Answered by the bridge scene, not the engine's boot shim.
 const SCENE_RPCS: ReadonlySet<RpcMethod> = new Set(['guestLogin', 'guestSign', 'guestDiscard'])
 
-export class BridgeClient implements LoginDriver {
+export class BridgeClient implements AutopilotDriver {
   private readonly ch: BridgeChannel
   private readonly pending = new Map<string, Pending>()
   private readonly listeners = new Set<(msg: SceneToPage) => void>()

@@ -248,7 +248,7 @@ The HUD and input:
   matches need an `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
   the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
   control out of every such region. `/hud_fill` answers with the field
-  as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
+  as the typing left it. The page's side is `library/ui/apps/hud/lib/hudAutomation.ts`.
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
   when `window.__dclTrustedInput` is present): sign in through the HUD's own flow with an
@@ -259,7 +259,7 @@ The HUD and input:
   own), and the destination is picked from the lobby as a link's would be, which releases the held
   world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
   `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
-  The command is `react-web/src/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
+  The command is `library/ui/apps/hud/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
   session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.

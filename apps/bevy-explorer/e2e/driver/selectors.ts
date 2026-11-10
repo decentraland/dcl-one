@@ -1,5 +1,5 @@
 // How a spec names a HUD control: the accessible name, or a JSON selector as `/hud_*` take it
-// (react-web/src/lib/hudAutomation.ts): `name` matches case-insensitively after whitespace
+// (library/ui/apps/hud/lib/hudAutomation.ts): `name` matches case-insensitively after whitespace
 // normalisation, exactly unless `exact: false`; `role` filters; `index` picks among several matches.
 
 export interface SelectorObject {

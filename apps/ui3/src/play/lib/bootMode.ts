@@ -12,15 +12,9 @@
 // The engine-bound params (?portables=, ?imposterSource=, ?pulseServer=, …) are not boot-mode
 // decisions: they come from the engine's web param table (lib/webParams.ts) and are handed over
 // as-is by EngineHost.
-export interface BootMode {
-  /** explicit ?systemScene= override; null = the default bridge scene drives */
-  systemScene: string | null
-  /** render only the engine — no HUD chrome, no sign-in/loading overlays */
-  hideHud: boolean
-  /** skip the sign-in screen: auto guest-login, or no React login at all (the ui scene owns it) */
-  autoLogin: 'guest' | 'scene-owned' | null
-}
+export type { BootMode } from '@hud/hostContract'
 
+import type { BootMode } from '@hud/hostContract'
 // Upstream's `vite build --mode native` defines __NATIVE_HUD__ for the HUD bundled into the
 // native client. Sites only builds the web HUD; the native shell here (apps/desktop) is a webview
 // around /play, not a CEF overlay, so there is no native build and ?native=1 is never honoured.

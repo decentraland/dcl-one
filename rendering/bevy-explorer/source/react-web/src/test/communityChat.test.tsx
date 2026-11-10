@@ -1,9 +1,9 @@
 import { beforeEach, describe, it, expect } from 'vitest'
 import { act } from '@testing-library/react'
 import { renderSession, enterAsGuest, type Harness } from './harness'
-import { PREF, getPref, setPref } from '../lib/prefs'
-import { pingModeFor, resetPingPrefs, setPingMode } from '../features/chat/ping'
-import { setAutoTranslate } from '../features/chat/translation'
+import { PREF, getPref, setPref } from '@hud/lib/prefs'
+import { pingModeFor, resetPingPrefs, setPingMode } from '@hud/features/chat/ping'
+import { setAutoTranslate } from '@hud/features/chat/translation'
 import type { CommunityChannel, CommunityMember } from '@hud/engine/protocol'
 
 // DOMAIN: community chat — the user's communities as chat tabs (fed at world entry, kept by

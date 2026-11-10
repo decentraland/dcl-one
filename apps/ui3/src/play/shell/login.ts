@@ -10,7 +10,7 @@ import {
   rootAddress,
   storeGuestLogin,
   type StoredLogin
-} from '../features/auth/sso'
+} from '@hud/features/auth/sso'
 import { personalSign } from '@hud/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it

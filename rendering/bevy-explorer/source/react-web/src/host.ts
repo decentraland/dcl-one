@@ -1,8 +1,9 @@
 // The HUD host module (`@hud-host`, vite.shared.ts) for the Explorer's own HUD: the shared HUD in
 // library/ui/apps/hud reads these through the contract in its hostContract.ts.
-import type { HudHost } from '@hud/hostContract'
+import type { HudHost, UnattendedRun } from '@hud/hostContract'
 import { BASE_DOMAIN, DEFAULT_REALM, nativeProfileImage, serviceUrl } from './lib/baseDomain'
-import { isNativeHud } from './lib/bootMode'
+import { bootMode, isNativeHud } from './lib/bootMode'
+import type { AutopilotDriver } from './engine/autopilot'
 import { acceptedEntryParams, entryRealm } from './lib/entryParams'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
 
@@ -12,8 +13,22 @@ const siteUrl = (path: string): string => `https://${BASE_DOMAIN}${path}`
 const ownShopItemUrl = (_contract: string, _item: string): string | null => null
 /** The Shop opens the web Shop: this HUD's in-world Shop page is the catalogue (ShopPage). */
 const IN_WORLD_SHOP = false
+/** The benchmark autopilot (?autopilot, where lib/bootMode.ts honours it): it signs in with the
+ *  machine's local guest and nothing else, lands at Genesis 0,0, and a sign-in that fails ends the
+ *  run through the engine (non-zero, no CSV). */
+const unattendedRun = (): UnattendedRun | null =>
+  bootMode().autoLogin === 'unattended'
+    ? {
+        destination: { kind: 'parcel', x: 0, y: 0 },
+        login: (d) => (d as AutopilotDriver).loginLocalGuest?.() ?? d.loginGuest(),
+        loginFailed: (d, reason) =>
+          void (d as AutopilotDriver)
+            .autopilotFailed?.(reason)
+            ?.catch((e: unknown) => console.error('[autopilot] the engine was not told the sign-in failed:', e))
+      }
+    : null
 
-export { acceptedEntryParams, BASE_DOMAIN, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl }
+export { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl }
+const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

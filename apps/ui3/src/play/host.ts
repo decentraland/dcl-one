@@ -2,7 +2,7 @@
 // reads these through the contract in its hostContract.ts.
 import type { HudHost } from '@hud/hostContract'
 import { BASE_DOMAIN, DEFAULT_REALM, ONE_GATEWAY_HOST, serviceUrl, siteUrl } from './lib/baseDomain'
-import { isNativeHud } from './lib/bootMode'
+import { bootMode, isNativeHud } from './lib/bootMode'
 import { acceptedEntryParams, entryRealm } from './lib/entryParams'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
 import { IN_WORLD_SHOP } from './features/shop/entry'
@@ -14,7 +14,10 @@ const nativeProfileImage = (raw: string | undefined): string | undefined => raw
 const ownShopItemUrl = (contract: string, item: string): string | null =>
   BASE_DOMAIN === ONE_GATEWAY_HOST ? siteUrl(`/shop/item/${contract}/${item}`) : null
 
-export { acceptedEntryParams, BASE_DOMAIN, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl }
+/** /play has no benchmark run. */
+const unattendedRun: HudHost['unattendedRun'] = () => null
 
-const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl }
+export { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+
+const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

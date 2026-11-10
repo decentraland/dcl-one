@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { BackpackPage } from '../features/backpack/BackpackPage'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
 import type { Wearable } from '@hud/engine/protocol'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from './harness'
 

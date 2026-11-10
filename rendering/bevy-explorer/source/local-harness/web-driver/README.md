@@ -7,7 +7,7 @@ and CEF input give it:
 - **Console commands.** `console(line)` runs `await window.engine_console_command(line)` in the
   app frame and returns what it resolves with, or rejects with the page's message.
 - **Trusted input.** `/hud_click`, `/hud_fill`, `/press_key` and `/click_at` (page side:
-  `react-web/src/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
+  `library/ui/apps/hud/lib/hudAutomation.ts`) ask the runner for real input instead of dispatching DOM
   events, so the page sees `isTrusted` events.
 
 Chrome is started with `--remote-debugging-pipe`, never a port (the benchmark runner forbids
@@ -63,7 +63,7 @@ one implementation of it.
 
 The page calls `window.__dclTrustedInput(json)`, a binding the runner installs in every frame
 with `Runtime.addBinding`, before the page's scripts run: the page registers `/hud_login` only if
-the binding is there when it installs its commands (`react-web/src/lib/hudAutomation.ts`). The
+the binding is there when it installs its commands (`library/ui/apps/hud/lib/hudAutomation.ts`). The
 JSON is `{"id", "op", ...}`:
 
 | `op` | fields |

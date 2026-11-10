@@ -73,7 +73,7 @@ describe('native HUD snapshot presentation', () => {
     const base = 'https://gateway.example.org/prefix/profile-images'
     params(base)
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
-    const { NotificationsPanel } = await import('../features/notifications/NotificationsPanel')
+    const { NotificationsPanel } = await import('@hud/features/notifications/NotificationsPanel')
     const notification = {
       id: '1', type: 'social_service_friendship_request', read: false, timestamp: '2026-01-01T00:00:00Z',
       metadata: { sender: { name: 'Friend', address: '0x1234', profileImageUrl: image } }
@@ -89,7 +89,7 @@ describe('native HUD snapshot presentation', () => {
     const base = 'https://gateway.example.org/profile-images'
     params(base)
     vi.stubGlobal('cef', { emit: vi.fn(), listen: vi.fn() })
-    const { NotificationsPanel } = await import('../features/notifications/NotificationsPanel')
+    const { NotificationsPanel } = await import('@hud/features/notifications/NotificationsPanel')
     const sold = { id: 'sale', type: 'item_sold', read: true, timestamp: '2026-01-01T00:00:00Z', metadata: { title: 'Item sold', image } }
     const other = { ...sold, id: 'other', metadata: { thumbnailUrl: 'https://cdn.example.org/promo.png' } }
     const { container } = render(<NotificationsPanel notifications={{

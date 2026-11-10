@@ -4,10 +4,10 @@
 // the way to its destination, or with what ended it.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import type { NewAccountPick } from '../engine/driver'
+import type { NewAccountPick } from '@hud/engine/driver'
 import type { PageToScene } from '@hud/engine/protocol'
-import type { AuthIdentity } from '../features/auth/sso'
-import { LOGIN_COMMANDS, loginThroughHud, parseLoginArgs, provideHudLogin } from '../lib/hudAutomation'
+import type { AuthIdentity } from '@hud/features/auth/sso'
+import { LOGIN_COMMANDS, loginThroughHud, parseLoginArgs, provideHudLogin } from '@hud/lib/hudAutomation'
 import { FakeDriver, renderSession } from './harness'
 
 const ADDRESS = '0x' + 'Ab'.repeat(20)

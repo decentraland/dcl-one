@@ -1,11 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { NameEditModal, openNameEdit } from '../features/profile/NameEditModal'
-import { SessionProvider } from '../features/session/SessionContext'
+import { NameEditModal, openNameEdit } from '@hud/features/profile/NameEditModal'
+import { SessionProvider } from '@hud/features/session/SessionContext'
 import { fakeProfileState, fakeSession } from './harness'
 import { PopupHost, resetPopups } from '@hud/design'
-import type { EngineSession } from '../features/session/useEngineSession'
+import type { EngineSession } from '@hud/features/session/useEngineSession'
 import type { Profile } from '@hud/engine/protocol'
 
 // COMPONENT: the name editor. A NAME is a different kind of choice from the rest of the profile —

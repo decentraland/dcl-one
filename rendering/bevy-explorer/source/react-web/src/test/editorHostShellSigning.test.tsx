@@ -2,10 +2,10 @@
 
 import { beforeAll, describe, it, expect, vi } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { useEditorHost } from '../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../features/editorHost/host/host'
-import { localSigner, signDeployment, signFetch } from '../features/editorHost/host/sign'
-import type { Signer } from '../features/editorHost/host/signer'
+import { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import type { DclEditorHostV1 } from '@hud/features/editorHost/host/host'
+import { localSigner, signDeployment, signFetch } from '@hud/features/editorHost/host/sign'
+import type { Signer } from '@hud/features/editorHost/host/signer'
 import { shellRequest } from '@hud/lib/shell'
 import { fakeSession } from './harness'
 

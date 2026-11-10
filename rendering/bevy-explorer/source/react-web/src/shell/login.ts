@@ -10,7 +10,7 @@ import {
   rootAddress,
   storeGuestLogin,
   type StoredLogin
-} from '../features/auth/sso'
+} from '@hud/features/auth/sso'
 import { isLoopbackHost } from '../lib/loopbackHost'
 import { createLocalGuestRootKey, getLocalGuestRootKey, localGuestIdentity, storeLocalGuestRootKey } from './localGuest'
 import { personalSign } from '@hud/shell/sign'

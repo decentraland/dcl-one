@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AuthIdentity } from '../features/auth/sso'
+import type { AuthIdentity } from '@hud/features/auth/sso'
 import { personalSign } from '@hud/shell/sign'
 
 // web3.js docs key; its address is 0x2c7536E3605D9C16a7a3D7b1898e529396a65c23

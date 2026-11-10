@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BackpackPage } from '../features/backpack/BackpackPage'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
 import type { Wearable } from '@hud/engine/protocol'
-import type { BackpackState } from '../features/session/useEngineSession'
+import type { BackpackState } from '@hud/features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 
 const hat: Wearable = { urn: 'urn:hat', name: 'Top Hat', rarity: 'rare', category: 'hat', equipped: true, hides: ['hair'] }

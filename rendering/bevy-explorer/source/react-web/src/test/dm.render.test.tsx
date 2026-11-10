@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Chat } from '../features/chat/Chat'
-import type { ChatState, Conversation } from '../features/session/useEngineSession'
+import { Chat } from '@hud/features/chat/Chat'
+import type { ChatState, Conversation } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
 
 // DOMAIN: direct messages in the chat panel — the conversation rail, the DM title bar and its

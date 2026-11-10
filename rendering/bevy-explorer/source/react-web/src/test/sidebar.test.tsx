@@ -1,10 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Sidebar } from '../features/sidebar/Sidebar'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { renderSettled, fakeSession } from './harness'
 import { PopupHost } from '@hud/design/popups'
-import { requestDebugPanel } from '../features/debug/useDebugPanel'
+import { requestDebugPanel } from '@hud/features/debug/useDebugPanel'
 import * as boot from '../lib/bootMode'
 
 // Unity parity for the nav rail (unity-explorer DCL/UI/Sidebar/SidebarView.cs).

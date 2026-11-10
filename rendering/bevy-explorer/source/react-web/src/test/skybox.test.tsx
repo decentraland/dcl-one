@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { SkyboxMenu, formatHours } from '../features/skybox/SkyboxMenu'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { SkyboxMenu, formatHours } from '@hud/features/skybox/SkyboxMenu'
 import { enterAsGuest, fakeSession, renderSession } from './harness'
 
 describe('skybox', () => {

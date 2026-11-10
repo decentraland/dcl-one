@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { SettingsPanel } from '../features/settings/SettingsPanel'
+import { SettingsPanel } from '@hud/features/settings/SettingsPanel'
 import type { Setting } from '@hud/engine/protocol'
-import type { SettingsState } from '../features/session/useEngineSession'
+import type { SettingsState } from '@hud/features/session/useEngineSession'
 import { fakeProfileState, fakeSession } from './harness'
 
 const base = (over: Partial<Setting>): Setting => ({

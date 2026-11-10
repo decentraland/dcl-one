@@ -5,11 +5,12 @@
 //     from the super-user bridge scene over the `bevy-ui-bridge` BroadcastChannel
 //     and are delivered through ONE generic `on(msg => …)` subscription.
 
-import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '../features/auth/sso'
-import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
-import { attachEngine, launchAnalytics } from '../lib/analytics'
+import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '@hud/features/auth/sso'
+import { trackGuestWalletCreation } from '@hud/features/auth/guestWalletEvent'
+import { attachEngine, launchAnalytics } from '@hud/lib/analytics'
 import { inShell, shellRequest } from '@hud/lib/shell'
-import { autopilotFailCommand, newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
+import { newAccountFlags, type NewAccountPick } from '@hud/engine/driver'
+import { autopilotFailCommand, type AutopilotDriver } from './autopilot'
 import type { EngineRpc, LaunchHostOptions } from '@hud/engine/engineRpc'
 import { BridgeChannel } from './bridgeChannel'
 import { bridgeChannelName, type PageToScene, type SceneToPage } from '@hud/engine/protocol'
@@ -20,7 +21,7 @@ const CREATE_GUEST_TIMEOUT_MS = 30_000
 /** Why the autopilot's sign-in fails outside the shell (`loginLocalGuest`). */
 export const NO_SHELL_FOR_LOCAL_GUEST = 'no shell to keep the local guest'
 
-export class EngineDriver implements LoginDriver {
+export class EngineDriver implements AutopilotDriver {
   private readonly ch: BridgeChannel
   private readonly listeners = new Set<(msg: SceneToPage) => void>()
 

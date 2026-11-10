@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProfilePanel } from '../features/profile/ProfilePanel'
-import type { ProfileState } from '../features/session/useEngineSession'
+import { ProfilePanel } from '@hud/features/profile/ProfilePanel'
+import type { ProfileState } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
 
 function panel(over: Partial<ProfileState>): ProfileState {

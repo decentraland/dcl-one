@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Sidebar } from '../features/sidebar/Sidebar'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { fakeSession } from './harness'
 
 function renderSidebar(over: { enabled?: boolean; available?: boolean } = {}) {

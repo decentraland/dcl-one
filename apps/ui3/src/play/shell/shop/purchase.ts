@@ -41,7 +41,7 @@ import { itemAsset } from '@shop/model/asset'
 import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
-import { loginExpired, rootAddress, type StoredLogin } from '../../features/auth/sso'
+import { loginExpired, rootAddress, type StoredLogin } from '@hud/features/auth/sso'
 import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
 import { siteUrl } from '../../lib/baseDomain'
 import {

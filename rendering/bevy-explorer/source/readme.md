@@ -193,7 +193,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   room and media connections, and exercise supported controls. Availability depends
   on the build, platform and preview mode. `/performance_state` reports the effective
   frame-rate target and session override independently of the panel.
-- The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
+- The HUD, by role and accessible name (`library/ui/apps/hud/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
   `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving

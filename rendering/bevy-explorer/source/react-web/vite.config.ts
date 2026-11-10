@@ -209,6 +209,10 @@ export default defineConfig(({ command, mode }) => ({
             // HUD's groups, which would otherwise take these along with the modules that import them.
             { name: 'crypto', test: /node_modules\/@noble\//, priority: 1 },
             { name: 'shell', test: /\/(src|apps\/hud)\/(lib\/(shell|prefs)|features\/auth\/(sso|guest|thirdweb))\.ts/, priority: 1 },
+            // The host module the shared HUD reads (`@hud-host`, src/host.ts) and what it reads, and the
+            // signer the shell and the editor share: the shell page needs them, so they go with it rather
+            // than with the first HUD chunk that imports them.
+            { name: 'shell', test: /\/src\/(host|lib\/(baseDomain|bootMode|entryParams|loopbackHost|publicUrl))\.ts|\/apps\/hud\/(engine\/generated\/(serviceTable|webParamTable)|shell\/sign)\.ts/, priority: 1 },
             {
               name(id) {
                 if (id.includes('node_modules')) return 'vendor'

@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { EventsPage } from '../features/events/EventsPage'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { EventsPage } from '@hud/features/events/EventsPage'
 import { eventDestination, type DclEvent } from '@hud/features/events/eventsApi'
 import { fakeProfileState, fakeSession } from './harness'
 

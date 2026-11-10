@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BackpackPage } from '../features/backpack/BackpackPage'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
 import { fakeProfileState, fakeSession } from './harness'
 
 function renderBackpack(initialTab?: 'emotes') {

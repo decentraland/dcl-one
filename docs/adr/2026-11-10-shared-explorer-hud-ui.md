@@ -21,7 +21,11 @@ import it as `@hud/*`.
   pin. A behavior the hosts implement differently comes from the module `@hud-host`, which each
   host maps to its own `host.ts` implementing `library/ui/apps/hud/hostContract.ts`. The mapping
   is a build-time alias (`paths` in each host's `tsconfig.json`, `resolve.alias` in its Vite and
-  Vitest configurations), so code one host leaves out never reaches its bundle.
+  Vitest configurations), so code one host leaves out never reaches its bundle. A flow only one
+  host has comes in the same way: react-web's benchmark autopilot is its `unattendedRun`, and the
+  shared session knows only that a host may have an unattended run.
+- **The host module stays below the HUD.** A host's `host.ts` and what it imports never import
+  shared HUD code that reads `@hud-host`, so loading the host module does not load the HUD.
 - **No packages of its own.** `apps/hud` adds nothing to `library/ui/package.json`. Each host
   resolves React and the other packages to its own copy (`paths`, `resolve.dedupe`), at the versions
   the hosts already pin; `library/ui`'s own tests use the packages `library/ui` already pins.

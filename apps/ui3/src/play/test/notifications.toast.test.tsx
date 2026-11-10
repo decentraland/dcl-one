@@ -6,9 +6,9 @@ import {
   TOAST_MS,
   clearNotificationToasts,
   queueNotificationToasts
-} from '../features/notifications/NotificationToast'
-import { ago } from '../features/notifications/summary'
-import { NOTIFICATIONS_KEPT, type NotificationsState } from '../features/session/useEngineSession'
+} from '@hud/features/notifications/NotificationToast'
+import { ago } from '@hud/features/notifications/summary'
+import { NOTIFICATIONS_KEPT, type NotificationsState } from '@hud/features/session/useEngineSession'
 import { fakeSession, renderSession, enterAsGuest } from './harness'
 
 const notif = (id: string, over: Partial<AppNotification> = {}): AppNotification => ({

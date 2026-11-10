@@ -47,23 +47,25 @@ transition"). The rest of `apps/ui3/src/play` adapts `source/react-web/src` with
 - Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
   in `apps/ui3` under `tsconfig.play.json`. Tests of the shared HUD UI live in
   `library/ui/apps/hud`, and `react-web`'s `npm test` runs them. `?native=1` is not built.
-- The benchmark's unattended run is not carried: the `autopilot` boot mode (`lib/bootMode.ts`) and
-  its sign-in in `features/session/useEngineSession.ts`, the shell's local guest
-  (`shell/localGuest.ts`) and the stream params (`perfStream`, `perfCsv`). `/play` never runs the
+- The benchmark's unattended run is not carried. The shared session only knows that a host may
+  have an unattended run (`@hud-host`'s `bootMode` and `unattendedRun`); react-web's `host.ts`
+  supplies the autopilot's (`?autopilot` read by `lib/bootMode.ts`, the local guest's sign-in, the
+  run's failure report and its Genesis landing), `/play`'s supplies none. Nor are the shell's local
+  guest (`shell/localGuest.ts`) and the stream params (`perfStream`, `perfCsv`). `/play` never runs the
   benchmark: `features/engine/EngineHost.tsx` keeps `autopilot` out of the engine's launch options
   on every host (the key is absent, not `false`, so an engine that predates the field still
   launches), and `perfStream` and `perfCsv` are never read. Neither HUD's `lib/launchGate.ts` has
   an entry for these switches: the Explorer's HUD ignores them except on loopback hosts and in
   native, `/play` ignores them everywhere, and `lib/entryParams.ts` does not list `autopilot`
   among the parameters a link can set. Nothing else of the run is carried either, because nothing in
-  `/play` calls it: the drivers' `loginLocalGuest` and `autopilotFailed` (`engine/driver.ts`,
+  `/play` calls it: the drivers' `loginLocalGuest` and `autopilotFailed` (`engine/autopilot.ts`,
   `engine/EngineDriver.ts`, `engine/bridge.ts`), the shell's `createLocalGuest` with the root key it
-  keeps (`shell/login.ts`, `features/auth/sso.ts`) and the helpers `features/auth/guest.ts` splits
+  keeps (`shell/login.ts`, `shell/localGuest.ts`) and the helpers `features/auth/guest.ts` splits
   out for it, `lib/loopbackHost.ts`, the `__bevyPerfStream` page switch (`EngineHost.tsx`) and the
   bridge channel's `__engineExited` exemption (`engine/bridgeChannel.ts`; `boot.js` sets it only
   when the engine ends its own run under the autopilot, which `/play` never starts).
 
-Open: `features/auth/sso.ts` expects the Foundation auth site's `/auth/login`, which Sites does not
+Open: `library/ui/apps/hud/features/auth/sso.ts` expects the Foundation auth site's `/auth/login`, which Sites does not
 serve; guest sessions work.
 
 ## Forks and drift

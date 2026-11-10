@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { MemberRow } from '../features/chat/Chat'
+import { MemberRow } from '@hud/features/chat/Chat'
 import { enterAsGuest, renderSession } from './harness'
 
 const ADDR = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'

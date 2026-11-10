@@ -2,8 +2,8 @@
 // per page, so editorHost.test.tsx can only see the features of its first load.
 import { describe, it, expect } from 'vitest'
 import { act, renderHook } from '@testing-library/react'
-import { useEditorHost } from '../features/editorHost/EditorHost'
-import type { DclEditorHostV1 } from '../features/editorHost/host/host'
+import { useEditorHost } from '@hud/features/editorHost/EditorHost'
+import type { DclEditorHostV1 } from '@hud/features/editorHost/host/host'
 import { fakeSession } from './harness'
 
 describe('editor features', () => {

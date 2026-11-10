@@ -8,11 +8,11 @@
 
 import { renderHook, act, waitFor, type RenderHookResult } from '@testing-library/react'
 import { expect, vi } from 'vitest'
-import type { LoginDriver, NewAccountPick } from '../engine/driver'
-import type { AuthIdentity } from '../features/auth/sso'
+import type { LoginDriver, NewAccountPick } from '@hud/engine/driver'
+import type { AuthIdentity } from '@hud/features/auth/sso'
 import type { PageToScene, SceneToPage } from '@hud/engine/protocol'
 import { GENESIS_SATELLITE_VIEW } from '@hud/features/map/atlas'
-import { useEngineSession, type EngineSession, type ProfileState } from '../features/session/useEngineSession'
+import { useEngineSession, type EngineSession, type ProfileState } from '@hud/features/session/useEngineSession'
 
 export class FakeDriver implements LoginDriver {
   /** Every page→scene message posted via `send` (the API calls under test). */

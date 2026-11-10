@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { SceneLoadingOverlay } from '../features/session/SceneLoadingOverlay'
+import { SceneLoadingOverlay } from '@hud/features/session/SceneLoadingOverlay'
 import { createLoadingProgress, type LoadingInput } from '@hud/features/session/loadingProgress'
 import { enterAsGuest, renderSession } from './harness'
 

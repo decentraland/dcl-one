@@ -1,6 +1,6 @@
 // The `@hud-host` module the library's own HUD tests run against: a web host on decentraland.org,
 // with images as given and no Shop page of its own.
-import type { AcceptedParam, HudHost } from '../hostContract'
+import type { AcceptedParam, BootMode, HudHost } from '../hostContract'
 
 export const BASE_DOMAIN = 'decentraland.org'
 export const nativeProfileImage: HudHost['nativeProfileImage'] = (raw) => raw
@@ -14,3 +14,5 @@ export const acceptedEntryParams = (): AcceptedParam[] => []
 export const entryRealm: HudHost['entryRealm'] = (q) => q.get('realm') || null
 export const ownShopItemUrl: HudHost['ownShopItemUrl'] = () => null
 export const IN_WORLD_SHOP = false
+export const bootMode = (): BootMode => ({ systemScene: null, hideHud: false, autoLogin: null })
+export const unattendedRun: HudHost['unattendedRun'] = () => null

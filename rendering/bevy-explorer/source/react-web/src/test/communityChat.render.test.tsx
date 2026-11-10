@@ -1,13 +1,13 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Chat } from '../features/chat/Chat'
-import type { ChatState, CommunityConversation } from '../features/session/useEngineSession'
-import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../features/chat/ping'
+import { Chat } from '@hud/features/chat/Chat'
+import type { ChatState, CommunityConversation } from '@hud/features/session/useEngineSession'
+import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '@hud/features/chat/ping'
 import { fakeSession } from './harness'
 
-vi.mock('../features/communities/CommunityModal', () => ({ openCommunityModal: vi.fn(() => () => undefined) }))
-import { openCommunityModal } from '../features/communities/CommunityModal'
+vi.mock('@hud/features/communities/CommunityModal', () => ({ openCommunityModal: vi.fn(() => () => undefined) }))
+import { openCommunityModal } from '@hud/features/communities/CommunityModal'
 
 // DOMAIN: community chat in the chat panel — the rail tab (badge, mention mark, close), the
 // community title bar (online count, members list, the menu with View Community, Notification

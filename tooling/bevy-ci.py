@@ -40,8 +40,8 @@ INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'lib
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
 # also an input of the Test Suite.
 HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
-                     'rendering/bevy-explorer/source/react-web/src/features/auth/sso.ts',
-                     'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
+                     'rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts',
+                     'library/ui/apps/hud/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',

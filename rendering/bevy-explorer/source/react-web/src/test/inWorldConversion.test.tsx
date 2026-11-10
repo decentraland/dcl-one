@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { waitFor } from '@testing-library/react'
-import { sessionId } from '../lib/analytics'
+import { sessionId } from '@hud/lib/analytics'
 import { postToShell } from '@hud/lib/shell'
 import { enterAsGuest, renderSession } from './harness'
 

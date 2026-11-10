@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { BridgeClient } from '../engine/bridge'
-import type { LoginDriver } from '../engine/driver'
+import type { LoginDriver } from '@hud/engine/driver'
+import type { AutopilotDriver } from '../engine/autopilot'
 
 type ConsoleWindow = Window & { engine_console_command?: (line: string) => Promise<string> }
 
@@ -23,7 +24,7 @@ describe('BridgeClient (desktop)', () => {
     ;(window as ConsoleWindow).engine_console_command = run
     const fetchSpy = vi.spyOn(globalThis, 'fetch')
     try {
-      const client: LoginDriver = new BridgeClient('test-bridge-client')
+      const client: AutopilotDriver = new BridgeClient('test-bridge-client')
       await client.loginLocalGuest?.()
       expect(run).toHaveBeenCalledExactlyOnceWith('/login_local_guest')
       expect(fetchSpy).not.toHaveBeenCalled()
@@ -36,7 +37,7 @@ describe('BridgeClient (desktop)', () => {
   it('the autopilot reports a failed sign-in as one plain-words console line', async () => {
     const run = vi.fn<(line: string) => Promise<string>>().mockResolvedValue('run ended')
     ;(window as ConsoleWindow).engine_console_command = run
-    const client: LoginDriver = new BridgeClient('test-bridge-client')
+    const client: AutopilotDriver = new BridgeClient('test-bridge-client')
     await client.autopilotFailed?.("sign-in failed: thirdweb 403:\n{\"error\": 'origin not allowed'}")
     expect(run).toHaveBeenCalledWith('/autopilot_fail sign-in failed: thirdweb 403: {error: origin not allowed}')
     client.dispose()

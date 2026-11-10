@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { SceneLoadingOverlay } from '../features/session/SceneLoadingOverlay'
+import { SceneLoadingOverlay } from '@hud/features/session/SceneLoadingOverlay'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 import { enterAsGuest, renderSession } from './harness'
 

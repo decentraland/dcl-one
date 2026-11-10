@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { CommunityModal } from '../features/communities/CommunityModal'
+import { CommunityModal } from '@hud/features/communities/CommunityModal'
 import type { Community } from '@hud/engine/protocol'
 import { enterAsGuest, renderSession } from './harness'
 

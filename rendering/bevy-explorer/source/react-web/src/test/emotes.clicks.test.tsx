@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { EmotesWheel } from '../features/emotes/EmotesWheel'
+import { EmotesWheel } from '@hud/features/emotes/EmotesWheel'
 import { fakeSession } from './harness'
 
 describe('emotes wheel slot play', () => {

@@ -7,7 +7,7 @@ import { batchAuthorization, createFakeChain, createFakeRelay, createFakeShop, c
 import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
 import type { UsdCents } from '@shop/model/money'
 import { BOOK, ITEM, storeMint } from '@shop/payment/fixtures'
-import type { StoredLogin } from '../features/auth/sso'
+import type { StoredLogin } from '@hud/features/auth/sso'
 import { SHOP_PROTOCOL, type ShopOperationEvent } from '../lib/shopProtocol'
 import { createShellShop, type ShellPurchaseHandlers, type ShellPurchaseView } from '../shell/shop/purchase'
 

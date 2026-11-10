@@ -1,18 +1,18 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ProfileCard, openProfileCard } from '../features/profileCard/ProfileCard'
-import { openPassport } from '../features/profile/Passport'
-import { openFriendRequest } from '../features/friends/FriendRequestPopup'
-import { SessionProvider } from '../features/session/SessionContext'
+import { ProfileCard, openProfileCard } from '@hud/features/profileCard/ProfileCard'
+import { openPassport } from '@hud/features/profile/Passport'
+import { openFriendRequest } from '@hud/features/friends/FriendRequestPopup'
+import { SessionProvider } from '@hud/features/session/SessionContext'
 import { fakeSession } from './harness'
 import { seedProfiles } from '@hud/features/session/profileStore'
 import { PopupHost, resetPopups } from '@hud/design'
-import type { EngineSession } from '../features/session/useEngineSession'
+import type { EngineSession } from '@hud/features/session/useEngineSession'
 
 // View Profile opens the passport popup, Add Friend the request popup; stub both to assert the trigger.
-vi.mock('../features/profile/Passport', () => ({ openPassport: vi.fn() }))
-vi.mock('../features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))
+vi.mock('@hud/features/profile/Passport', () => ({ openPassport: vi.fn() }))
+vi.mock('@hud/features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))
 
 // COMPONENT: the smart <ProfileCard userId> resolves name/picture from the profile store and the
 // relationship from the session, and renders the presentational card; openProfileCard mounts it as a popup.

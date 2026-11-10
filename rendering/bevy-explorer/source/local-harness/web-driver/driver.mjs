@@ -3,7 +3,7 @@
 //
 //   - Console commands. `console(line)` runs `await window.engine_console_command(line)` in the
 //     app frame.
-//   - Trusted input. The page (react-web/src/lib/hudAutomation.ts) calls
+//   - Trusted input. The page (library/ui/apps/hud/lib/hudAutomation.ts) calls
 //     `window.__dclTrustedInput(json)` for a click, a key or text to insert instead of
 //     dispatching DOM events. The runner installs that function in every frame with
 //     `Runtime.addBinding` and answers each request with `Input.dispatchMouseEvent`,

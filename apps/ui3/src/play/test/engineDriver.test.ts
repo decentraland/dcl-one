@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { EngineDriver } from '../engine/EngineDriver'
 import { EngineRpc } from '@hud/engine/engineRpc'
-import { sessionId } from '../lib/analytics'
+import { sessionId } from '@hud/lib/analytics'
 
 describe('EngineDriver', () => {
   it('launches with the page analytics session id beside the host options', () => {

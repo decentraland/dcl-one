@@ -6,10 +6,10 @@
 // `on(msg => …)` subscription; only request/response (login) is correlated by id.
 
 import { createGuestIdentity } from '../features/auth/guest'
-import { encodeIdentity, type AuthIdentity } from '../features/auth/sso'
+import { encodeIdentity, type AuthIdentity } from '@hud/features/auth/sso'
 import type { GuestWallet } from '@hud/features/auth/thirdweb'
 import { BridgeChannel } from './bridgeChannel'
-import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
+import { newAccountFlags, type LoginDriver, type NewAccountPick } from '@hud/engine/driver'
 import {
   bridgeChannelName,
   type LoginPreviousResult,

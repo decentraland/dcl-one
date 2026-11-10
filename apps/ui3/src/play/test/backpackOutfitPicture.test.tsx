@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BackpackPage } from '../features/backpack/BackpackPage'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
 import type { Outfit } from '@hud/engine/protocol'
 import { fakeProfileState, fakeSession } from './harness'
 

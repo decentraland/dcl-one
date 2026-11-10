@@ -3,9 +3,9 @@ import { expectConsoleOutput } from './console'
 // engine's console, leave together as `/track <base64 batch>`, and a rejected send keeps them.
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { attachEngine, dropAttributionParams, encodeBatch, listenForGoogleTag, pending, screenViewed, sessionId, track, type QueuedEvent } from '../lib/analytics'
-import { PREF, setPref } from '../lib/prefs'
-import { authLoginUrl } from '../features/auth/sso'
+import { attachEngine, dropAttributionParams, encodeBatch, listenForGoogleTag, pending, screenViewed, sessionId, track, type QueuedEvent } from '@hud/lib/analytics'
+import { PREF, setPref } from '@hud/lib/prefs'
+import { authLoginUrl } from '@hud/features/auth/sso'
 
 function decodeLine(line: string): QueuedEvent[] {
   const [command, payload] = line.split(' ')
@@ -70,7 +70,7 @@ describe('page analytics', () => {
       ])
     )
     vi.resetModules()
-    const restored = await import('../lib/analytics')
+    const restored = await import('@hud/lib/analytics')
     expect(restored.pending().map((e) => e.properties.screen_name)).toEqual(['LOBBY'])
   })
 

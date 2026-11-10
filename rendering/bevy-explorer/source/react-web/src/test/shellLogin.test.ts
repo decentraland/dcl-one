@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AuthIdentity } from '../features/auth/sso'
+import type { AuthIdentity } from '@hud/features/auth/sso'
 import { personalSign } from '@hud/shell/sign'
 import { leave, visit } from './entryUrl'
 import { recoverSigner } from './recoverSigner'

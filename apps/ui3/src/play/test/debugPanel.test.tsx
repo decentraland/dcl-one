@@ -1,8 +1,8 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { PopupHost, resetPopups } from '@hud/design/popups'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { requestDebugPanel } from '../features/debug/useDebugPanel'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { requestDebugPanel } from '@hud/features/debug/useDebugPanel'
 import { fakeSession } from './harness'
 
 it.each([true, false])('gates the direct debug launcher on the engine development build (%s)', async (development) => {

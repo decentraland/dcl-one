@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BootProgress } from '../features/engine/BootProgress'
-import { GuestStartPage } from '../features/login/GuestStartPage'
-import { LoadingAndLogin } from '../features/login/LoadingAndLogin'
-import { SessionProvider } from '../features/session/SessionContext'
-import type { EngineSession, LoginFlow } from '../features/session/useEngineSession'
+import { BootProgress } from '@hud/features/engine/BootProgress'
+import { GuestStartPage } from '@hud/features/login/GuestStartPage'
+import { LoadingAndLogin } from '@hud/features/login/LoadingAndLogin'
+import { SessionProvider } from '@hud/features/session/SessionContext'
+import type { EngineSession, LoginFlow } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
 
 function flow(over: Partial<LoginFlow>): LoginFlow {

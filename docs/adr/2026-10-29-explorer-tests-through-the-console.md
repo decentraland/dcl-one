@@ -43,7 +43,7 @@ scene-kill harness remain outside this decision; their availability is stated ab
 - **What a test needs becomes a console command**, not test-framework code: state reads
   (`/world_state`, `/avatar_state`, `/chat_history`, `/voice_state`, `/entity_screen_position`),
   the HUD (`/hud_list`, `/hud_read`, `/hud_click`, `/hud_fill`, `/hud_wait`, controls found by role
-  and accessible name in the page, `react-web/src/lib/hudAutomation.ts`) and input (`/press_key`,
+  and accessible name in the page, `library/ui/apps/hud/lib/hudAutomation.ts`) and input (`/press_key`,
   `/click_at`). Each is listed in `rendering/bevy-explorer/docs/guidelines/running.md`, "Test
   commands".
 - **Input is real on both.** The standalone clicks and types through CEF. On the web the page
@@ -113,7 +113,7 @@ Not chosen:
 
 The engine's `/login_identity` signs the engine in under a HUD that keeps its start page, since
 the HUD derives its phase from its own sign-in flow and the engine holds the world until a realm
-change. On the web the suite therefore signs in with `/hud_login` (`react-web/src/lib/hudAutomation.ts`),
+change. On the web the suite therefore signs in with `/hud_login` (`library/ui/apps/hud/lib/hudAutomation.ts`),
 a page command the HUD registers only while a test runner drives the browser
 (`window.__dclTrustedInput`): the HUD takes the identity as the page's stored sign-in, accepts the
 terms its welcome page asks for, and picks the destination from the lobby, which releases the

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { WearableCard } from '@hud/design'
-import { BackpackPage } from '../features/backpack/BackpackPage'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
 import { isCompatible, splitBodyShape, bodyShapesOf } from '@hud/engine/bodyShape'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from './harness'
 

@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, act, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Passport, openPassport } from '../features/profile/Passport'
-import { SessionProvider } from '../features/session/SessionContext'
+import { Passport, openPassport } from '@hud/features/profile/Passport'
+import { SessionProvider } from '@hud/features/session/SessionContext'
 import { fakeProfileState, fakeSession } from './harness'
 import { receiveProfile, seedProfiles, setProfileRequester } from '@hud/features/session/profileStore'
 import { PopupHost, closeTopPopup, resetPopups } from '@hud/design'
-import type { EngineSession } from '../features/session/useEngineSession'
+import type { EngineSession } from '@hud/features/session/useEngineSession'
 import type { Profile } from '@hud/engine/protocol'
 
 // COMPONENT: the smart <Passport userId> fetches the rich profile on open, renders identity-only from

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { GalleryPage } from '../features/gallery/GalleryPage'
+import { GalleryPage } from '@hud/features/gallery/GalleryPage'
 import { dispatchCancelLayer } from '@hud/lib/cancelLayers'
-import type { GalleryState, ProfileState } from '../features/session/useEngineSession'
+import type { GalleryState, ProfileState } from '@hud/features/session/useEngineSession'
 import { fakeProfileState } from './harness'
 import type { GalleryPhoto } from '@hud/engine/protocol'
 

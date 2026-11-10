@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ShopPage } from '../features/shop/ShopPage'
+import { ShopPage } from '@hud/features/shop/ShopPage'
 import { formatMana, shopItemPrice, type ShopItem } from '@hud/features/shop/shopApi'
 import { fakeProfileState } from './harness'
 

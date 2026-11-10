@@ -5,11 +5,11 @@
 //     from the super-user bridge scene over the `bevy-ui-bridge` BroadcastChannel
 //     and are delivered through ONE generic `on(msg => …)` subscription.
 
-import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '../features/auth/sso'
-import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
-import { attachEngine, launchAnalytics } from '../lib/analytics'
+import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '@hud/features/auth/sso'
+import { trackGuestWalletCreation } from '@hud/features/auth/guestWalletEvent'
+import { attachEngine, launchAnalytics } from '@hud/lib/analytics'
 import { inShell, shellRequest } from '@hud/lib/shell'
-import { newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
+import { newAccountFlags, type LoginDriver, type NewAccountPick } from '@hud/engine/driver'
 import type { EngineRpc, LaunchHostOptions } from '@hud/engine/engineRpc'
 import { BridgeChannel } from './bridgeChannel'
 import { bridgeChannelName, type PageToScene, type SceneToPage } from '@hud/engine/protocol'

@@ -1,9 +1,9 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Chat } from '../features/chat/Chat'
-import { SettingsPanel } from '../features/settings/SettingsPanel'
-import type { ChatLine, ChatState } from '../features/session/useEngineSession'
+import { Chat } from '@hud/features/chat/Chat'
+import { SettingsPanel } from '@hud/features/settings/SettingsPanel'
+import type { ChatLine, ChatState } from '@hud/features/session/useEngineSession'
 import {
   TRANSLATE_URL,
   languageFromSettings,
@@ -14,9 +14,9 @@ import {
   splitForTranslation,
   systemLanguage,
   translateText
-} from '../features/chat/translation'
-import { PREF, getPref } from '../lib/prefs'
-import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '../features/chat/ping'
+} from '@hud/features/chat/translation'
+import { PREF, getPref } from '@hud/lib/prefs'
+import { pingModeFor, resetPingPrefs, setPingDefault, setPingMode } from '@hud/features/chat/ping'
 import { fakeProfileState, fakeSession } from './harness'
 
 /** Answers each translate request with `answer(q)`, recording the requests. */

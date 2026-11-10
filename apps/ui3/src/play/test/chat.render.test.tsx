@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render } from '@testing-library/react'
-import { Chat } from '../features/chat/Chat'
-import type { ChatLine, ChatState } from '../features/session/useEngineSession'
+import { Chat } from '@hud/features/chat/Chat'
+import type { ChatLine, ChatState } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
 
 afterEach(() => vi.restoreAllMocks())

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
-import { BackpackPage } from '../features/backpack/BackpackPage'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
 import { previewFocusFor } from '@hud/features/backpack/previewFocus'
 import { fakeProfileState, fakeSession } from './harness'
 

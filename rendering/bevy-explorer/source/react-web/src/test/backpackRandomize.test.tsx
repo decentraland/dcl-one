@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { BackpackPage } from '../features/backpack/BackpackPage'
-import type { OutfitHistory } from '../features/session/useEngineSession'
+import { BackpackPage } from '@hud/features/backpack/BackpackPage'
+import type { OutfitHistory } from '@hud/features/session/useEngineSession'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from './harness'
 
 const BASE_MALE = 'urn:decentraland:off-chain:base-avatars:BaseMale'

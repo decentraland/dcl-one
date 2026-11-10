@@ -1,10 +1,10 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Chat } from '../features/chat/Chat'
-import { EmojiPicker } from '../features/chat/EmojiPicker'
-import { EMOJI_GROUPS } from '../features/chat/emojiData'
-import type { ChatState } from '../features/session/useEngineSession'
+import { Chat } from '@hud/features/chat/Chat'
+import { EmojiPicker } from '@hud/features/chat/EmojiPicker'
+import { EMOJI_GROUPS } from '@hud/features/chat/emojiData'
+import type { ChatState } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
 
 function chatState(over: Partial<ChatState> = {}): ChatState {

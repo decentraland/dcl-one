@@ -47,9 +47,9 @@ describe('benchmarkSwitchesHonoured', () => {
 describe('the autopilot boot mode', () => {
   it('is entered on a loopback host', () => {
     visit(HARNESS_URL)
-    expect(bootMode().autoLogin).toBe('autopilot')
+    expect(bootMode().autoLogin).toBe('unattended')
     visit('http://127.0.0.1:8080/?autopilot=')
-    expect(bootMode().autoLogin).toBe('autopilot')
+    expect(bootMode().autoLogin).toBe('unattended')
   })
 
   it('is never entered off loopback: the page boots as an ordinary visit', () => {

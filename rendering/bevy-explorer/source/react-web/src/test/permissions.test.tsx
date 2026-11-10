@@ -2,12 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { renderSettled, renderSession, enterAsGuest } from './harness'
-import { PermissionDialog } from '../features/permissions/PermissionDialog'
-import { Sidebar } from '../features/sidebar/Sidebar'
+import { PermissionDialog } from '@hud/features/permissions/PermissionDialog'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
 import { PopupHost, resetPopups } from '@hud/design'
 import { fakeSession } from './harness'
 import type { PermissionRequestMessage, PermissionUsedMessage } from '@hud/engine/protocol'
-import type { PermissionSubject } from '../features/session/useEngineSession'
+import type { PermissionSubject } from '@hud/features/session/useEngineSession'
 
 const REQ: PermissionRequestMessage = {
   kind: 'permissionRequest',

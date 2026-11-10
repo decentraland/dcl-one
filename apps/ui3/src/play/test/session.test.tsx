@@ -1,12 +1,12 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
 import { renderSession, enterAsGuest, FakeDriver } from './harness'
-import { openProfileCard } from '../features/profileCard/ProfileCard'
+import { openProfileCard } from '@hud/features/profileCard/ProfileCard'
 import { resetPopups } from '@hud/design'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 
 // The avatarClick handler opens the world profile card as a popup; stub it so we can assert the call.
-vi.mock('../features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
+vi.mock('@hud/features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
 afterEach(resetPopups)
 
 // Records launch() so tests can assert the realm/position the engine was booted with.

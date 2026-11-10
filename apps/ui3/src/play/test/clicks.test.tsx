@@ -1,15 +1,15 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { Chat } from '../features/chat/Chat'
-import { FriendsPanel } from '../features/friends/FriendsPanel'
-import { EmotesWheel } from '../features/emotes/EmotesWheel'
-import type { EngineSession, FriendsState } from '../features/session/useEngineSession'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { Chat } from '@hud/features/chat/Chat'
+import { FriendsPanel } from '@hud/features/friends/FriendsPanel'
+import { EmotesWheel } from '@hud/features/emotes/EmotesWheel'
+import type { EngineSession, FriendsState } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
-import { openFriendRequest } from '../features/friends/FriendRequestPopup'
+import { openFriendRequest } from '@hud/features/friends/FriendRequestPopup'
 
-vi.mock('../features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))
+vi.mock('@hud/features/friends/FriendRequestPopup', () => ({ openFriendRequest: vi.fn() }))
 vi.mock('@hud/features/friends/friendDialogs', () => ({ confirmUnblock: vi.fn(async () => true) }))
 
 // CLICK coverage: render the real components and assert each click invokes the

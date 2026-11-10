@@ -1,16 +1,16 @@
 import { readFileSync } from 'node:fs'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { BackpackModal } from '../features/backpack/BackpackModal'
+import { BackpackModal } from '@hud/features/backpack/BackpackModal'
 import modalStyles from '@hud/features/backpack/BackpackModal.module.css'
-import { LobbyHome } from '../features/lobby/LobbyHome'
-import { fetchHomePlace, fetchRecents } from '../features/lobby/lobbyApi'
-import type { DiscoverPlace } from '../features/places/placesApi'
+import { LobbyHome } from '@hud/features/lobby/LobbyHome'
+import { fetchHomePlace, fetchRecents } from '@hud/features/lobby/lobbyApi'
+import type { DiscoverPlace } from '@hud/features/places/placesApi'
 import { receiveProfile, resetProfileStore, setProfileRequester } from '@hud/features/session/profileStore'
-import { SessionProvider } from '../features/session/SessionContext'
+import { SessionProvider } from '@hud/features/session/SessionContext'
 import { fakeSession } from './harness'
 
-vi.mock('../features/lobby/lobbyApi', () => ({
+vi.mock('@hud/features/lobby/lobbyApi', () => ({
   fetchHomePlace: vi.fn(async () => null),
   fetchRecents: vi.fn(async () => []),
   fetchHighlighted: vi.fn(async () => []),

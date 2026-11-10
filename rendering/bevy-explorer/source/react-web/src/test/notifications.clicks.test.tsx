@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { NotificationsPanel } from '../features/notifications/NotificationsPanel'
-import type { NotificationsState } from '../features/session/useEngineSession'
+import { NotificationsPanel } from '@hud/features/notifications/NotificationsPanel'
+import type { NotificationsState } from '@hud/features/session/useEngineSession'
 import { fakeSession } from './harness'
 
 function panel(over: Partial<NotificationsState>): NotificationsState {

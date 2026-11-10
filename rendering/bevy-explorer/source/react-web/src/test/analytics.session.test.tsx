@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import { pending, sessionId } from '../lib/analytics'
+import { pending, sessionId } from '@hud/lib/analytics'
 import { renderSession } from './harness'
 
 const entryUrl = location.pathname + location.search
