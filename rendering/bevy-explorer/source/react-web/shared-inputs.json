@@ -127,7 +127,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/scripts/shared-inputs.mjs",
-      "sha256": "a99563ea038ebddb01d6657376fc7664d2cf98618646ef64fcc1b3a9199aebe4"
+      "sha256": "d6728775e6cc706f10d9fd357dc51451cdca03400f57bfb1ff4696477c13f92c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",

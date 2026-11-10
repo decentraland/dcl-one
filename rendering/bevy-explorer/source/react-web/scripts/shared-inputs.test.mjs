@@ -242,6 +242,99 @@ describe('the actual compiler and Vite shared-source contract', () => {
     const updated = await save()
     assert(updated.controls.some((entry) => entry.path === 'library/ui/foundations/tsconfig.json'))
   })
+  for (const control of [
+    'package.json',
+    'library/tsconfig.json',
+    'rendering/bevy-explorer/package.json'
+  ])
+    it('regenerates and repeats after adding ancestor resolver control ' + control, async () => {
+      await save()
+      const before = hashes()
+      put(control, control.endsWith('package.json') ? '{"type":"module"}' : '{}')
+      git('add', control)
+      assert.throws(() => readSharedPaths(root), /New HUD resolver control/)
+      const updated = await save()
+      const identity = updated.controls.find((entry) => entry.path === control)
+      assert(identity)
+      assert.equal(hashes()[control], identity.sha256)
+      assert.notDeepEqual(hashes(), before)
+      assert.deepEqual(JSON.parse(await generateSharedInputs({ root })), updated)
+    })
+  it('refuses ancestor resolver bytes changed during generation without replacing the manifest', async () => {
+    const control = 'package.json'
+    put(control, '{"type":"module"}')
+    git('add', control)
+    await save()
+    const original = readFileSync(path.join(root, MANIFEST))
+    const config = WEB + '/vite.config.ts'
+    put(
+      config,
+      "import {appendFileSync} from 'node:fs';\n" +
+        readFileSync(path.join(root, config), 'utf8').replace(
+          'build:{',
+          "plugins:[{name:'mutate-ancestor-control',buildStart(){appendFileSync(path.resolve(here,'../../../../package.json'),'\\n')}}],build:{"
+        )
+    )
+    git('add', config)
+    await assert.rejects(
+      generateSharedInputs({ root }),
+      /HUD input changed while resolving imports: package.json/
+    )
+    assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
+  })
+  for (const [control, operation] of [
+    ['package.json', 'add'],
+    ['library/tsconfig.json', 'add'],
+    ['package.json', 'untrack'],
+    ['package.json', 'delete']
+  ])
+    it(
+      'refuses resolver presence or tracking drift during generation: ' + operation + ' ' + control,
+      async () => {
+        if (operation !== 'add') {
+          put(control, '{"type":"module"}')
+          git('add', control)
+        }
+        await save()
+        const original = readFileSync(path.join(root, MANIFEST))
+        const config = WEB + '/vite.config.ts'
+        const mutation =
+          operation === 'add'
+            ? `writeFileSync(target, ${JSON.stringify(control.endsWith('package.json') ? '{"type":"module"}' : '{}')});execFileSync('git',['-C',repo,'add',${JSON.stringify(control)}]);`
+            : operation === 'delete'
+              ? 'unlinkSync(target);'
+              : `execFileSync('git',['-C',repo,'rm','--cached',${JSON.stringify(control)}]);`
+        put(
+          config,
+          "import {existsSync,writeFileSync,unlinkSync} from 'node:fs';import {execFileSync} from 'node:child_process';\n" +
+            readFileSync(path.join(root, config), 'utf8').replace(
+              'build:{',
+              `plugins:[{name:'mutate-resolver-presence',buildStart(){const repo=path.resolve(here,'../../../..'),target=path.join(repo,${JSON.stringify(control)}),marker=path.join(here,'resolver-mutated');if(!existsSync(marker)){${mutation}writeFileSync(marker,'done')}}}],build:{`
+            )
+        )
+        git('add', config)
+        await assert.rejects(
+          generateSharedInputs({ root }),
+          /HUD resolver control inventory changed/
+        )
+        assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
+      }
+    )
+  it('refuses an untracked or linked ancestor resolver before the compiler runs', async () => {
+    await save()
+    const original = readFileSync(path.join(root, MANIFEST))
+    put('package.json', '{}')
+    await assert.rejects(
+      generateSharedInputs({ root }),
+      /Untracked HUD resolver control: package.json/
+    )
+    git('add', 'package.json')
+    rmSync(path.join(root, 'package.json'))
+    put('outside-package.json', '{}')
+    symlinkSync(path.join(root, 'outside-package.json'), path.join(root, 'package.json'))
+    await assert.rejects(generateSharedInputs({ root }), /Linked shared input: package.json/)
+    assert.deepEqual(readFileSync(path.join(root, MANIFEST)), original)
+  })
   it('binds actual imported Vite configuration dependencies and refuses their stale identities', async () => {
     const config = WEB + '/vite.config.ts'
     put(config, "import './config-helper.ts';\n" + readFileSync(path.join(root, config)))
@@ -271,6 +364,22 @@ describe('the actual compiler and Vite shared-source contract', () => {
     )
     git('add', '.')
     await assert.rejects(generateSharedInputs({ root }), /Actual inline PostCSS plugin executed/)
+  })
+  it('runs a non-idempotent inline PostCSS transform exactly once per AST', async () => {
+    const config = WEB + '/vite.config.ts'
+    put(
+      config,
+      "import {appendFileSync} from 'node:fs';\n" +
+        readFileSync(path.join(root, config), 'utf8').replace(
+          'build:{',
+          "css:{postcss:{plugins:[{postcssPlugin:'non-idempotent-inline',Once(css){if(css.raws.checkedOnce)throw Error('Inline PostCSS plugin duplicated');css.raws.checkedOnce=true;css.walkDecls('color',declaration=>{if(declaration.value==='red'){declaration.value='blue';appendFileSync(path.join(here,'postcss-transform.log'),'blue\\n')}else if(declaration.value==='blue')throw Error('Inline PostCSS transform repeated')})}}]}},build:{"
+        )
+    )
+    git('add', config)
+    const first = await save()
+    assert.match(readFileSync(path.join(web, 'postcss-transform.log'), 'utf8'), /blue/)
+    assert(first.files.some((entry) => entry.path === 'library/catalyst-api/nested.css'))
+    assert.deepEqual(JSON.parse(await generateSharedInputs({ root })), first)
   })
   for (const property of ['composes', 'compose-with', 'COMPOSES'])
     it(

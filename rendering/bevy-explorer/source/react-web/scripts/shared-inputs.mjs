@@ -314,9 +314,22 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
     ),
     roots = rootInventory(paths)
   const controls = new Set([...roots, ...CONTROL_PATHS])
+  const candidates = [...paths].filter((file) => shared(file) || file.startsWith(OWNED_SOURCE))
+  const resolverCandidates = resolverControls(paths, candidates, root)
+  const resolverRoles = (inventory) =>
+    sorted(resolverControls(inventory, candidates, root)).map((file) => [
+      file,
+      inventory.has(file),
+      Boolean(lstatSync(path.join(root, file), { throwIfNoEntry: false }))
+    ])
+  const beforeResolverRoles = resolverRoles(paths)
   const beforeInputs = new Map()
-  for (const file of paths) {
-    if (!shared(file) && !file.startsWith(OWNED_SOURCE)) continue
+  for (const file of resolverCandidates) {
+    if (!paths.has(file)) throw Error('Untracked HUD resolver control: ' + file)
+    beforeInputs.set(file, sha256(regular(root, file)))
+  }
+  for (const file of candidates) {
+    if (beforeInputs.has(file)) continue
     try {
       beforeInputs.set(file, sha256(regular(root, file)))
     } catch {
@@ -439,13 +452,10 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
                 throw Error(
                   'External PostCSS configuration is unsupported by the checked HUD contract'
                 )
-              const postcss = config.css?.postcss ?? {}
               return {
                 css: {
                   postcss: {
-                    ...postcss,
                     plugins: [
-                      ...(postcss.plugins ?? []),
                       {
                         postcssPlugin: 'checked-hud-css-composition',
                         Once(css) {
@@ -587,9 +597,12 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
   // Package scopes and compiler controls alongside reachable sources are resolver inputs.
   for (const file of resolverControls(paths, [...files, ...roots])) controls.add(file)
   for (const file of controls) files.delete(file)
-  if (JSON.stringify(rootInventory(sourceInventory(root))) !== JSON.stringify(roots))
+  const afterPaths = sourceInventory(root)
+  if (JSON.stringify(rootInventory(afterPaths)) !== JSON.stringify(roots))
     throw Error('HUD source inventory changed while resolving imports')
-  for (const file of [...controls, ...files]) {
+  if (JSON.stringify(resolverRoles(afterPaths)) !== JSON.stringify(beforeResolverRoles))
+    throw Error('HUD resolver control inventory changed while resolving imports')
+  for (const file of new Set([...controls, ...files, ...resolverCandidates])) {
     if (beforeInputs.get(file) !== sha256(regular(root, file)))
       throw Error('HUD input changed while resolving imports: ' + file)
   }
