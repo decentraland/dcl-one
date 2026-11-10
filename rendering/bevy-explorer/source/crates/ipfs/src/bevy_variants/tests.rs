@@ -500,6 +500,49 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// A model whose variant fails stays pending (so an avatar waits instead of giving up) until
+/// its reload reads the original; after that, a failure is final and nothing loops.
+#[cfg(feature = "meshopt-variants")]
+#[tokio::test]
+async fn a_failed_model_variant_stays_pending_until_its_reload_reads_the_original() {
+    let (io, dir) = io_with_cache("pending-model");
+    let variant_route = format!("/{}", served_path(VARIANT_CID));
+    let original_route = format!("/contents/{ORIGINAL_CID}");
+    let (base, log) = serve(vec![
+        (variant_route.clone(), variant_bytes()),
+        (original_route.clone(), b"original glb".to_vec()),
+    ])
+    .await;
+    scene_with_variant_of(
+        &io,
+        &base,
+        "models/a.glb",
+        "model",
+        "glb-meshopt",
+        VARIANT_CID,
+    )
+    .await;
+    let path = content_path("models/a.glb");
+    let never_served = content_path("models/b.glb");
+    assert!(!io.bevy_variant_fallback_pending(&never_served));
+
+    // read from the variant: if the loader now reports a failure, it is not final
+    assert_eq!(read_all(&io, &path).await, variant_bytes());
+    assert!(io.bevy_variant_fallback_pending(&path));
+    // the failure is handled and a reload asked for: still pending until it reaches the reader
+    assert!(io.bevy_variants.decode_failed(&path, "invalid glb"));
+    assert!(io.bevy_variant_fallback_pending(&path));
+    // the reload reads the original (the variant is bad now), and the path is no longer pending
+    assert_eq!(read_all(&io, &path).await, b"original glb".to_vec());
+    assert!(!io.bevy_variant_fallback_pending(&path));
+    // the original failing too is final: nothing to reload, nothing pending
+    assert!(!io.bevy_variants.decode_failed(&path, "invalid glb"));
+    assert!(!io.bevy_variant_fallback_pending(&path));
+    assert_eq!(requests_for(&log, &variant_route), 1);
+    assert_eq!(requests_for(&log, &original_route), 1);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// A `glb-meshopt` model variant is handed to the loader of the original `.glb` path as it is,
 /// and cached under the variant cid alone.
 #[cfg(feature = "meshopt-variants")]

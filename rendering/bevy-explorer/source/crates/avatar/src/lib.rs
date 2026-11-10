@@ -78,7 +78,7 @@ use dcl_component::{
 use dcl_types::interface::{ComponentPosition, CrdtType};
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
-    EntityDefinition, IpfsAssetServer,
+    EntityDefinition, IpfsAssetServer, IpfsResource,
 };
 use scene_runner::scene_partition::PartitionedDownloads;
 use scene_runner::{
@@ -1051,6 +1051,7 @@ fn spawn_scenes(
     scene_ents: Query<&SceneEntity>,
     mut contexts: Query<&mut RendererSceneContext>,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+    ipfs: Res<IpfsResource>,
 ) {
     for (ent, def, parent) in query.iter() {
         let def = &def.render;
@@ -1076,10 +1077,18 @@ fn spawn_scenes(
             )
             .any(|model| {
                 let h_model = &model.gltf;
-                matches!(
-                    asset_server.get_load_state(h_model),
-                    Some(bevy::asset::LoadState::Loading)
-                )
+                match asset_server.get_load_state(h_model) {
+                    Some(bevy::asset::LoadState::Loading) => true,
+                    // a model variant that failed is reloaded from the original, which the
+                    // asset server only reports as loading once the reload starts: wait for it
+                    // rather than finishing the body with an error or dropping the wearable
+                    Some(bevy::asset::LoadState::Failed(_)) => {
+                        asset_server.get_path(h_model).is_some_and(|path| {
+                            ipfs.bevy_variant_fallback_pending(path.path())
+                        })
+                    }
+                    _ => false,
+                }
             });
 
         if any_loading {

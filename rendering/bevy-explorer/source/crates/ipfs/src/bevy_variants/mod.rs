@@ -374,6 +374,9 @@ struct Session {
     transport_failures: u32,
     bad: HashSet<String>,
     served: HashMap<PathBuf, ServedVariant>,
+    /// Paths whose variant failed to load and whose reload from the original has not reached
+    /// the reader yet (`fall_back_from_failed_variants` → `IpfsIo::read`).
+    reloading: HashSet<PathBuf>,
     downloaded: u64,
     cached: u64,
     fallbacks: u64,
@@ -486,6 +489,24 @@ impl BevyVariants {
         self.session.lock().unwrap().served.contains_key(path)
     }
 
+    /// The reload of `path` reached the reader: from here the asset server reports it as
+    /// loading, and then as the original's own outcome.
+    pub(crate) fn reload_started(&self, path: &Path) {
+        let mut session = self.session.lock().unwrap();
+        if !session.reloading.is_empty() {
+            session.reloading.remove(path);
+        }
+    }
+
+    /// Whether a failed load at `path` is not final yet: it was read from a variant whose
+    /// failure has not been handled, or its reload from the original has not started. Both
+    /// clear on their own (`decode_failed`, then the reload's read), and a variant that fails is
+    /// never selected again, so this cannot keep a path pending.
+    fn fallback_pending(&self, path: &Path) -> bool {
+        let session = self.session.lock().unwrap();
+        session.served.contains_key(path) || session.reloading.contains(path)
+    }
+
     /// Marks the variant served for `path` bad, if there was one; true when the asset should be
     /// reloaded (from its original).
     fn decode_failed(&self, path: &Path, error: &str) -> bool {
@@ -494,6 +515,7 @@ impl BevyVariants {
             return false;
         };
         session.bad.insert(served.cid.clone());
+        session.reloading.insert(path.to_owned());
         session.fallback(
             &served.scene,
             &served.file,
@@ -530,6 +552,14 @@ impl IpfsIo {
     /// reprocessed as if it were the original).
     pub fn served_bevy_variant(&self, path: &Path) -> bool {
         self.bevy_variants.is_served(path)
+    }
+
+    /// Whether a load at `path` that the asset server reports as failed will be retried from the
+    /// original: the asset was read from a variant, and the fallback to the original has not
+    /// reached the reader yet. A caller that gives up on a failed asset (avatars) waits while
+    /// this holds; once the reload starts the asset server reports it as loading.
+    pub fn bevy_variant_fallback_pending(&self, path: &Path) -> bool {
+        self.bevy_variants.fallback_pending(path)
     }
 
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
