@@ -137,6 +137,8 @@ fn manage_islands(
     }) {
         senders.push(sender.clone());
     }
+    // a closed sender holds one of its scene host's channels until it is dropped
+    senders.retain(|sender| !sender.is_closed());
 
     // Only the latest assignment matters. Acting on two in one frame would spawn the first
     // island's transport via `manager`'s command buffer and despawn it via `commands`, and

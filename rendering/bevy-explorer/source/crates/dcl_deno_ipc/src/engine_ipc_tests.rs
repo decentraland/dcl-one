@@ -459,6 +459,114 @@ async fn reply_channels_over_the_limit_end_the_host_connection() {
     assert!(host.connection_ends().await);
 }
 
+/// A tick of `count` subscriptions, and the scene-side ends of their channels.
+fn subscriptions(
+    scene: SceneId,
+    count: usize,
+) -> (SceneToEngine, Vec<common::rpc::RpcStreamReceiver<String>>) {
+    let (calls, receivers): (Vec<_>, Vec<_>) = (0..count).map(|_| subscription()).unzip();
+    let mut rpc_calls = RpcCalls::default();
+    rpc_calls.extend(calls);
+    let response = SceneResponse::Ok(
+        SceneCensus {
+            born: Default::default(),
+            died: Default::default(),
+        },
+        Default::default(),
+        SceneElapsedTime(0.0),
+        Vec::new(),
+        rpc_calls,
+    );
+    (SceneToEngine::SceneResponse(scene, response), receivers)
+}
+
+#[tokio::test]
+async fn reply_channels_the_engine_still_holds_count_after_the_host_closes_them() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let (tick, _receivers) = subscriptions(scene, MAX_HOST_IPC_CHANNELS);
+    let first_id = SCENE_IPC_CONTEXT.with_borrow(|ctx| ctx.as_ref().unwrap().next_id) + 1;
+    host.send(&tick).await;
+    let (_, SceneResponse::Ok(.., held)) = host.delivered_response().await else {
+        panic!("expected the tick");
+    };
+
+    for id in first_id..first_id + MAX_HOST_IPC_CHANNELS as u64 {
+        host.send(&SceneToEngine::IpcMessage(id, IpcMessage::Closed))
+            .await;
+    }
+    let (one_more, _receivers) = subscriptions(scene, 1);
+    host.send(&one_more).await;
+
+    assert!(host.connection_ends().await);
+    let held = held.into_iter().collect::<Vec<_>>();
+    assert!(held.iter().all(|call| matches!(
+        call,
+        RpcCall::SubscribePlayerConnected { sender } if sender.is_closed()
+    )));
+}
+
+#[tokio::test]
+async fn a_reply_channel_the_engine_dropped_frees_its_place() {
+    let mut host = Host::connect();
+    let (scene, _) = host.start_scene(false).await;
+    let (tick, _receivers) = subscriptions(scene, MAX_HOST_IPC_CHANNELS);
+    host.send(&tick).await;
+    let (_, SceneResponse::Ok(.., held)) = host.delivered_response().await else {
+        panic!("expected the tick");
+    };
+
+    drop(held);
+    // the engine tells the host each channel it dropped
+    for _ in 0..MAX_HOST_IPC_CHANNELS {
+        assert!(matches!(
+            host.read().await,
+            EngineToScene::IpcMessage(_, IpcMessage::Closed)
+        ));
+    }
+    let (one_more, _receivers) = subscriptions(scene, 1);
+    host.send(&one_more).await;
+
+    assert!(matches!(
+        host.delivered_response().await,
+        (_, SceneResponse::Ok(..))
+    ));
+}
+
+#[tokio::test]
+async fn frames_over_the_engine_budget_end_the_host_that_reads_them() {
+    let budget = tokio::sync::Semaphore::new(3);
+    let frame = |len: usize| {
+        let mut bytes = (len as u64).to_le_bytes().to_vec();
+        bytes.resize(8 + len, 0);
+        bytes
+    };
+    let mut stream = std::io::Cursor::new([frame(1024), frame(1024)].concat());
+
+    let (_, first) = read_frame(&mut stream, &budget).await.unwrap().unwrap();
+    let second = read_frame(&mut stream, &budget).await;
+
+    assert_eq!(first.num_permits(), 2);
+    assert!(second.is_err());
+    drop(first);
+    let mut stream = std::io::Cursor::new(frame(1024));
+    assert!(read_frame(&mut stream, &budget).await.is_ok());
+}
+
+#[test]
+fn system_api_is_taken_only_while_the_system_scene_runs() {
+    let mut scenes = HostScenes::default();
+    let now = Instant::now();
+    let (system_api, _rx) = unbounded_channel();
+    scenes.start(1, scene_response_channel().0, Some(system_api), now);
+    assert!(scenes.system_api().is_some());
+
+    scenes.kill(1, now);
+
+    assert!(scenes.system_api().is_none());
+    assert!(scenes.responses(1, now).is_some());
+}
+
 #[tokio::test]
 async fn system_api_from_a_host_with_a_system_scene_is_forwarded() {
     let mut host = Host::connect();

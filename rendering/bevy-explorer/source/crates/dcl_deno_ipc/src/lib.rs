@@ -39,6 +39,15 @@ const MAX_HOST_IPC_CHANNELS: usize = 65536;
 pub const MAX_SCENE_IPC_CHANNELS: usize = 4096;
 // decoding recurses on the engine's stack, and scene RPC parameters are arbitrary JSON
 const MAX_DECODE_DEPTH: usize = 32;
+/// Bytes every scene host's frames may hold in the engine at once: a frame is charged twice its
+/// length (its buffer, then what it decodes to) from before it is read until its message has been
+/// handed on. A host whose frame does not fit is ended. Real traffic is far below it (the largest
+/// frame measured is about 120 KiB); it leaves room for one frame at `MAX_FRAME_BYTES`, such as a
+/// scene's whole CRDT snapshot, beside everything else.
+pub const HOST_FRAME_BUDGET_BYTES: u64 = 3 * MAX_FRAME_BYTES;
+// the budget is counted in KiB, so it fits a semaphore's permits
+static HOST_FRAME_BUDGET: Lazy<tokio::sync::Semaphore> =
+    Lazy::new(|| tokio::sync::Semaphore::new((HOST_FRAME_BUDGET_BYTES / 1024) as usize));
 
 /// How long a killed scene gets to exit cleanly (finish its in-flight tick after its
 /// renderer channel closes) before its isolate is forcibly terminated.
@@ -107,9 +116,9 @@ impl SceneChannels {
     }
 }
 
-/// Messages dropped because the scene host that sent them does not run the scene they are for:
-/// a scene response for a scene it was not given, or a `SystemApi` message from a host that
-/// runs no system scene.
+/// Messages dropped from scene hosts: a scene response for a scene the host was not given, a
+/// `SystemApi` message from a host that runs no system scene, IPC data (the engine takes only
+/// `Closed` from a host), and on the headless server responses shed while the engine is behind.
 pub fn rejected_host_messages() -> u64 {
     REJECTED_HOST_MESSAGES.load(Ordering::Relaxed)
 }
@@ -229,10 +238,11 @@ impl HostScenes {
             .map(|scene| &scene.responses)
     }
 
-    fn system_api(&self, now: Instant) -> Option<&tokio::sync::mpsc::UnboundedSender<SystemApi>> {
+    // only while the system scene runs: unlike its responses, nothing it sent is still due
+    fn system_api(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<SystemApi>> {
         self.scenes
             .values()
-            .filter(|scene| scene.is_tracked(now))
+            .filter(|scene| scene.killed_at.is_none())
             .find_map(|scene| scene.system_api.as_ref())
     }
 }
@@ -515,8 +525,12 @@ async fn next_global_update(
     futures_util::future::select_all(recvs).await.0
 }
 
-// The next frame's body, or `None` once the host has closed the connection between frames.
-async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Option<Vec<u8>>> {
+// The next frame's body and its charge on `budget`, or `None` once the host has closed the
+// connection between frames.
+async fn read_frame<'a>(
+    stream: &mut (impl AsyncRead + Unpin),
+    budget: &'a tokio::sync::Semaphore,
+) -> anyhow::Result<Option<(Vec<u8>, tokio::sync::SemaphorePermit<'a>)>> {
     let mut header = [0u8; 8];
     if stream.read(&mut header[..1]).await? == 0 {
         return Ok(None);
@@ -532,19 +546,27 @@ async fn read_frame(stream: &mut (impl AsyncRead + Unpin)) -> anyhow::Result<Opt
         ))
         .into());
     }
+    let kib = (2 * len).div_ceil(1024).max(1) as u32;
+    let Ok(charge) = budget.try_acquire_many(kib) else {
+        return Err(Rejected(format!(
+            "frame of {len} bytes does not fit the engine's budget for scene host frames"
+        ))
+        .into());
+    };
     let mut buffer = Vec::with_capacity(len.min(FRAME_PREALLOCATION_BYTES) as usize);
     stream.take(len).read_to_end(&mut buffer).await?;
     if buffer.len() as u64 != len {
         bail!("frame truncated at {} of {len} bytes", buffer.len());
     }
-    Ok(Some(buffer))
+    Ok(Some((buffer, charge)))
 }
 
 async fn renderer_ipc_in(
     mut stream: impl AsyncRead + Unpin,
     scenes: Arc<Mutex<HostScenes>>,
 ) -> anyhow::Result<()> {
-    while let Some(buffer) = read_frame(&mut stream).await? {
+    // `_charge` lasts until the frame's message has been handed on
+    while let Some((buffer, _charge)) = read_frame(&mut stream, &HOST_FRAME_BUDGET).await? {
         let mut decoder = rmp_serde::Deserializer::from_read_ref(&buffer);
         decoder.set_max_depth(MAX_DECODE_DEPTH);
         let msg = SceneToEngine::deserialize(&mut decoder)
@@ -569,7 +591,10 @@ async fn renderer_ipc_in(
                 // stalls itself. Desktop and tests (flag unset) end the connection.
                 if EXIT_ON_SIDECAR_LOSS.load(Ordering::SeqCst) {
                     if let Err(e) = sender.try_send((id, scene_response)) {
-                        warn!("dropping scene response: renderer channel unavailable ({e})");
+                        reject_host_message(
+                            &mut scenes,
+                            format_args!("a scene response: renderer channel unavailable ({e})"),
+                        );
                     }
                 } else if let Err(e) = sender.try_send((id, scene_response)) {
                     bail!("renderer channel unavailable ({e})");
@@ -577,22 +602,27 @@ async fn renderer_ipc_in(
             }
             SceneToEngine::IpcMessage(id, ipc_message) => {
                 let IpcMessage::Closed = ipc_message else {
-                    warn!("ignoring unexpected ipc data message for channel {id}");
+                    reject_host_message(
+                        &mut scenes.lock().unwrap(),
+                        format_args!("an ipc data message for channel {id}"),
+                    );
                     continue;
                 };
 
+                // the entry stays until the engine drops its sender (`renderer_ipc_out`), so the
+                // host's channel limit counts every sender the engine still holds
                 ENGINE_IPC_CONTEXT.with(|ctx| {
                     let mut ctx = ctx.borrow_mut();
                     let ctx = ctx.as_mut().unwrap();
 
-                    if let Some(token) = ctx.ipc_channel_registry.remove(&id) {
+                    if let Some(token) = ctx.ipc_channel_registry.get(&id) {
                         token.cancel();
                     }
                 })
             }
             SceneToEngine::SystemApi(system_command) => {
                 let mut scenes = scenes.lock().unwrap();
-                let forwarded = scenes.system_api(Instant::now()).map(|sender| {
+                let forwarded = scenes.system_api().map(|sender| {
                     let _ = sender.send(system_command);
                 });
                 if forwarded.is_none() {
