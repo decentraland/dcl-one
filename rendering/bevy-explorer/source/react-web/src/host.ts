@@ -6,6 +6,7 @@ import { bootMode, isNativeHud } from './lib/bootMode'
 import type { AutopilotDriver } from './engine/autopilot'
 import { acceptedEntryParams, entryRealm } from './lib/entryParams'
 import { PAGE_DIR, publicUrl } from './lib/publicUrl'
+import { engineLaunch, seedBridgeSession } from './lib/engineLaunch'
 
 /** Site pages follow the domain the Explorer runs against (`?baseDomain=`, decentraland.org by default). */
 const siteUrl = (path: string): string => `https://${BASE_DOMAIN}${path}`
@@ -31,7 +32,7 @@ const unattendedRun = (): UnattendedRun | null =>
 /** boot.js sets it when the engine ended its own run (an `AppExit`, the benchmark autopilot). */
 const engineExited = (): boolean => (window as { __engineExited?: boolean }).__engineExited === true
 
-export { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+export { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 
-const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+const host: HudHost = { acceptedEntryParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
 void host

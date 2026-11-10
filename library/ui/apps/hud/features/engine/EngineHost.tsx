@@ -7,14 +7,9 @@
 import { useEffect } from 'react'
 import type { EngineRpc } from '@explorer-core/engine/engineRpc'
 import { bridgeChannelName } from '@explorer-core/engine/protocol'
-import { engineServiceOptions } from '../../lib/baseDomain'
-import { bootMode } from '../../lib/bootMode'
-import { EDITOR_SCENE, editorSession, isEditorScene } from '../../lib/editorEmbed'
-import { PAGE_DIR } from '../../lib/publicUrl'
+import { engineLaunch, PAGE_DIR, seedBridgeSession } from '@hud-host'
 import { inShell, shellRequest } from '@explorer-core/lib/shell'
-// Moved to lib/systemScene.ts; whether a link may override it is lib/launchGate.ts's call.
-import { SYSTEM_SCENE } from '../../lib/systemScene'
-import { launchOptionsFromUrl, type LaunchOptions } from '@explorer-core/lib/webParams'
+import type { LaunchOptions } from '@explorer-core/lib/webParams'
 
 // Engine media libs the wasm expects as globals (LivekitClient, Hls) — loaded from CDNs like the
 // old boot page did. Pinned with integrity hashes: they run in the app, which the shell signs for.
@@ -36,10 +31,8 @@ function injectEngine(): void {
   // is opt-in per host page — engine.js never generates one — so this call is what turns it on.
   // Above the guard so a host page that pre-set __bevyBootConfig (and bails below) still seeds
   // the id the page-side channel constructors will use.
-  // In the scene editor's viewport the session is the editor's, so the editor scene's bus channel
-  // (suffixed by the sandbox) is the one the editor page opens.
-  const editor = editorSession(bootMode().systemScene, location.hash)
-  if (editor != null) (window as { __bridgeSession?: string }).__bridgeSession = editor
+  // The host's own bridge session (/play's editor embed), if it has one.
+  seedBridgeSession()
   bridgeChannelName()
 
   // Once per page — the engine is a singleton (StrictMode remounts and HMR must not double-boot).
@@ -47,24 +40,12 @@ function injectEngine(): void {
   injected = true
 
   const params = new URLSearchParams(location.search)
-  // pkg/ fetch base: the pinned engine artifact Sites serves next to this page (/play/engine).
-  window.PUBLIC_URL = new URL('engine', PAGE_DIR).href
-  // Every launch param the engine's web param table lists, read from the entry url; the
-  // `resolved` ones are what this HUD resolved for itself (lib/baseDomain.ts), and only the
-  // ui scene has a HUD-side default (our bundled bridge scene, unless a link overrode it).
-  // `autopilot` is never handed over, on any host: /play has no benchmark run, and the key stays
-  // out of the options altogether (not `false`), so an engine that predates the field still launches.
-  window.__bevyBootConfig = {
-    ...launchOptionsFromUrl(params, ['autopilot']),
-    ...engineServiceOptions(),
-    // the engine takes a bare value for a world name, so the editor scene goes as its full url
-    systemScene: (() => {
-      const scene = bootMode().systemScene
-      return scene == null ? SYSTEM_SCENE : isEditorScene(scene) ? EDITOR_SCENE : scene
-    })(),
-    // a host option: the engine freezes each scene after its first frame until the editor plays it
-    ...(editor != null ? { editor: true } : {})
-  }
+  // The host's launch (`@hud-host`'s engineLaunch): the engine's options, where its pkg/ files are
+  // fetched from, and any page switch of its own.
+  const launch = engineLaunch(params)
+  window.PUBLIC_URL = launch.engineDir
+  window.__bevyBootConfig = launch.options
+  launch.pageSwitches?.()
   // A page switch, not a launch option (native could never use it): boot.js hands it to the wasm
   // directly. Gated like a service override (lib/launchGate.ts). A query value decodes `+` as a
   // space; base64 has no spaces, so each one was a `+`.

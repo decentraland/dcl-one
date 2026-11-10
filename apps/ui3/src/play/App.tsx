@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BridgeClient } from '@explorer-core/engine/bridge'
 import { EngineDriver } from '@explorer-core/engine/EngineDriver'
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
-import { EngineHost } from './features/engine/EngineHost'
+import { EngineHost } from '@hud/features/engine/EngineHost'
 import type { LoginDriver } from '@explorer-core/engine/driver'
 import { startMockBridge } from '@explorer-core/engine/mockBridge'
 // Dev-only (?showcase=1) design gallery — lazy so it never ships in the prod HUD path.

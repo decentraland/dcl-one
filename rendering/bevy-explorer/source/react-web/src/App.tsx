@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import { AutopilotBridgeClient, AutopilotEngineDriver } from './engine/autopilot'
 import { EngineRpc } from '@explorer-core/engine/engineRpc'
-import { EngineHost } from './features/engine/EngineHost'
+import { EngineHost } from '@hud/features/engine/EngineHost'
 import type { LoginDriver } from '@explorer-core/engine/driver'
 import { startMockBridge } from '@explorer-core/engine/mockBridge'
 // Dev-only (?showcase=1) design gallery — lazy so it never ships in the prod HUD path.

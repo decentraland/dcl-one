@@ -3,6 +3,7 @@
 // maps `@hud-host` to a module implementing this contract (react-web/src/host.ts,
 // apps/ui3/src/play/host.ts), so the shared HUD code stays one copy.
 import type { LoginDriver } from './engine/driver'
+import type { LaunchOptions } from './lib/webParams'
 
 /** A parameter an entry url may carry, as the entry-params dialog lists it. */
 export interface AcceptedParam {
@@ -32,6 +33,16 @@ export interface UnattendedRun {
   login(driver: LoginDriver): Promise<void>
   /** The sign-in failed: the run ends, and nothing returns to a sign-in screen. */
   loginFailed(driver: LoginDriver, reason: string): void
+}
+
+/** How this host launches the web engine in its page. */
+export interface EngineLaunch {
+  /** The engine's launch options (src/web_options.rs, keyed by the web param table). */
+  options: LaunchOptions
+  /** Where the engine's pkg/ files are fetched from. */
+  engineDir: string
+  /** Page switches the host hands boot.js besides the launch options, set before it loads. */
+  pageSwitches?(): void
 }
 
 export interface HudHost {
@@ -64,6 +75,11 @@ export interface HudHost {
   /** Whether the engine ended its own run (react-web's benchmark autopilot): the bridge scene went
    *  with it, so its silence is no fault. */
   engineExited(): boolean
+  /** Set the bridge session id the engine forwards to the scene sandbox, before it boots (/play's
+   *  editor embed uses the editor's); a no-op where the host has none. */
+  seedBridgeSession(): void
+  /** The web engine's launch for this entry url. */
+  engineLaunch(params: URLSearchParams): EngineLaunch
   /** How this page boots. */
   bootMode(): BootMode
   /** This boot's unattended run, when it is one (`bootMode().autoLogin === 'unattended'`), else null. */

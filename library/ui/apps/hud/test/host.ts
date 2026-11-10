@@ -17,3 +17,5 @@ export const IN_WORLD_SHOP = false
 export const bootMode = (): BootMode => ({ systemScene: null, hideHud: false, autoLogin: null })
 export const unattendedRun: HudHost['unattendedRun'] = () => null
 export const engineExited: HudHost['engineExited'] = () => false
+export const seedBridgeSession: HudHost['seedBridgeSession'] = () => {}
+export const engineLaunch: HudHost['engineLaunch'] = () => ({ options: {} as ReturnType<HudHost['engineLaunch']>['options'], engineDir: 'http://localhost/engine' })
