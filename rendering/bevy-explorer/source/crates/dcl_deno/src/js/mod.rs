@@ -41,6 +41,7 @@ use self::{
 pub mod fetch;
 #[cfg(feature = "inspect")]
 pub mod inspector;
+mod isolate_hooks;
 pub mod local_storage;
 pub mod op_wrappers;
 pub mod websocket;
@@ -166,6 +167,7 @@ pub fn create_runtime(
         ),
         ..Default::default()
     });
+    isolate_hooks::install(runtime.v8_isolate());
 
     // Deno extension permission objects. These must be in the op state from the moment the
     // runtime exists: the ops that consult them look the type up unconditionally, and a
@@ -664,6 +666,9 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 mod tests {
     mod system_scene_network {
         include!("system_scene_network_tests.rs");
+    }
+    mod isolate_hooks {
+        include!("isolate_hooks_tests.rs");
     }
     use std::sync::Arc;
 
