@@ -23,7 +23,7 @@ for avatars, wearables and emotes, replacing the Unity renderer slot of
 - `src/stage.rs`, `src/shadow_catcher.wgsl`: the light rig and the floor that shows only the
   avatar's shadow, so a transparent canvas still grounds it on the host page; the scene
   boundaries' cylinder and grid floor (`src/grid_01.png`, the Unity renderer's grid texture,
-  copied unchanged from `decentraland/unity-explorer` (Apache-2.0) at `49c1644901`,
+  copied unchanged from `decentraland/unity-explorer` (Apache-2.0) at `49c16449018602a57c4f222aada4edf39582b5e2`,
   `avatar-preview-renderer/Assets/Textures/`).
 - `web/preview.js`: the `wearable-preview` iframe contract over the host surface.
 - `web/compare.html`: wearable-preview's Unity renderer (`ref=<origin>`, default production) and
@@ -60,9 +60,9 @@ smooths the edges instead) and the scene-bounds cell table, which a preview neve
 `?flags=` takes camera pipeline switches for diagnosis: `nobloom`, `nomsaa`, `sdr` (no HDR),
 `clearsurface` (an explicit transparent surface clear).
 
-Release profile: `opt-level = "z"`, fat LTO, `panic = "abort"`, `wasm-opt -Oz`. Measured: the
-WebGPU module 24.9 MB raw, 8.3 MB gzip (2026-11-05); the WebGL2 module 25.2 MB raw, 8.4 MB gzip,
-and an avatar on screen 3.2 s after the page opens, served locally (2026-11-06).
+Release profile: `opt-level = "z"`, fat LTO, `panic = "abort"`, `wasm-opt -Oz`. Measured
+(2026-11-10, `gzip -9`): the WebGPU module 24.8 MB raw, 8.4 MB gzip; the WebGL2 module 25.7 MB raw,
+8.7 MB gzip. An avatar on screen 3.2 s after the page opens, served locally (2026-11-06).
 
 ## The host surface (`src/host.rs`)
 
@@ -196,7 +196,17 @@ The target is the Unity renderer's behaviour, not only its look. In place so far
 A named default emote plays once in the marketplace, then the avatar idles; it loops in the
 builder.
 
-Still to come: configurator mode.
+Still to come: configurator mode, the Unity renderer's avatar creator (`Scripts/Configurator/` in
+`decentraland/unity-explorer`'s `avatar-preview-renderer`, read at
+`149b712d392420603c83b773a6d2f0463cb4685b`). It is a wizard drawn by the renderer,
+not a preview: steps greeting the user by the name `setUsername` sets, a first step of preset
+avatars, then wearables by category from lists of its own, body shape and skin, hair and eye
+colours from fixed palettes; a camera per body region (head, upper body, lower body, full body)
+chosen by the category, with mobile spacing; a short clip on each pick (by category, a wave on a
+body shape change) and, on confirming, the floating animation with a burst of particles in place
+of the platform. It answers the host with three messages: `customization-done` (body shape,
+colours, the chosen urns and whether the user skipped), `avatar-customization-step` (the step's
+index) and `element-bounds` (a named UI element's rectangle on screen, on request).
 
 Waiting on the Explorer: the preview renders what the Explorer's crates render, so a feature the
 Explorer lacks waits for it there. Social emotes (the Explorer reads no `startAnimation` or
@@ -207,7 +217,8 @@ The emote controller follows the Unity renderer: `goTo` on a stopped emote start
 it at that time, `play` resumes a paused one, and emote events wait for `load`.
 
 Not supported yet, answered with an error: `physics.setSpringBonesParams`; social emotes.
-`mode=configurator` renders as the marketplace does for now.
+`mode=configurator` renders as the marketplace does for now, and `setUsername` is accepted and
+ignored.
 
 ## Embedding it in the shop
 
@@ -236,10 +247,9 @@ Windows Chrome can be driven headless from WSL over the DevTools protocol
 
 ## Next work
 
-1. A full release build of both modules and their size measured again.
-2. A workflow that builds both modules, fails over a size limit, publishes them, and runs on
+1. A workflow that builds both modules, fails over a size limit, publishes them, and runs on
    changes to the Explorer crates it links.
-3. Where the page and modules are served from, and how hosts switch to it: their preview url
+2. Where the page and modules are served from, and how hosts switch to it: their preview url
    pointed at this page, or a Bevy renderer inside `wearable-preview`. The shop sends `mode` only
    with its Unity flag on.
-4. Social emotes and spring bones, once the Explorer renders them.
+3. Social emotes and spring bones, once the Explorer renders them.
