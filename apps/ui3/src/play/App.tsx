@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { BridgeClient } from './engine/bridge'
 import { EngineDriver } from './engine/EngineDriver'
 import { EngineRpc } from './engine/engineRpc'
@@ -12,6 +13,7 @@ import { FriendsPanel } from './features/friends/FriendsPanel'
 import { SettingsPanel } from './features/settings/SettingsPanel'
 import { ProfilePanel } from './features/profile/ProfilePanel'
 import { NotificationsPanel } from './features/notifications/NotificationsPanel'
+import { NotificationToastHost } from './features/notifications/NotificationToast'
 import { SkyboxMenu } from './features/skybox/SkyboxMenu'
 import { EmotesWheel } from './features/emotes/EmotesWheel'
 import { BackpackPage } from './features/backpack/BackpackPage'
@@ -20,6 +22,11 @@ import { MapPage } from './features/map/MapPage'
 import { PlacesPage } from './features/places/PlacesPage'
 import { EventsPage } from './features/events/EventsPage'
 import { ShopPage } from './features/shop/ShopPage'
+import { IN_WORLD_SHOP } from './features/shop/entry'
+// The in-world Shop, which replaces ShopPage (`?shop=old` keeps ShopPage while it is retired), loaded only when it is first opened. lazy()
+// keeps a failed load, so a crash swaps in a fresh one for the next open.
+const loadInWorldShop = () => lazy(() => import('./features/shop/InWorldShop'))
+let InWorldShop = /* @__PURE__ */ loadInWorldShop()
 import { PlacesPicker } from './features/places/PlacesPicker'
 import { LobbyHome } from './features/lobby/LobbyHome'
 import { WelcomePage } from './features/welcome/WelcomePage'
@@ -27,6 +34,7 @@ import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
+import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
 import { openPassport } from './features/profile/Passport'
 import { openWorldVisit } from './components/WorldVisitModal'
 import { openPermissionDialog } from './features/permissions/PermissionDialog'
@@ -46,8 +54,11 @@ import { useHudInsetReport } from './lib/hudInset'
 import { bootMode } from './lib/bootMode'
 import { isMobile, isChromiumBased, hasBypassCookie } from './lib/isMobile'
 import { inShell } from './lib/shell'
-import { hasUsableGpu } from './lib/gpu'
+import { probeGpu, type GpuAdapterInfo } from './lib/gpu'
+import { integratedGpuOnWindows } from './lib/integratedGpu'
+import { getPref, PREF, setPref } from './lib/prefs'
 import { MobileGate, GateChecking } from './features/gate/MobileGate'
+import { openIntegratedGpuGuide } from './features/gate/IntegratedGpuGuide'
 import { UntrustedLaunchGate } from './features/gate/UntrustedLaunchGate'
 import { untrustedLaunchParams } from './lib/launchGate'
 import { ErrorBoundary } from './features/error/ErrorBoundary'
@@ -57,7 +68,7 @@ import { openRealmError } from './features/error/RealmErrorModal'
 import { DIALOG_TITLE, isDialogSource } from './features/error/fatalError'
 import { openEntryParamsDialog } from './features/gate/EntryParamsDialog'
 import { unrecognisedEntryParams } from './lib/entryParams'
-import { EDITOR_BUILD, editorOffered, EditorOffered } from './features/editorHost/config'
+import { EDITOR_BUILD, editorOffered, EditorOffered, FEATURES_PARAM } from './features/editorHost/config'
 // The scene editor's host and Create page: loaded once Create is first opened. lazy() keeps a
 // failed load, so a crash swaps in a fresh one for the next open.
 const loadEditorHost = () => lazy(() => import('./features/editorHost/EditorHost'))
@@ -97,17 +108,21 @@ function gateReason(): 'mobile' | 'browser' | 'gpu' | null {
   return null
 }
 const GATE_REASON = gateReason()
+// `?gpuGuide=1` shows the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) whatever the
+// machine, for a look at it (mock mode included); otherwise the probe's adapter decides.
+const GPU_GUIDE_FORCED = params.get('gpuGuide') === '1'
+const SAMPLE_INTEGRATED_GPU: GpuAdapterInfo = { vendor: 'intel', architecture: 'gen-12lp', device: '', description: 'Intel(R) Iris(R) Xe Graphics' }
 
 // Gated entry-url params (lib/launchGate.ts: `?systemScene=` is a session takeover delivered as
 // a link, `?baseDomain=` points every backend at another deployment) carrying a value this
 // front-end doesn't recognise get an interstitial before anything boots — captured at module
 // scope, from the ENTRY url, so a later history.replaceState can't retire the warning.
 const UNTRUSTED_PARAMS = untrustedLaunchParams({ native: MODE === 'native' })
-const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname)
+const EDITOR = EDITOR_BUILD && MODE === 'engine' && editorOffered(location.hostname, location.search)
 // the ENTRY url: the engine's url sync rewrites it
 const ENTRY_SEARCH = location.search
 // Entry-url params nothing reads (lib/entryParams.ts) — told to the user once the HUD is up.
-const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds'] : [])
+const UNRECOGNISED_PARAMS = unrecognisedEntryParams(params, EDITOR_BUILD && EDITOR ? ['editor', 'editor-projects', 'editor-worlds', 'editor-tag', FEATURES_PARAM] : [])
 
 export function App(): React.JSX.Element {
   const showFps = useFpsToggle()
@@ -116,6 +131,13 @@ export function App(): React.JSX.Element {
   // bevy/wgpu, not WebGPU in this webview, so probing there would gate a HUD that runs fine.
   // 'checking' shows a brief spinner.
   const gpu = useGpuProbe(GATE_REASON != null || MODE === 'mock' || MODE === 'native' || SHOWCASE)
+  // The one GPU finding the player can act on: a Windows browser on its integrated GPU (the
+  // engine's probe path only; native renders through the host's own wgpu). Told once signed in.
+  const integratedGpu = GPU_GUIDE_FORCED
+    ? SAMPLE_INTEGRATED_GPU
+    : MODE === 'engine' && integratedGpuOnWindows(gpu.adapter)
+      ? gpu.adapter
+      : null
   // Ahead of every other gate: returning here is what keeps EngineHost unmounted, and EngineHost is
   // what injects boot.js and starts the scene.
   const [trustUntrusted, setTrustUntrusted] = useState(false)
@@ -123,8 +145,8 @@ export function App(): React.JSX.Element {
     return <UntrustedLaunchGate params={UNTRUSTED_PARAMS} onProceed={() => setTrustUntrusted(true)} />
   }
   if (GATE_REASON) return <MobileGate reason={GATE_REASON} />
-  if (gpu === 'checking') return <GateChecking />
-  if (gpu === 'blocked') return <MobileGate reason="gpu" />
+  if (gpu.state === 'checking') return <GateChecking />
+  if (gpu.state === 'blocked') return <MobileGate reason="gpu" />
   return (
     <ErrorBoundary>
       {SHOWCASE ? (
@@ -132,7 +154,7 @@ export function App(): React.JSX.Element {
           <Showcase />
         </Suspense>
       ) : (
-        <Hud />
+        <Hud integratedGpu={integratedGpu} />
       )}
       {showFps && <FpsMeter />}
     </ErrorBoundary>
@@ -152,30 +174,31 @@ function useFpsToggle(): boolean {
   return on
 }
 
-// Async pre-boot GPU probe. 'checking' → 'ok' (boot) or 'blocked' (→ the no-GPU gate). `skip` (a sync
-// gate already decided, mock, native, or showcase) resolves immediately to 'ok'. `?nogate=1` and the shared
-// bypass cookie skip the gate too; `?gate=gpu` is handled synchronously in gateReason(), so this only
-// runs the real detection path.
-function useGpuProbe(skip: boolean): 'checking' | 'ok' | 'blocked' {
-  const [state, setState] = useState<'checking' | 'ok' | 'blocked'>(skip ? 'ok' : 'checking')
+// Async pre-boot GPU probe. 'checking' → 'ok' (boot) or 'blocked' (→ the no-GPU gate), with what the
+// adapter reports about itself once known. `skip` (a sync gate already decided, mock, native, or
+// showcase) resolves immediately to 'ok'. `?nogate=1` and the shared bypass cookie skip the gate too;
+// `?gate=gpu` is handled synchronously in gateReason(), so this only runs the real detection path.
+type GpuProbeState = { state: 'checking' | 'ok' | 'blocked'; adapter: GpuAdapterInfo | null }
+function useGpuProbe(skip: boolean): GpuProbeState {
+  const [probe, setProbe] = useState<GpuProbeState>({ state: skip ? 'ok' : 'checking', adapter: null })
   useEffect(() => {
     if (skip) return
     if (params.get('nogate') === '1' || hasBypassCookie()) {
-      setState('ok')
+      setProbe({ state: 'ok', adapter: null })
       return
     }
     let cancelled = false
-    void hasUsableGpu().then((ok) => {
-      if (!cancelled) setState(ok ? 'ok' : 'blocked')
+    void probeGpu().then((result) => {
+      if (!cancelled) setProbe({ state: result.usable ? 'ok' : 'blocked', adapter: result.adapter })
     })
     return () => {
       cancelled = true
     }
   }, [skip])
-  return state
+  return probe
 }
 
-function Hud(): React.JSX.Element {
+function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React.JSX.Element {
   const { rpc, createDriver } = useMemo((): {
     rpc: EngineRpc | null
     createDriver: () => LoginDriver
@@ -194,6 +217,8 @@ function Hud(): React.JSX.Element {
   }, [])
 
   const session = useEngineSession(createDriver)
+  // The HUD's one server-state cache (docs/web-app-standards.md, "QueryClient"), with the reference defaults.
+  const [queryClient] = useState(() => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }))
   // login.account is the remembered welcome-back identity. The engine's
   // current profile identifies its player; until it arrives, discovery reads
   // the same fresh SSO identity the login driver uses.
@@ -201,6 +226,9 @@ function Hud(): React.JSX.Element {
   // mounted for good once wanted: `?editor`, or Create opened
   const [editorWanted, setEditorWanted] = useState(params.has('editor'))
   if (EDITOR_BUILD && EDITOR && !editorWanted && session.create.open) setEditorWanted(true)
+  // mounted for good once the Shop is first opened (unless `?shop=old`)
+  const [shopWanted, setShopWanted] = useState(false)
+  if (IN_WORLD_SHOP && !shopWanted && session.shop.open) setShopWanted(true)
 
   // A link with params the Explorer doesn't know gets an ordinary dialog listing what was ignored
   // and what it accepts — informational, nothing is frozen behind it.
@@ -208,6 +236,34 @@ function Hud(): React.JSX.Element {
     if (UNRECOGNISED_PARAMS.length === 0) return
     return openEntryParamsDialog(UNRECOGNISED_PARAMS)
   }, [])
+
+  // A Windows browser on its integrated GPU: how to move it to the dedicated one, as an ordinary
+  // dialog once the player is signed in and in the lobby or the world (never over the sign-in
+  // screen), once per device ("Don't show again"; "Later" asks again next launch) and once per
+  // launch. Only the player closes it (or the HUD unmounting): travel that leaves the lobby or the
+  // world keeps it open, which is why the close handle lives in a ref rather than the effect's
+  // cleanup. Not where something else owns the UI (the embed) and not on an unattended or
+  // auto-signed-in run (the benchmark, which nobody would close it on; `?guest=1` previews); always
+  // when forced for a look.
+  const gpuGuideDue = integratedGpu != null && (GPU_GUIDE_FORCED || session.phase === 'lobby' || session.phase === 'world')
+  const gpuGuideClose = useRef<(() => void) | null>(null)
+  const gpuGuideOffered = useRef(false)
+  useEffect(() => {
+    if (integratedGpu == null || !gpuGuideDue || gpuGuideOffered.current || HIDE_HUD) return
+    if (!GPU_GUIDE_FORCED && (bootMode().autoLogin != null || getPref(PREF.gpuGuideSeen) === '1')) return
+    gpuGuideOffered.current = true
+    gpuGuideClose.current = openIntegratedGpuGuide({ adapter: integratedGpu, onDontShowAgain: () => setPref(PREF.gpuGuideSeen, '1') })
+  }, [gpuGuideDue, integratedGpu])
+  // Resetting the refs lets StrictMode's simulated unmount in dev remount with a clean slate, or
+  // `?gpuGuide=1` would open on the first pass, close, and never come back.
+  useEffect(
+    () => () => {
+      gpuGuideClose.current?.()
+      gpuGuideClose.current = null
+      gpuGuideOffered.current = false
+    },
+    []
+  )
 
   // A world that doesn't exist, or a HUD bridge that never answered, isn't a crash — it's an ordinary
   // dialog on the popup layer, so it gets Escape/scrim-click for free and freezes nothing behind it
@@ -229,8 +285,9 @@ function Hud(): React.JSX.Element {
       : null
 
   // Scene permission prompts (e.g. ChangeRealm), one at a time, opened through the popup layer. Escape
-  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes.
-  const permFrontId = session.phase === 'world' ? session.permissions.pending[0]?.id : undefined
+  // / scrim-click deny once. Re-opens whenever the front of the pending queue changes. Photo mode
+  // holds them: a popup would close it, and the prompt opens when it ends.
+  const permFrontId = session.phase === 'world' && !session.photoMode.active ? session.permissions.pending[0]?.id : undefined
   useEffect(() => {
     const front = session.permissions.pending[0]
     if (permFrontId == null || !front) return
@@ -313,7 +370,8 @@ function Hud(): React.JSX.Element {
   // The scene editor owns the screen: no chrome in 'edit', only the reticle and prompts in 'play',
   // and no loading overlay in either (a scene reloads on every edit).
   const editorMode = session.editor.mode
-  const chrome = !pageOpen && editorMode === 'off'
+  // photo mode shows only its own overlay (and the reticle) over the world
+  const chrome = !pageOpen && editorMode === 'off' && !session.photoMode.active
 
   // Tell the engine how much of the screen the persistent HUD occupies. A full-screen page is
   // transient, so the last in-world value stands while one is open.
@@ -335,6 +393,7 @@ function Hud(): React.JSX.Element {
   }
 
   return (
+    <QueryClientProvider client={queryClient}>
     <SessionProvider value={session}>
       {rpc && <EngineHost rpc={rpc} />}
       {MODE === 'engine' && <BootProgress flow={session.login} />}
@@ -367,6 +426,9 @@ function Hud(): React.JSX.Element {
           )}
           {/* The full-screen menu pages own the whole screen; hide the rail + chat so
               they don't show through (the map page's body is transparent). */}
+          {session.photoMode.active && !pageOpen && (
+            <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
+          )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
           {chrome && (
             <Minimap
@@ -448,8 +510,34 @@ function Hud(): React.JSX.Element {
               onVisitWorld={(realm) => session.map.changeRealm(realm)}
             />
           </SurfaceBoundary>
-          <SurfaceBoundary name="Shop" open={session.shop.open} onCrash={session.closeAllPanels}>
-            <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+          <SurfaceBoundary
+            name="Shop"
+            open={session.shop.open}
+            onCrash={() => {
+              if (IN_WORLD_SHOP) InWorldShop = loadInWorldShop()
+              session.closeAllPanels()
+            }}
+          >
+            {IN_WORLD_SHOP ? (
+              shopWanted && <Suspense fallback={null}>
+                <InWorldShop
+                  shop={session.shop}
+                  profile={session.profile}
+                  onNavigate={goToMenuPage}
+                  setEngineViewport={session.setEngineViewport}
+                  equipped={session.backpack.equipped}
+                  preview={session.backpack.preview}
+                  focus={session.backpack.focus}
+                  stage={session.backpack.stage}
+                  emote={session.backpack.emote}
+                  rotate={session.backpack.rotate}
+                  zoom={session.backpack.zoom}
+                  noEngine={MODE === 'mock'}
+                />
+              </Suspense>
+            ) : (
+              <ShopPage shop={session.shop} profile={session.profile} onNavigate={goToMenuPage} />
+            )}
           </SurfaceBoundary>
           <SurfaceBoundary name="Gallery" open={session.gallery.open} onCrash={session.closeAllPanels}>
             <GalleryPage
@@ -480,9 +568,11 @@ function Hud(): React.JSX.Element {
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
+      <NotificationToastHost notifications={session.notifications} friends={session.friends} />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}
     </SessionProvider>
+    </QueryClientProvider>
   )
 }

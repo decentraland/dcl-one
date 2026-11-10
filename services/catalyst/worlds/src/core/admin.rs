@@ -7,11 +7,15 @@
 //! domain's references) with the old query and answer shape. The age floor
 //! is at least an hour and the upload window; like every POST here it is
 //! behind `WORLDS_WRITES_ENABLED`, and it runs without the 30 s request
-//! deadline (a full store walk).
+//! deadline (a full store walk). One run at a time (503 + `Retry-After`
+//! otherwise); a bad or missing bearer is 401, as upstream. A run that
+//! deletes also reclaims expired partial uploads and reports them under
+//! `expiredUploads`.
 
 use axum::Json;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use chrono::SecondsFormat;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -23,7 +27,8 @@ use crate::shared::identity::Address;
 
 use super::SharedState;
 use super::auth::authorize_admin;
-use super::http::{ApiError, clamp_limit};
+use super::http::{ApiError, QueryPairs, clamp_limit, query_param};
+use super::metrics;
 use super::permissions::parse_world;
 use super::store;
 
@@ -53,23 +58,64 @@ fn admin(state: &SharedState, headers: &HeaderMap) -> Result<(), ApiError> {
     authorize_admin(state.settings.admin_token.as_deref(), headers)
 }
 
-#[derive(Debug, Deserialize)]
+/// `/gc`'s own query (upstream reads none): `dry_run`, `min_age_secs` and
+/// `allow_empty_active_set`, read after the bearer. A value that does not
+/// parse answers the worlds 400 envelope.
+#[derive(Debug, Default, PartialEq)]
 pub struct GcQuery {
-    #[serde(default)]
     pub dry_run: Option<bool>,
-    #[serde(default)]
     pub min_age_secs: Option<u64>,
-    #[serde(default)]
     pub allow_empty_active_set: Option<bool>,
 }
 
-/// POST /gc, /admin/gc: the blob store collector.
+impl GcQuery {
+    fn parse(q: &QueryPairs) -> Result<Self, ApiError> {
+        fn read<T: std::str::FromStr>(q: &QueryPairs, key: &str) -> Result<Option<T>, ApiError> {
+            query_param(q, key)
+                .map(|v| {
+                    v.parse().map_err(|_| {
+                        ApiError::bad_request(format!("Invalid query parameter {key}: {v}"))
+                    })
+                })
+                .transpose()
+        }
+        Ok(Self {
+            dry_run: read(q, "dry_run")?,
+            min_age_secs: read(q, "min_age_secs")?,
+            allow_empty_active_set: read(q, "allow_empty_active_set")?,
+        })
+    }
+}
+
+/// Retry hint when a run is already going or publishes keep the store lock busy, as upstream.
+pub const GC_DEFERRED_RETRY_AFTER_SECONDS: u64 = 60;
+
+pub const GC_IN_PROGRESS_MESSAGE: &str = "A garbage collection run is already in progress.";
+
+/// Upstream's `ContentLockBusyError` text (`src/adapters/content-locks/errors.ts`).
+pub const GC_LOCK_BUSY_MESSAGE: &str = "The content lock is still busy, please retry shortly.";
+
+fn gc_deferred(message: &str) -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        [(
+            axum::http::header::RETRY_AFTER,
+            GC_DEFERRED_RETRY_AFTER_SECONDS.to_string(),
+        )],
+        Json(json!({ "error": "Service Unavailable", "message": message })),
+    )
+        .into_response()
+}
+
+/// POST /gc, /admin/gc: the blob store collector. One run at a time across the fleet (503 +
+/// Retry-After otherwise); the run is detached, so a client hanging up does not cut it short.
 pub async fn garbage_collect(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    Query(q): Query<GcQuery>,
-) -> Result<Json<Value>, ApiError> {
+    Query(q): Query<QueryPairs>,
+) -> Result<Response, ApiError> {
     admin(&state, &headers)?;
+    let q = GcQuery::parse(&q)?;
     let limits = &state.settings.upload_limits;
     let floor = catalyst_storage::gc::orphan_age_floor(
         limits.multipart_upload_timeout_ms,
@@ -85,24 +131,58 @@ pub async fn garbage_collect(
         min_age,
         allow_empty_reference_set: q.allow_empty_active_set.unwrap_or(false),
     };
-    let report = match catalyst_storage::gc::collect(
-        &state.pool,
-        &state.storage,
-        &state.settings.global_scenes_urn,
-        options,
-    )
-    .await
-    {
-        Ok(report) => report,
+    let Some(run_lock) = catalyst_storage::gc::try_lock_run(&state.pool)
+        .await
+        .map_err(|e| ApiError::internal(format!("gc run lock: {e}")))?
+    else {
+        return Ok(gc_deferred(GC_IN_PROGRESS_MESSAGE));
+    };
+    let started = std::time::Instant::now();
+    let run = {
+        let state = state.clone();
+        tokio::spawn(async move {
+            let result = catalyst_storage::gc::collect(
+                &state.pool,
+                &state.storage,
+                &state.settings.global_scenes_urn,
+                options,
+            )
+            .await;
+            // Its deferral or failures do not undo the sweep: reported beside it, retried by its job.
+            let expired = match (&result, options.dry_run) {
+                (Ok(_), false) => Some(super::partial::delete_expired_uploads(&state).await),
+                _ => None,
+            };
+            if let Err(e) = run_lock.commit().await {
+                tracing::warn!(error = %e, "releasing the gc run lock");
+            }
+            result.map(|report| (report, expired))
+        })
+    };
+    let result = run
+        .await
+        .map_err(|e| ApiError::internal(format!("gc task: {e}")))?;
+    let elapsed = started.elapsed();
+    let (report, expired_uploads) = match result {
+        Ok((report, expired_uploads)) => {
+            metrics::gc_run("success", elapsed, report.removed, report.removed_bytes);
+            (report, expired_uploads)
+        }
+        Err(catalyst_storage::gc::GcError::LockTimeout) => {
+            metrics::gc_run("deferred", elapsed, 0, 0);
+            return Ok(gc_deferred(GC_LOCK_BUSY_MESSAGE));
+        }
         Err(catalyst_storage::gc::GcError::EmptyReferenceSet) => {
+            metrics::gc_run("error", elapsed, 0, 0);
             return Err(ApiError::bad_request(
                 "Refusing to collect: no domain names any stored content, which usually means the database is empty or misconfigured. Re-run with allow_empty_active_set=true to collect anyway.",
             ));
         }
         Err(e) => {
-            tracing::error!(error = %e, "garbage collection aborted; nothing was deleted");
+            metrics::gc_run("error", elapsed, 0, 0);
+            tracing::error!(error = %e, "garbage collection aborted");
             return Err(ApiError::internal(
-                "Garbage collection aborted; nothing was deleted",
+                "Garbage collection aborted; nothing more was deleted",
             ));
         }
     };
@@ -118,12 +198,15 @@ pub async fn garbage_collect(
         "message": message,
         "dryRun": report.dry_run,
         "removed": report.removed,
+        "removedBytes": report.removed_bytes,
         "failed": report.failed,
         "candidates": report.candidates,
         "scanned": report.scanned,
         "activeKeys": report.references,
         "minAgeSeconds": report.min_age_seconds,
-    })))
+        "expiredUploads": expired_uploads,
+    }))
+    .into_response())
 }
 
 /// GET /admin/worlds
@@ -381,4 +464,40 @@ pub async fn world_ban_status(
         "parcel": q.parcel,
         "sceneBanned": scene_banned,
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GcQuery;
+
+    fn pairs(raw: &[(&str, &str)]) -> super::QueryPairs {
+        raw.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn gc_query_reads_its_three_keys_and_ignores_the_rest() {
+        assert_eq!(
+            GcQuery::parse(&pairs(&[
+                ("dry_run", "true"),
+                ("min_age_secs", "7200"),
+                ("other", "x")
+            ]))
+            .unwrap(),
+            GcQuery {
+                dry_run: Some(true),
+                min_age_secs: Some(7200),
+                allow_empty_active_set: None,
+            }
+        );
+        assert_eq!(GcQuery::parse(&pairs(&[])).unwrap(), GcQuery::default());
+    }
+
+    #[test]
+    fn an_unparsable_gc_query_value_is_a_worlds_400() {
+        let err = GcQuery::parse(&pairs(&[("dry_run", "yes")])).unwrap_err();
+        let response = axum::response::IntoResponse::into_response(err);
+        assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
 }

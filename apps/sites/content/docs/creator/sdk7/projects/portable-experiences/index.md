@@ -13,7 +13,7 @@
 
 
 
-Smart Wearables are a kind of portable experience that is associated to a wearable, and activated based on if the player is using that wearable. This document doesn't cover those, see [smart wearables](/docs/creator/sdk7/projects/smart-wearables/) for more details.
+Smart Wearables are a kind of portable experience that is associated to a wearable, and activated based on if the player is using that wearable. This document doesn't cover those, see [smart wearables](smart-wearables.md) for more details.
 
 ## Getting started
 
@@ -27,7 +27,7 @@ Smart Wearables are a kind of portable experience that is associated to a wearab
 
 Running a preview of a portable experience is just like running that of a scene, simply click the **Run Scene** button on the Decentraland tab, or run `npm run start` in the command line.
 
-You’ll notice that rather than seeing an empty grid, you are surrounded by the default empty parcels content. In a portable experience, you are not restricted to any set of parcels, you can add 3D models or sounds anywhere in the world. Since the portable experience is meant to be experienced anywhere in Decentraland, you're most likely going to focus on entities attached to the player or UI, but you can also place entities freely in the world.
+You’ll notice that rather than seeing an empty grid, you are surrounded by the default empty parcels content. The preview runs your code as a regular scene on the parcels listed in `scene.json` (the template uses a single parcel at `0,0`), so features that only work in the scene the player is standing in stop when you walk off them. Once published, a portable experience isn't restricted to any set of parcels: you can add 3D models or sounds anywhere in the world. Since the portable experience is meant to be experienced anywhere in Decentraland, you're most likely going to focus on entities attached to the player or UI, but you can also place entities freely in the world.
 
 ## Publish
 
@@ -84,7 +84,7 @@ executeTask(async () => {
 
 You might be worried about preventing the use of portable experiences in your scene, since these could give players abilities that could be considered cheating in a competitive game. For example, in a platform game, a player that wears a jetpack has a very unfair advantage over others.
 
-The simplest approach is to add a flag to block all portable experiences entirely on your scene at any time, or prevent their UIs from showing. See [feature toggles](/docs/creator/sdk7/projects/scene-metadata/#feature-toggles). This also applies to portable experiences linked to smart wearables.
+The simplest approach is to add a flag to block all portable experiences entirely on your scene at any time, or prevent their UIs from showing. See [feature toggles](scene-metadata.md#feature-toggles). This also applies to portable experiences linked to smart wearables.
 
 Another approach is to query to view a player's portable experiences, and take action accordingly.
 
@@ -111,26 +111,15 @@ In the example above, the scene is using `kill()` to terminate portable experien
 
 An alternative to terminating portable experiences is to change the behavior of your scene when they are present. For example, the player might be able to keep their portable experience, but not be allowed to start a match, or to claim any rewards as long as they have any enabled.
 
-## Restricted actions in portable experiences
-
-To prevent abuse, certain features aren't permitted on portable experiences by default, and require adding a permission flag.
-
-See [Required permissions](/docs/creator/sdk7/projects/scene-metadata/#required-permissions) for more details.
-
-
-> [!WARNING]
-> **📔 Note**: Players are notified about the required flags by the portable experience. Avoid adding permissions you don't need, since it can make players distrust your portable experience and reject it.
-
-
 ## Limitations
 
-Portable experiences only run for the player that activates it. Other players don't see the effects. For example, if the portable experience renders a pet that follows the player, other players around won't see this pet. However, other players will see avatars perform animations that run as part of the portable experience, even [custom avatar animations](/docs/creator/sdk7/interactivity/avatars/avatar-animations/#custom-animations) uploaded as part of the portable experience's files.
+Portable experiences only run for the player that activates it. Other players don't see the effects. For example, if the portable experience renders a pet that follows the player, other players around won't see this pet. However, other players will see avatars perform animations that run as part of the portable experience, even [custom avatar animations](../interactivity/avatars/avatar-animations.md#custom-animations) uploaded as part of the portable experience's files.
 
 ## Tips
 
 * When positioning an entity, note that positions are global, relative to the 0,0 coordinates of Genesis Plaza.
 * To react to nearby players:
-  * See [Fetch all players](/docs/creator/sdk7/interactivity/user-data/#fetch-all-players) to know how to obtain data from other players in the surroundings.
+  * See [Fetch all players](../interactivity/user-data.md#fetch-all-players) to know how to obtain data from other players in the surroundings.
   * Be mindful that the loading of the portable experience, surrounding scenes and other players may occur in different orders depending on the situation. If the player enters Decentraland with the portable experience already on, it’s likely that your portable experience will load before other players do. On the other hand, tf the player first loads into a scene and then activates the portable experience, it’s likely that other players will already be loaded by the time the portable experience starts running.
   * For multiplayer experiences, wait till the player is connected to an island inside their realm. Run `getRealm()` and check for the ‘room’ field. If the ‘room’ field is null, the player is not yet connected to an island and other players won’t be loaded yet. You can periodically check this every 1 second till the ‘room’ field is present, and only initialize your logic then.
 * To interact with surrounding scenes:

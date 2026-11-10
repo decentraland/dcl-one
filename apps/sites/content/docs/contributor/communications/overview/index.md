@@ -115,7 +115,7 @@ The flow for getting assigned to an island and joining it is detailed in the [Ar
 
 ## Messages
 
-Messages in the comms protocol are binary blobs serialized using [protocol buffers](https://github.com/protocolbuffers/protobuf), wrapped in a [Packet](/docs/contributor/communications/messages/#Packet) structure.
+Messages in the comms protocol are binary blobs serialized using [protocol buffers](https://github.com/protocolbuffers/protobuf), wrapped in a [Packet](/docs/contributor/communications/messages/#packet) structure.
 
 
 > [!NOTE]

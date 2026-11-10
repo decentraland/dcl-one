@@ -78,6 +78,10 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
+lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
+it). Its contract is tier-1: `src/test/integratedGpuGuide.test.tsx`, `src/lib/integratedGpu.test.ts`.
+
 **Updating baselines** (only when the change is intentional):
 ```bash
 npm run test:visual:update      # regenerates the PNGs
@@ -121,8 +125,13 @@ or when touching the bridge protocol.
   plus `/login_*`, `/logout`, `/chat`.
 
 **Still tier-1-only** (a fresh guest can't reach them, so they can't round-trip here): accepting a
-friend request, leaving a community, marking notifications read — these need seeded data and are
-covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
+friend request, leaving a community, marking notifications read, community chat (the tabs come
+from the communities the account is a member of; `src/test/communityChat*.test.tsx`, and
+`apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
+and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
+that owns a LAND or a World with a deployed scene; `src/test/communities.clicks.test.tsx` covers the
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; acting on a member needs a second account in a community the first owns or moderates, and finding a community past the first browse page needs a service with more than 20) — these need seeded
+data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.
 
@@ -138,6 +147,8 @@ these by hand (or have an agent drive the Chrome extension against a live world)
 - [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
 - [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
       show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] A name colour picked on the passport reaches the tag once the passport closes, on your own
+      avatar and, for other players, on theirs, without a rename or a reload.
 - [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
       like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
       or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely
@@ -150,6 +161,10 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       hidden in first person.
 - [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
 - [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **Community chat bubbles** (`bridge-scene/src/domains/{chat,nametags}.*`): a message said in a
+      community chat by a player standing nearby shows as their bubble with the community's name on
+      a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
+      your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
@@ -287,3 +302,28 @@ back as `analyticsSession`). Expectations:
   `src/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
   `src/test/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
   id at launch), `entryParams.test.ts` (campaign params).
+
+## Photo mode
+
+The camera reel's in-world camera (`features/photoMode`, bridge `domains/photoMode.ts`). The engine
+owns the camera, the capture and the upload and reports them on the `photoMode` stream; the HUD
+owns the mode as a surface. Expectations:
+
+- **Opening and closing** go through the session: the `PhotoMode` key (a `systemAction`, so the
+  dispatcher's popup, editor and lobby gates apply), the rail's Camera button and the overlay's
+  Close and Gallery send `setPhotoMode` with its source (`shortcut` or `button`, the engine's
+  analytics). The gallery key and button close photo mode on the way to the gallery; Escape is the
+  overlay's cancel layer. Opening closes every page and panel.
+- **Focus**: photo mode is part of `uiFocus`, so scenes get no input while it is on and the engine
+  reads only the camera's own keys above that. A popup opening on top of it closes it; a scene
+  permission prompt waits until it ends (`App.tsx`).
+- **The overlay** replaces the chrome (no rail, minimap or chat): the frame at 0.87 of the tighter
+  screen dimension in 16:9, the thirds grid, Gallery / Shoot / camera controls under it, the camera
+  controls panel whose keys follow the bindings (scene movement actions included), and the
+  storage-full notice in Shoot's place. Shoot is disabled while a photo is in flight, the storage
+  is unknown or the capture effect plays; a capture plays the flash once per event seq and the
+  photo flies into the Gallery button.
+- Tests: `src/test/photoMode.test.tsx` (the session contract above), `src/test/photoModeOverlay.test.tsx`
+  (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
+  (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
+

@@ -9,6 +9,7 @@
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
+- For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
 
 ## Agentic roles documentation
@@ -31,7 +32,8 @@ Code that serves none of these deliverables is removed, not kept for reference:
 8. page-coherence scripts (`apps/sites/scripts`);
 9. one backend schema (`schemas/`);
 10. the `catalyst` binary: every backend area behind one base domain;
-11. the protocol (`library/protocol`): the `.proto` contract and the `@dcl/protocol` package.
+11. the protocol (`library/protocol`): the `.proto` contract and the `@dcl/protocol` package;
+12. the creator SDK (`library/js-sdk-toolchain`): the `@dcl/sdk` packages, built from the protocol beside it.
 
 - Docs state current behavior, verified capabilities and next work; no transition histories or internal generation labels.
 - Compare compatibility only against pinned `github.com/decentraland` repositories or dated Decentraland server captures.
@@ -57,6 +59,8 @@ Code that serves none of these deliverables is removed, not kept for reference:
 ## Ownership
 
 - `explore`: discovery and explorer-facing APIs (places, events, map, realms, flags, client config), including durable world-scene place identities maintained inside deployment transactions; `places::RemovedPlaces` captures catalogue removals, which comms consumes for moderation and ingress cleanup.
+  - Explore reaches social by shared SQL on exactly two edges, the current contract: it reads `social.communities` and `social.community_members` (one `EXISTS` per community-event write: the community active and not suspended, the signer its owner or an owner/moderator member; explore never writes those rows), and it inserts `social.event_notification_intents` rows (one per event notice, in the event's own transaction, carrying the event snapshot; social owns the table, processes the rows and deletes processed ones after its retention window; explore never updates or deletes them). Changing a column either edge reads or writes updates this paragraph in the same change.
+- `social` owns badges; its badge processor reads, never writes, other areas' tables by shared SQL: `content.deployments` and `content.active_pointers` (deployments by `id`, scene titles, wearable rarity), and on Polygon `shop.items`, `shop.collections`, `shop.sale_event`, `shop.trade_event`, `shop.nft_event`, `shop.chain_cursor` (an index's published block) and `shop.mirror_state` (a mirror's first complete pass). Changing a column it reads updates this paragraph and `DATABASE.md` "Badge processor" in the same change.
 - `worlds`: world catalogues, deployments, permissions, world/player storage, encrypted env values, SDK7 scene hosting with per-scene isolation, limits and cancellation.
 - Guest code reaches storage through a scoped host API, never the shared pool.
 - `comms` (layer 8): Pulse, the archipelago connector (`/ws`), the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events) and presence; all but Pulse run in `catalyst serve`.
@@ -75,9 +79,15 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.
 - A new crate needs an independent consumer or a concrete build requirement.
 - Preserve external API paths and room names when code moves.
-- Shop absorbs every Marketplace feature; its UI lives in `apps/ui3/src/shop`.
+- Shop absorbs every Marketplace feature (resales, bids, LAND, NAME resale, listing, owners and sales, lists), shown
+  only to a web3 wallet session while the `dapps-shop-marketplace-features` rollout is on
+  (`apps/ui3/src/shop/market/access.tsx`); web2 sessions never see them. Web3 means a web3 sign-in sites recorded
+  (`apps/sites/src/data/lib/auth/signin-kind.ts`) with a wallet here to sign, never an installed extension alone. One
+  exception: the in-world HUD outside the web shell (desktop, native) cannot buy or tell the wallet, so a signed-in
+  player who is not a guest may browse resales there, and the web Shop decides again. New and migrated Shop code
+  follows `docs/web-app-standards.md` and `docs/ui-standards.md`.
 - Credits are the main payment option; logged-in web3 wallets also see MANA.
-- LAND and every secondary sale are MANA-only, with guidance for web2 users.
+- LAND and every secondary sale are MANA-only.
 - Enforce eligibility in backend and settlement, including legacy routes; hiding a button is insufficient.
 
 ## Self-contained, public tree
@@ -99,6 +109,8 @@ migrates), `library/ui/` or
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.
+
+State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 
 ## Explorer automation
 

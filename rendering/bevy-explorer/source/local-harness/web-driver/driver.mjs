@@ -83,6 +83,23 @@ function noChromeMessage(env) {
   return `Google Chrome is not installed (looked in ${looked}); install it, or point CHROME_PATH at it`;
 }
 
+/** The credential a console line carries: the first argument of `/login_identity` or
+ *  `/hud_login` that is neither a flag nor the value of one that takes a value, an AuthIdentity
+ *  (an ephemeral private key and a signed delegation valid for days), or undefined. The e2e
+ *  suite's `driver/console.ts` has the same rule, which its tests keep in step. */
+export function secretOf(line) {
+  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
+  // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
+  return token?.replace(/^["']|["']$/g, '');
+}
+
+/** `text` with the line's credential replaced wherever it appears, for what the command line
+ *  prints: a reply, an error or a timeout may quote the line. */
+export function redact(line, text) {
+  const secret = secretOf(line);
+  return secret === undefined ? text : text.split(secret).join('<redacted>');
+}
+
 /** Does a call of the binding from this execution context count? Only from a default (not an
  *  isolated-world, as a browser extension's) context of the origin the runner opened: another
  *  origin's frame must not be able to make input. */
@@ -188,6 +205,8 @@ class Driver {
   #held = new Set();
   #shown = new WeakSet();
   #console = [];
+  // the credentials the lines run so far carried (`secretOf`): a page may quote one
+  #secrets = new Set();
   #queue = Promise.resolve();
   #closing = null;
   /** Chrome's own name and version, once launched, e.g. `Chrome/156.0.8078.48`. */
@@ -364,9 +383,16 @@ class Driver {
       .map(({ type, targetId }) => ({ type, targetId }));
   }
 
+  // a credential a line carried is replaced before the cut, so a cut cannot leave a part of it
+  #redactSecrets(text) {
+    let out = text;
+    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>');
+    return out;
+  }
+
   #log(sessionId, kind, text) {
     const target = this.#sessions.get(sessionId)?.type ?? 'page';
-    this.#console.push({ at: Date.now(), target, kind, text: String(text).slice(0, 2000) });
+    this.#console.push({ at: Date.now(), target, kind, text: this.#redactSecrets(String(text)).slice(0, 2000) });
     if (this.#console.length > CONSOLE_KEEP) this.#console.splice(0, this.#console.length - CONSOLE_KEEP);
   }
 
@@ -432,6 +458,8 @@ class Driver {
    *  rejection with the message the page failed with. */
   async console(line, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
     const started = Date.now();
+    const secret = secretOf(line);
+    if (secret !== undefined) this.#secrets.add(secret);
     await this.ready({ timeout });
     const context = await this.#findApp();
     if (!context) throw new Error('the app frame went away');
@@ -749,10 +777,10 @@ async function main(argv) {
     const run = async (command) => {
       try {
         const output = await driver.console(command);
-        console.log(JSON.stringify({ command, ok: true, output }));
+        console.log(JSON.stringify({ command: redact(command, command), ok: true, output: redact(command, output) }));
       } catch (error) {
         failed = true;
-        console.log(JSON.stringify({ command, ok: false, error: error.message }));
+        console.log(JSON.stringify({ command: redact(command, command), ok: false, error: redact(command, error.message) }));
       }
     };
     if (options.commands.length > 0) {

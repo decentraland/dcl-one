@@ -1,0 +1,515 @@
+import { runExplorerAlpha } from '../../../../packages/@dcl/sdk-commands/src/commands/start/explorer-alpha'
+
+// Mock the spawner.exec function
+const mockExec = jest.fn()
+
+// Mock the logger
+const mockLogger = {
+  log: jest.fn(),
+  info: jest.fn(),
+  error: jest.fn()
+}
+
+// Mock components
+const mockComponents = {
+  logger: mockLogger,
+  spawner: {
+    exec: mockExec
+  }
+} as any
+
+describe('explorer-alpha', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+    // Reset process.platform to ensure consistent testing
+    Object.defineProperty(process, 'platform', {
+      value: 'darwin',
+      writable: true
+    })
+  })
+
+  afterEach(() => {
+    jest.restoreAllMocks()
+  })
+
+  describe('boolean parameters', () => {
+    it('should always include local-scene and debug parameters', async () => {
+      const args: any = {
+        '--local-scene': true,
+        '--debug': true,
+        '--skip-auth-screen': true,
+        '--landscape-terrain-enabled': true
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('local-scene=true')]),
+        { silent: true }
+      )
+    })
+
+    it('should always include local-scene and debug even when they are false', async () => {
+      const args: any = {
+        '--local-scene': false,
+        '--debug': false,
+        '--skip-auth-screen': false,
+        '--landscape-terrain-enabled': false
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('local-scene=true')]),
+        { silent: true }
+      )
+    })
+
+    it('should always include local-scene and debug even when they are undefined', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('local-scene=true')]),
+        { silent: true }
+      )
+    })
+  })
+
+  describe('openDeeplinkInNewInstance parameter', () => {
+    it('should include open-deeplink-in-new-instance parameter when -n flag is provided', async () => {
+      const args: any = {
+        '-n': true
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('open-deeplink-in-new-instance=true')]),
+        { silent: true }
+      )
+    })
+
+    it('should not include open-deeplink-in-new-instance parameter when -n flag is not provided', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.not.stringContaining('open-deeplink-in-new-instance')]),
+        { silent: true }
+      )
+    })
+  })
+
+  describe('multiInstance parameter', () => {
+    it('should include multi-instance parameter when --multi-instance flag is provided', async () => {
+      const args: any = {
+        '--multi-instance': true
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('multi-instance=true')]),
+        { silent: true }
+      )
+    })
+
+    it('should not include multi-instance parameter when --multi-instance flag is not provided', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.not.stringContaining('multi-instance')]),
+        { silent: true }
+      )
+    })
+  })
+
+  describe('assetBundles parameter', () => {
+    it('should include local-ab parameter when --asset-bundles flag is provided', async () => {
+      const args: any = {
+        '--asset-bundles': true
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('local-ab=true')]),
+        { silent: true }
+      )
+    })
+
+    it('should not include local-ab parameter when --asset-bundles flag is not provided', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.not.stringContaining('local-ab')]),
+        { silent: true }
+      )
+    })
+  })
+
+  describe('mcp parameter', () => {
+    it('should include mcp parameter when --mcp flag is provided', async () => {
+      const args: any = {
+        '--mcp': true
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('mcp=true')]),
+        { silent: true }
+      )
+    })
+
+    it('should include mcp-port parameter when --mcp-port is provided', async () => {
+      const args: any = {
+        '--mcp': true,
+        '--mcp-port': 8025
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringContaining('mcp-port=8025')]),
+        { silent: true }
+      )
+    })
+
+    it('should not include mcp-port parameter when --mcp-port is not provided', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.not.stringContaining('mcp-port')]),
+        { silent: true }
+      )
+    })
+
+    it('should not include mcp parameter when --mcp flag is not provided', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.not.stringContaining('mcp=true')]),
+        { silent: true }
+      )
+    })
+  })
+
+  describe('passthrough parameters (after standalone --)', () => {
+    async function run(args: any) {
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+      return mockExec.mock.calls[0][2][0] as string
+    }
+
+    it('forwards a bare flag as key=true', async () => {
+      const deepLink = await run({ _: ['--paramA'] })
+      expect(deepLink).toContain('paramA=true')
+    })
+
+    it('forwards a flag followed by a value as key=value', async () => {
+      const deepLink = await run({ _: ['--paramX', 'valueX'] })
+      expect(deepLink).toContain('paramX=valueX')
+    })
+
+    it('forwards --key=value syntax', async () => {
+      const deepLink = await run({ _: ['--paramX=valueX'] })
+      expect(deepLink).toContain('paramX=valueX')
+    })
+
+    it('forwards multiple params, mixing bare flags and valued flags', async () => {
+      const deepLink = await run({ _: ['--paramA', '--paramB', '--paramX', 'valueX'] })
+      expect(deepLink).toContain('paramA=true')
+      expect(deepLink).toContain('paramB=true')
+      expect(deepLink).toContain('paramX=valueX')
+    })
+
+    it('does not override built-in deep link params already covered by a declared flag/default', async () => {
+      const deepLink = await run({ _: ['--realm', 'whatever.dcl.eth'] })
+      expect(deepLink).toContain('realm=test-realm')
+      expect(deepLink).not.toContain('realm=whatever.dcl.eth')
+    })
+
+    it('does not override an explicitly declared flag', async () => {
+      const deepLink = await run({ '--realm': 'declared.dcl.eth', _: ['--realm', 'whatever.dcl.eth'] })
+      expect(deepLink).toContain('realm=declared.dcl.eth')
+      expect(deepLink).not.toContain('realm=whatever.dcl.eth')
+    })
+
+    it('fills in a param that is not covered by any declared flag/default', async () => {
+      const deepLink = await run({ _: ['--paramA'] })
+      expect(deepLink).toContain('paramA=true')
+    })
+
+    it('ignores bare tokens that are not flags and not values of a flag', async () => {
+      const deepLink = await run({ _: ['stray-positional', '--paramA'] })
+      expect(deepLink).not.toContain('stray-positional')
+      expect(deepLink).toContain('paramA=true')
+    })
+
+    it('url-encodes forwarded values', async () => {
+      const deepLink = await run({ _: ['--paramX', 'a value&other'] })
+      expect(deepLink).toContain('paramX=a+value%26other')
+    })
+  })
+
+  describe('URL parameter construction', () => {
+    it('should construct URL with all parameters correctly', async () => {
+      const args: any = {
+        '--position': '10,20',
+        '--realm': 'custom-realm',
+        '--local-scene': true,
+        '--dclenv': 'zone',
+        '--skip-auth-screen': true,
+        '--landscape-terrain-enabled': false,
+        '-n': true
+      }
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'default-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: true,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([expect.stringMatching(/decentraland:\/\/".*"$/)]),
+        { silent: true }
+      )
+
+      // Check that all expected parameters are present
+      const callArgs = mockExec.mock.calls[0][2][0]
+      expect(callArgs).toContain('realm=custom-realm')
+      expect(callArgs).toContain('position=10%2C20')
+      expect(callArgs).toContain('dclenv=zone')
+      expect(callArgs).toContain('local-scene=true')
+      expect(callArgs).toContain('hub=true')
+      expect(callArgs).toContain('skip-auth-screen=true')
+      expect(callArgs).toContain('open-deeplink-in-new-instance=true')
+
+      // Check that false parameters are not present
+      expect(callArgs).not.toContain('landscape-terrain-enabled=true')
+    })
+
+    it('should use default values when parameters are not provided', async () => {
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'default-realm',
+        baseCoords: { x: 5, y: 10 },
+        isHub: false,
+        args
+      })
+
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        'open',
+        expect.arrayContaining([
+          expect.stringMatching(/decentraland:\/\/.*realm=default-realm.*position=5%2C10.*dclenv=org.*local-scene=true/)
+        ]),
+        { silent: true }
+      )
+    })
+
+    it('should handle Windows platform correctly', async () => {
+      // For this test, we'll just verify that the logic exists in the code
+      // The actual platform detection is tested by checking the regex pattern
+      // that determines the command to use
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      // The command should be either 'start' (Windows) or 'open' (Unix)
+      expect(mockExec).toHaveBeenCalledWith(
+        '/test',
+        expect.stringMatching(/^(start|open)$/),
+        expect.arrayContaining([expect.stringContaining('decentraland://')]),
+        { silent: true }
+      )
+    })
+  })
+
+  describe('error handling', () => {
+    it('should log error when spawner.exec throws an error', async () => {
+      mockExec.mockRejectedValue(new Error('Failed to open'))
+
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockLogger.error).toHaveBeenCalledWith('Decentraland Desktop Client failed with: ', 'Failed to open')
+    })
+
+    it('should log success message when spawner.exec succeeds', async () => {
+      mockExec.mockResolvedValue(undefined)
+
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockLogger.info).toHaveBeenCalledWith(expect.stringContaining('Desktop client:'))
+    })
+  })
+
+  describe('fallback behavior', () => {
+    it('should log fallback message when runApp returns false', async () => {
+      mockExec.mockRejectedValue(new Error('Failed to open'))
+
+      const args: any = {}
+
+      await runExplorerAlpha(mockComponents, {
+        cwd: '/test',
+        realm: 'test-realm',
+        baseCoords: { x: 0, y: 0 },
+        isHub: false,
+        args
+      })
+
+      expect(mockLogger.log).toHaveBeenCalledWith(
+        'Please download & install the Decentraland Desktop Client: https://dcl.gg/explorer\n\n'
+      )
+    })
+  })
+})

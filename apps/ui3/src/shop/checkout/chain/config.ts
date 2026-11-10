@@ -1,7 +1,7 @@
 // from: shop@94584a5c:app/src/config/index.ts (chainId, rpcUrl, ethereumChainId, ethereumRpcUrl, relayerUrl),
 //       app/src/config/env/{prod,dev}.json, app/src/lib/gasless-config.ts
 import { catalystBase } from "../../../data/catalyst/client";
-import { CHAIN, type ChainId } from "../../model/chain";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 
 export type ShopChainOverrides = {
   settlementChainId?: number;
@@ -62,6 +62,18 @@ export function rpcUrl(chainId: ChainId): string | null {
             ? env("VITE_SHOP_RPC_SEPOLIA")
             : undefined;
   return named ?? DEFAULT_RPC[chainId] ?? null;
+}
+
+/**
+ * The CreditsManager this build settles credits through on `chainId`, when it isn't that chain's registry
+ * one: `VITE_SHOP_CREDITS_MANAGER`, the address the Shop server's CREDITS_MANAGER_CONTRACT names. It applies
+ * only to the chain the build names in `VITE_SHOP_CHAIN_ID`, set explicitly: never to a chain picked at
+ * runtime, nor to Polygon by default. Lowercase; null otherwise, or when it isn't an address.
+ */
+export function configuredCreditsManager(chainId: ChainId): string | null {
+  const value = env("VITE_SHOP_CREDITS_MANAGER");
+  if (!value || !/^0x[0-9a-fA-F]{40}$/.test(value)) return null;
+  return numberFrom(env("VITE_SHOP_CHAIN_ID")) === chainId ? value.toLowerCase() : null;
 }
 
 export function relayerUrl(): string {

@@ -773,13 +773,54 @@ pub struct CursorObservation {
     pub observed_at: NaiveDateTime,
 }
 
-pub async fn cursor_observed(
-    pool: &PgPool,
+pub async fn cursor_observed<'e, E>(
+    executor: E,
     network: &str,
-) -> Result<Option<CursorObservation>, sqlx::Error> {
+) -> Result<Option<CursorObservation>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {CURSOR_COLUMNS}, timezone('UTC', now()) AS observed_at FROM land_authz.index_cursor WHERE network = $1"
-    ))).bind(network).fetch_optional(pool).await
+    ))).bind(network).fetch_optional(executor).await
+}
+
+/// A read of the local index at one snapshot: a `REPEATABLE READ, READ
+/// ONLY` transaction whose first statement found the cursor ready for the
+/// reader's registries ([`observation_ready`]). Every read run on `tx` sees
+/// the database exactly as that check did. A full replay that rebinds the
+/// cursor meanwhile, and the links its fold writes afterwards, stay
+/// invisible to it, so a reader that checked before the rebind answers from
+/// its registries' coherent state and never joins its rights to another
+/// registry's estate links. It takes no lock: neither the rebind nor the
+/// indexer waits on a reader.
+pub struct ReadySnapshot {
+    pub cursor: Cursor,
+    pub tx: sqlx::Transaction<'static, sqlx::Postgres>,
+}
+
+/// `Some` when the local index of these registries may answer, with the
+/// snapshot every dependent read must run on ([`ReadySnapshot`]); `None`
+/// when it may not (the transaction is rolled back).
+pub async fn ready_snapshot(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+) -> Result<Option<ReadySnapshot>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    Ok(match cursor_observed(&mut *tx, network).await? {
+        Some(observation) if observation_ready(&observation, land_registry, estate_registry) => {
+            Some(ReadySnapshot {
+                cursor: observation.cursor,
+                tx,
+            })
+        }
+        _ => None,
+    })
 }
 
 /// The row a fresh database starts from: `last_block = start - 1` so the
@@ -804,7 +845,8 @@ pub async fn ensure_cursor(pool: &PgPool, settings: &Settings) -> Result<Cursor,
     {
         bail!(
             "land_authz.index_cursor for {} was indexed from registries {}/{} but this node is configured with {}/{}: \
-             the log would mix two contracts; set LAND_AUTHZ_REPLAY_FROM_BLOCK={} to replay it from the start",
+             the log would mix two contracts; set LAND_AUTHZ_REPLAY_FROM_BLOCK={} to replay it from the start, \
+             and unset it once the replay has published (while it is set, every restart replays again)",
             settings.network,
             row.land_registry,
             row.estate_registry,
@@ -816,16 +858,22 @@ pub async fn ensure_cursor(pool: &PgPool, settings: &Settings) -> Result<Cursor,
     Ok(row)
 }
 
+/// Advances the cursor of the configured registries' log. A cursor rebound
+/// to other registries meanwhile is not this pass's: no row matches, and the
+/// range's transaction rolls back.
 pub async fn set_cursor(
     conn: &mut PgConnection,
-    network: &str,
+    settings: &Settings,
     block: i64,
 ) -> Result<(), sqlx::Error> {
     let updated = sqlx::query(
-        "UPDATE land_authz.index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) WHERE network = $1",
+        "UPDATE land_authz.index_cursor SET last_block = $2, updated_at = timezone('UTC', now()) \
+         WHERE network = $1 AND land_registry = $3 AND estate_registry = $4",
     )
-    .bind(network)
+    .bind(&settings.network)
     .bind(block)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
     .execute(conn)
     .await?;
     if updated.rows_affected() != 1 {
@@ -834,28 +882,53 @@ pub async fn set_cursor(
     Ok(())
 }
 
-/// Rewind durably before a repair scan: `last_block` never moves forward
-/// here, the publish marker is cleared at once (readers fall back to the
-/// subgraph until the repaired history is folded at chain head), and a
-/// rewind to the start block records that a full replay ran, which
-/// [`mark_folded`] requires. A later rewind cannot skip an earlier gap.
+/// Rewinds durably before a repair scan, and clears the publish marker at
+/// once (readers fall back to the subgraph until the repaired history is
+/// folded at chain head). On the same registries `last_block` never moves
+/// forward, so a later rewind cannot skip an earlier gap. A rewind to the
+/// start block records the full replay [`mark_folded`] requires and may
+/// switch registries: the new registries' log then starts exactly at `from`,
+/// wherever the old cursor stood, and the history timestamps are owed again.
+/// The old registries' events and rights are kept, since every reader names
+/// its registry and the readiness gate requires the cursor to be of the
+/// reader's registries ([`observation_ready`]), so a node still configured
+/// with the old ones falls back instead of answering; the estate links are
+/// not (a link does not record its
+/// registry, so an old one would join a new estate of the same id), and the
+/// replay's fold rebuilds them from the new estate registry alone. A partial
+/// rewind never touches a cursor indexed from other registries. Returns
+/// whether the cursor row was written.
 pub async fn begin_replay(
     pool: &PgPool,
     settings: &Settings,
     from: u64,
-) -> Result<(), sqlx::Error> {
+) -> Result<bool, sqlx::Error> {
     let before = from as i64 - 1;
     let full = from <= settings.start_block;
+    let mut tx = pool.begin().await?;
+    let previous: Option<(String, String)> = sqlx::query_as(
+        "SELECT land_registry, estate_registry FROM land_authz.index_cursor WHERE network = $1 FOR UPDATE",
+    )
+    .bind(&settings.network)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let switched = previous.filter(|(land, estate)| {
+        *land != settings.land_registry || *estate != settings.estate_registry
+    });
+    if switched.is_some() && !full {
+        return Ok(false);
+    }
     sqlx::query(
-        "INSERT INTO land_authz.index_cursor \
+        "INSERT INTO land_authz.index_cursor AS c \
              (network, land_registry, estate_registry, last_block, folded_block, folded_at, full_replay_started) \
          VALUES ($1, $2, $3, $4, NULL, NULL, $5) \
          ON CONFLICT (network) DO UPDATE SET \
-             last_block = LEAST(land_authz.index_cursor.last_block, EXCLUDED.last_block), \
+             last_block = CASE WHEN $6 THEN EXCLUDED.last_block ELSE LEAST(c.last_block, EXCLUDED.last_block) END, \
              folded_block = NULL, folded_at = NULL, \
-             full_replay_started = land_authz.index_cursor.full_replay_started OR EXCLUDED.full_replay_started, \
-             land_registry = CASE WHEN EXCLUDED.full_replay_started THEN EXCLUDED.land_registry ELSE land_authz.index_cursor.land_registry END, \
-             estate_registry = CASE WHEN EXCLUDED.full_replay_started THEN EXCLUDED.estate_registry ELSE land_authz.index_cursor.estate_registry END, \
+             full_replay_started = c.full_replay_started OR EXCLUDED.full_replay_started, \
+             history_timestamps_ready = c.history_timestamps_ready AND NOT $6, \
+             land_registry = EXCLUDED.land_registry, \
+             estate_registry = EXCLUDED.estate_registry, \
              updated_at = timezone('UTC', now())",
     )
     .bind(&settings.network)
@@ -863,21 +936,36 @@ pub async fn begin_replay(
     .bind(&settings.estate_registry)
     .bind(before)
     .bind(full)
-    .execute(pool)
+    .bind(switched.is_some())
+    .execute(&mut *tx)
     .await?;
-    Ok(())
+    if switched.is_some() {
+        sqlx::query("DELETE FROM land_authz.estate_land")
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
 }
 
-/// Publishes a completed fold: only on the row whose `last_block` is the
-/// block the fold covered and whose history was replayed in full. A failed
-/// or interrupted fold leaves the previous marker (or none) behind.
-pub async fn mark_folded(pool: &PgPool, network: &str, head: u64) -> Result<bool, sqlx::Error> {
+/// Publishes a completed fold: only on the configured registries' row whose
+/// `last_block` is the block the fold covered and whose history was
+/// replayed in full. A failed or interrupted fold leaves the previous marker
+/// (or none) behind.
+pub async fn mark_folded(
+    pool: &PgPool,
+    settings: &Settings,
+    head: u64,
+) -> Result<bool, sqlx::Error> {
     let updated = sqlx::query(
         "UPDATE land_authz.index_cursor SET folded_block = last_block, folded_at = timezone('UTC', now()) \
-         WHERE network = $1 AND last_block = $2 AND full_replay_started",
+         WHERE network = $1 AND last_block = $2 AND full_replay_started \
+           AND land_registry = $3 AND estate_registry = $4",
     )
-    .bind(network)
+    .bind(&settings.network)
     .bind(head as i64)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
     .execute(pool)
     .await?;
     Ok(updated.rows_affected() == 1)
@@ -896,12 +984,36 @@ pub fn index_ready(cursor: &Cursor, now: DateTime<Utc>) -> bool {
         && age <= READY_WINDOW
 }
 
-/// `Some(cursor)` when the local index may answer on the database clock.
-/// a database error reads as not ready (the fallback, never a grant).
-pub async fn ready_cursor(pool: &PgPool, network: &str) -> Option<Cursor> {
+/// Whether a reader of `land_registry` and `estate_registry` may answer from
+/// the local index: the readiness rule ([`index_ready`]) on a cursor indexed
+/// from exactly those registries. A full replay can rebind the network's
+/// cursor to other registries ([`begin_replay`]); for a node still
+/// configured with the old ones, that published cursor is not its index.
+/// Its rights rows are of its own registries, while `estate_land` (which
+/// names no registry) now follows the cursor's estate registry, so an answer
+/// from both would mix two contracts.
+pub fn observation_ready(
+    observation: &CursorObservation,
+    land_registry: &str,
+    estate_registry: &str,
+) -> bool {
+    observation.cursor.land_registry == land_registry
+        && observation.cursor.estate_registry == estate_registry
+        && index_ready(&observation.cursor, observation.observed_at.and_utc())
+}
+
+/// `Some(cursor)` when the local index of these registries may answer on the
+/// database clock ([`observation_ready`]). A database error reads as not
+/// ready (the fallback, never a grant).
+pub async fn ready_cursor(
+    pool: &PgPool,
+    network: &str,
+    land_registry: &str,
+    estate_registry: &str,
+) -> Option<Cursor> {
     match cursor_observed(pool, network).await {
         Ok(Some(observation))
-            if index_ready(&observation.cursor, observation.observed_at.and_utc()) =>
+            if observation_ready(&observation, land_registry, estate_registry) =>
         {
             Some(observation.cursor)
         }
@@ -956,8 +1068,7 @@ latest_owner AS (
 merged AS (
     SELECT token_address, token_id,
            NULLIF(w.owner, $3) AS owner,
-           NULLIF(o.operator, $3) AS operator,
-           NULLIF(u.update_operator, $3) AS update_operator,
+           o.operator, u.update_operator,
            lt.block_number AS updated_block, lt.log_index AS updated_log
     FROM latest_touch lt
     LEFT JOIN latest_operator o USING (token_address, token_id)
@@ -1030,16 +1141,54 @@ ON CONFLICT (land_token_id) DO UPDATE SET
 /// with `block_number > since` touched (`since = None`: every key, the
 /// rebuild). Each per-token leg is decided by the single latest event that
 /// touches it, so "granted then revoked" and "granted then transferred
-/// away" both end denied; the zero address is stored as no grant at all;
-/// `owner` is the latest `Transfer`'s `to`; a LAND's estate is its latest
+/// away" both end denied: a transfer stores NULL, a grant to the zero
+/// address stores the zero address (the land-manager subgraph's cleared
+/// leg, which `deploy_flags_for` reads as no grant); `owner` is the latest
+/// `Transfer`'s `to`, NULL for the zero address; a LAND's estate is its latest
 /// `AddLand` unless a later `RemoveLand` deleted the row.
 pub async fn fold(
     pool: &PgPool,
     settings: &Settings,
     since: Option<i64>,
 ) -> Result<FoldCounts, sqlx::Error> {
-    let since = since.unwrap_or(-1);
     let mut tx = pool.begin().await?;
+    let counts = fold_in_tx(&mut tx, settings, since).await?;
+    tx.commit().await?;
+    Ok(counts)
+}
+
+/// [`fold`] inside the caller's transaction. It writes only while the
+/// cursor still names `settings`' registries, and holds that row until the
+/// transaction ends. The estate links carry no registry of their own, so a
+/// pass bound to registries a full replay has since replaced must not write
+/// them. A fold already running when the replay rebinds the cursor makes
+/// [`begin_replay`] (`FOR UPDATE` on the same row) wait, so the replay's
+/// deletion of the old links lands after it. A fold that starts after the
+/// rebind finds no row and writes nothing: `RowNotFound`, as
+/// [`set_cursor`] answers such a pass. The lock is `FOR KEY SHARE`, the
+/// weakest that `FOR UPDATE` still waits on: the cursor's ordinary writers
+/// (`set_cursor`, `mark_folded`, the timestamp repair) update non-key
+/// columns and never wait on a fold, even one left running by a lost lease.
+/// So a rebind must lock the row `FOR UPDATE` before it changes the
+/// registries, as [`begin_replay`] does.
+pub(crate) async fn fold_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    settings: &Settings,
+    since: Option<i64>,
+) -> Result<FoldCounts, sqlx::Error> {
+    let since = since.unwrap_or(-1);
+    let bound: Option<i32> = sqlx::query_scalar(
+        "SELECT 1 FROM land_authz.index_cursor \
+         WHERE network = $1 AND land_registry = $2 AND estate_registry = $3 FOR KEY SHARE",
+    )
+    .bind(&settings.network)
+    .bind(&settings.land_registry)
+    .bind(&settings.estate_registry)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if bound.is_none() {
+        return Err(sqlx::Error::RowNotFound);
+    }
     // A job, not a request: the pool's 60 s statement_timeout is for the
     // routes. The rebuild fold (since = -1) over the whole registry history
     // is one statement per leg and may outlive it (the first live fold of
@@ -1047,7 +1196,7 @@ pub async fn fold(
     // node's orphaned fold still held the rows, 2026-09-25); a failed fold
     // retries with backoff, so the bound stays generous but finite.
     sqlx::query("SET LOCAL statement_timeout = '1800s'")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     // The fold follows the bulk insert of the same pass, before autoanalyze
     // has seen the rows: without column statistics the planner sizes the
@@ -1056,27 +1205,26 @@ pub async fn fold(
     // the same statement hash-joins in 0.5 s, 2026-09-25). One ANALYZE per
     // fold is the price of a plan that matches the data.
     sqlx::query("ANALYZE land_authz.authz_event")
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?;
     let tokens = sqlx::query(FOLD_TOKEN_SQL)
         .bind(&settings.land_registry)
         .bind(since)
         .bind(ZERO_ADDRESS)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
     let accounts = sqlx::query(FOLD_ACCOUNT_SQL)
         .bind(since)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
     let estate_lands = sqlx::query(FOLD_ESTATE_SQL)
         .bind(since)
         .bind(&settings.estate_registry)
-        .execute(&mut *tx)
+        .execute(&mut **tx)
         .await?
         .rows_affected();
-    tx.commit().await?;
     Ok(FoldCounts {
         tokens,
         accounts,
@@ -1188,7 +1336,7 @@ pub async fn sync_range(
         let events = decode_logs(&logs)?;
         let mut tx = state.pool.begin().await?;
         let written = insert_events(&mut tx, &events).await?;
-        set_cursor(&mut tx, network, reached as i64).await?;
+        set_cursor(&mut tx, &state.settings, reached as i64).await?;
         tx.commit().await?;
         outcome.events_written += written;
         outcome.indexed_to = reached as i64;
@@ -1214,17 +1362,38 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         bail!("ETH_RPC_URL is unset: the land-authz indexer has no log source");
     };
     let pool = &state.pool;
-    let mut row = ensure_cursor(pool, settings).await?;
-    if let Some(from) = settings.replay_from_block
-        && !state.replay_requested.swap(true, Ordering::SeqCst)
-    {
+    // The replay counts as done only once its rewind is durable: a failed
+    // write leaves it requested, and the next pass tries again.
+    let replay = settings
+        .replay_from_block
+        .filter(|_| !state.replay_requested.load(Ordering::SeqCst));
+    // A full replay rebinds the cursor to the configured registries, so it
+    // runs before the check that refuses a cursor indexed from other ones
+    // (the remedy that check names); a partial replay never rewinds another
+    // registries' cursor.
+    let full = replay.filter(|&from| from <= settings.start_block);
+    if let Some(from) = full {
         begin_replay(pool, settings, from)
             .await
             .context("beginning the replay")?;
+        state.replay_requested.store(true, Ordering::SeqCst);
+    }
+    let mut row = ensure_cursor(pool, settings).await?;
+    if let Some(from) = replay {
+        if full.is_none() {
+            let written = begin_replay(pool, settings, from)
+                .await
+                .context("beginning the replay")?;
+            anyhow::ensure!(
+                written,
+                "the land-authz cursor was rebound to other registries during the replay"
+            );
+            state.replay_requested.store(true, Ordering::SeqCst);
+        }
         row = cursor(pool, &settings.network)
             .await?
             .context("cursor row after the replay rewind")?;
-        tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head");
+        tracing::warn!(network = %settings.network, from, "land-authz: replay started; readers use the subgraph until it is folded at head. Unset LAND_AUTHZ_REPLAY_FROM_BLOCK once it has published: while it is set, every restart replays again");
     }
     let rpc = Rpc::new(&state.http, rpc_url, settings);
     let head = rpc.head_block().await.context("eth_blockNumber")?;
@@ -1271,7 +1440,7 @@ pub async fn run_pass(state: &LandAuthzState, ctx: &JobContext) -> anyhow::Resul
         ));
         return Ok(outcome);
     }
-    outcome.published = mark_folded(pool, &settings.network, target)
+    outcome.published = mark_folded(pool, settings, target)
         .await
         .context("publishing the fold")?;
     if !outcome.published {

@@ -35,6 +35,7 @@ impl Plugin for SystemBridgePlugin {
             (
                 post_events,
                 handle_home_scene,
+                handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
                 world_access::handle_world_access,
@@ -84,15 +85,12 @@ pub enum SystemApi {
     /// JSON read from localStorage) — no auth-server round-trip. The identity is the same
     /// regardless of how the user signed in (wallet, social, OTP, magic).
     /// bools: as for LoginPrevious; the identity is a guest account (see
-    /// `Wallet::is_guest_account`). The pick names and dresses the profile a first login builds;
-    /// the string is the lambdas endpoint to fetch the account's profile from (the catalyst the
-    /// sign-in deployed it to), else the realm's.
+    /// `Wallet::is_guest_account`). The pick names and dresses the profile a first login builds.
     LoginWithIdentity(
         String,
         bool,
         bool,
         Option<NewAccountPick>,
-        Option<String>,
         RpcResultSender<Result<(), String>>,
     ),
     LoginGuest,
@@ -139,6 +137,8 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    /// Credential-free resolved service endpoints.
+    GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
@@ -147,6 +147,7 @@ pub enum SystemApi {
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
     GetHoverStream(RpcStreamSender<HoverEvent>),
     GetProximityStream(RpcStreamSender<ProximityEvent>),
+    GetPhotoModeStream(RpcStreamSender<PhotoModeState>),
     GetProfileChangedStream(RpcStreamSender<ProfileChangedEvent>),
     GetSceneLoadingUiStream(RpcStreamSender<SceneLoadingUi>),
     GetAnalyticsEventStream(RpcStreamSender<AnalyticsEvent>),
@@ -208,6 +209,12 @@ pub enum SystemApi {
     GetDmHistory(String, RpcResultSender<Vec<DmHistoryEntryData>>),
     /// Deletes the stored DMs with a partner.
     DeleteDmHistory(String),
+    // Social / Communities
+    /// A community member came online or went offline, until dropped.
+    GetCommunityConnectivityStream(RpcStreamSender<CommunityMemberConnectivityData>),
+    /// The community channels the local user listens to (member of, chat not closed), as
+    /// community ids; replaces the previous set.
+    SetCommunityChannels(Vec<String>),
 }
 
 #[derive(Resource)]
@@ -285,6 +292,14 @@ fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfi
                 platform::write_config_file(&*config);
             }
             _ => (),
+        }
+    }
+}
+
+fn handle_service_urls(mut ev: EventReader<SystemApi>) {
+    for ev in ev.read() {
+        if let SystemApi::GetServiceUrls(sender) = ev {
+            sender.send(common::base_domain::hud_services());
         }
     }
 }

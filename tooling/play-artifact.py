@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -14,15 +15,26 @@ import tempfile
 ROOT = Path(__file__).resolve().parents[1]
 LOCK = 'rendering/bevy-explorer/upstream.lock.json'
 SOURCE = 'rendering/bevy-explorer/source/'
+# The vendored Bevy the engine compiles (rendering/bevy-explorer/docs/guidelines/bevy-fork.md).
+BEVY = 'rendering/bevy-explorer/bevy/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
+# Shared inputs come from the checked compiler/resolver graph, never a directory allowlist.
+_SPEC = importlib.util.spec_from_file_location('hud_shared_inputs', Path(__file__).with_name('hud_shared_inputs.py'))
+shared_inputs = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(shared_inputs)
+
+
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
-# Source is maintained here. Hash its tracked files directly, alongside the
-# build tools and configuration; generated outputs and local overrides are excluded.
+# Source is maintained here. Hash its tracked files directly, alongside the build tools and
+# configuration (the flake lock and package set pin the protoc and wasm-pack the web job
+# builds with); generated outputs and local overrides are excluded.
 INPUTS = ('apps/bevy-explorer/build-web.py',
-          'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-protoc.py',
-          'tooling/play-artifact.py',
+          'apps/bevy-explorer/install-web-tools.py',
+          'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-tools.sh',
+          '.github/actions/bevy-explorer-tools/action.yml', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix',
+          'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
           '.github/workflows/bevy-explorer-ci.yml')
 TOOLCHAINS = ('rust-toolchain', 'rust-toolchain.toml')
 # Compiled into the engine (option_env!): a value change must miss the engine cache like a source
@@ -55,6 +67,7 @@ def read_json(path):
 
 
 def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
+    shared = shared_inputs.input_hashes(root, revision) if not hud_only and not engine_only else {}
     def selected(path):
         if hud_only:
             return path.startswith(HUD)
@@ -65,7 +78,8 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
-        return (path.startswith((SOURCE, PROTO, '.cargo/')) or path in INPUTS or path in TOOLCHAINS)
+        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or path in shared or path in INPUTS
+                or path in TOOLCHAINS)
     if revision:
         tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
         entries = []
@@ -101,9 +115,10 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
             tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
         else:
             # Nix's filtered contract has no .git and contains only tracked inputs.
-            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, PROTO, '.cargo')
-                       for p in (root / base).rglob('*') if p.is_file()]
-            tracked += list(INPUTS)
+            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo')
+                       for p in ([root / base] if (root / base).is_file() else (root / base).rglob('*'))
+                       if p.is_file()]
+            tracked += list(INPUTS) + list(shared)
             tracked += [name for name in TOOLCHAINS if (root / name).is_file()]
         hashes = {}
         for path in sorted(set(filter(selected, tracked))):
@@ -115,6 +130,7 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
     if not any(path.startswith(HUD if hud_only else SOURCE) for path in hashes) or any(
             path not in hashes for path in required):
         raise ValueError('Incomplete Explorer source inputs')
+    hashes.update(shared)
     return hashes
 
 

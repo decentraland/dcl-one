@@ -1,10 +1,17 @@
 //! `POST /api/poster` and `/api/poster-vertical` (multipart, field
 //! `poster`, a signed fetch, behind `DATA_WRITES_ENABLED`): an event poster
-//! the events form uploads before it creates the event. The bytes must be
-//! one of the accepted image types (sniffed, and equal to the part's
-//! declared type), at most 500 KiB; they land in the ONE blob store and in
-//! `explore.poster` as a `local` row named `<sha256>.<ext>` (the old names),
-//! which `GET /poster/{file}` (`explore::api::posters`) serves.
+//! the events form uploads before it creates the event. The signer needs a
+//! profile this node holds (the old `withAuthProfile()`, 404 `Not found
+//! profile for "<user>"`; `Poster/routes.ts:67-80`). The bytes must be one
+//! of the accepted image types (sniffed, and equal to the part's declared
+//! type), at most 500 KiB; they land in the ONE blob store and in
+//! `explore.poster` as a `local` row named `<sha256>.<ext>`, which
+//! `GET /poster/{file}` (`explore::api::posters`) serves. The answer is the
+//! old `{ok:true,data:{filename,url,size,type}}` (`Poster/routes.ts:132-137`)
+//! with `url` absolute on this node's `/events` mount
+//! (`PUBLIC_URL/events/poster/<file>`), where the old service named its
+//! bucket; `filename` is `poster/<file>` with the content hash where the old
+//! service minted a uuid (`docs/events.md`).
 
 use axum::Json;
 use axum::extract::{Multipart, OriginalUri, State};
@@ -198,7 +205,27 @@ struct Uploaded {
     mime: String,
 }
 
-async fn read_poster(mut multipart: Multipart) -> Result<Uploaded, ApiError> {
+/// The 413 of each route: the horizontal upload limit's text and the
+/// vertical one's (`Poster/routes.ts:45-66`; fixtures `events.poster.too_large`,
+/// `events.poster_vertical.too_large`).
+fn too_large(kind: &str) -> ApiError {
+    if kind == "poster-vertical" {
+        ApiError::http(
+            413,
+            format!(
+                "File size limit has been reached (max {} KB)",
+                MAX_POSTER_BYTES / 1024
+            ),
+        )
+    } else {
+        ApiError::http(413, "File size limit has been reached")
+    }
+}
+
+/// The `poster` part, checked in the old order: the upload middleware's size
+/// limit first (`Poster/routes.ts:45-66`), then the handler's param, multiple,
+/// empty and content checks (`Poster/routes.ts:84-107`).
+async fn read_poster(mut multipart: Multipart, kind: &str) -> Result<Uploaded, ApiError> {
     let mut poster: Option<Uploaded> = None;
     while let Some(field) = multipart
         .next_field()
@@ -217,6 +244,9 @@ async fn read_poster(mut multipart: Multipart) -> Result<Uploaded, ApiError> {
                 .bytes()
                 .await
                 .map_err(|e| ApiError::bad_request(format!("invalid poster field: {e}")))?;
+            if data.len() > MAX_POSTER_BYTES {
+                return Err(too_large(kind));
+            }
             poster = Some(Uploaded { data, mime });
         } else {
             let _ = field.bytes().await;
@@ -229,6 +259,20 @@ async fn read_poster(mut multipart: Multipart) -> Result<Uploaded, ApiError> {
     Ok(poster)
 }
 
+/// `RequestError("Service unavailable", ServiceUnavailable, {...err})`
+/// (`Poster/routes.ts:273-279`): the failing S3 call's `operation` and
+/// `options` (`routes.ts:289-293`, set on the error by the wrappers) and the
+/// error's own fields spread into `data`. This node has no bucket, so
+/// `Bucket` is `null` and the error's field is its `message`. Fixture
+/// `events.poster.bucket_unavailable`.
+fn bucket_unavailable(operation: &str, options: Value, message: &str) -> ApiError {
+    ApiError::with_data(
+        503,
+        "Service unavailable",
+        json!({ "operation": operation, "options": options, "message": message }),
+    )
+}
+
 async fn upload(
     state: SharedState,
     method: Method,
@@ -239,17 +283,20 @@ async fn upload(
     allowed: &[&str],
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
-    state.signer(&headers, method.as_str(), path).await?;
-    let poster = read_poster(multipart).await?;
+    let signer = state.signer(&headers, method.as_str(), path).await?;
+    super::profiles::require_profile(&state.pool, &signer).await?;
+    let poster = read_poster(multipart, kind).await?;
     let mime = detect_and_validate_mime(&poster.data, &poster.mime, allowed)?;
     let size = poster.data.len();
-    if size > MAX_POSTER_BYTES {
-        return Err(ApiError::http(413, "File size limit has been reached"));
-    }
-    let storage = state
-        .storage
-        .clone()
-        .ok_or_else(|| ApiError::service_unavailable("Service unavailable"))?;
+    // `ensure()` (`Poster/routes.ts:249-285`) checks the bucket before the
+    // upload; this node's missing blob store is its `headBucket` failure.
+    let storage = state.storage.clone().ok_or_else(|| {
+        bucket_unavailable(
+            "headBucket",
+            json!({ "Bucket": null }),
+            "no blob store is configured on this node",
+        )
+    })?;
     let name = format!(
         "{}{}",
         hex::encode(Sha256::digest(&poster.data)),
@@ -270,7 +317,11 @@ async fn upload(
     .await;
     if let Err(e) = stored {
         tracing::error!(error = %e, "poster blob store failed");
-        return Err(ApiError::service_unavailable("Service unavailable"));
+        return Err(bucket_unavailable(
+            "putObject",
+            json!({ "Bucket": null, "Key": name }),
+            "the blob store refused the poster",
+        ));
     }
     sqlx::query(
         "INSERT INTO explore.poster (kind, file, blob_cid, content_type, byte_size, origin, fetched_at)
@@ -285,10 +336,29 @@ async fn upload(
     .bind(size as i64)
     .execute(&state.pool)
     .await?;
+    Ok(Json(poster_response(
+        &state.settings.events_asset_base_url,
+        kind,
+        &name,
+        size,
+        mime,
+    )))
+}
+
+/// The old `PosterAttributes` answer (`Poster/routes.ts:132-137`), `url`
+/// absolute on this node's events mount (fixtures `events.poster.success`,
+/// `events.poster_vertical.success`).
+fn poster_response(asset_base: &str, kind: &str, name: &str, size: usize, mime: &str) -> Value {
     let filename = format!("{kind}/{name}");
-    Ok(Json(
-        json!({ "filename": filename, "url": format!("/{filename}"), "size": size, "type": mime }),
-    ))
+    json!({
+        "ok": true,
+        "data": {
+            "filename": filename,
+            "url": format!("{}/{filename}", asset_base.trim_end_matches('/')),
+            "size": size,
+            "type": mime,
+        }
+    })
 }
 
 pub async fn upload_poster(
@@ -354,6 +424,8 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
+        let wallet = alloy_signer_local::PrivateKeySigner::random();
+        let address = format!("{:#x}", wallet.address());
         let dir = std::env::temp_dir().join(format!(
             "catalyst-posters-{}-{}",
             std::process::id(),
@@ -370,11 +442,17 @@ mod tests {
         let png = [PNG, &[7u8; 64][..]].concat();
         let post = |uri: &'static str, content_type: &'static str, data: Vec<u8>| {
             let app = app.clone();
+            let wallet = wallet.clone();
             async move {
                 let (body, ct) = multipart(content_type, &data);
                 let mut req = Request::post(uri).header("content-type", ct);
-                for (k, v) in crate::shared::signed_fetch::test_support::signed_headers(
-                    "post", uri, "{}", true,
+                for (k, v) in crate::shared::signed_fetch::test_support::signed_headers_by(
+                    &wallet,
+                    "post",
+                    uri,
+                    "{}",
+                    true,
+                    &chrono::Utc::now().timestamp_millis().to_string(),
                 )
                 .await
                 .iter()
@@ -395,12 +473,21 @@ mod tests {
                 )
             }
         };
+        // `withAuthProfile()`: a signer without a profile is 404 (fixture
+        // `events.poster.no_profile`).
         let (status, body) = post("/api/poster", "image/png", png.clone()).await;
-        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+        assert_eq!(
+            body["error"],
+            format!("Not found profile for \"{address}\"")
+        );
+        super::super::profiles::test_support::deploy_profile(&pool, &address, json!({})).await;
+        let (status, body) = post("/api/poster", "image/png", png.clone()).await;
+        assert_eq!(status, StatusCode::CREATED, "{body}");
         let name = format!("{}.png", hex::encode(Sha256::digest(&png)));
         assert_eq!(
             body,
-            json!({ "filename": format!("poster/{name}"), "url": format!("/poster/{name}"), "size": png.len(), "type": "image/png" })
+            json!({ "ok": true, "data": { "filename": format!("poster/{name}"), "url": format!("http://localhost/events/poster/{name}"), "size": png.len(), "type": "image/png" } })
         );
         let (cid, origin): (String, String) = sqlx::query_as(
             "SELECT blob_cid, origin FROM explore.poster WHERE kind = 'poster' AND file = $1",
@@ -414,16 +501,48 @@ mod tests {
             storage.retrieve(&cid).await.unwrap().unwrap().as_ref(),
             png.as_slice()
         );
-        let (status, _) = post("/api/poster-vertical", "image/gif", b"GIF89a-----".to_vec()).await;
+        let (status, body) =
+            post("/api/poster-vertical", "image/gif", b"GIF89a-----".to_vec()).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
-        let (status, _) = post(
-            "/api/poster",
-            "image/png",
-            [PNG, &vec![0u8; MAX_POSTER_BYTES][..]].concat(),
-        )
-        .await;
+        assert_eq!(
+            body["error"],
+            "Invalid file content; expected one of image/jpeg, image/png, image/webp"
+        );
+        // The size limit answers before the content check, with each route's
+        // text (`Poster/routes.ts:45-66`).
+        let oversized = [b"not an image".as_slice(), &vec![0u8; MAX_POSTER_BYTES][..]].concat();
+        let (status, body) = post("/api/poster", "image/png", oversized.clone()).await;
         assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(body["error"], "File size limit has been reached");
+        let (status, body) = post("/api/poster-vertical", "image/png", oversized).await;
+        assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(
+            body["error"],
+            "File size limit has been reached (max 500 KB)"
+        );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_answer_is_the_old_envelope_with_an_absolute_url_on_the_events_mount() {
+        assert_eq!(
+            poster_response(
+                "https://node.example/prefix/events/",
+                "poster-vertical",
+                "abc.webp",
+                7,
+                "image/webp"
+            ),
+            json!({ "ok": true, "data": { "filename": "poster-vertical/abc.webp", "url": "https://node.example/prefix/events/poster-vertical/abc.webp", "size": 7, "type": "image/webp" } })
+        );
+        assert_eq!(
+            too_large("poster").to_string(),
+            "File size limit has been reached"
+        );
+        assert_eq!(
+            too_large("poster-vertical").to_string(),
+            "File size limit has been reached (max 500 KB)"
+        );
     }
 
     #[test]

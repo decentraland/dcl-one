@@ -5,7 +5,7 @@
 // gesture (-32006 / 4100), and a declined switch (4001) is an answer, not an error to retry around.
 
 import type { Eip1193Provider } from "../../data/auth/wallet";
-import { CHAIN, chainLabel } from "../model/chain";
+import { CHAIN, chainLabel } from "@shop/model/chain";
 
 export const USER_REJECTED = 4001;
 const UNKNOWN_CHAIN = 4902;
@@ -15,7 +15,9 @@ export const AMOY_ADD_PARAMS = {
   chainId: "0x13882",
   chainName: "Polygon Amoy",
   nativeCurrency: { name: "POL", symbol: "POL", decimals: 18 },
-  rpcUrls: ["https://rpc-amoy.polygon.technology"],
+  // A wallet keeps this as its Amoy endpoint and sends through it, so it must accept writes and fee history:
+  // Decentraland's relay is read-only.
+  rpcUrls: ["https://polygon-amoy-bor-rpc.publicnode.com"],
   blockExplorerUrls: ["https://amoy.polygonscan.com"],
 };
 

@@ -1,7 +1,9 @@
 //! The onboarding checkpoints a client reports (`reached`, `completed`, 1-7)
 //! and the nudges a mailer pulls (`pending-nudges?sequence=1..3`: 12, 24, 36 h
 //! after the latest checkpoint of a user with an email). Process state, as
-//! the old service kept it: a restart forgets the checkpoints. Both routes
+//! the old service kept it: a restart forgets the checkpoints, the store
+//! holds at most [`MAX_CHECKPOINTS`] rows (the oldest evicted first) and a
+//! checkpoint's metadata at most [`MAX_METADATA_BYTES`] as JSON. Both routes
 //! need `ONBOARDING_API_KEY` as a bearer (compared in constant time); without
 //! the key they answer 401.
 
@@ -14,7 +16,7 @@ use axum::{Json, Router};
 use chrono::{DateTime, Duration, Utc};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::api::Shared as AppState;
 
@@ -25,6 +27,10 @@ const MAX_USER_IDENTIFIER_LEN: usize = 255;
 const MAX_EMAIL_LEN: usize = 255;
 const MAX_WALLET_LEN: usize = 255;
 const MAX_SOURCE_LEN: usize = 50;
+/// The rows the store holds; one more evicts the oldest.
+pub const MAX_CHECKPOINTS: usize = 10_000;
+/// A checkpoint's `metadata`, serialized compact.
+pub const MAX_METADATA_BYTES: usize = 4 * 1024;
 
 #[derive(Debug, Clone)]
 struct CheckpointRow {
@@ -68,9 +74,11 @@ struct PendingNudgesResponse {
     nudges: Vec<PendingNudge>,
 }
 
-/// Rows are append-only and unique per (user_id, checkpoint); `by_key` finds the one row
-/// an upsert touches, `by_wallet` the rows a wallet-only checkpoint resolves through, and
-/// `latest` each user's highest checkpoint, the only row a nudge can target.
+/// Rows are unique per (user_id, checkpoint) and evicted oldest first past
+/// [`MAX_CHECKPOINTS`]; `by_key` finds the one row an upsert touches, `by_wallet`
+/// the rows a wallet-only checkpoint resolves through (one entry per row with a
+/// wallet), and `latest` each user's highest checkpoint, the only row a nudge
+/// can target.
 #[derive(Default)]
 struct OnboardingStore {
     checkpoints: Rows,
@@ -80,12 +88,15 @@ struct OnboardingStore {
     sent_nudges: HashSet<(String, i64, i64)>,
 }
 
-/// The checkpoint rows, reached only by index, so a test can count how many rows
-/// an operation touches: a constant number per upsert and one per user for the
-/// nudge list, never a walk of every row.
+/// The checkpoint rows, reached only by id (an id never changes while its
+/// row lives), so a test can count how many rows an operation touches: a
+/// constant number per upsert and one per user for the nudge list, never a
+/// walk of every row.
 #[derive(Default)]
 struct Rows {
-    rows: Vec<CheckpointRow>,
+    rows: VecDeque<CheckpointRow>,
+    /// The id of the oldest row held.
+    first: usize,
     #[cfg(test)]
     touched: std::sync::atomic::AtomicUsize,
 }
@@ -95,12 +106,25 @@ impl Rows {
         self.rows.len()
     }
 
+    /// The id the next pushed row takes.
+    fn next_id(&self) -> usize {
+        self.first + self.rows.len()
+    }
+
     fn push(&mut self, row: CheckpointRow) {
-        self.rows.push(row);
+        self.rows.push_back(row);
+    }
+
+    /// The oldest row and its id, removed.
+    fn pop_oldest(&mut self) -> Option<(usize, CheckpointRow)> {
+        let row = self.rows.pop_front()?;
+        let id = self.first;
+        self.first += 1;
+        Some((id, row))
     }
 
     #[cfg(test)]
-    fn iter(&self) -> std::slice::Iter<'_, CheckpointRow> {
+    fn iter(&self) -> impl Iterator<Item = &CheckpointRow> {
         self.rows.iter()
     }
 
@@ -114,21 +138,21 @@ impl Rows {
 impl std::ops::Index<usize> for Rows {
     type Output = CheckpointRow;
 
-    fn index(&self, i: usize) -> &CheckpointRow {
+    fn index(&self, id: usize) -> &CheckpointRow {
         #[cfg(test)]
         self.touched
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        &self.rows[i]
+        &self.rows[id - self.first]
     }
 }
 
 impl std::ops::IndexMut<usize> for Rows {
-    fn index_mut(&mut self, i: usize) -> &mut CheckpointRow {
+    fn index_mut(&mut self, id: usize) -> &mut CheckpointRow {
         #[cfg(test)]
         {
             *self.touched.get_mut() += 1;
         }
-        &mut self.rows[i]
+        &mut self.rows[id - self.first]
     }
 }
 
@@ -146,15 +170,59 @@ impl OnboardingStore {
     fn set_wallet(&mut self, i: usize, wallet: &Option<String>) {
         let Some(w) = wallet else { return };
         let row = &mut self.checkpoints[i];
-        let changed = row.wallet.as_deref() != Some(w.as_str());
-        row.wallet = Some(w.clone());
-        if changed {
-            self.by_wallet.entry(w.clone()).or_default().push(i);
+        if row.wallet.as_deref() == Some(w.as_str()) {
+            return;
+        }
+        let previous = row.wallet.replace(w.clone());
+        if let Some(previous) = previous {
+            self.unlink_wallet(&previous, i);
+        }
+        self.by_wallet.entry(w.clone()).or_default().push(i);
+    }
+
+    fn unlink_wallet(&mut self, wallet: &str, i: usize) {
+        if let Some(ids) = self.by_wallet.get_mut(wallet) {
+            ids.retain(|&j| j != i);
+            if ids.is_empty() {
+                self.by_wallet.remove(wallet);
+            }
+        }
+    }
+
+    /// Drops the oldest row, its index entries and its nudge marks; a user
+    /// whose latest row it was falls back to their highest remaining checkpoint.
+    fn evict_oldest(&mut self) {
+        let Some((i, row)) = self.checkpoints.pop_oldest() else {
+            return;
+        };
+        self.by_key.remove(&(row.user_id.clone(), row.checkpoint));
+        for sequence in 1..SEQUENCE_HOURS.len() as i64 {
+            self.sent_nudges
+                .remove(&(row.user_id.clone(), row.checkpoint, sequence));
+        }
+        if let Some(w) = &row.wallet {
+            self.unlink_wallet(w, i);
+        }
+        if self.latest.get(&row.user_id) == Some(&i) {
+            let remaining = (MIN_CHECKPOINT..=MAX_CHECKPOINT)
+                .rev()
+                .find_map(|c| self.by_key.get(&(row.user_id.clone(), c)).copied());
+            match remaining {
+                Some(latest) => {
+                    self.latest.insert(row.user_id, latest);
+                }
+                None => {
+                    self.latest.remove(&row.user_id);
+                }
+            }
         }
     }
 
     fn push_row(&mut self, row: CheckpointRow) {
-        let i = self.checkpoints.len();
+        if self.checkpoints.len() >= MAX_CHECKPOINTS {
+            self.evict_oldest();
+        }
+        let i = self.checkpoints.next_id();
         self.by_key.insert((row.user_id.clone(), row.checkpoint), i);
         if let Some(w) = &row.wallet {
             self.by_wallet.entry(w.clone()).or_default().push(i);
@@ -183,15 +251,18 @@ impl OnboardingStore {
             *w = w.to_lowercase();
         }
 
-        if identifier_type == "wallet" && email.is_none() {
+        if identifier_type == "wallet" {
             let lowered = user_identifier.to_lowercase();
-            if let Some((resolved_user, resolved_email)) = self.resolve_wallet_identity(&lowered) {
-                wallet = Some(wallet.unwrap_or(lowered));
+            if email.is_none()
+                && let Some((resolved_user, resolved_email)) =
+                    self.resolve_wallet_identity(&lowered)
+            {
                 user_identifier = resolved_user;
                 email = Some(resolved_email);
-            } else {
-                wallet = Some(wallet.unwrap_or(lowered));
             }
+            // The identifier is the wallet: a body without the `wallet` field
+            // binds it too, so a later wallet-identified checkpoint finds the row.
+            wallet = Some(wallet.unwrap_or(lowered));
         }
 
         let key = (user_identifier.clone(), checkpoint_id);
@@ -217,6 +288,11 @@ impl OnboardingStore {
                 self.checkpoints[i].metadata = metadata.clone();
             }
         } else {
+            // A wallet no email is bound to can never be nudged: no row for
+            // it, so a throwaway wallet evicts no user's pending row.
+            if identifier_type == "wallet" && email.is_none() {
+                return;
+            }
             self.push_row(CheckpointRow {
                 user_id: user_identifier.clone(),
                 email: email.clone(),
@@ -269,6 +345,16 @@ impl OnboardingStore {
     }
 }
 
+/// A recorded checkpoint as [`OnboardingState::checkpoint_state`] reports it.
+#[cfg(any(test, feature = "test-support"))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CheckpointState {
+    pub completed: bool,
+    pub email: Option<String>,
+    pub wallet: Option<String>,
+    pub metadata: Option<serde_json::Value>,
+}
+
 #[derive(Default)]
 pub struct OnboardingState {
     inner: Mutex<OnboardingStore>,
@@ -277,6 +363,37 @@ pub struct OnboardingState {
 impl OnboardingState {
     fn record(&self, payload: CheckpointPayload, now: DateTime<Utc>) {
         self.inner.lock().record_checkpoint(payload, now);
+    }
+
+    /// Validates `req` as `POST /onboarding/checkpoint` does, then records it.
+    pub fn record_checkpoint(&self, req: CheckpointRequest) -> Result<(), String> {
+        validate_checkpoint(&req)?;
+        self.record(
+            CheckpointPayload {
+                user_identifier: req.user_identifier,
+                identifier_type: req.identifier_type,
+                checkpoint_id: req.checkpoint_id,
+                action: req.action,
+                email: req.email,
+                wallet: req.wallet,
+                metadata: req.metadata,
+            },
+            Utc::now(),
+        );
+        Ok(())
+    }
+
+    /// The recorded checkpoint of `user_id`, for the tests of what records one.
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn checkpoint_state(&self, user_id: &str, checkpoint: i64) -> Option<CheckpointState> {
+        let store = self.inner.lock();
+        let row = &store.checkpoints[*store.by_key.get(&(user_id.to_string(), checkpoint))?];
+        Some(CheckpointState {
+            completed: row.completed_at.is_some(),
+            email: row.email.clone(),
+            wallet: row.wallet.clone(),
+            metadata: row.metadata.clone(),
+        })
     }
 
     fn pending_nudges(&self, sequence: i64, now: DateTime<Utc>) -> Vec<PendingNudge> {
@@ -300,27 +417,29 @@ pub fn routes() -> Router<AppState> {
         .route("/pending-nudges", get(get_pending_nudges))
 }
 
+/// The body of `POST /onboarding/checkpoint`, also what the Segment webhooks
+/// lift from a forwarded checkpoint event (`social::segment_webhooks`).
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CheckpointRequestBody {
+pub struct CheckpointRequest {
     #[serde(rename = "checkpointId")]
-    checkpoint_id: i64,
+    pub checkpoint_id: i64,
     #[serde(rename = "userIdentifier")]
-    user_identifier: String,
+    pub user_identifier: String,
     #[serde(rename = "identifierType")]
-    identifier_type: String,
-    action: String,
+    pub identifier_type: String,
+    pub action: String,
     #[serde(default)]
-    email: Option<String>,
+    pub email: Option<String>,
     #[serde(default)]
-    wallet: Option<String>,
+    pub wallet: Option<String>,
     #[serde(default)]
-    source: Option<String>,
+    pub source: Option<String>,
     #[serde(default)]
-    metadata: Option<serde_json::Value>,
+    pub metadata: Option<serde_json::Value>,
 }
 
-fn validate_checkpoint(body: &CheckpointRequestBody) -> Result<(), String> {
+fn validate_checkpoint(body: &CheckpointRequest) -> Result<(), String> {
     if body.checkpoint_id < MIN_CHECKPOINT || body.checkpoint_id > MAX_CHECKPOINT {
         return Err("checkpointId must be an integer between 1 and 7".to_string());
     }
@@ -349,10 +468,15 @@ fn validate_checkpoint(body: &CheckpointRequestBody) -> Result<(), String> {
     {
         return Err("source must be at most 50 characters".to_string());
     }
-    if let Some(metadata) = &body.metadata
-        && !metadata.is_object()
-    {
-        return Err("metadata must be an object".to_string());
+    if let Some(metadata) = &body.metadata {
+        if !metadata.is_object() {
+            return Err("metadata must be an object".to_string());
+        }
+        if metadata.to_string().len() > MAX_METADATA_BYTES {
+            return Err(format!(
+                "metadata must be at most {MAX_METADATA_BYTES} bytes as JSON"
+            ));
+        }
     }
     Ok(())
 }
@@ -366,26 +490,13 @@ async fn post_checkpoint(
         return *resp;
     }
 
-    let req: CheckpointRequestBody = match serde_json::from_slice(&body) {
+    let req: CheckpointRequest = match serde_json::from_slice(&body) {
         Ok(req) => req,
         Err(e) => return bad_request(&e.to_string()),
     };
-    if let Err(msg) = validate_checkpoint(&req) {
+    if let Err(msg) = state.onboarding.record_checkpoint(req) {
         return bad_request(&msg);
     }
-
-    state.onboarding.record(
-        CheckpointPayload {
-            user_identifier: req.user_identifier,
-            identifier_type: req.identifier_type,
-            checkpoint_id: req.checkpoint_id,
-            action: req.action,
-            email: req.email,
-            wallet: req.wallet,
-            metadata: req.metadata,
-        },
-        Utc::now(),
-    );
 
     (StatusCode::OK, Json(CheckpointAck { success: true })).into_response()
 }
@@ -547,8 +658,8 @@ mod tests {
     #[test]
     fn upsert_coalesces_email_and_wallet() {
         let mut store = OnboardingStore::default();
-        store.record_checkpoint(reached("u", "wallet", 1, None, Some("0xabc")), t(0));
-        store.record_checkpoint(reached("u", "wallet", 1, Some("late@b.com"), None), t(5));
+        store.record_checkpoint(reached("u", "wallet", 1, Some("late@b.com"), None), t(0));
+        store.record_checkpoint(reached("u", "wallet", 1, None, Some("0xabc")), t(5));
 
         let row = store
             .checkpoints
@@ -557,6 +668,77 @@ mod tests {
             .unwrap();
         assert_eq!(row.email.as_deref(), Some("late@b.com"));
         assert_eq!(row.wallet.as_deref(), Some("0xabc"));
+    }
+
+    /// An email body identified by the wallet (`identifierType: "wallet"`, no
+    /// `wallet` field) binds that wallet, so the explorer's CP7 for it lands
+    /// on the user's row.
+    #[test]
+    fn an_email_body_identified_by_a_wallet_binds_that_wallet() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(
+            reached("0xABC", "wallet", 1, Some("late@b.com"), None),
+            t(0),
+        );
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 1)
+            .unwrap();
+        assert_eq!(row.wallet.as_deref(), Some("0xabc"));
+        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(5));
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 7)
+            .unwrap();
+        assert_eq!(
+            (row.user_id.as_str(), row.email.as_deref()),
+            ("0xABC", Some("late@b.com"))
+        );
+    }
+
+    #[test]
+    fn an_explicit_wallet_field_wins_over_the_identifier() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(
+            reached("0xabc", "wallet", 1, Some("a@b.com"), Some("0xDEF")),
+            t(0),
+        );
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 1)
+            .unwrap();
+        assert_eq!(row.wallet.as_deref(), Some("0xdef"));
+        assert_eq!(store.resolve_wallet_identity("0xabc"), None);
+        assert_eq!(
+            store.resolve_wallet_identity("0xdef"),
+            Some(("0xabc".to_string(), "a@b.com".to_string()))
+        );
+    }
+
+    #[test]
+    fn a_wallet_checkpoint_with_no_bound_email_leaves_no_row() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(0));
+        assert_eq!(
+            store.checkpoints.len(),
+            0,
+            "a row no nudge can reach would only evict a user's"
+        );
+        store.record_checkpoint(
+            reached("a@b.com", "email", 1, Some("a@b.com"), Some("0xabc")),
+            t(1),
+        );
+        store.record_checkpoint(reached("0xabc", "wallet", 7, None, None), t(2));
+        let row = store
+            .checkpoints
+            .iter()
+            .find(|r| r.checkpoint == 7)
+            .unwrap();
+        assert_eq!(row.user_id, "a@b.com");
+        assert_eq!(row.email.as_deref(), Some("a@b.com"));
     }
 
     #[test]
@@ -572,43 +754,143 @@ mod tests {
     #[test]
     fn pending_nudges_is_linear_not_quadratic() {
         let mut store = OnboardingStore::default();
-        for i in 0..20_000 {
+        for i in 0..MAX_CHECKPOINTS {
             let user = format!("user-{i:05}");
             let email = format!("u{i}@example.com");
             store.record_checkpoint(reached(&user, "email", 1, Some(&email), None), t(0));
         }
         store.checkpoints.take_touched();
         let nudges = store.pending_nudges(1, t(13 * 3600));
-        assert_eq!(nudges.len(), 20_000);
+        assert_eq!(nudges.len(), MAX_CHECKPOINTS);
         assert_eq!(nudges[0].user_id, "user-00000", "insertion order is kept");
         assert_eq!(
             store.checkpoints.take_touched(),
-            20_000,
+            MAX_CHECKPOINTS,
             "pending_nudges reads each user's latest row once"
         );
     }
 
     #[test]
     fn record_checkpoint_is_indexed_not_a_scan() {
+        let users = MAX_CHECKPOINTS / 2;
         let mut store = OnboardingStore::default();
-        for i in 0..20_000 {
+        for i in 0..users {
             let user = format!("user-{i:05}");
             store.record_checkpoint(reached(&user, "email", 1, Some(&user), None), t(0));
         }
         store.checkpoints.take_touched();
-        for i in 0..20_000 {
+        for i in 0..users {
             let user = format!("user-{i:05}");
             store.record_checkpoint(reached(&user, "email", 2, Some(&user), None), t(10));
         }
         let touched = store.checkpoints.take_touched();
         assert!(
-            touched <= 3 * 20_000,
-            "20k upserts touched {touched} rows: an upsert walks the rows instead of its index"
+            touched <= 3 * users,
+            "{users} upserts touched {touched} rows: an upsert walks the rows instead of its index"
         );
-        assert_eq!(store.by_key.len(), 40_000);
+        assert_eq!(store.by_key.len(), 2 * users);
         let pending = store.pending_nudges(1, t(13 * 3600));
-        assert_eq!(pending.len(), 20_000);
+        assert_eq!(pending.len(), users);
         assert!(pending.iter().all(|n| n.checkpoint_id == 2));
+    }
+
+    #[test]
+    fn the_store_holds_max_checkpoints_and_evicts_the_oldest_rows() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(reached("late", "email", 2, Some("late@b.com"), None), t(0));
+        store.record_checkpoint(reached("late", "email", 1, Some("late@b.com"), None), t(1));
+        store.record_checkpoint(
+            reached("first", "email", 1, Some("first@b.com"), Some("0xABC")),
+            t(2),
+        );
+        for i in 0..MAX_CHECKPOINTS - 3 {
+            let user = format!("user-{i:05}");
+            store.record_checkpoint(reached(&user, "email", 1, Some(&user), None), t(3));
+        }
+        assert_eq!(store.checkpoints.len(), MAX_CHECKPOINTS);
+        assert_eq!(
+            store.resolve_wallet_identity("0xabc"),
+            Some(("first".to_string(), "first@b.com".to_string()))
+        );
+
+        store.record_checkpoint(reached("more-0", "email", 1, Some("m0@b.com"), None), t(4));
+        assert_eq!(store.checkpoints.len(), MAX_CHECKPOINTS);
+        assert!(
+            !store.by_key.contains_key(&("late".to_string(), 2)),
+            "the oldest row is evicted"
+        );
+        assert_eq!(
+            store.checkpoints[store.latest["late"]].checkpoint, 1,
+            "a user's latest falls back to their highest remaining checkpoint"
+        );
+
+        store.record_checkpoint(reached("more-1", "email", 1, Some("m1@b.com"), None), t(5));
+        store.record_checkpoint(reached("more-2", "email", 1, Some("m2@b.com"), None), t(6));
+        assert_eq!(store.checkpoints.len(), MAX_CHECKPOINTS);
+        assert!(!store.latest.contains_key("late"));
+        assert_eq!(
+            store.resolve_wallet_identity("0xabc"),
+            None,
+            "an evicted wallet is forgotten"
+        );
+        assert!(store.by_wallet.is_empty());
+        assert_eq!(store.by_key.len(), MAX_CHECKPOINTS);
+        assert_eq!(store.pending_nudges(1, t(13 * 3600)).len(), MAX_CHECKPOINTS);
+        assert_eq!(
+            store.checkpoints[store.latest["more-2"]].user_id, "more-2",
+            "ids stay valid across evictions"
+        );
+    }
+
+    #[test]
+    fn eviction_drops_the_rows_nudge_marks() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(
+            reached("first", "email", 1, Some("first@b.com"), None),
+            t(0),
+        );
+        store.sent_nudges.insert(("first".to_string(), 1, 1));
+        for i in 0..MAX_CHECKPOINTS {
+            let user = format!("user-{i:05}");
+            store.record_checkpoint(reached(&user, "email", 1, Some(&user), None), t(1));
+        }
+        assert!(!store.by_key.contains_key(&("first".to_string(), 1)));
+        assert!(
+            store.sent_nudges.is_empty(),
+            "an evicted row's nudge marks go with it"
+        );
+    }
+
+    #[test]
+    fn a_wallet_change_moves_the_row_between_wallet_indexes() {
+        let mut store = OnboardingStore::default();
+        store.record_checkpoint(
+            reached("u", "email", 1, Some("u@b.com"), Some("0xold")),
+            t(0),
+        );
+        store.record_checkpoint(reached("u", "email", 1, None, Some("0xnew")), t(1));
+        assert!(!store.by_wallet.contains_key("0xold"));
+        assert_eq!(store.by_wallet["0xnew"].len(), 1);
+    }
+
+    #[test]
+    fn validation_caps_the_metadata_size() {
+        let request = |metadata: serde_json::Value| CheckpointRequest {
+            checkpoint_id: 1,
+            user_identifier: "u".to_string(),
+            identifier_type: "email".to_string(),
+            action: "reached".to_string(),
+            email: None,
+            wallet: None,
+            source: None,
+            metadata: Some(metadata),
+        };
+        assert!(validate_checkpoint(&request(serde_json::json!({ "step": "profile" }))).is_ok());
+        let padded = serde_json::json!({ "pad": "x".repeat(MAX_METADATA_BYTES) });
+        assert_eq!(
+            validate_checkpoint(&request(padded)).unwrap_err(),
+            format!("metadata must be at most {MAX_METADATA_BYTES} bytes as JSON")
+        );
     }
 
     #[test]
@@ -635,7 +917,7 @@ mod tests {
 
     #[test]
     fn validation_rejects_out_of_range_and_bad_enums() {
-        let base = |cp: i64, id_type: &str, action: &str| CheckpointRequestBody {
+        let base = |cp: i64, id_type: &str, action: &str| CheckpointRequest {
             checkpoint_id: cp,
             user_identifier: "u".to_string(),
             identifier_type: id_type.to_string(),

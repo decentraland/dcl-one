@@ -13,12 +13,12 @@
 //! [`create_entity`], [`unpublish_scene`], [`land_publish`], the
 //! [`write_deployer`] with the [`validator`] attached) answers behind
 //! `CONTENT_WRITES_ENABLED` ([`writes`], default off: 503 with
-//! `Retry-After`) and the console's read-only toggle (403, the old gate).
+//! `Retry-After`) and the console's read-only toggle (404, as upstream's
+//! `READ_ONLY` node, which does not register the route).
 
 // The crates this one builds on, under their module names (AGENTS.md).
 pub(crate) use catalyst_chain_index as chain_index;
 pub(crate) use catalyst_config::config;
-#[cfg(test)]
 pub(crate) use catalyst_db as db;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;
@@ -83,11 +83,14 @@ pub mod about_comms;
 mod active_entities;
 mod audit;
 pub mod available_content;
+pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
 mod failed_deployments;
+mod fixed_windows;
 pub mod get_content;
 mod pointer_changes;
+pub mod routing;
 mod snapshots;
 mod status;
 
@@ -105,12 +108,11 @@ use std::time::Duration;
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use bytes::Bytes;
 use parking_lot::RwLock;
 use sqlx::PgPool;
-use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultOnFailure, TraceLayer};
 
 use crate::shared::cache::TtlMap;
@@ -144,6 +146,9 @@ pub struct Settings {
     /// node: /about advertises it only while the tile grid it draws from is
     /// loaded ([`ContentState::attach_parcel_grid`]).
     pub map_parcel_view_needs_grid: bool,
+    /// `ABOUT_RESOURCE_CHECK`: /about stops accepting users while the host
+    /// is above 90% CPU or memory, as lamb2 does.
+    pub about_resource_check: bool,
     pub deployments_query_timeout: Duration,
     pub request_timeout: Option<Duration>,
     /// `CATALYRST_CONTENT_ADMIN_TOKEN`: the bearer of the operator routes
@@ -156,8 +161,27 @@ pub struct Settings {
     pub max_in_memory_deployment_bytes: u64,
     /// `POST_ENTITIES_DAILY_QUOTA_MAX`; 0 is off.
     pub post_entities_daily_quota_max: u32,
+    /// `POST_ENTITIES_RATE_LIMIT_MAX` per `POST_ENTITIES_RATE_LIMIT_WINDOW_SECONDS`; 0 is off.
+    pub post_entities_rate_limit_max: u32,
+    pub post_entities_rate_limit_window: Duration,
+    /// The `GET`/`HEAD /contents/{hash}` rate limit (`CONTENT_GET_*`,
+    /// `TRUSTED_SYNC_PEER_IPS`, `TRUSTED_CLIENT_IP_HEADER`).
+    pub content_get_limit: content_get_limit::Config,
     /// The partial-upload limits (`PENDING_DEPLOYMENT_TTL`, ...).
     pub partial_uploads: partial_deployments::Limits,
+    /// `MAX_CONCURRENT_UPLOADS_PER_SOURCE`, `MAX_IN_FLIGHT_UPLOAD_BYTES_PER_SOURCE`.
+    pub max_concurrent_uploads_per_source: u32,
+    pub max_in_flight_upload_bytes_per_source: u64,
+    /// `MULTIPART_UPLOAD_TIMEOUT_MS`: how long a deploy form may take to arrive.
+    pub multipart_upload_timeout: Duration,
+    /// `DEPLOYMENT_PROCESSING_TIMEOUT_MS`: how long a read deploy form may
+    /// take to be decided, the bound the blob collector's age floor assumes.
+    pub deployment_processing_timeout: Duration,
+    /// The deployer's request TTL and per-pointer rate limits.
+    pub deploy_limits: write_deployer::DeployLimits,
+    /// `HTTP_TRUSTED_PROXY_CIDRS`: the only socket peers whose `X-Real-IP`
+    /// names the client of the `POST /entities` limits.
+    pub trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 }
 
 /// An operator bearer whose `Debug` never prints it; empty is unset.
@@ -211,7 +235,10 @@ impl Settings {
         let public_url = config.node.own_url();
         let map = config.map_urls();
         Self {
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            // Upstream's `CURRENT_VERSION`, the variable the social RPC
+            // `/status` reads too.
+            version: non_empty(&config.social.social_rpc_current_version)
+                .unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string()),
             commit_hash: config.commit_hash(),
             eth_network: config.node.eth_network.clone(),
             content_public_url: non_empty(&config.node.content_url)
@@ -229,6 +256,7 @@ impl Settings {
                     config.node.node_posture.as_deref().map(str::trim),
                     Some("island" | "journey")
                 ),
+            about_resource_check: config.node.about_resource_check,
             deployments_query_timeout: Duration::from_secs(
                 config.node.deployments_query_timeout_secs,
             ),
@@ -241,7 +269,39 @@ impl Settings {
             max_upload_field_bytes: config.content.max_upload_field_size,
             max_in_memory_deployment_bytes: config.content.max_in_memory_deployment_bytes,
             post_entities_daily_quota_max: config.content.post_entities_daily_quota_max,
+            post_entities_rate_limit_max: config.content.post_entities_rate_limit_max,
+            post_entities_rate_limit_window: Duration::from_secs(
+                config
+                    .content
+                    .post_entities_rate_limit_window_seconds
+                    .max(1),
+            ),
+            content_get_limit: content_get_limit::Config {
+                burst_max: config.content.content_get_rate_limit_max,
+                burst_window: Duration::from_secs(u64::from(
+                    config.content.content_get_rate_limit_window_seconds,
+                )),
+                hourly_max: config.content.content_get_hourly_quota_max,
+                daily_max: config.content.content_get_daily_quota_max,
+                ipv6_prefix_length: config.content.content_get_rate_limit_ipv6_prefix_length,
+                trusted_sync_peer_ips: config.content.trusted_sync_peer_ips.clone(),
+                trusted_client_ip_header: config.content.trusted_client_ip_header.clone(),
+                trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
+            },
             partial_uploads: partial_deployments::Limits::from_config(config),
+            max_concurrent_uploads_per_source: config.content.max_concurrent_uploads_per_source,
+            max_in_flight_upload_bytes_per_source: config
+                .content
+                .max_in_flight_upload_bytes_per_source
+                .unwrap_or(create_entity::MAX_DEPLOYMENT_BYTES as u64),
+            multipart_upload_timeout: Duration::from_millis(
+                config.worlds.multipart_upload_timeout_ms.max(1),
+            ),
+            deployment_processing_timeout: Duration::from_millis(
+                config.worlds.deployment_processing_timeout_ms.max(1),
+            ),
+            deploy_limits: write_deployer::DeployLimits::from_config(&config.content),
+            trusted_proxy_cidrs: config.node.http_trusted_proxy_cidrs.clone(),
         }
     }
 
@@ -265,6 +325,7 @@ impl Settings {
             map_satellite_base_url: Some("http://127.0.0.1:5162/satellite".to_string()),
             map_parcel_view_url: "http://127.0.0.1:5162/v1/minimap.png".to_string(),
             map_parcel_view_needs_grid: false,
+            about_resource_check: false,
             deployments_query_timeout: Duration::from_secs(10),
             request_timeout: None,
             admin_token: AdminToken::default(),
@@ -272,7 +333,16 @@ impl Settings {
             max_upload_field_bytes: 32 * 1024,
             max_in_memory_deployment_bytes: 2 * 1024 * 1024 * 1024,
             post_entities_daily_quota_max: 300,
+            post_entities_rate_limit_max: 200,
+            post_entities_rate_limit_window: Duration::from_secs(60),
+            content_get_limit: content_get_limit::Config::default(),
             partial_uploads: partial_deployments::Limits::default(),
+            max_concurrent_uploads_per_source: 4,
+            max_in_flight_upload_bytes_per_source: create_entity::MAX_DEPLOYMENT_BYTES as u64,
+            multipart_upload_timeout: Duration::from_secs(300),
+            deployment_processing_timeout: Duration::from_secs(300),
+            deploy_limits: write_deployer::DeployLimits::default(),
+            trusted_proxy_cidrs: Vec::new(),
         }
     }
 }
@@ -470,7 +540,7 @@ pub struct ContentState {
     pub deployments_cache: TtlMap<String, Bytes>,
     /// The console's read-only toggle (process state, off at start as the
     /// old `READ_ONLY` default was): while set, `POST /entities` and
-    /// `DELETE /scenes/{coord}` answer the old 403.
+    /// `DELETE /scenes/{coord}` answer the router's not-found.
     pub read_only: AtomicBool,
     /// The console's accepting-users toggle (process state, on at start):
     /// `/about` reports `acceptingUsers` while the node is healthy and this
@@ -490,6 +560,15 @@ pub struct ContentState {
     pub upload_budget: upload_admission::UploadBudget,
     /// `POST /entities` requests per client address and day.
     pub deploy_quota: upload_admission::DailyQuota,
+    /// `POST /entities` requests per client address and burst window.
+    pub deploy_burst: upload_admission::DailyQuota,
+    /// `POST /entities` bodies and bytes in flight per client address.
+    pub source_uploads: upload_admission::SourceUploads,
+    /// The `/contents/{hash}` burst and quotas per client, this process's.
+    pub content_get_limit: content_get_limit::ContentGetLimit,
+    /// The `/challenge` text: one bare UUID per process, as upstream's
+    /// peer cluster keeps it; the console's `challenge/refresh` replaces it.
+    challenge: RwLock<String>,
 }
 
 /// See [`ContentState::attach_parcel_grid`].
@@ -517,6 +596,16 @@ impl ContentState {
         );
         let deploy_quota =
             upload_admission::DailyQuota::new(settings.post_entities_daily_quota_max);
+        let deploy_burst = upload_admission::DailyQuota::with_window(
+            settings.post_entities_rate_limit_max,
+            settings.post_entities_rate_limit_window,
+        );
+        let source_uploads = upload_admission::SourceUploads::new(
+            settings.max_concurrent_uploads_per_source,
+            settings.max_in_flight_upload_bytes_per_source,
+        );
+        let content_get_limit =
+            content_get_limit::ContentGetLimit::new(&settings.content_get_limit);
         Self {
             pool,
             settings,
@@ -535,7 +624,22 @@ impl ContentState {
             parcel_grid: OnceLock::new(),
             upload_budget,
             deploy_quota,
+            deploy_burst,
+            source_uploads,
+            challenge: RwLock::new(challenge_text()),
+            content_get_limit,
         }
+    }
+
+    pub fn challenge(&self) -> String {
+        self.challenge.read().clone()
+    }
+
+    /// Replaces the `/challenge` text and answers the new one.
+    pub fn refresh_challenge(&self) -> String {
+        let text = challenge_text();
+        *self.challenge.write() = text.clone();
+        text
     }
 
     pub fn is_read_only(&self) -> bool {
@@ -563,6 +667,7 @@ impl ContentState {
         enabled: bool,
         deployer: Arc<write_deployer::WriteDeployer>,
     ) -> bool {
+        deployer.configure(&self.settings.deploy_limits);
         self.writes.set(Writes { enabled, deployer }).is_ok()
     }
 
@@ -620,11 +725,20 @@ async fn empty_scenes() -> axum::Json<serde_json::Value> {
     axum::Json(serde_json::json!({ "scenes": [], "total": 0 }))
 }
 
-async fn not_found() -> impl IntoResponse {
-    (StatusCode::NOT_FOUND, "Not found")
+async fn not_found() -> Response {
+    not_found_response()
 }
 
-fn content_routes() -> Router<SharedState> {
+/// The router's answer for a path it does not serve.
+pub(crate) fn not_found_response() -> Response {
+    (StatusCode::NOT_FOUND, "Not found").into_response()
+}
+
+/// The paths here are listed again in [`routing::CONTENT_ROUTE_PATHS`] (case-insensitive)
+/// or [`routing::CASE_SENSITIVE_ROUTE_PATHS`]. `max_deploy_body` bounds a
+/// `POST /entities` body, framing included
+/// ([`create_entity::max_deployment_body_bytes`]).
+fn content_routes(state: &SharedState, max_deploy_body: usize) -> Router<SharedState> {
     Router::new()
         .route("/challenge", get(status::get_challenge))
         .route("/entities/{type}", get(active_entities::get_entities))
@@ -634,11 +748,21 @@ fn content_routes() -> Router<SharedState> {
         )
         .route(
             "/entities/active",
-            post(active_entities::get_active_entities).layer(DefaultBodyLimit::max(256 * 1024)),
+            post(active_entities::get_active_entities)
+                .layer(DefaultBodyLimit::max(
+                    routing::MAX_ACTIVE_ENTITIES_BODY_BYTES,
+                ))
+                .layer(axum::middleware::from_fn(routing::payload_too_large_text))
+                .get(active_entities::get_entities_active),
         )
         .route(
             "/contents/{hashId}",
-            get(get_content::get_content).head(get_content::get_content),
+            get(get_content::get_content)
+                .head(get_content::get_content)
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    content_get_limit::limit,
+                )),
         )
         .route(
             "/contents/{hashId}/active-entities",
@@ -682,7 +806,8 @@ fn content_routes() -> Router<SharedState> {
         .route(
             "/entities",
             post(create_entity::create_entity)
-                .layer(DefaultBodyLimit::max(create_entity::MAX_DEPLOYMENT_BYTES)),
+                .layer(DefaultBodyLimit::max(max_deploy_body))
+                .fallback(create_entity::other_method),
         )
         .route("/scenes/{coord}", delete(unpublish_scene::unpublish_scene))
         .route("/forwarding", get(forward::list_forwards))
@@ -694,8 +819,12 @@ fn content_routes() -> Router<SharedState> {
 /// them (the reverse proxy strips nothing).
 pub fn build_router(state: SharedState) -> Router {
     let request_timeout = state.settings.request_timeout;
+    let max_deploy_body =
+        create_entity::max_deployment_body_bytes(state.settings.max_upload_field_count);
     let mut app = Router::new()
         .route("/about", get(about::get_about))
+        // lamb2's own path for the same handler (`routes.ts`: `/about` under `/lambdas`).
+        .route("/lambdas/about", get(about::get_about))
         .route("/lambdas/explore/realms", get(about::get_explore_realms))
         .route("/scenes", get(empty_scenes))
         .route(
@@ -707,20 +836,33 @@ pub fn build_router(state: SharedState) -> Router {
             "/lambdas/collections/contents/{pointer}/image",
             get(entity_thumbnail::get_entity_image).head(entity_thumbnail::get_entity_image),
         )
-        .merge(content_routes())
-        .nest("/content", content_routes())
+        .merge(content_routes(&state, max_deploy_body))
+        .nest("/content", content_routes(&state, max_deploy_body))
         .fallback(not_found)
         .layer(
             TraceLayer::new_for_http()
                 .on_failure(DefaultOnFailure::new().level(tracing::Level::DEBUG)),
         )
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
-        .layer(axum::middleware::from_fn(cors::cors_middleware))
+        .layer(axum::middleware::from_fn(routing::content_cors))
         .layer(axum::middleware::from_fn(connection::keep_alive_hint));
     if let Some(timeout) = request_timeout {
-        app = app.layer(TimeoutLayer::with_status_code(
-            StatusCode::REQUEST_TIMEOUT,
-            timeout,
+        // A deploy form has its own, longer bounds in [`create_entity`]: the
+        // upload timeout (upstream's 408 with what arrived), then the
+        // processing deadline (503 with `Retry-After`).
+        app = app.layer(axum::middleware::from_fn(
+            move |request: axum::extract::Request, next: axum::middleware::Next| async move {
+                let path = request.uri().path();
+                if request.method() == axum::http::Method::POST
+                    && (path == "/entities" || path == "/content/entities")
+                {
+                    return next.run(request).await;
+                }
+                match tokio::time::timeout(timeout, next.run(request)).await {
+                    Ok(response) => response,
+                    Err(_) => StatusCode::REQUEST_TIMEOUT.into_response(),
+                }
+            },
         ));
     }
     app.with_state(state)
@@ -751,6 +893,32 @@ mod settings_tests {
                 .unwrap();
         let build_time = option_env!("CATALYST_COMMIT_HASH").map(str::to_string);
         assert_eq!(Settings::from_config(&config).commit_hash, build_time);
+    }
+
+    /// CS-15: `CURRENT_VERSION` sets the reported version, as upstream's.
+    #[test]
+    fn current_version_overrides_the_build_version() {
+        let config = Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--social-rpc-current-version",
+            "8.3.2",
+        ])
+        .unwrap();
+        assert_eq!(Settings::from_config(&config).version, "8.3.2");
+        let config = Config::parse_for_tests(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--social-rpc-current-version",
+            " ",
+        ])
+        .unwrap();
+        assert_eq!(
+            Settings::from_config(&config).version,
+            env!("CARGO_PKG_VERSION")
+        );
     }
 }
 

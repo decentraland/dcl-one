@@ -1,4 +1,4 @@
-// from: shop@94584a5c:app/src/lib/marketplace.ts and marketplace@f3956826:webapp/src/modules/vendor/decentraland/contracts.ts (which contract a purchase settles on, per chain), decentraland-transactions 3.3.0 (the addresses and EIP-712 domains, as ui3/src/shop/market/lib/contracts.ts and ui3/src/shop/land/contracts.ts carry them), docs/shop/CONTRACTS.md ("Addresses")
+// from: shop@94584a5c:app/src/lib/marketplace.ts and marketplace@f3956826:webapp/src/modules/vendor/decentraland/contracts.ts (which contract a purchase settles on, per chain), decentraland-transactions 3.3.0 (the addresses and EIP-712 domains, as library/shop/market/lib/contracts.ts and library/shop/land/contracts.ts carry them), docs/shop/CONTRACTS.md ("Addresses")
 //! The settlement venues of a chain: where a MANA purchase, listing, bid,
 //! rental or NAME registration executes and what it pays with. One book
 //! per process ([`Book::production`]); a controlled deployment (the anvil
@@ -155,6 +155,40 @@ impl Book {
         Self { chains }
     }
 
+    /// The testnet book: Amoy (80002) alone for now, the chain the Shop's
+    /// testnet journeys settle on. It holds no mainnet chain, so a testnet
+    /// process cannot settle on one. Only venues whose address and EIP-712
+    /// domain the repo pins are in it: the off-chain marketplaces V3 and V2
+    /// (`listings`). Amoy's V1 (its domain is not pinned here), the legacy
+    /// order book (the legacy index does not walk Amoy), rentals, LAND,
+    /// estates and NAMEs are absent, so those purchases answer "unavailable".
+    pub fn testnet(rpc: impl Fn(u64) -> Option<String>) -> Self {
+        let amoy = Chain {
+            chain_id: ChainId::AMOY,
+            net: Some(ChainNet::Matic),
+            mana: address!("0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0"),
+            marketplaces: [
+                listings::offchain_marketplace_v3(listings::MATIC_AMOY),
+                listings::offchain_marketplace_v2(listings::MATIC_AMOY),
+            ]
+            .into_iter()
+            .flatten()
+            .map(marketplace)
+            .collect(),
+            legacy_marketplace: None,
+            rentals: None,
+            land: None,
+            estate: None,
+            name_registrar: None,
+            name_controller: None,
+            rpc_url: rpc(ChainId::AMOY.0),
+            confirmations: ChainNet::Matic.confirmations(),
+        };
+        let mut chains = HashMap::new();
+        chains.insert(ChainId::AMOY.0, amoy);
+        Self { chains }
+    }
+
     /// A book of one controlled chain (the anvil tests).
     pub fn with_chain(mut self, chain: Chain) -> Self {
         self.chains.insert(chain.chain_id.0, chain);
@@ -222,6 +256,54 @@ mod tests {
         assert_eq!(
             book.chain_of_net(ChainNet::Matic).unwrap().chain_id,
             ChainId::POLYGON
+        );
+    }
+
+    #[test]
+    fn the_testnet_book_is_amoy_alone_over_the_repos_pinned_venues() {
+        let book = Book::testnet(|id| Some(format!("rpc-{id}")));
+        let ids: Vec<u64> = book.chains().map(|c| c.chain_id.0).collect();
+        assert_eq!(ids, [80_002], "no mainnet chain and no Sepolia");
+        for absent in [ChainId::ETHEREUM, ChainId::POLYGON, ChainId(11_155_111)] {
+            assert!(book.chain(absent).is_none(), "{absent:?}");
+        }
+        let amoy = book.chain(ChainId::AMOY).unwrap();
+        assert_eq!(amoy.rpc_url.as_deref(), Some("rpc-80002"));
+        assert_eq!(amoy.net, Some(ChainNet::Matic));
+        let pinned: serde_json::Value =
+            serde_json::from_str(include_str!("../evm/addresses.json")).unwrap();
+        assert_eq!(
+            format!("{:#x}", amoy.mana),
+            pinned["amoy"]["MANAToken"].as_str().unwrap().to_lowercase()
+        );
+        let expected: Vec<Marketplace> = listings::offchain_marketplaces(listings::MATIC_AMOY)
+            .into_iter()
+            .map(marketplace)
+            .collect();
+        assert_eq!(
+            amoy.marketplaces, expected,
+            "the listings module's domains, newest first"
+        );
+        assert_eq!(
+            format!("{:#x}", amoy.latest_marketplace().unwrap().address),
+            "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c"
+        );
+        let walked = crate::market::trade_events::deployments(listings::MATIC_AMOY);
+        for m in &amoy.marketplaces {
+            let (_, _, v3) = walked
+                .iter()
+                .find(|(a, _, _)| a.parse::<Address>().unwrap() == m.address)
+                .unwrap_or_else(|| panic!("{:#x} is not walked by the Amoy index", m.address));
+            assert_eq!(m.cancels_by_digest, *v3, "{:#x}", m.address);
+        }
+        assert!(
+            amoy.legacy_marketplace.is_none()
+                && amoy.rentals.is_none()
+                && amoy.land.is_none()
+                && amoy.estate.is_none()
+                && amoy.name_registrar.is_none()
+                && amoy.name_controller.is_none(),
+            "unverified venues stay unavailable"
         );
     }
 

@@ -7,22 +7,24 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 
+import { useMarketplace } from "../market/access";
 import Button from "../../atoms/Button";
 import { useMediaQuery } from "../../data/hooks/useMediaQuery";
-import { shopClient } from "../api/shop";
 import Icon from "../discovery/components/Icon";
 import { SHOP_BASE } from "../routes";
-import type { ShopClient } from "../api/shop";
-import { creditsCeil } from "../model/money";
-import type { PurchaseOffer } from "../model/purchase";
-import { presentPayment } from "../payment/present";
+import type { ShopClient } from "@shop/api/shop";
+import { creditsCeil } from "@shop/model/money";
+import type { PurchaseOffer } from "@shop/model/purchase";
+import { presentPayment } from "@shop/payment/present";
 import { useLandWallet } from "../land/useLandWallet";
-import { fetchBannedNames } from "./api";
+import { quoteNameCredits } from "@shop/names/api";
+import { readBannedNames } from "./reads";
 import NameBuyModal, { type NameBuyModalProps } from "./NameBuyModal";
-import { NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
+import { NAME_CHECK_DEBOUNCE_MS, NAME_INVALID_TEXT, NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput, validateName } from "./names";
 import { useOfferSource } from "../detail/offers";
-import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, quoteNameCredits, seamNameOffer, type NameOfferSource } from "./offer";
+import { interimNameOffer, NameAlreadyRegisteredError, nameLabel, seamNameOffer, type NameOfferSource } from "./offer";
 import { takeNameResume } from "./resume";
+import { shopClient } from "../api/host";
 import "./names.css";
 import "./namespage.css";
 import identityIcon from "./icons/identity-icon.svg?url";
@@ -77,10 +79,11 @@ function useTypedPlaceholder(words: readonly string[], enabled: boolean): string
   return enabled && frames.length ? frames[i % frames.length]!.text : "";
 }
 
-export default function NamesPage({ client, offerSource, loadBanned, debounceMs = 400, modal, resaleHref = (n) => `/shop/names?section=resale&search=${encodeURIComponent(n)}` }: NamesPageProps) {
+export default function NamesPage({ client, offerSource, loadBanned, debounceMs = NAME_CHECK_DEBOUNCE_MS, modal, resaleHref = (n) => `/shop/names?section=resale&search=${encodeURIComponent(n)}` }: NamesPageProps) {
   const wallet = useLandWallet();
   const location = useLocation();
   const navigate = useNavigate();
+  const marketplace = useMarketplace();
   const navResume = (location.state as NamesNavState | null)?.resumeName;
   const [value, setValue] = useState("");
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -114,8 +117,16 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
   }, [value, placeholder]);
 
   useEffect(() => {
-    const resume = typeof navResume === "string" && nameLabel(navResume) ? navResume : takeNameResume();
-    if (navResume) navigate(`${location.pathname}${location.search}`, { replace: true, state: null });
+    // A link may name the NAME to register (`?name=`, the in-world Shop's CLAIM NAME): taken out of the URL
+    // once read, as a navigation's resume is.
+    const params = new URLSearchParams(location.search);
+    const linked = params.get("name");
+    params.delete("name");
+    const rest = params.toString();
+    // A stashed top-up NAME is taken either way: one the link or the navigation supersedes must not reopen later.
+    const stashed = takeNameResume();
+    const resume = typeof navResume === "string" && nameLabel(navResume) ? navResume : linked !== null && nameLabel(linked) ? linked : stashed;
+    if (navResume || linked !== null) navigate(`${location.pathname}${rest ? `?${rest}` : ""}`, { replace: true, state: null });
     if (!resume) return;
     setValue(resume);
     setPendingResume(resume);
@@ -125,7 +136,7 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
 
   useEffect(() => {
     const ctrl = new AbortController();
-    (loadBanned ? loadBanned(ctrl.signal) : fetchBannedNames({ signal: ctrl.signal })).then(
+    (loadBanned ? loadBanned(ctrl.signal) : readBannedNames(ctrl.signal)).then(
       (list) => setBanned(new Set(list)),
       () => setBanned(new Set()),
     );
@@ -268,12 +279,17 @@ export default function NamesPage({ client, offerSource, loadBanned, debounceMs 
                   {status.kind === "banned" ? (
                     <span>This NAME is not available.</span>
                   ) : (
-                    <>
-                      <span>This NAME is taken. Choose another NAME or make an offer to the owner.</span>
-                      <Link className="shop-names-claim__action" to={resaleHref(value)}>
-                        Make offer
-                      </Link>
-                    </>
+                    // An offer to the owner is a Marketplace bid (market/access.tsx); without it, only another NAME.
+                    marketplace ? (
+                      <>
+                        <span>This NAME is taken. Choose another NAME or make an offer to the owner.</span>
+                        <Link className="shop-names-claim__action" to={resaleHref(value)}>
+                          Make offer
+                        </Link>
+                      </>
+                    ) : (
+                      <span>This NAME is taken. Choose another NAME.</span>
+                    )
                   )}
                 </div>
               ) : status.kind === "checking" || status.kind === "invalid" || status.kind === "error" || shortIdle ? (

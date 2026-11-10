@@ -30,6 +30,7 @@ pub(crate) use catalyst_config::config;
 pub(crate) use catalyst_content as content;
 #[cfg(test)]
 pub(crate) use catalyst_db as db;
+pub(crate) use catalyst_explore as explore;
 pub(crate) use catalyst_fed as fed;
 pub(crate) use catalyst_jobs as jobs;
 pub(crate) use catalyst_land_authz as land_authz;
@@ -40,7 +41,6 @@ pub(crate) use catalyst_storage as storage;
 pub(crate) use dcl_auth as auth;
 pub(crate) use dcl_http as http;
 
-pub mod analytics;
 pub mod campaigns;
 pub mod checkout;
 pub mod coupons;
@@ -63,6 +63,8 @@ pub mod types;
 
 #[cfg(test)]
 mod parity_tests;
+#[cfg(test)]
+mod test_db;
 
 use std::sync::Arc;
 
@@ -101,8 +103,6 @@ pub(crate) fn admin_extensions() -> Router<market::SharedState> {
 /// The states the canonical router serves over: each module keeps its own.
 pub struct States {
     pub market: Arc<market::MarketplaceState>,
-    /// The ops telemetry sink the Shop's analytics events land in (`analytics`).
-    pub analytics: analytics::Sink,
     pub credits: Arc<credits::State>,
     pub economy: Arc<crate::evm::State>,
     pub outfits: Arc<outfits::State>,
@@ -114,7 +114,7 @@ pub struct States {
     pub mana: Arc<mana::State>,
 }
 
-/// The canonical `/shop-api` tree ([`paths`]; `ui3/src/shop/api/endpoints.ts`
+/// The canonical `/shop-api` tree ([`paths`]; `library/shop/api/endpoints.ts`
 /// is the client's table of it):
 /// the marketplace-server paths as they are, the credits paths under their
 /// resource names, the rentals store's `/v1/rentals-listings`, the MANA
@@ -127,7 +127,6 @@ pub fn router(states: States) -> Router {
     Router::new()
         .merge(market::market_router(states.market.clone()))
         .merge(market::shop_admin_router(states.market))
-        .merge(analytics::router(states.analytics))
         .merge(credits::shop_router(states.credits))
         .merge(checkout::shop_router(states.economy.clone()))
         .merge(treasury::shop_router(states.economy))

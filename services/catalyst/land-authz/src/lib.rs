@@ -110,12 +110,19 @@ pub const ALL_KINDS: [&str; 7] = [
 
 /// A parcel's resolved subject: whose parcel it is (the estate's owner when
 /// it sits in one), which registry decides, and the two per-token legs.
+/// `operator` and `update_operator` are what the land-manager subgraph
+/// answers: `None` for a leg never set, the zero address for one cleared
+/// on chain. `deploy_update_operator` is the update operator the deploy
+/// check reads, where a cleared leg is no leg (the chain cannot tell the
+/// two apart), so a parcel's cleared update operator falls back to its
+/// estate's.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParcelSubject {
     pub owner: String,
     pub registry: String,
     pub operator: Option<String>,
     pub update_operator: Option<String>,
+    pub deploy_update_operator: Option<String>,
     pub belongs_to_estate: bool,
 }
 
@@ -178,7 +185,9 @@ pub struct Settings {
     /// timestamp-header and repair calls per pass, excluding head probes.
     pub requests_per_pass: usize,
     /// `LAND_AUTHZ_REPLAY_FROM_BLOCK`: rewind durably once at the first pass
-    /// (the start block for a full repair).
+    /// (the start block for a full repair, which may also switch registries).
+    /// Held per process: while it stays set, every restart replays again, so
+    /// unset it once the replay has published.
     pub replay_from_block: Option<u64>,
     /// `LAND_AUTHZ_STOP_BLOCK`: index no further (a development bound); an
     /// index held short of the head is never published.
@@ -276,6 +285,12 @@ pub struct Decision {
     pub flags: ParcelPermissionFlags,
 }
 
+/// A published parcel-membership answer. `None` inside this answer means the
+/// parcel belongs to no estate; absence of an answer means the index is unready.
+pub struct EstateMembership {
+    pub estate_id: Option<String>,
+}
+
 /// Why no decision could be made: the caller refuses the write (never
 /// grants), and a route answers the unavailable envelope.
 #[derive(Debug, thiserror::Error)]
@@ -316,9 +331,69 @@ impl LandAuthzState {
         )
     }
 
-    /// The cursor row when the local index may answer on the database clock.
+    /// The cursor row when the local index of the configured registries may
+    /// answer on the database clock. A yes/no only: a read that depends on
+    /// it runs on [`Self::ready_snapshot`] instead.
     pub async fn ready(&self) -> Option<Cursor> {
-        indexer::ready_cursor(&self.pool, &self.settings.network).await
+        indexer::ready_cursor(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+        )
+        .await
+    }
+
+    /// The configured registries' index when it may answer, as a snapshot
+    /// the dependent reads run on ([`indexer::ReadySnapshot`]): the check and
+    /// the reads see one state, so a rebind between them cannot mix two
+    /// registries' rows. A database error reads as not ready (the fallback,
+    /// never a grant).
+    pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
+        match indexer::ready_snapshot(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; using the fallback reader");
+                None
+            }
+        }
+    }
+
+    /// One indexed coordinate lookup on the caller's connection, including the
+    /// publication check in the same SQL snapshot on the database clock (as
+    /// `ready`). Event edits already hold a connection and must not acquire
+    /// another from a potentially full pool.
+    pub async fn estate_at(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<EstateMembership>, sqlx::Error> {
+        let answer: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT el.estate_token_id::text FROM land_authz.index_cursor c \
+             LEFT JOIN land_authz.token_right p ON p.token_address=c.land_registry AND p.x=$4 AND p.y=$5 \
+             LEFT JOIN land_authz.estate_land el ON el.land_token_id=p.token_id \
+             WHERE c.network=$1 AND c.land_registry=$2 AND c.estate_registry=$3 \
+               AND c.full_replay_started AND c.folded_block=c.last_block \
+               AND c.folded_at <= timezone('UTC', now()) \
+               AND c.folded_at >= timezone('UTC', now()) - make_interval(secs => $6)",
+        )
+        .bind(&self.settings.network)
+        .bind(&self.settings.land_registry)
+        .bind(&self.settings.estate_registry)
+        .bind(x)
+        .bind(y)
+        .bind(indexer::READY_WINDOW.num_seconds() as f64)
+        .fetch_optional(conn)
+        .await?;
+        Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
     }
 
     /// The marketplace reader, when one with a subgraph URL is attached.
@@ -371,16 +446,20 @@ pub async fn can_deploy_batch(
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(cursor) = state.ready().await {
+    if let Some(mut snapshot) = state.ready_snapshot().await {
+        let cursor = &snapshot.cursor;
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
         };
-        let rights = state.store().rights_batch(parcels).await?;
+        let rights = state
+            .store()
+            .deploy_rights_batch_on(&mut snapshot.tx, parcels)
+            .await?;
         return Ok(rights
             .into_iter()
             .map(|r| match r {
                 Some(rights) => {
-                    let flags = rights.flags_for(actor);
+                    let flags = rights.deploy_flags_for(actor);
                     let verdict = flags
                         .granting_leg()
                         .map_or(Verdict::Denied, Verdict::Granted);
@@ -458,8 +537,11 @@ pub async fn owns_land_at(
     owner: &str,
     coords: &[(i32, i32)],
 ) -> Result<bool, Unavailable> {
-    if state.ready().await.is_some() {
-        return Ok(state.store().owns_land_at(owner, coords).await?);
+    if let Some(mut snapshot) = state.ready_snapshot().await {
+        return Ok(state
+            .store()
+            .owns_land_at_on(&mut snapshot.tx, owner, coords)
+            .await?);
     }
     let Some(market) = state.fallback_reader() else {
         return Err(Unavailable::NoSource);

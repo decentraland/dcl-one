@@ -1,0 +1,14 @@
+[
+  {
+    "path": "apps/sites/content/docs/contributor/contributor-guides/web-ui-standards/index.md",
+    "check": "url",
+    "id": "tsyaDSedcsVZ8iM9N0McT2",
+    "reason": "Public Figma file linked from vendored docs.decentraland.org content (gen-docs-content); predates the guard. Pins this file id only: any other Figma URL in this path still fails."
+  },
+  {
+    "path": "apps/sites/content/docs/contributor/contributor-guides/web-ui-standards/process-overview/index.md",
+    "check": "url",
+    "id": "tsyaDSedcsVZ8iM9N0McT2",
+    "reason": "Public Figma file linked from vendored docs.decentraland.org content (gen-docs-content); predates the guard. Pins this file id only: any other Figma URL in this path still fails."
+  }
+]

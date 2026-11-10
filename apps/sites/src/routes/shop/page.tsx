@@ -23,7 +23,7 @@ export function primeShopPageData(data: ShopPageData | null | undefined): void {
   // reads its answers in the same synchronous render pass that primed them.
   if (typeof window === "undefined") resetShopQueries();
   // The flags the server rendered with, so the first client render (hydration) takes the same branches.
-  if (data.featureFlags) primeRemoteFlags(data.featureFlags);
+  if (data.featureFlags) primeRemoteFlags(data.featureFlags, data.featureFlagVariants);
   for (const [key, value, at] of data.queries) primeShopQuery(key, value, at);
 }
 

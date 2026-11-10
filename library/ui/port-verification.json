@@ -1,0 +1,37 @@
+{
+  "schema": 1,
+  "lockHash": "9557e6d41df53bbc10ba2121cb501dcc6ad97ab6904c50a7ff0027aaff5cb036",
+  "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "figmaTree": "e1fc092fc76117efee9e2362cc7e45e197b33f9a",
+  "checks": {
+    "fetch-source": {
+      "result": "pass",
+      "detail": "Verified existing 544 cache files against the pinned revision and digest table"
+    },
+    "deviations": {
+      "result": "pass",
+      "detail": "450 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
+    },
+    "diff": {
+      "result": "pass",
+      "detail": "Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues"
+    },
+    "check-mappings": {
+      "result": "pass",
+      "detail": "Fresh check passes with 1 public NavBar mapping and no diagnostics"
+    },
+    "review-manifest": {
+      "result": "pass",
+      "detail": "Fresh catalog regeneration is byte-identical, 46 components and 561 variants"
+    },
+    "navbar-bounds": {
+      "result": "pass",
+      "detail": "Public consumer4, foundations4 and gallery19 bounds pass with accepted bridge limitations unchanged"
+    },
+    "install": {
+      "result": "pass",
+      "detail": "Private11 component outputs reproduced merged metadata with repeat no-op and prior39 foundations unchanged"
+    }
+  }
+}

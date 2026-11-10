@@ -45,13 +45,6 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
-    "name": "assetBundleRegistry",
-    "value": "http",
-    "scheme": "https",
-    "sub": "asset-bundle-registry",
-    "path": ""
-  },
-  {
     "name": "storage",
     "value": "http",
     "scheme": "https",
@@ -90,14 +83,63 @@ export const SERVICES: ServiceDef[] = [
     "name": "reels",
     "value": "http",
     "scheme": "https",
-    "sub": "reels",
-    "path": ""
+    "sub": "",
+    "path": "/reels"
   },
   {
     "name": "mapApi",
     "value": "http",
     "scheme": "https",
     "sub": "api",
+    "path": ""
+  },
+  {
+    "name": "cameraReel",
+    "value": "http",
+    "scheme": "https",
+    "sub": "camera-reel-service",
+    "path": ""
+  },
+  {
+    "name": "events",
+    "value": "http",
+    "scheme": "https",
+    "sub": "events",
+    "path": ""
+  },
+  {
+    "name": "badges",
+    "value": "http",
+    "scheme": "https",
+    "sub": "badges",
+    "path": ""
+  },
+  {
+    "name": "notifications",
+    "value": "http",
+    "scheme": "https",
+    "sub": "notifications",
+    "path": ""
+  },
+  {
+    "name": "assetsCdn",
+    "value": "http",
+    "scheme": "https",
+    "sub": "assets-cdn",
+    "path": ""
+  },
+  {
+    "name": "marketplaceApi",
+    "value": "http",
+    "scheme": "https",
+    "sub": "marketplace-api",
+    "path": ""
+  },
+  {
+    "name": "autotranslate",
+    "value": "http",
+    "scheme": "https",
+    "sub": "autotranslate-server",
     "path": ""
   },
   {

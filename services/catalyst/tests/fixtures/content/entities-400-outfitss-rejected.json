@@ -1,0 +1,26 @@
+{
+  "description": "GET /content/entities/outfitss is 400: only names that do not already end in 's' take a plural 's'.",
+  "request": {
+    "method": "GET",
+    "path": "/content/entities/outfitss",
+    "query": {
+      "pointer": [
+        "0x0000000000000000000000000000000000000000"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Unrecognized type: outfitss"
+    }
+  },
+  "captured_from": "derived from decentraland/catalyst@a416565 test/integration/controller/entity-type-parsing.spec.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

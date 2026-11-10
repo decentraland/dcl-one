@@ -11,8 +11,72 @@ pub use system_api_types::services::{Service, ServiceValue};
 
 pub const DEFAULT: &str = "decentraland.org";
 
+/// Decentraland's own deployments, each a separate environment.
+pub const DECENTRALAND_DOMAINS: [&str; 2] = [DEFAULT, "decentraland.zone"];
+
 static BASE_DOMAIN: OnceLock<String> = OnceLock::new();
 static SERVICES: OnceLock<HashMap<Service, String>> = OnceLock::new();
+static GATEWAY: OnceLock<crate::gateway::Gateway> = OnceLock::new();
+
+/// Only the native CLI installs a gateway. Deep links and web options cannot set it.
+pub fn set_gateway(raw: &str) -> Result<(), String> {
+    GATEWAY
+        .set(crate::gateway::Gateway::parse(raw)?)
+        .map_err(|_| "--gateway already configured".to_owned())
+}
+
+fn endpoint_override(service: Service) -> Option<String> {
+    service_override(service)
+        .map(str::to_owned)
+        .or_else(|| GATEWAY.get()?.service(service))
+}
+
+/// The engine's credential-free service URL reply to the system scene.
+pub fn hud_services() -> Vec<(String, String)> {
+    Service::all()
+        .filter(|s| s.has_web_param())
+        .map(|s| {
+            (
+                s.param(),
+                public_endpoint_override(s).unwrap_or_else(|| composed_service(s)),
+            )
+        })
+        .collect()
+}
+
+/// The resolved override, with credentials removed before publishing or matching a public URL.
+pub fn public_endpoint_override(service: Service) -> Option<String> {
+    let base = endpoint_override(service)?;
+    if !base.contains('@') {
+        return Some(base);
+    }
+    let mut url = url::Url::parse(&base).ok()?;
+    url.set_password(None).ok()?;
+    url.set_username("").ok()?;
+    Some(url.as_str().trim_end_matches('/').to_owned())
+}
+
+pub fn profile_image_base() -> Option<String> {
+    GATEWAY
+        .get()
+        .map(crate::gateway::Gateway::profile_image_base)
+}
+
+pub fn profile_image(raw: &str) -> std::borrow::Cow<'_, str> {
+    GATEWAY
+        .get()
+        .and_then(|g| g.profile_image(raw, get()))
+        .map_or(raw.into(), std::borrow::Cow::Owned)
+}
+
+pub fn gateway_signed_path(raw: &str) -> anyhow::Result<Option<String>> {
+    match GATEWAY.get() {
+        Some(gateway) => {
+            gateway.original_path(raw, Service::all().filter_map(public_endpoint_override))
+        }
+        None => Ok(None),
+    }
+}
 
 pub fn set(domain: &str) -> Result<(), String> {
     let d = domain.trim().to_ascii_lowercase();
@@ -38,8 +102,19 @@ pub fn get() -> &'static str {
     BASE_DOMAIN.get().map(String::as_str).unwrap_or(DEFAULT)
 }
 
-pub fn is_custom() -> bool {
-    !matches!(get(), DEFAULT | "decentraland.zone")
+/// The Decentraland deployment a resolved service url runs on: [`DECENTRALAND_DOMAINS`] entry
+/// its host is, or is under. None for anything else, such as a dcl-one node, a gateway or a
+/// local service, whatever the base domain says: a page or launch keeps the default base
+/// domain while overriding its services.
+pub fn decentraland_domain(url: &str) -> Option<&'static str> {
+    let url = url::Url::parse(url).ok()?;
+    let host = url.host_str()?;
+    DECENTRALAND_DOMAINS.into_iter().find(|domain| {
+        host == *domain
+            || host
+                .strip_suffix(domain)
+                .is_some_and(|sub| sub.ends_with('.'))
+    })
 }
 
 fn host(sub: &str) -> String {
@@ -108,9 +183,10 @@ pub fn service_override(service: Service) -> Option<&'static str> {
 /// The service's base url (an authority service: its host) — its override, else its
 /// composition from the base domain.
 pub fn service(service: Service) -> String {
-    if let Some(value) = service_override(service) {
-        return value.to_owned();
-    }
+    endpoint_override(service).unwrap_or_else(|| composed_service(service))
+}
+
+fn composed_service(service: Service) -> String {
     let (scheme, sub, path) = service.composition();
     let host = if sub.is_empty() {
         get().to_owned()
@@ -168,6 +244,7 @@ mod tests {
             url(Service::AuthPage, "/requests"),
             "https://decentraland.org/auth/requests"
         );
+        assert_eq!(service(Service::Reels), "https://decentraland.org/reels");
         assert_eq!(
             url(Service::SocialRpc, ""),
             "wss://rpc-social-service-ea.decentraland.org"
@@ -175,6 +252,35 @@ mod tests {
         assert_eq!(
             service(Service::PulseServer),
             "pulse-server.decentraland.org"
+        );
+    }
+
+    #[test]
+    fn only_decentraland_hosts_are_a_decentraland_deployment() {
+        for (url, expected) in [
+            (
+                "https://peer.decentraland.org/lambdas",
+                Some("decentraland.org"),
+            ),
+            (
+                "https://PEER-EC1.Decentraland.ORG:443",
+                Some("decentraland.org"),
+            ),
+            ("https://decentraland.zone/auth", Some("decentraland.zone")),
+            ("https://peer.decentraland.zone", Some("decentraland.zone")),
+            ("https://gateway.example.test/mount/peer/lambdas", None),
+            ("http://127.0.0.1:5222/lambdas", None),
+            ("https://peer.decentraland.org.example.test", None),
+            ("https://evildecentraland.org", None),
+            ("https://peer.decentraland.today", None),
+            ("peer.decentraland.org", None),
+        ] {
+            assert_eq!(decentraland_domain(url), expected, "{url}");
+        }
+        // the default composition is Decentraland's own
+        assert_eq!(
+            decentraland_domain(&url(Service::Catalyst, "/lambdas")),
+            Some(DEFAULT)
         );
     }
 

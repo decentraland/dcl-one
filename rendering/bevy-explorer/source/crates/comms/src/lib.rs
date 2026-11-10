@@ -2,6 +2,7 @@ pub mod archipelago;
 mod automation;
 pub mod broadcast_position;
 pub mod chat_reaction;
+pub mod community_chat;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
@@ -43,7 +44,7 @@ use dcl_component::{
 };
 use ipfs::IpfsAssetServer;
 use prost::Message as _;
-use wallet::{sign_request, Wallet};
+use wallet::{sign_service_request, Wallet};
 
 use crate::global_crdt::ChannelControl;
 
@@ -185,6 +186,9 @@ pub enum NetworkMessageRecipient {
     All,
     Peer(Address),
     AuthServer,
+    /// The server's message router on the private chat room, which fans community chat out to
+    /// the community's members (see [`community_chat`]).
+    MessageRouter,
 }
 
 /// A queued broadcast that carries its own per-transport encodings rather than pre-resolved bytes,
@@ -555,7 +559,7 @@ pub(crate) async fn mint_gatekeeper_adapter(
     wallet: &Wallet,
     meta: String,
 ) -> Result<String, anyhow::Error> {
-    let headers = sign_request(method, &uri, wallet, meta).await?;
+    let headers = sign_service_request(method, &uri.to_string(), wallet, meta).await?;
 
     let mut request = client
         .request(method.parse()?, uri.to_string())
@@ -564,10 +568,10 @@ pub(crate) async fn mint_gatekeeper_adapter(
     for (k, v) in headers {
         request = request.header(k, v);
     }
-    let response = request.send().await?;
+    let response = platform::TracedJsonResponse::send(request).await?;
 
     if response.status() != StatusCode::OK {
-        return Err(anyhow::anyhow!("status: {}", response.status()));
+        return Err(anyhow::anyhow!("status: {}", response.discard()));
     }
 
     Ok(response.json::<GatekeeperResponse>().await?.adapter)

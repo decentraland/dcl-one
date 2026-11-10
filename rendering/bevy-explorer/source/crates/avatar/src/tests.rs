@@ -3,7 +3,6 @@ use std::sync::Arc;
 use bevy::{
     asset::io::memory::{Dir, MemoryAssetReader},
     ecs::system::RunSystemOnce,
-    prelude::*,
 };
 use collectibles::{Collectible, CollectibleData, Collectibles};
 use ipfs::{IpfsIo, IpfsResource};

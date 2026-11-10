@@ -1,10 +1,15 @@
-.PHONY: check owners bevy-web bevy-headless catalyst-build catalyst-test sites-install sites-build
+.PHONY: check figma-key-guard owners bevy-web bevy-headless catalyst-build catalyst-test sites-install sites-build
 
 NODE_CRATES = --workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring --exclude dcl-scene-build --exclude dcl-preview-tunnel --exclude dcl-preview-tunnel-protocol
 
 check:
 	bash services/catalyst/scripts/check-module-dag.sh
 	python3 tooling/ui_standards.py
+
+# Fails when the private Figma file key (FIGMA_FILE_KEY) or a Figma file URL is in the working tree or
+# in origin/main..HEAD. Extra flags through ARGS, e.g. ARGS="--path library/ui/figma/review/review-dist".
+figma-key-guard:
+	node library/ui/figma/key-guard.mjs $(ARGS)
 
 owners:
 	python3 tooling/owners.py
@@ -19,7 +24,7 @@ catalyst-build:
 	cd services/catalyst && cargo build --locked --bin catalyst
 
 catalyst-test:
-	cd services/catalyst && cargo test --locked $(NODE_CRATES)
+	tooling/catalyst-test.sh $(NODE_CRATES)
 
 sites-install:
 	pnpm --dir apps/ui3 install --frozen-lockfile

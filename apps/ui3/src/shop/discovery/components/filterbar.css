@@ -76,6 +76,11 @@
   gap: 8px;
   margin-left: auto;
 }
+/* from: shop@3a322cf9:app/src/components/FilterBar/FilterBar.styles.ts (Search) */
+.shop-filterbar__search {
+  flex: 0 1 405px;
+  min-width: 200px;
+}
 
 .shop-filterbar__sort {
   position: relative;
@@ -180,6 +185,11 @@
     min-width: 0;
     justify-content: flex-end;
     flex-wrap: wrap;
+  }
+  .shop-filterbar__search {
+    flex: 1 1 auto;
+    min-width: 130px;
+    margin-right: 16px;
   }
   .shop-filterbar__sorttrigger {
     height: 36px;

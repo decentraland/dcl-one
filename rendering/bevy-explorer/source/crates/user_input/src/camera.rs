@@ -10,7 +10,7 @@ use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
 use common::{
     inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
     structs::{
-        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind,
+        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind, PhotoMode,
         PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV,
     },
     terrain::PlayerTerrainHeight,
@@ -33,7 +33,7 @@ pub struct CinematicInitialData {
 #[allow(clippy::too_many_arguments)]
 pub fn update_camera(
     time: Res<Time>,
-    mut camera: Query<(&Transform, &mut PrimaryCamera)>,
+    mut camera: Query<(&Transform, &mut PrimaryCamera), Without<PhotoMode>>,
     locks: Res<CursorLocks>,
     mut cinematic_data: Local<Option<CinematicInitialData>>,
     input_manager: InputManager,
@@ -88,14 +88,9 @@ pub fn update_camera(
     if locks.0.contains("camera") {
         mouse_delta += input_manager.get_analog(POINTER_SET, InputPriority::Scroll);
     }
-    match config.camera_smoothing.rate() {
-        Some(rate) => {
-            let factor = 1.0 - (-dt * rate).exp();
-            mouse_delta = factor * mouse_delta + (1.0 - factor) * *smoothed_delta;
-            *smoothed_delta = mouse_delta;
-        }
-        None => *smoothed_delta = mouse_delta,
-    }
+    let mouse_delta = config
+        .camera_smoothing
+        .smooth(mouse_delta, &mut smoothed_delta, dt);
 
     if allow_cam_move {
         if input_manager.is_down(Action::System(SystemAction::RollLeft), InputPriority::None) {
@@ -144,13 +139,16 @@ pub fn update_camera(
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn update_camera_position(
     mut commands: Commands,
-    mut camera: Query<(
-        Entity,
-        &Transform,
-        &PrimaryCamera,
-        &mut Projection,
-        Option<&mut SystemTween>,
-    )>,
+    mut camera: Query<
+        (
+            Entity,
+            &Transform,
+            &PrimaryCamera,
+            &mut Projection,
+            Option<&mut SystemTween>,
+        ),
+        Without<PhotoMode>,
+    >,
     mut player: Query<
         (
             &Transform,

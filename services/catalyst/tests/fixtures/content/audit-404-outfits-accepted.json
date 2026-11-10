@@ -1,0 +1,22 @@
+{
+  "description": "GET /content/audit/outfits/{id} accepts the type and answers 404 for an unknown id.",
+  "request": {
+    "method": "GET",
+    "path": "/content/audit/outfits/0x0000000000000000000000000000000000000000",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "No deployment found"
+    }
+  },
+  "captured_from": "derived from decentraland/catalyst@a416565 test/integration/controller/entity-type-parsing.spec.ts",
+  "captured_at": "2026-11-04T00:00:00Z",
+  "volatile_paths": []
+}

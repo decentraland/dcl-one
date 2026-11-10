@@ -41,8 +41,8 @@ use crate::types::{
 pub const MAX_LINES_PER_GROUP: usize = policy::MAX_CREDIT_LINES_PER_GROUP;
 /// Upstream `DEFAULT_USD_CREDIT_TTL_SECONDS`.
 pub const DEFAULT_TTL_SECONDS: u64 = 300;
-/// Upstream `DEFAULT_CAP_HEADROOM_PCT`.
-pub const DEFAULT_CAP_HEADROOM_PCT: u32 = 150;
+/// 100 adds no headroom over the buffered quote: with the default buffer a credit signs 1.02x its quote.
+pub const DEFAULT_CAP_HEADROOM_PCT: u32 = 100;
 /// Upstream `USD_CREDIT_BUFFER_BPS` default.
 pub const DEFAULT_ORACLE_BUFFER_BPS: u32 = 200;
 /// The unavailable-source name of NAME credits (docs/shop/CONTRACTS.md).
@@ -225,6 +225,8 @@ pub enum AuthorizeError {
     TooManyLive {
         balance_cents: i64,
     },
+    /// 409: the request's `operationId` already authorized other lines.
+    OperationReused,
     Api(ApiError),
 }
 
@@ -301,6 +303,16 @@ impl AuthorizeError {
                 extra.insert("balanceCents".into(), json!(balance_cents));
                 envelope(409, "Too many purchases in progress. Complete or cancel them before starting another one.".to_string(), extra)
             }
+            Self::OperationReused => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("code".into(), json!("operation_reused"));
+                envelope(
+                    409,
+                    "This purchase was already authorized for other items. Start a new purchase."
+                        .to_string(),
+                    extra,
+                )
+            }
             Self::Api(e) => {
                 let status = e.status().as_u16();
                 let message = if status >= 500 {
@@ -343,13 +355,15 @@ pub fn refusal_code(r: &Refusal) -> &'static str {
         Refusal::GroupTooLarge { .. } | Refusal::EmptyGroup => "group_size",
         Refusal::NegativeDebit { .. } => "negative_debit",
         Refusal::CreditValueTooLarge { .. } => "credit_too_large",
+        Refusal::SettlementNeedAboveReference { .. } => "settlement_need_above_reference",
+        Refusal::UnlistedMarketplace { .. } => "unlisted_marketplace",
     }
 }
 
 /// A line the rule accepted, with what the store records for it.
-struct DerivedLine {
-    line: Authoritative,
-    quoted: UsdCents,
+pub(super) struct DerivedLine {
+    pub(super) line: Authoritative,
+    pub(super) quoted: UsdCents,
     charged: UsdCents,
     record: GroupLine,
 }
@@ -464,7 +478,7 @@ async fn item_lookup(
 
 /// One line's authoritative facts from the mirrors and the decoded order,
 /// through the rule; `chain_id` is the credits chain this node serves.
-async fn derive_line(
+pub(super) async fn derive_line(
     state: &State,
     chain_id: ChainId,
     session: Session,
@@ -486,11 +500,17 @@ async fn derive_line(
             message: "NAME registration with credits is unavailable: no executor builds the registration on chain yet (docs/shop/CONTRACTS.md); register the NAME with MANA".to_string(),
         });
     } else if let Some(trade_id) = &v.trade_id {
-        let trade = match state.pricing.fetch_trade(trade_id).await? {
-            TradeLookup::Open(json) => decode_trade(&json).map_err(|m| AuthorizeError::Line {
-                index,
-                message: format!("trade {trade_id} cannot be decoded: {m}"),
-            })?,
+        let (trade, trade_type) = match state.pricing.fetch_trade(trade_id).await? {
+            TradeLookup::Open(json) => (
+                decode_trade(&json).map_err(|m| AuthorizeError::Line {
+                    index,
+                    message: format!("trade {trade_id} cannot be decoded: {m}"),
+                })?,
+                json.get("type")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            ),
             TradeLookup::NotFound => {
                 return Err(AuthorizeError::Line {
                     index,
@@ -510,6 +530,13 @@ async fn derive_line(
                 got: trade.venue.chain_id,
             }));
         }
+        // The coupon the line's purchase offer was priced with, chosen again
+        // here by the same server rule: the authorized price is the offer's,
+        // and a coupon that ended or was outbid since is a changed price.
+        let coupon = state
+            .pricing
+            .fetch_trade_coupon(&trade, &trade_type)
+            .await?;
         let mut contract = Lookup::Unknown;
         let mut item = Lookup::Unknown;
         let mut identity = (None, None);
@@ -538,10 +565,7 @@ async fn derive_line(
         (
             Facts {
                 session,
-                offer: Offer::Trade {
-                    trade,
-                    coupon: None,
-                },
+                offer: Offer::Trade { trade, coupon },
                 contract,
                 item,
                 token: Lookup::Unknown,
@@ -670,6 +694,7 @@ pub async fn authorize_group(
     lines: &[ValidatedLine],
     source: Option<&str>,
     idempotency_key: &str,
+    request_digest: Option<&str>,
     single: bool,
 ) -> Result<AuthorizeCreditOut, AuthorizeError> {
     let settings = &state.settings;
@@ -712,6 +737,24 @@ pub async fn authorize_group(
     let manager = EvmAddress::parse(contract).map_err(|_| {
         ApiError::Internal("CREDITS_MANAGER_CONTRACT is not an address".to_string())
     })?;
+
+    // A purchase that names itself is recovered from what it reserved, before the
+    // index, the gate, the feed, the catalogue or the price is read: those decide
+    // whether to issue a new credit, never whether to hand back the one it has.
+    if let Some(digest) = request_digest {
+        if let Some(prior) = state
+            .credits
+            .authorization_for_key(idempotency_key, signer)
+            .await?
+        {
+            if prior.request_digest.as_deref() != Some(digest) {
+                return Err(AuthorizeError::OperationReused);
+            }
+            let (issued, lines) =
+                replayed(state, &prior.id, buyer, manager, chain_id, None, "").await?;
+            return credit_out(&wallet, issued, lines, single, signer, true);
+        }
+    }
 
     if state.usage.ready_at(chrono::Utc::now()).await.is_none() {
         return Err(AuthorizeError::Unavailable {
@@ -761,7 +804,7 @@ pub async fn authorize_group(
             .checked_add(d.charged)
             .ok_or_else(|| ApiError::bad_request("the group total overflows"))?;
     }
-    let sizing = CreditSizing::new(
+    let mut sizing = CreditSizing::new(
         rate,
         settings.credit_buffer_bps,
         settings.credit_cap_headroom_pct,
@@ -771,25 +814,125 @@ pub async fn authorize_group(
             "CREDITS_CAP_HEADROOM_PCT or CREDITS_ORACLE_BUFFER_BPS out of range".to_string(),
         )
     })?;
-    let value = sizing
-        .cap(quoted_total)
-        .ok_or_else(|| ApiError::bad_request("the group total overflows"))?;
     let authoritative: Vec<Authoritative> = derived.iter().map(|d| d.line.clone()).collect();
-    policy::guard_group_credit_spend(
-        &authoritative,
-        &SettlementOperation::AuthorizeCredit {
-            chain_id,
-            value,
-            sizing,
-        },
-    )
-    .map_err(|refusal| {
+    let policy_refusal = |refusal: Refusal| {
         let index = match &refusal {
             Refusal::MixedGroup => derived.len().saturating_sub(1),
             _ => 0,
         };
         AuthorizeError::Policy { index, refusal }
+    };
+    // A trade is only spent on a marketplace this node knows on its chain:
+    // the contract a trade row names is not taken on trust.
+    for (index, line) in authoritative.iter().enumerate() {
+        if let Offer::Trade { trade, .. } = line.offer()
+            && !listed_marketplace(trade.venue)
+        {
+            return Err(AuthorizeError::Policy {
+                index,
+                refusal: Refusal::UnlistedMarketplace { venue: trade.venue },
+            });
+        }
+    }
+    let guard = |value: ManaWei, sizing: CreditSizing| {
+        policy::guard_group_credit_spend(
+            &authoritative,
+            &SettlementOperation::AuthorizeCredit {
+                chain_id,
+                value,
+                sizing,
+            },
+        )
+    };
+    // A USD-pegged line settles at its marketplace's own feed, so the credit
+    // is sized at that feed, read now. The group's every other rule is
+    // checked first (a zero value passes the cap), so a refusal is never
+    // hidden behind an unavailable feed.
+    if let Some(venue) = authoritative
+        .iter()
+        .find(|line| policy::prices_in_usd(line))
+        .and_then(|line| line.venue(PaymentMethod::Credits))
+    {
+        guard(ManaWei::ZERO, sizing).map_err(policy_refusal)?;
+        // A retry of an authorization already reserved answers from its row,
+        // without the feed; the reservation itself stays the race's arbiter.
+        if let Some(prior) = state
+            .credits
+            .authorization_for_key(idempotency_key, signer)
+            .await?
+        {
+            if request_digest.is_some() && prior.request_digest.as_deref() != request_digest {
+                return Err(AuthorizeError::OperationReused);
+            }
+            let prior = prior.id;
+            let (issued, lines) = replayed(
+                state,
+                &prior,
+                buyer,
+                manager,
+                chain_id,
+                None,
+                &rate.rate().to_string(),
+            )
+            .await?;
+            return credit_out(&wallet, issued, lines, single, signer, true);
+        }
+        // The feed costs RPC calls: a wallet the reservation would refuse
+        // (no balance, too many live credits) is refused before it is read.
+        match state
+            .credits
+            .would_refuse(signer, charged_total.get())
+            .await?
+        {
+            Some(ReserveRefusal::Insufficient {
+                balance_cents,
+                required_cents,
+            }) => {
+                return Err(AuthorizeError::Insufficient {
+                    balance_cents,
+                    required_cents,
+                });
+            }
+            Some(ReserveRefusal::TooManyLive { balance_cents }) => {
+                return Err(AuthorizeError::TooManyLive { balance_cents });
+            }
+            Some(ReserveRefusal::OperationReused) => return Err(AuthorizeError::OperationReused),
+            None => {}
+        }
+        let reading = state
+            .feed
+            .read(venue.chain_id.0, venue.contract.address())
+            .await
+            .map_err(|why| {
+                // The provider's own text stays in the log: it may name the
+                // endpoint's project or key in ways `redact` cannot see.
+                tracing::warn!(marketplace = %venue.contract.address(), error = %why, "the marketplace's MANA/USD feed cannot be used");
+                AuthorizeError::Unavailable {
+                    source: super::feed::SOURCE,
+                    configure: super::feed::CONFIGURE,
+                    message: "a credit for a USD-pegged trade is sized at its marketplace's MANA/USD feed, which cannot be read now; try again later".to_string(),
+                }
+            })?;
+        tracing::info!(marketplace = %venue.contract.address(), aggregator = %reading.aggregator, block = reading.block, updated_at = reading.updated_at_s, rate = %reading.rate.rate(), "sizing a USD-pegged credit group at its marketplace's feed");
+        sizing = sizing.with_settlement_rate(reading.rate);
+    }
+    let value = policy::credit_cap(&authoritative, &sizing).map_err(|refusal| match refusal {
+        Refusal::SettlementNeedAboveReference { need, reference } => {
+            tracing::warn!(need = %need, reference = %reference, "a USD-pegged credit group needs more at its marketplace's feed than its quote allows");
+            AuthorizeError::Unavailable {
+            source: super::feed::DIVERGED_SOURCE,
+            configure: super::feed::DIVERGED_CONFIGURE,
+            message: format!(
+                "at the marketplace's MANA/USD feed this purchase needs {need} wei, above the {reference} wei its quote allows a credit to carry; try again later"
+            ),
+        }
+        }
+        refusal => policy_refusal(refusal),
     })?;
+    // Defense in depth: the guard recomputes the same `credit_cap` from the
+    // same inputs, so it only fails if the sizing above stops using it.
+    guard(value, sizing).map_err(policy_refusal)?;
+    let recorded_rate = sizing.recorded_rate();
 
     let salt = B256::from_slice(
         &getrandom_32().ok_or_else(|| ApiError::Internal("CSPRNG unavailable".into()))?,
@@ -819,15 +962,15 @@ pub async fn authorize_group(
         quoted_cents: quoted_total.get(),
         charged_cents: charged_total.get(),
         amount_wei: &value.get().to_string(),
-        oracle_rate: &rate.rate().to_string(),
-        oracle_decimals: rate.decimals() as i16,
+        oracle_rate: &recorded_rate.rate().to_string(),
+        oracle_decimals: recorded_rate.decimals() as i16,
         source,
         expires_at,
         lines: &records,
     };
     let reserved = match state
         .credits
-        .reserve_credit_group(&group, idempotency_key)
+        .reserve_credit_group(&group, idempotency_key, request_digest)
         .await?
     {
         Ok(reserved) => reserved,
@@ -843,54 +986,103 @@ pub async fn authorize_group(
         Err(ReserveRefusal::TooManyLive { balance_cents }) => {
             return Err(AuthorizeError::TooManyLive { balance_cents });
         }
+        Err(ReserveRefusal::OperationReused) => return Err(AuthorizeError::OperationReused),
     };
     let (issued, issued_lines) = if reserved.replayed {
-        let row = state
-            .credits
-            .get_authorization(&reserved.id)
-            .await?
-            .ok_or_else(|| ApiError::Internal("the replayed authorization vanished".into()))?;
-        let stored_manager = row
-            .contract
-            .as_deref()
-            .and_then(|c| Address::from_str(c).ok())
-            .unwrap_or(manager.address());
-        let identity = CreditIdentity {
-            sender: buyer.address(),
-            chain_id: row.chain_id.unwrap_or(chain_id.0 as i64) as u64,
-            manager: stored_manager,
-            value: u256(&row.amount_wei).unwrap_or(value.get()),
-            expires_at: row.expires_at.and_utc().timestamp() as u64,
-            salt: B256::from_str(&row.id).map_err(|_| {
-                ApiError::Internal("a replayed authorization has a non-bytes32 id".into())
-            })?,
-        };
-        let lines = state.credits.authorization_lines(&row.id).await?;
-        (
-            (
-                identity,
-                row.amount_wei.clone(),
-                row.usd_cents,
-                row.oracle_rate.unwrap_or_else(|| rate.rate().to_string()),
-            ),
-            lines,
+        replayed(
+            state,
+            &reserved.id,
+            buyer,
+            manager,
+            chain_id,
+            Some(value),
+            &recorded_rate.rate().to_string(),
         )
+        .await?
     } else {
         (
             (
                 identity,
                 value.get().to_string(),
                 charged_total.get(),
-                rate.rate().to_string(),
+                recorded_rate.rate().to_string(),
             ),
             records.clone(),
         )
     };
+    credit_out(
+        &wallet,
+        issued,
+        issued_lines,
+        single,
+        signer,
+        reserved.replayed,
+    )
+}
+
+/// What a credit answers with: its identity, signed value, cents and rate.
+type Issued = (CreditIdentity, String, i64, String);
+
+/// A reserved authorization, answered from its row: the stored value, salt,
+/// expiry, rate and lines, never re-sized or re-reserved. `fallback_value`
+/// and `fallback_rate` stand in only for columns an older row lacks.
+async fn replayed(
+    state: &State,
+    id: &str,
+    buyer: EvmAddress,
+    manager: EvmAddress,
+    chain_id: ChainId,
+    fallback_value: Option<ManaWei>,
+    fallback_rate: &str,
+) -> Result<(Issued, Vec<GroupLine>), AuthorizeError> {
+    let row = state
+        .credits
+        .get_authorization(id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("the replayed authorization vanished".into()))?;
+    let stored_manager = row
+        .contract
+        .as_deref()
+        .and_then(|c| Address::from_str(c).ok())
+        .unwrap_or(manager.address());
+    let value = u256(&row.amount_wei)
+        .or(fallback_value.map(ManaWei::get))
+        .ok_or_else(|| ApiError::Internal("a replayed authorization has no value".into()))?;
+    let identity = CreditIdentity {
+        sender: buyer.address(),
+        chain_id: row.chain_id.unwrap_or(chain_id.0 as i64) as u64,
+        manager: stored_manager,
+        value,
+        expires_at: row.expires_at.and_utc().timestamp() as u64,
+        salt: B256::from_str(&row.id).map_err(|_| {
+            ApiError::Internal("a replayed authorization has a non-bytes32 id".into())
+        })?,
+    };
+    let lines = state.credits.authorization_lines(&row.id).await?;
+    Ok((
+        (
+            identity,
+            row.amount_wei.clone(),
+            row.usd_cents,
+            row.oracle_rate.unwrap_or_else(|| fallback_rate.to_string()),
+        ),
+        lines,
+    ))
+}
+
+fn credit_out(
+    wallet: &TreasuryWallet,
+    issued: Issued,
+    issued_lines: Vec<GroupLine>,
+    single: bool,
+    signer: &str,
+    replayed: bool,
+) -> Result<AuthorizeCreditOut, AuthorizeError> {
     let (identity, amount, usd_cents, oracle_rate) = issued;
     let signature = wallet
         .sign_credit(&identity)
         .map_err(|e| ApiError::Internal(format!("credit signing failed: {e}")))?;
-    tracing::info!(address = %signer, salt = %bytes32_hex(identity.salt), usd_cents, value = %amount, lines = issued_lines.len(), replayed = reserved.replayed, "authorized a credit");
+    tracing::info!(address = %signer, salt = %bytes32_hex(identity.salt), usd_cents, value = %amount, lines = issued_lines.len(), replayed, "authorized a credit");
     Ok(AuthorizeCreditOut {
         credit: AuthorizedCreditOut {
             id: bytes32_hex(identity.salt),
@@ -916,6 +1108,16 @@ pub async fn authorize_group(
                 .collect()
         }),
     })
+}
+
+/// Whether `venue` is one of the off-chain marketplaces deployed on its chain.
+/// A marketplace the chain's CreditsManager lets `useCredits` call: the set
+/// the contract itself enforces (its allowed `marketplaces`), so a mirrored
+/// trade on any of them, the first off-chain marketplace included, can be
+/// paid with credits.
+fn listed_marketplace(venue: ContractRef) -> bool {
+    crate::policy_entry::manager_routes(venue.chain_id)
+        .is_some_and(|routes| routes.marketplaces.contains(&venue.contract.address()))
 }
 
 fn getrandom_32() -> Option<[u8; 32]> {

@@ -152,9 +152,9 @@ The syntax to use WebSockets is no different from that implemented natively by J
 
 > [!NOTE]
 > **💡 Tip**: One library that simplifies the use of websocket connections and has been proven to work very well with Decentraland is [Colyseus](https://colyseus.io/). Several other websocket libraries aren't compatible with the Decentraland SDK.
-> 
+>
 > It builds a layer of abstraction on top of the websocket connections that makes reacting to changes and storing a consistent game state remotely in the server super easy. You can see it in action in these examples:
-> 
+>
 > * [Cube Jumper](https://github.com/decentraland-scenes/cube-jumper-colyesus-sdk7)
 > * [Space Traitor](https://github.com/decentraland-scenes/Space-Traitor)
 > * [AI NPC](https://github.com/decentraland-scenes/inworld-ai-sdk7)
@@ -164,7 +164,7 @@ The syntax to use WebSockets is no different from that implemented natively by J
 
 You can debug network requests by opening Debug Panel.
 
-To open the Debug Panel, you can click the ![](/docs/creator/images/debug-icon.webp) icon on the top-right corner. Then select the **Web Requests** tab and click **Open Chrome Devtools**.
+To open the Debug Panel, you can click the ![](/docs/creator/images/debug-icon.webp) icon on the top-right corner. Then select the **Web Requests** tab and click **Open Chrome Devtools**.
 
 This will open a new Chrome window with the Network tab open.
 

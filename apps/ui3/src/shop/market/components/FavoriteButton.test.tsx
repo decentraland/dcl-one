@@ -2,13 +2,14 @@ import { fireEvent, render, screen, waitFor, within } from "@testing-library/rea
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { setShopClient } from "../../api/shop";
 import { invalidateShopQueries } from "../../discovery/query";
-import { BOOK } from "../../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { StoryShell } from "../testHarness";
 import { fakeShop } from "../testing";
+import { marketplaceOn } from "../testing-flags";
 import { shopFavorites } from "../store/favorites";
 import FavoriteButton from "./FavoriteButton";
+import { setShopClient } from "../../api/host";
 
 beforeEach(() => { localStorage.clear(); shopFavorites.reloadFor(null); });
 afterEach(() => setShopClient(null));
@@ -41,7 +42,10 @@ describe("who saved an item", () => {
   const addr = (i: number) => `0x${i.toString(16).padStart(40, "0")}`;
   const NACHO = addr(1);
 
+  // Each account links to its page, which is the Marketplace's: these tests turn it on; the last one leaves it off.
+  let marketplaceOff: (() => void) | null = null;
   beforeEach(() => {
+    marketplaceOff = marketplaceOn();
     invalidateShopQueries();
     vi.stubGlobal(
       "fetch",
@@ -52,7 +56,10 @@ describe("who saved an item", () => {
       }),
     );
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    marketplaceOff?.();
+    vi.unstubAllGlobals();
+  });
 
   function heart(opts: { count: number; total?: number; failFirst?: boolean }) {
     const total = opts.total ?? opts.count;
@@ -131,5 +138,16 @@ describe("who saved an item", () => {
     const dialog = await screen.findByRole("dialog", { name: "Saved by" });
     fireEvent.click(await within(dialog).findByRole("button", { name: /try again|retry/i }));
     await waitFor(() => expect(within(dialog).getAllByRole("link")).toHaveLength(2));
+  });
+
+  it("lists the accounts as plain names, not links, without the Marketplace", async () => {
+    marketplaceOff?.();
+    marketplaceOff = marketplaceOn(false);
+    heart({ count: 2 });
+    fireEvent.click(await screen.findByRole("button", { name: /See who saved Jacket/ }));
+    const dialog = await screen.findByRole("dialog", { name: "Saved by" });
+    await waitFor(() => expect(within(dialog).getByTestId("saved-by-list").querySelectorAll("li")).toHaveLength(2));
+    expect(within(dialog).queryAllByRole("link")).toHaveLength(0);
+    await waitFor(() => expect(within(dialog).getByTitle(NACHO)).toHaveTextContent("nacho"));
   });
 });

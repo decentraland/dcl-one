@@ -9,11 +9,10 @@ Object.assign(ENV_CONTENT, getPublicUrls());
 packageJson.homepage = ENV_CONTENT["PUBLIC_URL"];
 
 if (packageJson.homepage) {
-  // github action outputs. Do not touch.
-  console.log("::set-output name=public_url::" + packageJson.homepage);
-  console.log(
-    "::set-output name=public_path::" + new URL(packageJson.homepage).pathname
-  );
+  if (process.env.GITHUB_OUTPUT) {
+    fs.appendFileSync(process.env.GITHUB_OUTPUT,
+      `public_url=${packageJson.homepage}\npublic_path=${new URL(packageJson.homepage).pathname}\n`);
+  }
 }
 
 console.log("VERSIONS: ", Object.entries(ENV_CONTENT), "\n");
@@ -29,7 +28,7 @@ fs.writeFileSync("./package.json", JSON.stringify(packageJson, null, 2));
 
 // No HTML rewriting: the React app (the only page) bakes PUBLIC_URL in at build time (vite base),
 // and sets window.PUBLIC_URL for the engine's pkg/ fetches (react-web EngineHost). This script's
-// remaining job is stamping homepage/.env and the ::set-output lines the CDN deployer reads.
+// remaining job is stamping homepage/.env and the output environment file the CDN deployer reads.
 
 function getPublicUrls() {
   if (!process.env.GEN_STATIC_LOCAL) {

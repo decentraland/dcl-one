@@ -31,13 +31,14 @@ export function mediaKey(bytes: Buffer): string {
   return createHash("sha256").update(ENCODER).update(bytes).digest("hex").slice(0, 24);
 }
 
-export type RasterKind = "png" | "jpg" | "gif";
+export type RasterKind = "png" | "jpg" | "gif" | "webp";
 
 /** The raster format by magic bytes (GitBook assets often have no extension). */
 export function rasterKind(bytes: Buffer): RasterKind | null {
   if (bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return "png";
   if (bytes[0] === 0xff && bytes[1] === 0xd8) return "jpg";
   if (bytes.subarray(0, 4).toString("ascii") === "GIF8") return "gif";
+  if (bytes.subarray(0, 4).toString("ascii") === "RIFF" && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
   return null;
 }
 
@@ -57,7 +58,7 @@ export function isAnimatedPng(bytes: Buffer): boolean {
 
 /** x.png -> x.webp, extensionless -> x.webp; the served name of a replaced image. */
 export function webpName(rel: string): string {
-  return rel.replace(/\.(png|jpe?g|gif)$/i, "") + ".webp";
+  return /\.webp$/i.test(rel) ? rel : rel.replace(/\.(png|jpe?g|gif)$/i, "") + ".webp";
 }
 
 /**
@@ -129,9 +130,12 @@ export class DocsMedia {
       const input = path.join(scratch, `source.${kind}`);
       fs.writeFileSync(input, bytes);
       const apng = isAnimatedPng(bytes);
-      const animated = apng || (kind === "gif" && (await this.run(this.magick, ["identify", "-ping", "-format", "x", input], rel)).length > 1);
+      const animatedWebp = kind === "webp" && bytes.subarray(12, 16).toString("ascii") === "VP8X" && (bytes[20] & 2) !== 0;
+      const animated = animatedWebp || apng || (kind === "gif" && (await this.run(this.magick, ["identify", "-ping", "-format", "x", input], rel)).length > 1);
       const output = path.join(scratch, "out.webp");
-      if (animated && !apng) {
+      if (animatedWebp) {
+        fs.copyFileSync(input, output);
+      } else if (animated && !apng) {
         const mixed = path.join(scratch, "mixed.webp"), lossy = path.join(scratch, "lossy.webp");
         await this.run(this.gif2webp, ["-quiet", "-mixed", "-q", String(ANIMATED_QUALITY), "-m", "6", "-min_size", input, "-o", mixed], rel);
         let best = mixed;
@@ -147,7 +151,9 @@ export class DocsMedia {
           : ["-limit", "thread", "2", `${input}[0]`, "-auto-orient", "-resize", `${STATIC_WIDTH}x>`, "-strip",
             ...(bytes.length < LOSSLESS_BELOW ? ["-define", "webp:lossless=true"] : ["-quality", String(STATIC_QUALITY)]),
             "-define", "webp:method=6"];
+        const width = kind === "webp" ? Number(await this.run(this.magick, ["identify", "-ping", "-format", "%w", input], rel)) : 0;
         await this.run(this.magick, [...args, output], rel);
+        if (kind === "webp" && width <= STATIC_WIDTH && fs.statSync(output).size >= bytes.length) fs.copyFileSync(input, output);
       }
       const [width, height] = (await this.run(this.magick, ["identify", "-ping", "-format", "%w %h\\n", output], rel))
         .trim().split("\n")[0].split(" ").map(Number);

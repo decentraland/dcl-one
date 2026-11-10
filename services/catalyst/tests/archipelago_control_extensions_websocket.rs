@@ -15,6 +15,8 @@ mod archipelago;
 mod db;
 #[path = "support/fence.rs"]
 mod fence;
+// `fence` loads `gate` for itself; this binary needs it at the top as well.
+#[allow(clippy::duplicate_mod)]
 #[path = "support/gate.rs"]
 mod gate;
 #[path = "support/nats_broker.rs"]
@@ -1178,7 +1180,10 @@ async fn common_endpoint_keeps_legacy_bytes_heartbeats_and_invalid_input_bounds(
     }
     send(&mut current, &position(f32::NAN, None)).await;
     legacy_barrier(&mut current, 3).await;
-    tokio::time::sleep(Duration::from_millis(600)).await;
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_millis(600)).await;
+    tokio::time::resume();
+    legacy_barrier(&mut current, 3).await;
     assert_eq!(
         server.state.peers.peer(&address).unwrap().position,
         [3.0, 2.0, 3.0],

@@ -10,7 +10,7 @@ import { renderToPipeableStream } from "react-dom/server";
 import { markdownResponse, wantsMarkdown } from "@/data/lib/agent/markdown";
 import { renderAgentMarkdown } from "@/data/lib/agent/dispatch.server";
 import { ensureSid } from "@/core/lib/telemetry/session";
-import { track } from "@/core/lib/telemetry/track";
+import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
 import { applyFrameIsolation } from "./lib/frame-isolation";
 
@@ -44,16 +44,19 @@ export default function handleRequest(
   }
   applyFrameIsolation(request, responseHeaders);
 
-  if (responseStatusCode === 404) {
+  const userAgent = request.headers.get("user-agent");
+  const bot = !!userAgent && isbot(userAgent);
+  // A crawler's misses are not a visitor's: no Segment request per scanned path.
+  if (responseStatusCode === 404 && !bot) {
     try {
       const { sid } = ensureSid(request);
       const u = new URL(request.url);
       track(
         "page_not_found",
         {
-          path: u.pathname + u.search,
-          referrer: request.headers.get("referer") ?? "",
-          ua: request.headers.get("user-agent") ?? "",
+          path: withoutSensitiveParams(u.pathname + u.search),
+          referrer: withoutSensitiveParams(request.headers.get("referer") ?? ""),
+          ua: userAgent ?? "",
         },
         { sid, story: "sites-error" },
       );
@@ -63,10 +66,9 @@ export default function handleRequest(
 
   return new Promise((resolve, reject) => {
     let shellRendered = false;
-    const userAgent = request.headers.get("user-agent");
 
     const readyOption: keyof RenderToPipeableStreamOptions =
-      (userAgent && isbot(userAgent)) || routerContext.isSpaMode
+      bot || routerContext.isSpaMode
         ? "onAllReady"
         : "onShellReady";
 

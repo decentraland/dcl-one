@@ -136,6 +136,72 @@ fn state_over(
     ))
 }
 
+#[tokio::test]
+async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_callers_connection() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_rights(&db.pool).await;
+    let state = state_over(db.pool.clone(), Settings::for_tests(), None);
+    let mut conn = db.pool.acquire().await.unwrap();
+    assert!(state.estate_at(&mut conn, 2, 2).await.unwrap().is_none());
+    sqlx::query("INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started) VALUES ($1,$2,$3,1,1,timezone('UTC',now()),true)")
+        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE).execute(&mut *conn).await.unwrap();
+    assert_eq!(
+        state
+            .estate_at(&mut conn, 2, 2)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .as_deref(),
+        Some("500")
+    );
+    assert!(
+        state
+            .estate_at(&mut conn, 1, 1)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .is_none()
+    );
+    sqlx::query("DELETE FROM land_authz.estate_land WHERE land_token_id=$1::numeric")
+        .bind(land_token(2, 2))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .estate_at(&mut conn, 2, 2)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .is_none()
+    );
+    for assignment in [
+        "folded_at=timezone('UTC',now())-interval '31 minutes'",
+        "last_block=2",
+        "full_replay_started=false",
+        "land_registry='other'",
+    ] {
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now()),last_block=1,full_replay_started=true,land_registry=$1").bind(LAND).execute(&mut *conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE land_authz.index_cursor SET {assignment}"
+        )))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            state.estate_at(&mut conn, 2, 2).await.unwrap().is_none(),
+            "{assignment}"
+        );
+    }
+    drop(conn);
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();
@@ -185,8 +251,12 @@ async fn insert(pool: &PgPool, events: &[AuthzEvent]) -> usize {
     insert_events(&mut conn, events).await.unwrap()
 }
 
+/// The rebuild fold, under the cursor of the configured registries that a
+/// pass always holds before it folds (created here when the test has none).
 async fn fold_all(pool: &PgPool) -> indexer::FoldCounts {
-    fold(pool, &Settings::for_tests(), None).await.unwrap()
+    let settings = Settings::for_tests();
+    indexer::ensure_cursor(pool, &settings).await.unwrap();
+    fold(pool, &settings, None).await.unwrap()
 }
 
 async fn token_leg(pool: &PgPool, token: &str, column: &str) -> Option<String> {
@@ -249,7 +319,208 @@ async fn a_granted_then_revoked_update_operator_ends_revoked() {
     )
     .await;
     fold_all(&db.pool).await;
-    assert_eq!(token_leg(&db.pool, "1", "update_operator").await, None);
+    assert_eq!(
+        token_leg(&db.pool, "1", "update_operator").await.as_deref(),
+        Some(ZERO_ADDR),
+        "a cleared leg keeps the zero address, as the land-manager subgraph \
+         stores it (captures/lambdas-land/LL-18-*.json)"
+    );
+    db.drop().await;
+}
+
+/// The land-manager subgraph stores `null` for a leg never set and the zero
+/// address for one cleared on chain; lamb2 passes both through
+/// (`captures/lambdas-land/LL-18-*.json`). A transfer still clears to NULL.
+/// The deploy check reads a cleared leg as no leg: the zero address is
+/// never granted, and a parcel's cleared update operator falls back to its
+/// estate's, as before.
+#[tokio::test]
+async fn a_cleared_leg_answers_the_zero_address_and_never_grants() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_APPROVAL,
+                Some("6"),
+                Some(OWNER),
+                Some(BOB),
+                None,
+            ),
+            ev(
+                11,
+                0,
+                KIND_APPROVAL,
+                Some("6"),
+                Some(OWNER),
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                12,
+                0,
+                KIND_APPROVAL,
+                Some("7"),
+                Some(OWNER),
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                12,
+                1,
+                KIND_UPDATE_OPERATOR,
+                Some("7"),
+                None,
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(13, 0, KIND_TRANSFER, Some("7"), Some(BOB), None, None),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    assert_eq!(
+        token_leg(&db.pool, "6", "operator").await.as_deref(),
+        Some(ZERO_ADDR)
+    );
+    assert_eq!(
+        token_leg(&db.pool, "6", "update_operator").await,
+        None,
+        "never set"
+    );
+    assert_eq!(
+        token_leg(&db.pool, "7", "operator").await,
+        None,
+        "transferred"
+    );
+    assert_eq!(token_leg(&db.pool, "7", "update_operator").await, None);
+
+    seed_rights(&db.pool).await;
+    sqlx::query("UPDATE land_authz.token_right SET update_operator = $2 WHERE token_address = $1 AND x = 2 AND y = 2")
+        .bind(LAND)
+        .bind(ZERO_ADDR)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let rights = store.rights(2, 2).await.unwrap().unwrap();
+    assert_eq!(
+        rights.subject.update_operator.as_deref(),
+        Some(ZERO_ADDR),
+        "lamb2's `parcel.updateOperator ?? estate.updateOperator` keeps the parcel's zero"
+    );
+    assert!(!rights.flags_for(CARL).update_operator);
+    assert!(
+        rights.flags_for(ZERO_ADDR).update_operator,
+        "lamb2's comparison"
+    );
+    assert_eq!(
+        rights.deploy_flags_for(CARL).granting_leg(),
+        Some(LandRightLeg::Operator),
+        "the estate's operator"
+    );
+    assert!(
+        rights.deploy_flags_for(CARL).update_operator,
+        "the estate's update operator still reaches the parcel"
+    );
+    assert!(!rights.deploy_flags_for(ZERO_ADDR).grants_deploy());
+    let updatable = store.parcels_updatable_by(CARL).await.unwrap();
+    assert_eq!(
+        updatable.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+        vec![(2, 2)]
+    );
+    db.drop().await;
+}
+
+/// `schemas/migrations/0027_land_authz_cleared_legs.sql` rewrites the legs
+/// the old fold stored as NULL for a grant to the zero address, once, and
+/// leaves a leg a later transfer cleared.
+#[tokio::test]
+async fn the_cleared_legs_step_backfills_the_zero_address() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("1"),
+                None,
+                Some(ALICE),
+                None,
+            ),
+            ev(
+                11,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("1"),
+                None,
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                11,
+                1,
+                KIND_APPROVAL,
+                Some("1"),
+                Some(OWNER),
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(
+                12,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("2"),
+                None,
+                Some(ZERO_ADDR),
+                None,
+            ),
+            ev(13, 0, KIND_TRANSFER, Some("2"), Some(BOB), None, None),
+            ev(
+                14,
+                0,
+                KIND_UPDATE_OPERATOR,
+                Some("3"),
+                None,
+                Some(CARL),
+                None,
+            ),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    sqlx::query("UPDATE land_authz.token_right SET operator = NULL, update_operator = NULL WHERE token_id IN (1, 2)")
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    let step = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0027_land_authz_cleared_legs.sql"
+    ));
+    for _ in 0..2 {
+        sqlx::raw_sql(step).execute(&db.pool).await.unwrap();
+    }
+    assert_eq!(
+        token_leg(&db.pool, "1", "update_operator").await.as_deref(),
+        Some(ZERO_ADDR)
+    );
+    assert_eq!(
+        token_leg(&db.pool, "1", "operator").await.as_deref(),
+        Some(ZERO_ADDR)
+    );
+    assert_eq!(token_leg(&db.pool, "2", "update_operator").await, None);
+    assert_eq!(
+        token_leg(&db.pool, "3", "update_operator").await.as_deref(),
+        Some(CARL)
+    );
     db.drop().await;
 }
 
@@ -495,6 +766,7 @@ async fn folding_twice_is_idempotent_and_the_incremental_fold_matches_the_rebuil
         return;
     };
     let settings = Settings::for_tests();
+    indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     insert(
         &db.pool,
         &[
@@ -716,6 +988,67 @@ async fn seed_rights(pool: &PgPool) {
         .unwrap();
 }
 
+/// lamb2 folds the owner's authorization log into a JS `Map`
+/// (`parcel-rights-fetcher.ts`): the legs list operators by the approval
+/// that opened their current grant, a repeated approval keeps its place and
+/// a revoke then approve moves the operator to the end.
+#[tokio::test]
+async fn grant_legs_keep_lamb2s_map_order() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let grant = |block, index, kind, operator, approved| {
+        ev(
+            block,
+            index,
+            kind,
+            None,
+            Some(BOB),
+            Some(operator),
+            Some(approved),
+        )
+    };
+    insert(
+        &db.pool,
+        &[
+            ev(
+                10,
+                0,
+                KIND_TRANSFER,
+                Some(TOKEN_37_55),
+                Some(BOB),
+                None,
+                None,
+            ),
+            grant(11, 0, KIND_UPDATE_MANAGER, DANA, true),
+            grant(12, 0, KIND_UPDATE_MANAGER, CARL, true),
+            grant(13, 0, KIND_UPDATE_MANAGER, ALICE, true),
+            grant(14, 0, KIND_UPDATE_MANAGER, DANA, true),
+            grant(15, 0, KIND_UPDATE_MANAGER, CARL, false),
+            grant(16, 0, KIND_UPDATE_MANAGER, CARL, true),
+            grant(17, 0, KIND_APPROVED_FOR_ALL, CARL, true),
+            grant(17, 1, KIND_APPROVED_FOR_ALL, ALICE, true),
+            grant(18, 0, KIND_APPROVED_FOR_ALL, DANA, true),
+            grant(18, 1, KIND_APPROVED_FOR_ALL, DANA, false),
+        ],
+    )
+    .await;
+    fold_all(&db.pool).await;
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let rights = store.rights(37, 55).await.unwrap().unwrap();
+    assert_eq!(rights.subject.owner, BOB);
+    assert_eq!(rights.operators.update_managers, vec![DANA, ALICE, CARL]);
+    assert_eq!(rights.operators.approved_for_all, vec![CARL, ALICE]);
+    assert_eq!(
+        store
+            .account_grants(LAND, BOB, KIND_UPDATE_MANAGER)
+            .await
+            .unwrap(),
+        vec![DANA, ALICE, CARL]
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn rights_batch_matches_the_per_leg_reading() {
     let Some(db) = ScratchDb::create().await else {
@@ -775,6 +1108,22 @@ async fn rights_batch_matches_the_per_leg_reading() {
     assert_eq!(p4.subject.registry, LAND);
     assert!(store.rights_batch(&[]).await.unwrap().is_empty());
 
+    let deploy = store.deploy_rights_batch(&parcels).await.unwrap();
+    for (ordered, deploy) in batch.iter().zip(&deploy) {
+        let sorted = |r: &Option<ParcelRights>| {
+            r.clone().map(|mut r| {
+                r.operators.update_managers.sort();
+                r.operators.approved_for_all.sort();
+                r
+            })
+        };
+        assert_eq!(
+            sorted(ordered),
+            sorted(deploy),
+            "the deploy batch only drops the order"
+        );
+    }
+
     assert_eq!(p1.flags_for(BOB).granting_leg(), Some(LandRightLeg::Owner));
     assert_eq!(
         p1.flags_for(DANA).granting_leg(),
@@ -824,6 +1173,87 @@ async fn rights_batch_matches_the_per_leg_reading() {
     db.drop().await;
 }
 
+/// The land-manager subgraph's `Parcel.id` is the token id as lower-case
+/// hex without leading zeros, and lamb2 lists `lands-permissions` in its
+/// string order (`captures/lambdas-land/LL-17-*.json`): (9, 0) sorts after
+/// (22, -19).
+#[tokio::test]
+async fn update_operator_page_answers_the_subgraph_parcel_id_in_string_order() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    for (i, (x, y)) in [
+        (16, 9),
+        (16, 65),
+        (22, -19),
+        (0, 0),
+        (0, 1),
+        (-47, 111),
+        (17, 147),
+        (9, 0),
+        (0, -1),
+        (-1, -1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, update_operator, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, $6, 1, $7)",
+        )
+        .bind(LAND)
+        .bind(land_token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(BOB)
+        .bind(DANA)
+        .bind(i as i32)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+    let store = Store::new(db.pool.clone(), LAND, ESTATE);
+    let (page, total) = store
+        .parcels_with_update_operator_page(DANA, 100, 0)
+        .await
+        .unwrap();
+    assert_eq!(total, 10);
+    assert_eq!(
+        page.iter()
+            .map(|p| (p.id.as_str(), p.x, p.y))
+            .collect::<Vec<_>>(),
+        vec![
+            ("0x0", 0, 0),
+            ("0x1", 0, 1),
+            ("0x1000000000000000000000000000000009", 16, 9),
+            ("0x1000000000000000000000000000000041", 16, 65),
+            ("0x1100000000000000000000000000000093", 17, 147),
+            ("0x16ffffffffffffffffffffffffffffffed", 22, -19),
+            ("0x900000000000000000000000000000000", 9, 0),
+            (
+                "0xffffffffffffffffffffffffffffffd10000000000000000000000000000006f",
+                -47,
+                111
+            ),
+            ("0xffffffffffffffffffffffffffffffff", 0, -1),
+            (
+                "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                -1,
+                -1
+            ),
+        ]
+    );
+    let (page, _) = store
+        .parcels_with_update_operator_page(DANA, 2, 6)
+        .await
+        .unwrap();
+    assert_eq!(
+        page.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+        vec![(9, 0), (-47, 111)]
+    );
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn update_operator_page_carries_the_total() {
     let Some(db) = ScratchDb::create().await else {
@@ -838,25 +1268,50 @@ async fn update_operator_page_carries_the_total() {
         .await
         .unwrap();
 
-    let all = store.parcels_with_update_operator(DANA).await.unwrap();
-    assert_eq!(all.len(), 3);
+    // (16, 0) and (0, 5) sort apart in numeric and in string order.
+    for (i, (x, y)) in [(16, 0), (0, 5)].into_iter().enumerate() {
+        sqlx::query(
+            "INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, update_operator, updated_block, updated_log) \
+             VALUES ($1, $2::numeric, $3, $4, $5, $6, 2, $7)",
+        )
+        .bind(LAND)
+        .bind(land_token(x, y))
+        .bind(x)
+        .bind(y)
+        .bind(BOB)
+        .bind(DANA)
+        .bind(i as i32)
+        .execute(&db.pool)
+        .await
+        .unwrap();
+    }
+
+    let all = [(16, 0), (2, 2), (3, 3), (4, 4), (0, 5)];
+    let coords = |page: Vec<resolve::OperatedParcel>| -> Vec<(i32, i32)> {
+        page.iter().map(|p| (p.x, p.y)).collect()
+    };
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 0)
         .await
         .unwrap();
-    assert_eq!((total, page), (3, all[..2].to_vec()));
+    assert_eq!((total, coords(page)), (5, all[..2].to_vec()));
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 2)
         .await
         .unwrap();
-    assert_eq!((total, page), (3, all[2..].to_vec()));
+    assert_eq!((total, coords(page)), (5, all[2..4].to_vec()));
+    let (page, total) = store
+        .parcels_with_update_operator_page(DANA, 2, 4)
+        .await
+        .unwrap();
+    assert_eq!((total, coords(page)), (5, all[4..].to_vec()));
     let (page, total) = store
         .parcels_with_update_operator_page(DANA, 2, 10)
         .await
         .unwrap();
     assert_eq!(
         (page.len(), total),
-        (0, 3),
+        (0, 5),
         "past the end still reports the total"
     );
     let (page, total) = store
@@ -868,12 +1323,16 @@ async fn update_operator_page_carries_the_total() {
 }
 
 async fn present(pool: &PgPool) -> bool {
-    indexer::ready_cursor(pool, NETWORK_MAINNET).await.is_some()
+    indexer::ready_cursor(pool, NETWORK_MAINNET, LAND, ESTATE)
+        .await
+        .is_some()
 }
 
 async fn set(pool: &PgPool, block: i64) {
     let mut conn = pool.acquire().await.unwrap();
-    set_cursor(&mut conn, NETWORK_MAINNET, block).await.unwrap();
+    set_cursor(&mut conn, &Settings::for_tests(), block)
+        .await
+        .unwrap();
 }
 
 #[tokio::test]
@@ -896,14 +1355,14 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "an unfolded cursor cannot grant rights"
     );
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 101) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
             .unwrap(),
         "partial sync cannot publish readiness"
     );
     assert!(!present(pool).await);
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap(),
         "an existing cursor does not prove its full history was scanned"
@@ -935,7 +1394,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         "repair must disable stale rights immediately"
     );
     assert!(
-        !mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        !mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap()
     );
@@ -945,7 +1404,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
         .await
         .unwrap();
     assert!(
-        mark_folded(pool, NETWORK_MAINNET, (base + 100) as u64)
+        mark_folded(pool, &Settings::for_tests(), (base + 100) as u64)
             .await
             .unwrap()
     );
@@ -954,7 +1413,7 @@ async fn local_rights_are_used_only_after_a_recent_complete_fold() {
     set(pool, base + 101).await;
     assert!(!present(pool).await, "backfill invalidates the old fold");
     assert!(
-        mark_folded(pool, NETWORK_MAINNET, (base + 101) as u64)
+        mark_folded(pool, &Settings::for_tests(), (base + 101) as u64)
             .await
             .unwrap()
     );
@@ -1507,21 +1966,35 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     assert_eq!(body["totalAmount"], 1);
     assert_eq!(
         body["elements"][0],
-        json!({ "id": TOKEN_37_55, "x": "37", "y": "55", "owner": ALICE, "updateOperator": BOB })
+        json!({ "id": "0x2500000000000000000000000000000037", "x": "37", "y": "55", "owner": ALICE, "updateOperator": BOB }),
+        "the land-manager subgraph's Parcel.id"
     );
-    let (_, _, body) = get_json(
-        &app,
-        &format!("/lambdas/users/{BOB}/lands-permissions?pageSize=0&pageNum=-1"),
-    )
-    .await;
-    assert_eq!(
-        (
-            body["pageSize"].as_i64(),
-            body["pageNum"].as_i64(),
-            body["totalAmount"].as_i64()
-        ),
-        (Some(1), Some(1), Some(1))
-    );
+    // lamb2's `paginationObject` and `slice`: nothing is clamped, a
+    // negative bound counts from the end, `NaN` is answered `null`.
+    for (query, page_size, page_num, elements) in [
+        ("pageSize=0&pageNum=-1", json!(0), json!(-1), 0),
+        ("pageSize=1&pageNum=0", json!(1), json!(0), 0),
+        ("pageSize=-1&pageNum=0", json!(-1), json!(0), 0),
+        ("pageSize=abc", Value::Null, json!(1), 0),
+        ("pageSize=1.9&pageNum=1x", json!(1), json!(1), 1),
+    ] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{BOB}/lands-permissions?{query}"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{query}");
+        assert_eq!(
+            (
+                &body["pageSize"],
+                &body["pageNum"],
+                body["elements"].as_array().unwrap().len(),
+                body["totalAmount"].as_i64()
+            ),
+            (&page_size, &page_num, elements, Some(1)),
+            "{query}"
+        );
+    }
     let (_, _, body) = get_json(&app, &format!("/lambdas/users/{CARL}/lands-permissions")).await;
     assert_eq!(
         (
@@ -1551,6 +2024,24 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     )
     .await;
     assert_eq!(body["owner"], true, "case-insensitive address");
+    // `EthAddress.validate` wants a lower-case `0x`.
+    let (status, _, body) = get_json(
+        &app,
+        &format!("/lambdas/users/0X{}/parcels/37/55/permissions", &ALICE[2..]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["message"], "Address must be a valid Ethereum address");
+    // `parseInt`: a fraction, a suffix and a hex prefix all read.
+    for parcel in ["37.9/55", "37abc/55", "0x25/55", "%2037/+55"] {
+        let (status, _, body) = get_json(
+            &app,
+            &format!("/lambdas/users/{BOB}/parcels/{parcel}/permissions"),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{parcel}: {body}");
+        assert_eq!(body["updateOperator"], true, "{parcel}");
+    }
     let (status, _, _) = get_json(
         &app,
         &format!("/lambdas/users/{DANA}/parcels/99/99/permissions"),
@@ -1684,8 +2175,11 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         "only the touched token was refolded"
     );
     assert_eq!(
-        token_leg(&db.pool, TOKEN_37_55, "update_operator").await,
-        None
+        token_leg(&db.pool, TOKEN_37_55, "update_operator")
+            .await
+            .as_deref(),
+        Some(ZERO_ADDR),
+        "the cleared leg"
     );
     let row = cursor(&db.pool, NETWORK_MAINNET).await.unwrap().unwrap();
     assert_eq!(
@@ -1706,7 +2200,10 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
         Utc::now()
     ));
     let (_, _, body) = get_json(&app, "/lambdas/parcels/37/55/operators").await;
-    assert_eq!(body["updateOperator"], Value::Null);
+    assert_eq!(
+        body["updateOperator"], ZERO_ADDR,
+        "lamb2 answers the cleared leg"
+    );
     assert_eq!(
         can_deploy(&s2, (37, 55), BOB).await.unwrap().verdict,
         Verdict::Denied
@@ -1814,6 +2311,495 @@ async fn the_indexer_catches_up_under_a_budget_resumes_after_a_kill_and_publishe
     let out = indexer::run_pass(&replay, &ctx2).await.unwrap();
     assert!(out.paused && out.requests == 0, "{out:?}");
     jobs2.shutdown(std::time::Duration::from_secs(1)).await;
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_full_replay_rebinds_a_cursor_indexed_from_other_registries() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (chain, _) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let configured = |replay_from_block: Option<u64>| Settings {
+        rpc_url: Some(url.clone()),
+        index_enabled: true,
+        requests_per_pass: 50,
+        replay_from_block,
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+
+    // A published index of other registries (a testnet stack before a
+    // redeploy), holding an estate link the configured estate registry never
+    // made: LAND (37, 55) in estate 500, which that registry gives ALICE.
+    const OLD_LAND: &str = "0x00000000000000000000000000000000000000aa";
+    const OLD_ESTATE: &str = "0x00000000000000000000000000000000000000bb";
+    let old = Settings {
+        land_registry: OLD_LAND.into(),
+        estate_registry: OLD_ESTATE.into(),
+        ..configured(None)
+    };
+    let old_last = (START + 5_000) as i64;
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()), history_timestamps_ready = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_last)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 500, $2, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .bind(old_last - 1)
+    .execute(pool)
+    .await
+    .unwrap();
+    // A pass of the old registries synced that link's event and stopped
+    // before its fold (it resumes below, after the rebind).
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: OLD_ESTATE.to_string(),
+            ..estate_ev(old_last - 1, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT land_token_id::text, estate_token_id::text FROM land_authz.estate_land ORDER BY 1",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    let kept = |why: &'static str| async move {
+        let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+        assert_eq!(
+            (
+                row.land_registry.as_str(),
+                row.estate_registry.as_str(),
+                row.last_block
+            ),
+            (OLD_LAND, OLD_ESTATE, old_last),
+            "{why}"
+        );
+        assert_eq!(links().await.len(), 1, "{why}");
+    };
+
+    // Without a replay, or with a partial one, the configured registries are
+    // refused with the remedy named, and nothing is rewound or consumed.
+    for replay_from_block in [None, Some(START + 100)] {
+        let state = state_over(pool.clone(), configured(replay_from_block), None);
+        let err = format!("{:#}", indexer::run_pass(&state, &ctx).await.unwrap_err());
+        assert!(
+            err.contains(&format!("LAND_AUTHZ_REPLAY_FROM_BLOCK={START}")),
+            "{err}"
+        );
+        assert!(!state.replay_requested.load(Ordering::SeqCst));
+        kept("a refused pass rewinds nothing").await;
+    }
+
+    // A full replay whose rewind fails is not consumed: the same state
+    // retries it, and the failed write changed nothing.
+    let full = state_over(pool.clone(), configured(Some(START)), None);
+    sqlx::query(
+        "CREATE FUNCTION land_authz.refuse_cursor_update() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'cursor write refused by the test'; END $$",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_cursor_update BEFORE UPDATE ON land_authz.index_cursor \
+         FOR EACH ROW EXECUTE FUNCTION land_authz.refuse_cursor_update()",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    let err = format!("{:#}", indexer::run_pass(&full, &ctx).await.unwrap_err());
+    assert!(err.contains("cursor write refused by the test"), "{err}");
+    assert!(!full.replay_requested.load(Ordering::SeqCst));
+    kept("the failed rewind changed nothing").await;
+    sqlx::query("DROP TRIGGER refuse_cursor_update ON land_authz.index_cursor")
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query("DROP FUNCTION land_authz.refuse_cursor_update()")
+        .execute(pool)
+        .await
+        .unwrap();
+
+    // The retry rebinds the cursor to the configured registries, re-reads
+    // their log from the start and publishes; the old estate link is gone
+    // and only the configured estate registry's own link is folded.
+    let out = indexer::run_pass(&full, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+    assert!(full.replay_requested.load(Ordering::SeqCst));
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (
+            row.land_registry.as_str(),
+            row.estate_registry.as_str(),
+            row.last_block
+        ),
+        (LAND, ESTATE, (START + 1_000) as i64)
+    );
+    assert_eq!(links().await, vec![(land_token(2, 2), "500".to_string())]);
+    assert_eq!(
+        token_leg(pool, TOKEN_37_55, "owner").await.as_deref(),
+        Some(ALICE)
+    );
+    // The decisions at LAND (37, 55), which ALICE holds directly; DANA
+    // manages ALICE's estates, not her LAND. A stale link from it into estate
+    // 500 would turn both into Unknown, locking the owner out.
+    let at_37_55 = || async {
+        let mut verdicts = Vec::new();
+        for actor in [ALICE, DANA] {
+            let decision = can_deploy(&full, (37, 55), actor).await.unwrap();
+            assert!(
+                matches!(decision.source, DecisionSource::Index { .. }),
+                "{:?}",
+                decision.source
+            );
+            verdicts.push(decision.verdict);
+        }
+        verdicts
+    };
+    let decisions = vec![Verdict::Granted(LandRightLeg::Owner), Verdict::Denied];
+    assert_eq!(at_37_55().await, decisions);
+
+    // The old pass resumes its fold: the cursor no longer names its
+    // registries, so it writes nothing, publishes nothing, and the new
+    // authorization stands.
+    let stale = fold(pool, &old, None).await;
+    assert_eq!(links().await, vec![(land_token(2, 2), "500".to_string())]);
+    assert_eq!(at_37_55().await, decisions);
+    assert!(matches!(stale, Err(sqlx::Error::RowNotFound)), "{stale:?}");
+    assert!(!mark_folded(pool, &old, old_last as u64).await.unwrap());
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(row.folded_block, Some((START + 1_000) as i64));
+
+    // A node still configured with the old registries (a rolling deploy)
+    // never reads the published index as its own: its rights rows are of
+    // the old registries, the estate links of the new one. It falls back
+    // (here there is no fallback reader), and its status shows why.
+    assert!(full.ready().await.is_some());
+    let stale_reader = state_over(pool.clone(), old.clone(), None);
+    assert!(stale_reader.ready().await.is_none());
+    let answer = can_deploy(&stale_reader, (37, 55), ALICE).await;
+    assert!(matches!(answer, Err(Unavailable::NoSource)), "{answer:?}");
+    let (_, _, body) = get_json(&router(stale_reader), "/lambdas/land-authz/status").await;
+    assert_eq!(body["ready"], false);
+    assert_eq!(
+        (
+            body["landRegistry"].as_str(),
+            body["cursor"]["landRegistry"].as_str(),
+            body["cursor"]["estateRegistry"].as_str(),
+        ),
+        (Some(OLD_LAND), Some(LAND), Some(ESTATE))
+    );
+    let (_, _, body) = get_json(&router(full.clone()), "/lambdas/land-authz/status").await;
+    assert_eq!(body["ready"], true);
+    db.drop().await;
+}
+
+/// The other order: an old registries' fold already running when a full
+/// replay rebinds the cursor. Its transaction holds the cursor row, so the
+/// rebind waits for it, and the links it wrote are deleted after it.
+#[tokio::test]
+async fn a_fold_in_flight_holds_the_rebind_until_it_commits_and_its_links_are_dropped() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    insert(
+        pool,
+        &[AuthzEvent {
+            token_address: old.estate_registry.clone(),
+            ..estate_ev((START + 10) as i64, 0, KIND_ADD_LAND, "500", TOKEN_37_55)
+        }],
+    )
+    .await;
+    let links = || async {
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM land_authz.estate_land")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+
+    let mut folding = pool.begin().await.unwrap();
+    let counts = indexer::fold_in_tx(&mut folding, &old, None).await.unwrap();
+    assert_eq!(counts.estate_lands, 1);
+    // The cursor's ordinary writers do not wait on a running fold (one left
+    // by a lost lease can run for many minutes).
+    let advanced = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        let mut conn = pool.acquire().await.unwrap();
+        set_cursor(&mut conn, &old, (START + 20) as i64).await
+    })
+    .await;
+    assert!(
+        matches!(advanced, Ok(Ok(()))),
+        "set_cursor waited on the fold: {advanced:?}"
+    );
+    let rebind = {
+        let (pool, configured) = (pool.clone(), configured.clone());
+        tokio::spawn(async move { begin_replay(&pool, &configured, START).await })
+    };
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(!rebind.is_finished(), "the rebind waits for the fold");
+    folding.commit().await.unwrap();
+    assert!(rebind.await.unwrap().unwrap());
+
+    // The rebind's deletion landed after the old link, and the old
+    // registries can no longer fold.
+    assert_eq!(links().await, 0);
+    let row = cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap();
+    assert_eq!(
+        (row.land_registry.as_str(), row.estate_registry.as_str()),
+        (LAND, ESTATE)
+    );
+    let stale = fold(pool, &old, None).await;
+    assert_eq!(links().await, 0);
+    assert!(matches!(stale, Err(sqlx::Error::RowNotFound)), "{stale:?}");
+    db.drop().await;
+}
+
+/// A request of a node still configured with the old registries that
+/// checked readiness before a rebind, then stalled while the new registries
+/// were rebound, folded and published, answers from the old registries'
+/// coherent state when it resumes, never from their rights joined to the
+/// new registries' estate links.
+#[tokio::test]
+async fn a_reader_that_checked_before_a_rebind_answers_from_its_registries_alone() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let (chain, _) = fixture_chain();
+    let url = serve(chain.clone()).await;
+    let configured = Settings {
+        rpc_url: Some(url.clone()),
+        index_enabled: true,
+        requests_per_pass: 50,
+        replay_from_block: Some(START),
+        ..Settings::for_tests()
+    };
+    let old = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let (_jobs, ctx) = job_ctx().await;
+
+    // The old registries' published index: CARL holds LAND (2, 2) directly,
+    // and BOB holds their estate 500, which holds no LAND.
+    indexer::ensure_cursor(pool, &old).await.unwrap();
+    let old_block = (START + 10) as i64;
+    insert(
+        pool,
+        &[
+            AuthzEvent {
+                token_address: old.land_registry.clone(),
+                ..ev(
+                    old_block - 2,
+                    0,
+                    KIND_TRANSFER,
+                    Some(&land_token(2, 2)),
+                    Some(CARL),
+                    None,
+                    None,
+                )
+            },
+            AuthzEvent {
+                token_address: old.estate_registry.clone(),
+                ..ev(
+                    old_block - 1,
+                    0,
+                    KIND_TRANSFER,
+                    Some("500"),
+                    Some(BOB),
+                    None,
+                    None,
+                )
+            },
+        ],
+    )
+    .await;
+    fold(pool, &old, None).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, folded_block = $2, \
+         folded_at = timezone('UTC', now()) WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(old_block)
+    .execute(pool)
+    .await
+    .unwrap();
+
+    // The old node's request passes readiness and stalls there.
+    let stale = state_over(pool.clone(), old.clone(), None);
+    let mut held = stale
+        .ready_snapshot()
+        .await
+        .expect("the old registries' index is published");
+
+    // Meanwhile the configured node rebinds, folds its registries (its
+    // estate 500 holds LAND (2, 2)) and publishes.
+    let full = state_over(pool.clone(), configured, None);
+    let out = indexer::run_pass(&full, &ctx).await.unwrap();
+    assert!(out.published, "{out:?}");
+
+    // The stalled request resumes on its snapshot: CARL holds the LAND
+    // directly, as the old registries say, and BOB holds nothing on it.
+    let rights = stale
+        .store()
+        .deploy_rights_batch_on(&mut held.tx, &[(2, 2)])
+        .await
+        .unwrap()
+        .pop()
+        .flatten()
+        .expect("the old registries' LAND (2, 2)");
+    assert_eq!(
+        (
+            rights.subject.belongs_to_estate,
+            rights.subject.owner.as_str()
+        ),
+        (false, CARL)
+    );
+    assert_eq!(
+        rights.deploy_flags_for(CARL).granting_leg(),
+        Some(LandRightLeg::Owner)
+    );
+    assert_eq!(rights.deploy_flags_for(BOB).granting_leg(), None);
+    drop(held);
+
+    // A new request of the old node is not ready, and the configured node
+    // answers from its own registries.
+    let answer = can_deploy(&stale, (2, 2), BOB).await;
+    assert!(matches!(answer, Err(Unavailable::NoSource)), "{answer:?}");
+    assert_eq!(
+        can_deploy(&full, (2, 2), ALICE).await.unwrap().verdict,
+        Verdict::Granted(LandRightLeg::Owner)
+    );
+    db.drop().await;
+}
+
+#[tokio::test]
+async fn a_registry_switch_starts_the_new_log_at_its_start_and_a_partial_rewind_never_crosses_one()
+{
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    let pool = &db.pool;
+    let configured = Settings::for_tests();
+    let other = Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..Settings::for_tests()
+    };
+    let base = START as i64;
+    let row = || async { cursor(pool, NETWORK_MAINNET).await.unwrap().unwrap() };
+    let timestamps_ready = || async {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT history_timestamps_ready FROM land_authz.index_cursor WHERE network = $1",
+        )
+        .bind(NETWORK_MAINNET)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    };
+
+    // Another registries' cursor standing BEFORE the configured start: a
+    // switch still starts the new log exactly at the start, owes the
+    // timestamps again and drops the estate links.
+    indexer::ensure_cursor(pool, &other).await.unwrap();
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET last_block = $2, history_timestamps_ready = true WHERE network = $1",
+    )
+    .bind(NETWORK_MAINNET)
+    .bind(base - 50)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO land_authz.estate_land (land_token_id, estate_token_id, updated_block, updated_log) \
+         VALUES ($1::numeric, 7, 1, 0)",
+    )
+    .bind(TOKEN_37_55)
+    .execute(pool)
+    .await
+    .unwrap();
+    assert!(begin_replay(pool, &configured, START).await.unwrap());
+    let r = row().await;
+    assert_eq!(
+        (
+            r.land_registry.as_str(),
+            r.estate_registry.as_str(),
+            r.last_block,
+            r.folded_block
+        ),
+        (LAND, ESTATE, base - 1, None)
+    );
+    assert!(r.full_replay_started);
+    assert!(
+        !timestamps_ready().await,
+        "the new registries' timestamps are owed"
+    );
+    let estate_links: i64 = sqlx::query_scalar("SELECT count(*) FROM land_authz.estate_land")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(estate_links, 0);
+
+    // On the same registries a rewind never moves the cursor forward, and the
+    // timestamps already repaired stay so.
+    sqlx::query("UPDATE land_authz.index_cursor SET history_timestamps_ready = true")
+        .execute(pool)
+        .await
+        .unwrap();
+    assert!(begin_replay(pool, &configured, START + 95).await.unwrap());
+    assert_eq!(
+        row().await.last_block,
+        base - 1,
+        "a later rewind skips no block"
+    );
+    set(pool, base + 500).await;
+    assert!(begin_replay(pool, &configured, START + 95).await.unwrap());
+    assert_eq!(
+        row().await.last_block,
+        base + 94,
+        "a rewind goes back to the block asked"
+    );
+    assert!(timestamps_ready().await);
+
+    // A partial rewind for other registries writes nothing.
+    assert!(!begin_replay(pool, &other, START + 95).await.unwrap());
+    let r = row().await;
+    assert_eq!((r.land_registry.as_str(), r.last_block), (LAND, base + 94));
+
+    // Nor can a pass for other registries advance or publish this cursor.
+    let mut conn = pool.acquire().await.unwrap();
+    assert!(matches!(
+        set_cursor(&mut conn, &other, base + 900).await,
+        Err(sqlx::Error::RowNotFound)
+    ));
+    drop(conn);
+    assert!(!mark_folded(pool, &other, (base + 94) as u64).await.unwrap());
+    assert_eq!(row().await.last_block, base + 94);
     db.drop().await;
 }
 
@@ -2500,7 +3486,7 @@ async fn repair_uses_spare_batches_scopes_registries_and_never_starves_live_head
     settings.requests_per_pass = 1;
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     let mut conn = db.pool.acquire().await.unwrap();
-    set_cursor(&mut conn, NETWORK_MAINNET, START as i64 + 204)
+    set_cursor(&mut conn, &Settings::for_tests(), START as i64 + 204)
         .await
         .unwrap();
     drop(conn);
@@ -2708,7 +3694,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         !allowed(pool, entity_time).await,
         "fold commit alone is not publication"
     );
-    mark_folded(pool, NETWORK_MAINNET, 103).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 103)
+        .await
+        .unwrap();
     assert!(allowed(pool, entity_time).await);
     let mut recent_membership = estate_ev(104, 0, KIND_ADD_LAND, "43", &token);
     recent_membership.block_time = cutoff;
@@ -2718,7 +3706,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         .await
         .unwrap();
     fold_all(pool).await;
-    mark_folded(pool, NETWORK_MAINNET, 104).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 104)
+        .await
+        .unwrap();
     assert!(
         !allowed(pool, entity_time).await,
         "membership timestamp independently revokes at the strict boundary"
@@ -2742,7 +3732,9 @@ async fn published_history_survives_unrelated_ingest_and_revokes_pending_subject
         "even an old timestamp cannot bypass the pending estate transfer fence"
     );
     fold_all(pool).await;
-    mark_folded(pool, NETWORK_MAINNET, 105).await.unwrap();
+    mark_folded(pool, &Settings::for_tests(), 105)
+        .await
+        .unwrap();
     assert!(allowed(pool, entity_time).await);
     let mut transferred = ev(
         106,
@@ -2775,7 +3767,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     indexer::ensure_cursor(&db.pool, &settings).await.unwrap();
     sqlx::query("UPDATE land_authz.index_cursor SET last_block=100, folded_block=100, folded_at=timezone('UTC',now())").execute(&db.pool).await.unwrap();
     assert!(
-        indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .is_some()
     );
@@ -2796,7 +3788,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     .await
     .unwrap();
     assert!(
-        indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .is_none()
     );
@@ -2807,7 +3799,7 @@ async fn readiness_and_status_use_database_freshness_boundaries() {
     for (minutes, expected) in [(29, true), (31, false)] {
         sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now())-make_interval(mins=>$1)").bind(minutes).execute(&db.pool).await.unwrap();
         assert_eq!(
-            indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+            indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
                 .await
                 .is_some(),
             expected
@@ -2974,7 +3966,7 @@ async fn slow_repair_publishes_first_and_keeps_committed_chunks_on_cancel_or_dea
         )
         .await
         .unwrap();
-        let published = indexer::ready_cursor(&db.pool, NETWORK_MAINNET)
+        let published = indexer::ready_cursor(&db.pool, NETWORK_MAINNET, LAND, ESTATE)
             .await
             .unwrap();
         assert_eq!(

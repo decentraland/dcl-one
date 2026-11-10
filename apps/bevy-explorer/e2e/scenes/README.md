@@ -4,7 +4,7 @@ The 17 SDK7 scenes of explorer-automation's Visual suite (`explorer/scenes/packa
 `955b338`, 2026-10-22), copied once: each exercises one rendering path (primitives and
 transforms, glTF models, materials, lights, text, UI, tweens, raycasts, animations, the avatar)
 and ends in `setupVisualTest`, which hides avatars and locks a virtual camera, so a frame of it
-is deterministic. Their Unity baselines were not copied: every reference is recorded anew by
+is deterministic. Every reference is recorded by
 dcl-one's CI (`../references`).
 
 The scenes were authored for one host scene that swapped bundles. Here every scene is a member of
@@ -22,16 +22,22 @@ DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes          # every scene
 DCL_SCENE_CLI=/path/to/dcl-scene-cli npm run build-scenes -- core   # one
 ```
 
-## The video scene
+## The pointer and raycast scenes
 
-`video` is the one scene not from explorer-automation: after unity-explorer's UUAV PlayMode suite
-(`Explorer/Assets/Plugins/UUAV/Packages/UUAV/Tests`), it plays a committed fixture through the
-engine's player, UUAV on the standalone and the browser's video element on the web, at parcel
-`204,0`. `assets/video/red_tone.mp4` is 6 s of solid red at 320x240 with a 440 Hz tone, written
-by `video/generate-fixture.sh` (ffmpeg, as the Unity fixtures are), so a presented frame is red
-whenever it is sampled and the audio path runs too. `specs/visual/video.test.ts` asserts the
-player's events and the frame's centre pixel instead of comparing a reference; the scene's label
-shows the last event for whoever reads the report's frame.
+Two scenes outside explorer-automation, in the workspace but not in `SCENES`, so without a
+reference:
 
-`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png`, `.jpg` and
-`.mp4` assets are in Git LFS.
+- `pointer-targets`, parcels `0,20` to `9,20`, spawn at `(8, 0, 8)` facing +X: the targets of
+  `specs/visual/pointer.test.ts`, which hovers and clicks them through `/hover_entity` and
+  `/click_entity`. A near box with a Down and an Up (`Near`), a wall and the box it hides
+  (`Behind`), a box 50 m out reachable by camera distance (`Far`, `maxCameraDistance: 60`) and
+  the avocado glTF (`Model`, its pointer events on the container). It logs `pointer-targets ready` once the entities exist, then
+  `pointer down entity=<id> tick=<tick>` and `pointer up entity=<id> tick=<tick>` once per new
+  input command on a target.
+- `raycast-storm`, parcel `0,22`: 200 invisible entities in a 10 by 20 grid, each with a
+  continuous raycast down onto one floor collider, the load of `specs/visual/raycast-budget.test.ts`.
+  It logs `raycast entity=<id>` the first time an entity's raycast answers and
+  `raycast-storm complete` once all 200 have.
+
+`bin/`, `node_modules/` and the other build outputs are ignored. The `.glb`, `.png` and `.jpg`
+assets are in Git LFS.

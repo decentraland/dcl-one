@@ -1,10 +1,35 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError, redact, redactLine } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
-import { until } from './wait.ts'
+import { sleep, until } from './wait.ts'
+
+/** `/photo_mode` and `/take_photo`: whether the in-world camera is open, where it is, the
+ *  player's photo storage and this session's capture counters. */
+export interface PhotoModeState {
+  active: boolean
+  requested: boolean | null
+  position: [number, number, number]
+  /** `[current, max]` photos kept, once `storageLoaded`. */
+  storage: [number, number]
+  storageLoaded: boolean
+  phase: 'idle' | 'capturing' | string
+  captures: number
+  uploaded: number
+  failed: number
+  lastPhotoId: string | null
+  lastError: string | null
+  yaw?: number
+  pitch?: number
+  roll?: number
+  fov?: number
+  cursorLocked?: boolean
+  hudHidden?: boolean
+  source?: string
+  unavailable?: Record<string, string>
+}
 
 export interface WorldState {
   inWorld: boolean
@@ -17,6 +42,31 @@ export interface WorldState {
   worldHeld: boolean
   outOfWorld: boolean | null
   position: [number, number, number] | null
+  /** A text field (the HUD's or the engine's) holds the keyboard: keys are typed and resolve no
+   *  action. Null where the client takes no input; absent from builds older than the suite, which
+   *  the keyboard waits refuse. */
+  keyboardClaimed?: boolean | null
+}
+
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
+export interface PointerReport {
+  hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+  events: { event: string; button: string; tick: number }[]
+  diagnosis: string | null
+}
+
+/** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
+export interface RaycastStats {
+  budgetMs: number
+  ran: number
+  deferred: number
+  spentMs: number
+  uncappedRan: number
+  uncappedSpentMs: number
 }
 
 export interface Control {
@@ -30,6 +80,8 @@ export interface Control {
   visible: boolean
   actionable: boolean
   reason?: string
+  /** Inside a region that says it is still loading (`aria-busy`): what it shows is not final. */
+  busy?: boolean
   x: number
   y: number
   width: number
@@ -54,7 +106,7 @@ export interface HudEntry {
   name: string
 }
 
-export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable'
+export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable' | 'ready'
 
 export interface UserData {
   name: string
@@ -74,6 +126,9 @@ export interface EmoteState {
   repeat: boolean
   finished: boolean
   mask: 'fullBody' | 'upperBody'
+  /** An idle pose, which a triggered emote takes over: a scene's movement animation outranks one
+   *  only while it is not idle. Absent from builds before it was reported. */
+  idle?: boolean
 }
 
 export interface AvatarReport {
@@ -96,6 +151,21 @@ export interface ChatMessage {
 export interface ChatHistory {
   total: number
   messages: ChatMessage[]
+}
+
+/** `/community_state`: community chat's routing and counters (no message bodies). */
+export interface CommunityState {
+  routerIdentity: string
+  routerInRoom: boolean
+  channels: string[]
+  channelCount: number
+  roomSpawned: boolean
+  sent?: number
+  received?: number
+  reactionsSent?: number
+  reactionsReceived?: number
+  dropped?: { notMember: number; unattributed: number; rateLimited: number }
+  lastError?: string | null
 }
 
 export interface VoiceState {
@@ -125,8 +195,17 @@ export interface Position {
   z: number
 }
 
+/** What `/hud_login` answers once the sign-in has landed and the welcome page is done: the
+ *  account, and the HUD's phase: `lobby`, `entering` (on its way to the destination), `picking`
+ *  or `world`. */
+export interface HudLoginReply {
+  address: string
+  guest: boolean
+  phase: 'lobby' | 'picking' | 'entering' | 'world'
+}
+
 export interface CommandRecord {
-  /** The line as sent, with `/login_identity`'s payload redacted. */
+  /** The line as sent, with the payload of `/login_identity` or `/hud_login` redacted. */
   line: string
   startedAt: number
   ms: number
@@ -140,11 +219,32 @@ export interface ExplorerOptions {
   /** Accept `"input": "synthetic"` from the HUD commands (a run without the web driver). Off by
    *  default: a spec that passed on DOM events proves nothing about the browser's input path. */
   allowSyntheticInput?: boolean
+  /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
+  profileDeployWindowMs?: number
 }
+
+/** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
+ *  3 s per address, which zone's peers apply (a second one inside it fails with `Entity rate
+ *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
+ *  after the engine reports the new version. */
+export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
+ *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
+ *  frames. A ceiling: the wait ends as soon as `/world_state` reports the change. */
+export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
+/** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
+export const OLDER_CLIENT =
+  "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
+
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
+/** How long a click, a fill or a hover waits for its control to take a click: uncovered and no
+ *  longer moving (a page slides and fades in, a button grows in on hover). */
+const ACTIONABLE_TIMEOUT_MS = 10_000
+
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
@@ -161,10 +261,17 @@ export class Explorer {
   readonly hud: Hud
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
+  readonly #deployWindowMs: number
+  /** The own profile's version as last read, and when it was last seen to change. */
+  #ownVersion: number | undefined
+  #ownVersionChangedAt = 0
+  /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
+  readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
+    this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -178,10 +285,14 @@ export class Explorer {
   async run(line: string): Promise<string> {
     const startedAt = Date.now()
     const record: CommandRecord = { line: redactLine(line.trim()), startedAt, ms: 0 }
+    const secret = secretOf(line)
+    if (secret !== undefined) this.#secrets.add(secret)
     try {
       const reply = await this.console.run(line)
       record.ms = Date.now() - startedAt
-      record.reply = reply.length > 4000 ? `${reply.slice(0, 4000)}... (${reply.length} chars)` : reply
+      // redacted before it is cut, so a cut cannot leave a part of the credential
+      const safe = redact(line, reply)
+      record.reply = safe.length > 4000 ? `${safe.slice(0, 4000)}... (${safe.length} chars)` : safe
       return reply
     } catch (error) {
       record.ms = Date.now() - startedAt
@@ -193,6 +304,14 @@ export class Explorer {
     }
   }
 
+  /** `text` with every credential a line of this client carried replaced: the page's console,
+   *  which the HUD may have written an error into. */
+  redactSecrets(text: string): string {
+    let out = text
+    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>')
+    return out
+  }
+
   /** Run a line whose reply is JSON. A reply that does not parse is an error naming the command,
    *  never silently a string. */
   async json<T>(line: string): Promise<T> {
@@ -200,7 +319,7 @@ export class Explorer {
     try {
       return JSON.parse(reply) as T
     } catch {
-      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${reply.slice(0, 200)}`)
+      throw new Error(`\`${redactLine(line)}\` did not reply JSON: ${redact(line, reply).slice(0, 200)}`)
     }
   }
 
@@ -208,6 +327,43 @@ export class Explorer {
 
   worldState(): Promise<WorldState> {
     return this.json<WorldState>('/world_state')
+  }
+
+  // --- photo mode ---------------------------------------------------------------------------
+
+  /** Photo mode (the camera reel's in-world camera) as `/photo_mode` reports it; `state` opens or
+   *  closes it first (the change lands a frame later: `waitPhotoMode`). */
+  photoMode(state?: 'on' | 'off'): Promise<PhotoModeState> {
+    return this.json<PhotoModeState>(state ? `/photo_mode ${state}` : '/photo_mode')
+  }
+
+  waitPhotoMode(active: boolean, timeoutMs = 5000): Promise<PhotoModeState> {
+    return until(() => this.photoMode(), (state) => state.active === active, {
+      timeoutMs,
+      what: `photo mode to be ${active ? 'on' : 'off'}`
+    })
+  }
+
+  waitPhotoState(ready: (state: PhotoModeState) => boolean, what: string, timeoutMs = 10_000): Promise<PhotoModeState> {
+    return until(() => this.photoMode(), ready, { timeoutMs, what })
+  }
+
+  /** Delete one of the player's camera-reel photos (`/delete_photo`), and wait for the storage
+   *  count to drop: a failure lands in `lastError`. */
+  async deletePhoto(id: string, timeoutMs = 20_000): Promise<void> {
+    const before = await this.photoMode()
+    await this.run(`/delete_photo ${id}`)
+    await until(() => this.photoMode(), (state) => state.storage[0] < before.storage[0] || state.lastError !== before.lastError, {
+      timeoutMs,
+      what: `the photo ${id} to be deleted`
+    })
+    const after = await this.photoMode()
+    if (after.storage[0] >= before.storage[0]) throw new Error(`the photo ${id} was not deleted: ${after.lastError}`)
+  }
+
+  /** Take a photo in photo mode; rejects with the engine's reason when it cannot start. */
+  takePhoto(): Promise<PhotoModeState> {
+    return this.json<PhotoModeState>('/take_photo')
   }
 
   /** Wait until the player is in the world (signed in, realm connected, not out of world). */
@@ -251,15 +407,41 @@ export class Explorer {
 
   /** Sign in with an identity (while the world is held: the lobby, before any realm). `name` and
    *  `look` apply to a first login only. */
-  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; profiles?: string } = {}): Promise<void> {
+  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean } = {}): Promise<void> {
     const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
     const flags: string[] = []
     if (options.defaultOnError) flags.push('--default-on-error')
     if (options.guest) flags.push('--guest')
     if (options.name !== undefined) flags.push(`--name ${options.name}`)
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
-    if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
+  }
+
+  /** Sign in through the HUD's own flow (`/hud_login`, the web only): the identity becomes the
+   *  page's stored sign-in and goes in as its Jump In does, so the HUD leaves its start page and
+   *  accepts the terms its welcome page asks for; `name` and `look` pick a first login's profile
+   *  (an existing one keeps its own); `realm` and `position` are picked from the lobby as a link's
+   *  destination would be, which releases the held world. Resolves once the sign-in has landed
+   *  and the page is done, not once the world is reached. */
+  async hudLogin(
+    identity: AuthIdentity | string,
+    options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; realm?: string; position?: string } = {}
+  ): Promise<HudLoginReply> {
+    const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
+    const flags: string[] = []
+    // the line splits on whitespace: a value with any would read as stray words
+    const flag = (name: string, value: string | number | undefined): void => {
+      if (value === undefined) return
+      if (!/^\S+$/.test(String(value))) throw new Error(`a /hud_login ${name} takes no whitespace: ${JSON.stringify(String(value))}`)
+      flags.push(`${name} ${value}`)
+    }
+    flag('--name', options.name)
+    flag('--look', options.look)
+    if (options.guest) flags.push('--guest')
+    if (options.defaultOnError) flags.push('--default-on-error')
+    flag('--realm', options.realm)
+    flag('--position', options.position)
+    return this.json<HudLoginReply>(['/hud_login', payload, ...flags].join(' '))
   }
 
   /** A session-only guest made in the engine (no network). Takes effect the next frame; it is
@@ -278,7 +460,27 @@ export class Explorer {
     const reply = await this.run(address ? `/get_user_data ${address}` : '/get_user_data')
     const match = /^(.*) \((0x[0-9a-fA-F]{40})\): v(\d+), web3=(true|false)$/s.exec(reply.trim())
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
-    return { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    if (address === undefined) {
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      this.#ownVersion = data.version
+    }
+    return data
+  }
+
+  /** Count a deployment of the own profile from now that no version change showed: the sign-in,
+   *  whose first login deploys a new profile before any version was read. */
+  profileDeployed(): void {
+    this.#ownVersionChangedAt = Date.now()
+  }
+
+  /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
+   *  the passport): wait out the catalyst's window since the profile was last seen to change, a
+   *  deployment of its own. A change since the last read counts from now. */
+  async profileDeployWindow(): Promise<void> {
+    await this.userData()
+    const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
+    if (left > 0) await sleep(left)
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -315,9 +517,28 @@ export class Explorer {
     await this.run(`/dm ${address} ${message}`)
   }
 
+  /** The stored lines of a conversation: a partner's wallet, or a community's `community:<id>`. */
   async dmHistory(address: string, count = 20): Promise<string[]> {
     const reply = await this.run(`/dm_history ${address} ${count}`)
     return reply === '' ? [] : reply.split('\n')
+  }
+
+  /** A community chat message; `/community_chat` takes several words. Not a delivery confirmation. */
+  async communityChat(communityId: string, message: string): Promise<void> {
+    await this.run(`/community_chat ${communityId} ${message}`)
+  }
+
+  /** The community channels the engine listens to, after an optional edit. */
+  async communityChannels(edit?: { action: 'add' | 'remove'; communityId: string } | { action: 'clear' }): Promise<string[]> {
+    const args = edit == null ? '' : edit.action === 'clear' ? ' clear' : ` ${edit.action} ${edit.communityId}`
+    const reply = await this.run(`/community_channels${args}`)
+    const listed = /community channels: \[(.*)\]$/.exec(reply)?.[1]
+    if (listed === undefined) throw new Error(`unexpected /community_channels reply: ${reply}`)
+    return listed === '' ? [] : listed.split(',').map((id) => id.trim().replace(/^"|"$/g, ''))
+  }
+
+  communityState(): Promise<CommunityState> {
+    return this.json<CommunityState>('/community_state')
   }
 
   /** Other players' addresses, then the local player's. */
@@ -354,6 +575,30 @@ export class Explorer {
     return this.key('Escape')
   }
 
+  /** After a HUD text field took the focus (a fill): wait for the engine to hand it the keyboard, as
+   *  `/world_state` reports it; until then a key is still the engine's (Enter opens the chat,
+   *  Escape closes the page) and not typed. A client that does not report it is not waited on. */
+  async keyboardTaken(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await this.#keyboard((claimed) => claimed !== false, timeoutMs, 'the engine to hand the keyboard to the HUD field')
+  }
+
+  /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): wait for
+   *  the engine to let the keyboard go, as `/world_state` reports it; a key sent sooner is typed
+   *  into nothing. A client that does not report it (an older build) is not waited on. */
+  async keyboardReleased(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await this.#keyboard((claimed) => claimed !== true, timeoutMs, 'the engine to let the keyboard go (a HUD field had it)')
+  }
+
+  /** Wait for the engine's word on the keyboard to be `done`. Null (a client that takes no input)
+   *  is its own answer; a client whose `/world_state` has no such word is older than the suite and
+   *  is refused, not raced. */
+  async #keyboard(done: (claimed: boolean | null) => boolean, timeoutMs: number, what: string): Promise<void> {
+    const first = await this.worldState()
+    if (first.keyboardClaimed === undefined) throw new Error(OLDER_CLIENT)
+    if (done(first.keyboardClaimed)) return
+    await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
+  }
+
   /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
   async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
     await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
@@ -373,6 +618,49 @@ export class Explorer {
 
   entityScreenPosition(entity: string | number, options: { bounds?: boolean } = {}): Promise<ScreenPosition> {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
+  }
+
+  /** Aims the pointer at an entity and reports what it hovers; a blocked outcome resolves with `diagnosis` set; a refusal rejects. */
+  hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
+    let line = `/hover_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.frames !== undefined) line += ` --frames ${options.frames}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  async clearPointer(): Promise<void> {
+    await this.run('/hover_entity --clear')
+  }
+
+  clickEntity(
+    entity: string | number,
+    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+  ): Promise<PointerReport> {
+    let line = `/click_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.button) line += ` --button ${options.button}`
+    if (options.event) line += ` --event ${options.event}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  raycastStats(): Promise<RaycastStats> {
+    return this.json<RaycastStats>('/raycast_stats')
+  }
+
+  /** The capped raycast tier's budget in ms; with `ms`, overrides it first, and `'auto'` returns it to a tenth of the target frame. */
+  async raycastBudget(ms?: number | 'auto'): Promise<number> {
+    const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
+    const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
+    if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
+    return Number(match[1])
+  }
+
+  /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    return reply === '(no logs)' ? [] : reply.split('\n')
   }
 
   async close(): Promise<void> {
@@ -431,18 +719,23 @@ export class Hud {
     return control
   }
 
-  /** A real click on the control's centre. Fails on a synthetic (DOM-event) click unless the
-   *  explorer allows it. */
+  /** A real click on the control's centre, once a click would land there (`actionable`). Fails
+   *  on a synthetic (DOM-event) click unless the explorer allows it. */
   async click(selector: Selector): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_click ${selectorArg(selector)}`)
     this.#checkInput(result, `click on ${describeSelector(selector)}`)
     return result
   }
 
-  /** Replace a field's text; the reply holds the field as the typing left it. */
+  /** Replace a field's text, once a click would land on it; the reply holds the field as the
+   *  typing left it. A real fill leaves the field focused: it returns once the engine has handed
+   *  the field the keyboard, so the next key is the field's. */
   async fill(selector: Selector, text: string): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_fill ${JSON.stringify({ ...toSelectorObject(selector), text })}`)
     this.#checkInput(result, `fill of ${describeSelector(selector)}`)
+    if (result.input === 'trusted') await this.#explorer.keyboardTaken()
     return result
   }
 
@@ -456,11 +749,28 @@ export class Hud {
     return this.wait(selector, { state: 'hidden', timeoutMs })
   }
 
+  /** The control once a click would land on it: visible, enabled, in the viewport, uncovered and
+   *  no longer moving (the HUD reports a control on its way in, or growing in, as still moving: a
+   *  click aimed at it there lands where it no longer is). */
+  async waitActionable(selector: Selector, timeoutMs = ACTIONABLE_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'actionable', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
+  /** The control once nothing around it is still loading (`ready`: no `aria-busy` region holds
+   *  it), such as a grid whose newest page has arrived. */
+  async waitReady(selector: Selector, timeoutMs = DEFAULT_HUD_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'ready', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
   /** Put the pointer on a control, for the controls that appear on hover: a real click at its
-   *  centre, which the browser precedes with a move. It also selects the control, as a user's
-   *  click would. */
+   *  centre once a click would land there, which the browser precedes with a move. It also
+   *  selects the control, as a user's click would. */
   async hover(selector: Selector): Promise<Control> {
-    const control = await this.get(selector)
+    const control = await this.waitActionable(selector)
     await this.#explorer.clickAt(control.x + control.width / 2, control.y + control.height / 2)
     return control
   }

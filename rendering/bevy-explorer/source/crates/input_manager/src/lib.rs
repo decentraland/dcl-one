@@ -346,6 +346,27 @@ impl InputManager<'_, '_> {
         })
     }
 
+    /// `is_down` for the action's keys, mouse buttons and pad buttons only: a wheel or stick
+    /// bound to it does not count.
+    pub fn is_button_down<T: Into<Action>>(&self, action: T, priority: InputPriority) -> bool {
+        self.inputs(action.into()).any(|item| match item {
+            InputIdentifier::Key(k) => {
+                self.key_input.pressed(*k) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Mouse(mb) => {
+                self.mouse_input.pressed(*mb) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Gamepad(b) => {
+                self.gamepads
+                    .iter()
+                    .flat_map(|gp| gp.get_pressed())
+                    .any(|p| p == b)
+                    && self.check_priority(item, priority)
+            }
+            InputIdentifier::Analog(..) => false,
+        })
+    }
+
     pub fn get_analog(&self, set: InputDirectionalSet, priority: InputPriority) -> Vec2 {
         let mut amts = set.actions.iter().map(|a| {
             let Some(a) = a else {
@@ -945,6 +966,25 @@ fn handle_system_input_stream(
         }
     }
 
+    // a fresh press of an action still held from the last frame: its key went up and down again
+    // since (a tap's press and release can land in one frame, and the next tap in the frame
+    // after), so its release was never seen. The consumers get both edges, as over more frames,
+    // or the second tap of a toggle is lost.
+    for &action in new_pressed.intersection(&*pressed) {
+        if input_manager.just_down(action, InputPriority::Ui) {
+            for s in senders.iter() {
+                let _ = s.send(SystemActionEvent {
+                    action,
+                    pressed: false,
+                });
+                let _ = s.send(SystemActionEvent {
+                    action,
+                    pressed: true,
+                });
+            }
+        }
+    }
+
     for &action in pressed.difference(&new_pressed) {
         for s in senders.iter() {
             let _ = s.send(SystemActionEvent {
@@ -973,5 +1013,73 @@ fn reset_controls_command(
         config.inputs_generation = common::structs::INPUTS_GENERATION;
         platform::write_config_file(&*config);
         input.reply_ok("Controls reset to default");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::SystemId;
+    use common::rpc::{RpcStreamReceiver, RpcStreamSender};
+
+    use super::*;
+
+    fn world() -> (World, RpcStreamReceiver<SystemActionEvent>) {
+        let mut world = World::new();
+        world.init_resource::<InputMap>();
+        world.init_resource::<ButtonInput<MouseButton>>();
+        world.init_resource::<ButtonInput<KeyCode>>();
+        world.init_resource::<CumulativeAxisData>();
+        world.init_resource::<InputPriorities>();
+        world.init_resource::<SystemActionStreams>();
+        world.init_resource::<Events<SystemApi>>();
+        let (sender, receiver) = RpcStreamSender::channel();
+        world
+            .resource_mut::<Events<SystemApi>>()
+            .send(SystemApi::GetSystemActionStream(sender));
+        (world, receiver)
+    }
+
+    /// One frame: the keys tapped in it (pressed and released at once), then the stream.
+    fn frame(world: &mut World, stream: SystemId, taps: &[KeyCode]) {
+        let mut keys = world.resource_mut::<ButtonInput<KeyCode>>();
+        keys.clear();
+        for &key in taps {
+            keys.press(key);
+            keys.release(key);
+        }
+        world.run_system(stream).unwrap();
+    }
+
+    fn edges(receiver: &mut RpcStreamReceiver<SystemActionEvent>) -> Vec<(SystemAction, bool)> {
+        std::iter::from_fn(|| receiver.try_recv().ok())
+            .map(|event| (event.action, event.pressed))
+            .collect()
+    }
+
+    #[test]
+    fn a_tap_in_the_frame_after_the_last_is_a_press_of_its_own() {
+        let (mut world, mut receiver) = world();
+        let stream = world.register_system(handle_system_input_stream);
+
+        frame(&mut world, stream, &[KeyCode::KeyB]);
+        assert_eq!(edges(&mut receiver), [(SystemAction::Emote, true)]);
+
+        // the second tap lands before a frame without the key: its release goes out first
+        frame(&mut world, stream, &[KeyCode::KeyB]);
+        assert_eq!(
+            edges(&mut receiver),
+            [(SystemAction::Emote, false), (SystemAction::Emote, true)]
+        );
+
+        frame(&mut world, stream, &[]);
+        assert_eq!(edges(&mut receiver), [(SystemAction::Emote, false)]);
+
+        // taps a frame apart: a press and a release each, as before
+        frame(&mut world, stream, &[KeyCode::KeyB]);
+        frame(&mut world, stream, &[]);
+        assert_eq!(
+            edges(&mut receiver),
+            [(SystemAction::Emote, true), (SystemAction::Emote, false)]
+        );
     }
 }

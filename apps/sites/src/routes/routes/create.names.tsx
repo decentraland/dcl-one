@@ -17,6 +17,7 @@ import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
 
 import type { Route } from "./+types/create.names";
+import { useMarketplaceHere } from "@/data/lib/shop/marketplace-access";
 
 export const meta = () => creatorHubMeta("NAMEs");
 
@@ -45,6 +46,8 @@ export default function CreateNames({ loaderData }: Route.ComponentProps) {
 
 function NamesView({ address, names, fallback }: LoaderData) {
   const { rescoping, needsConnect } = useManageScope(address);
+  // Selling a NAME is the Shop's Marketplace: offered only to a visitor who has it. Read once for every card.
+  const marketplace = useMarketplaceHere();
   const revalidator = useRevalidator();
   const navigate = useNavigate();
 
@@ -111,7 +114,7 @@ function NamesView({ address, names, fallback }: LoaderData) {
                   ) : (
                     <div className="chm__list">
                       {names.map((entry) => (
-                        <NameCard key={entry.worldName} entry={entry} address={address} />
+                        <NameCard key={entry.worldName} entry={entry} address={address} marketplace={marketplace} />
                       ))}
                     </div>
                   )}
@@ -127,7 +130,7 @@ function NamesView({ address, names, fallback }: LoaderData) {
 
 
 
-function NameCard({ entry, address }: { entry: OwnedNameVM; address: string }) {
+function NameCard({ entry, address, marketplace }: { entry: OwnedNameVM; address: string; marketplace: boolean }) {
   const published = entry.deployedScenes > 0;
   const settingsHref = `/create/world-settings?world=${encodeURIComponent(entry.worldName)}&address=${encodeURIComponent(address)}`;
   return (
@@ -149,7 +152,7 @@ function NameCard({ entry, address }: { entry: OwnedNameVM; address: string }) {
           <Link to={settingsHref} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
             World settings
           </Link>
-          {entry.contractAddress && entry.tokenId ? (
+          {marketplace && entry.contractAddress && entry.tokenId ? (
             <Link to={`/shop/token/${entry.contractAddress.toLowerCase()}/${entry.tokenId}/sell`} prefetch="intent" className="chm__settingsbtn" style={CARD_ACTION}>
               Sell
             </Link>

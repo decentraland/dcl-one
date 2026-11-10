@@ -249,10 +249,18 @@ const UPSERT: &str = r#"
          categories, likes, dislikes, favorites, deployed_at, disabled, highlighted,
          raw, fetched_at, origin)
     SELECT u.id, u.base_position, u.title, u.description, u.creator_address,
-           COALESCE(m.content_rating, u.content_rating),
+           -- a scene's policy.contentRating may spell pending PR; the stored
+           -- code is RP (places::moderation)
+           COALESCE(m.content_rating, CASE WHEN u.content_rating = 'PR' THEN 'RP' ELSE u.content_rating END),
            ARRAY(SELECT jsonb_array_elements_text(u.raw->'categories')), 0, 0, 0,
            u.deployed_at, COALESCE(m.disabled, false), COALESCE(m.highlighted, false),
-           u.raw || COALESCE(r.overlay, '{}'::jsonb), timezone('UTC', now()), u.origin
+           u.raw || COALESCE(r.overlay, '{}'::jsonb)
+               -- a new row disabled by an operator carries the disable's instant and reason
+               || CASE WHEN m.disabled IS TRUE THEN jsonb_build_object(
+                           'disabled_at', to_char(m.disabled_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                           'disabled_reason', m.reason)
+                       ELSE '{}'::jsonb END,
+           timezone('UTC', now()), u.origin
     FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
                 $7::timestamp[], $8::jsonb[], $9::text[])
          AS u(id, base_position, title, description, creator_address, content_rating,
@@ -338,7 +346,13 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
     SELECT u.id, u.base_position, u.title, u.description, u.owner,
            COALESCE(m.content_rating, u.content_rating), u.categories, u.deployed_at,
            COALESCE(m.disabled, false), COALESCE(m.highlighted, false),
-           u.raw || COALESCE(r.overlay, '{}'::jsonb), timezone('UTC', now()), u.world_name, true
+           u.raw || COALESCE(r.overlay, '{}'::jsonb)
+               -- an operator's disable carries its instant and reason (places::moderation)
+               || CASE WHEN m.disabled IS TRUE THEN jsonb_build_object(
+                           'disabled_at', to_char(m.disabled_at, 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+                           'disabled_reason', m.reason)
+                       ELSE '{}'::jsonb END,
+           timezone('UTC', now()), u.world_name, true
     FROM (
         SELECT w.name AS id, w.description, w.owner, w.content_rating,
                COALESCE(w.categories, '{}') AS categories, s.created_at AS deployed_at,

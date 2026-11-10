@@ -46,11 +46,14 @@ export function entryRealm(q: URLSearchParams): string | null {
 // carrying them is told they were ignored.
 const INTERNAL_PARAMS = [
   'native',
+  'nativeProfileImageBase',
   'hud',
   'mock',
   'showcase',
   'gate',
   'nogate',
+  // forces the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) for a look at it
+  'gpuGuide',
   'bundled',
   'simerror',
   'simhover',

@@ -17,6 +17,7 @@ import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
 import { registerChat } from './domains/chat'
 import { registerDm } from './domains/dm'
+import { registerUiSound } from './domains/uiSound'
 import { registerEmotes } from './domains/emotes'
 import { registerWearables, sendEquipped } from './domains/wearables'
 import { registerCatalog } from './domains/catalog'
@@ -31,6 +32,7 @@ import { registerGallery } from './domains/gallery'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
 import { registerPointer } from './domains/pointer'
+import { registerPhotoMode } from './domains/photoMode'
 import { registerProximity } from './domains/proximity'
 import { registerSystemAction } from './domains/systemAction'
 import { registerBindings } from './domains/bindings'
@@ -51,6 +53,7 @@ export function main(): void {
     registerFriends(ctx)
     registerChat(ctx)
     registerDm(ctx)
+    registerUiSound(ctx)
     registerVoice(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
@@ -68,6 +71,7 @@ export function main(): void {
     registerWorld(ctx)
     registerPointer(ctx)
     registerProximity(ctx)
+    registerPhotoMode(ctx)
     registerSystemAction(ctx)
     registerBindings(ctx)
     registerAvatarPointer(ctx)

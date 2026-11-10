@@ -1,0 +1,28 @@
+{
+  "captured_at": "2026-11-05",
+  "peer": "https://asset-bundle-registry.decentraland.org",
+  "request": {
+    "method": "GET",
+    "path": "/queues/status",
+    "headers": {},
+    "body": ""
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "windowsPendingJobs": [
+        "bafkreifrm2pyzg2lruwhr366qyo2seq75e6i4ev3hzxh7k4r2efvqxcnwa",
+        "<1465 more>"
+      ],
+      "macPendingJobs": [
+        "bafkreie7oxdtnvm4w7dbpat433g24npk7nkxvk72seth45bkoystepwlly",
+        "<1465 more>"
+      ],
+      "webglPendingJobs": []
+    }
+  },
+  "note": "Arrays cut to their first entity id."
+}

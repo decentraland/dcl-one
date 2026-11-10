@@ -3,6 +3,7 @@
 //! own), and the pure quota arithmetic.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
 use axum::Router;
@@ -73,8 +74,18 @@ struct Scene {
 }
 
 async fn make_scene(signer: &PrivateKeySigner, files: &[&[u8]], entity_type: &str) -> Scene {
-    let x = 100 + (rand_u16() % 40) as i32;
-    let y = -140 - (rand_u16() % 10) as i32;
+    // These fixtures share a database: random parcels can overwrite another
+    // test's scene while its upload is still pending. Reserve each parcel once.
+    // Keep y in -99..=-90, outside batch_deployer::tests::scene_at's
+    // -149..=-100 range in the same scratch database.
+    static NEXT_PARCEL: AtomicUsize = AtomicUsize::new(0);
+    let parcel = NEXT_PARCEL.fetch_add(1, Ordering::Relaxed);
+    assert!(
+        parcel < 400,
+        "partial-upload fixture parcel range exhausted"
+    );
+    let x = 100 + (parcel % 40) as i32;
+    let y = -90 - (parcel / 40) as i32;
     let pointers = vec![format!("{x},{y}")];
     let files: Vec<(String, Bytes)> = files
         .iter()
@@ -156,10 +167,6 @@ async fn pending_rows(pool: &PgPool, entity_id: &str) -> i64 {
         .unwrap()
 }
 
-fn rand_u16() -> u16 {
-    uuid::Uuid::new_v4().as_bytes()[0] as u16 * 256 + uuid::Uuid::new_v4().as_bytes()[1] as u16
-}
-
 async fn chain_for(signer: &PrivateKeySigner, entity_id: &str) -> Value {
     let signature = signer
         .sign_message(entity_id.as_bytes())
@@ -213,6 +220,9 @@ fn batch_request(
             format!("multipart/form-data; boundary={boundary}"),
         )
         .header("x-real-ip", "203.0.113.7")
+        // Clients declare their length: an undeclared body takes a
+        // source's whole in-flight share.
+        .header(header::CONTENT_LENGTH, body.len())
         .body(Body::from(body))
         .unwrap()
 }

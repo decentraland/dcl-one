@@ -17,7 +17,7 @@
 //!
 //! A legacy alias is the same handler with the same wire shape: a signed
 //! request is verified over the method and path it was signed for, never
-//! redirected or rewritten. `ui3/src/shop/api/endpoints.ts` is the client's
+//! redirected or rewritten. `library/shop/api/endpoints.ts` is the client's
 //! table of the same paths.
 
 /// The canonical backend prefix.
@@ -257,9 +257,7 @@ mod tests {
 
     use super::*;
     use crate::http::Outbound;
-    use crate::{
-        analytics, checkout, credits, evm, mana, market, outfits, rentals, subscriptions, treasury,
-    };
+    use crate::{checkout, credits, evm, mana, market, outfits, rentals, subscriptions, treasury};
 
     fn lazy_pool() -> sqlx::PgPool {
         sqlx::postgres::PgPoolOptions::new()
@@ -323,14 +321,17 @@ mod tests {
             },
             None,
         ));
-        let mana = Arc::new(mana::State::new(
-            pool,
-            http,
-            market.clone(),
-            signatures.clone(),
-            mana::Settings::default(),
-            None,
-        ));
+        let mana = Arc::new(
+            mana::State::new(
+                pool,
+                http,
+                market.clone(),
+                signatures.clone(),
+                mana::Settings::default(),
+                None,
+            )
+            .expect("the production book"),
+        );
         let economy_routes = || {
             evm::router(economy.clone())
                 .merge(checkout::router(economy.clone()))
@@ -341,7 +342,6 @@ mod tests {
                 PREFIX,
                 crate::router(crate::States {
                     market: market.clone(),
-                    analytics: analytics::Sink(None),
                     credits: credits.clone(),
                     economy: economy.clone(),
                     outfits,

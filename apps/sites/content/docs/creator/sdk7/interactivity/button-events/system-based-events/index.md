@@ -57,7 +57,7 @@ The example above checks if the button was pressed, regardless of where the poin
 
 > [!WARNING]
 > **📔 Note**: The player needs to be standing inside the scene's boundaries for the pointer event to be detected. The player's cursor also needs to be locked, buttons pressed while having the free cursor aren't detected.
-> 
+>
 > Every entity you want to inteact with must have both a [`PointerEvents` component](/docs/creator/sdk7/interactivity/button-events/system-based-events/#show-feedback) and a [collider](/docs/creator/sdk7/3d-essentials/colliders/).
 
 
@@ -157,7 +157,7 @@ engine.addSystem(() => {
 
 > [!WARNING]
 > **📔 Note**: When checking pointer up events against a specific entity, it doesn't take into consideration where the cursor was pointing at when the button was pushed down. It only considers where the cursor is pointing at when the button is raised.
-> 
+>
 > Also keep in mind that hte entity must have both a [`PointerEvents` component](/docs/creator/sdk7/interactivity/button-events/system-based-events/#show-feedback) and a [collider](/docs/creator/sdk7/3d-essentials/colliders/).
 
 
@@ -282,7 +282,7 @@ Whenever the player's cursor points at the colliders in this entity, the UI will
 
 
 > [!WARNING]
-> **📔 Note**: The `PointerEvents` component just handles the displaying of hover feedback. To handle the button events themselves with custom logic, see [Using-a-system](/docs/creator/sdk7/interactivity/button-events/system-based-events/#check-for-events).
+> **📔 Note**: The `PointerEvents` component just handles the displaying of hover feedback. To handle the button events themselves with custom logic, see [Using-a-system](/docs/creator/sdk7/interactivity/button-events/system-based-events/#using-a-system).
 
 
 The `PointerEvents` component requires at least one pointer event definition. Each pointer event definition can be configured with the following:
@@ -743,7 +743,7 @@ Often, _.glTF_ 3D models are made up of multiple meshes, that each have an indiv
 
 To see how the meshes inside the model are named, you must open the 3D model with an editing tool, like [Blender](https://www.blender.org/) for example.
 
-![](</docs/.gitbook/assets/mesh-names (1).webp>)
+![](</docs/creator/images/media/mesh-names.webp>)
 
 
 > [!NOTE]

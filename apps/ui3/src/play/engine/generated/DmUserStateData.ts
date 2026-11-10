@@ -7,7 +7,8 @@ export type DmUserStateData = { address: string,
 /**
  * "notConnected" (the local user is not in the private chat room), "connected",
  * "blockedByOwnUser", "privateMessagesBlockedByOwnUser", "privateMessagesBlocked",
- * "disconnected" or "otherClient"
+ * "disconnected" or "otherClient"; for a community channel (`community:<id>`),
+ * "notConnected", "noRouter" (no message router in the room) or "connected"
  */
 state: string, 
 /**

@@ -33,6 +33,14 @@ is identified by its producer commit in `/play/sites-play.json` (no npm engine p
 - `lib/editorEmbed.ts`: the Creator Hub editor frames `/play/` with its trusted scene, the session
   fragment becomes the sandbox channel suffix, the engine runs with `editor`, and no bridge is
   reported. The shell mounts its app once per document.
+- The native CEF HUD and its SDK bridge receive gateway service URLs from the desktop engine.
+  CEF routes eligible snapshot images when displaying profiles and notifications. Sites uses its
+  web service configuration and the snapshot URLs returned by its backend.
+- The shared UI foundations: `react-web` loads `@dcl/one-ui/foundations.css` in `main.tsx`; `/play`
+  does not, as its HUD adaptation stays as it is until Sites migrates (`docs/ui-standards.md`).
+- The Shop's query cache: `react-web` wraps its Shop page in `features/shop/ShopQueries.tsx` (one
+  client per account, remounted and emptied when another account or a sign-out replaces it); `/play`
+  keeps the app-wide `QueryClientProvider` its in-world Shop uses until that Shop moves to `react-web`.
 - Tests that import bridge-scene sources or `deploy/web` were not moved; the rest run with `pnpm test`
   in `apps/ui3` under `tsconfig.play.json`. `?native=1` is not built.
 - The benchmark's unattended run is not carried: the `autopilot` boot mode (`lib/bootMode.ts`) and
@@ -58,10 +66,11 @@ serve; guest sessions work.
 
 `tooling/upstream-forks.py` writes `forks.toml` (git sources, locked revisions, crates; ahead/behind
 with `--check-upstream`) and `cargo-patches.toml` (`[patch.crates-io]` pins for
-`cargo --config rendering/bevy-explorer/cargo-patches.toml …`; Bevy stays lock-pinned) from
-`source/Cargo.lock`; `--check` fails on drift, `--verify` resolves a lock copy. The daily
+`cargo --config rendering/bevy-explorer/cargo-patches.toml …`) from `source/Cargo.lock`;
+`--check` fails on drift, `--verify` resolves a lock copy. The daily
 `bevy-explorer-upstream.yml` runs it, opens the `upstream/forks` PR and uploads the drift page
-(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`).
+(`tooling/upstream-drift.py`, `tooling/upstream-drift-site.py`). Bevy is not among these forks:
+it is vendored at `bevy/` and changed in place ([the bevy fork](docs/guidelines/bevy-fork.md)).
 
 ## Native builds and HUD updates
 
@@ -83,3 +92,46 @@ A pull request that changes the explorer's web app is measured against main in C
 the `benchmark` runner (`source/local-harness/benchmark`, `bevy-explorer-benchmark-<os>-<arch>-<sha>`)
 from CI's artifacts and writes the report into the pull request's CI status comment. How a run
 starts, how to read the report and how to set up a laptop: [Benchmark](docs/guidelines/benchmark.md).
+
+## Authenticated login events
+
+The Explorer queues a client-login event at the common successful identity completion for new
+sign-in, previous-login restoration and browser-imported identities. It does not need an opened
+social panel or social RPC connection. Unsigned guest mode does not emit authenticated events.
+Each completion has a new UUID and epoch-millisecond occurrence time. Delivery sends an empty
+`POST` to the configured `SocialApi` base plus `/v1/client-login`, with both values in the
+ADR-44 signed metadata alongside `signer: "dcl:explorer"`. The server derives the wallet from
+the auth chain.
+
+The queue is separate from settings: `client-logins.json` in the native configuration directory,
+or the browser's `dcl-client-logins` IndexedDB database. Each instance persists only its new
+IDs and explicit removals. Browser transactions and native file locks merge those changes with
+the latest stored state; a busy native lock defers persistence instead of blocking the worker.
+Removal records remain for 24 hours and five minutes so an uncertain earlier save cannot restore
+an acknowledged or discarded occurrence. The engine awaits the queue save before
+sending. Empty/corrupt stores are repaired, with one `.corrupt` file or IndexedDB `corrupt`
+record retaining the previous contents when quarantine succeeds. Native quarantine failure is logged
+and does not block repair. Malformed records and additions are dropped individually while valid
+records and acknowledgments survive. Three consecutive storage failures (ten-second timeout per asynchronous operation,
+five seconds between retries) enable visibly degraded memory-only delivery without delaying login.
+Unsaved changes remain in memory and storage recovery retries every minute. Normal persistence
+gating resumes after recovery; events accepted in memory mode are removed during reconciliation.
+Memory-only records can be lost on process/page shutdown. Each retry signs a fresh
+request with the original event ID and occurrence time. A signing snapshot binds the event to
+its wallet even if the current account changes. Logout cancels active delivery; pending records
+resume when that wallet logs in to the same service again.
+
+One request runs at a time, with a ten-second deadline covering signing and HTTP. Network
+failures, HTTP 408, 429 and server errors use randomized exponential backoff bounded between
+one second and five minutes. HTTP 204
+acknowledges the event. HTTP 404/405 retain it with a randomized 150–300 second backoff so client
+and server deployments can arrive in either order. Other client-error statuses stop its delivery
+and log only the status code. Native response bodies are drained up to 16 KiB or one second for
+connection reuse; browser fetch manages its connections. Response contents are never logged. Records expire after 24 hours. At most 32 pending records are retained per runtime and in shared storage;
+adding one beyond the limit discards the oldest. The debug panel's **Client login events**
+section and `/client_login_state` expose pending count, persistence, memory-only mode, consecutive storage failures, attempts, result and
+session discard count. Concurrent processes and browser tabs share the durable queue without
+replacing each other’s pending records; the shared capacity policy discards the oldest occurrence.
+
+This producer covers the owned Bevy Explorer, including its imported web identity path.
+Website-only sign-ins and external Explorer clients do not emit this event through this code.

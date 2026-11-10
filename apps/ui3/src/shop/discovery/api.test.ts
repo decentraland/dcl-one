@@ -1,7 +1,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { createShopClient } from "../api/shop";
+import { createShopClient } from "@shop/api/shop";
 import {
   fetchClassicItemOrders,
   fetchItemMeta,
@@ -10,7 +10,7 @@ import {
   fetchTokenById,
   fetchUnifiedListingForItem,
   pickItemListing,
-} from "../detail/api";
+} from "@shop/detail/api";
 import {
   compactEquipped,
   fetchCatalogByIds,
@@ -23,14 +23,15 @@ import {
   shopListingToItem,
   unifiedListingToItem,
   withoutSale,
-} from "./api";
+} from "@shop/discovery/api";
 import { catalogClient, catalogTransport, COLLECTION, CREATOR, ITEM_ID, PRIMARY_WEARABLE, RESALE_WEARABLE, RESELLER, saleWearable, STORE_EMOTE, TOKEN_ID } from "./fixtures";
-import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "./freshness";
+import { indexUnavailable, needsNotice, readFreshness, readMirrorFreshness } from "@shop/discovery/freshness";
 
-type FlagWindow = Window & { __SHOP_FLAGS__?: { creatorSales?: boolean; secondarySales?: boolean } };
+/** Creator sales off, as a page has them until the switch says yes. */
+const OFF = () => false;
 
 afterEach(() => {
-  delete (window as FlagWindow).__SHOP_FLAGS__;
+  delete window.__SHOP_FLAGS__;
 });
 
 describe("the browse feed", () => {
@@ -38,7 +39,7 @@ describe("the browse feed", () => {
     const client = catalogClient();
     const page = await fetchShopItems(
       { first: 48, skip: 48, category: "wearable", rarities: ["epic", "rare"], wearableCategories: ["hat"], minPriceCredits: 5, search: "hat", sortBy: "cheapest", onSale: true, listingType: "primary", contractAddresses: [] },
-      { client },
+      { client, creatorSales: OFF },
     );
     const url = new URL(client.calls[0]!.url);
     expect(url.pathname).toBe("/shop-api/v3/catalog/unified");
@@ -63,39 +64,47 @@ describe("the browse feed", () => {
   it("goes to the /marketplace-api alias in legacy mode, same query", async () => {
     const transport = catalogTransport();
     const client = createShopClient({ base: "http://shop.test", mode: "legacy", transport, signer: null });
-    await fetchTrendingItems({ first: 12, listingType: "primary" }, { client });
+    await fetchTrendingItems({ first: 12, listingType: "primary" }, { client, creatorSales: OFF });
     const url = new URL(transport.calls[0]!.url);
     expect(url.pathname).toBe("/marketplace-api/v3/catalog/trending");
     expect(url.searchParams.get("includeSocialEmotes")).toBe("false");
   });
 
   it("maps a unified row: seconds to ms, a store mint keeps its MANA, a resale its token", () => {
-    (window as FlagWindow).__SHOP_FLAGS__ = { creatorSales: true };
-    const sale = unifiedListingToItem(saleWearable(1_000_000_000_000));
+    const sale = unifiedListingToItem(saleWearable(1_000_000_000_000), true);
     expect(sale.saleEndsAt).toBe((1_000_000_000 + 86_400) * 1000);
     expect(sale.compareAtCredits).toBe(20);
-    const mint = unifiedListingToItem(STORE_EMOTE);
+    const mint = unifiedListingToItem(STORE_EMOTE, true);
     expect(mint).toMatchObject({ acquisition: "store", manaWei: "4020000000000000000", tradeId: undefined, id: `${COLLECTION}-8` });
-    const resale = unifiedListingToItem(RESALE_WEARABLE);
+    const resale = unifiedListingToItem(RESALE_WEARABLE, true);
     expect(resale).toMatchObject({ tokenId: TOKEN_ID, listingType: "secondary", seller: RESELLER, available: undefined });
+  });
+
+  it("asks the creator-sales switch when the answer is mapped, not when the read starts", async () => {
+    // As when the flags file answers while a read is in flight: the switch turns on before the answer arrives.
+    let on = false;
+    const answer = catalogTransport("ok", { "/v3/catalog/unified": { data: [saleWearable()], total: 1 } });
+    const client = createShopClient({ base: "http://shop.test", mode: "canonical", signer: null, transport: async (req) => ((on = true), answer(req)) });
+    const page = await fetchShopItems({}, { client, creatorSales: () => on });
+    expect(page.items[0]).toMatchObject({ priceCredits: 14, compareAtCredits: 20 });
   });
 
   it("with creator sales off (the default), erases the discount from the whole row, coupon included", () => {
     const raw = { ...saleWearable(), coupon: { id: "c" } as never };
     expect(withoutSale(raw)).toMatchObject({ priceCredits: 20, compareAtCredits: null, saleEndsAt: null, coupon: null });
-    expect(shopListingToItem(raw)).toMatchObject({ priceCredits: 20, compareAtCredits: undefined, coupon: undefined });
+    expect(shopListingToItem(raw, false)).toMatchObject({ priceCredits: 20, compareAtCredits: undefined, coupon: undefined });
   });
 
   it("carries the freshness the answer reports", async () => {
     const client = catalogClient("ok", { "/v3/catalog/unified": { data: [PRIMARY_WEARABLE], total: 1, freshness: { completedAt: "2026-09-25T10:00:00Z", complete: false, source: "tradesMirror" } } });
-    const page = await fetchShopItems({}, { client });
+    const page = await fetchShopItems({}, { client, creatorSales: OFF });
     expect(page.meta.freshness).toEqual({ kind: "fresh", asOf: Date.parse("2026-09-25T10:00:00Z"), lagSeconds: null, complete: false, source: "tradesMirror" });
   });
 
   it("keeps the 503 unavailable envelope as an index that is catching up", async () => {
-    const error = await fetchShopItems({}, { client: catalogClient("outage") }).catch((e) => e);
+    const error = await fetchShopItems({}, { client: catalogClient("outage"), creatorSales: OFF }).catch((e) => e);
     expect(indexUnavailable(error)).toEqual({ kind: "unavailable", source: "itemsMirror", message: "the items mirror has no complete pass yet", configure: "MARKETPLACE_MIRRORS_ENABLED" });
-    const other = await fetchShopItems({}, { client: catalogClient("error") }).catch((e) => e);
+    const other = await fetchShopItems({}, { client: catalogClient("error"), creatorSales: OFF }).catch((e) => e);
     expect(indexUnavailable(other)).toBeNull();
   });
 });
@@ -103,7 +112,7 @@ describe("the browse feed", () => {
 describe("the catalogue and collections", () => {
   it("asks /v3/catalog/items with repeated rarities and an empty set as the zero address", async () => {
     const client = catalogClient();
-    await fetchCatalogItems({ contractAddresses: [], rarities: ["epic", "rare"], isOnSale: false }, { client });
+    await fetchCatalogItems({ contractAddresses: [], rarities: ["epic", "rare"], isOnSale: false }, { client, creatorSales: OFF });
     const url = new URL(client.calls[0]!.url);
     expect(url.pathname).toBe("/shop-api/v3/catalog/items");
     expect(url.searchParams.getAll("rarity")).toEqual(["epic", "rare"]);
@@ -114,7 +123,7 @@ describe("the catalogue and collections", () => {
   it("asks the catalog-items route for a sub-category in the parameters it reads", async () => {
     const asked = async (wearableCategories: string[], category = "wearable") => {
       const client = catalogClient();
-      await fetchCatalogItems({ category, wearableCategories }, { client });
+      await fetchCatalogItems({ category, wearableCategories }, { client, creatorSales: OFF });
       const p = new URL(client.calls[0]!.url).searchParams;
       return Object.fromEntries(["wearableCategory", "emoteCategory", "isWearableHead", "isWearableAccessory"].filter((k) => p.has(k)).map((k) => [k, p.getAll(k)]));
     };
@@ -132,24 +141,24 @@ describe("the catalogue and collections", () => {
 
   it("returns catalogue rows by id in the ids' order, dropping unknown ones", async () => {
     const client = catalogClient();
-    const items = await fetchCatalogByIds([`${COLLECTION}-3`, "0xdead-1", `${COLLECTION}-7`], { client });
+    const items = await fetchCatalogByIds([`${COLLECTION}-3`, "0xdead-1", `${COLLECTION}-7`], { client, creatorSales: OFF });
     expect(items.map((i) => i.itemId)).toEqual(["3", "7"]);
     expect(new URL(client.calls[0]!.url).searchParams.getAll("id")).toHaveLength(3);
   });
 
   it("reads the collection's name and creator, sanitising a dcl:// name", async () => {
-    expect(await fetchCollection(COLLECTION, { client: catalogClient() })).toMatchObject({ name: "Nacho Collection", creator: CREATOR });
+    expect(await fetchCollection(COLLECTION, { client: catalogClient(), creatorSales: OFF })).toMatchObject({ name: "Nacho Collection", creator: CREATOR });
     expect(sanitizeCollectionName("dcl://halloween_2019")).toBe("Halloween 2019");
   });
 
   it("answers the search box's three sections in one request", async () => {
     const client = catalogClient();
-    const s = await fetchSuggestions("  nacho ", {}, { client });
+    const s = await fetchSuggestions("  nacho ", {}, { client, creatorSales: OFF });
     expect(new URL(client.calls[0]!.url).searchParams.get("search")).toBe("nacho");
     expect(s.items[0]).toMatchObject({ name: "Nacho Hat", creatorName: "Nacho" });
     expect(s.collections[0]!.name).toBe("Nacho Collection");
     expect(s.creators[0]!.address).toBe(CREATOR);
-    expect(await fetchSuggestions("   ", {}, { client })).toEqual({ items: [], total: 0, collections: [], creators: [] });
+    expect(await fetchSuggestions("   ", {}, { client, creatorSales: OFF })).toEqual({ items: [], total: 0, collections: [], creators: [] });
   });
 
   it("compacts equipped collections-v2 urns and drops the rest", () => {
@@ -159,17 +168,17 @@ describe("the catalogue and collections", () => {
 
 describe("the detail reads", () => {
   it("prefers the creator's mint over a resale, then native over legacy", async () => {
-    const listing = await fetchUnifiedListingForItem(COLLECTION, ITEM_ID, { client: catalogClient() });
+    const listing = await fetchUnifiedListingForItem(COLLECTION, ITEM_ID, { client: catalogClient(), creatorSales: OFF });
     expect(listing).toMatchObject({ tradeId: "trade-primary-7", tokenId: undefined });
-    const legacy = { ...unifiedListingToItem(PRIMARY_WEARABLE), source: "legacy" as const };
-    const native = unifiedListingToItem(PRIMARY_WEARABLE);
-    const resale = unifiedListingToItem(RESALE_WEARABLE);
+    const legacy = { ...unifiedListingToItem(PRIMARY_WEARABLE, false), source: "legacy" as const };
+    const native = unifiedListingToItem(PRIMARY_WEARABLE, false);
+    const resale = unifiedListingToItem(RESALE_WEARABLE, false);
     expect(pickItemListing([resale, legacy, native])).toBe(native);
     expect(pickItemListing([resale])).toBe(resale);
   });
 
   it("lists only an item's resales (a token and a trade each)", async () => {
-    const resales = await fetchItemResales(COLLECTION, ITEM_ID, { client: catalogClient() });
+    const resales = await fetchItemResales(COLLECTION, ITEM_ID, { client: catalogClient(), creatorSales: OFF });
     expect(resales.map((r) => r.tokenId)).toEqual([TOKEN_ID]);
   });
 
@@ -177,19 +186,19 @@ describe("the detail reads", () => {
     const client = catalogClient("ok", {
       "/v1/orders": { data: [{ tokenId: "5", issuedId: "5", owner: RESELLER, contractAddress: COLLECTION, price: "3000000000000000000", tradeId: null, expiresAt: 0 }, { tokenId: "6", owner: RESELLER, contractAddress: COLLECTION, price: "1", tradeId: "t" }] },
     });
-    expect(await fetchClassicItemOrders(COLLECTION, ITEM_ID, { client })).toEqual([{ tokenId: "5", issuedId: "5", seller: RESELLER, contractAddress: COLLECTION, priceWei: "3000000000000000000", expiresAt: null }]);
+    expect(await fetchClassicItemOrders(COLLECTION, ITEM_ID, { client, creatorSales: OFF })).toEqual([{ tokenId: "5", issuedId: "5", seller: RESELLER, contractAddress: COLLECTION, priceWei: "3000000000000000000", expiresAt: null }]);
   });
 
   it("maps item metadata: utility trimmed, supply from a string, gender from body shapes", async () => {
-    const meta = await fetchItemMeta(COLLECTION, ITEM_ID, { client: catalogClient() });
+    const meta = await fetchItemMeta(COLLECTION, ITEM_ID, { client: catalogClient(), creatorSales: OFF });
     expect(meta).toMatchObject({ utility: "Glows at night", available: 10, gender: "unisex", wearableCategory: "hat", creator: CREATOR });
   });
 
   it("finds a token only when the row matches it, and counts ownership softly", async () => {
     const client = catalogClient();
-    expect(await fetchTokenById(COLLECTION, TOKEN_ID, { client })).toMatchObject({ tokenId: TOKEN_ID, owner: RESELLER, isOnSale: true, issuedId: "42" });
-    expect(await fetchTokenById(COLLECTION, "999", { client })).toBeNull();
-    expect(await fetchOwnedItemCount(RESELLER, COLLECTION, ITEM_ID, { client: catalogClient("error") })).toBe(0);
+    expect(await fetchTokenById(COLLECTION, TOKEN_ID, { client, creatorSales: OFF })).toMatchObject({ tokenId: TOKEN_ID, owner: RESELLER, isOnSale: true, issuedId: "42" });
+    expect(await fetchTokenById(COLLECTION, "999", { client, creatorSales: OFF })).toBeNull();
+    expect(await fetchOwnedItemCount(RESELLER, COLLECTION, ITEM_ID, { client: catalogClient("error"), creatorSales: OFF })).toBe(0);
   });
 
   it("reads freshness from a body, a nested meta or the mirror status shape", () => {

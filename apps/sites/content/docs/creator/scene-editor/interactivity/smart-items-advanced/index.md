@@ -13,7 +13,7 @@ Most smart items have a basic module where you can configure only the most commo
 
 The following item has a Transform component and a basic module that exposes only the basic fields for configuring a button. But if you scroll down past the **Advanced** marker, you'll find all the available settings.
 
-![](/docs/creator/images/editor/advanced-settings-smart-item.webp)
+![](/docs/creator/images/editor/advanced-settings-smart-item.webp)
 
 
 > [!NOTE]
@@ -49,13 +49,13 @@ For example, to make a button open a door:
 3. Select the smart item for the door on the first dropdown.
 4. On the second dropdown, select the "Open" action.
 
-![](/docs/creator/images/editor/button-to-door.webp)
+![](/docs/creator/images/editor/button-to-door.webp)
 
 
 > [!NOTE]
 > **💡 Tip**: You can instead create a new Trigger event that only handles the door's action. Both trigger events are called every time the button is clicked.
-> 
-> <img src="/docs/creator/images/editor/button-to-door2.webp" alt="" data-size="original">
+>
+> <img src="/docs/creator/images/editor/button-to-door2.webp" alt="" data-size="original">
 
 
 Any item can trigger any action from any other item, as long as the action is defined. See [Triggers](/docs/creator/scene-editor/interactivity/smart-items-advanced/#triggers) for more ways in which an action can be triggered.
@@ -136,7 +136,7 @@ The **Actions** component defines possible actions, but these don't do anything 
 
 To add a new action to an item, click the **Add New Action** button at the bottom of the Action component. Then give the action a name, select a type, and complete any additional fields specific to the type of action.
 
-![](/docs/creator/images/editor/new-action.webp)
+![](/docs/creator/images/editor/new-action.webp)
 
 ### Triggers
 
@@ -162,7 +162,7 @@ See [states and conditional logic](/docs/creator/scene-editor/interactivity/stat
 
 To add a new trigger, click the **Add New Trigger Event** at the bottom of the Trigger component. Then select the type of trigger, the entity you want to activate and an action from that entity.
 
-![](/docs/creator/images/editor/new-trigger.webp)
+![](/docs/creator/images/editor/new-trigger.webp)
 
 
 > [!NOTE]
@@ -175,7 +175,7 @@ Use an action of type **Play Animation** to run an animation on the 3D model of 
 
 The **Play Mode** field lets you select if an animation should play just once, or if it should keep looping.
 
-![](/docs/creator/images/editor/play-animation.webp)
+![](/docs/creator/images/editor/play-animation.webp)
 
 Once the action is created, you can activate it via the [Triggers](/docs/creator/scene-editor/interactivity/smart-items-advanced/#triggers) component of that same item or of any other item.
 
@@ -199,7 +199,7 @@ Use an action of type **Play Sound** to play a sound file. You can play any soun
 
 Use the **Play Mode** field to chose if playing the sound once, or looping it continuously.
 
-![](/docs/creator/images/editor/play-sound.webp)
+![](/docs/creator/images/editor/play-sound.webp)
 
 Once the action is created, you can activate it via the [Triggers](/docs/creator/scene-editor/interactivity/smart-items-advanced/#triggers) component of that same item or of any other item.
 
@@ -207,7 +207,7 @@ Use the **Stop Sound** action to stop all sounds by the item, both looping and n
 
 To make an item play a looping sound always, for example for ambience or music, it's easier to use the **AudioSource** component, instead of using Actions and Triggers. This component only requires that you provide a path to a file, and check the boxes **Start Playing** and **Loop**.
 
-![](/docs/creator/images/editor/audiosource.webp)
+![](/docs/creator/images/editor/audiosource.webp)
 
 
 > [!NOTE]
@@ -226,13 +226,13 @@ Tweens in rotation can also be relative or absolute. A relative rotation is adde
 
 Use the **Duration** field to set how long the whole movement should take, in seconds. Note that the slider goes up to 100 seconds, but you can also write a larger number manually if you need to.
 
-![](/docs/creator/images/editor/tweens.webp)
+![](/docs/creator/images/editor/tweens.webp)
 
 Once the action is created, you can activate it via the [Triggers](/docs/creator/scene-editor/interactivity/smart-items-advanced/#triggers) component of that same item or of any other item.
 
 Tweens can follow different **Curve Types** that affect the rate of change over time. A **linear** curve (default), means that the speed of the change is constant from start to finish. There are plenty of options to chose, that draw differently shaped curves depending on if the beginning and/or end start slow, and how much. An **easeinexpo** curve starts slow and ends fast, increasing speed exponentially, on the contrary an **easeoutexpo** curve starts fast and ends slow.
 
-![](/docs/creator/images/editor/easing-functions.webp)
+![](/docs/creator/images/editor/easing-functions.webp)
 
 
 > [!NOTE]
@@ -279,16 +279,16 @@ If the item you spawn is itself a smart item, each spawned copy keeps its own ac
 
 To trigger an action by clicking on an item, create an **On Click** trigger. The action will be activated every time that the player clicks on the entity.
 
-![](/docs/creator/images/editor/on_click.webp)
+![](/docs/creator/images/editor/on_click.webp)
 
 See [Make any item smart](/docs/creator/scene-editor/interactivity/make-any-item-smart/#interactivity) for more details.
 
 
 > [!NOTE]
 > **📔 Note**: When using custom 3D models, the model must have an invisible collider geometry for it to be clickable. See [colliders](/docs/creator/sdk7/3d-essentials/colliders/#pointer-blocking).
-> 
+>
 > As an alternative, you can configure the **GLTF** component of the item, so that its **Visible Layer** of collision is set to **Pointer**.
-> 
+>
 > Another alternative is to add a **Click Area** smart item, to draw a cube that overlaps the item you want to click. The Click Area smart item is an [invisible item](/docs/creator/scene-editor/interactivity/smart-items-advanced/#invisible-items).
 
 
@@ -298,7 +298,7 @@ Triggers of type **On Spawn** activate an action when the scene is loaded. Inste
 
 For example, use this to make a platform move continually. Use an **On Spawn** trigger to activate a tween action. Then use **On State Change** triggers to keep it moving between two or more positions.
 
-![](/docs/creator/images/editor/on_spawn.webp)
+![](/docs/creator/images/editor/on_spawn.webp)
 
 ## Multiplayer
 

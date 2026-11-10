@@ -5,16 +5,20 @@
 
 import {
   bridgeChannelName,
+  type AppNotification,
   type Badge,
   type BadgeTier,
   type BindingEntry,
   type Community,
+  type CommunityChannel,
+  type CommunityMember,
   type DmHistoryEntry,
   type Emote,
   type Envelope,
   type Outfit,
   type OutfitsMetadata,
   type PageToScene,
+  type PhotoModeSnapshot,
   type Profile,
   type ProfileEdit,
   type SceneToPage,
@@ -22,6 +26,7 @@ import {
   type Wearable
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
+import { mentionName } from './mention'
 import type { Color3 } from './generated'
 import { GENESIS_SATELLITE_VIEW } from '../features/map/atlas'
 import { DEFAULT_REALM } from '../lib/baseDomain'
@@ -114,6 +119,17 @@ const MOCK_NEARBY = [
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
 
+// The places the mock user can link to a community, and what each community links.
+const MOCK_OWNED_PLACES = [
+  { id: 'place-land-1', isWorld: false, label: 'Mock Plaza (12,-34)', ownerName: 'You' },
+  { id: 'place-world-1', isWorld: true, label: 'Mock Mansion (mock.dcl.eth)', ownerName: 'You' }
+]
+const mockLinkedPlaces = new Map<string, string[]>()
+// The card places unlinked per community.
+const mockRemovedPlaces = new Map<string, Set<string>>()
+// The card's member actions by community: a member's new role, or null once kicked or banned.
+const mockMemberChanges = new Map<string, Map<string, string | null>>()
+
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
   { id: 'c2', name: 'Chiri Storytelling', description: "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!", thumbnail: '', membersCount: 374, role: 'none', ownerName: 'Chiri', privacy: 'private' },
@@ -122,8 +138,31 @@ const mockCommunities: Community[] = [
   { id: 'c5', name: 'Toxic Events', description: 'The wildest parties and events in DCL.', thumbnail: '', membersCount: 601, role: 'member', ownerName: 'ToxicWaifu' },
   { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum' },
   { id: 'c7', name: 'SheFi', description: 'Empowering women in web3 and DeFi.', thumbnail: '', membersCount: 310, role: 'none', ownerName: 'msjoedor' },
-  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' }
+  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' },
+  // more than two browse pages (20 a page), every third private, some with friends in them
+  ...Array.from({ length: 40 }, (_, i): Community => ({
+    id: `b${i + 1}`,
+    name: `${['Pixel', 'Neon', 'Genesis', 'Lunar', 'Voxel'][i % 5]} ${['Builders', 'Club', 'Guild', 'Collective', 'Lounge', 'Crew', 'Society', 'Hub'][i % 8]} ${i + 1}`,
+    description: `Mock community ${i + 1}, here so the browse grid has pages to load.`,
+    thumbnail: '',
+    membersCount: 20 + ((i * 37) % 400),
+    role: 'none',
+    ownerName: `owner${i + 1}`,
+    privacy: i % 3 === 2 ? 'private' : 'public'
+  }))
 ]
+// The user's friends in a community (the browse card's faces).
+const mockFriend = (n: number): { address: string; name: string; picture: string; hasClaimedName: boolean } => ({
+  address: `0x${(n + 100).toString(16).padStart(40, '0')}`,
+  name: ['Mojito', 'KazeNoKai', 'laurenmae', 'Kimbo'][n % 4],
+  picture: `https://picsum.photos/seed/friend${n}/64/64`,
+  hasClaimedName: n % 2 === 0
+})
+mockCommunities[0].friends = [mockFriend(0), mockFriend(1), mockFriend(2)]
+mockCommunities[2].friends = [mockFriend(3)]
+mockCommunities[9].friends = [mockFriend(1), mockFriend(2)]
+// My Communities: the ones the user is a member of
+const mockMine = (): Community[] => mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator' || c.role === 'member')
 
 const RARITIES = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const thumb = (urn: string): string => `https://peer.decentraland.org/lambdas/collections/contents/${urn}/thumbnail`
@@ -254,6 +293,12 @@ const defaultBindings = (): BindingEntry[] => [
   [{ System: 'HideNames' }, ['KeyN']],
   [{ System: 'RollLeft' }, []],
   [{ System: 'RollRight' }, []],
+  [{ System: 'PhotoMode' }, ['KeyC']],
+  [{ System: 'TakePhoto' }, ['Space', 'Gamepad South']],
+  [{ System: 'PhotoCameraUp' }, ['KeyR', 'Gamepad DPadUp']],
+  [{ System: 'PhotoCameraDown' }, ['KeyF', 'Gamepad DPadDown']],
+  [{ System: 'PhotoTiltLeft' }, ['KeyQ', 'Gamepad DPadLeft']],
+  [{ System: 'PhotoTiltRight' }, ['KeyE', 'Gamepad DPadRight']],
   [{ System: 'PointAt' }, ['Mouse Middle', 'KeyQ']],
   [{ System: 'Microphone' }, ['KeyV']],
   [{ System: 'Map' }, ['KeyM', 'Tab']],
@@ -323,7 +368,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user
   // under metadata.sender (name + avatar), with no metadata.title.
-  const mockNotifications = [
+  let mockPolled = false
+  const mockNotifications: AppNotification[] = [
     { id: 'n1', type: 'social_service_friendship_accepted', read: false, timestamp: new Date(mockNow).toISOString(), metadata: { sender: { address: '0x5854cce95d5e25817b41f4c41f06b695a83bc495', name: 'Mojito', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreid5btlh76opew65hxu6dtkdo6ybqhymdof6vrrmjy2p5a74oy4huq/face.png' } } },
     { id: 'n2', type: 'social_service_friendship_request', read: false, timestamp: new Date(mockNow - 1800_000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado', profileImageUrl: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } } },
     { id: 'n3', type: 'item_sold', read: false, timestamp: new Date(mockNow - 3600_000).toISOString(), metadata: { title: 'Item sold', description: 'Your “Sunset Hoodie” sold for 120 MANA.', image: 'https://profile-images.decentraland.org/entities/bafkreie5bpho47gnh3jrfxoezwc4pxffup4cmmhmdxsmpf3oslopxb4enm/face.png' } },
@@ -342,6 +388,19 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     isPublic: i % 2 === 0,
     dateTime: String(Math.floor((mockNow - i * 3 * DAY) / 1000))
   }))
+  let mockPhotoMode: PhotoModeSnapshot = {
+    active: false,
+    hudHidden: false,
+    cursorLocked: true,
+    phase: 'idle',
+    storageCurrent: 0,
+    storageMax: 500,
+    storageLoaded: true,
+    event: 'none',
+    eventSeq: 0,
+    previewJpegBase64: '',
+    message: ''
+  }
   // Stateful saved outfits so save/delete persist across reopens (mirrors the real store).
   const mockOutfits: OutfitsMetadata = {
     outfits: [
@@ -361,7 +420,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   // Message ids as the engine makes them: the sender and a timestamp.
   let mockClock = 46000
   const messageId = (sender: string): string => `${sender.toLowerCase()}:${(mockClock += 0.001).toFixed(3)}`
-  // DM history per partner, as the engine's local store would hold it; one conversation is seeded.
+  // DM history per partner, as the engine's local store would hold it; one conversation is seeded,
+  // and one community chat (stored the same way, under `community:<id>`).
   const mojito = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
   const dmStores = new Map<string, DmHistoryEntry[]>([
     [
@@ -376,8 +436,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
           reactions: [{ emoji: '\u{1f44d}', from: [mojito] }]
         }
       ]
+    ],
+    [
+      'community:c1',
+      [
+        { from: mojito, message: 'welcome everyone to the Foundation chat', receivedAt: Date.now() - 3_600_000, messageId: messageId(mojito), reactions: [{ emoji: '\u{1f44b}', from: [o.userId] }] },
+        { from: o.userId, message: 'hi all!', receivedAt: Date.now() - 3_500_000, messageId: messageId(o.userId), reactions: [] }
+      ]
     ]
   ])
+  // The communities the mock user is in, as chat channels; who is online in one.
+  const memberNames = ['DCLOfficial', 'KazeNoKai', 'METAWOLF', 'laurenmae', 'Eax', 'Thund', 'aixa', 'Kimbo', 'BayBackner', 'Rochyou', 'Soultasium', 'franfranfran', 'olavra', 'Meshroom']
+  const memberAddr = (i: number): string => `0x${(i + 1).toString(16).padStart(40, '0')}`
+  const communityChannels = (): CommunityChannel[] =>
+    mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator' || c.role === 'member').map((c) => ({ id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role }))
+  const onlineMembers = (): CommunityMember[] => [
+    // the mock user is in the server's list too: the HUD must not count them
+    { address: o.userId, name: 'You', role: 'member' },
+    { address: mojito, name: 'Mojito', role: 'moderator', picture: 'https://picsum.photos/seed/mojito/64/64' },
+    ...memberNames.slice(0, 5).map((name, i) => ({ address: memberAddr(i), name, role: i === 0 ? 'owner' : 'member', picture: `https://picsum.photos/seed/${name}/64/64` }))
+  ]
   const dmStore = (address: string): DmHistoryEntry[] => {
     const key = address.toLowerCase()
     let store = dmStores.get(key)
@@ -540,7 +618,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
             { id: 'r1', address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat', message: 'Met you at the plaza!' }
           ],
           sent: [{ id: 's1', address: '0x9f8c2a1b4d6e7f0a3b5c8d9e1f2a4b6c8d0e1f23', name: 'Johnny' }],
-          blocked: []
+          blocked: [],
+          // The unnamed nearby player has blocked you: their passport offers no CHAT or friend button.
+          blockedBy: ['0xc0ffee254729296a45a3885639ac7e10f9d54979']
         }),
       1600
     )
@@ -833,6 +913,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'previewFocus') return
+    // No engine in mock mode — the Shop's stage, emote try-on, turning and zoom have no avatar to show on.
+    if (msg.kind === 'previewStage' || msg.kind === 'previewEmote' || msg.kind === 'previewRotate' || msg.kind === 'previewZoom') return
     if (msg.kind === 'previewAvatar') {
       // No engine in mock mode — avatar preview has nothing to render.
       return
@@ -871,21 +953,134 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getCommunities') {
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
+      return
+    }
+    if (msg.kind === 'browseCommunities') {
+      // a name search on the "server", 20 a page; a search for "error" fails, to show the toast
+      const term = msg.search.trim().toLowerCase()
+      const found = mockCommunities.filter((c) => c.visibility !== 'unlisted' && c.name.toLowerCase().includes(term))
+      const from = (msg.page - 1) * 20
+      setTimeout(() => {
+        if (term === 'error') reply({ kind: 'communityBrowse', search: msg.search, page: msg.page, communities: [], total: 0, failed: true })
+        else reply({ kind: 'communityBrowse', search: msg.search, page: msg.page, communities: found.slice(from, from + 20).map((c) => ({ ...c })), total: found.length })
+      }, 500)
+      return
+    }
+    if (msg.kind === 'getCommunity') {
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (c) reply({ kind: 'community', community: c })
+      return
+    }
+    if (msg.kind === 'getCommunityChannels') {
+      reply({ kind: 'communityChannels', communities: communityChannels() })
+      // a line that mentions the mock user, and a member arriving, a while after they are in
+      setTimeout(() => {
+        // stored before it is relayed, as the engine does: the shown tab re-reads the store
+        const line = { sender: mojito, message: `@${mentionName(o.hasPreviousLogin ? 'Mojito' : 'Guest', o.userId, o.hasPreviousLogin)} the Foundation town hall starts in 10 minutes`, channel: 'community:c1', messageId: messageId(mojito) }
+        dmStore('community:c1').push({ from: line.sender, message: line.message, receivedAt: Date.now(), messageId: line.messageId, reactions: [] })
+        reply({ kind: 'chat', chat: line })
+      }, 6000)
+      setTimeout(() => reply({ kind: 'communityPresence', communityId: 'c1', member: { address: memberAddr(7), name: memberNames[7], role: 'member' }, online: true }), 9000)
+      return
+    }
+    if (msg.kind === 'setCommunityChannels' || msg.kind === 'playUiSound') return
+    if (msg.kind === 'getCommunityOnlineMembers') {
+      reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
+      return
+    }
+    if (msg.kind === 'removeCommunityPlace') {
+      // unlinked from this community; the card reads its places again
+      const removed = mockRemovedPlaces.get(msg.id) ?? new Set<string>()
+      removed.add(msg.placeId)
+      mockRemovedPlaces.set(msg.id, removed)
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    if (msg.kind === 'communityMemberAction') {
+      // the member's new role (null: removed); a transfer also makes the user a moderator
+      const changes = mockMemberChanges.get(msg.id) ?? new Map<string, string | null>()
+      const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
+      changes.set(msg.address, role)
+      mockMemberChanges.set(msg.id, changes)
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (msg.action === 'transfer' && c != null) {
+        c.role = 'moderator'
+        reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockMine() })
+      }
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    if (msg.kind === 'getCommunityPlaceOptions') {
+      // one LAND and one World the user owns, and what each community links
+      const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
+      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), hiddenLinkedIds: [], linkedFailed: false, errors: [] }
+      setTimeout(() => reply(options), 300)
       return
     }
     if (msg.kind === 'createCommunity') {
+      // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
+      // form's moderation views can be seen without a backend.
+      const lower = msg.name.toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'create', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const id = `new-${mockCommunities.length}`
+      mockLinkedPlaces.set(id, msg.placeIds)
       mockCommunities.unshift({
-        id: `new-${mockCommunities.length}`,
+        id,
         name: msg.name,
         description: msg.description,
-        thumbnail: '',
+        thumbnail: msg.thumbnail ?? '',
         membersCount: 1,
         role: 'owner',
         ownerName: 'You',
         privacy: msg.privacy
       })
-      reply({ kind: 'communities', communities: mockCommunities })
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'create', id })
+        reply({ kind: 'communities', communities: mockMine() })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'deleteCommunity') {
+      const at = mockCommunities.findIndex((m) => m.id === msg.id)
+      if (at >= 0) mockCommunities.splice(at, 1)
+      setTimeout(() => {
+        reply({ kind: 'communityDeleted', id: msg.id })
+        reply({ kind: 'communities', communities: mockMine() })
+      }, 300)
+      return
+    }
+    if (msg.kind === 'updateCommunity') {
+      // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
+      const lower = (msg.name ?? '').toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'update', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const c = mockCommunities.find((m) => m.id === msg.id)
+      if (c != null) {
+        if (msg.name != null) c.name = msg.name
+        if (msg.description != null) c.description = msg.description
+        if (msg.privacy != null) c.privacy = msg.privacy
+        if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
+        if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+        if (msg.placeIds != null) mockLinkedPlaces.set(c.id, msg.placeIds)
+      }
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
+        if (c != null) reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockMine() })
+      }, 600)
       return
     }
     if (msg.kind === 'joinCommunity') {
@@ -893,20 +1088,24 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (c) {
         c.role = 'member'
         c.membersCount += 1
+        reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
+        reply({ kind: 'community', community: { ...c } })
       }
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
-      reply({ kind: 'communities', communities: mockCommunities })
+      if (c) reply({ kind: 'community', community: { ...c } })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
-      reply({ kind: 'communities', communities: mockCommunities })
+      if (c) reply({ kind: 'community', community: { ...c } })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'leaveCommunity') {
@@ -914,33 +1113,38 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (c) {
         c.role = 'none'
         c.membersCount = Math.max(0, c.membersCount - 1)
+        reply({ kind: 'communityChannelRemoved', id: c.id })
+        reply({ kind: 'community', community: { ...c } })
       }
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'getCommunityDetail') {
-      const memberNames = ['DCLOfficial', 'KazeNoKai', 'METAWOLF', 'laurenmae', 'Eax', 'Thund', 'aixa', 'Kimbo', 'BayBackner', 'Rochyou', 'Soultasium', 'franfranfran', 'olavra', 'Meshroom']
-      const addr = (i: number): string => `0x${(i + 1).toString(16).padStart(40, '0')}`
+      const addr = memberAddr
       const day = 24 * 60 * 60 * 1000
       reply({
         kind: 'communityDetail',
         id: msg.id,
-        members: memberNames.map((name, i) => ({
-          address: addr(i),
-          name,
-          role: i === 0 ? 'owner' : i < 3 ? 'moderator' : 'member',
-          picture: `https://i.pravatar.cc/80?u=${name}`,
-          hasClaimedName: true,
-          isFriend: i % 5 === 0
-        })),
+        members: memberNames
+          .map((name, i) => {
+            const changed = mockMemberChanges.get(msg.id)
+            const base = i === 0 ? 'owner' : i < 3 ? 'moderator' : 'member'
+            // a transfer hands the owner's role over: the old owner (the first row) becomes a moderator
+            const handedOver = i === 0 && [...(changed?.values() ?? [])].includes('owner')
+            const role = changed?.has(addr(i)) === true ? changed.get(addr(i)) : handedOver ? 'moderator' : base
+            // every third name unclaimed, so the rows show the #tag
+            return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
+          })
+          .filter((m) => m != null),
         posts: [
           { id: 'p1', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'It was TIME for an update. See you all in the new Plaza. Enjoy!', timestamp: Date.now() - 2 * day, likes: 10 },
           { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
           { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
         ],
+        // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1 }
-        ],
+          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+        ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
           url: `https://picsum.photos/seed/dclph${i}/600/600`,
@@ -957,11 +1161,49 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getNotifications') {
       reply({ kind: 'notifications', notifications: mockNotifications })
+      // Once per session, a poll result a few seconds later, so ?mock=1 shows the new-notification
+      // toasts (one at a time) and the list growing.
+      if (!mockPolled) {
+        mockPolled = true
+        setTimeout(() => {
+          const fresh: AppNotification[] = [
+            { id: 'n7', type: 'community_invite_received', read: false, timestamp: new Date().toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
+            { id: 'n8', type: 'social_service_friendship_request', read: false, timestamp: new Date(Date.now() - 1000).toISOString(), metadata: { sender: { address: '0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4', name: 'Sharknado' } } },
+            // Opens the reward popup as well as its toast.
+            { id: 'n9', type: 'reward_in_progress', read: false, timestamp: new Date(Date.now() - 2000).toISOString(), metadata: { title: 'New item unlocked', description: 'Your reward is being processed', tokenName: 'Mock Reward Hat', tokenImage: 'https://picsum.photos/seed/reward/256/256', tokenRarity: 'epic', tokenCategory: 'hat' } }
+          ]
+          mockNotifications.unshift(...fresh)
+          reply({ kind: 'notificationsNew', notifications: fresh })
+        }, 4000)
+      }
       return
     }
     if (msg.kind === 'markNotificationsRead') {
       // Persist read state in the mock so reopening reflects it (mirrors the real service).
       for (const n of mockNotifications) if (msg.ids.includes(n.id)) n.read = true
+      return
+    }
+    if (msg.kind === 'setPhotoMode') {
+      mockPhotoMode = { ...mockPhotoMode, active: msg.enable, event: 'none', previewJpegBase64: '', message: '' }
+      reply({ kind: 'photoMode', state: mockPhotoMode })
+      return
+    }
+    if (msg.kind === 'takePhoto') {
+      if (!mockPhotoMode.active) return
+      mockPhotoMode = { ...mockPhotoMode, event: 'captured', eventSeq: mockPhotoMode.eventSeq + 1, previewJpegBase64: '', message: '' }
+      reply({ kind: 'photoMode', state: mockPhotoMode })
+      setTimeout(() => {
+        const id = `mock-photo-${mockPhotoMode.eventSeq}`
+        mockGallery.unshift({ id, url: mockGallery[0]?.url ?? '', thumbnailUrl: mockGallery[0]?.thumbnailUrl, dateTime: String(Math.floor(Date.now() / 1000)), isPublic: false })
+        mockPhotoMode = {
+          ...mockPhotoMode,
+          event: 'uploaded',
+          eventSeq: mockPhotoMode.eventSeq + 1,
+          storageCurrent: mockGallery.length,
+          message: id
+        }
+        reply({ kind: 'photoMode', state: mockPhotoMode })
+      }, 800)
       return
     }
     if (msg.kind === 'getGallery') {

@@ -14,6 +14,7 @@ pub mod client_ip;
 pub mod cors;
 pub mod drain;
 pub mod errors;
+pub mod health;
 pub mod http_util;
 pub mod identity;
 pub mod livekit;
@@ -22,8 +23,8 @@ pub mod openapi;
 pub mod parcel;
 pub mod query_params;
 pub mod rpc;
+pub mod segment_signature;
 pub mod signed_fetch;
-pub mod telemetry;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_http;
 #[cfg(any(test, feature = "test-support"))]

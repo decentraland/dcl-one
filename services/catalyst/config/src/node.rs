@@ -38,8 +38,9 @@ pub struct NodeConfig {
     pub http_server_port: u16,
 
     /// Direct backend proxies allowed to supply a single, overwritten X-Real-IP
-    /// for referral quotas. Empty trusts only the socket peer. These are the
-    /// backend proxy networks, not the proxy's own upstream CDN networks.
+    /// for referral quotas and the `/contents` rate limit. Empty trusts only the
+    /// socket peer. These are the backend proxy networks, not the proxy's own
+    /// upstream CDN networks.
     #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 
@@ -94,7 +95,8 @@ pub struct NodeConfig {
 
     /// The map service `/lambdas/users/{address}/lands` points its parcel and
     /// estate images at (`<base>/v1/parcels/{x}/{y}/map.png`); empty is this
-    /// node's own `<PUBLIC_URL>/api`.
+    /// node's own `<PUBLIC_URL>/api`. `NODE_POSTURE=mirror` sets
+    /// `https://api.decentraland.org`, the base of the subgraph's images.
     #[arg(long, env = "LAND_IMAGE_BASE_URL", default_value = "")]
     pub land_image_base_url: String,
 
@@ -113,6 +115,13 @@ pub struct NodeConfig {
     /// Overrides the build-time CATALYST_COMMIT_HASH in /about and /status.
     #[arg(long, env = "COMMIT_HASH")]
     pub commit_hash: Option<String>,
+
+    /// lamb2's overload check: /about answers `acceptingUsers: false` while the
+    /// host's one-minute load average per CPU or its used memory is above
+    /// 90%. Off by default under every posture: the figures are host-wide,
+    /// and a node shares its host with sync, Postgres and builds.
+    #[arg(long, env = "ABOUT_RESOURCE_CHECK", default_value_t = false, action = clap::ArgAction::Set)]
+    pub about_resource_check: bool,
 
     /// Development only. Report `Syncing` (healthy, accepting users) although no
     /// sync worker is attached, so the content read contracts can be replayed

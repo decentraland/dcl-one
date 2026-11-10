@@ -6,7 +6,8 @@ const MetadataSchema = z.record(z.string(), z.unknown());
 export const NotificationSchema = z.object({
   id: z.string().min(1),
   type: z.string().min(1),
-  address: z.string(),
+  // null on a broadcast
+  address: z.string().nullable(),
   timestamp: z.union([z.number(), z.string()]),
   read: z.boolean(),
   created_at: z.string(),

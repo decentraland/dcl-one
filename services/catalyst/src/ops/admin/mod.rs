@@ -14,7 +14,7 @@
 //! over the snapshot generator, merged beside this one).
 //!
 //! `/admin/api/<family>/*` ([`console`]): the old console's proxies into
-//! every other service's admin routes (telemetry, credits, price, social
+//! every other service's admin routes (credits, price, social
 //! moderation, the social RPC, communities, notifications, badges, worlds,
 //! the scene host, the camera reel, builder curation, the EVM relay, the
 //! explorer overlays, place/world/event moderation) as calls into the owning
@@ -62,7 +62,6 @@ mod rpc;
 pub mod session;
 pub mod snapshots;
 mod social;
-mod telemetry;
 mod worlds;
 
 #[cfg(test)]

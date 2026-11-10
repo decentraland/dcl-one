@@ -97,34 +97,39 @@ debug = false
 [package.metadata.wasm-pack.profile.release]
 wasm-opt = ["-Oz"]
 
-# The Explorer's engine forks. A patch table only applies from the workspace root, so the
-# Explorer's is repeated here; keep it in step with rendering/bevy-explorer/source/Cargo.toml.
+# The Explorer's engine forks and its vendored Bevy (rendering/bevy-explorer/bevy). A patch table
+# only applies from the workspace root, so the Explorer's is repeated here; keep it in step with
+# rendering/bevy-explorer/source/Cargo.toml.
 [patch.crates-io]
 naga_oil = { git = "https://github.com/robtfm/naga_oil", branch = "fix/deterministic-override-emit-order" }
 draco-oxide-decoder = { git = "https://github.com/robtfm/draco-oxide", branch = "fix/wasm32-rans-refill" }
 draco-oxide-core = { git = "https://github.com/robtfm/draco-oxide", branch = "fix/wasm32-rans-refill" }
 draco-nd-vector = { git = "https://github.com/robtfm/draco-oxide", branch = "fix/wasm32-rans-refill" }
-bevy = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_a11y = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_asset = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_app = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_derive = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_ecs = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_image = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_input = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_log = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_math = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_color = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_transform = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_reflect = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_render = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_time = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_winit = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_window = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
-bevy_platform = { git = "https://github.com/robtfm/bevy", branch = "release-0.16-dcl" }
+bevy = { path = "../bevy-explorer/bevy" }
+bevy_a11y = { path = "../bevy-explorer/bevy/crates/bevy_a11y" }
+bevy_asset = { path = "../bevy-explorer/bevy/crates/bevy_asset" }
+bevy_app = { path = "../bevy-explorer/bevy/crates/bevy_app" }
+bevy_derive = { path = "../bevy-explorer/bevy/crates/bevy_derive" }
+bevy_ecs = { path = "../bevy-explorer/bevy/crates/bevy_ecs" }
+bevy_image = { path = "../bevy-explorer/bevy/crates/bevy_image" }
+bevy_input = { path = "../bevy-explorer/bevy/crates/bevy_input" }
+bevy_log = { path = "../bevy-explorer/bevy/crates/bevy_log" }
+bevy_math = { path = "../bevy-explorer/bevy/crates/bevy_math" }
+bevy_color = { path = "../bevy-explorer/bevy/crates/bevy_color" }
+bevy_transform = { path = "../bevy-explorer/bevy/crates/bevy_transform" }
+bevy_reflect = { path = "../bevy-explorer/bevy/crates/bevy_reflect" }
+bevy_render = { path = "../bevy-explorer/bevy/crates/bevy_render" }
+bevy_time = { path = "../bevy-explorer/bevy/crates/bevy_time" }
+bevy_winit = { path = "../bevy-explorer/bevy/crates/bevy_winit" }
+bevy_window = { path = "../bevy-explorer/bevy/crates/bevy_window" }
+bevy_platform = { path = "../bevy-explorer/bevy/crates/bevy_platform" }
 gltf = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
 gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
 winit = { git = "https://github.com/robtfm/winit", branch = "v0.30.x" }
 wgpu = { git = "https://github.com/robtfm/wgpu", branch = "24.0.5-dcl" }
 wgpu-types = { git = "https://github.com/robtfm/wgpu", branch = "24.0.5-dcl" }
 naga = { git = "https://github.com/robtfm/wgpu", branch = "24.0.5-dcl" }
+
+# Crates that name the former Bevy fork by git reach the vendored tree too, as in the Explorer.
+[patch."https://github.com/robtfm/bevy"]
+bevy = { path = "../bevy-explorer/bevy" }

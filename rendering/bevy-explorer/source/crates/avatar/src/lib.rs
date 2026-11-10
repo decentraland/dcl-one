@@ -47,7 +47,7 @@ pub mod colliders;
 #[cfg(feature = "explorer")]
 mod debug_avatars;
 #[cfg(feature = "explorer")]
-mod dynamic_nametag;
+pub mod dynamic_nametag;
 #[cfg(feature = "explorer")]
 pub mod emote_report;
 #[cfg(feature = "explorer")]
@@ -513,7 +513,6 @@ fn update_base_avatar_shape(
         commands.entity(ent).try_insert(avatar_shape);
     }
 }
-
 
 /// A mesh of the avatar's base body (head, torso, hands, legs, feet), as opposed to a wearable's.
 /// The avatar preview hides these to show a wearable on its own.
@@ -1477,14 +1476,7 @@ fn process_avatar(
                     commands.entity(scene_ent).try_insert(Visibility::Hidden);
                 }
 
-                if let Some(mesh) = meshes.get(h_mesh) {
-                    if mesh.asset_usage == RenderAssetUsages::MAIN_WORLD {
-                        if let Some(mesh_data) = meshes.get_mut(h_mesh) {
-                            mesh_data.normalize_joint_weights();
-                            mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                        }
-                    }
-                }
+                upload_cpu_mesh(&mut meshes, h_mesh);
 
                 commands.entity(scene_ent).try_insert(calculate_local_aabb(
                     aabb_bounds.0,
@@ -1787,14 +1779,7 @@ fn process_avatar(
                 }
 
                 if let Some(h_mesh) = maybe_h_mesh {
-                    if let Some(mesh) = meshes.get(h_mesh) {
-                        if mesh.asset_usage == RenderAssetUsages::MAIN_WORLD {
-                            if let Some(mesh_data) = meshes.get_mut(h_mesh) {
-                                mesh_data.normalize_joint_weights();
-                                mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                            }
-                        }
-                    }
+                    upload_cpu_mesh(&mut meshes, h_mesh);
                     commands.entity(scene_ent).try_insert(calculate_local_aabb(
                         aabb_bounds.0,
                         aabb_bounds.1,
@@ -2262,5 +2247,19 @@ fn remove_attach_points_from_avatar_shape(
             commands.entity(attach_point).try_despawn();
         }
         commands.entity(entity).try_remove::<AttachPoints>();
+    }
+}
+
+/// Send a mesh loaded cpu-side only (a scene's glb settings) to the GPU as well.
+pub(crate) fn upload_cpu_mesh(meshes: &mut Assets<Mesh>, mesh: impl Into<AssetId<Mesh>>) {
+    let id = mesh.into();
+    if meshes
+        .get(id)
+        .is_some_and(|mesh| mesh.asset_usage == RenderAssetUsages::MAIN_WORLD)
+    {
+        if let Some(mesh) = meshes.get_mut(id) {
+            mesh.normalize_joint_weights();
+            mesh.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+        }
     }
 }

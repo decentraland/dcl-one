@@ -18,17 +18,17 @@ import { getPlatform, isMobile, isDesktop, isWeb } from '@dcl/sdk/platform'
 
 > [!WARNING]
 > **📔 Note**: These functions read a value that is populated asynchronously when the scene starts, and nothing guarantees it's already available by the time `main()` runs. If you call them too early, they may still return `null` / `false`. To be safe, defer any platform-dependent setup until `getPlatform()` returns something other than `null`, for example by checking inside a system:
-> 
+>
 > ```ts
 > import { engine } from '@dcl/sdk/ecs'
 > import { getPlatform } from '@dcl/sdk/platform'
-> 
+>
 > function platformCheckSystem() {
 >   if (getPlatform() === null) return
 >   engine.removeSystem(platformCheckSystem)
 >   setupUI()
 > }
-> 
+>
 > engine.addSystem(platformCheckSystem)
 > ```
 

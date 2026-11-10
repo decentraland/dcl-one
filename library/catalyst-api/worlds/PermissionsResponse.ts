@@ -2,4 +2,4 @@
 import type { PermissionSummaryEntry } from "./PermissionSummaryEntry";
 import type { WorldPermissionsBlock } from "./WorldPermissionsBlock";
 
-export type PermissionsResponse = { permissions: WorldPermissionsBlock, owner: string | null, summary: { [key in string]: Array<PermissionSummaryEntry> }, };
+export type PermissionsResponse = { permissions: WorldPermissionsBlock, owner?: string, summary: { [key in string]: Array<PermissionSummaryEntry> }, };

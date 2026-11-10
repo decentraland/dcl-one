@@ -6,6 +6,8 @@ import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
 import json
+import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -41,9 +43,14 @@ class Upstream(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("Content-Length", "0")))
         if self.path in ("/content/contents/test", "/worlds-content-server/contents/test",
                          "/ipfs/test", "/ab-cdn/content/contents/test"):
+            # The headers content_file_headers() sends beside X-Accel-Redirect.
             self.send_response(200)
             self.send_header("X-Accel-Redirect", "/__protected_storage/0a/blob")
+            self.send_header("Content-Type", "image/png")
             self.send_header("ETag", '"gateway-fixture"')
+            self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -75,7 +82,11 @@ def request(host, path, *, vhost="example.test", headers=None, method="GET", bod
     response = conn.getresponse()
     result = response.status, response.read()
     if include_headers:
-        result += ({key.lower(): value for key, value in response.getheaders()},)
+        # Every value of a header, so a duplicate shows.
+        collected = {}
+        for key, value in response.getheaders():
+            collected.setdefault(key.lower(), []).append(value)
+        result += (collected,)
     conn.close()
     return result
 
@@ -97,20 +108,34 @@ def websocket(host, path):
         assert stream.read(len(message)) == message
 
 
-def wait_ready(host):
-    for _ in range(80):
+def wait_ready(host, path="/_gateway/healthz"):
+    deadline = time.monotonic() + 20
+    delay = .1
+    while True:
         try:
-            if request(host, "/_gateway/healthz")[0] == 200:
+            if request(host, path)[0] == 200:
                 return
         except OSError:
             pass
-        time.sleep(0.25)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(delay, remaining))
+        delay = min(delay * 2, 2)
     raise AssertionError(f"{host} did not become ready")
+
+
+def assert_budget(statuses, capacity):
+    # The exact last admitted slot can vary at a worker/timer boundary.
+    # Still require a useful initial allowance, its ceiling, and sustained 429s.
+    admitted = statuses.count(200)
+    assert capacity - 1 <= admitted <= capacity, statuses
+    assert statuses == [200] * admitted + [429] * (len(statuses) - admitted), statuses
 
 
 def client(args):
     table = json.loads(Path(args.table).read_text())
-    public, admitted, untrusted, trusted, accel, late = args.targets
+    public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted, rate_untrusted = args.targets
     for host in args.targets:
         wait_ready(host)
 
@@ -151,6 +176,7 @@ def client(args):
     for alias in table["aliases"]:
         method, path, target = alias["probe"]
         hit(path, "apis", method=method, target=target)
+    hit("/events-notifier/forward", "apis", method="POST")
     hit("/place/1,2", "sites", vhost="places.example.test", target="/places/place/1,2")
     hit("/world/sample.dcl.eth", "sites", vhost="places.example.test", target="/places/world/sample.dcl.eth")
     hit("/place?position=1,2", "apis", vhost="places.example.test", target="/places/place?position=1,2")
@@ -207,6 +233,9 @@ def client(args):
         data = hit(path, "apis", vhost=vhost, target="/world-storage/values/k")
         assert data["headers"]["x-original-path"] == "/values/k", (vhost, data)
     hit("/world-storage/values/k", "apis", vhost="storage.example.test")
+    hit("/world-storage/values/key.data", "apis")
+    hit("/values/key.data", "apis", vhost="storage.example.test", target="/world-storage/values/key.data")
+    hit("/world-storage/values/k", "apis", host=storage_trusted)
     data = hit("/get-scene-adapter", "apis", vhost="comms-gatekeeper-local.example.test",
         target="/comms-gatekeeper/get-scene-adapter")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"
@@ -238,25 +267,69 @@ def client(args):
     ]:
         status, body, headers = request(accel, path, vhost=vhost, include_headers=True)
         assert (status, body) == (200, b"authorized-blob"), (vhost, path, status, body)
+        # One value each: the app's Cache-Control, Content-Type and expose list reach
+        # the client as upstream sends them, and nginx adds no second copy.
         for key, value in {"x-content-type-options": "nosniff",
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
-                           "access-control-allow-origin": "*", "etag": '"gateway-fixture"'}.items():
-            assert headers.get(key) == value, (vhost, path, key, headers)
+                           "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-type": "image/png", "accept-ranges": "bytes",
+                           "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
+                           "access-control-expose-headers":
+                               "ETag, Content-Range, Accept-Ranges, Content-Length"}.items():
+            assert headers.get(key) == [value], (vhost, path, key, headers)
+        # A Range the app does not support reaches nginx as a whole-file GET; upstream
+        # answers it with the whole file, not nginx's multipart 206 or HTML 416.
+        for byte_range in ["bytes=0-1,3-4", "bytes=-"]:
+            ranged = request(accel, path, vhost=vhost, headers={"Range": byte_range})
+            assert ranged == (200, b"authorized-blob"), (vhost, path, byte_range, ranged)
     assert request(public, "/about", method="POST", body=b"x" * (1024 * 1024 + 1))[0] == 413
     deployed = request(public, "/entities", vhost="worlds-content-server.example.test", method="POST",
                        body=b"x" * (1024 * 1024 + 1))
     assert deployed[0] == 200, ("worlds deploy body cap", deployed)
     assert json.loads(deployed[1])["path"] == "/worlds-content-server/entities", deployed
-    for _ in range(40):
-        if request(late, "/about")[0] == 200:
-            break
-        time.sleep(0.5)
-    else:
-        raise AssertionError("Gateway did not resolve an upstream that started later")
+    for path in ["/world/w.dcl.eth/settings", "/worlds-content-server/world/w.dcl.eth/settings"]:
+        updated = request(public, path, vhost="worlds-content-server.example.test" if path.startswith("/world/")
+                          else "example.test", method="PUT", body=b"x" * (1024 * 1024 + 1))
+        assert updated[0] == 200, ("worlds settings body cap", path, updated)
+    wait_ready(late, "/about")
     hit("/about", "apis", host=late)
     print("Host aliases, signed paths, WebSocket echo, authorized file delivery and body caps passed.", flush=True)
     print("Gateway starts without upstreams and resolves them when they become available.", flush=True)
+
+    # These two fixtures use the production maps/geo/locations, with a
+    # one-minute refill and small bursts. No CI throughput assumption.
+    for target, expected in [(rate_public, 3), (rate_trusted, 6)]:
+        statuses = [request(target, "/world-storage/values/k")[0] for _ in range(8)]
+        assert_budget(statuses, expected)
+    # Fresh forwarded client address isolates the write bucket. The real geo
+    # sees the sanitized client IP, not the immediate trusted proxy address.
+    statuses = [request(rate_public, "/world-storage/values/k", method="PUT", body=b"{}",
+                        headers={"X-Forwarded-For": "198.51.100.77"})[0] for _ in range(4)]
+    assert_budget(statuses, 2)
+    statuses = [request(rate_untrusted, "/world-storage/values/key.data",
+                        headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})[0] for i in range(8)]
+    assert_budget(statuses, 3)
+    print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
+
+
+def rate_fixture(args):
+    """Keep production routing and identity logic; shrink only test budgets."""
+    import gateway
+    wrapper = Path(args.rate_fixture).read_text()
+    nginx = re.search(r"--nginx ([^ \"']+)", wrapper)[1]
+    mime = re.search(r"--mime ([^ \"']+)", wrapper)[1]
+    text = gateway.render(json.loads(Path(args.table).read_text()), gateway.settings(os.environ), mime)
+    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5)]:
+        text, n = re.subn(rf"(zone={zone}:10m rate=)[0-9]+r/s", r"\g<1>1r/m", text)
+        assert n == 1, (zone, n)
+        text = re.sub(rf"(limit_req zone={zone} burst=)[0-9]+", rf"\g<1>{burst}", text)
+    folder = Path("/tmp/gateway")
+    folder.mkdir(mode=0o700, exist_ok=True)
+    conf = folder / "nginx.conf"
+    conf.write_text(text)
+    subprocess.run([nginx, "-p", str(folder), "-c", str(conf), "-t"], check=True)
+    os.execv(nginx, [nginx, "-p", str(folder), "-c", str(conf), "-g", "daemon off;"])
 
 
 def docker(*args, check=True):
@@ -296,8 +369,12 @@ def smoke(args):
                 ("trusted", {"GATEWAY_ADMIN_CIDRS": "198.51.100.7/32",
                              "GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
                 ("accel", {"GATEWAY_STORAGE_ROOT": "/content"}),
+                ("storage", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
                 ("late", {"GATEWAY_APIS_UPSTREAMS": token + "-late-upstreams:8081",
                           "GATEWAY_SITES_UPSTREAMS": token + "-late-upstreams:8082"}),
+                ("rate-public", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
+                ("rate-trusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
+                ("rate-untrusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": "198.51.100.0/24"}),
             ]
             targets = []
             for name, extra in cases:
@@ -307,8 +384,13 @@ def smoke(args):
                 env = {"GATEWAY_DOMAIN": "example.test", "GATEWAY_APIS_UPSTREAMS": fixture + ":8081",
                        "GATEWAY_SITES_UPSTREAMS": fixture + ":8082", **extra}
                 env_args = [item for key, value in env.items() for item in ("-e", f"{key}={value}")]
-                docker("run", "-d", "--name", container, *common, *env_args, "-v", f"{storage}:/content:ro", image)
-            docker("exec", fixture, "python3", "/test/smoke.py", "--unresolved", targets[-1])
+                if name.startswith("rate-"):
+                    docker("run", "-d", "--name", container, *common, *env_args,
+                           "-v", f"{source}:/test:ro", "--entrypoint", "python3", image,
+                           "/test/smoke.py", "--rate-fixture", info["Config"]["Entrypoint"][0], "--table", table)
+                else:
+                    docker("run", "-d", "--name", container, *common, *env_args, "-v", f"{storage}:/content:ro", image)
+            docker("exec", fixture, "python3", "/test/smoke.py", "--unresolved", targets[6])
             late_fixture = token + "-late-upstreams"
             containers.append(late_fixture)
             docker("run", "-d", "--name", late_fixture, *common, "-v", f"{source}:/test:ro",
@@ -334,12 +416,15 @@ if __name__ == "__main__":
     parser.add_argument("--client", action="store_true")
     parser.add_argument("--unresolved")
     parser.add_argument("--table")
-    parser.add_argument("--targets", nargs=6)
+    parser.add_argument("--targets", nargs=10)
+    parser.add_argument("--rate-fixture")
     parser.add_argument("--image", default="foundation-gateway:nix")
     parser.add_argument("--revision")
     parser.add_argument("--arch", choices=("amd64", "arm64"))
     args = parser.parse_args()
-    if args.serve:
+    if args.rate_fixture:
+        rate_fixture(args)
+    elif args.serve:
         serve()
     elif args.client:
         client(args)

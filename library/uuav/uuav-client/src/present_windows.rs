@@ -16,12 +16,6 @@ use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC}
 use windows::Win32::Graphics::Dxgi::IDXGIKeyedMutex;
 use windows::core::Interface as _;
 
-/// Pixels a generation may announce: 4096 x 4096, DCI 4K and a little more.
-/// The helper is the untrusted side of this channel and its dimensions size
-/// what this side allocates or wraps per slot, so a frame past this is
-/// refused before anything is allocated.
-const MAX_PIXELS: u64 = 4096 * 4096;
-
 const SLOTS: usize = 3;
 
 /// A generation announced by the helper but not yet opened. The NT handle
@@ -74,10 +68,9 @@ pub struct PlayerVideo {
     /// Newest (generation, slot) the helper finished writing.
     published: Option<(u32, u8)>,
     presented: Option<(u32, u8)>,
+    pub(crate) presented_frames: u64,
     /// Ack the render event owes the helper after opening a generation.
     ack_due: Option<u32>,
-    /// Frames copied into the presentation texture.
-    frames: u64,
 }
 
 // D3D11 interfaces are free-threaded; everything here is accessed behind
@@ -179,26 +172,11 @@ impl PlayerVideo {
 
         if copy_slot(unity, source, &presentation.texture)? {
             self.presented = Some((generation, slot));
-            self.frames = self.frames.wrapping_add(1);
+            self.presented_frames = self.presented_frames.saturating_add(1);
         }
         // busy mutex: the helper is mid-write; keep the previous frame and
         // retry on the next render event
         Ok(ack)
-    }
-
-    /// The size the presentation texture were created for, once the first
-    /// frame was presented: the decoded frame's (even-rounded), which the
-    /// stream header behind the state update need not match.
-    pub fn presented_size(&self) -> Option<(u32, u32)> {
-        self.presentation
-            .as_ref()
-            .map(|sized| (sized.width, sized.height))
-    }
-
-    /// Frames copied into the presentation texture so far; unchanged while
-    /// nothing new was published.
-    pub const fn frames(&self) -> u64 {
-        self.frames
     }
 
     fn ensure_presentation(&mut self, unity: &UnityDevice, width: u32, height: u32) -> Result<()> {
@@ -245,12 +223,6 @@ fn open_generation(unity: &UnityDevice, mut pending: PendingSet) -> Result<Activ
         pending.handles.len() == SLOTS,
         "expected {SLOTS} slot handles, got {}",
         pending.handles.len()
-    );
-    ensure!(
-        u64::from(pending.width).saturating_mul(u64::from(pending.height)) <= MAX_PIXELS,
-        "helper announced {}x{}, past the {MAX_PIXELS} pixel cap",
-        pending.width,
-        pending.height
     );
     let handles = std::mem::take(&mut pending.handles);
 

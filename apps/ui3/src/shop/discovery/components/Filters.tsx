@@ -3,10 +3,10 @@
 
 import { useEffect, useId, useState, type ReactNode } from "react";
 
-import { t } from "../intl";
-import { CATEGORIES, type Sub, type Top } from "../lib/categories";
-import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "../lib/price-slider";
-import { RARITIES, rarityColor, rarityLabel } from "../lib/rarity";
+import { t } from "@shop/discovery/intl";
+import { CATEGORIES, type Sub, type Top } from "@shop/discovery/lib/categories";
+import { PRICE_SLIDER_MAX, PRICE_SLIDER_STEPS, priceToSliderPct, priceToSliderPos, sliderPosToPrice } from "@shop/discovery/lib/price-slider";
+import { RARITIES, rarityColor, rarityLabel } from "@shop/discovery/lib/rarity";
 import { CollectionFilter, CreatorFilter, useCollectionName, useCreatorNames } from "./PickerFilters";
 import Icon from "./Icon";
 import "./filters.css";
@@ -38,6 +38,8 @@ export function CategoryFilter({
   hideAll = false,
   collections = false,
   onCollections,
+  title,
+  extraLabel,
 }: {
   category: string;
   subCategory: string | null;
@@ -47,12 +49,18 @@ export function CategoryFilter({
   hideAll?: boolean;
   collections?: boolean;
   onCollections?: () => void;
+  /** A heading above the list (My Items' "Items"). */
+  title?: string;
+  /** The `onCollections` entry's label (My Items' "My Creations"); "Collections" by default. */
+  extraLabel?: string;
 }) {
   const [expandedKey, setExpandedKey] = useState<string | null>(() => (CATEGORIES.some((top) => top.key === category && top.subs) ? category : null));
   const [expandedSubKey, setExpandedSubKey] = useState<string | null>(() => parentOfLeaf(subCategory));
 
   useEffect(() => {
+    // A category with sub-categories opens them; any other (another page's section, none) closes the open one.
     if (CATEGORIES.some((top) => top.key === category && top.subs)) setExpandedKey(category);
+    else setExpandedKey(null);
     const parent = parentOfLeaf(subCategory);
     if (parent) setExpandedSubKey(parent);
   }, [category, subCategory]);
@@ -76,6 +84,7 @@ export function CategoryFilter({
 
   return (
     <div className="shop-cats" data-testid="category-filter">
+      {title ? <h2 className="shop-cats__title">{title}</h2> : null}
       {CATEGORIES.filter((top) => !(hideAll && top.key === "all") && !(hideNames && top.key === "names")).map((top) => {
         const open = expandedKey === top.key && !!top.subs;
         const selected = !collections && top.key === category && !subCategory;
@@ -140,7 +149,7 @@ export function CategoryFilter({
       {onCollections ? (
         <div className="shop-cats__group">
           <button type="button" className="shop-cats__cat" data-testid="filter-collections" data-selected={collections || undefined} aria-pressed={collections} onClick={onCollections}>
-            <span>{t("categories.collections")}</span>
+            <span>{extraLabel ?? t("categories.collections")}</span>
           </button>
         </div>
       ) : null}

@@ -243,9 +243,6 @@ async fn announce_started(
         }
     };
     let broadcast = async {
-        if let Some(state) = ctx.communities() {
-            state.publish_community_event(&event, &audience).await;
-        }
         notify(ctx.db().pool(), event, audience).await;
     };
     let analytics = async {
@@ -483,10 +480,8 @@ pub(crate) async fn end_community_voice_chat(
         None => true,
     };
     if let Err(error) = ctx.voice().end_community_voice_chat(cid, me).await {
-        if claimed {
-            if let Some(entry) = &audience {
-                ctx.db().restore_voice_notification(entry).await?;
-            }
+        if claimed && let Some(entry) = &audience {
+            ctx.db().restore_voice_notification(entry).await?;
         }
         return runtime("end community voice chat", raw, Err(error));
     }

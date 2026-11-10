@@ -21,6 +21,10 @@
 //! (formerly in `shared::livekit`) are named here too, so every LiveKit room
 //! name has this one owner.
 
+// `ParsedRoom` and `RoomClassification` carry a `ResolvedRoom` by value;
+// boxing it would ripple through every match.
+#![allow(clippy::large_enum_variant)]
+
 use crate::shared::identity::CommunityId;
 use crate::world_identity::{
     Parcel, ParcelSet, RealmId, SceneId, SceneNamespace, WorldName, is_world_realm_name,
@@ -324,6 +328,39 @@ pub struct ResolvedRoom {
     /// The active deployment behind `scene_id`, when this node holds one.
     pub deployment: Option<ActiveDeployment>,
     pub room: String,
+}
+
+/// A world scene a redeploy recently replaced: its own base and the bases of
+/// the active scenes now standing on its parcels.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplacedScene {
+    pub base: Parcel,
+    pub successors: Vec<Parcel>,
+}
+
+impl ReplacedScene {
+    /// Every key whose ban reaches this scene's room: its own and its successors'.
+    pub fn ban_keys(&self, world: &WorldName) -> Vec<crate::access::SceneBanKey> {
+        std::iter::once(self.base)
+            .chain(self.successors.iter().copied())
+            .map(|base| crate::access::SceneBanKey::world(world, base))
+            .collect()
+    }
+}
+
+impl ResolvedRoom {
+    /// The key this scene's bans live under; `None` for the world lobby.
+    pub fn ban_key(&self) -> Option<crate::access::SceneBanKey> {
+        match (&self.realm, &self.deployment) {
+            (RealmId::World(world), Some(deployment)) => {
+                Some(crate::access::SceneBanKey::world(world, deployment.base))
+            }
+            _ => self
+                .scene_id
+                .as_ref()
+                .map(crate::access::SceneBanKey::scene),
+        }
+    }
 }
 
 #[cfg(test)]

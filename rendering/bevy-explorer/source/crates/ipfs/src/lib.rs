@@ -40,7 +40,7 @@ use bevy::{
             ErasedAssetReader, Reader, VecReader,
         },
         meta::Settings,
-        Asset, AssetLoader, LoadState, UntypedAssetId,
+        Asset, AssetLoader, AssetPath, LoadState, UntypedAssetId,
     },
     diagnostic::{
         Diagnostic, DiagnosticMeasurement, DiagnosticPath, DiagnosticsStore, RegisterDiagnostic,
@@ -407,9 +407,19 @@ impl IpfsAssetServer<'_, '_> {
         scene_hash: &str,
         content_hash: &str,
     ) -> Handle<T> {
+        self.server
+            .load(Self::scene_content_hash_path::<T>(scene_hash, content_hash))
+    }
+
+    /// The asset path [`Self::load_scene_content_hash`] loads.
+    pub fn scene_content_hash_path<T: IpfsAsset>(
+        scene_hash: &str,
+        content_hash: &str,
+    ) -> AssetPath<'static> {
         let ext = T::ext();
-        let path = format!("$ipfs/$scene_content/{scene_hash}/{content_hash}.{ext}");
-        self.server.load(path)
+        AssetPath::from(format!(
+            "$ipfs/$scene_content/{scene_hash}/{content_hash}.{ext}"
+        ))
     }
 
     pub fn active_endpoint(&self) -> Option<String> {
@@ -1257,21 +1267,16 @@ impl IpfsIo {
         let mut about;
         let mut final_url;
         loop {
-            let about_raw = self
-                .client
-                .get(format!("{new_realm}/about"))
-                .send()
-                .await
-                .map_err(|e| anyhow!(e))?;
+            let about_raw =
+                platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/about")))
+                    .await
+                    .map_err(|e| anyhow!(e))?;
             if about_raw.status() != StatusCode::OK {
-                return Err(anyhow!("status: {}", about_raw.status()));
+                return Err(anyhow!("status: {}", about_raw.discard()));
             }
             final_url = about_raw.url().to_string();
 
-            about = about_raw
-                .json::<ServerAbout>()
-                .await
-                .map_err(|e| anyhow!(e))?;
+            about = about_raw.json::<ServerAbout>().await?;
             if about.configurations.as_ref().is_some_and(|config| {
                 config
                     .scenes_urn
@@ -1453,8 +1458,7 @@ impl IpfsIo {
                         client
                             .post(active_url)
                             .header("content-type", "application/json")
-                            .body(body)
-                            .send(),
+                            .body(body),
                         Duration::from_secs(30),
                         Duration::from_secs(10),
                     )
@@ -1766,21 +1770,17 @@ impl IpfsIo {
         about: &mut ServerAbout,
         new_realm: &str,
     ) -> Result<(), anyhow::Error> {
-        let scenes_raw = self
-            .client
-            .get(format!("{new_realm}/scenes"))
-            .send()
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let scenes_raw =
+            platform::TracedJsonResponse::send(self.client.get(format!("{new_realm}/scenes")))
+                .await
+                .map_err(|e| anyhow!(e))?;
         if scenes_raw.status() == StatusCode::NOT_FOUND {
+            scenes_raw.discard();
             return Ok(());
         } else if scenes_raw.status() != StatusCode::OK {
-            return Err(anyhow!("status: {}", scenes_raw.status()));
+            return Err(anyhow!("status: {}", scenes_raw.discard()));
         }
-        let scenes = scenes_raw
-            .json::<ServerScenes>()
-            .await
-            .map_err(|e| anyhow!(e))?;
+        let scenes = scenes_raw.json::<ServerScenes>().await?;
 
         if scenes.total > 0 {
             if let Some(scenes_urn) = about.configurations.as_mut().and_then(|config| {

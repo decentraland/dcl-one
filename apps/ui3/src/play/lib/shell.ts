@@ -6,19 +6,24 @@
 // copy with no sign-in key, and its parent isolates it, so the app runs there on its own. The
 // guard in app.html makes the same check.
 
+import { responseError } from './shellReply'
+
 export const inShell = window.parent !== window && !(window as { credentialless?: boolean }).credentialless
 
 export function postToShell(message: { type: string; [key: string]: unknown }): void {
   window.parent.postMessage(message, location.origin)
 }
 
-/** A message the shell posts on its own rather than as an answer to a request, by type. */
-export function onShellMessage(type: string, handler: (message: Record<string, unknown>) => void): void {
-  window.addEventListener('message', (e: MessageEvent) => {
+/** A message the shell posts on its own rather than as an answer to a request, by type. Returns the
+ *  unsubscribe. */
+export function onShellMessage(type: string, handler: (message: Record<string, unknown>) => void): () => void {
+  const listener = (e: MessageEvent): void => {
     if (e.source !== window.parent || e.origin !== location.origin) return
     const m = e.data as Record<string, unknown> | null
     if (m?.type === type) handler(m)
-  })
+  }
+  window.addEventListener('message', listener)
+  return () => window.removeEventListener('message', listener)
 }
 
 const REQUEST_TIMEOUT_MS = 10_000
@@ -34,12 +39,12 @@ export function shellRequest<T>(method: string, params?: unknown, timeoutMs = RE
     listening = true
     window.addEventListener('message', (e: MessageEvent) => {
       if (e.source !== window.parent || e.origin !== location.origin) return
-      const m = e.data as { type?: string; id?: number; result?: unknown; error?: string } | null
+      const m = e.data as { type?: string; id?: number; result?: unknown; error?: string; code?: unknown } | null
       if (m?.type !== 'bevy-shell:response' || typeof m.id !== 'number') return
       const call = pending.get(m.id)
       if (!call) return
       pending.delete(m.id)
-      if (m.error !== undefined) call.reject(new Error(m.error))
+      if (m.error !== undefined) call.reject(responseError({ error: m.error, code: m.code }))
       else call.resolve(m.result)
     })
   }

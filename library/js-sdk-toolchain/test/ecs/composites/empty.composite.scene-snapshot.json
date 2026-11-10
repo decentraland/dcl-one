@@ -1,0 +1,6 @@
+{
+  "core::Transform": {},
+  "core-schema::Network-Entity": {},
+  "core-schema::Network-Parent": {},
+  "composite::root": {}
+}

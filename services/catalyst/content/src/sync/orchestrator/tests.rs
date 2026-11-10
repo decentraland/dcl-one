@@ -192,3 +192,116 @@ async fn wait_for_bootstrap_returns_when_the_state_already_left_bootstrapping() 
     futures::FutureExt::now_or_never(handle.wait_for_bootstrap())
         .expect("a transition that already happened must not be missed");
 }
+
+#[tokio::test]
+async fn bootstrap_callbacks_require_success_and_keep_parent_cancellation_scope() {
+    use crate::batch_deployer::BatchDeployerConfig;
+    use crate::bloom_filter::BloomFilter;
+    use crate::jobs::Jobs;
+    use crate::sync_deployer::{LiveFailedDeploymentsStore, LiveSyncDeployer, SyncValidation};
+    use std::sync::atomic::AtomicUsize;
+
+    for (state, cancelled, expected) in [
+        (SyncState::Syncing, false, 1),
+        (
+            SyncState::PartiallySynced {
+                ready_types: vec!["scene".into()],
+            },
+            false,
+            1,
+        ),
+        (SyncState::Failed, false, 0),
+        (SyncState::Syncing, true, 0),
+    ] {
+        let (storage, temp) = crate::sync_test_support::temp_storage("bootstrap-callback").await;
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/unused")
+            .unwrap();
+        let status = Arc::new(SyncStatus::default());
+        let client = reqwest::Client::new();
+        let deployer = Arc::new(BatchDeployer::new(
+            BatchDeployerConfig::default(),
+            client.clone(),
+            storage.clone(),
+            pool.clone(),
+            Arc::new(LiveSyncDeployer::new(
+                pool.clone(),
+                1,
+                SyncValidation::AuthChainOnly,
+            )),
+            Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
+            BloomFilter::with_capacity(1),
+        ));
+        let orchestrator = Arc::new(SyncOrchestrator::new(
+            SyncOrchestratorConfig::default(),
+            SyncDependencies {
+                http_client: client,
+                storage,
+                deployer,
+                processed_store: Arc::new(LiveProcessedSnapshotStore::new(pool.clone())),
+                deployment_repo: Arc::new(LiveDeploymentRepository::new(pool, status.clone())),
+                status,
+                control: SyncControl::default(),
+            },
+        ));
+        let jobs = Arc::new(Jobs::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        let terminated = Arc::new(AtomicUsize::new(0));
+        let ended = terminated.clone();
+        let registry = jobs.clone();
+        let sync = orchestrator.clone();
+        let (entered, started) = tokio::sync::oneshot::channel();
+        jobs.spawn("bootstrap-test", move |ctx| async move {
+            let scope = ctx.clone();
+            entered.send(ctx.cancel.clone()).unwrap();
+            let (_peers_tx, peers) = tokio::sync::watch::channel(HashSet::new());
+            let retry_peers = Arc::new(tokio::sync::RwLock::new(Vec::new()));
+            run_sync_job(sync, peers, retry_peers, ctx, || {
+                observed.fetch_add(1, SeqCst);
+                registry.spawn_scoped(&scope, "after-bootstrap", |child| async move {
+                    child.cancel.cancelled().await;
+                    ended.fetch_add(1, SeqCst);
+                    Ok(())
+                });
+            })
+            .await
+        });
+        let cancellation = started.await.unwrap();
+        assert!(
+            crate::shared::test_wait::until(async || jobs
+                .report()
+                .iter()
+                .any(|job| job.name == "bootstrap-test"
+                    && job.progress.as_deref() == Some("bootstrapping")))
+            .await
+        );
+        if cancelled {
+            cancellation.cancel();
+        }
+        orchestrator.inner.set_state(state);
+        if !cancelled {
+            assert!(
+                crate::shared::test_wait::until(async || jobs.report().iter().any(|job| job.name
+                    == "bootstrap-test"
+                    && job
+                        .progress
+                        .as_deref()
+                        .is_some_and(|value| value.starts_with("bootstrapped;"))))
+                .await
+            );
+        }
+        assert_eq!(
+            jobs.report()
+                .iter()
+                .filter(|job| job.name == "after-bootstrap")
+                .count(),
+            expected
+        );
+        jobs.shutdown(Duration::from_secs(5)).await;
+        assert_eq!(calls.load(SeqCst), expected);
+        assert_eq!(terminated.load(SeqCst), expected);
+        assert!(orchestrator.inner.is_stopped());
+        let _ = std::fs::remove_dir_all(temp);
+    }
+}

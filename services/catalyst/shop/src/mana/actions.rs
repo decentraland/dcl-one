@@ -361,6 +361,22 @@ async fn build(
     }
 }
 
+/// Accepting a bid is the Marketplace's: refused while its rollout is off (`market::features`). The cancels stay
+/// open, so a trade signed before can still be withdrawn.
+fn marketplace_refusal(
+    kind: &ActionKind,
+    market: &crate::market::MarketplaceState,
+) -> Option<Response> {
+    if matches!(kind, ActionKind::AcceptBid) && !market.marketplace_features() {
+        return Some(error(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            &crate::market::features::refusal(),
+        ));
+    }
+    None
+}
+
 pub async fn post_action(
     State(state): State<SharedState>,
     OriginalUri(original): OriginalUri,
@@ -384,6 +400,9 @@ pub async fn post_action(
         Ok(a) => a,
         Err(r) => return r,
     };
+    if let Some(refused) = marketplace_refusal(&req.kind, &state.market) {
+        return refused;
+    }
     let chain_id = match (req.asset, req.trade_id.as_deref()) {
         (Some(asset), _) => asset.chain_id,
         (None, Some(id)) => match facts::load_trade(&state.pool, id).await {
@@ -415,7 +434,17 @@ pub async fn post_action(
             &format!("chain {chain_id} is not one the Shop settles on"),
         );
     };
-    let reader = state.reader(chain.chain_id);
+    let reader = match state.reader(chain.chain_id).await {
+        Ok(reader) => reader,
+        Err(refusal) => {
+            tracing::warn!(error = %refusal, "refusing to prepare an action through a mismatched chain endpoint");
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service Unavailable",
+                &refusal.to_string(),
+            );
+        }
+    };
     let built = match build(&state, &chain, reader.as_ref(), actor, &req).await {
         Ok(b) => b,
         Err(r) => return r,
@@ -476,4 +505,20 @@ pub async fn post_action(
         execution: built.execution,
     })
     .into_response()
+}
+
+#[cfg(test)]
+mod marketplace_tests {
+    use super::*;
+    use crate::market::tests::support::state_without_db_settings;
+
+    #[tokio::test]
+    async fn accepting_a_bid_is_refused_while_the_marketplace_is_off_and_a_cancel_never_is() {
+        let market = state_without_db_settings(crate::market::Settings::for_tests());
+        assert!(marketplace_refusal(&ActionKind::AcceptBid, &market).is_none());
+        market.set_marketplace_features(false);
+        let refused = marketplace_refusal(&ActionKind::AcceptBid, &market).expect("refused");
+        assert_eq!(refused.status(), StatusCode::FORBIDDEN);
+        assert!(marketplace_refusal(&ActionKind::CancelTrade, &market).is_none());
+    }
 }

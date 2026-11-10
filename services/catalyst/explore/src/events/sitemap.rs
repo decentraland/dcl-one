@@ -15,15 +15,11 @@ use crate::SharedState;
 use crate::shared::errors::ApiError;
 
 pub const SITEMAP_ITEMS_PER_PAGE: i64 = 100;
-/// The approved, undeleted events, one page of ids, oldest first (the
-/// old order; a malformed `created_at` sorts last instead of failing the page).
-const SITEMAP_SQL: &str = "SELECT id FROM explore.event WHERE approved IS TRUE \
-     AND (raw->>'deleted_by_user') IS DISTINCT FROM 'true' AND (raw->>'deleted_by_admin') IS DISTINCT FROM 'true' \
-     ORDER BY CASE WHEN jsonb_typeof(raw->'created_at') = 'string' AND raw->>'created_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]+(Z|[+-][0-9]{2}:?[0-9]{2})$' \
-          THEN (raw->>'created_at')::timestamptz END ASC NULLS LAST, id ASC OFFSET $1 LIMIT $2";
-/// Every schedule an event names, capped (a site map of schedules, not of events).
-const SCHEDULE_IDS_SQL: &str = "SELECT DISTINCT s AS id FROM explore.event, jsonb_array_elements_text(raw->'schedules') AS s \
-     WHERE jsonb_typeof(raw->'schedules') = 'array' ORDER BY id ASC LIMIT 50000";
+/// The approved, undeleted events, one page of ids, oldest first (the old
+/// order; a malformed `created_at` is a NULL `created_at_ts` and sorts last
+/// instead of failing the page).
+const SITEMAP_SQL: &str = "SELECT id FROM explore.event WHERE approved IS TRUE AND deleted IS FALSE \
+     ORDER BY created_at_ts ASC NULLS LAST, id ASC OFFSET $1 LIMIT $2";
 
 fn site_url(base: &str, pathname: &str) -> String {
     let trimmed = base.trim_end_matches('/');
@@ -102,9 +98,11 @@ pub async fn sitemap_events(
         .and_then(|s| s.parse::<i64>().ok())
         .filter(|p| *p >= 0 && raw_page.map(String::as_str) == Some(p.to_string().as_str()));
     let mut out = open("urlset");
-    if let Some(page) = page {
+    // A page past i64 is past every row: an empty urlset, never a wrapped
+    // offset.
+    if let Some(offset) = page.and_then(|p| p.checked_mul(SITEMAP_ITEMS_PER_PAGE)) {
         let ids: Vec<String> = sqlx::query_scalar(SITEMAP_SQL)
-            .bind(page * SITEMAP_ITEMS_PER_PAGE)
+            .bind(offset)
             .bind(SITEMAP_ITEMS_PER_PAGE)
             .fetch_all(&state.pool)
             .await?;
@@ -117,11 +115,12 @@ pub async fn sitemap_events(
     Ok(xml(out))
 }
 
+/// Every row of the schedules table, expired ones included, as the old
+/// `getSchedulesSitemap` listed `ScheduleModel.find()` (`Sitemap/routes.ts:84-94`;
+/// fixture `events.sitemap.schedules`).
 pub async fn sitemap_schedules(State(state): State<SharedState>) -> Result<Response, ApiError> {
     let base = &state.settings.events_base_url;
-    let ids: Vec<String> = sqlx::query_scalar(SCHEDULE_IDS_SQL)
-        .fetch_all(&state.pool)
-        .await?;
+    let ids = state.schedules.all().await?.into_iter().map(|s| s.id);
     let mut out = open("urlset");
     for id in ids {
         let loc = format!("{}?id={id}", site_url(base, "/schedule/"));
@@ -146,5 +145,64 @@ mod tests {
             "https://events.example/submit/"
         );
         assert_eq!(xml_escape("a?x=1&y=<2>"), "a?x=1&amp;y=&lt;2&gt;");
+    }
+
+    /// `Sitemap/routes.ts:84-94`: every schedule row, whether or not an event
+    /// names it and whether or not it still runs; `page=-1` stays an empty
+    /// urlset (the upstream 500 is not reproduced).
+    #[tokio::test]
+    async fn the_schedules_sitemap_lists_the_schedules_table() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use std::sync::Arc;
+        use tower::ServiceExt;
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let expired = uuid::Uuid::new_v4().to_string();
+        let unreferenced = uuid::Uuid::new_v4().to_string();
+        sqlx::query(
+            "INSERT INTO explore.schedules_local (id, name, active_since, active_until) VALUES \
+             ($1, 'Expired', timezone('UTC', now()) - interval '2 days', timezone('UTC', now()) - interval '1 day'), \
+             ($2, 'Unreferenced', timezone('UTC', now()), timezone('UTC', now()) + interval '1 day')",
+        )
+        .bind(&expired)
+        .bind(&unreferenced)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let app = crate::router(Arc::new(crate::ExploreState::new(
+            pool,
+            crate::Settings::for_tests(),
+            None,
+        )));
+        async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
+            let response = app
+                .clone()
+                .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let status = response.status();
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            (status, String::from_utf8(bytes.to_vec()).unwrap())
+        }
+        let (status, body) = get(&app, "/events/sitemap.schedules.xml").await;
+        assert_eq!(status, StatusCode::OK);
+        for id in [&expired, &unreferenced] {
+            assert!(
+                body.contains(&format!(
+                    "<url><loc>https://events.decentraland.org/schedule/?id={id}</loc></url>"
+                )),
+                "{body}"
+            );
+        }
+        let (status, body) = get(&app, "/events/sitemap.events.xml?page=-1").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body,
+            "<?xml version=\"1.0\" encoding=\"UTF-8\"?><urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\"></urlset>"
+        );
     }
 }

@@ -13,6 +13,10 @@ export const PREF = {
   emojiRecents: 'dcl-emoji-recents',
   chatAutoTranslateDefault: 'chat.translate.autoDefault',
   chatAutoTranslateChannels: 'chat.translate.channels',
+  chatPingDefault: 'chat.ping.default',
+  chatPingChannels: 'chat.ping.channels',
+  chatClosedCommunities: 'chat.communities.closed',
+  chatKnownCommunities: 'chat.communities.known',
   lobbyRecents: 'lobby.recentPlaces',
   minimapPlaces: 'dcl-minimap-places',
   minimapStyle: 'dcl-minimap-style',
@@ -27,7 +31,8 @@ export const PREF = {
   voiceDisabled: 'nearbyVoiceDisabled',
   voiceVolume: 'nearbyVoiceVolume',
   voiceUsed: 'nearbyVoiceUsed',
-  launchCount: 'launchCount'
+  launchCount: 'launchCount',
+  gpuGuideSeen: 'hud.gpuGuideSeen'
 } as const
 
 const DB = 'hud-prefs'

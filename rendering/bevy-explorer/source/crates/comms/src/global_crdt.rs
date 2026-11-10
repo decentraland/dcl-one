@@ -17,7 +17,6 @@ use common::{
     },
     util::ModifyComponentExt,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use system_bridge::{SystemApi, VoiceMessage};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -38,7 +37,6 @@ use dcl_types::{
 
 use crate::{
     chat_reaction::{canonical_message_id, received_emoji, ChatReactionEvent},
-    profile::ProfileMetaCache,
     Transport,
 };
 
@@ -171,7 +169,6 @@ pub enum PlayerMessage {
     /// — it exists so a transport can say "they are here" without waiting for them to send data.
     /// Transports that learn about joins should emit it; `PlayerLeft` is the counterpart.
     Joined,
-    MetaData(String),
     PlayerData(rfc4::packet::Message),
     /// Pulse-decoded movement, delivered natively rather than as an rfc4 `Movement` packet (those
     /// are no longer supported). Boxed because the decoder already hands us a `Box`. `teleport` marks
@@ -211,7 +208,6 @@ impl std::fmt::Debug for PlayerMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let var_name = match self {
             Self::Joined => f.write_str("Joined"),
-            Self::MetaData(arg0) => f.debug_tuple("MetaData").field(arg0).finish(),
             Self::PlayerData(arg0) => f.debug_tuple("PlayerData").field(arg0).finish(),
             Self::Movement {
                 movement,
@@ -600,11 +596,6 @@ impl LocalAudioSource {
     }
 }
 
-#[derive(Serialize, Deserialize, Component, Clone, Debug)]
-#[serde(rename_all = "camelCase")]
-pub struct ForeignMetaData {
-    pub lambdas_endpoint: String,
-}
 /// A positional update for a foreign player from the Pulse-decoded movement stream. Position only;
 /// scene-driven animation travels separately as [`PlayerSceneAnimEvent`].
 #[derive(Event)]
@@ -835,7 +826,6 @@ pub fn process_transport_updates(
     mut string_senders: Local<HashMap<String, RpcEventSender>>,
     mut binary_senders: Local<HashMap<String, RpcStreamSender<(String, Vec<u8>)>>>,
     mut subscribers: EventReader<RpcCallEvent>,
-    mut profile_meta_cache: ResMut<ProfileMetaCache>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
     (discard_player_updates, transports): (Res<DiscardPlayerUpdates>, Query<(), With<Transport>>),
@@ -962,14 +952,6 @@ pub fn process_transport_updates(
                     match update.message {
                         // presence only — registering the transport above was the whole point
                         PlayerMessage::Joined => (),
-                        PlayerMessage::MetaData(str) => {
-                            if let Ok(meta) = serde_json::from_str::<ForeignMetaData>(&str) {
-                                debug!("foreign player metadata: {scene_id:?}: {meta:?}");
-                                profile_meta_cache
-                                    .0
-                                    .insert(update.address, meta.lambdas_endpoint);
-                            }
-                        }
                         PlayerMessage::AudioStreamAvailable { transport } => {
                             // pass through
                             debug!("{transport} available for {entity}!");
@@ -1604,7 +1586,6 @@ mod tests {
         let mut app = App::new();
         app.init_resource::<Time>();
         app.init_resource::<DiscardPlayerUpdates>();
-        app.init_resource::<ProfileMetaCache>();
         app.add_event::<RpcCallEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<PlayerPositionEvent>();
