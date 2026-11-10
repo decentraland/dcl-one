@@ -258,7 +258,7 @@ def select(base, head):
             # which read them (the sender the benchmark runner's receiver must accept, the guest's
             # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
-        elif path.startswith(HUD_SHARED):
+        elif _artifact.hud_shared(path):
             # The web HUD compiles them (react-web/vite.shared.ts); the engine never reads them.
             affected = ('web',)
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',

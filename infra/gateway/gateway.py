@@ -121,6 +121,10 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     }
 
 
+# First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
+BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
+
+
 def render(table, cfg, mime):
     if not cfg["apis"] or not cfg["sites"]:
         raise ValueError("Both API and Sites upstreams are required")
@@ -134,6 +138,11 @@ def render(table, cfg, mime):
                     "asset-bundle-registry-abgen": "/asset-bundle-registry",
                     "rpc-social-service-ea": "/social-rpc", "market": "/shop",
                     "storage": "/world-storage", "comms-gatekeeper-local": "/comms-gatekeeper"}
+    # A host whose path already carries its prefix is not prefixed again, except
+    # badges.: upstream's own paths start with /badges (/badges/<id>/tiers), so
+    # only a second segment the badges router mounts counts as prefixed. No
+    # catalog badge id equals one (/badges/status is the mount, not a badge).
+    badges_mounts = "|".join(BADGES_MOUNTS)
     alias_moves, settled = [], []
     for name, target in host_aliases.items():
         alias_moves.extend([f'"~^gateway:/{name}/?$" "{target}/";',
@@ -322,6 +331,8 @@ http {{
         {" ".join(alias_moves)}
         "~^gateway:" "";
         {" ".join(settled)}
+        "~^badges:/badges/({badges_mounts})(/|$)" "";
+        "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;

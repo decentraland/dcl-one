@@ -127,6 +127,8 @@ const MOCK_OWNED_PLACES = [
 const mockLinkedPlaces = new Map<string, string[]>()
 // The card places unlinked per community.
 const mockRemovedPlaces = new Map<string, Set<string>>()
+// The card's member actions by community: a member's new role, or null once kicked or banned.
+const mockMemberChanges = new Map<string, Map<string, string | null>>()
 
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
@@ -962,6 +964,22 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
       return
     }
+    if (msg.kind === 'communityMemberAction') {
+      // the member's new role (null: removed); a transfer also makes the user a moderator
+      const changes = mockMemberChanges.get(msg.id) ?? new Map<string, string | null>()
+      const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
+      changes.set(msg.address, role)
+      mockMemberChanges.set(msg.id, changes)
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (msg.action === 'transfer' && c != null) {
+        c.role = 'moderator'
+        reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockCommunities })
+      }
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
     if (msg.kind === 'getCommunityPlaceOptions') {
       // one LAND and one World the user owns, and what each community links
       const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
@@ -1069,14 +1087,17 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({
         kind: 'communityDetail',
         id: msg.id,
-        members: memberNames.map((name, i) => ({
-          address: addr(i),
-          name,
-          role: i === 0 ? 'owner' : i < 3 ? 'moderator' : 'member',
-          picture: `https://i.pravatar.cc/80?u=${name}`,
-          hasClaimedName: true,
-          isFriend: i % 5 === 0
-        })),
+        members: memberNames
+          .map((name, i) => {
+            const changed = mockMemberChanges.get(msg.id)
+            const base = i === 0 ? 'owner' : i < 3 ? 'moderator' : 'member'
+            // a transfer hands the owner's role over: the old owner (the first row) becomes a moderator
+            const handedOver = i === 0 && [...(changed?.values() ?? [])].includes('owner')
+            const role = changed?.has(addr(i)) === true ? changed.get(addr(i)) : handedOver ? 'moderator' : base
+            // every third name unclaimed, so the rows show the #tag
+            return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
+          })
+          .filter((m) => m != null),
         posts: [
           { id: 'p1', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'It was TIME for an update. See you all in the new Plaza. Enjoy!', timestamp: Date.now() - 2 * day, likes: 10 },
           { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },

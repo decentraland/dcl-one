@@ -3,9 +3,14 @@ import { parseSvg, type SvgNode } from '../capture/svg-tree.js'
 
 type OptimizedIcon = {
   viewBox: string
-  jsx: string
   monochrome: boolean
+  // True when the SVG declares ids, so the component must scope them per rendered instance.
+  scopedIds: boolean
+  jsx: (depth: number) => string
 }
+
+// The local variable a generated component holds its per-instance id prefix in.
+const ID_SCOPE = 'svgId'
 
 const ATTRIBUTE = /([\w:.-]+)="([^"]*)"/g
 const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'" }
@@ -43,36 +48,66 @@ function collectPaints(node: SvgNode, colors: Set<string>, state: { dynamic: boo
   node.children.forEach((child) => collectPaints(child, colors, state))
 }
 
-function renderStyle(value: string): string {
+type RenderContext = { monochrome: boolean; idPrefix: string; inMask: boolean }
+
+// svgo's prefixIds writes every id as `<prefix>-<id>` and every reference as `#<prefix>-<id>`, so both
+// become a template literal on the instance prefix. Returns null when the value holds no id.
+function scopedIdExpression(name: string, value: string, idPrefix: string): string | null {
+  const marker = `${idPrefix}-`
+  const declares = name === 'id' && value.startsWith(marker)
+  if (!declares && !value.includes(`#${marker}`)) return null
+  const escaped = value.replace(/[\\`]|\$\{/g, (match) => `\\${match}`)
+  const scoped = escaped.split(`#${marker}`).join(`#\${${ID_SCOPE}}-`)
+  return `\`${declares ? `\${${ID_SCOPE}}-${scoped.slice(marker.length)}` : scoped}\``
+}
+
+function renderStyle(value: string, idPrefix: string): string {
   const declarations = value
     .split(';')
     .map((declaration) => declaration.split(':').map((part) => part.trim()))
     .filter(([property, rule]) => property && rule)
-    .map(([property, rule]) => `${toJsxAttributeName(property!)}: ${JSON.stringify(rule)}`)
+    .map(
+      ([property, rule]) =>
+        `${toJsxAttributeName(property!)}: ${scopedIdExpression(property!, rule!, idPrefix) ?? JSON.stringify(rule)}`
+    )
   return `style={{ ${declarations.join(', ')} }}`
 }
 
-function renderAttribute(name: string, value: string): string {
-  if (name === 'style') return renderStyle(value)
+function renderAttribute(name: string, value: string, idPrefix: string): string {
+  if (name === 'style') return renderStyle(value, idPrefix)
   const jsxName = toJsxAttributeName(name)
+  const scoped = scopedIdExpression(name, value, idPrefix)
+  if (scoped) return `${jsxName}={${scoped}}`
   return /["&{}\\\n]/.test(value)
     ? `${jsxName}={${JSON.stringify(value)}}`
     : `${jsxName}="${value}"`
 }
 
-function renderNode(node: SvgNode, depth: number, monochrome: boolean): string {
+// A mask works by luminance: its paints are data, not color, so they keep their original value even
+// in a monochrome icon. Only paint outside every mask follows currentColor.
+function renderNode(node: SvgNode, depth: number, context: RenderContext): string {
   const pad = '  '.repeat(depth)
+  const scope = node.tag === 'mask' ? { ...context, inMask: true } : context
   const attributes = parseAttributes(node).map(([name, value]) => {
-    const paint = monochrome && PAINT_ATTRIBUTES.has(name) && value !== 'none'
-    return renderAttribute(name, paint ? 'currentColor' : value)
+    const paint =
+      scope.monochrome && !scope.inMask && PAINT_ATTRIBUTES.has(name) && value !== 'none'
+    return renderAttribute(name, paint ? 'currentColor' : value, scope.idPrefix)
   })
   const open = `${pad}<${node.tag}${attributes.map((attribute) => ` ${attribute}`).join('')}`
   if (node.children.length === 0) return `${open} />`
-  const children = node.children.map((child) => renderNode(child, depth + 1, monochrome))
+  const children = node.children.map((child) => renderNode(child, depth + 1, scope))
   return `${open}>\n${children.join('\n')}\n${pad}</${node.tag}>`
 }
 
-function optimizeIcon(svg: string, prefix: string, depth: number): OptimizedIcon {
+function declaresIds(node: SvgNode, idPrefix: string): boolean {
+  return (
+    parseAttributes(node).some(
+      ([name, value]) => name === 'id' && value.startsWith(`${idPrefix}-`)
+    ) || node.children.some((child) => declaresIds(child, idPrefix))
+  )
+}
+
+function optimizeIcon(svg: string, prefix: string): OptimizedIcon {
   const { data } = optimize(svg, {
     multipass: true,
     plugins: ['preset-default', { name: 'prefixIds', params: { prefix, delim: '-' } }]
@@ -86,12 +121,14 @@ function optimizeIcon(svg: string, prefix: string, depth: number): OptimizedIcon
   root.children.forEach((child) => collectPaints(child, colors, state))
   const monochrome = !state.dynamic && colors.size <= 1
 
+  const context: RenderContext = { monochrome, idPrefix: prefix, inMask: false }
   return {
     viewBox,
     monochrome,
-    jsx: root.children.map((child) => renderNode(child, depth, monochrome)).join('\n')
+    scopedIds: root.children.some((child) => declaresIds(child, prefix)),
+    jsx: (depth) => root.children.map((child) => renderNode(child, depth, context)).join('\n')
   }
 }
 
-export { optimizeIcon }
+export { ID_SCOPE, optimizeIcon }
 export type { OptimizedIcon }

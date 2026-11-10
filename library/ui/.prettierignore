@@ -1,4 +1,5 @@
 node_modules
+.agent-work
 pnpm-lock.yaml
 figma/.figma-cache
 figma/figma-snapshot
@@ -10,7 +11,7 @@ figma/review/src/review/catalog.json
 # Written by lock-digests --write and fetch-source --seal.
 upstream.lock.json
 
-# Written by promote-reviewed as exact copies of reviewed output; never reformatted by hand.
+# Generated installation output is preserved byte for byte.
 components/*
 !components/Button
 !components/Modal

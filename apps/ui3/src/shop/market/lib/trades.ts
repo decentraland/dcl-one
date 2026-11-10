@@ -6,7 +6,7 @@
 import { encodeFunctionData, type Hex } from "viem";
 
 import type { Eip1193Provider } from "../../../data/auth/wallet";
-import { isShopApiError } from "../../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { isPolygon, type ChainId } from "@shop/model/chain";
 import { requireChain } from "../../wallet/chain";
 import {

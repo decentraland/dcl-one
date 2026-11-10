@@ -5,7 +5,7 @@
 // badge.
 
 import { shopPeers } from "../../api/host";
-import { peerUrlFor } from "./urn";
+import { peerUrlFor } from "@shop/detail/lib/urn";
 
 export type WearableRule = { urn: string; category: string; hides: string[]; replaces: string[] };
 

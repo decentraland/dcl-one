@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { RentalListing } from "@catalyst-api/market/RentalListing";
 import { CHAIN } from "@shop/model/chain";
 import { WrongNetworkError } from "../wallet/chain";
-import { LAND_NETWORKS } from "./contracts";
+import { LAND_NETWORKS } from "@shop/land/contracts";
 import { erc20Abi } from "./evm";
 import { estateRegistryAbi } from "./estate";
 import {
