@@ -247,6 +247,7 @@ fn scene_topics_command(
 mod tests {
     use super::*;
     use crate::TransportType;
+    use bevy::ecs::system::RunSystemOnce;
 
     fn routing_app() -> App {
         let mut app = App::new();
@@ -260,9 +261,16 @@ mod tests {
         app: &mut App,
         hash: &str,
     ) -> tokio::sync::mpsc::Receiver<NetworkMessage> {
+        spawn_running_room_entity(app, hash).1
+    }
+
+    fn spawn_running_room_entity(
+        app: &mut App,
+        hash: &str,
+    ) -> (Entity, tokio::sync::mpsc::Receiver<NetworkMessage>) {
         let (sender, receiver) = tokio::sync::mpsc::channel(8);
         let context = app.world_mut().spawn_empty().id();
-        app.world_mut().spawn((
+        let room = app.world_mut().spawn((
             Transport {
                 transport_type: TransportType::Livekit,
                 sender,
@@ -272,7 +280,85 @@ mod tests {
             SceneRoom(hash.to_owned()),
             TestRoomRunning,
         ));
+        (room.id(), receiver)
+    }
+
+    fn spawn_inbox(app: &mut App, hash: &str) -> common::rpc::RpcStreamReceiver<(String, Vec<u8>)> {
+        let (sender, receiver) = RpcStreamSender::channel_with_capacity(8);
+        app.world_mut().spawn(SceneTopicInbox {
+            hash: hash.to_owned(),
+            sender,
+        });
         receiver
+    }
+
+    fn deliver(app: &mut App, transport: Entity, scene_hash: &str) {
+        let scene_hash = scene_hash.to_owned();
+        app.world_mut()
+            .run_system_once(move |mut router: SceneTopicRouter| {
+                router.deliver(transport, &scene_hash, "0x1".to_owned(), vec![1, 0, b't']);
+            })
+            .unwrap();
+    }
+
+    fn local_preview(app: &mut App) {
+        app.world_mut()
+            .resource_mut::<CurrentRealm>()
+            .config
+            .local_scene_parcels = Some(vec!["0,0".to_owned()]);
+    }
+
+    #[test]
+    fn delivery_skips_a_closed_inbox_for_the_same_scene() {
+        let mut app = routing_app();
+        let (room, _) = spawn_running_room_entity(&mut app, "bafyscene");
+        // a scene with this hash being torn down, ahead of the live one in the query
+        drop(spawn_inbox(&mut app, "bafyscene"));
+        let mut live = spawn_inbox(&mut app, "bafyscene");
+        deliver(&mut app, room, "bafyscene");
+        assert_eq!(
+            live.try_recv().unwrap(),
+            ("0x1".to_owned(), vec![1, 0, b't'])
+        );
+        let traffic = app.world().resource::<SceneTopicTraffic>();
+        assert_eq!((traffic.received, traffic.receive_dropped), (1, 0));
+    }
+
+    #[test]
+    fn a_shared_room_delivers_to_a_scene_other_than_the_room_name() {
+        let mut app = routing_app();
+        let (room, _) = spawn_running_room_entity(&mut app, "bafyroom");
+        let mut inbox = spawn_inbox(&mut app, "bafyscene");
+        deliver(&mut app, room, "bafyscene");
+        assert!(
+            inbox.try_recv().is_err(),
+            "isolated rooms carry only their own scene"
+        );
+        local_preview(&mut app);
+        deliver(&mut app, room, "bafyscene");
+        assert!(inbox.try_recv().is_ok());
+        let traffic = app.world().resource::<SceneTopicTraffic>();
+        assert_eq!((traffic.received, traffic.receive_dropped), (2, 1));
+    }
+
+    #[test]
+    fn a_shared_room_carries_a_publish_from_a_scene_other_than_the_room_name() {
+        let mut app = routing_app();
+        let mut room = spawn_running_room(&mut app, "bafyroom");
+        local_preview(&mut app);
+        let scene = app.world_mut().spawn_empty().id();
+        app.world_mut().send_event(RpcCallEvent {
+            origin: RpcOrigin::Scene {
+                entity: scene,
+                hash: "bafyscene".into(),
+            },
+            call: RpcCall::PublishSceneTopic {
+                data: vec![3, 1, 0, b't', b'x'],
+            },
+        });
+        app.update();
+        assert!(room.try_recv().is_ok());
+        assert_eq!(app.world().resource::<SceneTopicTraffic>().published, 1);
     }
 
     #[test]
