@@ -38,6 +38,12 @@ pub(crate) fn raw_cid(bytes: &[u8]) -> String {
     format!("b{}", base32(&cid(RAW, bytes)))
 }
 
+/// A cache name for bytes known only by the url they were fetched from: a digest of the url,
+/// lower-case base32, safe as a file name.
+pub(crate) fn url_cache_name(url: &str) -> String {
+    format!("u{}", base32(&sha256(url.as_bytes())))
+}
+
 fn sha256(bytes: &[u8]) -> [u8; 32] {
     Code::Sha2_256
         .digest(bytes)

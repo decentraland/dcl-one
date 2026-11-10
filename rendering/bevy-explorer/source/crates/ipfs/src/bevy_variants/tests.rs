@@ -22,93 +22,104 @@ fn variant_bytes() -> Vec<u8> {
     (0..1000).map(|i| (i % 251) as u8).collect()
 }
 
-/// The path abgen would serve a texture variant at; any valid one will do here.
-fn served_path(cid: &str) -> String {
-    format!("bevy/t1/{ORIGINAL_CID}_{}", &cid[cid.len() - 6..])
+/// The path abgen would serve a variant of `format` at, from an id (any valid one will do here);
+/// its prefix letter is the class.
+fn served_path_of(format: &str, id: &str) -> String {
+    let prefix = match format {
+        "glb-meshopt" => "m1",
+        "glb" => "g1",
+        _ => "t2",
+    };
+    format!("bevy/{prefix}/{ORIGINAL_CID}_{}", &id[id.len() - 6..])
 }
 
-fn variant(cid: &str, kind: &str, format: &str) -> Variant {
+fn served_path(id: &str) -> String {
+    served_path_of("ktx2-bc", id)
+}
+
+fn variant(id: &str, kind: &str, format: &str) -> Variant {
     Variant {
-        path: served_path(cid),
-        cid: cid.to_owned(),
+        path: served_path_of(format, id),
         kind: kind.to_owned(),
         format: format.to_owned(),
-        width: None,
-        height: None,
-        mips: None,
-        size: None,
     }
 }
 
-#[test]
-fn parses_a_v2_manifest() {
-    let json = format!(
-        r#"{{
-            "v": 2,
-            "entity": "{SCENE}",
-            "generator": "abgen 0.1",
-            "lanes": {{"texture": "t1", "mesh": "m1"}},
-            "unknown": true,
-            "files": {{
-                "{ORIGINAL_CID}": [
-                    {{"path": "bevy/t1/{ORIGINAL_CID}_srgb", "cid": "{VARIANT_CID}",
-                      "kind": "texture", "format": "ktx2-bc7",
-                      "width": 1024, "height": 1024, "mips": 11, "size": 1000}},
-                    {{"path": "bevy/t1/x", "cid": "../../etc/passwd", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"path": "bevy/t1/x", "cid": "QmNotRawLeaf", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"path": "bevy/../etc/passwd", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"path": "bevy/t1/a.br", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"path": "bevy/manifest/x", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"path": "https://elsewhere/bevy/t1/x", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"path": "bevy/t1/x/y", "cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}},
-                    {{"cid": "{VARIANT_CID}", "kind": "texture", "format": "ktx2-bc1"}}
-                ],
-                "bafkreionlybadvariants": [
-                    {{"path": "bevy/m1/x", "cid": "bafkrei/../x", "kind": "model", "format": "glb"}}
-                ]
-            }}
-        }}"#
-    );
-    let manifest = parse_manifest(json.as_bytes(), SCENE).unwrap();
-    assert_eq!(manifest.generator.as_deref(), Some("abgen 0.1"));
-    // only the well-formed variant survives, and an original left with none is dropped
-    assert_eq!(manifest.files.len(), 1);
-    let variants = &manifest.files[ORIGINAL_CID];
-    assert_eq!(variants.len(), 1);
-    assert_eq!(variants[0].cid, VARIANT_CID);
-    assert_eq!(variants[0].path, format!("bevy/t1/{ORIGINAL_CID}_srgb"));
-    assert_eq!(variants[0].width, Some(1024));
-    assert_eq!(variants[0].mips, Some(11));
+/// The cache file name of a variant fetched from `base`: a digest of its url.
+fn cache_name(base: &str, path: &str) -> String {
+    crate::content_hash::url_cache_name(&format!("{base}/{path}"))
 }
 
 #[test]
-fn rejects_other_versions_entities_and_garbage() {
-    let manifest =
-        |v: u32, entity: &str| format!(r#"{{"v": {v}, "entity": "{entity}", "files": {{}}}}"#);
-    assert!(parse_manifest(manifest(2, SCENE).as_bytes(), SCENE).is_ok());
-    // v1 manifests (variants addressed by CID alone) are no longer read
-    assert!(parse_manifest(manifest(1, SCENE).as_bytes(), SCENE)
+fn parses_a_v3_manifest() {
+    let json = format!(
+        r#"{{
+            "v": 3,
+            "lanes": {{"texture": "t2", "mesh": "m1"}},
+            "unknown": true,
+            "files": {{
+                "{ORIGINAL_CID}": [
+                    "bevy/t2/{ORIGINAL_CID}_srgb",
+                    "bevy/m1/{ORIGINAL_CID}",
+                    "bevy/g1/{ORIGINAL_CID}",
+                    "bevy/x1/{ORIGINAL_CID}",
+                    "bevy/../etc/passwd",
+                    "bevy/t2/a.br",
+                    "bevy/manifest/x",
+                    "https://elsewhere/bevy/t2/x",
+                    "bevy/t2/x/y",
+                    ""
+                ],
+                "bafkreionlybadvariants": ["bevy/q1/x", "../x"]
+            }}
+        }}"#
+    );
+    let manifest = parse_manifest(json.as_bytes()).unwrap();
+    assert_eq!(manifest.lanes["texture"], "t2");
+    // only the well-formed paths of a known class survive, in order, and an original left with
+    // none is dropped
+    assert_eq!(manifest.files.len(), 1);
+    let variants: Vec<_> = manifest.files[ORIGINAL_CID]
+        .iter()
+        .map(|v| (v.path.as_str(), v.kind.as_str(), v.format.as_str()))
+        .collect();
+    assert_eq!(
+        variants,
+        [
+            (&*format!("bevy/t2/{ORIGINAL_CID}_srgb"), "texture", "ktx2-bc"),
+            (&*format!("bevy/m1/{ORIGINAL_CID}"), "model", "glb-meshopt"),
+            (&*format!("bevy/g1/{ORIGINAL_CID}"), "model", "glb"),
+        ]
+    );
+}
+
+#[test]
+fn rejects_other_versions_and_garbage() {
+    let manifest = |v: u32| format!(r#"{{"v": {v}, "files": {{}}}}"#);
+    assert!(parse_manifest(manifest(3).as_bytes()).is_ok());
+    // v1 and v2 manifests (variants with a CID) are no longer read
+    assert!(parse_manifest(manifest(2).as_bytes())
         .unwrap_err()
-        .contains("version 1"));
-    assert!(parse_manifest(manifest(3, SCENE).as_bytes(), SCENE).is_err());
-    assert!(parse_manifest(manifest(2, "bafkreiother").as_bytes(), SCENE).is_err());
-    assert!(parse_manifest(b"<html>not found</html>", SCENE).is_err());
-    assert!(parse_manifest(br#"{"entity": "x"}"#, SCENE).is_err());
+        .contains("version 2"));
+    assert!(parse_manifest(manifest(1).as_bytes()).is_err());
+    assert!(parse_manifest(manifest(4).as_bytes()).is_err());
+    assert!(parse_manifest(b"<html>not found</html>").is_err());
+    assert!(parse_manifest(br#"{"files": {}}"#).is_err());
 }
 
 #[test]
 fn selects_the_first_variant_this_client_takes() {
     let variants = [
         variant(OTHER_CID, "texture", "astc-4x4"),
-        // the format strings of the DDS manifests are no longer taken
-        variant(OTHER_CID, "texture", "dds-bc7"),
-        variant(VARIANT_CID, "texture", "ktx2-bc7"),
-        variant(OTHER_CID, "texture", "ktx2-bc1"),
+        // the per-format strings of v2 manifests are no longer taken
+        variant(OTHER_CID, "texture", "ktx2-bc7"),
+        variant(VARIANT_CID, "texture", "ktx2-bc"),
+        variant(OTHER_CID, "texture", "ktx2-bc"),
     ];
     let none_bad = |_: &str| false;
     assert_eq!(
-        select_variant(&variants, "images/a.png", true, none_bad).map(|v| v.cid.as_str()),
-        Some(VARIANT_CID)
+        select_variant(&variants, "images/a.png", true, none_bad).map(|v| v.path.clone()),
+        Some(served_path(VARIANT_CID))
     );
     // the extension is matched case-insensitively, and a path without one is an image too
     assert!(select_variant(&variants, "images/A.JPG", true, none_bad).is_some());
@@ -120,15 +131,12 @@ fn selects_the_first_variant_this_client_takes() {
     assert!(select_variant(&variants, "models/a.glb", true, none_bad).is_none());
     assert!(select_variant(&variants, "sounds/a.mp3", true, none_bad).is_none());
     // a variant that failed this session is passed over for the next supported one
-    let fallback = select_variant(&variants, "a.png", true, |cid| cid == VARIANT_CID);
-    assert_eq!(fallback.map(|v| v.format.as_str()), Some("ktx2-bc1"));
-    assert!(select_variant(
-        &[variant(VARIANT_CID, "texture", "ktx2-bc5")],
-        "normal.png",
-        true,
-        none_bad
-    )
-    .is_some());
+    let bad = served_path(VARIANT_CID);
+    let fallback = select_variant(&variants, "a.png", true, |path| path == bad);
+    assert_eq!(
+        fallback.map(|v| v.path.clone()),
+        Some(served_path(OTHER_CID))
+    );
 
     // `glb` embeds KTX2 under KHR_texture_basisu, which the glTF loader rejects: never taken
     let glb = [variant(VARIANT_CID, "model", "glb")];
@@ -143,7 +151,7 @@ fn selects_the_first_variant_this_client_takes() {
         assert!(select_variant(&meshopt, "models/a.gltf", true, none_bad).is_none());
         assert_eq!(
             taken_formats(),
-            "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS); not glb, glb-meshopt"
+            "ktx2-bc (BC1/BC5/BC7, loaded as DDS); not glb-meshopt, glb"
         );
         assert!(!could_have_variant("a.glb"));
     }
@@ -163,13 +171,13 @@ fn selects_the_first_variant_this_client_takes() {
         assert!(select_variant(&variants, "models/a.glb", true, none_bad).is_none());
         assert_eq!(
             taken_formats(),
-            "ktx2-bc7, ktx2-bc1, ktx2-bc5 (loaded as DDS), glb-meshopt (meshopt streams decoded by the glTF loader); not glb"
+            "ktx2-bc (BC1/BC5/BC7, loaded as DDS), glb-meshopt (meshopt streams decoded by the glTF loader); not glb"
         );
         assert!(could_have_variant("a.glb") && could_have_variant("a.GLTF"));
     }
     // a kind/format pair the schema does not have
     assert!(select_variant(
-        &[variant(VARIANT_CID, "model", "ktx2-bc7")],
+        &[variant(VARIANT_CID, "model", "ktx2-bc")],
         "a.png",
         true,
         none_bad
@@ -360,15 +368,13 @@ async fn scene_with_variant_of(
     io.set_bevy_variants_base(base);
     let _ = io.bevy_variants.bc.set(true);
     let manifest = format!(
-        r#"{{"v": 2, "entity": "{SCENE}", "files": {{"{ORIGINAL_CID}": [
-            {{"path": "{}", "cid": "{variant_cid}", "kind": "{kind}", "format": "{format}"}}
-        ]}}}}"#,
-        served_path(variant_cid)
+        r#"{{"v": 3, "lanes": {{"texture": "t2", "mesh": "m1"}}, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
+        served_path_of(format, variant_cid)
     );
+    let variants = parse_manifest(manifest.as_bytes()).unwrap();
+    assert_eq!(variants.files[ORIGINAL_CID][0].kind, kind);
     // the scene's own content server is loopback here, which `request_bevy_variants` refuses
-    let (sender, receiver) = watch::channel(ManifestState::Loaded(Arc::new(
-        parse_manifest(manifest.as_bytes(), SCENE).unwrap(),
-    )));
+    let (sender, receiver) = watch::channel(ManifestState::Loaded(Arc::new(variants)));
     drop(sender);
     io.bevy_variants
         .manifests
@@ -389,7 +395,7 @@ fn requests_for(log: &Mutex<Vec<String>>, path: &str) -> usize {
 }
 
 #[tokio::test]
-async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
+async fn a_texture_variant_is_served_as_dds_and_cached_under_its_url() {
     let (io, dir) = io_with_cache("served");
     let (ktx2, cid, dds) = bc7_variant();
     let variant_route = format!("/{}", served_path(&cid));
@@ -404,18 +410,20 @@ async fn a_verified_variant_is_served_as_dds_and_cached_under_its_own_cid() {
 
     assert_eq!(read_all(&io, &path).await, dds);
     assert!(io.served_bevy_variant(&path));
-    // the KTX2 under the variant cid, its DDS under a name derived from it, and nothing under
-    // the original's
-    assert_eq!(std::fs::read(dir.join(&cid)).unwrap(), ktx2);
-    assert_eq!(std::fs::read(dir.join(format!("{cid}.dds"))).unwrap(), dds);
+    // the KTX2 under a digest of its url, its DDS beside it, and nothing under the original's
+    // hash or the variant's path
+    let name = cache_name(&base, &served_path(&cid));
+    assert_eq!(std::fs::read(dir.join(&name)).unwrap(), ktx2);
+    assert_eq!(std::fs::read(dir.join(format!("{name}.dds"))).unwrap(), dds);
     assert!(!dir.join(ORIGINAL_CID).exists());
+    assert!(!dir.join("bevy").exists());
 
     // a warm read is the cached DDS
     assert_eq!(read_all(&io, &path).await, dds);
     // without it, the cached KTX2 is unwrapped again, and the DDS cached again
-    std::fs::remove_file(dir.join(format!("{cid}.dds"))).unwrap();
+    std::fs::remove_file(dir.join(format!("{name}.dds"))).unwrap();
     assert_eq!(read_all(&io, &path).await, dds);
-    assert!(dir.join(format!("{cid}.dds")).exists());
+    assert!(dir.join(format!("{name}.dds")).exists());
 
     assert_eq!(requests_for(&log, &variant_route), 1);
     assert_eq!(requests_for(&log, &original_route), 0);
@@ -437,9 +445,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
     let (io, dir) = io_with_cache("wearable");
     let (ktx2, cid, dds) = bc7_variant();
     let manifest = format!(
-        r#"{{"v": 2, "entity": "{WEARABLE}", "files": {{"{ORIGINAL_CID}": [
-            {{"path": "{}", "cid": "{cid}", "kind": "texture", "format": "ktx2-bc7"}}
-        ]}}}}"#,
+        r#"{{"v": 3, "lanes": {{"texture": "t2"}}, "files": {{"{ORIGINAL_CID}": ["{}"]}}}}"#,
         served_path(&cid)
     );
     let manifest_route = format!("/bevy/manifest/{WEARABLE}.json");
@@ -506,7 +512,7 @@ async fn a_wearable_entity_fetches_its_manifest_and_reads_its_variants() {
 #[tokio::test]
 async fn a_failed_model_variant_stays_pending_until_its_reload_reads_the_original() {
     let (io, dir) = io_with_cache("pending-model");
-    let variant_route = format!("/{}", served_path(VARIANT_CID));
+    let variant_route = format!("/{}", served_path_of("glb-meshopt", VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
         (variant_route.clone(), variant_bytes()),
@@ -544,12 +550,12 @@ async fn a_failed_model_variant_stays_pending_until_its_reload_reads_the_origina
 }
 
 /// A `glb-meshopt` model variant is handed to the loader of the original `.glb` path as it is,
-/// and cached under the variant cid alone.
+/// and cached under its url's digest alone.
 #[cfg(feature = "meshopt-variants")]
 #[tokio::test]
-async fn a_verified_model_variant_is_served_as_is_and_cached_under_its_own_cid() {
+async fn a_model_variant_is_served_as_is_and_cached_under_its_url() {
     let (io, dir) = io_with_cache("served-model");
-    let variant_route = format!("/{}", served_path(VARIANT_CID));
+    let variant_route = format!("/{}", served_path_of("glb-meshopt", VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
         (variant_route.clone(), variant_bytes()),
@@ -569,11 +575,9 @@ async fn a_verified_model_variant_is_served_as_is_and_cached_under_its_own_cid()
 
     assert_eq!(read_all(&io, &path).await, variant_bytes());
     assert!(io.served_bevy_variant(&path));
-    assert_eq!(
-        std::fs::read(dir.join(VARIANT_CID)).unwrap(),
-        variant_bytes()
-    );
-    assert!(!dir.join(format!("{VARIANT_CID}.dds")).exists());
+    let name = cache_name(&base, &served_path_of("glb-meshopt", VARIANT_CID));
+    assert_eq!(std::fs::read(dir.join(&name)).unwrap(), variant_bytes());
+    assert!(!dir.join(format!("{name}.dds")).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
 
     // a warm read is the cached variant
@@ -589,31 +593,33 @@ async fn a_verified_model_variant_is_served_as_is_and_cached_under_its_own_cid()
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+/// The manifest names no hash for a variant, so its header decides: a KTX2 that holds no BC
+/// format this client unwraps (here sRGB BC7) falls back, and is not asked for again.
 #[tokio::test]
-async fn a_variant_that_fails_its_cid_check_falls_back_to_the_original() {
-    let (io, dir) = io_with_cache("mismatch");
-    let (_, cid, _) = bc7_variant();
-    let variant_route = format!("/{}", served_path(&cid));
+async fn a_texture_variant_whose_header_names_no_bc_format_falls_back_to_the_original() {
+    let (io, dir) = io_with_cache("not-bc");
+    let (_, level0, level1) = super::ktx2::tests::bc7_two_levels();
+    let srgb = super::ktx2::tests::ktx2(146, 8, 4, &[level0, level1]);
+    let variant_route = format!("/{}", served_path(VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
     let (base, log) = serve(vec![
-        (variant_route.clone(), b"tampered".to_vec()),
+        (variant_route.clone(), srgb),
         (original_route.clone(), b"original png".to_vec()),
     ])
     .await;
-    scene_with_variant(&io, &base, &cid).await;
+    scene_with_variant(&io, &base, VARIANT_CID).await;
     let path = content_path("tex.png");
 
     assert_eq!(read_all(&io, &path).await, b"original png");
     assert!(!io.served_bevy_variant(&path));
-    // the tampered bytes are cached under no key
-    assert!(!dir.join(&cid).exists());
-    assert!(!dir.join(format!("{cid}.dds")).exists());
+    let name = cache_name(&base, &served_path(VARIANT_CID));
+    assert!(!dir.join(format!("{name}.dds")).exists());
     assert!(!dir.join(ORIGINAL_CID).exists());
     {
         let session = io.bevy_variants.session.lock().unwrap();
         assert_eq!(session.fallbacks, 1);
-        assert!(session.recent[0].reason.contains("do not hash"));
-        assert!(session.bad.contains(&cid));
+        assert!(session.recent[0].reason.contains("vkFormat 146"));
+        assert!(session.bad.contains(&served_path(VARIANT_CID)));
     }
 
     // the bad variant is not asked for again this session
@@ -624,7 +630,7 @@ async fn a_variant_that_fails_its_cid_check_falls_back_to_the_original() {
 }
 
 #[tokio::test]
-async fn a_verified_variant_that_is_no_bc_ktx2_falls_back_to_the_original() {
+async fn a_variant_that_is_no_ktx2_falls_back_to_the_original() {
     let (io, dir) = io_with_cache("not-ktx2");
     let variant_route = format!("/{}", served_path(VARIANT_CID));
     let original_route = format!("/contents/{ORIGINAL_CID}");
@@ -637,11 +643,12 @@ async fn a_verified_variant_that_is_no_bc_ktx2_falls_back_to_the_original() {
     let path = content_path("tex.png");
 
     assert_eq!(read_all(&io, &path).await, b"original png");
-    assert!(!dir.join(format!("{VARIANT_CID}.dds")).exists());
+    let name = cache_name(&base, &served_path(VARIANT_CID));
+    assert!(!dir.join(format!("{name}.dds")).exists());
     {
         let session = io.bevy_variants.session.lock().unwrap();
         assert!(session.recent[0].reason.starts_with("invalid KTX2"));
-        assert!(session.bad.contains(VARIANT_CID));
+        assert!(session.bad.contains(&served_path(VARIANT_CID)));
     }
     assert_eq!(read_all(&io, &path).await, b"original png");
     assert_eq!(requests_for(&log, &variant_route), 1);
@@ -672,15 +679,15 @@ fn a_variant_that_fails_to_decode_is_marked_bad_once() {
         ServedVariant {
             scene: SCENE.to_owned(),
             file: "tex.png".to_owned(),
-            cid: VARIANT_CID.to_owned(),
-            format: "ktx2-bc7".to_owned(),
+            variant: served_path(VARIANT_CID),
+            format: "ktx2-bc".to_owned(),
         },
         false,
     );
     assert!(variants.is_served(&path));
     assert!(variants.decode_failed(&path, "unsupported texture format"));
     assert!(!variants.is_served(&path));
-    assert!(variants.is_bad(VARIANT_CID));
+    assert!(variants.is_bad(&served_path(VARIANT_CID)));
     // an asset that was never a variant is not reloaded
     assert!(!variants.decode_failed(&path, "again"));
     assert!(!variants.decode_failed(&content_path("other.png"), "x"));

@@ -210,8 +210,8 @@ State, in every build:
   and the addresses speaking.
 - `/bevy_variants`: the abgen Bevy variants client as JSON: `base` (the manifest origin, `null`
   when off) and `disabled` (why), `bc` (the GPU decodes BC textures), the manifests fetched per
-  scene (`manifestsLoaded` with the file count, `manifestsOther` with the miss reason),
-  `filesEligible`, `hitsByFormat`, `served` (`downloaded`, `fromCache`), `fallbacks` with
+  entity, scene, wearable or emote (`manifestsLoaded` with the file count, `manifestsOther` with
+  the miss reason), `filesEligible`, `hitsByFormat` (`ktx2-bc`, `glb-meshopt`), `served` (`downloaded`, `fromCache`), `fallbacks` with
   `fallbackReasons`, `variantBytesFetched` and `badVariants` (variants that failed to decode, so
   the original was loaded instead).
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the

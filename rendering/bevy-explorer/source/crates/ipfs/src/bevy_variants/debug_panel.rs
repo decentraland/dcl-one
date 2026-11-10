@@ -54,11 +54,12 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
                     format!(
                         "loaded, {} files{}",
                         manifest.files.len(),
-                        manifest
-                            .generator
-                            .as_deref()
-                            .map(|generator| format!(" ({generator})"))
-                            .unwrap_or_default()
+                        if manifest.lanes.is_empty() {
+                            String::new()
+                        } else {
+                            let lanes: Vec<_> = manifest.lanes.values().map(String::as_str).collect();
+                            format!(" ({})", lanes.join(", "))
+                        }
                     ),
                 ),
                 ManifestState::None => (1, "none".to_owned()),

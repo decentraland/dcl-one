@@ -60,6 +60,18 @@ fn u64_at(bytes: &[u8], offset: usize) -> u64 {
     u64::from_le_bytes(bytes[offset..offset + 8].try_into().unwrap())
 }
 
+/// The BC format a KTX2 holds, from its header's vkFormat (UNORM only).
+pub fn bc_format(bytes: &[u8]) -> Result<BcFormat, String> {
+    if bytes.len() < LEVEL_INDEX || bytes[..12] != KTX2_IDENTIFIER {
+        return Err("not a KTX2 file".to_owned());
+    }
+    let vk_format = u32_at(bytes, 12);
+    [BcFormat::Bc7, BcFormat::Bc1, BcFormat::Bc5]
+        .into_iter()
+        .find(|format| format.vk_formats().contains(&vk_format))
+        .ok_or_else(|| format!("vkFormat {vk_format} is not BC1, BC5 or BC7 UNORM"))
+}
+
 /// The DDS (DX10 header, all levels largest first) a BC KTX2 of `format` holds.
 pub fn bc_ktx2_to_dds(bytes: &[u8], format: BcFormat) -> Result<Vec<u8>, String> {
     if bytes.len() < LEVEL_INDEX || bytes[..12] != KTX2_IDENTIFIER {
@@ -265,6 +277,20 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_bc_format_is_read_from_the_header() {
+        let (bc7, _, _) = bc7_two_levels();
+        assert_eq!(bc_format(&bc7), Ok(BcFormat::Bc7));
+        assert_eq!(bc_format(&ktx2(131, 4, 4, &[vec![0; 8]])), Ok(BcFormat::Bc1));
+        assert_eq!(bc_format(&ktx2(133, 4, 4, &[vec![0; 8]])), Ok(BcFormat::Bc1));
+        assert_eq!(bc_format(&ktx2(141, 4, 4, &[vec![0; 16]])), Ok(BcFormat::Bc5));
+        // sRGB BC7, and anything that is not a KTX2
+        assert!(bc_format(&ktx2(146, 4, 4, &[vec![0; 16]]))
+            .unwrap_err()
+            .contains("vkFormat 146"));
+        assert!(bc_format(b"not a ktx2").is_err());
+    }
+
+    #[test]
     fn bc1_and_bc5_take_their_own_block_size_and_dxgi_format() {
         let bc1 = ktx2(131, 4, 4, &[vec![7; 8]]);
         let dds = bc_ktx2_to_dds(&bc1, BcFormat::Bc1).unwrap();
@@ -296,13 +322,13 @@ pub(crate) mod tests {
             .contains("vkFormat"));
         // a level 0 that is not whole 4x4 blocks, on either axis
         for (width, height) in [(6, 4), (8, 6), (3, 3)] {
-            let unaligned = ktx2(145, width, height, &[level0.clone()]);
+            let unaligned = ktx2(145, width, height, std::slice::from_ref(&level0));
             assert!(bc_ktx2_to_dds(&unaligned, BcFormat::Bc7)
                 .unwrap_err()
                 .contains("whole 4x4 blocks"));
         }
         // oversized, and more levels than the mip chain has
-        let huge = ktx2(145, 16384, 4, &[level0.clone()]);
+        let huge = ktx2(145, 16384, 4, std::slice::from_ref(&level0));
         assert!(bc_ktx2_to_dds(&huge, BcFormat::Bc7)
             .unwrap_err()
             .contains("outside"));

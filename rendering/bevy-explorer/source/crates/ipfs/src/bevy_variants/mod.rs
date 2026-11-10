@@ -4,14 +4,17 @@
 //! Off unless a variants base url is configured (`--bevy-variants-url`, `?bevyVariants=`, or the
 //! `bevy_variants_url` config field). For each scene, wearable and emote entity it loads, the
 //! explorer fetches
-//! `{base}/bevy/manifest/{entityId}.json` once; it maps original content CIDs to variants, each
-//! with the path it is served at and the raw-leaf CID of its bytes. A content file read whose
-//! original CID has a variant in a format this client takes is answered with
-//! `{base}/{variantPath}` instead, checked against the variant CID and cached under that CID
-//! only. A texture variant is a BC KTX2, handed
-//! to the loaders as the DDS it unwraps to (`ktx2`); that DDS is cached too, under a name derived
-//! from the variant CID. Anything else, at any step, reads the original. A variant that fails to
-//! decode is marked bad for the session and its asset reloaded from the original.
+//! `{base}/bevy/manifest/{entityId}.json` once (schema v3); it maps original content CIDs to the
+//! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
+//! (`t` a BC KTX2 texture, `m` a `glb-meshopt` model, `g` a GLB). A content file read whose
+//! original CID has a variant of a class this client takes is answered with
+//! `{base}/{variantPath}` instead and cached under a digest of that url, never under the
+//! original's hash. abgen keeps a path's bytes fixed for the life of its generation, and the
+//! manifest names no hash for them, so a variant is trusted by its path and rejected only by
+//! what it decodes to. A texture variant is a BC KTX2 whose header names its BC format, handed
+//! to the loaders as the DDS it unwraps to (`ktx2`); that DDS is cached too. Anything else, at
+//! any step, reads the original. A variant that fails to decode is marked bad for the session
+//! and its asset reloaded from the original.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
 //! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Of the
@@ -32,7 +35,7 @@ pub mod ktx2;
 mod tests;
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     io::ErrorKind,
     path::{Path, PathBuf},
     sync::{atomic::Ordering, Arc, Mutex, OnceLock},
@@ -63,23 +66,24 @@ const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
 /// Model paths the glTF loader reads (and the meshopt pre-pass loader stands in for).
 #[cfg(feature = "meshopt-variants")]
 const MODEL_EXTENSIONS: [&str; 2] = ["glb", "gltf"];
-/// Every `format` the manifest schema (v2) may name, taken or not.
-const SCHEMA_FORMATS: [&str; 5] = ["ktx2-bc7", "ktx2-bc1", "ktx2-bc5", "glb", "glb-meshopt"];
+/// Every variant class the manifest schema (v3) names by a path's prefix letter, taken or not.
+const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-meshopt", "glb"];
 const RECENT_FALLBACKS: usize = 20;
 
 /// What a supported variant's bytes are handed to the loaders as.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Decoded {
-    /// A BC KTX2 texture, unwrapped to the DDS the image loaders read.
-    BcTexture(ktx2::BcFormat),
+    /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), unwrapped to the DDS the image
+    /// loaders read.
+    BcTexture,
     /// Handed to the loader of the original path as it is: a `glb-meshopt` model, whose meshopt
     /// streams the glTF loader's pre-pass decodes.
     #[cfg(feature = "meshopt-variants")]
     AsIs,
 }
 
-/// A manifest format this client takes: the schema's `kind`/`format` pair, the content files it
-/// may replace, what the GPU must support and what the bytes decode as.
+/// A variant class this client takes: its `kind`/`format` (from the path's prefix letter), the
+/// content files it may replace, what the GPU must support and what the bytes decode as.
 #[derive(Debug)]
 pub struct SupportedFormat {
     pub kind: &'static str,
@@ -103,23 +107,17 @@ impl SupportedFormat {
     }
 }
 
-const fn bc_texture(format: &'static str, bc: ktx2::BcFormat) -> SupportedFormat {
+/// The variant classes this client takes. A variant is loaded only through a row here; the
+/// manifest's order of preference decides between rows.
+pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
     SupportedFormat {
         kind: "texture",
-        format,
+        format: "ktx2-bc",
         extensions: &TEXTURE_EXTENSIONS,
         without_extension: true,
         needs_bc: true,
-        decoded: Decoded::BcTexture(bc),
-    }
-}
-
-/// The manifest formats this client takes. A variant is loaded only through a row here; the
-/// manifest's order of preference decides between rows.
-pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
-    bc_texture("ktx2-bc7", ktx2::BcFormat::Bc7),
-    bc_texture("ktx2-bc1", ktx2::BcFormat::Bc1),
-    bc_texture("ktx2-bc5", ktx2::BcFormat::Bc5),
+        decoded: Decoded::BcTexture,
+    },
     // the bytes pass through: the meshopt pre-pass glTF loader decodes the streams
     #[cfg(feature = "meshopt-variants")]
     SupportedFormat {
@@ -151,7 +149,7 @@ pub fn taken_formats() -> String {
     let mut groups: Vec<(Vec<&str>, &str)> = Vec::new();
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
-            Decoded::BcTexture(_) => "loaded as DDS",
+            Decoded::BcTexture => "BC1/BC5/BC7, loaded as DDS",
             #[cfg(feature = "meshopt-variants")]
             Decoded::AsIs => "meshopt streams decoded by the glTF loader",
         };
@@ -175,29 +173,44 @@ pub fn taken_formats() -> String {
 /// down for the rest of the session, so a dead host costs a few requests, not one per file.
 const BREAKER_FAILURES: u32 = 5;
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+/// One variant of an original: where it is served, and the class its path's prefix letter
+/// names. The path also identifies it (failed variants, caches): abgen keeps a path's bytes
+/// fixed for the life of its generation.
+#[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
-    /// Where the variant is served, relative to the base: `bevy/{prefix}/{name}`. Missing
-    /// reads as empty, which drops that variant, not the manifest.
-    #[serde(default)]
+    /// Relative to the base: `bevy/{prefix}/{name}`.
     pub path: String,
-    /// Raw-leaf CID of the variant's bytes: what they are checked against and cached under.
-    pub cid: String,
     pub kind: String,
     pub format: String,
-    #[serde(default)]
-    pub width: Option<u32>,
-    #[serde(default)]
-    pub height: Option<u32>,
-    #[serde(default)]
-    pub mips: Option<u32>,
-    #[serde(default)]
-    pub size: Option<u64>,
+}
+
+impl Variant {
+    /// The variant at `path`, when it is `bevy/{prefix}/{name}` with plain segments and its
+    /// prefix letter is a class the schema names; anything else is dropped.
+    pub fn from_path(path: &str) -> Option<Variant> {
+        if !is_variant_path(path) {
+            return None;
+        }
+        let prefix = path.split('/').nth(1)?;
+        let (kind, format) = match prefix.as_bytes().first()? {
+            b't' => ("texture", "ktx2-bc"),
+            b'm' => ("model", "glb-meshopt"),
+            b'g' => ("model", "glb"),
+            _ => return None,
+        };
+        Some(Variant {
+            path: path.to_owned(),
+            kind: kind.to_owned(),
+            format: format.to_owned(),
+        })
+    }
 }
 
 #[derive(Debug)]
 pub struct Manifest {
-    pub generator: Option<String>,
+    /// The generation each variant class was built from (`texture` → `t2`, …), for the debug
+    /// panel; the client does not act on it.
+    pub lanes: BTreeMap<String, String>,
     /// Variants by original content CID, in the manifest's order of preference.
     pub files: HashMap<String, Vec<Variant>>,
 }
@@ -209,55 +222,43 @@ struct ManifestVersion {
 
 #[derive(Deserialize)]
 struct ManifestJson {
-    entity: String,
     #[serde(default)]
-    generator: Option<String>,
+    lanes: BTreeMap<String, String>,
     #[serde(default)]
-    files: HashMap<String, Vec<Variant>>,
+    files: HashMap<String, Vec<String>>,
 }
 
 /// The manifest schema version this client reads.
-pub const MANIFEST_VERSION: u32 = 2;
+pub const MANIFEST_VERSION: u32 = 3;
 
-/// A v2 manifest for `entity`. Variants whose cid is not a raw-leaf CIDv1 (`bafkrei…`) are
-/// dropped (the cid becomes a cache file name, and only that scheme is checked against the
-/// bytes), and so are variants whose path is not `bevy/{prefix}/{name}` with plain segments
-/// (it becomes part of a url).
-pub fn parse_manifest(bytes: &[u8], entity: &str) -> Result<Manifest, String> {
+/// A v3 manifest: `v`, `lanes`, and original content CID → variant paths. It is fetched at the
+/// entity's own url, so it names no entity. Paths that are not `bevy/{prefix}/{name}` with plain
+/// segments (a path becomes part of a url) or whose prefix letter names no class are dropped,
+/// and so is an original left with none.
+pub fn parse_manifest(bytes: &[u8]) -> Result<Manifest, String> {
     let version: ManifestVersion = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
     if version.v != MANIFEST_VERSION {
         return Err(format!("unsupported manifest version {}", version.v));
     }
     let json: ManifestJson = serde_json::from_slice(bytes).map_err(|e| e.to_string())?;
-    if json.entity != entity {
-        return Err(format!("manifest names entity `{}`", json.entity));
-    }
     let files = json
         .files
         .into_iter()
-        .map(|(original, variants)| {
-            let variants: Vec<_> = variants
-                .into_iter()
-                .filter(|variant| is_raw_cid(&variant.cid) && is_variant_path(&variant.path))
+        .map(|(original, paths)| {
+            let variants: Vec<_> = paths
+                .iter()
+                .filter_map(|path| Variant::from_path(path))
                 .collect();
             (original, variants)
         })
         .filter(|(_, variants)| !variants.is_empty())
         .collect();
     Ok(Manifest {
-        generator: json.generator,
+        lanes: json.lanes,
         files,
     })
 }
 
-/// CIDv1, raw codec, sha2-256, base32: `b` + 58 base32 characters.
-fn is_raw_cid(cid: &str) -> bool {
-    cid.len() == 59
-        && cid.starts_with("bafkrei")
-        && cid
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
-}
 
 /// `bevy/{prefix}/{name}`: the prefix ASCII alphanumeric and not `manifest`, the name ASCII
 /// alphanumeric or `_`. No dots, slashes or escapes can reach the url.
@@ -310,7 +311,7 @@ pub fn select_variant<'a>(
 ) -> Option<&'a Variant> {
     variants
         .iter()
-        .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.cid))
+        .find(|variant| supports(variant, file_path, bc) && !is_bad(&variant.path))
 }
 
 /// Why an entity (scene, wearable or emote) gets no manifest request, if it doesn't.
@@ -357,7 +358,8 @@ pub enum ManifestState {
 struct ServedVariant {
     scene: String,
     file: String,
-    cid: String,
+    /// The variant's path, its identity.
+    variant: String,
     format: String,
 }
 
@@ -462,14 +464,14 @@ impl BevyVariants {
         }
     }
 
-    fn is_bad(&self, cid: &str) -> bool {
-        self.session.lock().unwrap().bad.contains(cid)
+    fn is_bad(&self, variant: &str) -> bool {
+        self.session.lock().unwrap().bad.contains(variant)
     }
 
-    fn fail(&self, scene: &str, file: &str, cid: Option<&str>, reason: String) {
+    fn fail(&self, scene: &str, file: &str, variant: Option<&str>, reason: String) {
         let mut session = self.session.lock().unwrap();
-        if let Some(cid) = cid {
-            session.bad.insert(cid.to_owned());
+        if let Some(variant) = variant {
+            session.bad.insert(variant.to_owned());
         }
         session.fallback(scene, file, reason);
     }
@@ -514,7 +516,7 @@ impl BevyVariants {
         let Some(served) = session.served.remove(path) else {
             return false;
         };
-        session.bad.insert(served.cid.clone());
+        session.bad.insert(served.variant.clone());
         session.reloading.insert(path.to_owned());
         session.fallback(
             &served.scene,
@@ -606,7 +608,7 @@ impl IpfsIo {
         {
             Ok(response) => {
                 self.bevy_variants.transport_ok();
-                match parse_manifest(&response.body, entity) {
+                match parse_manifest(&response.body) {
                     Ok(manifest) => ManifestState::Loaded(Arc::new(manifest)),
                     Err(e) => ManifestState::Failed(format!("invalid manifest: {e}")),
                 }
@@ -675,27 +677,28 @@ impl IpfsIo {
             variants.fail(scene, file, None, reason);
             return None;
         }
-        let variant = select_variant(options, file, bc, |cid| variants.is_bad(cid))?.clone();
+        let variant = select_variant(options, file, bc, |path| variants.is_bad(path))?.clone();
 
         let decoded = supported_format(&variant)?.decoded;
 
+        // the manifest names no hash for a variant, so its bytes are cached under a digest of
+        // the url they came from, never under a content hash
         let url = format!("{base}/{}", variant.path);
-        let key = CacheKey::Content(variant.cid.clone());
-        // a BC texture's unwrapped DDS, under a name no content hash can take
+        let key = CacheKey::Url(content_hash::url_cache_name(&url));
+        // a BC texture's unwrapped DDS, under a name of its own
         #[cfg(not(target_arch = "wasm32"))]
-        let dds_key = format!("{}.dds", variant.cid);
-        // keyed by the variant CID, not its path: a cache entry must name the bytes it holds
+        let dds_key = format!("{}.dds", key.name());
         #[cfg(target_arch = "wasm32")]
-        let dds_url = format!("{base}/bevy/dds/{}.dds", variant.cid);
+        let dds_url = format!("{url}.dds");
         let served = ServedVariant {
             scene: scene.to_owned(),
             file: file.to_owned(),
-            cid: variant.cid.clone(),
+            variant: variant.path.clone(),
             format: variant.format.clone(),
         };
 
         // a warm visit of a texture skips the download and the zstd decode
-        if matches!(decoded, Decoded::BcTexture(_)) {
+        if matches!(decoded, Decoded::BcTexture) {
             #[cfg(not(target_arch = "wasm32"))]
             let dds = self
                 .read_disk_cache(&CacheKey::Url(dds_key.clone()))
@@ -713,14 +716,10 @@ impl IpfsIo {
             }
         }
 
-        // the cache holds bytes under a content key only once they hash to it
         #[cfg(not(target_arch = "wasm32"))]
         let cached = self.read_disk_cache(&key).await.ok().flatten();
-        // the web cache is keyed by url, and a path names its bytes only by convention: check
         #[cfg(target_arch = "wasm32")]
-        let cached = crate::web_cache::read(&url)
-            .await
-            .filter(|bytes| content_hash::matches_content_hash(&variant.cid, bytes));
+        let cached = crate::web_cache::read(&url).await;
         let (fetched, from_cache) = match cached {
             Some(bytes) => (SharedBytes(Arc::new(bytes)), true),
             None => {
@@ -737,18 +736,9 @@ impl IpfsIo {
                     .ok()
                     .and_then(|result| result.clone());
                 match fetched {
-                    Some(Ok(bytes)) if content_hash::matches_content_hash(&variant.cid, &bytes) => {
+                    Some(Ok(bytes)) => {
                         variants.transport_ok();
                         (bytes, false)
-                    }
-                    Some(Ok(bytes)) => {
-                        let reason = format!(
-                            "{} bytes from abgen do not hash to {}",
-                            bytes.len(),
-                            variant.cid
-                        );
-                        variants.fail(scene, file, Some(&variant.cid), reason);
-                        return None;
                     }
                     Some(Err(AssetReaderError::Io(e))) if e.kind() == ErrorKind::Interrupted => {
                         return None
@@ -756,7 +746,7 @@ impl IpfsIo {
                     Some(Err(e)) => {
                         let reason = e.to_string();
                         variants.transport_failed(&reason);
-                        variants.fail(scene, file, Some(&variant.cid), format!("fetch: {reason}"));
+                        variants.fail(scene, file, Some(&variant.path), format!("fetch: {reason}"));
                         return None;
                     }
                     None => return None,
@@ -765,14 +755,16 @@ impl IpfsIo {
         };
 
         let bytes = match decoded {
-            Decoded::BcTexture(format) => {
-                let dds = match ktx2::bc_ktx2_to_dds(&fetched, format) {
+            Decoded::BcTexture => {
+                let dds = match ktx2::bc_format(&fetched)
+                    .and_then(|format| ktx2::bc_ktx2_to_dds(&fetched, format))
+                {
                     Ok(dds) => dds,
                     Err(reason) => {
                         variants.fail(
                             scene,
                             file,
-                            Some(&variant.cid),
+                            Some(&variant.path),
                             format!("invalid KTX2: {reason}"),
                         );
                         return None;
@@ -780,17 +772,17 @@ impl IpfsIo {
                 };
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Err(error) = self.cache_bytes(&dds_key, &dds).await {
-                    warn!("failed to cache the DDS of `{}`: {error}", variant.cid);
+                    warn!("failed to cache the DDS of `{}`: {error}", variant.path);
                 }
                 #[cfg(target_arch = "wasm32")]
                 if let Err(error) = crate::web_cache::keep(&dds_url, &dds).await {
-                    warn!("failed to cache the DDS of `{}`: {error:?}", variant.cid);
+                    warn!("failed to cache the DDS of `{}`: {error:?}", variant.path);
                 }
                 dds
             }
             // the loader of the original path (a `.glb`/`.gltf`: the meshopt pre-pass glTF
             // loader) reads the variant's bytes as they are; the cache keeps them under the
-            // variant cid alone
+            // variant's url digest alone
             #[cfg(feature = "meshopt-variants")]
             Decoded::AsIs => {
                 Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone())
