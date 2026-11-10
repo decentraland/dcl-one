@@ -22,7 +22,7 @@ import type { PaymentMethod } from "@shop/model/settlement";
 import { SHOP_BASE, shopPath } from "../routes";
 import { useShopWallet } from "../wallet/context";
 import FavoriteButton from "../market/components/FavoriteButton";
-import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "../discovery/api";
+import { fetchCatalogItems, fetchCollection, fetchCollectionItems, fetchRelatedItems, type UnifiedListing } from "@shop/discovery/api";
 import { cardEligibility } from "@shop/discovery/cardPrice";
 import { cartInputFor } from "../discovery/components/AssetCard";
 import { useMarketplace } from "../market/access";
@@ -34,7 +34,7 @@ import SaleTag from "../discovery/components/SaleTag";
 import { OfferStock, SaleTimer } from "../discovery/components/SaleTimer";
 import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
-import { indexUnavailable } from "../discovery/freshness";
+import { indexUnavailable } from "@shop/discovery/freshness";
 import { useSaleActive, useSeo } from "../discovery/hooks";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
@@ -58,8 +58,8 @@ import {
   fetchPrimaryListingForItem,
   fetchUnifiedListingForItem,
   itemListingKey,
-} from "./api";
-import type { LegacyOrderRef } from "./api";
+} from "@shop/detail/api";
+import type { LegacyOrderRef } from "@shop/detail/api";
 import { fetchItemVideoUrl, fetchSmartWearableRequiredPermissions } from "./builder";
 import ItemPreview from "./components/ItemPreview";
 import LandBranch from "./components/LandBranch";
@@ -71,7 +71,7 @@ import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
 import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
-import { itemUrn } from "./lib/urn";
+import { itemUrn } from "@shop/detail/lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
 import { offerQueryKey, offersRevalidation, useOffers, type OfferQuery } from "./offers";
 import { useShopServices } from "../checkout/services";
@@ -81,8 +81,9 @@ import BuyModal from "./components/BuyModal";
 import { takeBuyNowReturn, type BuyNowReturn } from "../credits/returns";
 import { listingTypeFor } from "@shop/market/access-rule";
 import { serviceBase } from "../../data/catalyst/client";
-import "./itemdetail.css";
 import { shopClient } from "../api/host";
+import { shopReads } from "../discovery/reads";
+import "./itemdetail.css";
 
 type RouteState = { item?: CatalogItem } | null;
 
@@ -288,19 +289,19 @@ export default function ItemDetail() {
   const listingScope = marketplace ? "all" : "primary";
   const listingQ = useShopQuery(
     !isTokenRoute && validContract && pageItemId ? itemListingKey(contractAddress, pageItemId, listingScope) : null,
-    (signal) => (marketplace ? fetchUnifiedListingForItem : fetchPrimaryListingForItem)(contractAddress, pageItemId!, { client: shopClient(), signal }),
+    (signal) => (marketplace ? fetchUnifiedListingForItem : fetchPrimaryListingForItem)(contractAddress, pageItemId!, shopReads(signal)),
     // Pending to on (every web3 visitor with the rollout on): the primary answer stays on screen until the wider one
     // lands. Never the other way: a resale read under the Marketplace is dropped the moment it is off.
     { staleMs: 0, keepPrevious: marketplace },
   );
-  const metaQ = useShopQuery(validContract && pageItemId ? ["item-meta", contractAddress, pageItemId] : null, (signal) => fetchItemMeta(contractAddress, pageItemId!, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
-  const tokenQ = useShopQuery(isTokenRoute && validContract ? ["token", contractAddress, routeTokenId] : null, (signal) => fetchTokenById(contractAddress, routeTokenId!, { client: shopClient(), signal }), { staleMs: 0 });
-  const ownedQ = useShopQuery(isTokenRoute && validContract && account ? ["owned-token", contractAddress, routeTokenId, account] : null, (signal) => fetchOwnedToken(account!, contractAddress, routeTokenId!, { client: shopClient(), signal }), { staleMs: 0 });
-  const descQ = useShopQuery(validContract && pageItemId ? ["item-desc", contractAddress, pageItemId] : null, (signal) => fetchItemDescription(contractAddress, pageItemId!, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
-  const collectionQ = useShopQuery(validContract ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
-  const resalesQ = useShopQuery(marketplace && validContract && pageItemId ? ["item-resales", contractAddress, pageItemId] : null, (signal) => fetchItemResales(contractAddress, pageItemId!, { client: shopClient(), signal }), { staleMs: 0 });
-  const classicQ = useShopQuery(marketplace && validContract && pageItemId ? ["classic-orders", contractAddress, pageItemId] : null, (signal) => fetchClassicItemOrders(contractAddress, pageItemId!, { client: shopClient(), signal }), { staleMs: 0 });
-  const ownedCountQ = useShopQuery(!isTokenRoute && validContract && account && routeItemId ? ["owned-count", contractAddress, routeItemId, account] : null, (signal) => fetchOwnedItemCount(account!, contractAddress, routeItemId!, { client: shopClient(), signal }), { staleMs: 30_000 });
+  const metaQ = useShopQuery(validContract && pageItemId ? ["item-meta", contractAddress, pageItemId] : null, (signal) => fetchItemMeta(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 5 * 60_000 });
+  const tokenQ = useShopQuery(isTokenRoute && validContract ? ["token", contractAddress, routeTokenId] : null, (signal) => fetchTokenById(contractAddress, routeTokenId!, shopReads(signal)), { staleMs: 0 });
+  const ownedQ = useShopQuery(isTokenRoute && validContract && account ? ["owned-token", contractAddress, routeTokenId, account] : null, (signal) => fetchOwnedToken(account!, contractAddress, routeTokenId!, shopReads(signal)), { staleMs: 0 });
+  const descQ = useShopQuery(validContract && pageItemId ? ["item-desc", contractAddress, pageItemId] : null, (signal) => fetchItemDescription(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 5 * 60_000 });
+  const collectionQ = useShopQuery(validContract ? ["collection-meta", contractAddress] : null, (signal) => fetchCollection(contractAddress, shopReads(signal)), { staleMs: 5 * 60_000 });
+  const resalesQ = useShopQuery(marketplace && validContract && pageItemId ? ["item-resales", contractAddress, pageItemId] : null, (signal) => fetchItemResales(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 0 });
+  const classicQ = useShopQuery(marketplace && validContract && pageItemId ? ["classic-orders", contractAddress, pageItemId] : null, (signal) => fetchClassicItemOrders(contractAddress, pageItemId!, shopReads(signal)), { staleMs: 0 });
+  const ownedCountQ = useShopQuery(!isTokenRoute && validContract && account && routeItemId ? ["owned-count", contractAddress, routeItemId, account] : null, (signal) => fetchOwnedItemCount(account!, contractAddress, routeItemId!, shopReads(signal)), { staleMs: 30_000 });
 
   const listing = isTokenRoute ? null : (listingQ.data ?? null);
   const meta = metaQ.data ?? null;
@@ -424,12 +425,12 @@ export default function ItemDetail() {
   const permissionsQ = useShopQuery(current.isSmart && urnForTraits ? ["item-permissions", urnForTraits] : null, (signal) => fetchSmartWearableRequiredPermissions(urnForTraits!, signal), { staleMs: 30 * 60_000 });
 
   const railAnchor = useMemo(() => ({ id: current.id, contractAddress, itemId: pageItemId, tokenId: routeTokenId ?? undefined }), [current.id, contractAddress, pageItemId, routeTokenId]);
-  const collectionItemsQ = useShopQuery(validContract ? ["rail-collection", contractAddress] : null, (signal) => fetchCollectionItems(contractAddress, { first: 20 }, { client: shopClient(), signal }), { staleMs: 60_000 });
+  const collectionItemsQ = useShopQuery(validContract ? ["rail-collection", contractAddress] : null, (signal) => fetchCollectionItems(contractAddress, { first: 20 }, shopReads(signal)), { staleMs: 60_000 });
   const siblingsSettled = !!collectionItemsQ.data || !!collectionItemsQ.error;
   const collectionCount = useMemo(() => mergeSuggestions({ collection: collectionItemsQ.data?.items ?? [] }, railAnchor).items.length, [collectionItemsQ.data, railAnchor]);
   const needsPadding = siblingsSettled && collectionCount < SUGGESTIONS_TARGET;
   const railCreator = current.creator || null;
-  const creatorItemsQ = useShopQuery(needsPadding && railCreator ? ["rail-creator", railCreator.toLowerCase()] : null, (signal) => fetchCatalogItems({ creator: railCreator!, isOnSale: true, first: 30 }, { client: shopClient(), signal }), { staleMs: 5 * 60_000 });
+  const creatorItemsQ = useShopQuery(needsPadding && railCreator ? ["rail-creator", railCreator.toLowerCase()] : null, (signal) => fetchCatalogItems({ creator: railCreator!, isOnSale: true, first: 30 }, shopReads(signal)), { staleMs: 5 * 60_000 });
   const creatorSettled = !railCreator || !!creatorItemsQ.data || !!creatorItemsQ.error;
   const withCreatorCount = useMemo(
     () => mergeSuggestions({ collection: collectionItemsQ.data?.items ?? [], creator: creatorItemsQ.data?.items ?? [] }, railAnchor).items.length,
@@ -438,7 +439,7 @@ export default function ItemDetail() {
   const relatedQ = useShopQuery(
     needsPadding && creatorSettled && withCreatorCount < SUGGESTIONS_TARGET && validContract && pageItemId ? ["rail-related", contractAddress, pageItemId, SUGGESTIONS_TARGET, listingScope] : null,
     // A resale card is the Marketplace's: without it the rail suggests primary sales only.
-    (signal) => fetchRelatedItems(contractAddress, pageItemId!, { first: SUGGESTIONS_TARGET, listingType: listingTypeFor(marketplace) }, { client: shopClient(), signal }),
+    (signal) => fetchRelatedItems(contractAddress, pageItemId!, { first: SUGGESTIONS_TARGET, listingType: listingTypeFor(marketplace) }, shopReads(signal)),
     { staleMs: 60_000 },
   );
   const rail = useMemo(

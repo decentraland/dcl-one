@@ -10,8 +10,8 @@ import type { Session } from "@shop/model/settlement";
 import { encodePurchaseOffer } from "@shop/model/wire";
 import { BOOK, SIGNED_OUT, storeMint, web2, web3 } from "@shop/payment/fixtures";
 import { purchaseOfferSource } from "./offers";
-import { createShopClient } from "./shop";
-import type { ShopSigner, TransportRequest } from "./signer";
+import { createShopClient } from "@shop/api/shop";
+import type { ShopSigner, TransportRequest } from "@shop/api/signer";
 
 const stamp = 1_800_000_000_000;
 const offer = (session = web3(), item = 7n) => ({ ...storeMint(session, "wearable", item), quotedAt: stamp });

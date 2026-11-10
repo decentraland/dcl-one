@@ -17,12 +17,14 @@ import { EnvTokenProvider, FigmaClient } from './figma/client.js'
 import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
+import { runInstall } from './install.js'
 import { fetchFdsSource } from './sources/fds-source.js'
 
 const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
   dcl-figma probe
+  dcl-figma install foundations [--source snapshot] [--out <private-stage>]
   dcl-figma sync [--out <dir>] [--developer [--apply-retirements]]
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
@@ -79,6 +81,18 @@ async function main(argv: string[]): Promise<number> {
     }
   })
   const [command] = positionals
+
+  if (command === 'install') {
+    if (positionals.length !== 2) throw new Error(USAGE)
+    print(
+      await runInstall(await createApp(process.cwd(), values.config), {
+        target: positionals[1]!,
+        source: sourceKind(values.source),
+        outDir: values.out
+      })
+    )
+    return 0
+  }
 
   if (command === 'review-manifest') {
     print(await writeReviewManifest(await createApp(process.cwd(), values.config), values.out))

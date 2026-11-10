@@ -19,7 +19,8 @@ import type { NftResult } from "@catalyst-api/market/NftResult";
 import { landTokenId } from "../../../data/catalyst/landListing";
 import { EstateUpgradeWarning } from "../../land/LandSections";
 import { fetchNftResult, indexOutage, landData, landParcels, type LandNftData } from "../../land/api";
-import { landCategoryOf, landNetwork } from "../../land/contracts";
+import { landChainId } from "../../land/chain";
+import { landCategoryOf, landNetwork } from "@shop/land/contracts";
 import { isEstateListingAffectedByUpgrade } from "../../land/estate";
 import { dateText, epochMs, manaText } from "../../land/format";
 import { distanceText, estateProximity, parcelProximity, proximityIndex, type Proximity } from "../../land/proximity";
@@ -45,8 +46,8 @@ import offerIcon from "./landbranch-assets/make_offer.svg";
 import plazaIcon from "./landbranch-assets/plaza.svg";
 import roadIcon from "./landbranch-assets/road.svg";
 import districtIcon from "./landbranch-assets/district.svg";
-import "./landbranch.css";
 import { shopClient } from "../../api/host";
+import "./landbranch.css";
 
 export function isLandToken(contractAddress: string | null | undefined, tokenId: string | null | undefined): boolean {
   return !!tokenId && !!contractAddress && !!landCategoryOf(contractAddress);
@@ -503,7 +504,7 @@ function estateContract(chainId: number): string {
   try {
     return landNetwork(chainId).estate;
   } catch {
-    return landNetwork().estate;
+    return landNetwork(landChainId()).estate;
   }
 }
 
@@ -545,7 +546,7 @@ function DetailsBox({ result, land, rental, order }: { result: NftResult; land: 
 function ParcelCoordinates({ parcels: unsorted, total }: { parcels: { x: number; y: number }[]; total: number }) {
   const [open, setOpen] = useState(false);
   const parcels = useMemo(() => [...unsorted].sort((a, b) => a.y - b.y || a.x - b.x), [unsorted]);
-  const landContract = useMemo(() => landNetwork().land, []);
+  const landContract = useMemo(() => landNetwork(landChainId()).land, []);
   return (
     <div className="shop-landtoken__parcels" data-testid="land-parcels">
       <h2 className="shop-landtoken__subheader">Parcels</h2>

@@ -1,13 +1,16 @@
 // Outfits: the player's saved avatar looks (backpack Outfits tab).
 //   load  ← what this session last saved or read, else catalyst GET /lambdas/outfits/:address
+//           (404 → none saved yet; any other failure refuses the save or delete)
 //   save/delete → BevyApi.deployOutfits: the engine signs and deploys the `outfits` entity
+//                 (slots past FREE_SLOTS carry the player's owned names)
 //                 (a guest's saves last until the scene restarts)
 //                 a refused one → outfitSaveFailed to the page
 //   thumbnails → BevyApi.get/setOutfitThumbnail(s): kept by the engine on this device
 //   equip → the Backpack's look (body shape + colors + wearables; ./avatarDraft deploys it on close)
 import { getPlayer } from '@dcl/sdk/players'
 import { BevyApi } from '../bevy-api'
-import { catalystBase, getJson } from '../http'
+import { catalystBase, getJson, HttpError } from '../http'
+import { fetchOwnedNames } from './profile'
 import { sendEquipped } from './wearables'
 import { currentLook, editLook } from './avatarDraft'
 import { captureAvatarThumbnail, waitFrames } from './avatarPreview'
@@ -18,6 +21,8 @@ import type { Outfit, OutfitsMetadata, RGBColor } from '../../../src/engine/prot
 
 const EMPTY: OutfitsMetadata = { outfits: [], namesForExtraSlots: [] }
 const GREY: RGBColor = { r: 0.5, g: 0.5, b: 0.5 }
+// The catalyst takes slots 5 to 9 only with a name the deployer owns.
+const FREE_SLOTS = 5
 // Wait for an equipped outfit's wearables to load before picturing it.
 const EQUIP_THUMBNAIL_DELAY_FRAMES = 180
 
@@ -79,9 +84,17 @@ function toDeploy(metadata: OutfitsMetadata): OutfitsData {
 
 // A guest's outfits stay in this session; anyone else's are deployed, and kept once the catalyst
 // takes them.
-async function store(address: string, isGuest: boolean, next: OutfitsMetadata): Promise<void> {
-  if (!isGuest) await BevyApi.deployOutfits(toDeploy(next))
-  known.set(address.toLowerCase(), next)
+async function store(address: string, isGuest: boolean, next: OutfitsMetadata): Promise<OutfitsMetadata> {
+  let kept = next
+  if (!isGuest) {
+    const extra = next.outfits.some((o) => o.slot >= FREE_SLOTS)
+    if (extra && next.namesForExtraSlots.length === 0) {
+      kept = { ...next, namesForExtraSlots: await fetchOwnedNames(address) }
+    }
+    await BevyApi.deployOutfits(toDeploy(kept))
+  }
+  known.set(address.toLowerCase(), kept)
+  return kept
 }
 
 // Saves and deletes run one at a time, each on the outfits the previous one left.
@@ -93,14 +106,21 @@ function serially<T>(change: () => Promise<T>): Promise<T> {
 }
 
 // This session's outfits, else the catalyst lambdas endpoint, which returns
-// { metadata: OutfitsMetadata } (missing → empty for new users).
+// { metadata: OutfitsMetadata }, or 404 for an address that never saved one.
 async function loadMetadata(address: string): Promise<OutfitsMetadata> {
-  const local = known.get(address.toLowerCase())
+  const key = address.toLowerCase()
+  const local = known.get(key)
   if (local != null) return local
   const base = await catalystBase()
-  const res = await getJson<{ metadata?: OutfitsMetadata }>(`${base}/lambdas/outfits/${address}`).catch(() => undefined)
+  const res = await getJson<{ metadata?: OutfitsMetadata }>(`${base}/lambdas/outfits/${address}`).catch((e: unknown) => {
+    if (e instanceof HttpError && e.status === 404) return undefined
+    throw e
+  })
   if (res?.metadata == null) return EMPTY
-  known.set(address.toLowerCase(), res.metadata)
+  // A change stored while this read was in flight is newer.
+  const stored = known.get(key)
+  if (stored != null) return stored
+  known.set(key, res.metadata)
   return res.metadata
 }
 
@@ -122,20 +142,26 @@ export function registerOutfits(ctx: Ctx): void {
     ctx.send({ kind: 'outfits', metadata: me != null ? await withThumbnails(me.userId, metadata) : metadata })
   }
 
-  // A change the catalyst refuses shows the outfits as they were, then tells the page why.
-  const stored = async (
+  // Applies a change to the stored outfits. A failed read refuses it; a change the catalyst
+  // refuses shows the outfits as they were. Either way the page is told why.
+  const apply = async (
     me: { userId: string; isGuest: boolean },
     change: { slot: number; action: 'save' | 'delete' },
-    metadata: OutfitsMetadata,
-    next: OutfitsMetadata
-  ): Promise<boolean> => {
+    edit: (metadata: OutfitsMetadata) => OutfitsMetadata
+  ): Promise<OutfitsMetadata | null> => {
+    let metadata: OutfitsMetadata
     try {
-      await store(me.userId, me.isGuest, next)
-      return true
+      metadata = await loadMetadata(me.userId)
+    } catch (e) {
+      ctx.send({ kind: 'outfitSaveFailed', ...change, message: String(e) })
+      return null
+    }
+    try {
+      return await store(me.userId, me.isGuest, edit(metadata))
     } catch (e) {
       await emit(metadata)
       ctx.send({ kind: 'outfitSaveFailed', ...change, message: String(e) })
-      return false
+      return null
     }
   }
 
@@ -145,7 +171,12 @@ export function registerOutfits(ctx: Ctx): void {
       await emit(EMPTY)
       return
     }
-    await emit(await loadMetadata(me.userId))
+    // Shown, not kept: a save or delete reads again.
+    const metadata = await loadMetadata(me.userId).catch((e: unknown) => {
+      console.error('[outfits] read failed', e)
+      return EMPTY
+    })
+    await emit(metadata)
   })
 
   // Save the current look into `slot`, replacing any existing outfit there, then re-emit.
@@ -155,12 +186,13 @@ export function registerOutfits(ctx: Ctx): void {
     if (me == null || look == null) return
     const thumbnail = await captureAvatarThumbnail()
     await serially(async () => {
-      const metadata = await loadMetadata(me.userId)
-      const outfits = metadata.outfits.filter((o) => o.slot !== msg.slot)
-      outfits.push({ slot: msg.slot, outfit: currentOutfit(look) })
-      outfits.sort((a, b) => a.slot - b.slot)
-      const next = { ...metadata, outfits }
-      if (!(await stored(me, { slot: msg.slot, action: 'save' }, metadata, next))) return
+      const next = await apply(me, { slot: msg.slot, action: 'save' }, (metadata) => {
+        const outfits = metadata.outfits.filter((o) => o.slot !== msg.slot)
+        outfits.push({ slot: msg.slot, outfit: currentOutfit(look) })
+        outfits.sort((a, b) => a.slot - b.slot)
+        return { ...metadata, outfits }
+      })
+      if (next == null) return
       await writeThumbnail(me.userId, msg.slot, thumbnail)
       await emit(next)
     })
@@ -170,9 +202,11 @@ export function registerOutfits(ctx: Ctx): void {
     const me = getPlayer()
     if (me == null) return
     await serially(async () => {
-      const metadata = await loadMetadata(me.userId)
-      const next = { ...metadata, outfits: metadata.outfits.filter((o) => o.slot !== msg.slot) }
-      if (!(await stored(me, { slot: msg.slot, action: 'delete' }, metadata, next))) return
+      const next = await apply(me, { slot: msg.slot, action: 'delete' }, (metadata) => ({
+        ...metadata,
+        outfits: metadata.outfits.filter((o) => o.slot !== msg.slot)
+      }))
+      if (next == null) return
       await writeThumbnail(me.userId, msg.slot, null)
       await emit(next)
     })
