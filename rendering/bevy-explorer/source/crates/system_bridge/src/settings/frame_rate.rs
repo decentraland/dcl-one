@@ -36,7 +36,14 @@ impl AppSetting for FpsTargetSetting {
     }
 
     fn description(&self) -> String {
-        "The target frame rate. Lower values may be uncomfortable or jerky, while higher values will result in a smoother experience but increased CPU and GPU load.\n\n".to_owned()
+        let text = "The target frame rate. Lower values may be uncomfortable or jerky, while higher values will result in a smoother experience but increased CPU and GPU load.";
+        if cfg!(target_arch = "wasm32") {
+            text.to_owned()
+        } else {
+            format!(
+                "{text} Ignored while VSync is on: frames then follow the monitor's refresh rate."
+            )
+        }
     }
 
     fn save(&self, config: &mut AppConfig) {

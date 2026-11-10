@@ -110,6 +110,25 @@ fn label(size: UVec2) -> String {
     }
 }
 
+/// The choices shown for `list`. Until the monitor is read (or when it reports no usable mode)
+/// the one choice is the desktop, shown greyed out by the negative value: a list keeps the panel
+/// on its dropdown, where no choices would read as an off/on switch.
+fn variants(list: &ModeList) -> Vec<NamedVariant> {
+    if list.modes.is_empty() {
+        return vec![NamedVariant {
+            name: "Desktop".to_owned(),
+            description: DESCRIPTION.to_owned(),
+        }];
+    }
+    list.modes
+        .iter()
+        .map(|m| NamedVariant {
+            name: label(m.physical_size),
+            description: DESCRIPTION.to_owned(),
+        })
+        .collect()
+}
+
 /// `Monitor` keeps the size and rate it had when enumerated, before any exclusive switch.
 fn desktop_mode(monitor: &Monitor) -> Option<VideoMode> {
     let size = UVec2::new(monitor.physical_width, monitor.physical_height);
@@ -137,25 +156,14 @@ pub(super) fn register(app: &mut App, settings: &mut Settings, config: &AppConfi
             category: SettingCategory::Graphics.to_string(),
             description: DESCRIPTION.to_owned(),
             min_value: 0.0,
-            max_value: 0.0,
-            named_variants: Vec::new(),
+            max_value: 1.0,
+            named_variants: variants(&ModeList::default()),
             step_size: 1.0,
             value: -1.0,
             default: -1.0,
             disabled: disabled(config),
         },
-        move || {
-            variants_list
-                .read()
-                .unwrap()
-                .modes
-                .iter()
-                .map(|m| NamedVariant {
-                    name: label(m.physical_size),
-                    description: DESCRIPTION.to_owned(),
-                })
-                .collect()
-        },
+        move || variants(&variants_list.read().unwrap()),
         // negative (shown greyed out) until the monitor is known
         move |config: &AppConfig| {
             load_list
@@ -372,6 +380,18 @@ mod tests {
         let info = |settings: &Settings| settings.settings[0].info.clone();
         assert_eq!(info(&settings).value, -1.0);
         assert!(info(&settings).disabled);
+        // before the monitor is read: one greyed-out choice, so the panel shows a dropdown
+        let pending = |settings: &Settings| {
+            let info = info(settings);
+            assert_eq!(info.named_variants.len(), 1);
+            assert_eq!(info.named_variants[0].name, "Desktop");
+            assert_eq!(info.max_value, 1.0);
+            assert_eq!(info.value, -1.0);
+        };
+        pending(&settings);
+        settings.refresh(&config);
+        pending(&settings);
+        assert!(settings.set_value(&mut config, "Resolution", 0.0).is_err());
 
         let desktop = mode(1920, 1080, 60, 32);
         *app.world().resource::<MonitorModes>().list.write().unwrap() =
@@ -394,5 +414,14 @@ mod tests {
             })
         );
         assert!(settings.set_value(&mut config, "Resolution", 2.0).is_err());
+        // a failed set leaves the setting usable
+        settings.set_value(&mut config, "Resolution", 1.0).unwrap();
+        assert_eq!(
+            config.graphics.fullscreen_size,
+            Some(FullscreenSize {
+                width: 1920,
+                height: 1080
+            })
+        );
     }
 }

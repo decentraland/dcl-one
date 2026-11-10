@@ -23,13 +23,14 @@ function humanize(s: string): string {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
 }
 // A toggle only reads right for an off/on pair; any other pair of names (Everyone / Only friends)
-// needs its names on screen, so it is a select like the longer lists.
+// needs its names on screen, so it is a select like the longer lists. Any named list is a select,
+// even of one choice (a monitor with a single fullscreen size): a slider has no names to show.
 function isBinary(s: Setting): boolean {
   if (s.namedVariants.length === 2) return s.namedVariants.every((v) => /^(off|on)$/i.test(v.name))
   return s.namedVariants.length === 0 && s.maxValue - s.minValue <= 1 && s.stepSize >= 1
 }
 function isSlider(s: Setting): boolean {
-  return !isBinary(s) && s.namedVariants.length < 2
+  return !isBinary(s) && s.namedVariants.length === 0
 }
 // Values are f32 widened to f64 on the way over, so 19.95 arrives as 19.950000762939453. Showing
 // them at f32's own precision drops the noise, and the trailing zeros with it. Display only.
@@ -54,7 +55,7 @@ function Control({ s, onSet }: { s: Setting; onSet: (name: string, value: number
   if (isBinary(s)) {
     return <Toggle checked={s.value >= 1} disabled={disabled} onChange={(c) => onSet(s.name, c ? 1 : 0)} aria-label={s.name} />
   }
-  if (s.namedVariants.length >= 2) {
+  if (s.namedVariants.length >= 1) {
     return (
       <Select
         variant="light"
@@ -165,7 +166,9 @@ export function SettingsPanel({
       }).then((ok) => ok && bindings.reset())
       return
     }
-    // a negative default is a choice the engine cannot name yet (no monitor read)
+    // a negative default is a choice the engine cannot name yet (no monitor read). Disabled
+    // controls reset too: "all defaults" includes the frame-rate cap under VSync and the
+    // fullscreen size while windowed, which take effect when re-enabled.
     items.forEach((s) => s.default >= 0 && settings.set(s.name, s.default))
     if (activeTab === CHAT_TAB) {
       setAutoTranslateDefault(false)
