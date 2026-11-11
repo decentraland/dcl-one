@@ -2840,6 +2840,15 @@
         }
       }
     },
+    "lp_help_creator_fund_clicked": {
+      "loose": false,
+      "props": {
+        "button": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
     "lp_home_download_clicked": {
       "loose": false,
       "props": {
