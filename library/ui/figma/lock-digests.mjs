@@ -5,9 +5,13 @@
 // so nothing here changes without a lock change, and a change to a port input needs a port verification record
 // (port-verification.mjs). Each file also records its FDS counterpart and, when it differs, the deviation codes that
 // explain why; each code in `deviationCodes` carries its own reason, keyed by a stable id in sorted order. It reads the index, so it judges what would be committed; an LFS pointer fails.
-// `--write` reseals the digests from the index, keeps counterparts and codes, and sorts the codes. Dependency-free; it needs no install and no capture.
-import { publicFoundationProblems } from './public-foundations.mjs'
-import { publicComponentsProblems } from './public-components.mjs'
+// `--write` reseals the digests from the index, keeps counterparts and codes, and sorts the codes. It then rewrites the
+// public foundation and component tables from the staged manifests (source.json, font-source.json and the component
+// generation record); a table whose manifest does not validate against the resealed lock is kept and reported, so
+// the check fails until the target is reinstalled and resealed. Hand-written components are never pinned.
+// Dependency-free; it needs no install and no capture.
+import { publicFoundationProblems, publicFoundationTable } from './public-foundations.mjs'
+import { publicComponentTable, publicComponentsProblems } from './public-components.mjs'
 import { Buffer } from 'node:buffer'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -255,9 +259,39 @@ export function main(argv, root = process.cwd()) {
         source.deviationCodes = Object.fromEntries(
           Object.entries(source.deviationCodes).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
         )
+      const staged = (file) =>
+        execFileSync('git', ['-C', top, 'show', ':' + file], { maxBuffer: 1 << 30 })
+      const listed = (scope) =>
+        execFileSync('git', ['-C', top, 'ls-files', '-z', '--', scope], { maxBuffer: 1 << 28 })
+          .toString('utf8')
+          .split('\0')
+          .filter(Boolean)
+          .map((file) => file.slice(scope.length + 1))
+      const tables = [
+        [
+          'publicFoundations',
+          'library/ui/foundations',
+          (files) => publicFoundationTable(lock, files, staged, lock.publicFoundations?.files)
+        ],
+        ['publicComponents', 'library/ui/components', () => publicComponentTable(lock, staged)]
+      ]
+      let kept = 0
+      for (const [name, scope, build] of tables) {
+        const files = listed(scope)
+        if (!files.length) continue
+        try {
+          lock[name] = { ...lock[name], files: build(files) }
+        } catch (error) {
+          kept++
+          process.stderr.write(
+            `lock-digests: kept the ${name} table: ${error instanceof Error ? error.message : String(error)}\n`
+          )
+        }
+      }
       writeFileSync(lockFile, JSON.stringify(lock, null, 2) + '\n')
       process.stdout.write(`lock-digests: pinned ${Object.keys(tracked).length} files\n`)
-      return 0
+      // The resealed digests are written either way; a kept table is a failure until its target is reinstalled.
+      return kept ? 1 : 0
     }
     const { digests, problems } = pinnedFiles(lock)
     const { mismatched, missing, unpinned } = compare(digests, tracked)

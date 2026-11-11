@@ -1,5 +1,6 @@
 import type { ChHappening, ChNetworkScene } from "@ui/creatorhub/pages/CreatorHubHome";
-import { blogPostCards } from "@/core/lib/content/blog";
+import { blogPostHref } from "@dcl/one-ui/apps/sites/blog/blogModel";
+import { blogCms } from "../blog/cms";
 import { readWallet } from "../auth/wallet-cookie";
 import { isProfileOfAddress, profileDisplayName } from "../auth/profile-label";
 import { loadCreatorScenes } from "../catalyst/create/index.server";
@@ -61,16 +62,17 @@ export async function loadCreateScreen(request: Request) {
   const viewer = params.get("viewer")?.trim() || wallet || creator;
   const profileAddress = /^0x[0-9a-f]{40}$/i.test(viewer) ? viewer.toLowerCase() : "";
   const sections = screenSections(request.signal);
-  const [scenes, networkResult, eventsResult, profile] = await Promise.all([
+  const [scenes, networkResult, eventsResult, profile, blog] = await Promise.all([
     sections.load("create_scenes", (signal) => loadCreatorScenes({ creator, limit: 6, signal })),
     sections.load("create_network", () => network(), 1_000),
     sections.load("create_events", () => events(), 1_000),
     sections.load("create_profile", (signal) => profileAddress ? fetchProfile(profileAddress, { signal }) : Promise.resolve(null)),
+    sections.load("create_blog", () => blogCms().list({}, 1), 1_000),
   ]);
-  const posts: ChHappening[] = blogPostCards().slice(0, 3).map((post) => ({
+  const posts: ChHappening[] = (blog.data?.posts ?? []).slice(0, 3).map((post) => ({
     id: post.id, kind: "post", title: post.title, hue: post.hue,
-    meta: [post.category.title, happeningDate(post.publishedDate)].filter(Boolean).join(" \u00b7 "),
-    href: `/blog/${encodeURIComponent(post.slug)}`,
+    meta: [post.category.title, happeningDate(post.publishedAt ? `${post.publishedAt}T12:00:00Z` : null)].filter(Boolean).join(" \u00b7 "),
+    href: blogPostHref(post.category.slug, post.slug),
   }));
   return {
     data: {

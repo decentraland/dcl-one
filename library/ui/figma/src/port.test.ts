@@ -680,6 +680,31 @@ describe('when the real port stages run against canned command output', () => {
     })
   })
 
+  describe('and the components hold a hand-written component the installer never writes', () => {
+    beforeEach(() => {
+      mkdirSync(path.join(ui, 'components/Badge'), { recursive: true })
+      writeFileSync(path.join(ui, 'components/Badge/Badge.tsx'), 'export const Badge = 1\n')
+      commit('hand-written')
+    })
+
+    it('should compare only installer outputs with the private install', () => {
+      expect(portVerify(figma, { run })).toMatchObject({ ok: true })
+    })
+
+    it('should still fail when the private install misses a directory the lock pins', () => {
+      const lockPath = path.join(ui, 'upstream.lock.json')
+      const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+      lock.publicComponents.files['Badge/Badge.tsx'] = {}
+      writeFileSync(lockPath, JSON.stringify(lock))
+      commit('pinned')
+
+      expect(portVerify(figma, { run })).toMatchObject({
+        failed: 'install',
+        reason: 'the private components install differs from the canonical one'
+      })
+    })
+  })
+
   describe('and the private install differs from the canonical one', () => {
     it('should fail the install check', () => {
       replies['install components --out'] = {

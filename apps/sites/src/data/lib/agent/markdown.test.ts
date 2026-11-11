@@ -1,7 +1,9 @@
 import { createElement } from "react";
 import { describe, expect, it } from "vitest";
 
-import { blogPostCards, type BlogPost } from "@/core/lib/content/blog";
+import type { BlogArticle, BlogCard } from "@dcl/one-ui/apps/sites/blog/blogModel";
+
+import { FIRST_POST_BODY } from "../blog/cms.test-utils";
 import type { Place } from "../catalyst/schema";
 import {
   blogIndexToMarkdown,
@@ -84,59 +86,71 @@ describe("reactNodeToMarkdown", () => {
   });
 });
 
+const card = (over: Partial<BlogCard> = {}): BlogCard => ({
+  slug: "test-post",
+  title: "Test Post Title",
+  description: "A test description of the post.",
+  publishedAt: "2026-01-01",
+  readMinutes: 1,
+  category: { slug: "announcements", title: "Announcements" },
+  author: { slug: "test-author", name: "Test Author", image: "" },
+  image: null,
+  hue: 0,
+  ...over,
+});
+
 describe("blogPostToMarkdown", () => {
-  it("leads with the H1, includes description and metadata, renders body blocks; no HTML", () => {
-    const post: BlogPost = {
-      id: "test-post",
-      slug: "test-post",
-      title: "Test Post Title",
-      description: "A test description of the post.",
-      publishedDate: "JAN 1, 2026",
-      image: { url: "", width: 1200, height: 600 },
-      category: {
-        id: "announcements",
-        slug: "announcements",
-        title: "Announcements",
-        url: "/blog?category=announcements",
-      },
-      author: {
-        id: "test-author",
-        title: "Test Author",
-        slug: "test-author",
-        image: { url: "" },
-        url: "/blog?author=test-author",
-      },
-      hue: 0,
-      body: [
-        { type: "p", content: "An opening paragraph." },
-        { type: "h2", content: "A Brand-New Desktop Client" },
-        { type: "quote", content: "A pull quote." },
-        { type: "h3", content: "What's New for Explorers" },
-        { type: "ul", items: ["Photorealistic visuals with upgraded lighting and shadows"] },
-      ],
+  it("leads with the H1, includes description and metadata, renders the CMS rich text; no HTML", () => {
+    const post: BlogArticle = {
+      ...card(),
+      body: FIRST_POST_BODY,
+      assets: { "body-image": { url: "https://images.example/body-image.png", width: 800, height: 400, alt: "The new map" } },
     };
     const md = blogPostToMarkdown(post);
     expect(md.startsWith(`# ${post.title}`)).toBe(true);
     expect(md).toContain(post.description);
-    expect(md).toContain(post.category.title);
-    expect(md).toContain(post.publishedDate);
-    expect(md).toContain(post.author.title);
-    expect(md).toContain("## A Brand-New Desktop Client");
-    expect(md).toContain("### What's New for Explorers");
-    expect(md).toMatch(/^> /m);
-    expect(md).toContain("- Photorealistic visuals with upgraded lighting and shadows");
+    expect(md).toContain("_Announcements \u{B7} 2026-01-01 \u{B7} Test Author_");
+    expect(md).toContain("Opening **bold** words.");
+    expect(md).toContain("## A section");
+    expect(md).toContain("Read [the docs](https://example.org/docs) or this.");
+    expect(md).not.toContain("javascript:");
+    expect(md).toContain("![The new map](https://images.example/body-image.png)");
+    expect(md).toContain("- One item");
     expect(md).not.toMatch(NO_HTML);
+  });
+
+  it("keeps the text of node types it does not know, and survives an empty body", () => {
+    const body = {
+      nodeType: "document",
+      content: [
+        { nodeType: "embedded-entry-block", content: [{ nodeType: "paragraph", content: [{ nodeType: "text", value: "Inside a widget" }] }] },
+        { nodeType: "mystery-inline", content: [{ nodeType: "text", value: "Loose text" }] },
+        { nodeType: "embedded-asset-block", data: { target: { sys: { id: "gone" } } } },
+      ],
+    };
+    const md = blogPostToMarkdown({ ...card(), body, assets: {} });
+    expect(md).toContain("Inside a widget");
+    expect(md).toContain("Loose text");
+    expect(blogPostToMarkdown({ ...card(), body: null, assets: {} })).toContain("# Test Post Title");
+  });
+
+  it("renders a table with its first row as the header", () => {
+    const cell = (value: string) => ({ nodeType: "table-cell", content: [{ nodeType: "paragraph", content: [{ nodeType: "text", value }] }] });
+    const row = (...cells: string[]) => ({ nodeType: "table-row", content: cells.map(cell) });
+    const body = { nodeType: "document", content: [{ nodeType: "table", content: [row("Date", "Film"), row("Oct 7", "Nosferatu")] }] };
+    expect(blogPostToMarkdown({ ...card(), body, assets: {} })).toContain("| Date | Film |\n| --- | --- |\n| Oct 7 | Nosferatu |");
   });
 });
 
 describe("blogIndexToMarkdown", () => {
   it("has the index H1, a count line and an H2 + read-more link per post; no HTML", () => {
-    const cards = blogPostCards();
+    const cards = [card(), card({ slug: "other", title: "Other", category: { slug: "platform", title: "Platform" } })];
     const md = blogIndexToMarkdown(cards);
     expect(md.startsWith("# Decentraland Blog")).toBe(true);
-    expect(md).toContain(`${cards.length} posts.`);
-    expect(md).toContain(`## ${cards[0].title}`);
-    expect(md).toContain(`[Read more](/blog/${cards[0].slug})`);
+    expect(md).toContain("2 posts.");
+    expect(md).toContain("## Test Post Title");
+    expect(md).toContain("[Read more](/blog/announcements/test-post)");
+    expect(md).toContain("[Read more](/blog/platform/other)");
     expect(md).not.toMatch(NO_HTML);
   });
 });
