@@ -1,10 +1,10 @@
-/* Source's SceneJumpInModal: an 880px panel (at 1920) on the scene-panel radial gradient. Its
-   center stop (#6e31a7) has no foundation token yet. */
+/* Source's SceneJumpInModal: an 880px panel (at 1920) on the scene-panel radial gradient. Its center
+   stop (#6e31a7 in source) is the nearest brand token, brand purple (#691fa9). */
 .modal {
   border-radius: var(--dcl-radius-xl);
   background: radial-gradient(
     47.39% 84.22% at 42.4% 26.48%,
-    #6e31a7 0%,
+    var(--dcl-brand-purple) 0%,
     var(--dcl-background-web-dark) 100%
   );
   box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
