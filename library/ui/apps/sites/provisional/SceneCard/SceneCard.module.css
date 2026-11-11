@@ -1,0 +1,216 @@
+/* TODO(figma-ds): replace with the Figma-generated scene card's styles. Sizes follow the source
+ * (decentraland-ui2 SceneCard with Jump In shown on hover): a 416px card, a 256px image that
+ * shrinks to 224px, and a 160px minimum text panel. The source's 600px breakpoint (MUI `sm`)
+ * has no foundations breakpoint and is kept. */
+.root {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  box-sizing: border-box;
+  flex-direction: column;
+  max-width: 600px;
+  border-radius: var(--dcl-radius-lg);
+  background: transparent;
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+}
+
+.media {
+  flex-shrink: 0;
+  width: 100%;
+  height: 224px;
+  background: var(--dcl-transparencies-black-40);
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.content {
+  display: flex;
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  min-height: 160px;
+  padding: var(--dcl-space-16) var(--dcl-space-16) var(--dcl-space-24);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.info {
+  min-width: 0;
+}
+
+.title {
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0 0 0.35em;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 400;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.cardLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The title's link stretches over the whole card; the links inside the card sit above it. */
+.cardLink::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: var(--dcl-radius-lg);
+}
+
+.cardLink:focus-visible {
+  outline: none;
+}
+
+.cardLink:focus-visible::after {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: -2px;
+}
+
+.meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+}
+
+.creator {
+  display: flex;
+  overflow: hidden;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+}
+
+.face {
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.by {
+  overflow: hidden;
+  min-width: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creatorLink,
+.location,
+.jump {
+  position: relative;
+  z-index: 2;
+}
+
+.creatorLink {
+  color: var(--dcl-primary-primary);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.creatorLink:focus-visible,
+.location:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.location {
+  display: none;
+  box-sizing: border-box;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  max-width: 50%;
+  height: 24px;
+  padding: 0 var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-button-sm);
+  text-decoration: none;
+}
+
+.location svg {
+  flex-shrink: 0;
+}
+
+.locationText {
+  overflow: hidden;
+  min-width: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jump {
+  display: none;
+}
+
+@media (min-width: 600px) {
+  .root {
+    height: 416px;
+  }
+
+  .media {
+    height: 256px;
+    transition: height 300ms ease;
+  }
+
+  .root:hover .media,
+  .root:focus-within .media {
+    height: 224px;
+  }
+
+  .creator {
+    max-width: 50%;
+  }
+
+  .location {
+    display: inline-flex;
+  }
+
+  /* Jump In is revealed on hover or keyboard focus, sliding up as in the source. */
+  .jump {
+    display: grid;
+    overflow: hidden;
+    max-height: 0;
+    /* Room for the button's focus ring, which the clipping would cut off. */
+    margin: calc(-1 * var(--dcl-space-4));
+    padding: var(--dcl-space-4);
+    opacity: 0;
+    transform: translateY(20px);
+    transition:
+      opacity 300ms ease,
+      max-height 300ms ease,
+      transform 300ms ease;
+  }
+
+  .root:hover .jump,
+  .root:focus-within .jump {
+    max-height: 80px;
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .media,
+  .jump {
+    transition: none;
+  }
+}

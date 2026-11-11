@@ -36,50 +36,6 @@ export function mapPlace(p: Place): PlaceCardProps {
   };
 }
 
-export type ProfilePlace = {
-  id: string;
-  title: string;
-  description: string;
-  image?: string;
-  base_position: string;
-  positions: string[];
-  world: boolean;
-  world_name?: string;
-  likes: number;
-  favorites: number;
-  user_count: number;
-  contact_name: string;
-};
-
-function placeImageCss(image: string | null | undefined): string | undefined {
-  const v = (image ?? "").trim();
-  if (!v) return undefined;
-  if (/^(url\(|(repeating-)?(linear|radial|conic)-gradient\()/i.test(v)) return v;
-  return `url("${v.replace(/"/g, "%22")}")`;
-}
-
-function mapProfilePlace(p: Place, fallbackName?: string): ProfilePlace {
-  return {
-    id: p.id,
-    title: p.title ?? "",
-    description: p.description ?? "",
-    image: placeImageCss(p.image),
-    base_position: p.base_position,
-    positions: p.positions,
-    world: p.world,
-    world_name: p.world_name ?? undefined,
-    likes: p.likes,
-    favorites: p.favorites,
-    user_count: p.user_count ?? 0,
-    contact_name: p.contact_name?.trim() || fallbackName || "",
-  };
-}
-
-export function withContactName(places: ProfilePlace[], fallbackName?: string): ProfilePlace[] {
-  if (!fallbackName) return places;
-  return places.map((p) => (p.contact_name ? p : { ...p, contact_name: fallbackName }));
-}
-
 const PlacesListEnvelope = ApiDataTotalSchema(z.unknown());
 
 export async function fetchMostActivePlaces(
@@ -101,29 +57,4 @@ export async function fetchMostActivePlaces(
     return parsePlaces(loose.success ? loose.data.data : []);
   }
   return parsePlaces(env.data.data);
-}
-
-export async function fetchProfilePlaces(
-  address: string,
-  params: { limit?: number; fallbackName?: string } = {},
-  opts: GetOptions = {},
-): Promise<ProfilePlace[]> {
-  const raw = await getJSON<unknown>(placesApiPath("get", "/api/places"), {
-    ...opts,
-    query: {
-      creator_address: address.toLowerCase(),
-      limit: params.limit ?? 100,
-    },
-  });
-  const env = PlacesListEnvelope.safeParse(raw);
-  if (!env.success) {
-    reportSchemaDrift("ProfilePlacesEnvelope", env.error.issues);
-    const loose = z.object({ data: z.array(z.unknown()) }).safeParse(raw);
-    return parsePlaces(loose.success ? loose.data.data : []).map((p) =>
-      mapProfilePlace(p, params.fallbackName),
-    );
-  }
-  return parsePlaces(env.data.data).map((p) =>
-    mapProfilePlace(p, params.fallbackName),
-  );
 }

@@ -37,7 +37,6 @@ const { stub } = vi.hoisted(() => ({
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
 vi.mock("@ui/web/pages/StProfileCreationsTab", () => stub("creations"));
-vi.mock("@ui/web/pages/StProfilePlacesTab", () => stub("places"));
 vi.mock("@ui/web/pages/StProfilePhotosTab", () => stub("photos"));
 vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
 vi.mock("@ui/web/pages/StProfileMyAssetsTab", () => stub("assets"));

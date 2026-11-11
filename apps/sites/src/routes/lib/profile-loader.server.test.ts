@@ -18,8 +18,8 @@ vi.mock("@/data/lib/catalyst/marketplace/index", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/marketplace/index")>()),
   fetchCreations: net.fetchCreations,
 }));
-vi.mock("@/data/lib/catalyst/places/index", async (original) => ({
-  ...(await original<typeof import("@/data/lib/catalyst/places/index")>()),
+vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
   fetchProfilePlaces: net.fetchProfilePlaces,
 }));
 vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: net.fetchUserPhotos }));
