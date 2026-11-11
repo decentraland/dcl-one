@@ -7,7 +7,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { ChatLine, ChatState, Conversation } from '../session/useEngineSession'
 import type { DmUserState, MessageReaction, NearbyMember } from '../../engine/protocol'
-import { Avatar, ControlButton, DclLogo, MaskIcon, Translate, VerifiedBadge, VoiceBars } from '../../design'
+import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
 import { EmojiPicker } from './EmojiPicker'
 import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
@@ -37,10 +37,16 @@ import { isCancelKey } from '../../lib/bindingLabels'
 import { hudInsetRef } from '../../lib/hudInset'
 import { displayName, mentionName } from '../../engine/mention'
 import playersIcon from '../../assets/chat/players.png'
+import callIcon from '../../assets/voice/call.png'
+import callBlockedIcon from '../../assets/voice/call-blocked.png'
 import closeIcon from '../../assets/chat/close-thin.png'
 import newTag from '../../assets/chat/new-tag.png'
 import arrowLeftIcon from '../../assets/chat/arrow-left.png'
+import { callGate } from '../voiceChat/callGate'
+import { useOptionalSession } from '../session/SessionContext'
+import { CommunityStreamBanner } from './CommunityStreamBanner'
 import styles from './Chat.module.css'
+import { dmRefusal } from './dmStateCopy'
 
 const MAX_LEN = 500
 
@@ -551,23 +557,12 @@ function MembersOverlay({
   )
 }
 
-/** Why a DM cannot be sent right now, in unity-explorer's words. */
-const BLOCKED_COPY: Record<Exclude<DmUserState, 'connected'>, string> = {
-  notConnected: 'You are not connected to chat.',
-  disconnected: 'The user you are trying to message is offline.',
-  privateMessagesBlocked: 'The user you are trying to message only accepts DMs from friends.',
-  blockedByOwnUser: 'To message this user you must first unblock them.',
-  privateMessagesBlockedByOwnUser: 'Add this user as a friend to chat, or update your DM settings to connect with everyone.',
-  otherClient: 'User is not connected to chat. They may be using a client without DM support.',
-  noRouter: 'Community chat is not available right now.'
-}
-
 /** The words in the own-privacy copy that become the settings link. */
 const SETTINGS_LINK = 'DM settings'
 
 /** Replaces the input while the partner cannot be messaged. The own-setting case links to settings. */
 function BlockedInput({ state, onSettings }: { state: Exclude<DmUserState, 'connected'>; onSettings?: () => void }): React.JSX.Element {
-  const copy = BLOCKED_COPY[state]
+  const copy = dmRefusal(state, 'message')
   const [before, after] = copy.split(SETTINGS_LINK)
   const linked = state === 'privateMessagesBlockedByOwnUser' && onSettings && after != null
   return (
@@ -587,7 +582,7 @@ function BlockedInput({ state, onSettings }: { state: Exclude<DmUserState, 'conn
   )
 }
 
-/** The DM title bar: the partner, their reachability, and the conversation menu. */
+/** The DM title bar: the partner, their reachability, the Call button, and the conversation menu. */
 function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
   conversation: Conversation
   onClose: () => void
@@ -597,6 +592,10 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
   const { name, picture, claimed, color } = usePartner(conversation.address)
   const { base, tag } = splitName(name)
   const status = conversation.state == null ? 'Checking…' : conversation.online ? 'Online' : 'Offline'
+  // The call button, and why it is disabled when it is. Only with a session
+  // (the chat also renders on its own).
+  const session = useOptionalSession()
+  const gate = session == null ? null : callGate(session.voiceChat.state, conversation, session.profile.data?.isGuest === true)
   return (
     <header className={styles.nav}>
       <button
@@ -616,6 +615,20 @@ function DmHeader({ conversation, onClose, onDelete, onOpenProfile }: {
         </span>
       </button>
       <div className={styles.navRight}>
+        {session != null && gate != null && (
+          <Tooltip label={gate.allowed ? 'Call' : gate.reason} side="bottom" multiline={!gate.allowed}>
+            <ControlButton
+              variant="faint"
+              aria-label="Call"
+              aria-disabled={!gate.allowed}
+              onClick={() => {
+                if (gate.allowed) session.voiceChat.act({ op: 'startPrivateCall', address: conversation.address })
+              }}
+            >
+              <MaskIcon src={gate.allowed ? callIcon : callBlockedIcon} size={18} />
+            </ControlButton>
+          </Tooltip>
+        )}
         <AutoTranslateButton channel={conversation.address} />
         <ConversationMenu
           channel={conversation.address}
@@ -1117,6 +1130,7 @@ export function Chat({
           onClose={() => chat.closeCommunity(community.id)}
         />
       )}
+      {open && community != null && <CommunityStreamBanner communityId={community.id} />}
       {open && conversation == null && community == null && (
         <header className={styles.nav}>
           <div className={styles.navLeft}>
