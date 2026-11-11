@@ -118,8 +118,8 @@ function showsLive(view: View): boolean {
  * the page's error state), Live Now is optional. Member sections need the visitor's signature, so the
  * browser reads them.
  */
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = sidLoader(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = sidLoader(request, context);
   const view = readView(new URL(request.url).searchParams);
   const client = new QueryClient(QUERY_CLIENT_CONFIG);
   let unavailable = false;

@@ -1,4 +1,5 @@
 import type { DehydratedState } from "@tanstack/react-query";
+import { RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
@@ -15,7 +16,7 @@ type Payload = { sid: string; platform: { kind: string }; dehydratedState: Dehyd
 
 async function run(url: string, userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)") {
   const request = new Request(url, { headers: { "user-agent": userAgent } });
-  const result = (await loader({ request, params: {}, context: {} } as never)) as unknown as { data: Payload; init: ResponseInit | null };
+  const result = (await loader({ request, params: {}, context: new RouterContextProvider() } as never)) as unknown as { data: Payload; init: ResponseInit | null };
   return { payload: result.data, status: result.init?.status ?? 200 };
 }
 
@@ -89,7 +90,7 @@ describe("when the visitor disconnects during the document read", () => {
     );
     const controller = new AbortController();
     const request = new Request("http://localhost/places", { signal: controller.signal });
-    const pending = loader({ request, params: {}, context: {} } as never);
+    const pending = loader({ request, params: {}, context: new RouterContextProvider() } as never);
     await vi.waitFor(() => expect(signals).toHaveLength(2));
     controller.abort();
     const result = (await pending) as unknown as { data: Payload; init: ResponseInit | null };

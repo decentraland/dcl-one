@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { it, expect } from "vitest";
 
 import { describeRequiringPg } from "./require-dep";
@@ -16,7 +17,7 @@ async function runLoader(url: string) {
   const result: unknown = await loader({
     request,
     params: {},
-    context: {},
+    context: new RouterContextProvider(),
   } as never);
   if (result && typeof result === "object" && "data" in (result as object)) {
     return (result as { data: unknown }).data as Record<string, unknown>;

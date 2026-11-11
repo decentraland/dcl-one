@@ -46,7 +46,7 @@ const FALLBACK: PageDefaults = {
   variant: "live_feed",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   if (url.searchParams.get("tab") === "my") {
     return { tab: "my" as const, sid: "", offset: 0, hasMore: false, unavailable: false, liveUnavailable: false, calendarUnavailable: false, calendarLimited: false, invalidCount: 0, filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
@@ -67,7 +67,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     recurrent: filter === "recurring" ? true : undefined,
   };
   const [{ sid, wrap }, liveRes, activeRes, calendarRes] = await Promise.all([
-    pageLoader(request, FALLBACK),
+    pageLoader(request, context, FALLBACK),
     fetchEvents({ search: filters.search, recurrent: filters.recurrent, list: "live", limit: LIVE_LIMIT, with_connected_users: true }, { signal: request.signal })
       .then((result) => ({ ...result, unavailable: false }))
       .catch(() => ({ data: [] as Event[], copy: null, unavailable: true })),
