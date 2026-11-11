@@ -17,6 +17,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
+  is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
+  cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
+  so a bias that clears a metre of slope also draws it over anything that close, and the
+  blob stays flat rather than lying on the ground. Bevy's own decals do not fit either:
+  clustered decals are true box projectors but need bindless textures, so they do not run
+  on WebGPU or macOS, and `ForwardDecal` is a flat quad with a depth fade, so it has the
+  same slope limits in a softer form. The projection reads the primary camera's
+  depth prepass, which the camera therefore keeps; without one the marker draws nothing.
+  Keeping it costs nothing new: the camera already renders it on native and web, and it
+  saves the main pass shading hidden opaque pixels. It also enables later work: decals,
+  soft edges where transparent surfaces meet geometry, and GPU occlusion culling.
+  The box runs from 0.1 m under the feet, so the blob never darkens the avatar, to 1 m
+  below the ground under the player's centre, so ground falling away by up to 45 degrees
+  across the footprint still catches it. The ramps follow the shadergraph, except that
+  grounded means within 0.2 m of the ground, as for the animation, and the opacity rises
+  over the next 0.2 m instead of the last metre: with the projector's 0.5 fade factor,
+  Unity's ramp left the blob nearly invisible before the player landed.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
@@ -29,6 +47,57 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
+  3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
+  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
+    the call mic while a call is connected and the nearby mic otherwise. A community listener's
+    `V` does nothing, since a listener can't speak.
+  - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
+    whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
+    after a re-dial: what the user chose since then stands.
+  - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
+    user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
+    same state.
+  - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
+    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
+    microphone; a device picker is next work.
+  - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
+    re-triggered every 3.056 s (its length) while ringing.
+  - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
+    and the voice module subscribes to each microphone track itself.
+  - Don't also play someone the user shares a voice room with (a call or a stream) through
+    nearby voice: their spatial track is unsubscribed while they share it.
+  - Don't skip the re-dial when the user is alone in the room. A stream's creator before anyone
+    joins, or a caller whose partner is still connecting, would lose the call to a network blip.
+    A call that has really ended has its room deleted, and that disconnect ends the call without
+    a re-dial.
+  - Don't count the user's own call room for the community chat's "Live Voice Stream" banner: it
+    shows the backend's participant count for the stream (1 for a stream known only from its
+    start update, until the next read). Don't let it catch clicks while the chat is unfocused: it
+    is hidden, not just transparent.
+  - Don't wait for an update about the user's own stream. Expected: once the user's stream starts
+    it shows as live (rail icon, chat banner, sidebar badge, scene banner) with current counts.
+    Actual: the social service leaves the starter out of the stream's STARTED update, and neither
+    update carries counts; ENDED reaches everyone, the ender included. So the bridge re-reads the
+    live list when the user's own stream is entered or left.
+  - Don't let a ringing private call carry on next to a stream: joining or starting a stream
+    while one rings refuses it first, and the stream starts a second later.
+  - Don't leave a stream running with nobody in it: one whose start succeeds after its creator
+    left (or moved to another stream) is ended with `EndCommunityVoiceChat`.
+  - Don't hold a hung-up private call in an ending state. One whose id is known ends at once,
+    and `EndPrivateVoiceChat` is sent behind it. With the social link down the request waits for
+    the reconnect (up to 30 s of backoff), and an ending state would keep the nearby mic off and
+    refuse new calls all that time. That request is not retried if it fails. A call whose start
+    is still in flight at sign-out is not ended by the client either: its reply comes back after
+    the account's link is gone, so the end goes out on the next account's link, where the server
+    refuses it (only a party ends a call), or on none. The server ends both anyway: leaving the
+    room makes the gatekeeper delete a private room, and a closed social socket ends that user's
+    pending call (`social-service-ea` `logic/subscriptions/lifecycle.ts`, mirrored by the
+    catalyst).
+  - Don't ring a call again on reconnect. A call left ringing when the social link dropped is
+    rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
+    ignored: the server tells only the caller about a reject, so a second ring would never stop.
+  - Don't show the "stream in this scene" banner to guests: they can't join.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:

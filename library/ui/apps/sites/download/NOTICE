@@ -1,0 +1,3 @@
+VerifiedIcon.tsx ports the 18px solid-white product graphic from decentraland/sites (https://github.com/decentraland/sites) at revision 5aabce35423428332c81a4a78a7a9c2b486446b5, src/components/Icon/VerifiedIcon.tsx. The SVG path geometry, white fill and clipping rectangle are preserved. The local React wrapper gives repeated decorative instances distinct clip IDs. This graphic is separate from the shared gradient GeneralVerified icon.
+
+That source is licensed under the Apache License 2.0; the license is included at ../assets/LICENSE.

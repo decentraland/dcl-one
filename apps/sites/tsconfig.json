@@ -27,14 +27,22 @@
     "paths": {
       "react": ["./node_modules/@types/react/index.d.ts"],
       "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      "@ui/*": ["../ui3/src/*"],
+      "@dcl/one-ui/*": ["../../library/ui/*"],
       "react-dom": ["./node_modules/@types/react-dom/index.d.ts"],
       "react-dom/*": ["./node_modules/@types/react-dom/*"],
-      "@dcl/one-ui/*": ["../../library/ui/*"],
-      "@ui/*": ["../ui3/src/*"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with ui3.
       "@catalyst-api/*": ["../../library/catalyst-api/*"],
       // The Shop's portable core (model, prices, rules), shared with ui3.
       "@shop/*": ["../../library/shop/*"],
+      // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it.
+      "@hud/*": ["../../library/ui/apps/hud/*"],
+      "@explorer-core/*": ["../../library/explorer-core/*"],
+      "@hud-host": ["../ui3/src/play/host.ts"],
+      // library/ui/apps/hud has no node_modules of its own: its packages resolve to this app's copy.
+      "@noble/*": ["./node_modules/@noble/*"],
       // library/shop has no node_modules of its own: its packages resolve to this app's copy.
       "viem": ["./node_modules/viem"],
       // The validation seam ui3 owns. Types always resolve to the checking

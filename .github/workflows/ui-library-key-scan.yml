@@ -148,7 +148,7 @@ jobs:
             range="$HEAD_SHA"
             required=true
           else
-            files=$(git -C trusted log --format= --name-only --diff-merges=cc "$range" -- library/ui .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git -C trusted log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
             [ -z "$files" ] || required=true
           fi
           echo "artifact_required=$required" >> "$GITHUB_OUTPUT"

@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import fnmatch
 import re
 from pathlib import Path
 import subprocess
@@ -113,18 +114,62 @@ class WorkflowSetupTest(unittest.TestCase):
         self.build = workflow.split('  build:\n', 1)[1].split('  production-ready:\n', 1)[0]
         self.checkout = self.build.index('      - uses: actions/checkout@')
 
-    def test_lfs_checkout_declares_consumed_media_and_fonts_after_disk_preparation(self):
+    def test_lfs_checkout_covers_sites_media_and_fonts_after_disk_preparation(self):
         before = self.build[:self.checkout]
         self.assertIn('name: Preserve disk headroom on small runners', before)
-        includes = re.findall(r"lfs\.fetchinclude '([^']+)'", before)
-        if includes:
-            patterns = set(includes[-1].split(','))
-            self.assertIn('apps/sites/content/**', patterns)
-            nix = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
-            if '/library/ui/foundations' in nix:
-                self.assertIn('library/ui/foundations/typography/fonts/**', patterns)
+        include = re.search(r"lfs.fetchinclude '([^']+)'", before)
+        self.assertIsNotNone(include)
+        patterns = include.group(1).split(',')
+        required = ('apps/sites/content/docs/fixture.webp',
+                    'library/ui/apps/sites/assets/hero_desktop.webp',
+                    'library/ui/apps/sites/assets/catch_the_vibe/alan.mp4',
+                    'library/ui/apps/sites/assets/video_landing.webm',
+                    'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2')
+        for path in required:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns))
+        self.assertFalse(any(fnmatch.fnmatchcase('library/uuav/dist/libavcodec.so', pattern)
+                             for pattern in patterns))
         self.assertIn('lfs: true', self.build[self.checkout:])
         self.assertNotIn('tooling/', before)
+
+    def test_sites_media_guard_rejects_pointer_text_and_accepts_materialized_binary(self):
+        source = (Path(__file__).parents[2] / 'infra/packages/sites.nix').read_text()
+        build = source.split("  buildPhase = ''", 1)[1]
+        guard = build.split('    if grep -rIl ', 1)[1].split('    pnpm run build', 1)[0]
+        script = 'if grep -rIl ' + guard
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            work = root / 'apps/sites'
+            assets = root / 'library/ui/apps/sites/assets'
+            fonts = root / 'library/ui/foundations/typography/fonts'
+            for path in (work, assets, fonts):
+                path.mkdir(parents=True)
+            media = assets / 'hero.webp'
+            font = fonts / 'inter.woff2'
+            payload = b'actual\0binary'
+            media.write_bytes(payload)
+            font.write_bytes(payload)
+            result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
+                                    cwd=work, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for path in (media, font):
+                with self.subTest(path=path.name):
+                    path.write_text('version https://git-lfs.github.com/spec/v1\n'
+                                    'oid sha256:' + 'a' * 64 + '\nsize 12\n')
+                    before = path.read_bytes()
+                    result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
+                                            cwd=work, capture_output=True)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn(b'Git LFS pointers', result.stderr)
+                    self.assertEqual(path.read_bytes(), before)
+                    path.write_bytes(payload)
+            font.unlink()
+            fonts.rmdir()
+            result = subprocess.run(['bash', '-e', '-o', 'pipefail', '-c', script],
+                                    cwd=work, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(b'Unable to inspect', result.stderr)
 
     def test_sdk_cleanup_runs_only_below_fifty_gibibytes(self):
         step = self.build.split('      - name: Preserve disk headroom on small runners\n', 1)[1].split('      - name:', 1)[0]

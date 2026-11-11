@@ -1,4 +1,5 @@
-import type { BlogBlock, BlogPost, BlogPostCard } from "@/core/lib/content/blog";
+import { blogHref } from "@dcl/one-ui/apps/sites/blog/blogLinks";
+import { blogPostHref, type BlogArticle, type BlogCard, type BlogRichTextNode } from "@dcl/one-ui/apps/sites/blog/blogModel";
 import type { Place } from "../catalyst/schema";
 import { playUrl } from "../catalyst/bases";
 import { eventOccurrence, eventCoords, formatEventWhen, type Event } from "../catalyst/places/events";
@@ -96,25 +97,69 @@ export function reactNodeToMarkdown(node: unknown): string {
   return "";
 }
 
-function blogBlockToMarkdown(block: BlogBlock): string {
-  switch (block.type) {
-    case "h2":
-      return heading(2, block.content);
-    case "h3":
-      return heading(3, block.content);
-    case "h4":
-      return heading(4, block.content);
-    case "quote":
-      return `> ${clean(block.content)}`;
-    case "ul":
-      return bulletList(block.items);
-    case "p":
-      return clean(block.content);
+function blogInlineToMarkdown(node: BlogRichTextNode): string {
+  if (node.nodeType === "text") {
+    const value = node.value ?? "";
+    if (!value.trim()) return value;
+    const marks = new Set((node.marks ?? []).map((m) => m.type));
+    const lead = value.match(/^\s*/)?.[0] ?? "";
+    const trail = value.match(/\s*$/)?.[0] ?? "";
+    let text = value.trim();
+    if (marks.has("code")) text = `\`${text}\``;
+    if (marks.has("italic")) text = `*${text}*`;
+    if (marks.has("bold")) text = `**${text}**`;
+    return `${lead}${text}${trail}`;
+  }
+  const inner = (node.content ?? []).map(blogInlineToMarkdown).join("");
+  if (node.nodeType !== "hyperlink") return inner;
+  const target = blogHref(node.data?.uri);
+  return target && inner.trim() ? `[${clean(inner)}](${target.href})` : inner;
+}
+
+const blogListItem = (node: BlogRichTextNode): string =>
+  (node.content ?? []).map((child) => clean(blogInlineToMarkdown(child))).filter(Boolean).join(" ");
+
+function blogNodeToMarkdown(node: BlogRichTextNode, assets: BlogArticle["assets"]): string {
+  const inline = () => clean(blogInlineToMarkdown(node));
+  const level = /^heading-([1-6])$/.exec(node.nodeType);
+  if (level) return heading(Math.max(2, Number(level[1])), inline());
+  switch (node.nodeType) {
+    case "paragraph":
+      return inline();
+    case "unordered-list":
+      return bulletList((node.content ?? []).map(blogListItem));
+    case "ordered-list":
+      return (node.content ?? [])
+        .map(blogListItem)
+        .filter(Boolean)
+        .map((item, i) => `${i + 1}. ${item}`)
+        .join("\n");
+    case "blockquote":
+      return (node.content ?? []).map((child) => `> ${clean(blogInlineToMarkdown(child))}`).join("\n>\n");
+    case "hr":
+      return "---";
+    case "embedded-asset-block": {
+      const id = (node.data?.target as { sys?: { id?: unknown } } | undefined)?.sys?.id;
+      const image = typeof id === "string" ? assets[id] : undefined;
+      return image ? `![${clean(image.alt)}](${image.url})` : "";
+    }
+    case "table": {
+      const rows = (node.content ?? []).map((row) => (row.content ?? []).map((cell) => clean(blogInlineToMarkdown(cell))));
+      const lines = rows.map((cells) => `| ${cells.join(" | ")} |`);
+      // The first row is the header, as the CMS's tables are read.
+      if (rows[0]) lines.splice(1, 0, `| ${rows[0].map(() => "---").join(" | ")} |`);
+      return lines.join("\n");
+    }
+    default:
+      // document, and node types the blog does not know: their blocks, else their text.
+      return (node.content ?? []).some((child) => child.nodeType !== "text" && child.nodeType !== "hyperlink")
+        ? joinBlocks((node.content ?? []).map((child) => blogNodeToMarkdown(child, assets)))
+        : inline();
   }
 }
 
-export function blogPostToMarkdown(post: BlogPost): string {
-  const meta = [post.category?.title, post.publishedDate, post.author?.title]
+export function blogPostToMarkdown(post: BlogArticle): string {
+  const meta = [post.category?.title, post.publishedAt, post.author?.name]
     .filter((v): v is string => typeof v === "string" && v.trim().length > 0)
     .join(" \u{B7} ");
 
@@ -122,18 +167,18 @@ export function blogPostToMarkdown(post: BlogPost): string {
     heading(1, post.title),
     post.description ? clean(post.description) : "",
     meta ? `_${meta}_` : "",
-    ...(post.body ?? []).map(blogBlockToMarkdown),
+    post.body ? blogNodeToMarkdown(post.body, post.assets ?? {}) : "",
   ]);
 }
 
-export function blogIndexToMarkdown(posts: BlogPostCard[]): string {
+export function blogIndexToMarkdown(posts: BlogCard[]): string {
   const list = posts ?? [];
   const entries = list.map((p) =>
     joinBlocks([
       heading(2, p.title),
       p.description ? clean(p.description) : "",
-      joinInline([p.category?.title, p.publishedDate]),
-      `[Read more](/blog/${p.slug})`,
+      joinInline([p.category?.title, p.publishedAt]),
+      `[Read more](${blogPostHref(p.category.slug, p.slug)})`,
     ]),
   );
 
@@ -392,6 +437,9 @@ export function discoverToMarkdown(content: HomeContent): string {
 
   const blocks: string[] = [
     heading(1, content.hero?.title || "Discover Decentraland"),
+    content.hero?.mobileTitle
+      ? `Mobile title: ${clean(content.hero.mobileTitle)}`
+      : "",
     content.hero?.subtitle ? clean(content.hero.subtitle) : "",
   ];
   if (events.length)

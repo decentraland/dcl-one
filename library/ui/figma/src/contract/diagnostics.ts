@@ -28,7 +28,7 @@ const DIAGNOSTICS = {
     severity: 'error',
     audience: 'consumer',
     action:
-      'Point --mapping-root (or DCL_FIGMA_MAPPING_ROOT, or contract.mappingRoot in figma.config.json) at the mapping directory inside the library package. With --mapping-only the default is the library components directory.'
+      'Point --mapping-root (or DCL_FIGMA_MAPPING_ROOT, or contract.mappingRoot in figma.config.json) at a readable mapping directory inside the library package, or remove the setting. Those settings win over the default even with --mapping-only, which uses the library components directory only when none is set.'
   },
   'mapping-missing': {
     severity: 'error',
@@ -53,6 +53,7 @@ const DIAGNOSTICS = {
     action: {
       name: 'Several captured components share this name. Resolve again with a nodeId from details.candidates; never pick one yourself.',
       mappings: `Several mappings claim this node, which is a library defect. Do not pick one. ${REPORT}`,
+      'name-mappings': `Several mappings answer to this component set name (details.files), which is a library defect. Do not pick one or retry with one of their ids. ${REPORT}`,
       'duplicate-node':
         'Two mappings in the library target the same Figma node. Keep one mapping per component set.',
       'duplicate-id':
@@ -64,9 +65,18 @@ const DIAGNOSTICS = {
     severity: 'error',
     audience: 'consumer',
     action: {
-      name: 'Without a capture a component cannot be found by name. Resolve again with the component set nodeId from the design.',
-      node: `No capture is available and no mapping names this node, so it cannot be established whether it is a library component. Without a capture only a component set id matches a mapping: if you passed a variant id, resolve again with its component set id. Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`
+      'name-unmatched': `No mapping declares this component set name, and without a capture it cannot be established whether it is a library component. Check the name is the component set name (not the instance or variant name). Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`,
+      'name-unconfirmed':
+        'A mapping has this name, but a name alone does not identify a component. Resolve again with the instance variantProperties.',
+      'name-incompatible': `A mapping has this name, but the instance variant properties do not fit it (details.unknown, details.unsupported), so it may be another component. Do not pick the mapping. ${REPORT}`,
+      node: `No capture is available and no mapping names this node, so it cannot be established whether it is a library component. Node ids from a design file usually differ from the library's: resolve again with the component set name and variantProperties. Otherwise do not treat it as a missing mapping and do not build a replacement. ${REPORT}`
     }
+  },
+  'identity-name-match': {
+    severity: 'warning',
+    audience: 'consumer',
+    action:
+      'The component was identified by its set name and checked against its variant properties, not by a stable id. Repeat this when you report the result.'
   },
   'capture-revision-unknown': {
     severity: 'warning',
@@ -96,7 +106,8 @@ const DIAGNOSTICS = {
       'import-path-mismatch': `The mapping imports from another package than the one that owns it. ${REPORT}`,
       'source-missing': `The mapping names a source file that does not exist. ${REPORT}`,
       'export-missing': `The mapped component is not a public export of the library. ${REPORT}`,
-      'figma-drift': `The mapping reads a Figma property the captured component no longer defines. ${REPORT}`
+      'figma-drift': `The mapping reads a Figma property the captured component no longer defines. ${REPORT}`,
+      'component-registry': `The library's component registry (components/promotion.json) cannot be read or is not valid, so the component's accepted limits are unknown. Do not report the component as limit-free. ${REPORT}`
     }
   },
   'unsupported-construct': {
@@ -122,11 +133,17 @@ const DIAGNOSTICS = {
     action:
       'The export could not be confirmed statically. Let the application typecheck confirm the import.'
   },
+  'accepted-limits': {
+    severity: 'warning',
+    audience: 'consumer',
+    action:
+      'The library owners accepted these gaps for this component (resolved.limits). Repeat each limit verbatim when you report the result and do not claim parity on those aspects; they are accepted, not blockers.'
+  },
   'figma-identity-unverified': {
     severity: 'warning',
     audience: 'consumer',
     action:
-      'Identity and variants were checked against the mapping only, not against a capture. Repeat this when you report the result; differences from the live design may come from capture age.'
+      'Identity and variants were checked against the mapping only, not against a capture, so the combination of variant values is not checked against the design. Pass every variant property the instance has (details.notGiven lists mapped ones the usage left out), let the application typecheck confirm the props, and repeat this when you report the result; differences from the live design may come from capture age.'
   },
   'capture-unchecked': {
     severity: 'warning',

@@ -2684,12 +2684,83 @@ async fn the_direct_signer_refuses_a_fee_over_its_cap_before_sending() {
 fn trial_relay() -> Settings {
     Settings {
         trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::default()),
         meta_tx_broadcast_enabled: true,
         relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
         polygon_rpc_url: Some("http://127.0.0.1:1/".into()),
         relayer_max_fee_per_gas_wei: Some(500_000_000_000),
         ..Settings::for_tests()
     }
+}
+
+/// Under CREDITS_TRIAL_MODE the relay is how the trial's buyers spend their credits, so its
+/// writes open with OPS_WRITES_ENABLED, not DATA_WRITES_ENABLED: with the data plane off and the
+/// operator plane on, a relayed meta-transaction passes the gate and reaches the relay's own
+/// checks.
+#[tokio::test]
+async fn a_trial_relay_opens_with_the_operator_plane_while_data_writes_stay_off() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..trial_relay()
+        },
+    ));
+    for path in ["/v1/transactions"] {
+        let (status, text) = send(&app, "POST", path, Some("{}".into()), &[]).await;
+        assert_ne!(status, 503, "{path} passes the gate: {text}");
+    }
+}
+
+/// With the operator plane off, a trial's relay answers the credits 503 (naming
+/// OPS_WRITES_ENABLED) even while DATA_WRITES_ENABLED is on, and the relayer controls still
+/// pass the gate and stop at the admin bearer.
+#[tokio::test]
+async fn a_trial_relay_is_held_by_the_operator_plane_even_with_data_writes_on() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: true,
+            ops_writes_enabled: false,
+            ..trial_relay()
+        },
+    ));
+    let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
+    assert_eq!(status, 503, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["message"],
+        crate::shared::writes::WRITES_DISABLED_MESSAGE,
+        "{text}"
+    );
+    for path in ["/v1/admin/relayer/toggle", "/v1/admin/relayer/signer"] {
+        let (status, text) = send(&app, "POST", path, Some("{}".into()), &[]).await;
+        assert_eq!(status, 403, "{path}: {text}");
+        assert!(
+            text.contains("CATALYRST_ECONOMY_ADMIN_TOKEN is unset"),
+            "{path}: {text}"
+        );
+    }
+    let (status, _) = send(&app, "GET", "/v1/admin/relayer", None, &[]).await;
+    assert_ne!(status, 503, "a read passes the gate");
+}
+
+/// Outside a trial the relay keeps the data plane's gate: OPS_WRITES_ENABLED alone does not
+/// open it.
+#[tokio::test]
+async fn outside_a_trial_the_relay_keeps_the_data_plane_gate() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
+    assert_eq!(status, 503, "{text}");
+    assert!(text.contains("DATA_WRITES_ENABLED=false"), "{text}");
 }
 
 /// Under CREDITS_TRIAL_MODE the relay's one route is its own capped direct signer: any OZ or
@@ -2774,6 +2845,13 @@ fn a_trial_relay_has_one_capped_route() {
                 ..trial_relay()
             },
         ),
+        (
+            "CREDITS_TRIAL_BUYERS",
+            Settings {
+                trial_buyers: None,
+                ..trial_relay()
+            },
+        ),
     ] {
         let why = closed.refuse_an_open_trial_relay().unwrap_err().to_string();
         assert!(why.contains(needs), "{why}");
@@ -2826,6 +2904,7 @@ async fn a_trial_refuses_the_mana_payment_routes() {
         relayer_private_key: Some(hex::encode(key.to_bytes())),
         relayer_max_fee_per_gas_wei: Some(500_000_000_000),
         trial_mode: true,
+        trial_buyers: Some(crate::credits::trial::TrialBuyers::default()),
         ..Settings::for_tests()
     };
     let app = router(state(lazy_pool(), settings));
@@ -2848,4 +2927,72 @@ async fn a_trial_refuses_the_mana_payment_routes() {
     )
     .await;
     assert_eq!(status, 403, "{text}");
+}
+
+/// A trial's relayer pays gas for the trial's buyers only: a meta-transaction signed for any other
+/// wallet is refused with 403 before the daily quota is charged or anything is broadcast, while a
+/// listed buyer's relays as before.
+#[tokio::test]
+async fn a_trial_relays_meta_transactions_for_its_buyers_only() {
+    let _mirror_rows = crate::market::tests::support::MIRROR_STATE_LOCK
+        .lock()
+        .await;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    seed_collection(&pool, COLLECTION).await;
+    let (chain_url, raws) = spawn_fake_chain().await;
+    let buyer = PrivateKeySigner::random();
+    let stranger = PrivateKeySigner::random();
+    let buyer_address = format!("{:#x}", buyer.address());
+    let stranger_address = format!("{:#x}", stranger.address());
+    let settings = Settings {
+        trial_mode: true,
+        trial_buyers: Some(
+            crate::credits::trial::TrialBuyers::parse(Some(
+                &buyer_address.to_uppercase().replace("0X", "0x"),
+            ))
+            .unwrap(),
+        ),
+        meta_tx_broadcast_enabled: true,
+        relayer_private_key: Some(hex::encode(PrivateKeySigner::random().to_bytes())),
+        polygon_rpc_url: Some(chain_url),
+        relayer_max_fee_per_gas_wei: Some(500_000_000_000),
+        ..Settings::for_tests()
+    };
+    let app = router(state(pool.clone(), settings));
+
+    let (status, body) = post_transaction(
+        &app,
+        &stranger_address,
+        COLLECTION,
+        &signed_split_calldata(&stranger, FS),
+    )
+    .await;
+    assert_eq!(status, 403, "{body}");
+    assert!(body.to_string().contains("CREDITS_TRIAL_MODE"), "{body}");
+    assert_eq!(
+        row_count(&pool, &stranger_address).await,
+        0,
+        "no quota charged"
+    );
+    assert!(
+        raws.lock().unwrap().is_empty(),
+        "nothing broadcast for a stranger"
+    );
+
+    let (status, body) = post_transaction(
+        &app,
+        &buyer_address,
+        COLLECTION,
+        &signed_split_calldata(&buyer, FS),
+    )
+    .await;
+    assert_eq!(
+        status, 200,
+        "a listed buyer's meta-transaction relays: {body}"
+    );
+    assert_eq!(raws.lock().unwrap().len(), 1);
+    cleanup_user(&pool, &buyer_address).await;
+    cleanup_user(&pool, &stranger_address).await;
 }

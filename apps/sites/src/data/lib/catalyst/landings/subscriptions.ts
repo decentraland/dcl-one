@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { NOTIFICATIONS_PREFIX } from "../bases";
 import { catalystBase, getJSON, signedGetJSON } from "../client";
 import type { GetOptions } from "../client";
 import { apiOkOf } from "../envelope";
@@ -163,7 +164,7 @@ export const NOTIFICATION_GROUPS: Group[] = [
 type WriteChannel = { email: boolean; in_app: boolean };
 
 /** The node nests the notifications routes under `/notifications`; nothing serves a root `/subscription`. */
-export const SUBSCRIPTION_PATH = "/notifications/subscription";
+export const SUBSCRIPTION_PATH = `${NOTIFICATIONS_PREFIX}/subscription`;
 
 const UNREADABLE_SETTINGS_MESSAGE =
   "We couldn't read your current notification settings, so nothing was changed. Try again in a moment.";
@@ -218,6 +219,8 @@ export function buildSubscriptionCommit(
       body: JSON.stringify(body),
       signal,
     });
+    // The reply is not used; release it so the connection is not held until garbage collection.
+    await res.body?.cancel();
     if (!res.ok) {
       throw new Error(`Subscription update returned ${res.status}.`);
     }

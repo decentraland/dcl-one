@@ -1,5 +1,25 @@
 {
   "components": [
-    "NavBar"
+    {
+      "name": "NavBar",
+      "limits": [
+        {
+          "id": "signed-in-placeholders",
+          "text": "Signed-in views retain captured mock balances, notification counts and a placeholder avatar."
+        },
+        {
+          "id": "empty-mobile-variants",
+          "text": "Signed-in mobile variants 7 and 8 remain empty."
+        },
+        {
+          "id": "pending-contracts",
+          "text": "Semantic data and avatar props, navigation href and list behavior, notifications, icons and forced-state contracts remain follow-ups."
+        },
+        {
+          "id": "logo-size",
+          "text": "The logo is currently 60px on desktop and 48px on mobile; alignment to the 40px design is pending."
+        }
+      ]
+    }
   ]
 }

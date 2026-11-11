@@ -3,6 +3,9 @@ import type { EntryContext } from "react-router";
 import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
 import { toAgentLegalDoc } from "@/data/legal/agent";
 
+import { emptyProfile, type ProfileVM } from "../catalyst/social/profile";
+import { profileKeys } from "../profile/queries";
+
 import {
   blogIndexToMarkdown,
   blogPostToMarkdown,
@@ -19,13 +22,14 @@ import {
 } from "./markdown";
 
 const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = {
+  // A 404 or 503 blog page is not a list of 0 posts: null keeps the HTML page with its status and headers.
   blogIndex: (data) => {
-    const d = data as { posts?: Parameters<typeof blogIndexToMarkdown>[0] } | undefined;
-    return blogIndexToMarkdown(d?.posts ?? []);
+    const d = data as { state?: string; posts?: Parameters<typeof blogIndexToMarkdown>[0] } | undefined;
+    return d?.state === "ok" && d.posts ? blogIndexToMarkdown(d.posts) : null;
   },
   blogPost: (data) => {
-    const d = data as { post?: Parameters<typeof blogPostToMarkdown>[0] | null } | undefined;
-    return d?.post ? blogPostToMarkdown(d.post) : null;
+    const d = data as { state?: string; post?: Parameters<typeof blogPostToMarkdown>[0] | null } | undefined;
+    return d?.state === "ok" && d.post ? blogPostToMarkdown(d.post) : null;
   },
   legalDoc: (data) => {
     const d = data as { doc?: string } | undefined;
@@ -55,8 +59,17 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
     return d?.seo ? shopPageToMarkdown(d) : null;
   },
   profileDetail: (data) => {
-    const d = data as { profile?: Parameters<typeof profileToMarkdown>[0] | null } | undefined;
-    return d?.profile ? profileToMarkdown(d.profile) : null;
+    // The profile reaches the page as the loader's dehydrated profile query; a wallet with no
+    // profile yet is described as the empty profile the page shows.
+    const d = data as
+      | { address?: string; dehydratedState?: { queries?: { queryKey: unknown; state: { data?: unknown } }[] } }
+      | undefined;
+    if (!d?.address) return null;
+    const key = JSON.stringify(profileKeys.profile(d.address));
+    const entry = d.dehydratedState?.queries?.find((q) => JSON.stringify(q.queryKey) === key);
+    if (!entry) return null;
+    const profile = (entry.state.data as ProfileVM | null | undefined) ?? emptyProfile(d.address);
+    return profileToMarkdown(profile);
   },
   discover: (data) => {
     const d = data as { content?: Parameters<typeof discoverToMarkdown>[0] | null } | undefined;
