@@ -260,8 +260,8 @@ describe('when validating component generation as an offline consistency record'
   it.each([
     ['a dynamic import of a variable', 'const load = (name) => import(name)', 'dynamic import'],
     ['a dynamic import of a template', 'const load = () => import(`./lazy.js`)', 'dynamic import'],
-    ['require', "const tool = require('./unrelated-tool.js')", 'require()'],
-    ['an import assignment', "import tool = require('./unrelated-tool.js')", 'require()'],
+    ['require', "const tool = require('./unrelated-tool.js')", 'require is not a static import'],
+    ['an import assignment', "import tool = require('./unrelated-tool.js')", 'import = require()'],
     [
       'an extensionless import',
       "import './unrelated-tool'",
@@ -272,13 +272,46 @@ describe('when validating component generation as an offline consistency record'
     ['an untracked import', "import './absent.js'", 'untracked file'],
     ['a test import', "import './helper.test.js'", 'test, fixture or document'],
     ['a fixture import', "import './fixtures/data.json'", 'test, fixture or document'],
-    ['a query import', "import './unrelated-tool.js?raw'", 'query or fragment'],
+    ['a query import', "import './unrelated-tool.js?raw'", 'query, fragment or percent escape'],
     ['a subpath import', "import '#internal'", 'outside the sanctioned packages'],
     ['the package itself', "import '@dcl/one-ui'", 'outside the sanctioned packages'],
     ['an unsanctioned package', "import 'left-pad'", 'outside the sanctioned packages'],
     ['an unprefixed built-in', "import 'fs'", 'outside the sanctioned packages'],
     ['an unterminated literal', "const text = 'open", 'Unterminated string literal'],
-    ['an unbalanced bracket', 'const value = (1', 'Unbalanced bracket']
+    ['an unbalanced bracket', 'const value = (1', 'Unbalanced bracket'],
+    [
+      'a createRequire result kept for later',
+      "import { createRequire } from 'node:module'\nconst load = createRequire(import.meta.url)\nload('./x.cjs')",
+      'createRequire is used only'
+    ],
+    [
+      'a createRequire result called directly',
+      "import { createRequire } from 'node:module'\ncreateRequire(import.meta.url)('./x.cjs')",
+      'createRequire is used only'
+    ],
+    [
+      'a renamed createRequire',
+      "import { createRequire as load } from 'node:module'",
+      'node:module is imported only'
+    ],
+    [
+      'the node:module namespace',
+      "import * as m from 'node:module'",
+      'node:module is imported only'
+    ],
+    ['a dynamic node:module import', "await import('node:module')", 'node:module is imported only'],
+    ['require.call', "require.call(null, './x.cjs')", 'require is not a static import'],
+    ['a member require', "module.require('./x.cjs')", 'require is not a static import'],
+    ['an escaped require', "\\u0072equire('./x.cjs')", 'escaped identifier'],
+    ['getBuiltinModule', "process.getBuiltinModule('node:module')", 'getBuiltinModule is not'],
+    ['a percent escape', "import './%75nrelated-tool.js'", 'percent escape'],
+    [
+      'a / after a postfix increment',
+      "let i = 0\nconst h = i++ / 2 + 'x/'\nimport './unrelated-tool.js'\nconst z = 4 /2/ 1",
+      'ambiguous / after ++'
+    ],
+    ['a / after a non-null assertion', 'const h = value! / 2', 'non-null assertion'],
+    ['a / after a closing brace', "if (a) {}\n/'/.test(b)", 'ambiguous / after }']
   ])('should fail closed when a bound module has %s', (_case, text, message) => {
     lock('src/helper.test.ts')
     lock('src/fixtures/data.json', '{}')
@@ -293,6 +326,20 @@ describe('when validating component generation as an offline consistency record'
   it('should fail closed when two tracked files could answer one import', () => {
     lock('src/extra-production.js')
     expect(() => componentModulePaths(source, read)).toThrow('ambiguous import')
+  })
+
+  it('should read regular expressions after a condition or a prefix ! and allow createRequire(...).resolve', () => {
+    lock(
+      'src/extra-production.ts',
+      [
+        "import { createRequire } from 'node:module'",
+        "const where = createRequire(import.meta.url).resolve('zod')",
+        "if (where) /'/.test(where)",
+        "const missing = !/'/.test(where)",
+        "import './cycle.js'"
+      ].join('\n')
+    )
+    expect(componentModulePaths(source, read)).toContain(prefix + 'src/cycle.ts')
   })
 
   it('should allow sanctioned packages, their subpaths and node built-ins', () => {

@@ -1,7 +1,7 @@
 // module-graph: the static import closure of the component installer, computed without dependencies so the offline
 // guard can recompute it. It reads JavaScript and TypeScript (not JSX), and fails closed on every import it cannot
 // resolve to exactly one tracked file or a sanctioned package: a non-literal dynamic import, require, an
-// extensionless, query or escaped specifier, a path outside its scope, a test, fixture or Markdown target, a missing
+// extensionless, query, percent-escaped or escaped specifier, a path outside its scope, a test, fixture or Markdown target, a missing
 // or ambiguous file, a bare specifier that is not a `node:` built-in or a sanctioned package, and any text it cannot
 // tokenize. The installed contents of sanctioned packages are bound by the dependency manifests, not here.
 import { posix } from 'node:path'
@@ -83,12 +83,29 @@ export function tokenize(text, file) {
   const stack = []
   let at = 0
   const previous = () => tokens[tokens.length - 1]
+  // Whether a `/` here starts a regular expression. The contexts where only a full parser can tell (after a closing
+  // brace, a postfix `++`/`--` or a TypeScript non-null `!`) fail instead of being guessed, because a wrong guess
+  // can hide an import inside a misread literal.
   const regexAllowed = () => {
     const last = previous()
     if (!last) return true
     if (last.type === 'name') return KEYWORDS_BEFORE_EXPRESSION.has(last.value)
-    if (last.type === 'punct') return ![')', ']', '}'].includes(last.value)
-    return false
+    if (last.type !== 'punct') return false
+    if (last.value === ')') return last.control === true
+    if (last.value === ']') return false
+    if (last.value === '}' || last.value === '++' || last.value === '--')
+      fail(file, 'An ambiguous / after ' + last.value)
+    if (last.value === '!') {
+      const before = tokens[tokens.length - 2]
+      if (
+        before &&
+        (['number', 'string', 'template', 'regex'].includes(before.type) ||
+          (before.type === 'name' && !KEYWORDS_BEFORE_EXPRESSION.has(before.value)) ||
+          (before.type === 'punct' && [')', ']'].includes(before.value)))
+      )
+        fail(file, 'An ambiguous / after a non-null assertion')
+    }
+    return true
   }
   const readTemplate = () => {
     // `at` is just after a backtick or the `}` that closes a substitution.
@@ -164,14 +181,24 @@ export function tokenize(text, file) {
       const start = at
       at += 1
       while (at < text.length && IDENTIFIER_PART.test(text[at])) at += 1
-      tokens.push({ type: 'name', value: text.slice(start, at) })
+      const value = text.slice(start, at)
+      if (value.includes('\\')) fail(file, 'An escaped identifier is not read: ' + value)
+      tokens.push({ type: 'name', value })
     } else if (/[0-9]/.test(character) || (character === '.' && /[0-9]/.test(text[at + 1] ?? ''))) {
       const start = at
       at += 1
       while (at < text.length && /[\w.]/.test(text[at])) at += 1
       tokens.push({ type: 'number', value: text.slice(start, at) })
     } else if (character in CLOSERS) {
-      stack.push(character)
+      // A parenthesis after if, while, for or with closes a condition, after which `/` starts a regular expression.
+      const last = previous()
+      stack.push(
+        character === '(' &&
+          last?.type === 'name' &&
+          ['if', 'while', 'for', 'with'].includes(last.value)
+          ? 'control'
+          : character
+      )
       tokens.push({ type: 'punct', value: character })
       at += 1
     } else if (character === ')' || character === ']' || character === '}') {
@@ -181,8 +208,8 @@ export function tokenize(text, file) {
         readTemplate()
         continue
       }
-      if (CLOSERS[open] !== character) fail(file, 'Unbalanced bracket')
-      tokens.push({ type: 'punct', value: character })
+      if (CLOSERS[open === 'control' ? '(' : open] !== character) fail(file, 'Unbalanced bracket')
+      tokens.push({ type: 'punct', value: character, control: open === 'control' })
       at += 1
     } else {
       const punctuator =
@@ -198,8 +225,9 @@ export function tokenize(text, file) {
 /**
  * The specifiers one module loads: static imports, re-exports and literal dynamic imports. `import type` and
  * `export type` statements are left out because they are erased before the module runs; every other import counts,
- * even when only its types are used. Throws on require, on a dynamic import whose argument is not one plain string
- * and on an import statement it cannot read to its end.
+ * even when only its types are used. Throws on require and getBuiltinModule in any form, on createRequire used for
+ * anything but an immediate .resolve(), on node:module imported other than as { createRequire }, on a dynamic import
+ * whose argument is not one plain string and on an import statement it cannot read to its end.
  * @param {string} text
  * @param {string} file
  * @param {boolean} [erased] also return the type-only specifiers, for comparison with a full parser
@@ -225,16 +253,39 @@ export function moduleSpecifiers(text, file, erased = false) {
     }
     return undefined
   }
+  // The index just after the bracket that closes the one at `index`.
+  const after = (index) => {
+    let depth = 0
+    for (let at = index; at < tokens.length; at += 1) {
+      if (tokens[at].type !== 'punct') continue
+      if (['(', '[', '{'].includes(tokens[at].value)) depth += 1
+      else if ([')', ']', '}'].includes(tokens[at].value) && --depth === 0) return at + 1
+    }
+    return tokens.length
+  }
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]
-    if (token.type !== 'name' || member(index)) continue
-    // An object key or a method named like the keyword is not a statement.
-    if (is(index + 1, 'punct', ':') && (is(index - 1, 'punct', '{') || is(index - 1, 'punct', ',')))
-      continue
-    if (token.value === 'require') {
-      if (is(index + 1, 'punct', '(')) fail(file, 'require() is not a static import')
+    if (token.type !== 'name') continue
+    // An object key named like a keyword is not a use of it.
+    const key =
+      is(index + 1, 'punct', ':') && (is(index - 1, 'punct', '{') || is(index - 1, 'punct', ','))
+    // Any other way to load a module at run time: require in any form, a built-in fetched by name, and a
+    // createRequire result used for anything but an immediate .resolve(), which only resolves a path.
+    if (!key && (token.value === 'require' || token.value === 'getBuiltinModule'))
+      fail(file, token.value + ' is not a static import')
+    if (!key && token.value === 'createRequire') {
+      const close = is(index + 1, 'punct', '(') ? after(index + 1) : -1
+      if (
+        member(index) ||
+        close < 0 ||
+        !is(close, 'punct', '.') ||
+        !is(close + 1, 'name', 'resolve') ||
+        !is(close + 2, 'punct', '(')
+      )
+        fail(file, 'createRequire is used only as createRequire(...).resolve(...)')
       continue
     }
+    if (member(index) || key) continue
     if (token.value === 'import') {
       if (is(index + 1, 'punct', '.')) continue // import.meta
       if (is(index + 1, 'punct', '(')) {
@@ -242,12 +293,16 @@ export function moduleSpecifiers(text, file, erased = false) {
           is(index + 2, 'string') &&
           (is(index + 3, 'punct', ')') || is(index + 3, 'punct', ','))
         ) {
+          if (tokens[index + 2].value === 'node:module')
+            fail(file, 'node:module is imported only as { createRequire }')
           specifiers.push(tokens[index + 2].value)
           continue
         }
         fail(file, 'A dynamic import needs one string literal')
       }
       if (is(index + 1, 'string')) {
+        if (tokens[index + 1].value === 'node:module')
+          fail(file, 'node:module is imported only as { createRequire }')
         specifiers.push(tokens[index + 1].value)
         continue
       }
@@ -258,6 +313,16 @@ export function moduleSpecifiers(text, file, erased = false) {
         !is(index + 2, 'punct', ',')
       const at = fromClause(index + 1)
       if (at === undefined) fail(file, 'Unreadable import statement')
+      if (
+        tokens[at].value === 'node:module' &&
+        !(
+          at === index + 5 &&
+          is(index + 1, 'punct', '{') &&
+          is(index + 2, 'name', 'createRequire') &&
+          is(index + 3, 'punct', '}')
+        )
+      )
+        fail(file, 'node:module is imported only as { createRequire }')
       if (erased || !typeOnly) specifiers.push(tokens[at].value)
       index = at
       continue
@@ -279,6 +344,8 @@ export function moduleSpecifiers(text, file, erased = false) {
       }
       const clause = fromClause(start)
       if (clause === undefined) fail(file, 'Unreadable re-export statement')
+      if (tokens[clause].value === 'node:module')
+        fail(file, 'node:module is imported only as { createRequire }')
       if (erased || !typeOnly) specifiers.push(tokens[clause].value)
       index = clause
     }
@@ -296,8 +363,9 @@ const EXCLUDED = /(?:\.(?:test|spec)\.[^/]+$|(?:^|\/)(?:fixtures|test|__tests__)
  * that exists, `.mjs` to `.mjs` or `.mts`, `.json` to itself. Anything else, or none or both candidates, fails.
  */
 function resolveRelative(importer, specifier, files, scope) {
-  if (/[?#]/.test(specifier))
-    fail(importer, 'An import with a query or fragment is not read: ' + specifier)
+  // Node decodes percent escapes in a specifier, so `%61` would name a file this graph did not resolve.
+  if (/[?#%]/.test(specifier))
+    fail(importer, 'An import with a query, fragment or percent escape is not read: ' + specifier)
   const target = posix.normalize(posix.join(posix.dirname(importer), specifier))
   if (!scope(target)) fail(importer, 'An import outside the generation scope: ' + specifier)
   let candidates

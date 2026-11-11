@@ -146,8 +146,9 @@ async function main(argv: string[]): Promise<number> {
     if (positionals.length !== 2) throw new Error(USAGE)
     // Install runs in its own process, which loads only the import closure components/generation.json binds.
     const forwarded = [positionals[1]!, '--source', sourceKind(values.source)]
-    if (values.out !== undefined) forwarded.push('--out', values.out)
-    if (values.config !== undefined) forwarded.push('--config', values.config)
+    // name=value keeps a value that starts with '-' a value in the child's strict parser.
+    if (values.out !== undefined) forwarded.push(`--out=${values.out}`)
+    if (values.config !== undefined) forwarded.push(`--config=${values.config}`)
     const child = spawnSync(
       process.execPath,
       [
@@ -158,6 +159,7 @@ async function main(argv: string[]): Promise<number> {
       { stdio: 'inherit' }
     )
     if (child.error) throw child.error
+    if (child.signal) throw new Error(`The install process ended on signal ${child.signal}`)
     return child.status ?? 1
   }
 

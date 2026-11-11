@@ -79,6 +79,13 @@ describe('when the CLI receives an explicit configuration outside its working di
     }
   )
 
+  // The install process parses its own arguments, so a forwarded value that starts with '-' must stay a value.
+  it('should forward an --out value that starts with a dash to the install process as a value', async () => {
+    await expect(run(['install', 'components', '--out=-stage'])).rejects.toMatchObject({
+      stderr: expect.stringContaining('Install output must be components')
+    })
+  })
+
   it('should reject an unknown install target', async () => {
     await expect(run(['install', 'unknown'])).rejects.toMatchObject({
       stderr: expect.stringContaining('Unknown install target')

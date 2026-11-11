@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   lstat,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App } from './app.js'
 import { verifyFdsCache } from './sources/fds-source.js'
@@ -136,6 +138,31 @@ describe('when foundations are installed from a verified synthetic cache', () =>
   afterEach(async () => {
     vi.restoreAllMocks()
     await rm(root, { recursive: true, force: true })
+  })
+
+  it('should install through the CLI in its own process with the same result and exit code', async () => {
+    const cli = async () =>
+      JSON.parse(
+        (
+          await promisify(execFile)(
+            process.execPath,
+            [
+              '--import',
+              import.meta.resolve('tsx'),
+              path.join(import.meta.dirname, 'cli.ts'),
+              'install',
+              'foundations'
+            ],
+            { cwd: figma }
+          )
+        ).stdout
+      ) as Awaited<ReturnType<typeof runInstall>>
+    const first = await cli()
+    const second = await cli()
+    expect(first.changed).toBe(true)
+    expect(second.changed).toBe(false)
+    expect(second.files).toEqual(first.files)
+    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
   })
 
   it('should preserve maintained files and give identical bytes on a second install', async () => {

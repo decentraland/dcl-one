@@ -431,13 +431,16 @@ async function assertInstallResolverBoundary(ui: string, modules: readonly strin
   }
   const dependencies = componentPackages
   const installed = await canonicalPath(path.join(ui, 'node_modules'))
-  const sanctioned = createRequire(path.join(ui, 'package.json'))
+  // createRequire is used only to resolve paths, inline, so the generation import reader can prove it loads nothing.
   for (const relative of directories) {
     const directory = await resolveContained(ui, relative)
-    const resolver = createRequire(path.join(directory, '__component_resolution__.cjs'))
     for (const dependency of dependencies) {
-      const expected = await canonicalPath(sanctioned.resolve(dependency))
-      const actual = await canonicalPath(resolver.resolve(dependency))
+      const expected = await canonicalPath(
+        createRequire(path.join(ui, 'package.json')).resolve(dependency)
+      )
+      const actual = await canonicalPath(
+        createRequire(path.join(directory, '__component_resolution__.cjs')).resolve(dependency)
+      )
       if (!expected.startsWith(installed + path.sep) || actual !== expected)
         throw new Error(
           'Component dependency resolves outside the sanctioned UI installation: ' + dependency

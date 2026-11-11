@@ -39,10 +39,14 @@ Two small structural changes make the closure equal what an install runs, and ne
 
 `module-graph.mjs` reads JavaScript and TypeScript with its own tokenizer (strings, templates and their substitutions, comments, regular expressions), so text that looks like an import inside a generated template is not an edge and an import inside a template substitution is. It follows static imports, re-exports and dynamic imports of one string literal. `import type` and `export type` statements are skipped because they are erased before the module runs; an import whose bindings are only used as types still counts. Everything it cannot resolve to exactly one tracked file or a sanctioned package is an error, never a skipped edge:
 
-- a dynamic import whose argument is not one plain string literal, `require(...)` and `import x = require(...)`;
-- a relative specifier without a `.js`, `.mjs` or `.json` extension, with a query, fragment or escape, that resolves outside the top of `library/ui/figma` and its `src` tree, to a test, fixture or Markdown file, to no tracked file, or to more than one candidate (`x.js` beside `x.ts`);
+- a dynamic import whose argument is not one plain string literal; `require` and `getBuiltinModule` in any form (a call, a member, `require.call`, `import x = require(...)`); `createRequire` used for anything but an immediate `createRequire(...).resolve(...)`, which only resolves a path; `node:module` imported other than as `{ createRequire }`; an identifier written with a Unicode escape;
+- a relative specifier without a `.js`, `.mjs` or `.json` extension, with a query, fragment, percent escape (Node decodes `%61` to `a`) or backslash escape, that resolves outside the top of `library/ui/figma` and its `src` tree, to a test, fixture or Markdown file, to no tracked file, or to more than one candidate (`x.js` beside `x.ts`);
 - a bare specifier that is not a `node:` built-in or one of the six packages the installer already sanctions (`componentPackages`), which covers `#` subpath imports, the package's own name, a new dependency and an unprefixed built-in;
-- a module that is JSX, a module it cannot tokenize to the end, and unbalanced brackets, so a tokenizer mistake surfaces as an error instead of a hidden import;
+- a module that is JSX, a module it cannot tokenize to the end, and unbalanced brackets;
+- a `/` where only a full parser can tell a regular expression from a division: after a closing brace, a postfix `++`/`--` or a TypeScript non-null `!`. A `/` after the condition of `if`, `while`, `for` or `with`, or after a prefix `!`, is read as a regular expression; after any other `)` or `]` as a division.
+
+These rules make a misread `/`, the one place a hand-written tokenizer can hide an import inside a literal, an error in the dependency-free guard itself, not only in the test that compares the tokenizer with the TypeScript parser.
+
 - a `figma/tsconfig.json` that is not plain JSON or that sets `paths`, `baseUrl`, `rootDirs` or `extends`, since tsx would resolve through them.
 
 A generation module can therefore never be a file that port verification exempts, and [that record](2026-11-10-port-verification-binds-port-inputs.md) keeps refusing to exempt any candidate.
