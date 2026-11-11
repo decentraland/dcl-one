@@ -90,3 +90,41 @@ Development run: it waits, replacing any run already waiting, so each completed
 run tests every earlier commit and a macOS-only failure in source shows up
 there. A PR labelled `ci:macos` runs both on macOS (label, then push or reopen;
 re-running a job does not pick up a new label).
+
+Linux jobs run on `ubuntu-26.04` unless they compile the explorer or uuav natively or
+test what they compiled: those run on `ubuntu-24.04`, the image the uuav binaries lock
+records and the glibc 2.39 floor of the shipped Linux desktop, headless and uuav
+binaries; the 16-core Linux runner exists only as `ubuntu-24.04-16core`. macOS jobs run
+on `macos-15`, Windows jobs on `windows-2025`; `xlarge` and `16core` where the
+explorer's test suite and headless packages need them.
+
+## CI runners
+
+Every `runs-on` resolves through a repository variable `RUNNER_{OS}_{ARCH}_{VERSION}_{SIZE}`
+that falls back to the GitHub-hosted label written next to it. Defaults are left out of the
+name: ARCH for Windows (x86) and macOS (arm), while Linux always writes `X86` or `ARM`;
+VERSION for Ubuntu 26.04, macOS 15 and Windows 2025; SIZE for the standard runner, otherwise
+the label's own word (`16CORE`, `XLARGE`). So `ubuntu-26.04` is `RUNNER_LINUX_X86`,
+`ubuntu-24.04-16core` is `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` and `macos-15-xlarge` is
+`RUNNER_MACOS_XLARGE`. Unset, the job runs on the hosted label. Set to one of a fork's own
+runner labels, every job of that class runs there with the same workflow files, so a fork
+chooses per OS, architecture, version and size which jobs it hosts and which stay on GitHub.
+`BEVY_E2E_WINDOWS_RUNNER` stays the separate switch for the GPU scenarios job, and the
+benchmark legs keep their laptop labels from `tooling/benchmark-inputs.py`.
+
+| Variable | Hosted label | Jobs | Workflows |
+| --- | --- | ---: | --- |
+| `RUNNER_LINUX_X86_UBUNTU_24_04` | `ubuntu-24.04` | 6 | bevy-explorer-ci, bevy-explorer-desktop, bevy-explorer-headless-build, bevy-explorer-scenes, uuav-native, uuav-verify |
+| `RUNNER_LINUX_X86_UBUNTU_24_04_16CORE` | `ubuntu-24.04-16core` | 3 | bevy-explorer-ci (3) |
+| `RUNNER_LINUX_X86` | `ubuntu-26.04` | 54 | apis-sites-images (5), bevy-explorer-benchmark (6), bevy-explorer-ci (5), bevy-explorer-ci-status (3), bevy-explorer-desktop, bevy-explorer-e2e (3), bevy-explorer-headless (3), bevy-explorer-images (3), bevy-explorer-rollout, bevy-explorer-rollout-manual, bevy-explorer-scenes (2), bevy-explorer-upstream, closed-pr-cache, development (5), gateway-images (2), nixpkgs-update, pr-labeler, protocol, sdk (2), social-captures, social-voice-release, structure (2), uuav-native (2), uuav-verify |
+| `RUNNER_LINUX_ARM` | `ubuntu-26.04-arm` | 3 | apis-sites-images, bevy-explorer-images, gateway-images |
+| `RUNNER_WINDOWS` | `windows-2025` | 4 | bevy-explorer-desktop, bevy-explorer-e2e, uuav-native, uuav-verify |
+| `RUNNER_WINDOWS_16CORE` | `windows-2025-16core` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
+| `RUNNER_MACOS` | `macos-15` | 4 | development (2), uuav-native, uuav-verify |
+| `RUNNER_MACOS_XLARGE` | `macos-15-xlarge` | 2 | bevy-explorer-ci, bevy-explorer-headless-build |
+
+```bash
+for v in RUNNER_LINUX_X86_UBUNTU_24_04 RUNNER_LINUX_X86; do
+  gh variable set "$v" --body my-linux-runner
+done
+```
