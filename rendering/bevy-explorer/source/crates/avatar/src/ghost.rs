@@ -709,7 +709,7 @@ mod tests {
                 pipelined_rendering::PipelinedRenderingPlugin,
                 render_resource::{
                     CachedPipelineState, Extent3d, PipelineCache, TextureDimension, TextureFormat,
-                    TextureUsages,
+                    TextureUsages, TextureViewDescriptor, TextureViewDimension,
                 },
                 storage::ShaderStorageBuffer,
                 RenderApp,
@@ -775,6 +775,23 @@ mod tests {
             TextureFormat::Rgba8UnormSrgb,
             RenderAssetUsages::all(),
         ));
+        // a sky envmap, so the materials' environment map overrides compile too
+        let mut envmap = Image::new_fill(
+            Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 6,
+            },
+            TextureDimension::D2,
+            &[128, 128, 128, 255],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::all(),
+        );
+        envmap.texture_view_descriptor = Some(TextureViewDescriptor {
+            dimension: Some(TextureViewDimension::Cube),
+            ..default()
+        });
+        let envmap = images.add(envmap);
         let cube = world
             .resource_mut::<Assets<Mesh>>()
             .add(Cuboid::new(0.5, 1.0, 0.5));
@@ -808,6 +825,11 @@ mod tests {
             },
             DepthPrepass,
             NormalPrepass,
+            bevy::pbr::environment_map::EnvironmentMapLight {
+                diffuse_map: envmap.clone(),
+                specular_map: envmap,
+                ..default()
+            },
             Transform::from_xyz(0.0, 1.0, 4.0).looking_at(Vec3::Y, Vec3::Y),
         ));
         world.spawn((
