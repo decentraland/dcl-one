@@ -94,9 +94,9 @@ pub(super) fn register(app: &mut App) {
                 command: "/shadow_map {value}",
                 kind: DebugInputKind::Select(&[
                     ("512", "512"),
-                    ("1024 (this branch)", "1024"),
+                    ("1024", "1024"),
                     ("2048", "2048"),
-                    ("4096 (main)", "4096"),
+                    ("4096 (default)", "4096"),
                 ]),
             },
             slider(

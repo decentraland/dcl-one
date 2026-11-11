@@ -23,6 +23,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
   (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
   bias.
+- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
+  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
+  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
+  keeps it.
 - **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
   ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
   darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's

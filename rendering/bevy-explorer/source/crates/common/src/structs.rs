@@ -1017,8 +1017,8 @@ pub enum ShadowSetting {
 
 /// The far bounds of High's first three cascades, as fractions of the shadow distance.
 pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
-/// The sun's shadow map size in texels, per cascade.
-pub const SUN_SHADOW_MAP_SIZE: usize = 1024;
+/// The sun's shadow map size in texels, per cascade (see decisions.md).
+pub const SUN_SHADOW_MAP_SIZE: usize = 4096;
 /// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
