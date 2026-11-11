@@ -407,3 +407,22 @@ describe('when a public button adapts captured label geometry and interaction co
     expect(root).toContain('color: var(--dcl-neutrals-snow)')
   })
 })
+
+describe('when a native control has no variant axis', () => {
+  it('should emit no reference to an undeclared variant', async () => {
+    const spec = (await componentSpecs()).find((entry) => entry.name === 'Button')!
+    spec.control = 'button'
+    const base = spec.views.find((view) => view.key === spec.defaultKey)!
+    spec.props = spec.props.filter((prop) =>
+      ['disabled', 'loading', 'selected'].includes(prop.name)
+    )
+    spec.views = [{ ...base, key: 'default', values: {}, booleans: {} }]
+    spec.defaultKey = 'default'
+    const source = generateComponents([spec], context).files.find((file) =>
+      file.path.endsWith('/Button.tsx')
+    )!.content
+    expect(source).not.toContain('appearance: variant')
+    expect(source).not.toContain('variant ===')
+    expect(source).toContain('appearance: undefined')
+  })
+})

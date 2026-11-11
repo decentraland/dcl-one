@@ -318,18 +318,64 @@ function variantContract(spec: ComponentSpec): string | undefined {
   ].join('\n')
 }
 
-function labelColor(node: ViewNode): string | undefined {
-  if (node.kind === 'text' && node.slot === 'label')
-    return node.css.decls.find(([property]) => property === 'color')?.[1]
+function labelNode(node: ViewNode): ViewNode | undefined {
+  if (node.kind === 'text' && node.slot === 'label') return node
   for (const child of node.children ?? []) {
-    const color = labelColor(child)
-    if (color) return color
+    const label = labelNode(child)
+    if (label) return label
   }
 }
 
-function buttonControlView(view: ViewSpec, color: string | undefined): ViewSpec {
+function labelColor(node: ViewNode): string | undefined {
+  return labelNode(node)?.css.decls.find(([property]) => property === 'color')?.[1]
+}
+
+function buttonControlView(
+  view: ViewSpec,
+  color: string | undefined,
+  restingLabel?: ViewNode
+): ViewSpec {
   const labels = new Set<string>()
-  const root = (node: ViewNode): ViewNode => {
+  const root = (input: ViewNode): ViewNode => {
+    let node = input
+    if (view.flags.loading && node.name === 'label' && restingLabel)
+      node = {
+        ...restingLabel,
+        path: node.path,
+        css: {
+          ...restingLabel.css,
+          decls: [
+            ...restingLabel.css.decls.filter(([property]) => property !== 'opacity'),
+            ['opacity', '0']
+          ]
+        }
+      }
+    if (view.flags.loading && node.name === 'Spinner') {
+      const background = node.css.decls.find(([property]) => property === 'background')?.[1]
+      node = {
+        ...node,
+        css: {
+          ...node.css,
+          decls: [
+            ...node.css.decls.filter(
+              ([property]) =>
+                !['left', 'top', 'transform', ...(background ? ['background'] : [])].includes(
+                  property
+                )
+            ),
+            ...(background
+              ? ([
+                  ['mask', background],
+                  ['background-color', 'currentColor']
+                ] as [string, string][])
+              : []),
+            ['left', '50%'],
+            ['top', '50%'],
+            ['transform', 'translate(-50%, -50%)']
+          ]
+        }
+      }
+    }
     const label = node.kind === 'text' && node.slot === 'label'
     if (label) labels.add(pathKey(node.path))
     const naturalWidth = node.path.length === 0 || label
@@ -440,7 +486,18 @@ function emitComponent(
         )
         .map((candidate) => labelColor(candidate.root))
         .find(Boolean)
-    return emitView(buttonControlView(view, color), index, cssRules, semantic)
+    const restingLabel = view.flags.loading
+      ? spec.views
+          .filter(
+            (candidate) =>
+              !candidate.flags.loading &&
+              !candidate.flags.disabled &&
+              Object.entries(view.values).every(([axis, value]) => candidate.values[axis] === value)
+          )
+          .map((candidate) => labelNode(candidate.root))
+          .find(Boolean)
+      : undefined
+    return emitView(buttonControlView(view, color, restingLabel), index, cssRules, semantic)
   })
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
   const handlerProps = [...(semantic?.props.handlers ?? [])].sort()
@@ -484,7 +541,7 @@ function emitComponent(
   const selection = [
     `values: { ${enums.map((prop) => (control && prop.name === 'variant' ? `variant: ${actionVariant}` : prop.name)).join(', ')} }`,
     `booleans: { ${booleans.map((prop) => prop.name).join(', ')} }`,
-    `flags: { ${flagProps.map((prop) => prop.name).join(', ')} }`
+    `flags: { ${flagProps.map((prop) => (control && prop.name === 'disabled' ? `disabled: ${flagProps.some((flag) => flag.name === 'loading') ? '!loading && ' : ''}(disabled || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true')` : prop.name)).join(', ')} }`
   ].join(',\n      ')
   const disabled = flagProps.some((prop) => prop.name === 'disabled')
   const slotObject = slots.length > 0 ? `{ ${slots.map((slot) => slot.name).join(', ')} }` : '{}'
@@ -505,7 +562,7 @@ function emitComponent(
         ]
       : []),
     `import styles from './${spec.name}.module.css'`,
-    `import { FigmaView, registerComponent, type ForcedState, type ViewNode${control ? ', type ActionProps' : ''} } from '../../../components/figma-module-runtime'`,
+    `import { FigmaView, registerComponent, type ForcedState, type ViewNode${control ? ', type ActionProps, type ControlContent, type ControlName, type IconOnlyContract' : ''} } from '../../../components/figma-module-runtime'`,
     "import type { MatrixCase } from '../../../components/StateMatrix'",
     ...refImports.map((name) => `import '../${folders.get(name) ?? pageFolder(spec.page)}/${name}'`)
   ]
@@ -520,7 +577,7 @@ function emitComponent(
     '',
     `export type ${spec.name}Props = {`,
     ...typeLines,
-    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & ${control ? 'ActionProps' : "Omit<HTMLAttributes<HTMLElement>, 'children'>"}`,
+    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & ${control ? `ActionProps & ControlContent & IconOnlyContract${variantValues.length ? ` & ({ variant?: Exclude<${[...new Set([...variantValues, ...extraVariants])].map(quote).join(' | ')}, 'iconOnly'> } | ({ variant: 'iconOnly' } & ControlName))` : ''}` : "Omit<HTMLAttributes<HTMLElement>, 'children'>"}`,
     '',
     `export const ${varName}Views: Record<string, ViewNode> = {`,
     views.join(',\n'),
@@ -554,10 +611,11 @@ function emitComponent(
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
+    ...(control && flagProps.some((prop) => prop.name === 'loading') ? ['    busy={loading}'] : []),
     // The caller's props go in as data, never spread over the generated configuration above.
     ...(control
       ? [
-          "    action={{ ...rest, children, leadingIcon, trailingIcon, iconOnly, appearance: variant === 'inverse' || variant === 'iconOnly' ? variant : undefined }}"
+          `    action={{ ...rest, children, leadingIcon, trailingIcon, iconOnly, appearance: ${variantValues.length ? "variant === 'inverse' || variant === 'iconOnly' ? variant : undefined" : 'undefined'} }}`
         ]
       : ['    attributes={rest}']),
     ...(omittedTextSlots.length ? [`    suppressed={${varName}SuppressedProps}`] : []),
