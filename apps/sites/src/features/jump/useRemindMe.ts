@@ -27,13 +27,16 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
       return { key, previous };
     },
     onError: (_error, _toggle, context) => {
-      if (!context) return;
+      // A sign-out or account switch removed the entry meanwhile; restoring it would bring back another account's flag.
+      if (!context || client.getQueryState(context.key) === undefined) return;
       // setQueryData ignores undefined, so a flag that was never read goes back to unread instead.
       if (context.previous === undefined) client.removeQueries({ queryKey: context.key, exact: true });
       else client.setQueryData(context.key, context.previous);
     },
-    onSettled: (_data, _error, { identity, eventId }) =>
-      client.invalidateQueries({ queryKey: jumpKeys.attending(identity.signer, eventId) }),
+    // Not awaited: a slow re-read must not keep the toggle disabled after the write settled.
+    onSettled: (_data, _error, { identity, eventId }) => {
+      void client.invalidateQueries({ queryKey: jumpKeys.attending(identity.signer, eventId) });
+    },
   });
 
   return {

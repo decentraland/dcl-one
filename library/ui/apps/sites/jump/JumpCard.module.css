@@ -47,6 +47,15 @@
   color: var(--dcl-primary-primary);
 }
 
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .onlineDot {
   width: var(--dcl-space-12);
   height: var(--dcl-space-12);

@@ -163,7 +163,8 @@ export function eventHasEnded(finishAt: string | null | undefined, now = Date.no
   return !Number.isNaN(at) && now > at;
 }
 
-export function formatEventStart(iso: string | null): string | null {
+/** A start time in the given zone, or the runtime's own when none is given. Null for a missing or bad date. */
+export function formatEventStart(iso: string | null, timeZone?: string): string | null {
   if (!iso) return null;
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return null;
@@ -174,6 +175,7 @@ export function formatEventStart(iso: string | null): string | null {
     hour: "2-digit",
     minute: "2-digit",
     timeZoneName: "short",
+    timeZone,
   });
 }
 

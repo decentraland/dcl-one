@@ -30,7 +30,7 @@ type JumpCardProps = {
   /** The World name, or the parcel as "x, y". */
   location: { world?: string; parcel: string }
   /** Event start, already formatted, or the ended notice. */
-  when?: { label: string; ended: boolean }
+  when?: { label: string; ended: boolean; dateTime?: string }
   badge?: JumpCardBadge
   /** Where Jump In travels to; omitted when the card shows no Jump In. */
   jumpInHref?: string
@@ -52,17 +52,19 @@ function Badge({ badge }: { badge: JumpCardBadge }) {
   }
   if (badge.kind === 'attendees') {
     return (
-      <span className={styles.badge} aria-label={`${badge.count} interested`}>
+      <span className={styles.badge}>
         <GeneralBell size={16} aria-hidden="true" className={styles.accent} />
-        <span>+{badge.count}</span>
+        <span aria-hidden="true">+{badge.count}</span>
+        <span className={styles.visuallyHidden}>{badge.count} interested</span>
       </span>
     )
   }
   return (
-    <span className={styles.badge} aria-label={`${badge.count} players in-world`}>
+    <span className={styles.badge}>
       <span className={styles.onlineDot} aria-hidden="true" />
       <GeneralPlayers size={16} aria-hidden="true" />
-      <span>{badge.count}</span>
+      <span aria-hidden="true">{badge.count}</span>
+      <span className={styles.visuallyHidden}>{badge.count} players in-world</span>
     </span>
   )
 }
@@ -129,7 +131,7 @@ function JumpCard({
             {when ? (
               <span className={when.ended ? styles.ended : styles.metaItem}>
                 <GeneralTime size={16} aria-hidden="true" />
-                {when.label}
+                {when.dateTime ? <time dateTime={when.dateTime}>{when.label}</time> : when.label}
               </span>
             ) : null}
             <span

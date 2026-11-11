@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const server = vi.hoisted(() => ({
   loadJumpPlace: vi.fn(),
-  loadSceneCreator: vi.fn(),
-  worldExists: vi.fn(),
+  loadParcelCreator: vi.fn(),
+  loadWorldEntity: vi.fn(),
   loadJumpEvent: vi.fn(),
   loadCreator: vi.fn(),
 }));
@@ -59,9 +59,10 @@ const eventRow = {
 
 beforeEach(() => {
   for (const fn of Object.values(server)) fn.mockReset();
-  server.loadSceneCreator.mockResolvedValue(null);
+  server.loadParcelCreator.mockResolvedValue(null);
   server.loadCreator.mockResolvedValue(null);
-  server.worldExists.mockResolvedValue(true);
+  server.loadWorldEntity.mockResolvedValue({ id: "bafy" });
+  server.loadJumpPlace.mockResolvedValue(null);
 });
 
 describe("/jump/places loader", () => {
@@ -74,7 +75,7 @@ describe("/jump/places loader", () => {
   });
 
   it("should send a World the worlds server does not know to the invalid page", async () => {
-    server.worldExists.mockResolvedValue(false);
+    server.loadWorldEntity.mockResolvedValue(null);
     server.loadJumpPlace.mockResolvedValue(placeRow);
     await expect(redirectOf(placesLoader(args("/jump?realm=gone.dcl.eth")))).resolves.toMatchObject({
       location: "/jump/places/invalid",
@@ -82,10 +83,20 @@ describe("/jump/places loader", () => {
   });
 
   it("should still render a World card when the worlds server is down", async () => {
-    server.worldExists.mockRejectedValue(new Error("502"));
+    server.loadWorldEntity.mockRejectedValue(new Error("502"));
     server.loadJumpPlace.mockResolvedValue({ ...placeRow, world: true, world_name: "foo.dcl.eth" });
     const data = await placesLoader(args("/jump?realm=foo.dcl.eth"));
     expect(data.card.location).toEqual({ world: "foo.dcl.eth", parcel: "10, 20" });
+  });
+
+  it("should name a World's owner from its active scene, looked up once", async () => {
+    server.loadWorldEntity.mockResolvedValue({ id: "bafy", metadata: { owner: WALLET } });
+    server.loadCreator.mockResolvedValue({ address: WALLET, name: "owner" });
+    server.loadJumpPlace.mockResolvedValue({ ...placeRow, world: true, world_name: "foo.dcl.eth" });
+    const data = await placesLoader(args("/jump?realm=foo.dcl.eth"));
+    expect(data.card.creator.name).toBe("owner");
+    expect(server.loadWorldEntity).toHaveBeenCalledOnce();
+    expect(server.loadParcelCreator).not.toHaveBeenCalled();
   });
 
   it("should send a failed catalogue read to the invalid page", async () => {
@@ -104,7 +115,7 @@ describe("/jump/places loader", () => {
 
   it("should prefer the scene deployer over the catalogue contact", async () => {
     server.loadJumpPlace.mockResolvedValue(placeRow);
-    server.loadSceneCreator.mockResolvedValue({ address: WALLET, name: "builder" });
+    server.loadParcelCreator.mockResolvedValue({ address: WALLET, name: "builder" });
     const data = await placesLoader(args("/jump/places?position=10,20"));
     expect(data.card.creator).toMatchObject({ name: "builder", href: `/profile/${WALLET}` });
     expect(data.card.badge).toEqual({ kind: "players", count: 3 });
@@ -112,7 +123,7 @@ describe("/jump/places loader", () => {
 
   it("should keep the catalogue contact when the deployer lookup fails", async () => {
     server.loadJumpPlace.mockResolvedValue(placeRow);
-    server.loadSceneCreator.mockRejectedValue(new Error("down"));
+    server.loadParcelCreator.mockRejectedValue(new Error("down"));
     const data = await placesLoader(args("/jump/places?position=10,20"));
     expect(data.card.creator.name).toBe("Studio");
   });
@@ -155,6 +166,33 @@ describe("/jump/events loader", () => {
     expect(data.state).toBe("live");
     expect(data.card.badge).toEqual({ kind: "live", count: 12 });
     expect(data.card.jumpInHref).toContain("position=5%2C-3");
+  });
+
+  it("should fall back to no occupancy when a live event's scene lookup fails", async () => {
+    server.loadJumpEvent.mockResolvedValue({ ...eventRow, live: true });
+    server.loadJumpPlace.mockRejectedValue(new Error("500"));
+    const data = await eventsLoader(args("/jump/events?id=e1"));
+    expect(data.card.badge).toEqual({ kind: "live", count: 0 });
+  });
+
+  it("should keep the event's own host name when the profile lookup fails", async () => {
+    server.loadJumpEvent.mockResolvedValue(eventRow);
+    server.loadCreator.mockRejectedValue(new Error("down"));
+    const data = await eventsLoader(args("/jump/events?id=e1"));
+    expect(data.card.creator).toMatchObject({ name: "host", href: `/profile/${WALLET}` });
+  });
+
+  it("should render the start in UTC on the server", async () => {
+    server.loadJumpEvent.mockResolvedValue(eventRow);
+    const data = await eventsLoader(args("/jump/events?id=e1"));
+    expect(data.card.when).toEqual({ label: expect.stringContaining("10:00 AM UTC"), ended: false, dateTime: eventRow.next_start_at });
+  });
+
+  it("should offer nothing for an event without a start unless it is live", async () => {
+    server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_start_at: null });
+    await expect(eventsLoader(args("/jump/events?id=e1"))).resolves.toMatchObject({ state: "none" });
+    server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_start_at: null, live: true });
+    await expect(eventsLoader(args("/jump/events?id=e1"))).resolves.toMatchObject({ state: "live" });
   });
 
   it("should mark a deleted event and drop its actions", async () => {

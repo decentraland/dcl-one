@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { loadCreator, loadJumpEvent, loadJumpPlace, loadSceneCreator, worldExists } from "./jump.server";
+import { loadCreator, loadJumpEvent, loadJumpPlace, loadParcelCreator, loadWorldEntity } from "./jump.server";
 
 const WALLET = "0x" + "ab".repeat(20);
 
@@ -31,22 +31,20 @@ const placeRow = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** A full event record: the events client validates the whole schema before the jump card picks its fields. */
 const eventRow = {
-  id: "e1",
-  name: "Party",
-  image: null,
-  description: null,
-  next_start_at: "2030-01-01T10:00:00.000Z",
-  next_finish_at: "2030-01-01T12:00:00.000Z",
-  coordinates: [5, -3],
-  user: WALLET,
-  user_name: "host",
-  total_attendees: 2,
-  live: false,
-  world: false,
-  server: null,
-  deleted_by_user: false,
-  deleted_by_admin: false,
+  id: "e1", name: "Party", image: null, image_vertical: null, description: null, contact: null, details: null,
+  start_at: "2030-01-01T10:00:00.000Z", finish_at: "2030-01-01T12:00:00.000Z",
+  next_start_at: "2030-01-01T10:00:00.000Z", next_finish_at: "2030-01-01T12:00:00.000Z", duration: 7200000,
+  all_day: false, x: 5, y: -3, server: null, url: null, user: WALLET, user_name: "host", estate_id: null,
+  estate_name: null, scene_name: null, approved: true, rejected: false, highlighted: false, trending: false,
+  world: false, recurrent: false, recurrent_frequency: null, recurrent_weekday_mask: 0, recurrent_month_mask: 0,
+  recurrent_interval: 0, recurrent_setpos: null, recurrent_monthday: null, recurrent_count: null,
+  recurrent_until: null, recurrent_dates: [], categories: [], schedules: [], total_attendees: 2,
+  latest_attendees: [], coordinates: [5, -3], position: [5, -3], live: false, attending: false, place_id: null,
+  community_id: null, featured_item: null, created_at: null, updated_at: null, approved_by: null,
+  rejected_by: null, rejection_reason: null, deleted_by_user: false, deleted_by_admin: false, deleted_by: null,
+  deleted_at: null, deleted_reason: null,
 };
 
 describe("loadJumpPlace", () => {
@@ -89,20 +87,22 @@ describe("loadJumpPlace", () => {
   });
 });
 
-describe("worldExists", () => {
-  it("should be false when the worlds server has no active scene for the name", async () => {
-    const { opts } = stub([["/entities/active", json([])]]);
-    await expect(worldExists("foo.dcl.eth", opts)).resolves.toBe(false);
+describe("loadWorldEntity", () => {
+  it("should be null when the worlds server has no active scene for the name", async () => {
+    const { opts, urls } = stub([["/entities/active", json([])]]);
+    await expect(loadWorldEntity("Foo.dcl.eth", opts)).resolves.toBeNull();
+    expect(urls[0]).toMatch(/\/entities\/active$/);
+    expect(urls[0]).not.toContain("/content/");
   });
 
-  it("should be true when it has one", async () => {
-    const { opts } = stub([["/entities/active", json([{ id: "bafy" }])]]);
-    await expect(worldExists("foo.dcl.eth", opts)).resolves.toBe(true);
+  it("should return the active scene with its owner", async () => {
+    const { opts } = stub([["/entities/active", json([{ id: "bafy", metadata: { owner: WALLET } }])]]);
+    await expect(loadWorldEntity("foo.dcl.eth", opts)).resolves.toMatchObject({ metadata: { owner: WALLET } });
   });
 
   it("should throw on an outage instead of reporting the World missing", async () => {
     const { opts } = stub([["/entities/active", json({}, 502)]]);
-    await expect(worldExists("foo.dcl.eth", opts)).rejects.toThrow();
+    await expect(loadWorldEntity("foo.dcl.eth", opts)).rejects.toThrow();
   });
 });
 
@@ -116,32 +116,24 @@ describe("loadCreator", () => {
   });
 });
 
-describe("loadSceneCreator", () => {
+describe("loadParcelCreator", () => {
   it("should name a parcel's deployer", async () => {
     const { opts } = stub([
       ["/content/entities/active", json([{ id: "bafy" }])],
       ["/content/deployments", json({ deployments: [{ deployedBy: WALLET }] })],
       ["/lambdas/profile/", profile("builder")],
     ]);
-    await expect(loadSceneCreator({ coordinates: [1, 2], realm: undefined }, opts)).resolves.toEqual({
-      address: WALLET,
-      name: "builder",
-      avatar: "face.png",
-    });
-  });
-
-  it("should name a World's owner", async () => {
-    const { opts, urls } = stub([
-      ["/entities/active", json([{ id: "bafy", metadata: { owner: WALLET } }])],
-      ["/lambdas/profile/", profile("owner")],
-    ]);
-    await expect(loadSceneCreator({ coordinates: [0, 0], realm: "foo.dcl.eth" }, opts)).resolves.toMatchObject({ name: "owner" });
-    expect(urls.some((url) => url.includes("/content/"))).toBe(false);
+    await expect(loadParcelCreator([1, 2], opts)).resolves.toEqual({ address: WALLET, name: "builder", avatar: "face.png" });
   });
 
   it("should return null for an empty parcel", async () => {
     const { opts } = stub([["/content/entities/active", json([])]]);
-    await expect(loadSceneCreator({ coordinates: [1, 2], realm: undefined }, opts)).resolves.toBeNull();
+    await expect(loadParcelCreator([1, 2], opts)).resolves.toBeNull();
+  });
+
+  it("should throw when the content server fails", async () => {
+    const { opts } = stub([["/content/entities/active", json({}, 500)]]);
+    await expect(loadParcelCreator([1, 2], opts)).rejects.toThrow();
   });
 });
 
@@ -162,14 +154,14 @@ describe("loadJumpEvent", () => {
   });
 
   it("should pick the first valid event at a World parcel", async () => {
-    const { opts, urls } = stub([["/events/api/events?", json({ ok: true, data: [{ id: "broken" }, eventRow] })]]);
+    const { opts, urls } = stub([["/events/v1/events?", json({ ok: true, data: [{ id: "broken" }, eventRow] })]]);
     await expect(loadJumpEvent({ id: null, coordinates: [5, -3], realm: "foo.dcl.eth" }, opts)).resolves.toMatchObject({ id: "e1" });
     expect(urls[0]).toContain("position=5%2C-3");
-    expect(urls[0]).toContain("world_names%5B%5D=foo.dcl.eth");
+    expect(urls[0]).toContain("world_names=foo.dcl.eth");
   });
 
   it("should return null when no event is at the parcel", async () => {
-    const { opts } = stub([["/events/api/events?", json({ ok: true, data: [] })]]);
+    const { opts } = stub([["/events/v1/events?", json({ ok: true, data: [] })]]);
     await expect(loadJumpEvent({ id: null, coordinates: [5, -3], realm: undefined }, opts)).resolves.toBeNull();
   });
 });

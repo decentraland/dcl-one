@@ -18,7 +18,7 @@ type JumpEventActionsProps =
 function JumpEventActions(props: JumpEventActionsProps) {
   if (props.state === 'deleted') {
     return (
-      <p className={styles.notice} role="status">
+      <p className={styles.notice}>
         This event is no longer available. Browse <a href={props.eventsHref}>All Events</a> to
         discover more.
       </p>

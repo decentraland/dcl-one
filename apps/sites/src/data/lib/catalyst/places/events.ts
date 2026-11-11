@@ -1,7 +1,8 @@
 import { z } from "zod";
 
 import { playUrl } from "../bases";
-import { CatalystError, getJSON } from "../client";
+import { CatalystError, getJSON, postJSON } from "../client";
+import type { AuthIdentity } from "../../auth/types";
 import type { GetOptions } from "../client";
 import { eventsApiPath } from "../typed";
 import { apiOkOf, okDataTotalOf } from "../envelope";
@@ -98,6 +99,9 @@ type FetchEventsParams = {
   with_connected_users?: boolean;
   limit?: number;
   offset?: number;
+  /** A parcel as "x,y". */
+  position?: string;
+  world_names?: string;
 };
 
 const EventListEnvelope = apiOkOf(
@@ -143,6 +147,8 @@ async function fetchEventRows(
       with_connected_users: params.with_connected_users,
       limit: params.limit,
       offset: params.offset,
+      position: params.position,
+      world_names: params.world_names,
     },
   });
   const copy = readCopy(raw);
@@ -176,6 +182,17 @@ export async function fetchEventPage(
     invalidCount: rows.slice(0, params.limit).filter((event) => event === null).length,
     copy,
   };
+}
+
+/** The member's attendance write; the reply is the event's attendee list. */
+export function writeAttendance(
+  identity: AuthIdentity,
+  eventId: string,
+  going: boolean,
+  signal?: AbortSignal,
+): Promise<unknown> {
+  const path = eventsApiPath(going ? "post" : "delete", "/api/events/{event_id}/attendees", { event_id: eventId });
+  return postJSON<unknown>(path, undefined, { identity, method: going ? "POST" : "DELETE", signal });
 }
 
 export async function fetchEvent(id: string, opts: GetOptions = {}): Promise<Event> {

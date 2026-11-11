@@ -5,7 +5,7 @@ import { redirect } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { genericPlaceCard, isEnsRealm, readJumpTarget, toPlaceCard } from "@/data/lib/catalyst/jump/jump";
-import { loadJumpPlace, loadSceneCreator, worldExists } from "@/data/lib/catalyst/jump/jump.server";
+import { loadCreator, loadJumpPlace, loadParcelCreator, loadWorldEntity } from "@/data/lib/catalyst/jump/jump.server";
 import { cardProps } from "@/features/jump/view";
 
 import type { Route } from "./+types/jump.places._index";
@@ -25,15 +25,18 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (!target.validPosition) throw redirect(INVALID);
   const opts = { signal: request.signal };
   const world = target.realm && isEnsRealm(target.realm) ? target.realm : null;
-  const [exists, place, creator] = await Promise.all([
-    world ? worldExists(world, opts).catch(() => true) : true,
+  const [entity, place, parcelCreator] = await Promise.all([
+    // undefined: the worlds server could not answer, which is not "unknown World".
+    world ? loadWorldEntity(world, opts).catch(() => undefined) : undefined,
     loadJumpPlace(target, opts).then(
       (record) => ({ record }),
       () => null,
     ),
-    loadSceneCreator(target, opts).catch(() => null),
+    world ? null : loadParcelCreator(target.coordinates, opts).catch(() => null),
   ]);
-  if (!exists || !place) throw redirect(INVALID);
+  if (entity === null || !place) throw redirect(INVALID);
+  const owner = entity?.metadata?.owner;
+  const creator = owner ? await loadCreator(owner, opts).catch(() => null) : parcelCreator;
   const card = place.record ? toPlaceCard(place.record) : genericPlaceCard(target.coordinates, target.realm);
   return { card: cardProps(card, creator) };
 }

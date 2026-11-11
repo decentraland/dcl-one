@@ -109,7 +109,7 @@ describe("JumpEventActions", () => {
 
   it("should tell a deleted event is gone", () => {
     render(<JumpEventActions state="deleted" eventsHref="/whats-on" />);
-    expect(screen.getByRole("status").textContent).toMatch(/no longer available/);
+    expect(screen.getByText(/This event is no longer available/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "All Events" }).getAttribute("href")).toBe("/whats-on");
   });
 });

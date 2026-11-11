@@ -2,7 +2,8 @@ import { queryOptions } from "@tanstack/react-query";
 import { z } from "zod";
 
 import type { AuthIdentity } from "../../auth/types";
-import { postJSON, signedGetJSON } from "../client";
+import { signedGetJSON } from "../client";
+import { writeAttendance } from "../places/events";
 import { eventsApiPath } from "../typed";
 
 export const JUMP_STALE_MS = 30_000;
@@ -24,8 +25,7 @@ export async function fetchAttending(identity: AuthIdentity, eventId: string, si
 }
 
 export async function saveAttending(identity: AuthIdentity, eventId: string, attending: boolean): Promise<void> {
-  const path = eventsApiPath(attending ? "post" : "delete", "/api/events/{event_id}/attendees", { event_id: eventId });
-  await postJSON(path, undefined, { identity, method: attending ? "POST" : "DELETE" });
+  await writeAttendance(identity, eventId, attending);
 }
 
 /** The identity signs the request and is never cached; the key names only its account. */

@@ -32,7 +32,10 @@ function setup(id: AuthIdentity | null, onSignIn = vi.fn()) {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  const hook = renderHook(() => useRemindMe(id, "e1", onSignIn), { wrapper });
+  const hook = renderHook(({ who }: { who: AuthIdentity | null }) => useRemindMe(who, "e1", onSignIn), {
+    wrapper,
+    initialProps: { who: id },
+  });
   return { client, hook, onSignIn };
 }
 
@@ -50,26 +53,51 @@ describe("useRemindMe", () => {
     expect(hook.result.current.active).toBe(false);
   });
 
-  it("should flip the flag optimistically and save it", async () => {
+  it("should show the flag as set while the save is still pending", async () => {
     attendingReply(false);
-    http.postJSON.mockResolvedValue(undefined);
-    const { hook, client } = setup(identity);
-    await waitFor(() => expect(hook.result.current.pending).toBe(false));
-    attendingReply(true);
-    act(() => hook.result.current.toggle());
-    await waitFor(() => expect(client.getQueryData(jumpKeys.attending("0xab", "e1"))).toBe(true));
-    expect(http.postJSON).toHaveBeenCalledWith("/events/api/events/e1/attendees", undefined, { identity, method: "POST" });
-    await waitFor(() => expect(hook.result.current.active).toBe(true));
-  });
-
-  it("should roll back and report a failed save", async () => {
-    attendingReply(false);
-    http.postJSON.mockRejectedValue(new Error("401"));
+    let finish: (value: unknown) => void = () => {};
+    http.postJSON.mockReturnValue(new Promise((resolve) => (finish = resolve)));
     const { hook } = setup(identity);
     await waitFor(() => expect(hook.result.current.pending).toBe(false));
     act(() => hook.result.current.toggle());
+    await waitFor(() => expect(hook.result.current.active).toBe(true));
+    expect(http.postJSON).toHaveBeenCalledWith("/events/api/events/e1/attendees", undefined, {
+      identity,
+      method: "POST",
+      signal: undefined,
+    });
+    attendingReply(true);
+    await act(async () => finish(undefined));
+    await waitFor(() => expect(hook.result.current.pending).toBe(false));
+    expect(hook.result.current.active).toBe(true);
+  });
+
+  it("should restore the previous flag when the save fails", async () => {
+    attendingReply(true);
+    http.postJSON.mockRejectedValue(new Error("401"));
+    const { hook, client } = setup(identity);
+    await waitFor(() => expect(hook.result.current.active).toBe(true));
+    // The refetch after the failure never answers, so only the rollback can bring `true` back.
+    http.signedGetJSON.mockReturnValue(new Promise(() => {}));
+    act(() => hook.result.current.toggle());
     await waitFor(() => expect(hook.result.current.failed).toBe(true));
-    expect(hook.result.current.active).toBe(false);
+    expect(client.getQueryData(jumpKeys.attending("0xab", "e1"))).toBe(true);
+  });
+
+  it("should not bring back an account's flag removed during a failing save", async () => {
+    attendingReply(false);
+    let fail: (error: Error) => void = () => {};
+    http.postJSON.mockReturnValue(new Promise((_, reject) => (fail = reject)));
+    const { hook, client } = setup(identity);
+    await waitFor(() => expect(hook.result.current.pending).toBe(false));
+    act(() => hook.result.current.toggle());
+    await waitFor(() => expect(client.getQueryData(jumpKeys.attending("0xab", "e1"))).toBe(true));
+    // Sign-out as the app orders it: the account leaves the context, then usePrivateQueryLifecycle removes its entries.
+    hook.rerender({ who: null });
+    client.removeQueries({ queryKey: ["private", "0xab"] });
+    await act(async () => fail(new Error("401")));
+    await waitFor(() => expect(hook.result.current.failed).toBe(true));
+    expect(client.getQueryState(jumpKeys.attending("0xab", "e1"))).toBeUndefined();
   });
 
   it("should not report attending when the flag cannot be read", async () => {

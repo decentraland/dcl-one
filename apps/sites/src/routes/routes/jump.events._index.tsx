@@ -11,6 +11,7 @@ import { siteUrl } from "@/data/lib/catalyst/bases";
 import { eventShareUrl, googleCalendarUrl, readJumpTarget, toEventCard } from "@/data/lib/catalyst/jump/jump";
 import { loadCreator, loadJumpEvent, loadJumpPlace } from "@/data/lib/catalyst/jump/jump.server";
 import { openSignIn } from "@/features/components/auth/signin-store";
+import { useLocalWhen } from "@/features/jump/useLocalWhen";
 import { useRemindMe } from "@/features/jump/useRemindMe";
 import { cardProps, eventActionState } from "@/features/jump/view";
 
@@ -80,8 +81,10 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
     }
   }
 
+  const when = useLocalWhen(card.when);
+
   const actions =
-    state === "live" ? undefined : state === "deleted" || state === "ended" ? (
+    state === "live" ? undefined : state === "none" ? null : state === "deleted" || state === "ended" ? (
       <JumpEventActions state={state} eventsHref={EVENTS_HREF} />
     ) : (
       <JumpEventActions
@@ -96,7 +99,7 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
   return (
     <SitesChrome active="play">
       <JumpPage>
-        <JumpCard {...card} actions={actions} />
+        <JumpCard {...card} when={when} actions={actions} />
       </JumpPage>
     </SitesChrome>
   );
