@@ -1,0 +1,161 @@
+// TODO(figma-ds): replace with the Figma-generated profile collectibles panel from library/ui/components.
+import type { ComponentType, ReactNode } from 'react'
+import { GeneralName, GeneralRightArrow } from '../../../../foundations/icons'
+import styles from './ProfileCollectibles.module.css'
+
+type ProfileCollectiblesState =
+  | { kind: 'loading'; label: string }
+  /** A read failed: say so, with the way to try again. Never shown as an empty list. */
+  | { kind: 'error'; message: string; action?: ReactNode }
+  /** Nothing to list: an EmptyState, or a one-line note. */
+  | { kind: 'empty'; label: string; children: ReactNode }
+  | { kind: 'empty-note'; message: string }
+  | {
+      kind: 'list'
+      /** Announced when loading ends; shown above the list unless `showCount` is false. */
+      count: string
+      showCount?: boolean
+      /** Cards in a grid, or full-width rows (NAMEs). */
+      layout?: 'grid' | 'rows'
+      children: ReactNode
+      /** Under the list: Load more, its progress, or why the next page failed. */
+      more?: ReactNode
+    }
+
+type ProfileCollectiblesProps = {
+  /** The category chips; shown above every state. */
+  filters?: ReactNode
+  /** Beside the filters, e.g. a "View all" link. */
+  aside?: ReactNode
+  state: ProfileCollectiblesState
+}
+
+/** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
+function ProfileCollectibles({ filters, aside, state }: ProfileCollectiblesProps) {
+  const list = state.kind === 'list' ? state : null
+  const countShown = list !== null && list.showCount !== false
+
+  return (
+    <div className={styles.root}>
+      {filters || aside ? (
+        <div className={styles.header}>
+          {filters}
+          {aside ? <div className={styles.aside}>{aside}</div> : null}
+        </div>
+      ) : null}
+      {/* One live region, always mounted, so a screen reader hears how loading ended. */}
+      <p className={countShown ? styles.count : styles.status} role="status">
+        {state.kind === 'loading' ? (
+          <>
+            <span className={styles.spinner} aria-hidden="true" />
+            <span className={styles.visuallyHidden}>{state.label}</span>
+          </>
+        ) : state.kind === 'error' ? (
+          state.message
+        ) : state.kind === 'empty-note' ? (
+          <span className={styles.note}>{state.message}</span>
+        ) : state.kind === 'list' ? (
+          countShown ? (
+            state.count
+          ) : (
+            <span className={styles.visuallyHidden}>{state.count}</span>
+          )
+        ) : (
+          // The EmptyState below shows this title; the region only announces it.
+          <span className={styles.visuallyHidden}>{state.label}</span>
+        )}
+      </p>
+      {state.kind === 'error' && state.action ? (
+        <div className={styles.errorAction}>{state.action}</div>
+      ) : null}
+      {state.kind === 'empty' ? state.children : null}
+      {list ? (
+        <>
+          <ul className={list.layout === 'rows' ? styles.rows : styles.grid}>{list.children}</ul>
+          {list.more ? <div className={styles.more}>{list.more}</div> : null}
+        </>
+      ) : null}
+    </div>
+  )
+}
+
+/** One cell of the list; wraps a CatalogCard or a ProfileNameCard. */
+function ProfileCollectiblesItem({ children }: { children: ReactNode }) {
+  return <li className={styles.item}>{children}</li>
+}
+
+/** The spinner the list shows while its next page loads. */
+function ProfileCollectiblesProgress({ label }: { label: string }) {
+  return (
+    <span className={styles.progress}>
+      <span className={styles.spinnerSmall} aria-hidden="true" />
+      <span className={styles.visuallyHidden}>{label}</span>
+    </span>
+  )
+}
+
+/** The app's router link, so following it is a client navigation; a plain anchor otherwise. */
+type ProfileCollectiblesLinkProps = { to: string; className: string; children: ReactNode }
+
+function AnchorLink({ to, ...props }: ProfileCollectiblesLinkProps) {
+  return <a href={to} {...props} />
+}
+
+type ProfileCollectiblesViewAllProps = {
+  href: string
+  label: string
+  LinkComponent?: ComponentType<ProfileCollectiblesLinkProps>
+}
+
+/** The header's link to the full list elsewhere, with its chevron. */
+function ProfileCollectiblesViewAll({
+  href,
+  label,
+  LinkComponent = AnchorLink
+}: ProfileCollectiblesViewAllProps) {
+  return (
+    <LinkComponent to={href} className={styles.viewAll}>
+      {label}
+      <GeneralRightArrow size={16} aria-hidden="true" />
+    </LinkComponent>
+  )
+}
+
+type ProfileNameCardProps = {
+  /** The NAME without its suffix. */
+  name: string
+  suffix?: string
+  /** Its Edit and Transfer links. */
+  actions?: ReactNode
+}
+
+/** A NAME as a row: the NAME tile, the name and its `.dcl.eth` suffix, and its actions. */
+function ProfileNameCard({ name, suffix = '.dcl.eth', actions }: ProfileNameCardProps) {
+  return (
+    <div className={styles.name}>
+      <span className={styles.nameTile} aria-hidden="true">
+        <GeneralName size={26} />
+      </span>
+      <p className={styles.nameLabel}>
+        {name}
+        <span className={styles.nameSuffix}>{suffix}</span>
+      </p>
+      {actions ? <div className={styles.nameActions}>{actions}</div> : null}
+    </div>
+  )
+}
+
+export {
+  ProfileCollectibles,
+  ProfileCollectiblesItem,
+  ProfileCollectiblesProgress,
+  ProfileCollectiblesViewAll,
+  ProfileNameCard
+}
+export type {
+  ProfileCollectiblesLinkProps,
+  ProfileCollectiblesProps,
+  ProfileCollectiblesState,
+  ProfileCollectiblesViewAllProps,
+  ProfileNameCardProps
+}

@@ -1,0 +1,226 @@
+/* TODO(figma-ds): replace with the Figma-generated profile collectibles panel's styles. The grid
+ * follows the source (a 250px column floor, 28px rows and 16px columns, two columns below the
+ * 900px MUI `md` breakpoint with 16px rows and 12px columns); 28px has no spacing token and the
+ * breakpoint none in the foundations. The source's light blue "View all" link uses the link
+ * token. The NAME row's 10px tile radius and 48px tile keep the source's sizes; its fills (25%
+ * and 35% black, 8% and 18% white border) use the nearest transparencies. */
+.root {
+  width: 100%;
+}
+
+.header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0 var(--dcl-space-16);
+}
+
+.aside {
+  display: flex;
+  align-items: center;
+  min-height: 32px;
+  margin-bottom: var(--dcl-space-16);
+}
+
+.viewAll {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  color: var(--dcl-text-link);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.viewAll:hover {
+  text-decoration: underline;
+}
+
+.viewAll:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.status,
+.count {
+  margin: 0 0 var(--dcl-space-16);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+}
+
+.status {
+  color: var(--dcl-text-primary);
+}
+
+.count {
+  color: var(--dcl-text-secondary);
+}
+
+.note {
+  color: var(--dcl-text-disabled);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.errorAction {
+  margin-bottom: var(--dcl-space-16);
+}
+
+.spinner,
+.spinnerSmall {
+  display: block;
+  box-sizing: border-box;
+  border: 3px solid var(--dcl-transparencies-white-20);
+  border-top-color: var(--dcl-primary-primary);
+  border-radius: var(--dcl-radius-full);
+  animation: spin 800ms linear infinite;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  margin: var(--dcl-space-24) 0;
+}
+
+.spinnerSmall {
+  width: 22px;
+  height: 22px;
+}
+
+.progress {
+  display: inline-flex;
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--dcl-space-16) var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  min-width: 0;
+}
+
+.more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-24) 0;
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.name {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-12) var(--dcl-space-16);
+  border: 1px solid var(--dcl-transparencies-white-10);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.name:hover {
+  border-color: var(--dcl-transparencies-white-20);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.nameTile {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, var(--dcl-brand-ruby) 0%, var(--dcl-brand-violet) 100%);
+  color: var(--dcl-neutrals-snow);
+}
+
+.nameLabel {
+  overflow: hidden;
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nameSuffix {
+  color: var(--dcl-text-disabled);
+  font-weight: 500;
+}
+
+.nameActions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: var(--dcl-space-8);
+}
+
+@media (min-width: 600px) {
+  .nameActions {
+    flex-direction: row;
+  }
+}
+
+@media (min-width: 900px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+    gap: 28px var(--dcl-space-16);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner,
+  .spinnerSmall {
+    animation-duration: 2400ms;
+  }
+
+  .name {
+    transition: none;
+  }
+}

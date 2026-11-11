@@ -3,13 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { AuthIdentity } from "../auth/types";
 import {
+  PROFILE_COLLECTIBLES_PAGE,
   PROFILE_STALE_MS,
+  assetsQuery,
   canReadProfile,
   creationsQuery,
   myCommunitiesQuery,
   myFavoritePlacesQuery,
-  ownedNamesQuery,
-  ownedWearablesQuery,
+  nextCollectiblesPage,
   photosQuery,
   placeOwnersQuery,
   placesQuery,
@@ -47,6 +48,13 @@ describe("profileKeys", () => {
     expect(profileKeys.photos(` ${ADDRESS} `)).toEqual(["profile", "photos", LOWER]);
   });
 
+  it("keys creations and assets by category, so each filter is its own list", () => {
+    expect(profileKeys.creations(ADDRESS, "emote")).toEqual(["profile", "creations", LOWER, "emote"]);
+    expect(profileKeys.creations(ADDRESS, "wearable")).not.toEqual(profileKeys.creations(ADDRESS, "emote"));
+    expect(profileKeys.assets(ADDRESS, null)).toEqual(["profile", "assets", LOWER, "all"]);
+    expect(profileKeys.assets(ADDRESS, "ens")).toEqual(["profile", "assets", LOWER, "ens"]);
+  });
+
   it("puts the member's own communities under the private account prefix", () => {
     expect(profileKeys.myCommunities(ADDRESS)).toEqual(["private", LOWER, "profile", "communities"]);
   });
@@ -67,11 +75,10 @@ describe("options factories", () => {
     const identity = { signer: ADDRESS } as AuthIdentity;
     const all = [
       profileQuery(ADDRESS),
-      creationsQuery(ADDRESS),
+      creationsQuery(ADDRESS, "wearable"),
       placesQuery(ADDRESS),
       photosQuery(ADDRESS),
-      ownedWearablesQuery(ADDRESS),
-      ownedNamesQuery(ADDRESS),
+      assetsQuery(ADDRESS, null),
       myCommunitiesQuery(identity),
       myFavoritePlacesQuery(identity),
       placeOwnersQuery([ADDRESS]),
@@ -195,15 +202,41 @@ describe("photosQuery", () => {
   });
 });
 
-describe("ownedWearablesQuery", () => {
-  it("asks for the first page of the address's wearables", async () => {
-    respond = () => json({ ok: true, data: { elements: [], total: 0, page: 0, pages: 0, limit: 48 } });
+describe("nextCollectiblesPage", () => {
+  const page = (rows: number, total: number) => ({ items: Array.from({ length: rows }, (_, n) => n), total });
+
+  it("starts the next page after every row already requested", () => {
+    const first = page(PROFILE_COLLECTIBLES_PAGE, 60);
+    expect(nextCollectiblesPage(first, [first])).toBe(PROFILE_COLLECTIBLES_PAGE);
+    expect(nextCollectiblesPage(first, [first, first])).toBe(2 * PROFILE_COLLECTIBLES_PAGE);
+  });
+
+  it("ends when every row the catalogue holds was requested", () => {
+    const last = page(12, 36);
+    expect(nextCollectiblesPage(last, [page(24, 36), last])).toBeUndefined();
+  });
+
+  it("ends on an empty page even when the total says there are more", () => {
+    expect(nextCollectiblesPage(page(0, 500), [page(24, 500), page(0, 500)])).toBeUndefined();
+  });
+});
+
+describe("assetsQuery", () => {
+  it("reads one category of the lowercased owner's tokens, newest first", async () => {
+    respond = () => json({ data: [], total: 0 });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
-    const owned = await client.fetchQuery(ownedWearablesQuery(ADDRESS));
+    const owned = await client.fetchInfiniteQuery(assetsQuery(ADDRESS, "ens"));
 
-    expect(calls[0].url.pathname).toBe(`/marketplace-api/v1/users/${LOWER}/wearables`);
-    expect(calls[0].url.searchParams.get("first")).toBe("48");
-    expect(owned).toEqual({ elements: [], total: 0 });
+    expect(calls[0].url.pathname).toBe("/marketplace-api/v1/nfts");
+    expect(Object.fromEntries(calls[0].url.searchParams)).toEqual({
+      owner: LOWER,
+      category: "ens",
+      first: String(PROFILE_COLLECTIBLES_PAGE),
+      skip: "0",
+      sortBy: "newest",
+    });
+    expect(calls[0].signal).toBeInstanceOf(AbortSignal);
+    expect(owned.pages).toEqual([{ items: [], total: 0 }]);
   });
 });

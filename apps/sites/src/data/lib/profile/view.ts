@@ -1,4 +1,3 @@
-import type { OwnedItem, OwnedList, OwnedName } from "../catalyst/marketplace/account";
 import type { GalleryImage } from "../catalyst/social/photos";
 
 export type PhotoVM = {
@@ -61,42 +60,4 @@ export function mapPhotos(images: GalleryImage[]): PhotoVM[] {
       },
     };
   });
-}
-
-export type AssetWearableVM = {
-  id: string;
-  name: string;
-  rarity: string;
-  price: string;
-  network: "MATIC" | "ETHEREUM";
-  category: string;
-  bodyShape: "unisex";
-  isSmart: false;
-};
-export type AssetNameVM = { id: string; stem: string };
-export type ProfileAssets = { wearables: AssetWearableVM[]; names: AssetNameVM[] };
-
-export const EMPTY_ASSETS: ProfileAssets = { wearables: [], names: [] };
-
-export function mapAssets(
-  wearables: OwnedList<OwnedItem>,
-  names: OwnedList<OwnedName>,
-): ProfileAssets {
-  return {
-    wearables: wearables.elements.map((w) => ({
-      id: w.id,
-      name: w.name ?? "Unnamed",
-      rarity: w.rarity ?? "common",
-      price: w.price ?? "",
-      network: w.urn?.includes(":matic:")
-        ? "MATIC"
-        : w.urn?.includes(":ethereum:")
-          ? "ETHEREUM"
-          : "MATIC",
-      category: w.category ?? "wearable",
-      bodyShape: "unisex",
-      isSmart: false,
-    })),
-    names: names.elements.map((n) => ({ id: n.tokenId ?? n.name, stem: n.name })),
-  };
 }
