@@ -43,11 +43,11 @@ host that omits the flag is covered). Until the realm resolves the requested one
 preview, the editor or a loopback realm, the runs that show out-of-bounds geometry); re-evaluated
 when the realm or the preview mode changes.
 
-The page side is `react-web/src/lib/analytics.ts` (events and sequences in
+The page side is `library/explorer-core/lib/analytics.ts` (events and sequences in
 `react-web/review.md`, "Analytics"). The web's Google Ads conversion (`bevy_first_move_in_world`, a GA4 event
 the shell page sends when the engine's First Move In World fires, seen through the system scene's
 `getAnalyticsEventStream`, the engine's events as `segment_system.rs` queues them) is not a Segment
-event: `react-web/src/shell/googleTag.ts`.
+event: `library/explorer-core/shell/googleTag.ts`.
 It carries the Segment session as `dcl_session_id`, and the page sends GA4's ids back to Segment as
 `Google Tag Linked` (`ga_client_id`, the export's `user_pseudo_id`; `ga_session_id`). Both are
 taken at the conversion, once per tab session: `ga_session_id` is GA4's session at that moment (GA4

@@ -17,7 +17,7 @@ PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Sm
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 GATEWAY_HUD_INPUTS = ('apps/ui3/src/play/lib/baseDomain.ts',
-                      'apps/ui3/src/play/engine/generated/serviceTable.ts')
+                      'library/explorer-core/engine/generated/serviceTable.ts')
 # Sources the web HUD compiles from library/: the ones tooling/play-artifact.py fingerprints with it.
 _ARTIFACT = importlib.util.spec_from_file_location('play_artifact', Path(__file__).with_name('play-artifact.py'))
 _artifact = importlib.util.module_from_spec(_ARTIFACT)
@@ -39,13 +39,12 @@ INPUTS = ('rendering/bevy-explorer/source', 'rendering/bevy-explorer/bevy', 'lib
 # (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
 # also an input of the Test Suite.
 HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
-                     'rendering/bevy-explorer/source/react-web/src/features/auth/sso.ts',
-                     'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
+                     'rendering/bevy-explorer/source/react-web/src/shell/localGuest.ts',
+                     'library/explorer-core/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
     'rendering/bevy-explorer/bevy/**',
-    'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -238,7 +237,7 @@ def select(base, head):
     except _artifact.shared_inputs.ManifestError:
         previous, bootstrap = {}, True
     shared_paths = set(shared) | set(previous)
-    paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths))))
+    paths = changed_inputs(base, head, (*INPUTS, *(':(literal)' + path for path in sorted(shared_paths | set(HARNESS_WEB_READS)))))
     selected = dict.fromkeys((*LANES, 'native-matrix', 'scenes'), False)
     if bootstrap:
         selected['web'] = True

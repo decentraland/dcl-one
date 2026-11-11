@@ -633,6 +633,100 @@ describe('when component installation owns its verified input read-set and trans
     )
   })
 
+  describe('and the target holds a hand-written component', () => {
+    const template = [
+      'Component.tsx',
+      'Component.module.css',
+      'Component.test.tsx',
+      'Component.figma.ts'
+    ]
+    let handWritten: Record<string, Buffer>
+    const handWrittenOnDisk = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          Object.keys(handWritten).map(async (file) => [
+            file,
+            await readFile(path.join(root, 'components', file))
+          ])
+        )
+      )
+    beforeEach(async () => {
+      await runInstall(app, options)
+      handWritten = {}
+      for (const file of template) {
+        const bytes = (await readFile(path.resolve('templates/component', file)))
+          .toString('utf8')
+          .replaceAll('Component', 'Badge')
+        handWritten['Badge/' + file.replace('Component', 'Badge')] = Buffer.from(bytes)
+      }
+      for (const [file, bytes] of Object.entries(handWritten)) {
+        await mkdir(path.dirname(path.join(root, 'components', file)), { recursive: true })
+        await writeFile(path.join(root, 'components', file), bytes)
+      }
+      await fixtureCommit(repository)
+    })
+
+    it('should keep it byte for byte, leave it out of the install output and no-op on repeat', async () => {
+      const result = await runInstall(app, options)
+      expect(result.changed).toBe(false)
+      expect(result.files.map((file) => file.path).some((file) => file.startsWith('Badge/'))).toBe(
+        false
+      )
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+      const record = JSON.parse(
+        await readFile(path.join(root, 'components/generation.json'), 'utf8')
+      )
+      expect(
+        (record.output as { path: string }[]).some((entry) => entry.path.startsWith('Badge/'))
+      ).toBe(false)
+    })
+
+    it('should keep it when the registry empties and the generated output is retired', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const retired = await runInstall(app, options)
+      expect(retired.changed).toBe(true)
+      expect(retired.files.map((file) => file.path)).toEqual(['generation.json', 'promotion.json'])
+      expect(await readdir(path.join(root, 'components'))).toEqual([
+        'Badge',
+        'generation.json',
+        'promotion.json'
+      ])
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+      expect((await runInstall(app, options)).changed).toBe(false)
+    })
+
+    it('should not copy it into a private stage', async () => {
+      options.outDir = stage
+      const staged = await runInstall(app, options)
+      expect(await readdir(staged.outDir)).not.toContain('Badge')
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+    })
+
+    it('should refuse a registry that would generate over it and leave the target unchanged', async () => {
+      const before = await readdir(path.join(root, 'components'), { recursive: true })
+      vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+        const plan = await actualPlan(context)
+        plan.files.set('badge/badge.tsx', Buffer.from('export const badge = 1\n'))
+        return plan
+      })
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would overwrite a hand-written component: Badge'
+      )
+      expect(await readdir(path.join(root, 'components'), { recursive: true })).toEqual(before)
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+    })
+
+    it('should refuse an uncommitted edit to it instead of publishing over it', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const edited = Buffer.from('export const Badge = () => null\n')
+      await writeFile(path.join(root, 'components/Badge/Badge.tsx'), edited)
+      await expect(runInstall(app, options)).rejects.toThrow('Install target is dirty')
+      expect(await readFile(path.join(root, 'components/Badge/Badge.tsx'))).toEqual(edited)
+    })
+  })
+
   it('should reproduce empty retirement in a fresh immutable private stage and no-op', async () => {
     await writeFile(registryPath, '{"components":[],"internal":[]}')
     options.outDir = stage

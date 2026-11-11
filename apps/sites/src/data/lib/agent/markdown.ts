@@ -390,6 +390,9 @@ export function discoverToMarkdown(content: HomeContent): string {
 
   const blocks: string[] = [
     heading(1, content.hero?.title || "Discover Decentraland"),
+    content.hero?.mobileTitle
+      ? `Mobile title: ${clean(content.hero.mobileTitle)}`
+      : "",
     content.hero?.subtitle ? clean(content.hero.subtitle) : "",
   ];
   if (events.length)

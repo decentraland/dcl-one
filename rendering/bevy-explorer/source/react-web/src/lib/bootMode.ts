@@ -1,3 +1,4 @@
+import type { BootMode } from '@explorer-core/hostContract'
 import { isLoopbackHost } from './loopbackHost'
 
 // The interrelated "how does this page boot" decisions, derived from the entry URL in ONE
@@ -19,15 +20,7 @@ import { isLoopbackHost } from './loopbackHost'
 // The engine-bound params (?portables=, ?imposterSource=, ?pulseServer=, …) are not boot-mode
 // decisions: they come from the engine's web param table (lib/webParams.ts) and are handed over
 // as-is by EngineHost.
-export interface BootMode {
-  /** explicit ?systemScene= override; null = the default bridge scene drives */
-  systemScene: string | null
-  /** render only the engine — no HUD chrome, no sign-in/loading overlays */
-  hideHud: boolean
-  /** skip the sign-in screen: auto guest-login, no React login at all (the ui scene owns it), or
-   *  the autopilot's local guest */
-  autoLogin: 'guest' | 'scene-owned' | 'autopilot' | null
-}
+export type { BootMode } from '@explorer-core/hostContract'
 
 /** The HUD is hosted by the native (CEF) client: a native build entered with ?native=1. */
 export function isNativeHud(): boolean {
@@ -63,7 +56,7 @@ export function bootMode(): BootMode {
         : systemScene != null
           ? 'scene-owned'
           : q.has('autopilot') && benchmarkSwitchesHonoured()
-            ? 'autopilot'
+            ? 'unattended'
             : null
   }
 }

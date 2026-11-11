@@ -1,21 +1,19 @@
 // The signed-in identity, kept by the shell for the app (src/lib/shell.ts shellRequest): the app
 // gets the public identity and asks for signatures, and never sees the key.
-import { createGuestIdentity, webGuestBackend } from '../features/auth/guest'
+import { createGuestIdentity, webGuestBackend } from '@explorer-core/features/auth/guest'
 import {
   clearGuestLogin,
   clearStoredLogins,
-  getLocalGuestRootKey,
   getStoredLogin,
   loginExpired,
   publicLogin,
   rootAddress,
   storeGuestLogin,
-  storeLocalGuestRootKey,
   type StoredLogin
-} from '../features/auth/sso'
+} from '@explorer-core/features/auth/sso'
 import { isLoopbackHost } from '../lib/loopbackHost'
-import { createLocalGuestRootKey, localGuestIdentity } from './localGuest'
-import { personalSign } from './sign'
+import { createLocalGuestRootKey, getLocalGuestRootKey, localGuestIdentity, storeLocalGuestRootKey } from './localGuest'
+import { personalSign } from '@explorer-core/shell/sign'
 
 // The login handed to the app, key included. It is the only one the shell signs with, and once it
 // has signed it is kept for the session, so signing out or in again in another tab doesn't pull it

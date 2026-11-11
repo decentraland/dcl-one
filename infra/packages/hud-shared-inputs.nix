@@ -6,7 +6,7 @@ let
     sort stringLength substring;
   web = "rendering/bevy-explorer/source/react-web/";
   manifestPath = web + "shared-inputs.json";
-  domains = [ "library/ui" "library/shop" "library/catalyst-api" ];
+  domains = [ "library/ui" "library/shop" "library/catalyst-api" "library/explorer-core" ];
   resolverNames = [ "package.json" "tsconfig.json" "jsconfig.json" ];
   requiredControls = map (name: web + name) [
     "package.json" "package-lock.json" "tsconfig.json" "vite.config.ts"
@@ -94,7 +94,7 @@ let
     let entries = readDir (fsPath directory);
     in concatLists (map (name:
       let path = directory + "/${name}"; kind = entries.${name};
-      in if name == "node_modules" || path == web + "src/engine/generated" then []
+      in if name == "node_modules" then []
         else if kind == "directory" then scanRoots path
         else if kind == "regular" then [ path ]
         else throw "Unsafe HUD root inventory entry") (attrNames entries));
