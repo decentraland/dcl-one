@@ -253,3 +253,65 @@ test('repeat subscribe disposes the previous rig and streaming attachment', asyn
   assert.equal(attached.size, 0);
   assert.equal(connected.size, 0);
 });
+
+
+test('flat voice stays centred across block, unblock and resubscription', async (t) => {
+  const { room_connect, room_drop, remote_track_pan_and_volume } =
+    await import('./livekit_web_bindings.js?flat-voice-policy');
+  const roomEvent = new Proxy({}, { get: (_, name) => name });
+  class Room extends EventEmitter {
+    async connect() {}
+    async disconnect() {}
+  }
+  const previous = [globalThis.LivekitClient, globalThis.window, globalThis.MediaStream];
+  t.after(() => {
+    [globalThis.LivekitClient, globalThis.window, globalThis.MediaStream] = previous;
+  });
+  globalThis.LivekitClient = { Room, RoomEvent: roomEvent };
+  const gains = new Set();
+  const node = () => ({ connect() {}, disconnect() {} });
+  globalThis.window = { AudioContext: class {
+    destination = {};
+    createMediaStreamSource() { return node(); }
+    createStereoPanner() { return { ...node(), pan: { value: 0 } }; }
+    createGain() {
+      const gain = { value: 1 };
+      return { gain, connect() { gains.add(gain); }, disconnect() { gains.delete(gain); } };
+    }
+  } };
+  globalThis.MediaStream = class {};
+  const room = await room_connect('wss://room.example', 'token', {}, {}, () => {});
+  t.after(() => room_drop(room));
+  const track = {
+    sid: 'flat-voice',
+    kind: 'audio',
+    mediaStreamTrack: {},
+    attach() { return { muted: false, play() {}, pause() {} }; },
+    detach() {},
+  };
+  const speaker = { sid: 'speaker', identity: 'player' };
+  const subscribe = () => room.emit(roomEvent.TrackSubscribed, track, {}, speaker);
+  const assertPlayback = volume => {
+    assert.equal(track.trackRig.pannerNode.pan.value, 0);
+    assert.equal(track.trackRig.audioElement.muted, true);
+    assert.deepEqual([...gains].map(gain => gain.value), [volume]);
+  };
+  subscribe();
+  assertPlayback(0);
+  const rig = track.trackRig;
+  remote_track_pan_and_volume(track, 0.5, 0.4);
+  assertPlayback(0.4);
+  remote_track_pan_and_volume(track, 0.5, 0);
+  assertPlayback(0);
+  // The permission can return before unsubscribe acknowledgement removes the rig.
+  remote_track_pan_and_volume(track, 0.5, 0.2);
+  assert.equal(track.trackRig, rig);
+  assertPlayback(0.2);
+  room.emit(roomEvent.TrackUnsubscribed, track, {}, speaker);
+  assert.equal(gains.size, 0);
+  subscribe();
+  assert.notEqual(track.trackRig, rig);
+  assertPlayback(0);
+  remote_track_pan_and_volume(track, 0.5, 0.2);
+  assertPlayback(0.2);
+});

@@ -30,24 +30,50 @@ Figma file: PRUEBA-SKILL. Its key is private and never in a file; set `FIGMA_FIL
 The contract is the library's Code Connect template files, read statically (never executed) from `contract.mappingRoot` in `figma.config.json`, overridable with `--mapping-root`, `DCL_FIGMA_MAPPING_ROOT`, `--library-range`. Supported subset: header comments `url`, `source`, `component`, `contract`, `states`; `instance.getEnum/getBoolean/getString/findText`; `figma.tsx`/`code` example; `imports`; `id`. Anything else is reported as `unsupported-construct`.
 
 - Provenance comes from the mapping header (Figma file and node) plus the nearest `package.json` of the library (name, version). Names alone never identify a component.
-- Errors are coded and never guessed around: `mapping-missing`, `identity-ambiguous`, `identity-not-found`, `variant-unsupported`, `variant-not-in-figma`, `contract-incompatible` (with `details.reason`), `unsupported-construct`, `invalid-input`, `mapping-root-not-configured`. Warnings: `figma-drift`, `unmapped-figma-property`, `figma-identity-unverified`, `export-unverifiable`.
+- Diagnostics are coded and never guessed around. Each one carries its `severity`, `audience` and `action` from the single registry in `src/contract/diagnostics.ts`; `src/contract/diagnostics-docs.test.ts` fails when the codes, severities or audiences in this table or the consumer skill's table differ from it; the prose is not compared. `consumer` codes can come back from resolve; `maintainer` codes come only from check-mappings, and a code marked both has reasons that only check-mappings emits. The table after the `diagnostic-codes` marker is the one the test reads. `mapping-missing` is returned only when the node is a captured library component; without a capture an unmapped node is `identity-uncertain`.
+
+<!-- diagnostic-codes -->
+
+| Code                          | Severity | Audience             |
+| ----------------------------- | -------- | -------------------- |
+| `invalid-input`               | error    | consumer             |
+| `mapping-root-not-configured` | error    | consumer             |
+| `mapping-missing`             | error    | consumer             |
+| `identity-not-found`          | error    | consumer, maintainer |
+| `identity-ambiguous`          | error    | consumer, maintainer |
+| `identity-uncertain`          | error    | consumer             |
+| `variant-unsupported`         | error    | consumer             |
+| `variant-not-in-figma`        | error    | consumer             |
+| `contract-incompatible`       | error    | consumer             |
+| `unsupported-construct`       | error    | consumer             |
+| `unmapped-figma-property`     | warning  | consumer             |
+| `figma-drift`                 | warning  | consumer             |
+| `export-unverifiable`         | warning  | consumer             |
+| `capture-revision-unknown`    | warning  | consumer             |
+| `identity-name-match`         | warning  | consumer             |
+| `accepted-limits`             | warning  | consumer             |
+| `figma-identity-unverified`   | warning  | consumer             |
+| `capture-unchecked`           | warning  | maintainer           |
+| `superseded-by-sync`          | warning  | maintainer           |
+| `superseded-pending`          | warning  | maintainer           |
+
 - `dcl-figma check-mappings` (and the test `src/contract/integrity.test.ts`) fails CI on any mapping error or Figma drift.
-- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`; without a config it runs resolve-only. See `library/ui/README.md`.
+- Running the MCP from another project: server flags `--config`, `--mapping-root`, `--library-range`, `--mapping-only`; without a config, or with `--mapping-only`, it registers only `figma_resolve_component` and `figma_check_mappings`. `--mapping-only` reads only the `contract` block (mapping root and library range) and the `componentNames` aliases of the Figma config, never the capture cache; without one the mapping root defaults to `library/ui/components` (a configured `--mapping-root`, `DCL_FIGMA_MAPPING_ROOT` or `contract.mappingRoot` still wins over that default). Without a capture a component set name resolves to a single mapping (its `component` header, its `id`, or the code name `componentNames` gives the Figma name) only when the instance's variant properties fit it (Figma BOOLEAN properties travel apart in `booleanProperties`: one the mapping does not read is an `unmapped-figma-property` warning, while an unread variant does not fit), and always with the `identity-name-match` warning; the name-based fallback is temporary (`TODO(figma-identity)` in `src/contract/name-identity.ts`). Component keys are never stored. `resolve --batch <file|->` resolves a JSON list of instances in input order (a relative file path is read from the directory `pnpm figma` was run in, or from the working directory when the `dcl-figma` bin runs directly, while `--config` and `--mapping-root` resolve from the working directory, `library/ui/figma` under `pnpm figma`); an identical repeat shares the earlier answer, a failed entry exits 1, while an unreadable batch, a broken invocation or a configuration or library that cannot be used exits 2. A batch reads the library once for all its entries. The CLI takes the same flags plus `--boolean 'Prop=true'` and `--text 'Layer=Value'` (the MCP `booleanProperties` and `texts` inputs); design text goes in single quotes, never double quotes, where the shell would run `$(...)`. Resolve results name the capture revision the tracked lock pins in `provenance.capture.revision`. See `library/ui/README.md`.
 
 ## Data source: the fetched capture only
 
 `dcl-figma sync`, `diff`, `check-mappings`, `review-manifest` and the MCP server read the capture offline, from the cache `pnpm figma fetch-source` builds from the commit of figma-design-system that `upstream.lock.json` pins (fail-closed: a missing, stale or edited cache stops every reader). Live Figma reads are for local inspection only (`diff --source rest`, the MCP read tools with `source: "rest"`, `figma_screenshot`, `probe`): they never write tracked files, `sync` refuses them, and nothing from them is stored in the tree. Capturing pages and ingesting chunks happen in figma-design-system. Every raster in the capture (artwork, image fills and icons) is stored without non-rendering metadata: tEXt, iTXt, zTXt, eXIf and tIME are dropped and the rendering and colour chunks are kept byte for byte. `figma/test/image-metadata.test.ts` fails on any such chunk in a file under library/ui/figma (the synthetic test capture included; the strip tests plant synthetic metadata at test time) or library/ui/components/assets, except the public files listed, each with a reason and an expiry, in `figma/image-metadata-allow.json`.
 
-Unit tests read a hand-written synthetic capture in `figma/test/fixtures/synthetic-snapshot/` (plain git, fake ids and names, described in its README), never the real one, so they run in public CI and a capture refresh cannot fail them. The checks against the real capture (`diff`, `check-mappings`, `review-manifest`, the NavBar bounds) run locally after `pnpm figma fetch-source`, and a port records their results in `library/ui/port-verification.json` (`port-verification.mjs`).
+Unit tests read a hand-written synthetic capture in `figma/test/fixtures/synthetic-snapshot/` (plain git, fake ids and names, described in its README), never the real one, so they run in public CI and a capture refresh cannot fail them. The checks against the real capture (`diff`, `check-mappings`, `review-manifest`, the NavBar bounds) run locally after `pnpm figma fetch-source`, and a change to a port input records their results in `library/ui/port-verification.json` (`port-verification.mjs`; edits to existing tests, fixtures and Markdown are not port input changes).
 
 ## Refresh workflow
 
-The capture is refreshed in figma-design-system, which owns it and documents how a capture is taken. This tree then ports the new commit:
+The capture is refreshed in figma-design-system, which owns it and documents how a capture is taken. This tree then ports the new commit (the `maintain-figma-library` skill walks through it):
 
 1. Bump the pin in `upstream.lock.json`, then `pnpm figma fetch-source --seal`.
-2. `pnpm figma diff` shows what would change (exit 1 if not empty), then `pnpm figma sync`.
-3. Run `sync` a second time: the diff must be empty (idempotency is tested).
-4. `node figma/lock-digests.mjs --write`, then run the real-capture checks and commit their record (`port-verification.mjs`).
+2. `pnpm figma port prepare`: on a `library/ui` whose only change is `upstream.lock.json`, fetch-source, diff, sync, a second sync that must change nothing, install foundations and components, and `lock-digests --write` (after staging `library/ui`, since it reads the index), stopping at the first stage that fails. Record a deviation code for every changed file (a stable id in `deviationCodes`; `--write` keeps them sorted), stage `library/ui` again, rerun `node figma/lock-digests.mjs --write`, and commit.
+3. `pnpm figma port verify`: on a clean tree, runs the seven real-capture checks and only when all pass writes `library/ui/port-verification.json` from their own output; a failed check writes no record and puts back only what the checks regenerate (the Review under `figma/review/`, `foundations/`, `components/`), after copying those files to `.agent-work/figma-port/restored-<time>/`; any other change under `library/ui` is left as it is and listed as kept. Commit the record. It states what the local run reported, not proof of execution, an attestation or live parity. `node figma/port-verification.mjs --print-hash` prints the `portInputHash` a record must name.
+4. A new public Figma URL lands in two pull requests: its `figma/key-guard-allow.json` entry merged to main first, then the URL. When a URL fails, the key guard prints this as a hint for a public URL; a private file URL is removed instead.
 5. Checks (format, lint, typecheck, tests, build, lock digests, key guard) run in GitHub Actions (`.github/workflows/ui-library.yml`); push and read the CI result instead of running the full suite locally. Run locally only what is needed to debug a failure.
 6. `pnpm review:build` and `pnpm review:check-build` prove the gallery builds, navigates and renders. They do not prove visual parity: comparing a variant with Figma happens in figma-design-system. Never say a component "matches" Figma from this tree.
 
@@ -77,7 +103,7 @@ A component is flagged when the mapper cannot reproduce it confidently. Reasons 
 
 ## Rules
 
-- Follow CLAUDE.md's component architecture rules: custom browser primitives, no Base UI or other component kit, co-located CSS Modules instead of Emotion/styled-components, and TanStack only when shared state or data caching is needed. Apply changes to generated components through their templates.
+- Follow [`docs/ui-standards.md`](../../../docs/ui-standards.md) for component styling, shared foundations and reuse. Apply changes to generated components through their templates.
 - Everything in the repo is English: code, comments, tests, docs.
 - Dependencies: exact versions (`--save-exact`), `@dcl/*` and `decentraland-*` with caret. Install with `pnpm install --frozen-lockfile` in `library/ui`.
 - Never write a Figma token or any secret to a file or to chat: `FIGMA_TOKEN` and `FIGMA_FILE_KEY` are read from the environment only.

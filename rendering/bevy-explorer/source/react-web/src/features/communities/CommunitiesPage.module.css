@@ -14,18 +14,6 @@
 .search {
   width: 240px;
   margin-left: auto;
-  height: 38px;
-  padding: 0 14px;
-  border: 1px solid var(--white-10);
-  border-radius: var(--r-pill);
-  background: rgba(0, 0, 0, 0.3);
-  color: var(--text);
-  font-family: inherit;
-  font-size: 14px;
-  outline: none;
-}
-.search::placeholder {
-  color: var(--ink-45);
 }
 
 .layout {
@@ -120,11 +108,35 @@
   min-width: 0;
 }
 .browseHead {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 14px;
   font-size: 15px;
   font-weight: 700;
   color: var(--text);
+}
+.count {
+  color: var(--ink-45);
+}
+.back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--r-pill);
+  background: var(--white-10);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+}
+.back:hover {
+  background: var(--fill-2);
 }
 .grid {
   display: grid;
@@ -189,9 +201,19 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ownerRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-height: 20px;
+}
 .cardOwner {
+  overflow: hidden;
   font-size: 12px;
   color: var(--ink-6);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cardMeta {
   display: flex;
@@ -200,6 +222,35 @@
   margin-bottom: 10px;
   font-size: 12px;
   color: var(--ink-45);
+  white-space: nowrap;
+}
+/* The user's friends in the community: overlapping faces, each named on hover. */
+.friends {
+  display: flex;
+  flex: none;
+}
+.friend + .friend {
+  margin-left: -6px;
+}
+/* The description opens on hover or keyboard focus, so the grid stays compact. */
+.cardDesc {
+  display: -webkit-box;
+  max-height: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--ink-6);
+  opacity: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  transition: max-height var(--dur-fast) ease, opacity var(--dur-fast) ease, margin var(--dur-fast) ease;
+}
+.card:hover .cardDesc,
+.card:focus-within .cardDesc {
+  max-height: 4.2em;
+  margin: 4px 0 2px;
+  opacity: 1;
 }
 .cardBtn {
   width: 100%;
@@ -210,4 +261,31 @@
   text-align: center;
   font-size: 14px;
   color: var(--ink-45);
+}
+
+/* A live voice stream on the card's cover. */
+.live {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--voice-live);
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+}
+.loading {
+  display: flex;
+  justify-content: center;
+  padding: 60px;
+}
+.loadMore {
+  height: 1px;
+}
+.loadingMore {
+  display: flex;
+  justify-content: center;
+  padding: 0 0 24px;
 }

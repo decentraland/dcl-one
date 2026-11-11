@@ -183,6 +183,8 @@ pub enum SystemApi {
     SetMicEnabled(bool),
     /// Trusted HUD recovery request; terminal access decisions remain unchanged.
     RetryConnectivity,
+    /// The current safe snapshot, followed by changes until the consumer closes.
+    GetConnectivityStream(RpcStreamSender<ConnectivitySnapshot>),
     /// Activate or replace the one on-demand voice session. Credentials stay engine-side.
     SetVoiceRoom {
         session: String,
@@ -224,6 +226,13 @@ pub enum SystemApi {
     /// The community channels the local user listens to (member of, chat not closed), as
     /// community ids; replaces the previous set.
     SetCommunityChannels(Vec<String>),
+    // Voice chat (private calls and community streams)
+    /// Emits the voice chat state now and whenever it changes, until dropped.
+    GetVoiceChatStateStream(RpcStreamSender<VoiceChatState>),
+    /// Emits every community voice chat started / ended broadcast, until dropped.
+    GetCommunityVoiceUpdateStream(RpcStreamSender<CommunityVoiceUpdate>),
+    /// A voice chat command from the HUD; its outcome shows on the state stream.
+    VoiceChatAction(VoiceChatAction),
 }
 
 #[derive(Resource)]

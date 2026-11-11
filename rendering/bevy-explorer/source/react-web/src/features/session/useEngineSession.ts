@@ -51,6 +51,7 @@ import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
 import { hudActsOn, type EditorHudMode } from '../editorHost/hudMode'
+import { streamHere } from '../voiceChat/streamHere'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -61,6 +62,10 @@ import type {
   MessageReaction,
   Community,
   DmUserState,
+  ActiveCommunityVoiceChat,
+  CommunityVoiceUpdateMessage,
+  VoiceChatActionWire,
+  VoiceChatState,
   CommunityAction,
   CommunityMemberAction,
   CommunityDetailMessage,
@@ -236,8 +241,35 @@ export type UpdateCommunityInput = Omit<UpdateCommunityRequest, 'kind'>
 /** A community create or update in flight (`saving`) or its outcome (`done`). */
 export type CommunitySave = { status: 'saving' } | { status: 'done'; result: CommunitySaveResultMessage }
 
+/** The Communities page's browse grid: the pages read so far for one search. */
+export interface CommunityBrowse {
+  /** The search the grid shows; '' is every community. */
+  search: string
+  items: Community[]
+  /** How many communities the search has in all (the service's total). */
+  total: number
+  /** The first page is being read. */
+  loading: boolean
+  /** A further page is being read. */
+  loadingMore: boolean
+  /** The first page could not be read: the grid shows no count and no empty state. */
+  failed?: boolean
+}
+
+/** The toast when a browse page can't be read. */
+export const BROWSE_ERROR = 'There was an error loading Communities. Please try again.'
+
+const NO_BROWSE: CommunityBrowse = { search: '', items: [], total: 0, loading: false, loadingMore: false }
+
 export interface CommunitiesState {
+  /** My Communities: every community the user is a member of. */
   list: Community[]
+  /** The browse grid, a page at a time. */
+  browse: CommunityBrowse
+  /** Read the grid's first page for a search ('' for every community), replacing the grid. */
+  loadBrowse: (search: string) => void
+  /** Read the grid's next page, when there is one and no read is running. */
+  loadMoreBrowse: () => void
   open: boolean
   toggle: () => void
   /** Create a community (name, description, Public/Private, discoverable, picture as a data URL).
@@ -813,6 +845,32 @@ export interface EditorHostState {
   setMode: (mode: EditorHudMode) => void
 }
 
+/** Private calls and community streams: the engine's state, the live streams, and the commands. */
+export interface VoiceChatSession {
+  /** Null until the engine's first snapshot. */
+  state: VoiceChatState | null
+  /** Every live community stream the local user may see. */
+  active: ActiveCommunityVoiceChat[]
+  /** `active` has been read for this account: until then it says nothing about what is live. */
+  activeLoaded: boolean
+  /** The live stream whose places include where the player stands. */
+  scene: ActiveCommunityVoiceChat | null
+  /** A guest account: voice chat is refused. */
+  guest: boolean
+  act: (action: VoiceChatActionWire) => void
+}
+
+type VoiceChatEventListener = (event: CommunityVoiceUpdateMessage) => void
+const voiceChatListeners = new Set<VoiceChatEventListener>()
+/** Subscribe to community stream started / ended broadcasts (toasts); returns the unsubscribe. */
+export function onVoiceChatEvent(listener: VoiceChatEventListener): () => void {
+  voiceChatListeners.add(listener)
+  return () => voiceChatListeners.delete(listener)
+}
+function emitVoiceChatEvent(event: CommunityVoiceUpdateMessage): void {
+  for (const listener of voiceChatListeners) listener(event)
+}
+
 export interface EngineSession {
   phase: SessionPhase
   playerReady: boolean
@@ -881,6 +939,8 @@ export interface EngineSession {
   worldPassword: WorldPasswordState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** Private calls and community streams. */
+  voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
   /** Report (or clear) the screen rect where the scene should render an engine view. */
@@ -1184,6 +1244,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false })
+  const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
+  const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
+  const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
+  const [scenePlace, setScenePlace] = useState<{ parcel: string; realm: string } | null>(null)
   const [catalogItems, setCatalogItems] = useState<Wearable[]>([])
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -1202,6 +1266,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
   const [communityCards, setCommunityCards] = useState<Record<string, Community>>({})
+  const [communityBrowse, setCommunityBrowse] = useState<CommunityBrowse>(NO_BROWSE)
+  // The grid as last set, and the page read last, for the next page's request.
+  const communityBrowseRef = useRef<CommunityBrowse>(NO_BROWSE)
+  const communityBrowsePage = useRef(0)
+  // The search and page the grid waits for: an answer for any other (an older search) is dropped.
+  const communityBrowseWanted = useRef<{ search: string; page: number } | null>(null)
+  const updateCommunityBrowse = useCallback((next: (prev: CommunityBrowse) => CommunityBrowse) => {
+    communityBrowseRef.current = next(communityBrowseRef.current)
+    setCommunityBrowse(communityBrowseRef.current)
+  }, [])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
   const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
@@ -1231,8 +1305,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     const swap = <T extends { id: string; thumbnail?: string }>(c: T): T => (c.id === id ? { ...c, thumbnail: picture } : c)
     setCommunities((prev) => prev.map(swap))
     setCommunityCards((prev) => (prev[id] != null ? { ...prev, [id]: swap(prev[id]) } : prev))
+    updateCommunityBrowse((prev) => ({ ...prev, items: prev.items.map(swap) }))
     setCommunityConvos((prev) => prev.map(swap))
-  }, [])
+  }, [updateCommunityBrowse])
   const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
   const [mapOpen, setMapOpen] = useState(false)
   // Minimap pose: a ref, not state — see MinimapState.pose for why.
@@ -1588,6 +1663,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         }
+        case 'voiceChatState':
+          setVoiceChatState(msg.state)
+          break
+        case 'communityVoiceUpdate':
+          // the live list follows (the scene re-reads it); the broadcast itself feeds the toasts
+          emitVoiceChatEvent(msg)
+          break
+        case 'activeCommunityVoiceChats':
+          setActiveVoiceChats(msg.chats)
+          setActiveVoiceChatsLoaded(msg.loaded !== false)
+          break
         case 'menuVisibility':
           setMenuOpen(msg.open)
           break
@@ -1746,10 +1832,38 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communities':
           setCommunities(msg.communities.map(withSavedPicture))
           break
-        case 'community':
-          // one community for a card, kept apart from the browse list (replaced if already there)
-          setCommunityCards((prev) => ({ ...prev, [msg.community.id]: withSavedPicture(msg.community) }))
+        case 'community': {
+          // one community for a card, kept apart from the browse list (replaced if already there);
+          // after a write it is the community that changed, so its browse card shows the change too
+          // (keeping the friends only the browse read carries)
+          const fresh = withSavedPicture(msg.community)
+          setCommunityCards((prev) => ({ ...prev, [fresh.id]: fresh }))
+          if (communityBrowseRef.current.items.some((c) => c.id === fresh.id)) {
+            updateCommunityBrowse((prev) => ({
+              ...prev,
+              items: prev.items.map((c) => (c.id === fresh.id ? { ...fresh, friends: fresh.friends ?? c.friends } : c))
+            }))
+          }
           break
+        }
+        case 'communityBrowse': {
+          const wanted = communityBrowseWanted.current
+          if (wanted == null || wanted.search !== msg.search || wanted.page !== msg.page) break
+          communityBrowseWanted.current = null
+          if (msg.failed === true) {
+            showToast(BROWSE_ERROR, { tone: 'error' })
+            updateCommunityBrowse((prev) => ({ ...prev, loading: false, loadingMore: false, failed: msg.page === 1 }))
+            break
+          }
+          communityBrowsePage.current = msg.page
+          const page = msg.communities.map(withSavedPicture)
+          updateCommunityBrowse((prev) => {
+            // a community that moved up the order while paging is listed once
+            const items = msg.page === 1 ? page : [...prev.items, ...page.filter((c) => !prev.items.some((p) => p.id === c.id))]
+            return { search: msg.search, items, total: msg.total, loading: false, loadingMore: false }
+          })
+          break
+        }
         case 'communityActionFailed':
           setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
           break
@@ -1764,10 +1878,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           const pending = pendingCommunityPicture.current
           pendingCommunityPicture.current = null
           if (msg.mode === 'update' && msg.id != null && pending?.id === msg.id) showSavedPicture(pending.id, pending.picture)
+          // a save reloads the grid: a new or changed community may
+          // join, leave or move in the grid
+          if (msg.id != null && communityBrowsePage.current > 0) loadCommunityBrowse(communityBrowseRef.current.search)
           break
         }
         case 'communityDeleted':
           setDeletedCommunity(msg.id)
+          if (communityBrowseRef.current.items.some((c) => c.id === msg.id)) {
+            updateCommunityBrowse((prev) => ({ ...prev, items: prev.items.filter((c) => c.id !== msg.id), total: Math.max(0, prev.total - 1) }))
+          }
           setCommunityCards((prev) => {
             const { [msg.id]: _gone, ...rest } = prev
             return rest
@@ -1960,6 +2080,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         case 'sceneInfo':
           setSceneTitle(msg.title)
+          setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
           // that one); the used permissions and the badge are the current scene's only.
           if (msg.scene !== currentScene.current) {
@@ -2457,6 +2578,21 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [exclusive, ensure]
   )
   const toggleCommunities = useCallback(() => exclusive(setCommunitiesOpen, () => ensure('getCommunities')), [exclusive, ensure])
+  const loadCommunityBrowse = useCallback((search: string) => {
+    communityBrowseWanted.current = { search, page: 1 }
+    communityBrowsePage.current = 0
+    updateCommunityBrowse(() => ({ search, items: [], total: 0, loading: true, loadingMore: false }))
+    driverRef.current?.send({ kind: 'browseCommunities', search, page: 1 })
+  }, [updateCommunityBrowse])
+  const loadMoreCommunityBrowse = useCallback(() => {
+    const current = communityBrowseRef.current
+    if (communityBrowseWanted.current != null || current.loading || current.loadingMore) return
+    if (communityBrowsePage.current === 0 || current.items.length >= current.total) return
+    const page = communityBrowsePage.current + 1
+    communityBrowseWanted.current = { search: current.search, page }
+    updateCommunityBrowse((prev) => ({ ...prev, loadingMore: true }))
+    driverRef.current?.send({ kind: 'browseCommunities', search: current.search, page })
+  }, [updateCommunityBrowse])
   const fetchCommunity = useCallback((id: string) => {
     // a failed fetch's message would otherwise outlive a later success
     setCommunityError((prev) => (prev?.id === id ? null : prev))
@@ -3168,6 +3304,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       })
     )
   }, [])
+  const voiceChatAct = useCallback((action: VoiceChatActionWire) => {
+    driverRef.current?.send({ kind: 'voiceChatAction', action })
+  }, [])
+  const sceneVoiceChat = useMemo(
+    () => (scenePlace == null ? null : streamHere(activeVoiceChats, scenePlace.parcel, scenePlace.realm)),
+    [activeVoiceChats, scenePlace]
+  )
   const toggleMic = useCallback(() => {
     setMic((m) => {
       driverRef.current?.send({ kind: 'setMic', enabled: !m.enabled })
@@ -3322,8 +3465,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setNotifications([])
     clearNotificationToasts()
     clearRewardPopups()
+    // the engine sends its state again after an account change
+    setVoiceChatState(null)
+    // the live streams are per account (`isMember`)
+    setActiveVoiceChats([])
+    setActiveVoiceChatsLoaded(false)
     setCommunities([])
     setCommunityCards({})
+    communityBrowseWanted.current = null
+    communityBrowsePage.current = 0
+    updateCommunityBrowse(() => NO_BROWSE)
     clearCommunitySave()
     clearCommunityPlaceOptions()
     setDeletedCommunity(null)
@@ -4125,7 +4276,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
@@ -4166,6 +4317,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     setEngineViewport,
     setInteractableArea,

@@ -34,7 +34,6 @@ pub struct StartLivekit {
 #[require(participant::ParticipantIndex, crate::room_connection::RoomRecovery)]
 pub struct LivekitTransport {
     pub address: String,
-    pub retries: usize,
 }
 
 #[derive(Component)]
@@ -72,10 +71,7 @@ pub(crate) fn standalone_room_components(
     let (control_sender, control_receiver) = mpsc::channel(128);
     (
         (
-            LivekitTransport {
-                address,
-                retries: 0,
-            },
+            LivekitTransport { address },
             LivekitChannelControl {
                 receiver: control_receiver,
             },
@@ -86,9 +82,15 @@ pub(crate) fn standalone_room_components(
     )
 }
 
+/// The native output of the rooms' flat audio: casts and streams on `scene_track` at the scene
+/// volume, a call's voices on `voice_track` at the voice chat volume (nearby voice is spatial and
+/// played by `av`).
 #[derive(Resource, Deref, DerefMut)]
 pub struct LivekitAudioManager {
+    #[deref]
     manager: AudioManager,
+    pub scene_track: kira::track::TrackHandle,
+    pub voice_track: kira::track::TrackHandle,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, States)]

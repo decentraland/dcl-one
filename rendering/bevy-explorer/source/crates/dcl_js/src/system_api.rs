@@ -16,11 +16,12 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
-    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
+    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, ProfileChangedEvent, ProximityEvent, SatelliteView,
+    SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -989,6 +990,36 @@ pub async fn op_read_hover_stream(
     Ok(read_stream(state, rid).await)
 }
 
+pub async fn op_get_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sender, receiver) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), receiver);
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetConnectivityStream(sender))
+        .unwrap();
+    rid
+}
+
+pub async fn op_read_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ConnectivitySnapshot>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_connectivity_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<ConnectivitySnapshot>(&mut *state.borrow_mut(), rid);
+}
+
+pub fn op_retry_connectivity(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::RetryConnectivity)
+        .unwrap();
+}
+
 pub async fn op_get_proximity_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -1392,6 +1423,71 @@ pub fn op_close_dm_user_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
     close_stream::<DmUserStateData>(&mut *state.borrow_mut(), rid);
 }
 
+/// The voice chat state (private calls, community streams): a snapshot now, then on change.
+/// The HUD keeps it open for the session; `close` ends it.
+pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetVoiceChatStateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_voice_chat_state_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<VoiceChatState>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_voice_chat_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<VoiceChatState>(&mut *state.borrow_mut(), rid);
+}
+
+/// Every community voice chat started / ended broadcast the social service sends.
+pub fn op_get_community_voice_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityVoiceUpdateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_voice_update_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityVoiceUpdate>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_community_voice_update_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<CommunityVoiceUpdate>(&mut *state.borrow_mut(), rid);
+}
+
+/// A voice chat command; its outcome shows on the state stream.
+pub fn op_voice_chat_action(
+    state: Rc<RefCell<impl State>>,
+    action: VoiceChatAction,
+) -> Result<(), anyhow::Error> {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::VoiceChatAction(action))?;
+    Ok(())
+}
+
 pub async fn op_get_dm_history(
     state: Rc<RefCell<impl State>>,
     address: String,
@@ -1531,27 +1627,26 @@ mod voice_room_tests {
         let mut state = TestState::default();
         state.put(SuperUserScene(sender));
         let state = Rc::new(RefCell::new(state));
-        let mut activation = Box::pin(op_set_voice_room(
-            state.clone(),
-            "call".into(),
-            "adapter".into(),
-        ));
-        assert!(block_on(poll_once(&mut activation)).is_none());
-        let SystemApi::SetVoiceRoom {
-            session,
-            adapter,
-            response,
-        } = receiver.try_recv().unwrap()
-        else {
-            panic!("expected trusted voice activation");
-        };
-        assert_eq!(session, "call");
-        assert_eq!(adapter, "adapter");
-        response.send(Err("invalid or insecure room adapter".into()));
-        assert_eq!(
-            block_on(activation).unwrap_err().to_string(),
-            "invalid or insecure room adapter"
-        );
+        for outcome in [Ok(()), Err("invalid or insecure room adapter".to_owned())] {
+            let mut activation = Box::pin(op_set_voice_room(
+                state.clone(),
+                "call".into(),
+                "adapter".into(),
+            ));
+            assert!(block_on(poll_once(&mut activation)).is_none());
+            let SystemApi::SetVoiceRoom {
+                session,
+                adapter,
+                response,
+            } = receiver.try_recv().unwrap()
+            else {
+                panic!("expected trusted voice activation");
+            };
+            assert_eq!(session, "call");
+            assert_eq!(adapter, "adapter");
+            response.send(outcome.clone());
+            assert_eq!(block_on(activation).map_err(|err| err.to_string()), outcome);
+        }
         block_on(op_leave_voice_room(state)).unwrap();
         assert!(matches!(
             receiver.try_recv().unwrap(),
@@ -1573,6 +1668,27 @@ mod voice_room_tests {
         .unwrap_err();
         assert_eq!(error.to_string(), "voice room service unavailable");
     }
+
+    #[test]
+    fn engine_shutdown_rejects_pending_activation_without_credentials() {
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let mut state = TestState::default();
+        state.put(SuperUserScene(sender));
+        let mut activation = Box::pin(op_set_voice_room(
+            Rc::new(RefCell::new(state)),
+            "call".into(),
+            "private-token".into(),
+        ));
+        assert!(block_on(poll_once(&mut activation)).is_none());
+        let SystemApi::SetVoiceRoom { response, .. } = receiver.try_recv().unwrap() else {
+            panic!("expected trusted voice activation");
+        };
+        drop(response);
+        assert_eq!(
+            block_on(activation).unwrap_err().to_string(),
+            "voice room service unavailable"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1587,6 +1703,45 @@ mod stream_tests {
         let mut state = TestState::default();
         state.put(SuperUserScene(sx));
         (Rc::new(RefCell::new(state)), rx)
+    }
+
+    #[test]
+    fn connectivity_reads_and_retry_use_the_trusted_system_channel() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let snapshot = ConnectivitySnapshot {
+            connection_lost: true,
+            ..Default::default()
+        };
+        sender.send(snapshot.clone()).unwrap();
+        assert_eq!(
+            block_on(op_read_connectivity_stream(state.clone(), rid)).unwrap(),
+            Some(snapshot)
+        );
+        op_retry_connectivity(state.clone());
+        assert!(matches!(
+            system.try_recv(),
+            Ok(SystemApi::RetryConnectivity)
+        ));
+        drop(state);
+        assert!(sender.is_closed());
+    }
+
+    #[test]
+    fn closing_connectivity_wakes_its_parked_read() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let mut parked = Box::pin(op_read_connectivity_stream(state.clone(), rid));
+        assert!(block_on(poll_once(&mut parked)).is_none());
+        op_close_connectivity_stream(state.clone(), rid);
+        assert!(block_on(parked).unwrap().is_none());
+        assert!(sender.is_closed());
     }
 
     // what the engine does with each request: keep the sender

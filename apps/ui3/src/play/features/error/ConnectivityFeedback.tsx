@@ -9,7 +9,7 @@ const SCOPES: Record<string, string> = { realm: 'Realm room', scene: 'Scene room
 const STATES: Record<string, string> = {
   denied: 'access denied', identity_conflict: 'this identity is connected elsewhere',
   invalid: 'connection settings are invalid', credentials_required: 'new credentials are required',
-  reconnecting: 'reconnecting', paused: 'paused'
+  reconnecting: 'reconnecting', failed: 'connection failed', disconnected: 'disconnected', paused: 'paused'
 }
 
 function RetryButton({ retry }: { retry: () => void | Promise<void> }) {
@@ -30,7 +30,7 @@ export function ConnectivityFeedback({ state, retry, exit }: { state: Connectivi
   const lost = state?.connectionLost === true
   useEffect(() => {
     if (!lost) return
-    // Only engine state dismisses Retry: a fast failed probe can finish between HUD polls.
+    // Only a recovered engine snapshot dismisses the warning.
     // The owner handle bypasses the Escape guard when Exit is chosen.
     const dismiss = openPopup(() => (
       <ModalShell width={600} className={styles.modal} bodyless role="alertdialog" ariaLabel="Connection Lost" closeButton={false}>

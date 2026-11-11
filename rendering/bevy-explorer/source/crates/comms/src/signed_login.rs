@@ -42,14 +42,7 @@ fn start_signed_login(
         });
         // A realm chooses its login endpoint. Do not let third-party realms correlate wallets
         // through the installation's persistent identifier.
-        if crate::adapter::validate_url(&event.address).is_ok_and(|url| {
-            url.scheme() == "https"
-                && url.host_str().is_some_and(|host| {
-                    ["decentraland.org", "decentraland.zone"]
-                        .iter()
-                        .any(|domain| host == *domain || host.ends_with(&format!(".{domain}")))
-                })
-        }) {
+        if crate::adapter::allows_device_identifier(&event.address) {
             metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
         }
         if let Some(secret) = &secret.0 {
@@ -66,7 +59,7 @@ fn start_signed_login(
                 RoomContext(event.context),
                 RealmRoom,
                 RealmAdapter,
-                crate::room_connection::RoomAccessScope(common::access_status::AccessScope::Realm(
+                crate::room_connection::RoomAccessScope(crate::access_status::AccessScope::Realm(
                     realm.address.clone(),
                 )),
             ));
@@ -81,10 +74,19 @@ mod tests {
     #[test]
     fn custom_login_endpoints_cannot_receive_the_installation_identifier() {
         for (address, allowed) in [
+            ("https://decentraland.org/login", true),
+            ("https://decentraland.zone/login", true),
             ("https://comms-gatekeeper.decentraland.org/login", true),
             ("https://comms-gatekeeper.decentraland.zone/login", true),
+            ("https://COMMS-GATEKEEPER.DECENTRALAND.ORG/login", true),
             ("https://custom.example/login", false),
             ("https://decentraland.org.attacker.example/login", false),
+            ("https://notdecentraland.org/login", false),
+            ("https://decentraland.today/login", false),
+            ("https://user@decentraland.org/login", false),
+            ("https://decentraland.org/login#fragment", false),
+            ("http://decentraland.org/login", false),
+            ("wss://decentraland.org/login", false),
             ("http://localhost:8000/login", false),
         ] {
             let mut app = App::new();
@@ -104,9 +106,10 @@ mod tests {
             app.update();
             let request = app.world().get::<CredentialRequest>(owner).unwrap();
             let metadata: serde_json::Value = serde_json::from_str(&request.metadata).unwrap();
+            let expected = serde_json::json!(app.world().resource::<AppConfig>().user_id);
             assert_eq!(
-                metadata.get("deviceIdentifier").is_some(),
-                allowed,
+                metadata.get("deviceIdentifier"),
+                allowed.then_some(&expected),
                 "{address}"
             );
         }

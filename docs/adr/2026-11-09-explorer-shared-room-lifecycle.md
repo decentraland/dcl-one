@@ -22,6 +22,11 @@ login. Transient failures retry indefinitely with delays capped at five seconds;
 server retry deadlines are respected. Refreshable sources obtain credentials before
 an application reconnect. Fixed external credentials require replacement after
 rejection. The LiveKit SDK retains responsibility for its internal reconnects.
+Successful admission preserves retry history. One shared observer resets it after
+30 continuous seconds of healthy transport state; interruptions restart that window.
+This keeps brief successful reconnects from repeatedly restarting the one-second
+delay. Island promotion retains the matching retry history until the active room
+resets it. Explicit user and access resets remain immediate.
 Credential responses cannot start another signed-login request; such responses
 are invalid and stop recovery for that room.
 
@@ -36,38 +41,51 @@ backoff. Removal from a credentialed scene or private room remains a scoped deni
 
 All adapter ingress uses one validator. Diagnostics expose safe failure categories
 and connection phases rather than credentials or upstream response bodies. Signed
-login includes the installation identifier only for HTTPS Decentraland endpoints.
+login, scene and private-chat admission include the installation identifier only
+for HTTPS endpoints under decentraland.org or decentraland.zone.
 
 ## Access and media policy
 
-The shared access-status contract lives in `common`. A denied admission stops
-automatic recovery for its scope without declaring a platform-wide ban. Identity
-conflicts in voice and private chat also stop only that room; world-room identity
-conflicts retain the session gate. Identity changes and explicit access updates
-reset the applicable state. Existing social
-updates supply personal blocking in both directions. Private voice waits for a
-successful snapshot for the current identity, and stays muted after a social
-disconnect until that snapshot is available again. A snapshot raced by a newer
-block update is retried rather than overwriting the update.
-An incomplete snapshot preserves valid DM block entries while voice remains muted
-until a complete snapshot arrives. Subscription and playback share one voice-access
-decision. This is client-side enforcement; preventing a modified peer from receiving
-audio also requires enforcement by the room's token issuer.
+The access-status contract lives in `comms` and contains room admission observations.
+A denied admission stops automatic recovery for its scope without declaring a
+platform-wide ban. Identity conflicts in on-demand voice and private chat stop only
+that room; world-room identity conflicts retain the session gate. Identity changes
+and explicit access updates reset the applicable state.
 
-One wallet-owned on-demand voice session uses the shared room lifecycle. Trusted
-SystemApi callers activate, replace or leave it. Activation suppresses proximity
-microphone publication immediately and keeps it suppressed during connection,
-failure and recovery. Explicit deactivation preserves a prior proximity mute and
-never overrides a current mute or unavailable microphone. Identity changes and
-headless cancellation disable capture instead of restoring another session's state.
-Native and browser publication use the same eligibility policy and
-wait for publication cleanup before changing destinations. A failed publication
-retries only after acknowledged cleanup, using the shared backoff capped at five
-seconds. Known native publish denial suppresses attempts until permission returns.
-Browser playback uses one mixer, and room teardown disposes its remote handles and
-playback independently of asynchronous SDK disconnect events. Private chat remains data-only.
-Browser proximity microphones have one gain writer, combining spatial attenuation,
-voice volume and any transmitter multiplier. Other tracks use the scene-volume path.
+The social handler owns personal blocks in both directions and the readiness of its
+snapshot. On-demand voice playback waits for a complete snapshot belonging to the
+current wallet instance. Disconnects and same-address wallet replacements invalidate
+that readiness. A snapshot raced by a newer block update is retried; incomplete
+snapshots retain valid DM block entries without authorizing voice playback.
+Subscription and playback use the same eligibility decision. This receive-side
+filter does not gate microphone publication; preventing a modified peer from
+receiving audio requires enforcement by the room's token issuer.
+
+One wallet-owned on-demand session uses the shared room lifecycle. Trusted SystemApi
+callers activate, replace or leave it. Its reservation suppresses nearby publication
+while connecting, recovering or failed. Leaving preserves the saved nearby mute and
+never overrides a current mute or unavailable microphone. Wallet replacement and
+headless cancellation disable capture without restoring the previous session's state.
+
+Social calls and community streams retain their existing controller, independent
+call mute and call-ending retry budget. The existing owner keeps the microphone
+reservation; call entry and on-demand activation reject competing requests. The call
+controller runs before on-demand activation in the existing RestrictedActions slot,
+so simultaneous requests have a deterministic result. A deferred community start
+retains its reservation. Incoming ringing does not displace an on-demand session.
+
+One publication decision serves both native and browser clients. An active on-demand
+session permits only its selected room; otherwise the call and nearby policies apply.
+An active call suppresses nearby publication without changing its saved preference.
+Every replacement waits for acknowledged capture cleanup. Failed publication uses the
+shared capped retry policy after cleanup; known native publish denial waits for
+permission to return. Private chat remains data-only.
+
+Browser teardown disposes remote playback independently of SDK disconnect events.
+Each audio route has one gain writer: nearby audio combines spatial attenuation,
+voice volume and transmitter gain; on-demand audio is centered and uses voice volume;
+social calls use voice-chat volume; other tracks use scene volume. Native subtracks
+apply scene and voice-chat gain once, while on-demand sounds use the main output.
 
 ## Connectivity feedback
 
@@ -76,14 +94,18 @@ It requires previous connectivity and excludes intentional offline states and he
 worlds. Terminal or suspended rooms are excluded from the required-room sample;
 their failures do not suppress monitoring of other required rooms. A healthy required transport suppresses an
 offline warning. The HUD presents this shared state through the existing engine
-bridge and supplies Retry and Exit controls; it does not implement another recovery
-or probe policy. Debug sections and the authenticated automation surface expose the
-same safe status and actions.
+bridge stream, receiving an initial snapshot and subsequent changes, and supplies
+Retry and Exit controls. It does not implement another recovery or probe policy.
+Debug sections and the authenticated automation surface expose the same safe status
+and actions. One room-state calculation reads the shared failure record, suspension
+marker and transport phase for connectivity and room diagnostics. First admission
+is distinct from recovery; a stable connection resets the failed-attempt count.
 
 ## Consequences
 
-Room adapters remain small and do not acquire independent retry loops. Tests can
-exercise cancellation, access isolation and credential refresh through common ECS
-boundaries. Platform-specific SDK and audio operations remain behind their existing
-facades. Invitations, ringing, community roles and calling product UI can consume
-the voice substrate without introducing a separate transport lifecycle.
+Room adapters share admission and recovery rather than acquiring independent retry
+loops. The social call's bounded redial count remains its call-ending policy.
+Cancellation, scoped access and credential refresh are tested through common ECS
+boundaries; platform-specific SDK and audio operations stay behind existing facades.
+The social call UI and trusted on-demand API remain separate consumers of these
+shared mechanisms. The on-demand API does not add another calling product UI.

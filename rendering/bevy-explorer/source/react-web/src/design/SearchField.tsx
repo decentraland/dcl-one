@@ -13,6 +13,12 @@ interface SearchFieldProps {
   defaultValue?: string
   placeholder?: string
   onChange?: (value: string) => void
+  /** Enter pressed, with the field's text. */
+  onSubmit?: (value: string) => void
+  /** A clear button on the dark variant too (the light one always has it). */
+  clearable?: boolean
+  /** The clear button emptied the field (after `onChange('')`). */
+  onClear?: () => void
 }
 
 export function SearchField({
@@ -21,7 +27,10 @@ export function SearchField({
   value,
   defaultValue = '',
   placeholder = 'Search',
-  onChange
+  onChange,
+  onSubmit,
+  clearable = false,
+  onClear
 }: SearchFieldProps): React.JSX.Element {
   const [internal, setInternal] = useState(defaultValue)
   const isControlled = value !== undefined
@@ -46,9 +55,18 @@ export function SearchField({
         placeholder={placeholder}
         value={v}
         onChange={set}
+        onKeyDown={onSubmit != null ? (e) => { if (e.key === 'Enter') onSubmit(e.currentTarget.value) } : undefined}
       />
-      {variant === 'light' && v !== '' && (
-        <button type="button" className={styles.clear} aria-label="Clear search" onClick={() => setValue('')}>
+      {(variant === 'light' || clearable) && v !== '' && (
+        <button
+          type="button"
+          className={`${styles.clear} ${variant === 'light' ? '' : styles.clearDark}`.trim()}
+          aria-label="Clear search"
+          onClick={() => {
+            setValue('')
+            onClear?.()
+          }}
+        >
           <span className={styles.clearGlyph} aria-hidden="true" />
         </button>
       )}

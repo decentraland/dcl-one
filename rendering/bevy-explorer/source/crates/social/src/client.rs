@@ -34,6 +34,10 @@ use web_time::Duration;
 
 use crate::rpc_websocket::PlatformRpcWebSocket;
 use crate::runtime::SocialRuntime;
+use crate::voice::{
+    self, rpc::StreamMessage, IncomingPrivateCall, PrivateVoiceStatus, PrivateVoiceUpdate,
+    VoiceEvent, VoiceQuery,
+};
 use crate::{DirectChatMessage, DmPrivacy, DmPrivacyOf};
 
 pub enum SocialQuery {
@@ -66,6 +70,8 @@ pub enum SocialQuery {
         addresses: Vec<String>,
         response: tokio::sync::oneshot::Sender<Result<Vec<DmPrivacyOf>, String>>,
     },
+    /// A voice chat procedure; its reply channel is inside.
+    Voice(VoiceQuery),
 }
 
 enum FriendData {
@@ -110,6 +116,8 @@ enum FriendData {
         address: String,
         is_blocked: bool,
     },
+    /// A voice chat update, or the voice subscriptions opening.
+    Voice(VoiceEvent),
     Disconnected,
 }
 
@@ -141,11 +149,15 @@ type BlockUpdateCallback = Box<dyn Fn(&str, bool) + Send + Sync + 'static>;
 type CommunityConnectivityCallback =
     Box<dyn Fn(&str, Address, ConnectivityStatus) + Send + Sync + 'static>;
 
+/// Callback invoked with every voice chat event (see [`VoiceEvent`]).
+type VoiceCallback = Box<dyn Fn(VoiceEvent) + Send + Sync + 'static>;
+
 pub struct SocialClientHandler {
     sender: UnboundedSender<UpsertFriendshipRequest>,
     query_sender: UnboundedSender<SocialQuery>,
     friendship_receiver: UnboundedReceiver<FriendData>,
     owner: Address,
+    pub(super) wallet_changed: Option<bevy::ecs::component::Tick>,
     blocks_ready: bool,
 
     pub is_initialized: bool,
@@ -168,9 +180,11 @@ pub struct SocialClientHandler {
     community_connectivity_callback: CommunityConnectivityCallback,
     #[allow(dead_code)]
     chat_event_callback: Box<dyn Fn(DirectChatMessage) + Send + Sync + 'static>,
+    voice_callback: VoiceCallback,
 }
 
 impl SocialClientHandler {
+    #[allow(clippy::too_many_arguments)]
     pub fn connect(
         wallet: wallet::Wallet,
         runtime: &SocialRuntime,
@@ -182,6 +196,7 @@ impl SocialClientHandler {
             + Send
             + Sync
             + 'static,
+        voice_callback: impl Fn(VoiceEvent) + Send + Sync + 'static,
     ) -> Option<Self> {
         let wallet = wallet.snapshot();
         let owner = wallet.address()?;
@@ -205,6 +220,7 @@ impl SocialClientHandler {
             query_sender: query_sx,
             friendship_receiver: response_rx,
             owner,
+            wallet_changed: None,
             blocks_ready: false,
             sent_requests: Default::default(),
             received_requests: Default::default(),
@@ -219,6 +235,7 @@ impl SocialClientHandler {
             block_update_callback: Box::new(block_update_callback),
             chat_event_callback: Box::new(chat_callback),
             community_connectivity_callback: Box::new(community_connectivity_callback),
+            voice_callback: Box::new(voice_callback),
         })
     }
 
@@ -421,6 +438,12 @@ impl SocialClientHandler {
         Ok(rx)
     }
 
+    /// Runs a voice chat procedure; the answer arrives on the query's own channel.
+    pub fn voice(&self, query: VoiceQuery) -> Result<(), anyhow::Error> {
+        self.query_sender.send(SocialQuery::Voice(query))?;
+        Ok(())
+    }
+
     pub fn chat(&self, _address: Address, _message: String) -> Result<(), anyhow::Error> {
         // DM chat not supported in V2 (no Matrix)
         Err(anyhow!("chat not available in V2"))
@@ -599,10 +622,14 @@ impl SocialClientHandler {
                     }
                     (self.block_update_callback)(&address, is_blocked);
                 }
+                FriendData::Voice(event) => {
+                    (self.voice_callback)(event);
+                }
                 FriendData::Disconnected => {
                     self.is_initialized = false;
                     self.blocks_ready = false;
                     self.friend_status.clear();
+                    (self.voice_callback)(VoiceEvent::Disconnected);
                 }
             }
         }
@@ -688,6 +715,28 @@ fn forward_block_update(
         is_blocked,
     })?;
     Ok(())
+}
+
+async fn finish_social_writer<F, Fut>(
+    result: Result<(), anyhow::Error>,
+    queries: &mut UnboundedReceiver<SocialQuery>,
+    handler_closed: bool,
+    mut dispatch: F,
+) -> Result<(), anyhow::Error>
+where
+    F: FnMut(VoiceQuery) -> Fut,
+    Fut: Future<Output = ()>,
+{
+    if handler_closed {
+        // A pending block snapshot can finish after the handler closes its event receiver.
+        // Send the queued end/reject procedures on every writer exit, including that failure.
+        while let Ok(query) = queries.try_recv() {
+            if let SocialQuery::Voice(query) = query {
+                dispatch(query).await;
+            }
+        }
+    }
+    result
 }
 
 async fn social_socket_handler_inner(
@@ -958,6 +1007,57 @@ async fn run_one_connection(
             None
         }
     };
+    // Subscribe to the voice chat updates (private calls, community rooms), then ask for a call
+    // that rang while we were away, on every (re)connect.
+    // Like community connectivity, a refusal is not fatal: it costs calls, not friends, DMs or
+    // blocks.
+    debug!("[social] Subscribing to voice chat updates...");
+    let private_voice_updates = match service_module
+        .subscribe_to_private_voice_chat_updates()
+        .await
+    {
+        Ok(updates) => Some(updates),
+        Err(e) => {
+            warn!("[social] no private voice chat updates until the next connection: {e:?}");
+            None
+        }
+    };
+    let community_voice_updates = match service_module
+        .subscribe_to_community_voice_chat_updates()
+        .await
+    {
+        Ok(updates) => Some(updates),
+        Err(e) => {
+            warn!("[social] no community voice chat updates until the next connection: {e:?}");
+            None
+        }
+    };
+    debug!("[social] Subscribed to voice chat updates");
+    // calls work only with their update stream: without it a call would never ring or connect
+    if private_voice_updates.is_some() {
+        response_sx.send(FriendData::Voice(VoiceEvent::Connected))?;
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        voice::rpc::dispatch(
+            service_module.as_ref(),
+            VoiceQuery::GetIncomingPrivate { response: tx },
+        )
+        .await;
+        match rx.await {
+            Ok(Ok(Some(IncomingPrivateCall { call_id, caller }))) => {
+                debug!("[social] incoming private call {call_id} from {caller}");
+                response_sx.send(FriendData::Voice(VoiceEvent::Private(PrivateVoiceUpdate {
+                    call_id,
+                    status: PrivateVoiceStatus::Requested,
+                    caller: Some(caller),
+                    callee: None,
+                    connection_url: None,
+                })))?;
+            }
+            Ok(Ok(None)) => (),
+            Ok(Err(e)) => warn!("[social] get_incoming_private_voice_chat_request: {e}"),
+            Err(_) => (),
+        }
+    }
 
     let blocks = load_blocks(service_module.clone()).await?;
     let blocks_ready = blocks.as_ref().is_some_and(|snapshot| snapshot.complete);
@@ -983,342 +1083,355 @@ async fn run_one_connection(
     let response_sx_write = response_sx.clone();
     let f_service_write = async move {
         let response_sx = response_sx_write;
-        loop {
-            tokio::select! {
-                _ = async {
-                    match block_retry.as_mut() {
-                        Some(delay) => delay.await,
-                        None => std::future::pending().await,
+        let result = async {
+            loop {
+                tokio::select! {
+                    _ = async {
+                        match block_retry.as_mut() {
+                            Some(delay) => delay.await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        // Serialize retries with local block/unblock writes.
+                        if retry_block_snapshot(
+                            block_snapshot_dirty,
+                            &response_sx,
+                            load_blocks(service_module.clone()),
+                        ).await? {
+                            block_retry = None;
+                        } else {
+                            block_retry = Some(Box::pin(async_std::task::sleep(BLOCK_SNAPSHOT_RETRY_DELAY)));
+                        }
                     }
-                } => {
-                    // Serialize retries with local block/unblock writes.
-                    if retry_block_snapshot(
-                        block_snapshot_dirty,
-                        &response_sx,
-                        load_blocks(service_module.clone()),
-                    ).await? {
-                        block_retry = None;
-                    } else {
-                        block_retry = Some(Box::pin(async_std::task::sleep(BLOCK_SNAPSHOT_RETRY_DELAY)));
-                    }
-                }
-                req = rx.recv() => {
-                    let Some((req, reply)) = req else { return Result::<(), anyhow::Error>::Ok(()); };
-                    debug!("[social] upsert_friendship request: {req:?}");
-                    let action = req.action.clone();
-                    let resp = service_module
-                        .upsert_friendship(req)
-                        .await
-                        .map_err(|e| anyhow!("[social] upsert_friendship transport error: {e:?}"))?;
-                    debug!("[social] upsert_friendship response: {resp:?}");
+                    req = rx.recv() => {
+                        let Some((req, reply)) = req else {
+                            return Result::<(), anyhow::Error>::Ok(());
+                        };
+                        debug!("[social] upsert_friendship request: {req:?}");
+                        let action = req.action.clone();
+                        let resp = service_module
+                            .upsert_friendship(req)
+                            .await
+                            .map_err(|e| anyhow!("[social] upsert_friendship transport error: {e:?}"))?;
+                        debug!("[social] upsert_friendship response: {resp:?}");
 
-                    // The server doesn't echo our own actions back via the subscription,
-                    // so update local state from the RPC response. The error variants
-                    // are forwarded to the caller so the UI can show a meaningful
-                    // message instead of a silent no-op.
-                    match resp.response {
-                        Some(upsert_friendship_response::Response::Accepted(accepted)) => {
-                            match action {
-                                Some(upsert_friendship_payload::Action::Request(_)) => {
-                                    if let Some(friend) = accepted.friend.as_ref() {
-                                        if let Some(address) = friend.address.as_h160() {
-                                            let req = FriendshipRequestResponse {
-                                                friend: accepted.friend.clone(),
-                                                created_at: accepted.created_at,
-                                                message: accepted.message,
-                                                id: accepted.id,
-                                            };
-                                            let _ = response_sx.send(FriendData::OwnRequestSent { address, req });
+                        // The server doesn't echo our own actions back via the subscription,
+                        // so update local state from the RPC response. The error variants
+                        // are forwarded to the caller so the UI can show a meaningful
+                        // message instead of a silent no-op.
+                        match resp.response {
+                            Some(upsert_friendship_response::Response::Accepted(accepted)) => {
+                                match action {
+                                    Some(upsert_friendship_payload::Action::Request(_)) => {
+                                        if let Some(friend) = accepted.friend.as_ref() {
+                                            if let Some(address) = friend.address.as_h160() {
+                                                let req = FriendshipRequestResponse {
+                                                    friend: accepted.friend.clone(),
+                                                    created_at: accepted.created_at,
+                                                    message: accepted.message,
+                                                    id: accepted.id,
+                                                };
+                                                let _ = response_sx.send(FriendData::OwnRequestSent { address, req });
+                                            }
                                         }
                                     }
-                                }
-                                Some(upsert_friendship_payload::Action::Accept(AcceptPayload { user: Some(user) })) => {
-                                    if let (Some(address), Some(profile)) = (user.address.as_h160(), accepted.friend) {
-                                        let _ = response_sx.send(FriendData::OwnRequestAccepted { address, profile });
+                                    Some(upsert_friendship_payload::Action::Accept(AcceptPayload { user: Some(user) })) => {
+                                        if let (Some(address), Some(profile)) = (user.address.as_h160(), accepted.friend) {
+                                            let _ = response_sx.send(FriendData::OwnRequestAccepted { address, profile });
+                                        }
                                     }
+                                    _ => {}
                                 }
-                                _ => {}
+                                let _ = reply.send(Ok(()));
                             }
-                            let _ = reply.send(Ok(()));
-                        }
-                        Some(upsert_friendship_response::Response::InvalidFriendshipAction(e)) => {
-                            let msg = e.message.unwrap_or_default();
-                            warn!("[social] upsert_friendship rejected: invalidFriendshipAction: {msg}");
-                            let _ = reply.send(Err(format!("invalidFriendshipAction: {msg}")));
-                        }
-                        Some(upsert_friendship_response::Response::InvalidRequest(e)) => {
-                            let msg = e.message.unwrap_or_default();
-                            warn!("[social] upsert_friendship rejected: invalidRequest: {msg}");
-                            let _ = reply.send(Err(format!("invalidRequest: {msg}")));
-                        }
-                        Some(upsert_friendship_response::Response::InternalServerError(e)) => {
-                            let msg = e.message.unwrap_or_default();
-                            warn!("[social] upsert_friendship internal server error: {msg}");
-                            let _ = reply.send(Err(format!("internalServerError: {msg}")));
-                        }
-                        None => {
-                            warn!("[social] upsert_friendship returned empty response");
-                            let _ = reply.send(Err("empty response from upsert_friendship".to_string()));
+                            Some(upsert_friendship_response::Response::InvalidFriendshipAction(e)) => {
+                                let msg = e.message.unwrap_or_default();
+                                warn!("[social] upsert_friendship rejected: invalidFriendshipAction: {msg}");
+                                let _ = reply.send(Err(format!("invalidFriendshipAction: {msg}")));
+                            }
+                            Some(upsert_friendship_response::Response::InvalidRequest(e)) => {
+                                let msg = e.message.unwrap_or_default();
+                                warn!("[social] upsert_friendship rejected: invalidRequest: {msg}");
+                                let _ = reply.send(Err(format!("invalidRequest: {msg}")));
+                            }
+                            Some(upsert_friendship_response::Response::InternalServerError(e)) => {
+                                let msg = e.message.unwrap_or_default();
+                                warn!("[social] upsert_friendship internal server error: {msg}");
+                                let _ = reply.send(Err(format!("internalServerError: {msg}")));
+                            }
+                            None => {
+                                warn!("[social] upsert_friendship returned empty response");
+                                let _ = reply.send(Err("empty response from upsert_friendship".to_string()));
+                            }
                         }
                     }
-                }
-                query = query_rx.recv() => {
-                    let Some(query) = query else { return Result::<(), anyhow::Error>::Ok(()); };
-                    match query {
-                        SocialQuery::GetMutualFriends { address, response } => {
-                            debug!("[social] getMutualFriends request for {address}");
-                            let mut all_friends = Vec::new();
-                            let mut offset = 0;
-                            let mut result: Result<Vec<FriendProfile>, String> = Ok(Vec::new());
-                            loop {
-                                match service_module.get_mutual_friends(GetMutualFriendsPayload {
+                    query = query_rx.recv() => {
+                        let Some(query) = query else { return Result::<(), anyhow::Error>::Ok(()); };
+                        match query {
+                            SocialQuery::GetMutualFriends { address, response } => {
+                                debug!("[social] getMutualFriends request for {address}");
+                                let mut all_friends = Vec::new();
+                                let mut offset = 0;
+                                let mut result: Result<Vec<FriendProfile>, String> = Ok(Vec::new());
+                                loop {
+                                    match service_module.get_mutual_friends(GetMutualFriendsPayload {
+                                        user: Some(User { address: address.clone() }),
+                                        pagination: Some(Pagination { limit: PAGE_SIZE, offset }),
+                                    }).await {
+                                        Ok(resp) => {
+                                            let count = resp.friends.len();
+                                            all_friends.extend(resp.friends);
+                                            let total = resp.pagination_data.as_ref().map(|p| p.total).unwrap_or(0);
+                                            offset += PAGE_SIZE;
+                                            if offset >= total || count == 0 { break; }
+                                        }
+                                        Err(e) => {
+                                            warn!("[social] getMutualFriends error: {e:?}");
+                                            result = Err(format!("{e:?}"));
+                                            break;
+                                        }
+                                    }
+                                }
+                                if result.is_ok() {
+                                    debug!("[social] getMutualFriends: {} mutual friends", all_friends.len());
+                                    let _ = response.send(Ok(all_friends));
+                                } else {
+                                    let _ = response.send(result);
+                                }
+                            }
+                            SocialQuery::BlockUser { address, response } => {
+                                debug!("[social] blockUser request for {address}");
+                                match service_module.block_user(BlockUserPayload {
                                     user: Some(User { address: address.clone() }),
-                                    pagination: Some(Pagination { limit: PAGE_SIZE, offset }),
                                 }).await {
                                     Ok(resp) => {
-                                        let count = resp.friends.len();
-                                        all_friends.extend(resp.friends);
-                                        let total = resp.pagination_data.as_ref().map(|p| p.total).unwrap_or(0);
-                                        offset += PAGE_SIZE;
-                                        if offset >= total || count == 0 { break; }
+                                        use dcl_component::proto_components::social_service::v2::block_user_response::Response;
+                                        match resp.response {
+                                            Some(Response::Ok(_)) => {
+                                                debug!("[social] blockUser success for {address}");
+                                                if let Some(addr) = address.as_h160() {
+                                                    let _ = response_sx.send(FriendData::OwnBlock { address: addr });
+                                                }
+                                                let _ = response.send(Ok(()));
+                                            }
+                                            Some(Response::InternalServerError(e)) => {
+                                                let msg = e.message.unwrap_or_default();
+                                                warn!("[social] blockUser internal error: {msg}");
+                                                let _ = response.send(Err(msg));
+                                            }
+                                            Some(Response::InvalidRequest(e)) => {
+                                                let msg = e.message.unwrap_or_default();
+                                                warn!("[social] blockUser invalid request: {msg}");
+                                                let _ = response.send(Err(msg));
+                                            }
+                                            Some(Response::ProfileNotFound(e)) => {
+                                                let msg = e.message.unwrap_or_else(|| "profile not found".to_string());
+                                                warn!("[social] blockUser profile not found: {msg}");
+                                                let _ = response.send(Err(msg));
+                                            }
+                                            None => {
+                                                let _ = response.send(Err("empty response".to_string()));
+                                            }
+                                        }
                                     }
                                     Err(e) => {
-                                        warn!("[social] getMutualFriends error: {e:?}");
-                                        result = Err(format!("{e:?}"));
-                                        break;
+                                        warn!("[social] blockUser error: {e:?}");
+                                        let _ = response.send(Err(format!("{e:?}")));
                                     }
                                 }
                             }
-                            if result.is_ok() {
-                                debug!("[social] getMutualFriends: {} mutual friends", all_friends.len());
-                                let _ = response.send(Ok(all_friends));
-                            } else {
-                                let _ = response.send(result);
-                            }
-                        }
-                        SocialQuery::BlockUser { address, response } => {
-                            debug!("[social] blockUser request for {address}");
-                            match service_module.block_user(BlockUserPayload {
-                                user: Some(User { address: address.clone() }),
-                            }).await {
-                                Ok(resp) => {
-                                    use dcl_component::proto_components::social_service::v2::block_user_response::Response;
-                                    match resp.response {
-                                        Some(Response::Ok(_)) => {
-                                            debug!("[social] blockUser success for {address}");
-                                            if let Some(addr) = address.as_h160() {
-                                                let _ = response_sx.send(FriendData::OwnBlock { address: addr });
-                                            }
-                                            let _ = response.send(Ok(()));
-                                        }
-                                        Some(Response::InternalServerError(e)) => {
-                                            let msg = e.message.unwrap_or_default();
-                                            warn!("[social] blockUser internal error: {msg}");
-                                            let _ = response.send(Err(msg));
-                                        }
-                                        Some(Response::InvalidRequest(e)) => {
-                                            let msg = e.message.unwrap_or_default();
-                                            warn!("[social] blockUser invalid request: {msg}");
-                                            let _ = response.send(Err(msg));
-                                        }
-                                        Some(Response::ProfileNotFound(e)) => {
-                                            let msg = e.message.unwrap_or_else(|| "profile not found".to_string());
-                                            warn!("[social] blockUser profile not found: {msg}");
-                                            let _ = response.send(Err(msg));
-                                        }
-                                        None => {
-                                            let _ = response.send(Err("empty response".to_string()));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("[social] blockUser error: {e:?}");
-                                    let _ = response.send(Err(format!("{e:?}")));
-                                }
-                            }
-                        }
-                        SocialQuery::UnblockUser { address, response } => {
-                            debug!("[social] unblockUser request for {address}");
-                            match service_module.unblock_user(UnblockUserPayload {
-                                user: Some(User { address: address.clone() }),
-                            }).await {
-                                Ok(resp) => {
-                                    use dcl_component::proto_components::social_service::v2::unblock_user_response::Response;
-                                    match resp.response {
-                                        Some(Response::Ok(_)) => {
-                                            debug!("[social] unblockUser success for {address}");
-                                            if let Some(addr) = address.as_h160() {
-                                                let _ = response_sx.send(FriendData::OwnUnblock { address: addr });
-                                            }
-                                            let _ = response.send(Ok(()));
-                                        }
-                                        Some(Response::InternalServerError(e)) => {
-                                            let msg = e.message.unwrap_or_default();
-                                            warn!("[social] unblockUser internal error: {msg}");
-                                            let _ = response.send(Err(msg));
-                                        }
-                                        Some(Response::InvalidRequest(e)) => {
-                                            let msg = e.message.unwrap_or_default();
-                                            warn!("[social] unblockUser invalid request: {msg}");
-                                            let _ = response.send(Err(msg));
-                                        }
-                                        Some(Response::ProfileNotFound(e)) => {
-                                            let msg = e.message.unwrap_or_else(|| "profile not found".to_string());
-                                            warn!("[social] unblockUser profile not found: {msg}");
-                                            let _ = response.send(Err(msg));
-                                        }
-                                        None => {
-                                            let _ = response.send(Err("empty response".to_string()));
-                                        }
-                                    }
-                                }
-                                Err(e) => {
-                                    warn!("[social] unblockUser error: {e:?}");
-                                    let _ = response.send(Err(format!("{e:?}")));
-                                }
-                            }
-                        }
-                        SocialQuery::GetBlockedUsers { response } => {
-                            debug!("[social] getBlockedUsers request");
-                            let mut all_profiles = Vec::new();
-                            let mut offset = 0;
-                            let mut result: Result<Vec<FriendProfile>, String> = Ok(Vec::new());
-                            loop {
-                                match service_module.get_blocked_users(GetBlockedUsersPayload {
-                                    pagination: Some(Pagination { limit: PAGE_SIZE, offset }),
+                            SocialQuery::UnblockUser { address, response } => {
+                                debug!("[social] unblockUser request for {address}");
+                                match service_module.unblock_user(UnblockUserPayload {
+                                    user: Some(User { address: address.clone() }),
                                 }).await {
                                     Ok(resp) => {
-                                        let count = resp.profiles.len();
-                                        // Convert BlockedUserProfile to FriendProfile
-                                        for blocked in &resp.profiles {
-                                            all_profiles.push(FriendProfile {
-                                                address: blocked.address.clone(),
-                                                name: blocked.name.clone(),
-                                                has_claimed_name: blocked.has_claimed_name,
-                                                profile_picture_url: blocked.profile_picture_url.clone(),
-                                                name_color: blocked.name_color,
-                                            });
+                                        use dcl_component::proto_components::social_service::v2::unblock_user_response::Response;
+                                        match resp.response {
+                                            Some(Response::Ok(_)) => {
+                                                debug!("[social] unblockUser success for {address}");
+                                                if let Some(addr) = address.as_h160() {
+                                                    let _ = response_sx.send(FriendData::OwnUnblock { address: addr });
+                                                }
+                                                let _ = response.send(Ok(()));
+                                            }
+                                            Some(Response::InternalServerError(e)) => {
+                                                let msg = e.message.unwrap_or_default();
+                                                warn!("[social] unblockUser internal error: {msg}");
+                                                let _ = response.send(Err(msg));
+                                            }
+                                            Some(Response::InvalidRequest(e)) => {
+                                                let msg = e.message.unwrap_or_default();
+                                                warn!("[social] unblockUser invalid request: {msg}");
+                                                let _ = response.send(Err(msg));
+                                            }
+                                            Some(Response::ProfileNotFound(e)) => {
+                                                let msg = e.message.unwrap_or_else(|| "profile not found".to_string());
+                                                warn!("[social] unblockUser profile not found: {msg}");
+                                                let _ = response.send(Err(msg));
+                                            }
+                                            None => {
+                                                let _ = response.send(Err("empty response".to_string()));
+                                            }
                                         }
-                                        let total = resp.pagination_data.as_ref().map(|p| p.total).unwrap_or(0);
-                                        offset += PAGE_SIZE;
-                                        if offset >= total || count == 0 { break; }
                                     }
                                     Err(e) => {
-                                        warn!("[social] getBlockedUsers error: {e:?}");
-                                        result = Err(format!("{e:?}"));
-                                        break;
+                                        warn!("[social] unblockUser error: {e:?}");
+                                        let _ = response.send(Err(format!("{e:?}")));
                                     }
                                 }
                             }
-                            if result.is_ok() {
-                                debug!("[social] getBlockedUsers: {} blocked users", all_profiles.len());
-                                let _ = response.send(Ok(all_profiles));
-                            } else {
+                            SocialQuery::GetBlockedUsers { response } => {
+                                debug!("[social] getBlockedUsers request");
+                                let mut all_profiles = Vec::new();
+                                let mut offset = 0;
+                                let mut result: Result<Vec<FriendProfile>, String> = Ok(Vec::new());
+                                loop {
+                                    match service_module.get_blocked_users(GetBlockedUsersPayload {
+                                        pagination: Some(Pagination { limit: PAGE_SIZE, offset }),
+                                    }).await {
+                                        Ok(resp) => {
+                                            let count = resp.profiles.len();
+                                            // Convert BlockedUserProfile to FriendProfile
+                                            for blocked in &resp.profiles {
+                                                all_profiles.push(FriendProfile {
+                                                    address: blocked.address.clone(),
+                                                    name: blocked.name.clone(),
+                                                    has_claimed_name: blocked.has_claimed_name,
+                                                    profile_picture_url: blocked.profile_picture_url.clone(),
+                                                    name_color: blocked.name_color,
+                                                });
+                                            }
+                                            let total = resp.pagination_data.as_ref().map(|p| p.total).unwrap_or(0);
+                                            offset += PAGE_SIZE;
+                                            if offset >= total || count == 0 { break; }
+                                        }
+                                        Err(e) => {
+                                            warn!("[social] getBlockedUsers error: {e:?}");
+                                            result = Err(format!("{e:?}"));
+                                            break;
+                                        }
+                                    }
+                                }
+                                if result.is_ok() {
+                                    debug!("[social] getBlockedUsers: {} blocked users", all_profiles.len());
+                                    let _ = response.send(Ok(all_profiles));
+                                } else {
+                                    let _ = response.send(result);
+                                }
+                            }
+                            SocialQuery::GetBlockingStatus { response } => {
+                                debug!("[social] getBlockingStatus request");
+                                match service_module.get_blocking_status().await {
+                                    Ok(resp) => {
+                                        debug!(
+                                            "[social] getBlockingStatus: {} blocked, {} blocked-by",
+                                            resp.blocked_users.len(),
+                                            resp.blocked_by_users.len()
+                                        );
+                                        let _ = response.send(Ok((resp.blocked_users, resp.blocked_by_users)));
+                                    }
+                                    Err(e) => {
+                                        warn!("[social] getBlockingStatus error: {e:?}");
+                                        let _ = response.send(Err(format!("{e:?}")));
+                                    }
+                                }
+                            }
+                            SocialQuery::GetSocialSettings { response } => {
+                                debug!("[social] getSocialSettings request");
+                                let result = match service_module.get_social_settings().await {
+                                    Ok(resp) => match resp.response {
+                                        Some(get_social_settings_response::Response::Ok(ok)) => {
+                                            Ok(ok
+                                                .settings
+                                                .unwrap_or_default()
+                                                .private_messages_privacy()
+                                                .into())
+                                        }
+                                        other => Err(format!("{other:?}")),
+                                    },
+                                    Err(e) => Err(format!("{e:?}")),
+                                };
+                                if let Err(e) = &result {
+                                    warn!("[social] getSocialSettings error: {e}");
+                                }
                                 let _ = response.send(result);
                             }
-                        }
-                        SocialQuery::GetBlockingStatus { response } => {
-                            debug!("[social] getBlockingStatus request");
-                            match service_module.get_blocking_status().await {
-                                Ok(resp) => {
-                                    debug!(
-                                        "[social] getBlockingStatus: {} blocked, {} blocked-by",
-                                        resp.blocked_users.len(),
-                                        resp.blocked_by_users.len()
-                                    );
-                                    let _ = response.send(Ok((resp.blocked_users, resp.blocked_by_users)));
-                                }
-                                Err(e) => {
-                                    warn!("[social] getBlockingStatus error: {e:?}");
-                                    let _ = response.send(Err(format!("{e:?}")));
-                                }
-                            }
-                        }
-                        SocialQuery::GetSocialSettings { response } => {
-                            debug!("[social] getSocialSettings request");
-                            let result = match service_module.get_social_settings().await {
-                                Ok(resp) => match resp.response {
-                                    Some(get_social_settings_response::Response::Ok(ok)) => {
-                                        Ok(ok
-                                            .settings
-                                            .unwrap_or_default()
-                                            .private_messages_privacy()
-                                            .into())
+                            SocialQuery::UpsertSocialSettings { privacy, response } => {
+                                debug!("[social] upsertSocialSettings {privacy:?}");
+                                let payload = UpsertSocialSettingsPayload {
+                                    private_messages_privacy: Some(PrivateMessagePrivacySetting::from(privacy) as i32),
+                                    ..Default::default()
+                                };
+                                let result = match service_module.upsert_social_settings(payload).await
+                                {
+                                    Ok(resp) => match resp.response {
+                                        Some(upsert_social_settings_response::Response::Ok(
+                                            settings,
+                                        )) => {
+                                            Ok(settings.private_messages_privacy().into())
+                                        }
+                                        other => Err(format!("{other:?}")),
+                                    },
+                                    Err(e) => Err(format!("{e:?}")),
+                                };
+                                match &result {
+                                    Ok(privacy) => {
+                                        let _ = response_sx.send(FriendData::OwnDmPrivacy(*privacy));
                                     }
-                                    other => Err(format!("{other:?}")),
-                                },
-                                Err(e) => Err(format!("{e:?}")),
-                            };
-                            if let Err(e) = &result {
-                                warn!("[social] getSocialSettings error: {e}");
-                            }
-                            let _ = response.send(result);
-                        }
-                        SocialQuery::UpsertSocialSettings { privacy, response } => {
-                            debug!("[social] upsertSocialSettings {privacy:?}");
-                            let payload = UpsertSocialSettingsPayload {
-                                private_messages_privacy: Some(PrivateMessagePrivacySetting::from(privacy) as i32),
-                                ..Default::default()
-                            };
-                            let result = match service_module.upsert_social_settings(payload).await
-                            {
-                                Ok(resp) => match resp.response {
-                                    Some(upsert_social_settings_response::Response::Ok(
-                                        settings,
-                                    )) => {
-                                        Ok(settings.private_messages_privacy().into())
-                                    }
-                                    other => Err(format!("{other:?}")),
-                                },
-                                Err(e) => Err(format!("{e:?}")),
-                            };
-                            match &result {
-                                Ok(privacy) => {
-                                    let _ = response_sx.send(FriendData::OwnDmPrivacy(*privacy));
+                                    Err(e) => warn!("[social] upsertSocialSettings error: {e}"),
                                 }
-                                Err(e) => warn!("[social] upsertSocialSettings error: {e}"),
+                                let _ = response.send(result);
                             }
-                            let _ = response.send(result);
-                        }
-                        SocialQuery::GetPrivateMessagesSettings {
-                            addresses,
-                            response,
-                        } => {
-                            debug!("[social] getPrivateMessagesSettings for {addresses:?}");
-                            let payload = GetPrivateMessagesSettingsPayload {
-                                user: addresses
-                                    .into_iter()
-                                    .map(|address| User { address })
-                                    .collect(),
-                            };
-                            let result = match service_module
-                                .get_private_messages_settings(payload)
-                                .await
-                            {
-                                Ok(resp) => match resp.response {
-                                    Some(get_private_messages_settings_response::Response::Ok(
-                                        ok,
-                                    )) => Ok(ok
-                                        .settings
+                            SocialQuery::Voice(query) => {
+                                debug!("[social] voice query: {query:?}");
+                                voice::rpc::dispatch(service_module.as_ref(), query).await;
+                            }
+                            SocialQuery::GetPrivateMessagesSettings {
+                                addresses,
+                                response,
+                            } => {
+                                debug!("[social] getPrivateMessagesSettings for {addresses:?}");
+                                let payload = GetPrivateMessagesSettingsPayload {
+                                    user: addresses
                                         .into_iter()
-                                        .map(|s| DmPrivacyOf {
-                                            privacy: s.private_messages_privacy().into(),
-                                            address: s.user.unwrap_or_default().address,
-                                        })
-                                        .collect()),
-                                    other => Err(format!("{other:?}")),
-                                },
-                                Err(e) => Err(format!("{e:?}")),
-                            };
-                            if let Err(e) = &result {
-                                warn!("[social] getPrivateMessagesSettings error: {e}");
+                                        .map(|address| User { address })
+                                        .collect(),
+                                };
+                                let result = match service_module
+                                    .get_private_messages_settings(payload)
+                                    .await
+                                {
+                                    Ok(resp) => match resp.response {
+                                        Some(get_private_messages_settings_response::Response::Ok(
+                                            ok,
+                                        )) => Ok(ok
+                                            .settings
+                                            .into_iter()
+                                            .map(|s| DmPrivacyOf {
+                                                privacy: s.private_messages_privacy().into(),
+                                                address: s.user.unwrap_or_default().address,
+                                            })
+                                            .collect()),
+                                        other => Err(format!("{other:?}")),
+                                    },
+                                    Err(e) => Err(format!("{e:?}")),
+                                };
+                                if let Err(e) = &result {
+                                    warn!("[social] getPrivateMessagesSettings error: {e}");
+                                }
+                                let _ = response.send(result);
                             }
-                            let _ = response.send(result);
                         }
                     }
                 }
             }
         }
+        .await;
+        finish_social_writer(result, query_rx, rx.is_closed(), |query| {
+            voice::rpc::dispatch(service_module.as_ref(), query)
+        })
+        .await
     }
     .fuse();
 
@@ -1416,6 +1529,53 @@ async fn run_one_connection(
     }
     .fuse();
 
+    // Inbound: private voice chat updates (a call ringing, accepted, rejected, ended, expired)
+    let sx_private_voice = response_sx.clone();
+    let f_private_voice_read = async move {
+        let Some(mut private_voice_updates) = private_voice_updates else {
+            return std::future::pending::<Result<(), anyhow::Error>>().await;
+        };
+        while let Some(update) = private_voice_updates.next().await {
+            debug!(
+                "[social] Received private voice update: {}",
+                common::util::redact_access_token(&format!("{update:?}"))
+            );
+            match voice::rpc::private_update(update) {
+                StreamMessage::Update(update) => sx_private_voice
+                    .send(FriendData::Voice(VoiceEvent::Private(update)))
+                    .map_err(dbgerr)?,
+                StreamMessage::Unknown(status) => {
+                    warn!("[social] private voice update with an unknown status {status}");
+                }
+                StreamMessage::Closed => break,
+            }
+        }
+        Err(anyhow!("[social] private voice update stream ended"))
+    }
+    .fuse();
+
+    // Inbound: community voice chat updates (a community room started or ended)
+    let sx_community_voice = response_sx.clone();
+    let f_community_voice_read = async move {
+        let Some(mut community_voice_updates) = community_voice_updates else {
+            return std::future::pending::<Result<(), anyhow::Error>>().await;
+        };
+        while let Some(update) = community_voice_updates.next().await {
+            debug!("[social] Received community voice update: {update:?}");
+            match voice::rpc::community_update(update) {
+                StreamMessage::Update(update) => sx_community_voice
+                    .send(FriendData::Voice(VoiceEvent::Community(update)))
+                    .map_err(dbgerr)?,
+                StreamMessage::Unknown(status) => {
+                    warn!("[social] community voice update with an unknown status {status}");
+                }
+                StreamMessage::Closed => break,
+            }
+        }
+        Err(anyhow!("[social] community voice update stream ended"))
+    }
+    .fuse();
+
     // Keepalive every 30s. Both proxies / load balancers and the server itself may
     // close idle connections; this also surfaces broken sockets promptly (the send
     // will fail rather than appearing healthy).
@@ -1472,6 +1632,8 @@ async fn run_one_connection(
         f_connectivity_read,
         f_community_connectivity_read,
         f_block_read,
+        f_private_voice_read,
+        f_community_voice_read,
         f_keepalive,
         f_ws_closed
     );
@@ -1481,6 +1643,8 @@ async fn run_one_connection(
         r = f_connectivity_read => r,
         r = f_community_connectivity_read => r,
         r = f_block_read => r,
+        r = f_private_voice_read => r,
+        r = f_community_voice_read => r,
         r = f_keepalive => r,
         r = f_ws_closed => r,
     }
@@ -1492,8 +1656,38 @@ pub type FriendshipEventBody = friendship_update::Update;
 mod block_snapshot_tests {
     use super::*;
     use crate::{update_social_client, SocialClient, SocialStateChanged};
+    use bevy::ecs::system::RunSystemOnce;
     use bevy::prelude::*;
-    use common::access_status::AccessStatus;
+
+    fn handler(
+        owner: Address,
+        wallet_changed: bevy::ecs::component::Tick,
+        friendship_receiver: UnboundedReceiver<FriendData>,
+    ) -> SocialClientHandler {
+        SocialClientHandler {
+            sender: mpsc::unbounded_channel().0,
+            query_sender: mpsc::unbounded_channel().0,
+            friendship_receiver,
+            owner,
+            wallet_changed: Some(wallet_changed),
+            blocks_ready: false,
+            is_initialized: false,
+            sent_requests: Default::default(),
+            received_requests: Default::default(),
+            friends: Default::default(),
+            friend_status: Default::default(),
+            blocked: Default::default(),
+            blocked_by: Default::default(),
+            dm_privacy: Default::default(),
+            unread_messages: Default::default(),
+            friend_event_callback: Box::new(|_| {}),
+            connectivity_callback: Box::new(|_, _| {}),
+            block_update_callback: Box::new(|_, _| {}),
+            community_connectivity_callback: Box::new(|_, _, _| {}),
+            chat_event_callback: Box::new(|_| {}),
+            voice_callback: Box::new(|_| {}),
+        }
+    }
 
     fn app() -> (App, UnboundedSender<FriendData>, Address) {
         let mut wallet = wallet::Wallet::default();
@@ -1501,38 +1695,35 @@ mod block_snapshot_tests {
         let owner = wallet.address().unwrap();
         let (events, friendship_receiver) = mpsc::unbounded_channel();
         let mut app = App::new();
-        app.insert_resource(wallet)
-            .insert_resource(SocialClient(Some(SocialClientHandler {
-                sender: mpsc::unbounded_channel().0,
-                query_sender: mpsc::unbounded_channel().0,
-                friendship_receiver,
-                owner,
-                blocks_ready: false,
-                is_initialized: false,
-                sent_requests: Default::default(),
-                received_requests: Default::default(),
-                friends: Default::default(),
-                friend_status: Default::default(),
-                blocked: Default::default(),
-                blocked_by: Default::default(),
-                dm_privacy: Default::default(),
-                unread_messages: Default::default(),
-                friend_event_callback: Box::new(|_| {}),
-                connectivity_callback: Box::new(|_, _| {}),
-                block_update_callback: Box::new(|_, _| {}),
-                community_connectivity_callback: Box::new(|_, _, _| {}),
-                chat_event_callback: Box::new(|_| {}),
-            })))
-            .init_resource::<AccessStatus>()
-            .add_event::<SocialStateChanged>()
-            .add_systems(PostUpdate, update_social_client);
+        app.insert_resource(wallet);
+        let wallet_changed = app.world().resource_ref::<wallet::Wallet>().last_changed();
+        app.insert_resource(SocialClient(Some(handler(
+            owner,
+            wallet_changed,
+            friendship_receiver,
+        ))))
+        .add_event::<SocialStateChanged>()
+        .add_systems(PostUpdate, update_social_client);
         (app, events, owner)
     }
 
-    fn allows_voice(app: &App, owner: Address, peer: Address) -> bool {
-        app.world()
-            .resource::<AccessStatus>()
-            .allows_voice_from(Some(owner), peer)
+    fn allows_voice(app: &mut App, owner: Address, peer: Address) -> bool {
+        app.world_mut()
+            .run_system_once(
+                move |social: Res<SocialClient>, wallet: Res<wallet::Wallet>| {
+                    assert_eq!(wallet.address(), Some(owner));
+                    social.allows_voice_from(&wallet, peer)
+                },
+            )
+            .unwrap()
+    }
+
+    fn blocks_ready(app: &mut App) -> bool {
+        app.world_mut()
+            .run_system_once(|social: Res<SocialClient>, wallet: Res<wallet::Wallet>| {
+                social.blocks_ready_for(&wallet)
+            })
+            .unwrap()
     }
 
     fn init(blocks: Option<BlockSnapshot>) -> FriendData {
@@ -1553,7 +1744,7 @@ mod block_snapshot_tests {
     }
 
     fn assert_dm_blocks_and_no_voice(
-        app: &App,
+        app: &mut App,
         owner: Address,
         blocked: Address,
         blocked_by: Address,
@@ -1562,10 +1753,7 @@ mod block_snapshot_tests {
         assert!(handler.is_initialized);
         assert!(handler.blocked.contains(&blocked));
         assert!(handler.blocked_by.contains(&blocked_by));
-        assert!(!app
-            .world()
-            .resource::<AccessStatus>()
-            .blocks_ready_for(Some(owner)));
+        assert!(!blocks_ready(app));
         assert!(!allows_voice(app, owner, Address::from([9; 20])));
     }
 
@@ -1580,7 +1768,7 @@ mod block_snapshot_tests {
         app.update();
         app.update();
 
-        assert_dm_blocks_and_no_voice(&app, owner, blocked, blocked_by);
+        assert_dm_blocks_and_no_voice(&mut app, owner, blocked, blocked_by);
     }
 
     #[test]
@@ -1598,7 +1786,7 @@ mod block_snapshot_tests {
         .unwrap();
         assert!(!completed);
         app.update();
-        assert_dm_blocks_and_no_voice(&app, owner, blocked, blocked_by);
+        assert_dm_blocks_and_no_voice(&mut app, owner, blocked, blocked_by);
 
         let newer_block = Address::from([5; 20]);
         let completed = async_std::task::block_on(retry_block_snapshot(&dirty, &events, async {
@@ -1635,10 +1823,10 @@ mod block_snapshot_tests {
         .unwrap();
         assert!(completed);
         app.update();
-        assert!(allows_voice(&app, owner, Address::from([9; 20])));
-        assert!(allows_voice(&app, owner, blocked));
-        assert!(!allows_voice(&app, owner, blocked_by));
-        assert!(!allows_voice(&app, owner, newer_block));
+        assert!(allows_voice(&mut app, owner, Address::from([9; 20])));
+        assert!(allows_voice(&mut app, owner, blocked));
+        assert!(!allows_voice(&mut app, owner, blocked_by));
+        assert!(!allows_voice(&mut app, owner, newer_block));
     }
 
     #[test]
@@ -1656,7 +1844,7 @@ mod block_snapshot_tests {
                 .unwrap()
                 .is_initialized
         );
-        assert!(!allows_voice(&app, owner, peer));
+        assert!(!allows_voice(&mut app, owner, peer));
 
         let empty_snapshot = || BlockSnapshot {
             blocked: HashSet::new(),
@@ -1683,7 +1871,7 @@ mod block_snapshot_tests {
             retried.unwrap()
         });
         app.update();
-        assert!(!allows_voice(&app, owner, peer));
+        assert!(!allows_voice(&mut app, owner, peer));
         assert!(!retried, "the block update raced the snapshot reply");
 
         let blocked_snapshot = BlockSnapshot {
@@ -1698,11 +1886,8 @@ mod block_snapshot_tests {
             .unwrap()
         );
         app.update();
-        assert!(app
-            .world()
-            .resource::<AccessStatus>()
-            .blocks_ready_for(Some(owner)));
-        assert!(!allows_voice(&app, owner, peer));
+        assert!(blocks_ready(&mut app));
+        assert!(!allows_voice(&mut app, owner, peer));
 
         events
             .send(FriendData::BlockUpdate {
@@ -1711,19 +1896,294 @@ mod block_snapshot_tests {
             })
             .unwrap();
         app.update();
-        assert!(allows_voice(&app, owner, peer));
+        assert!(allows_voice(&mut app, owner, peer));
 
         events.send(FriendData::Disconnected).unwrap();
         app.update();
-        assert!(!allows_voice(&app, owner, peer));
+        assert!(!allows_voice(&mut app, owner, peer));
 
         events.send(init(Some(empty_snapshot()))).unwrap();
         app.update();
-        assert!(allows_voice(&app, owner, peer));
+        assert!(allows_voice(&mut app, owner, peer));
 
         drop(events);
         app.update();
-        assert!(!allows_voice(&app, owner, peer));
+        assert!(!allows_voice(&mut app, owner, peer));
+    }
+
+    fn empty_snapshot() -> BlockSnapshot {
+        BlockSnapshot {
+            blocked: HashSet::new(),
+            blocked_by: HashSet::new(),
+            complete: true,
+        }
+    }
+
+    #[test]
+    fn same_address_wallet_replacement_rejects_old_snapshots_before_handler_replacement() {
+        let (mut app, old_events, owner) = app();
+        let peer = Address::from([9; 20]);
+        old_events.send(init(Some(empty_snapshot()))).unwrap();
+        app.update();
+        assert!(allows_voice(&mut app, owner, peer));
+
+        app.world_mut()
+            .resource_mut::<wallet::Wallet>()
+            .finalize_as_guest_with_seed([12; 32]);
+        assert_eq!(
+            app.world().resource::<wallet::Wallet>().address(),
+            Some(owner)
+        );
+        // Check before PostUpdate has a chance to replace the old handler.
+        assert!(!allows_voice(&mut app, owner, peer));
+        old_events
+            .send(FriendData::BlockSnapshot(empty_snapshot()))
+            .unwrap();
+        app.update();
+        app.update();
+        assert!(!allows_voice(&mut app, owner, peer));
+
+        let wallet_changed = app.world().resource_ref::<wallet::Wallet>().last_changed();
+        let (new_events, receiver) = mpsc::unbounded_channel();
+        app.world_mut().resource_mut::<SocialClient>().0 =
+            Some(handler(owner, wallet_changed, receiver));
+        assert!(!allows_voice(&mut app, owner, peer));
+        assert!(old_events.send(init(Some(empty_snapshot()))).is_err());
+        new_events.send(init(Some(empty_snapshot()))).unwrap();
+        app.update();
+        assert!(allows_voice(&mut app, owner, peer));
+    }
+
+    #[test]
+    fn wrong_snapshot_owner_logout_and_missing_handler_deny_voice() {
+        let (mut app, events, owner) = app();
+        let peer = Address::from([9; 20]);
+        events.send(init(Some(empty_snapshot()))).unwrap();
+        app.update();
+        assert!(allows_voice(&mut app, owner, peer));
+
+        app.world_mut()
+            .resource_mut::<SocialClient>()
+            .0
+            .as_mut()
+            .unwrap()
+            .owner = peer;
+        assert!(!allows_voice(&mut app, owner, peer));
+        app.world_mut()
+            .resource_mut::<SocialClient>()
+            .0
+            .as_mut()
+            .unwrap()
+            .owner = owner;
+        app.world_mut()
+            .resource_mut::<wallet::Wallet>()
+            .disconnect();
+        assert!(!blocks_ready(&mut app));
+        app.world_mut().resource_mut::<SocialClient>().0 = None;
+        assert!(!blocks_ready(&mut app));
+    }
+
+    #[test]
+    fn voice_events_survive_block_snapshot_initialization_and_reconnect() {
+        let (mut app, events, owner) = app();
+        let (voice_events, mut voice_receiver) = mpsc::unbounded_channel();
+        app.world_mut()
+            .resource_mut::<SocialClient>()
+            .0
+            .as_mut()
+            .unwrap()
+            .voice_callback = Box::new(move |event| {
+            voice_events.send(event).unwrap();
+        });
+        let incoming = VoiceEvent::Private(PrivateVoiceUpdate {
+            call_id: "incoming".to_owned(),
+            status: PrivateVoiceStatus::Requested,
+            caller: Some(format!("{:#x}", Address::from([9; 20]))),
+            callee: Some(format!("{owner:#x}")),
+            connection_url: None,
+        });
+        for event in [VoiceEvent::Connected, incoming.clone()] {
+            events.send(FriendData::Voice(event)).unwrap();
+        }
+        events.send(init(None)).unwrap();
+        app.update();
+        assert_eq!(voice_receiver.try_recv().unwrap(), VoiceEvent::Connected);
+        assert_eq!(voice_receiver.try_recv().unwrap(), incoming);
+        assert!(!blocks_ready(&mut app));
+
+        events.send(FriendData::Disconnected).unwrap();
+        app.update();
+        assert_eq!(voice_receiver.try_recv().unwrap(), VoiceEvent::Disconnected);
+        events
+            .send(FriendData::Voice(VoiceEvent::Connected))
+            .unwrap();
+        events.send(init(Some(empty_snapshot()))).unwrap();
+        app.update();
+        assert_eq!(voice_receiver.try_recv().unwrap(), VoiceEvent::Connected);
+        assert!(blocks_ready(&mut app));
+    }
+
+    #[test]
+    fn queued_voice_actions_survive_a_pending_block_snapshot_retry() {
+        let (mut app, events, _) = app();
+        events.send(init(None)).unwrap();
+        app.update();
+        let (queries, mut query_receiver) = mpsc::unbounded_channel();
+        app.world_mut()
+            .resource_mut::<SocialClient>()
+            .0
+            .as_mut()
+            .unwrap()
+            .query_sender = queries;
+        let dirty = AtomicBool::new(false);
+        let (snapshot_sender, snapshot_receiver) = tokio::sync::oneshot::channel();
+        let retry = retry_block_snapshot(&dirty, &events, async {
+            Ok(Some(snapshot_receiver.await.unwrap()))
+        });
+        pin_mut!(retry);
+        assert!(retry.as_mut().now_or_never().is_none());
+
+        let (end_sender, mut end_reply) = tokio::sync::oneshot::channel();
+        let (reject_sender, mut reject_reply) = tokio::sync::oneshot::channel();
+        let handler = app.world().resource::<SocialClient>().0.as_ref().unwrap();
+        handler
+            .voice(VoiceQuery::EndPrivate {
+                call_id: "ended".to_owned(),
+                response: end_sender,
+            })
+            .unwrap();
+        handler
+            .voice(VoiceQuery::RejectPrivate {
+                call_id: "rejected".to_owned(),
+                response: reject_sender,
+            })
+            .unwrap();
+        assert_eq!(query_receiver.len(), 2);
+        assert_eq!(
+            end_reply.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+        assert_eq!(
+            reject_reply.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
+        assert!(retry.as_mut().now_or_never().is_none());
+
+        assert!(snapshot_sender.send(empty_snapshot()).is_ok());
+        assert!(async_std::task::block_on(retry).unwrap());
+        app.update();
+        assert!(blocks_ready(&mut app));
+        // The writer can consume both queued procedures, in order, once its retry returns.
+        let SocialQuery::Voice(VoiceQuery::EndPrivate { call_id, response }) =
+            query_receiver.try_recv().unwrap()
+        else {
+            panic!("the first queued procedure must end the call");
+        };
+        assert_eq!(call_id, "ended");
+        response.send(Ok(())).unwrap();
+        let SocialQuery::Voice(VoiceQuery::RejectPrivate { call_id, response }) =
+            query_receiver.try_recv().unwrap()
+        else {
+            panic!("the second queued procedure must reject the call");
+        };
+        assert_eq!(call_id, "rejected");
+        response.send(Ok(())).unwrap();
+        assert_eq!(end_reply.try_recv(), Ok(Ok(())));
+        assert_eq!(reject_reply.try_recv(), Ok(Ok(())));
+    }
+
+    #[test]
+    fn closing_the_handler_during_a_block_retry_still_drains_queued_teardown() {
+        let (mut app, events, _) = app();
+        let (requests, request_receiver) = mpsc::unbounded_channel();
+        let (queries, mut query_receiver) = mpsc::unbounded_channel();
+        {
+            let mut social = app.world_mut().resource_mut::<SocialClient>();
+            let handler = social.0.as_mut().unwrap();
+            handler.sender = requests;
+            handler.query_sender = queries;
+        }
+        let dirty = AtomicBool::new(false);
+        let (snapshot_sender, snapshot_receiver) = tokio::sync::oneshot::channel();
+        let retry = retry_block_snapshot(&dirty, &events, async {
+            Ok(Some(snapshot_receiver.await.unwrap()))
+        });
+        pin_mut!(retry);
+        assert!(retry.as_mut().now_or_never().is_none());
+
+        let (end_sender, mut end_reply) = tokio::sync::oneshot::channel();
+        let (reject_sender, mut reject_reply) = tokio::sync::oneshot::channel();
+        {
+            let social = app.world().resource::<SocialClient>();
+            let handler = social.0.as_ref().unwrap();
+            handler
+                .voice(VoiceQuery::EndPrivate {
+                    call_id: "ended".to_owned(),
+                    response: end_sender,
+                })
+                .unwrap();
+            handler
+                .voice(VoiceQuery::RejectPrivate {
+                    call_id: "rejected".to_owned(),
+                    response: reject_sender,
+                })
+                .unwrap();
+        }
+        app.world_mut().resource_mut::<SocialClient>().0 = None;
+        assert!(request_receiver.is_closed());
+        assert!(events.is_closed());
+        assert!(snapshot_sender.send(empty_snapshot()).is_ok());
+        let result = async_std::task::block_on(retry).map(|_| ());
+        assert!(
+            result.is_err(),
+            "the snapshot receiver closed during the retry"
+        );
+
+        let mut dispatched = Vec::new();
+        let result = async_std::task::block_on(finish_social_writer(
+            result,
+            &mut query_receiver,
+            request_receiver.is_closed(),
+            |query| {
+                match query {
+                    VoiceQuery::EndPrivate { call_id, response }
+                    | VoiceQuery::RejectPrivate { call_id, response } => {
+                        dispatched.push(call_id);
+                        response.send(Ok(())).unwrap();
+                    }
+                    _ => panic!("unexpected queued voice procedure"),
+                }
+                std::future::ready(())
+            },
+        ));
+        assert!(result.is_err(), "the original writer error is retained");
+        assert_eq!(dispatched, ["ended", "rejected"]);
+        assert_eq!(end_reply.try_recv(), Ok(Ok(())));
+        assert_eq!(reject_reply.try_recv(), Ok(Ok(())));
+    }
+
+    #[test]
+    fn a_live_handler_keeps_queued_voice_queries_across_writer_failure() {
+        let (queries, mut query_receiver) = mpsc::unbounded_channel();
+        let (response, mut reply) = tokio::sync::oneshot::channel();
+        queries
+            .send(SocialQuery::Voice(VoiceQuery::EndPrivate {
+                call_id: "ended".to_owned(),
+                response,
+            }))
+            .unwrap();
+        let result = async_std::task::block_on(finish_social_writer(
+            Err(anyhow!("snapshot timed out")),
+            &mut query_receiver,
+            false,
+            |_| async { panic!("a live handler keeps its query for reconnect") },
+        ));
+        assert!(result.is_err());
+        assert_eq!(query_receiver.len(), 1);
+        assert_eq!(
+            reply.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        );
     }
 }
 

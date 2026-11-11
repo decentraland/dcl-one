@@ -221,16 +221,19 @@ fn connect_private_chat_room(
     if wallet.address().is_none() {
         return;
     }
+    let url = common::base_domain::url(Service::CommsGatekeeper, "/private-messages/token");
+    let mut metadata = serde_json::json!({"signer": "dcl:explorer"});
+    if crate::adapter::allows_device_identifier(&url) {
+        metadata["deviceIdentifier"] = serde_json::json!(config.user_id);
+    }
     commands.spawn((
         PrivateChatRoom,
         CommunityChatStats::default(),
-        crate::room_connection::RoomAccessScope(common::access_status::AccessScope::PrivateChat),
+        crate::room_connection::RoomAccessScope(crate::access_status::AccessScope::PrivateChat),
         crate::room_connection::CredentialRequest {
             method: "GET",
-            url: common::base_domain::url(Service::CommsGatekeeper, "/private-messages/token"),
-            metadata:
-                serde_json::json!({"signer": "dcl:explorer", "deviceIdentifier": config.user_id})
-                    .to_string(),
+            url,
+            metadata: metadata.to_string(),
         },
         crate::room_connection::NeedsAdapter,
     ));
@@ -863,6 +866,108 @@ mod tests {
     const ALICE: &str = "0x1111111111111111111111111111111111111111";
     const BOB: &str = "0x2222222222222222222222222222222222222222";
     const COMMUNITY: &str = "abc-1";
+
+    #[test]
+    fn custom_room_endpoints_do_not_receive_the_installation_identifier() {
+        const CHILD: &str = "DCL_COMMS_TEST_CUSTOM_ENDPOINTS";
+        if std::env::var_os(CHILD).is_none() {
+            // Service overrides latch for the process; other tests configure Pulse separately.
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "private_chat::tests::custom_room_endpoints_do_not_receive_the_installation_identifier",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            return;
+        }
+        common::base_domain::set_services([
+            (
+                Service::CommsGatekeeper,
+                "https://custom.example/gatekeeper",
+            ),
+            (Service::PreviewGatekeeper, "https://custom.example/preview"),
+            (Service::WorldsServer, "https://custom.example/worlds"),
+        ])
+        .unwrap();
+        for (about_url, scene_id, path) in [
+            (
+                "https://realm.example/about",
+                "scene",
+                "/gatekeeper/get-scene-adapter",
+            ),
+            (
+                "https://realm.example/about",
+                "b64-preview",
+                "/preview/get-scene-adapter",
+            ),
+            (
+                "https://custom.example/worlds/world/test.dcl.eth/about",
+                "scene",
+                "/worlds/worlds/test.dcl.eth/scenes/scene/comms",
+            ),
+        ] {
+            let mut wallet = Wallet::default();
+            wallet.finalize_as_guest();
+            let mut app = App::new();
+            app.insert_resource(wallet)
+                .init_resource::<AppConfig>()
+                .insert_resource(common::structs::CurrentRealm {
+                    about_url: about_url.into(),
+                    ..Default::default()
+                })
+                .init_resource::<common::structs::PreviewMode>()
+                .init_resource::<ipfs::world_access::WorldCommsSecret>()
+                .init_resource::<crate::SceneRoomConnection>()
+                .init_resource::<crate::SceneRoomAdapterOverride>()
+                .init_resource::<DisableSceneRoomGatekeeper>()
+                .init_resource::<CommunityChannels>()
+                .add_event::<crate::SetCurrentScene>()
+                .add_event::<crate::websocket_room::StartWsRoom>()
+                .add_event::<crate::signed_login::StartSignedLogin>()
+                .add_event::<crate::archipelago::StartArchipelago>()
+                .add_event::<crate::livekit::StartLivekit>()
+                .add_systems(
+                    Update,
+                    (crate::connect_scene_room, connect_private_chat_room),
+                );
+            app.world_mut()
+                .spawn(crate::global_crdt::GlobalCrdtState::new(None));
+            app.world_mut().send_event(crate::SetCurrentScene {
+                realm_name: "realm".into(),
+                scene_id: scene_id.into(),
+            });
+            app.update();
+            let world = app.world_mut();
+            let requests: Vec<_> = world
+                .query::<&crate::room_connection::CredentialRequest>()
+                .iter(world)
+                .collect();
+            assert_eq!(requests.len(), 2);
+            for request in requests {
+                assert!(
+                    request.url == format!("https://custom.example{path}")
+                        || request.url
+                            == "https://custom.example/gatekeeper/private-messages/token"
+                );
+                let metadata: serde_json::Value = serde_json::from_str(&request.metadata).unwrap();
+                assert!(
+                    metadata.get("deviceIdentifier").is_none(),
+                    "{}",
+                    request.url
+                );
+                if request.method == "GET" {
+                    assert_eq!(metadata["signer"], "dcl:explorer");
+                } else {
+                    assert_eq!(metadata["realmName"], "realm");
+                    assert_eq!(metadata["sceneId"], scene_id);
+                }
+            }
+        }
+    }
 
     #[test]
     fn outgoing_chats_wait_in_the_room_channel_while_not_connected() {

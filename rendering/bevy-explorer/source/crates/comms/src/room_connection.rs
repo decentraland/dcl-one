@@ -1,8 +1,8 @@
 use bevy::{
+    ecs::query::QueryData,
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
-use common::access_status::{AccessScope, AccessStatus};
 use common::util::{TaskCompat, TaskExt};
 use ipfs::IpfsAssetServer;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use std::sync::{
 use wallet::{sign_service_request, Wallet};
 
 use crate::{
+    access_status::{AccessScope, AccessStatus},
     adapter::{parse_adapter, validate_url, AdapterKind},
     recovery::RetryState,
     AdapterManager,
@@ -126,7 +127,109 @@ impl RoomAccessScope {
 pub struct RealmAdapter;
 
 #[derive(Component)]
+#[component(on_remove = Self::on_remove)]
 pub struct RoomSuspended;
+
+impl RoomSuspended {
+    fn on_remove(
+        mut world: bevy::ecs::world::DeferredWorld,
+        context: bevy::ecs::component::HookContext,
+    ) {
+        // A producer can enqueue after the last paused Update; discard before resuming.
+        #[cfg(feature = "livekit")]
+        if let Some(mut messages) =
+            world.get_mut::<crate::livekit::LivekitNetworkMessage>(context.entity)
+        {
+            while messages.try_recv().is_ok() {}
+        }
+        #[cfg(not(feature = "livekit"))]
+        let _ = (&mut world, context);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoomState {
+    Connecting,
+    Connected,
+    Reconnecting,
+    Disconnected,
+    Failed,
+    Paused,
+    Denied,
+    Invalid,
+    IdentityConflict,
+    CredentialsRequired,
+}
+
+impl RoomState {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Reconnecting => "reconnecting",
+            Self::Disconnected => "disconnected",
+            Self::Failed => "failed",
+            Self::Paused => "paused",
+            Self::Denied => "denied",
+            Self::Invalid => "invalid",
+            Self::IdentityConflict => "identity_conflict",
+            Self::CredentialsRequired => "credentials_required",
+        }
+    }
+}
+
+/// The same lifecycle reading for socket and LiveKit rooms, including admission failures.
+#[derive(QueryData)]
+pub struct RoomStatus {
+    pub recovery: &'static RoomRecovery,
+    pub suspended: Has<RoomSuspended>,
+    pub socket: Option<&'static ConnectionHealth>,
+    #[cfg(feature = "livekit")]
+    pub connected: Has<crate::livekit::room::Connected>,
+    #[cfg(feature = "livekit")]
+    pub connecting: Has<crate::livekit::room::Connecting>,
+    #[cfg(feature = "livekit")]
+    pub reconnecting: Has<crate::livekit::room::Reconnecting>,
+    #[cfg(feature = "livekit")]
+    pub disconnected: Has<crate::livekit::room::Disconnected>,
+}
+
+impl RoomStatusItem<'_> {
+    pub fn state(&self) -> RoomState {
+        if self.suspended {
+            return RoomState::Paused;
+        }
+        match self.recovery.failure {
+            Some(FailureKind::Denied) => return RoomState::Denied,
+            Some(FailureKind::Invalid) => return RoomState::Invalid,
+            Some(FailureKind::IdentityConflict) => return RoomState::IdentityConflict,
+            Some(FailureKind::CredentialsRequired) => return RoomState::CredentialsRequired,
+            _ => {}
+        }
+        if self.socket.is_some_and(ConnectionHealth::is_connected) {
+            return RoomState::Connected;
+        }
+        #[cfg(feature = "livekit")]
+        {
+            if self.connected {
+                return RoomState::Connected;
+            }
+            if self.reconnecting {
+                return RoomState::Reconnecting;
+            }
+            if self.disconnected {
+                return RoomState::Disconnected;
+            }
+        }
+        if self.recovery.failure.is_some() {
+            RoomState::Failed
+        } else if self.recovery.retry.attempts > 0 {
+            RoomState::Reconnecting
+        } else {
+            RoomState::Connecting
+        }
+    }
+}
 
 /// Authenticated socket health shared with its async driver and the connectivity watchdog.
 #[derive(Component, Clone, Default)]
@@ -180,6 +283,30 @@ impl Plugin for RoomConnectionPlugin {
             )
                 .chain(),
         );
+        app.add_systems(PostUpdate, observe_stable_connections);
+    }
+}
+
+pub(crate) fn observe_stable_connections(
+    mut rooms: Query<(
+        Entity,
+        &mut RoomRecovery,
+        Option<&ConnectionHealth>,
+        Has<RoomSuspended>,
+    )>,
+    #[cfg(feature = "livekit")] connected_rooms: Query<(), With<crate::livekit::room::Connected>>,
+    time: Res<Time>,
+) {
+    for (entity, mut recovery, health, suspended) in &mut rooms {
+        let connected = health.is_some_and(ConnectionHealth::is_connected);
+        #[cfg(feature = "livekit")]
+        let connected = connected || connected_rooms.contains(entity);
+        #[cfg(not(feature = "livekit"))]
+        let _ = entity;
+        let healthy = connected && !suspended && recovery.failure.is_none();
+        recovery
+            .retry
+            .observe_connection(healthy, time.elapsed_secs_f64());
     }
 }
 
@@ -199,7 +326,7 @@ fn publish_access(
             status.set_denied(scope.0.clone());
             commands.entity(entity).try_insert(PublishedDenial);
         } else if recovery.failure.is_none() {
-            status.set_allowed(&scope.0);
+            status.remove_scope(&scope.0);
             commands.entity(entity).try_remove::<PublishedDenial>();
         }
     }
@@ -338,7 +465,7 @@ fn finish_credentials(
             Ok(adapter)
         }) {
             Ok(adapter) => {
-                // Keep failure count until the transport connects, so repeated expired tokens back off.
+                // Admission alone does not establish a stable transport connection.
                 recovery.failure = None;
                 commands.entity(entity).try_remove::<NeedsAdapter>();
                 manager.connect_existing(&adapter, context.map(|context| context.0), entity);
@@ -354,6 +481,96 @@ fn finish_credentials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_continuous_healthy_rooms_reset_their_retry_budget() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_systems(PostUpdate, observe_stable_connections);
+        let health = ConnectionHealth::default();
+        health.connected();
+        let mut recovery = RoomRecovery::default();
+        recovery.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        recovery.failure = None;
+        let room = app.world_mut().spawn((recovery, health.clone())).id();
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(29));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(room)
+                .unwrap()
+                .retry
+                .attempts,
+            1
+        );
+        health.disconnected();
+        app.update();
+        health.connected();
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(29));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(room)
+                .unwrap()
+                .retry
+                .attempts,
+            1
+        );
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(room)
+                .unwrap()
+                .retry
+                .attempts,
+            0
+        );
+    }
+
+    #[test]
+    fn connection_health_never_resets_denied_or_suspended_rooms() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_systems(PostUpdate, observe_stable_connections);
+        let health = ConnectionHealth::default();
+        health.connected();
+        let mut denied = RoomRecovery::default();
+        denied.fail(0.0, AdmissionError::new(FailureKind::Denied));
+        let room = app.world_mut().spawn((denied, health.clone())).id();
+        let mut suspended = RoomRecovery::default();
+        suspended.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        suspended.failure = None;
+        let paused = app
+            .world_mut()
+            .spawn((suspended, health, RoomSuspended))
+            .id();
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(31));
+        app.update();
+        let denied = app.world().get::<RoomRecovery>(room).unwrap();
+        assert_eq!(denied.failure, Some(FailureKind::Denied));
+        assert!(!denied.can_retry(100.0));
+        assert_eq!(denied.retry.attempts, 1);
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(paused)
+                .unwrap()
+                .retry
+                .attempts,
+            1
+        );
+    }
 
     #[test]
     fn cancelled_socket_lifetime_cannot_leave_healthy_state_behind() {
@@ -521,7 +738,7 @@ mod tests {
             .is_denied(&scene_scope));
         app.world_mut()
             .resource_mut::<AccessStatus>()
-            .set_allowed(&scene_scope);
+            .remove_scope(&scene_scope);
         app.update();
         assert_eq!(
             app.world().get::<RoomRecovery>(scene).unwrap().failure,

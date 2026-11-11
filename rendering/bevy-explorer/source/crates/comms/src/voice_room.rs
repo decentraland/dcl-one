@@ -103,26 +103,27 @@ use alloy_core::primitives::Address;
 use bevy::{ecs::relationship::Relationship, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{
-    access_status::{AccessScope, AccessStatus},
+    sets::SceneSets,
     structs::{MicState, NoRenderApp},
     util::AsH160,
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
+use social::SocialClient;
 use system_bridge::SystemApi;
 use wallet::Wallet;
 
 use crate::{
+    access_status::AccessScope,
     adapter::{parse_adapter, AdapterKind},
     livekit::{
         participant::{HostedBy, LivekitParticipant, Local},
-        room::{Connected, Connecting, Reconnecting},
         track::{
             LivekitTrack, Microphone, PublishedBy, SubscribeToTrack, Subscribed, Subscribing,
             UnsubscribeToTrack,
         },
         StartLivekit,
     },
-    room_connection::{RoomAccessScope, RoomRecovery},
+    room_connection::{RoomAccessScope, RoomState, RoomStatus},
 };
 
 pub struct VoiceRoomPlugin;
@@ -130,7 +131,14 @@ pub struct VoiceRoomPlugin;
 impl Plugin for VoiceRoomPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ActiveVoiceRoom>()
-            .add_systems(Update, (update_voice_room, subscribe_voice_tracks).chain())
+            .add_systems(
+                Update,
+                (update_voice_room, subscribe_voice_tracks)
+                    .chain()
+                    .in_set(SceneSets::RestrictedActions)
+                    .after(crate::voice_chat::drive_voice_chat)
+                    .after(crate::livekit::plugin::respond_to_system_api),
+            )
             .add_console_command::<VoiceRoomCommand, _>(voice_room_command)
             .add_debug_section(DebugSection {
                 title: "On-demand voice",
@@ -164,16 +172,16 @@ impl ActiveVoiceRoom {
     pub(crate) fn allows_microphone_from(
         &self,
         room: Entity,
-        owner: Option<Address>,
+        wallet: &Res<Wallet>,
         identity: &str,
-        access: &AccessStatus,
+        social: &SocialClient,
     ) -> bool {
         self.routing.active == Some(room)
-            && owner.is_some()
-            && self.owner == owner
+            && wallet.address().is_some()
+            && self.owner == wallet.address()
             && identity
                 .as_h160()
-                .is_some_and(|address| access.allows_voice_from(owner, address))
+                .is_some_and(|address| social.allows_voice_from(wallet, address))
     }
 
     fn leave(&mut self, commands: &mut Commands, mic: &mut MicState, restore_proximity: bool) {
@@ -194,11 +202,14 @@ pub(crate) fn update_voice_room(
     wallet: Res<Wallet>,
     no_render: Option<Res<NoRenderApp>>,
     mut active: ResMut<ActiveVoiceRoom>,
+    call: Option<Res<crate::voice_chat::VoiceChat>>,
     mut mic: ResMut<MicState>,
     mut connect: EventWriter<StartLivekit>,
     publications: Query<&crate::livekit::mic::MicrophonePublication>,
 ) {
-    if active.owner.is_some() && (active.owner != wallet.address() || no_render.is_some()) {
+    if active.owner.is_some()
+        && (wallet.is_changed() || active.owner != wallet.address() || no_render.is_some())
+    {
         for publication in &publications {
             publication.revoke();
         }
@@ -215,6 +226,15 @@ pub(crate) fn update_voice_room(
                     Err("voice rooms require a rendered client".to_owned())
                 } else if wallet.address().is_none() {
                     Err("voice rooms require a wallet".to_owned())
+                } else if active.routing.active.is_none()
+                    && call.as_ref().is_some_and(|call| {
+                        call.state.is_active() || call.state.has_deferred_start()
+                    })
+                {
+                    Err(
+                        "Leave the current call before starting an on-demand voice session."
+                            .to_owned(),
+                    )
                 } else if !valid_session(session) {
                     Err("invalid voice session identifier".to_owned())
                 } else {
@@ -267,7 +287,7 @@ fn subscribe_voice_tracks(
     mut commands: Commands,
     active: Res<ActiveVoiceRoom>,
     wallet: Res<Wallet>,
-    access: Res<AccessStatus>,
+    social: Option<Res<SocialClient>>,
     participants: Query<(&LivekitParticipant, &HostedBy), Without<Local>>,
     tracks: Query<
         (
@@ -280,7 +300,6 @@ fn subscribe_voice_tracks(
         With<Microphone>,
     >,
 ) {
-    let owner = wallet.address();
     for (entity, track, publisher, subscribed, subscribing) in &tracks {
         let Ok((participant, room)) = participants.get(publisher.get()) else {
             continue;
@@ -288,19 +307,21 @@ fn subscribe_voice_tracks(
         if Some(room.get()) != active.routing.active {
             continue;
         }
-        let allowed = active.allows_microphone_from(
-            room.get(),
-            owner,
-            participant.identity().as_str(),
-            &access,
-        );
+        let allowed = social.as_deref().is_some_and(|social| {
+            active.allows_microphone_from(
+                room.get(),
+                &wallet,
+                participant.identity().as_str(),
+                social,
+            )
+        });
         if allowed && !subscribed && !subscribing {
             commands.entity(entity).trigger(SubscribeToTrack);
         } else if !allowed && (subscribed || subscribing) {
             // Silence immediately while the unsubscribe acknowledgment is in flight.
             if let Some(remote) = track.track() {
                 #[cfg(target_arch = "wasm32")]
-                remote.pan_and_volume(0.0, 0.0);
+                remote.pan_and_volume(0.5, 0.0);
                 #[cfg(not(target_arch = "wasm32"))]
                 let _ = remote;
             }
@@ -321,16 +342,8 @@ fn voice_room_command(
     mut input: ConsoleCommand<VoiceRoomCommand>,
     active: Res<ActiveVoiceRoom>,
     wallet: Res<Wallet>,
-    access: Res<AccessStatus>,
-    rooms: Query<
-        (
-            Has<Connected>,
-            Has<Connecting>,
-            Has<Reconnecting>,
-            &RoomRecovery,
-        ),
-        With<VoiceRoom>,
-    >,
+    social: Option<Res<SocialClient>>,
+    rooms: Query<RoomStatus, With<VoiceRoom>>,
     drains: Option<Res<crate::livekit::mic::MicrophoneDrain>>,
     mut events: EventWriter<SystemApi>,
 ) {
@@ -343,18 +356,22 @@ fn voice_room_command(
         return;
     }
     let room = active.routing.active.and_then(|room| rooms.get(room).ok());
-    let phase = match room {
-        Some((true, _, _, _)) => "connected",
-        Some((_, _, true, _)) => "reconnecting",
-        Some((_, _, _, recovery)) if recovery.failure.is_some() => "failed",
-        Some((_, true, _, _)) => "connecting",
-        _ if active.routing.active.is_some() => "pending",
-        _ => "inactive",
+    let phase = match room.as_ref().map(|room| room.state()) {
+        Some(
+            RoomState::Failed
+            | RoomState::Denied
+            | RoomState::Invalid
+            | RoomState::IdentityConflict
+            | RoomState::CredentialsRequired,
+        ) => "failed",
+        Some(state) => state.name(),
+        None if active.routing.active.is_some() => "pending",
+        None => "inactive",
     };
     input.reply_ok(
         serde_json::json!({"active": active.routing.active.is_some(), "session": active.session,
-        "phase": phase, "failure": room.and_then(|(_, _, _, recovery)| recovery.failure),
-        "blockStatusReady": access.blocks_ready_for(wallet.address()),
+        "phase": phase, "failure": room.and_then(|room| room.recovery.failure),
+        "blockStatusReady": social.as_deref().is_some_and(|social| social.blocks_ready_for(&wallet)),
         "proximitySuppressed": active.routing.active.is_some(),
         "microphoneCleanupPending": drains.map_or(0, |drain| drain.pending())})
         .to_string(),
@@ -483,6 +500,32 @@ mod lifecycle_tests {
     }
 
     #[test]
+    fn same_address_wallet_replacement_cancels_voice_and_capture() {
+        let mut app = app();
+        start_with_enabled_mic(&mut app);
+        let room = app
+            .world()
+            .resource::<ActiveVoiceRoom>()
+            .routing
+            .active
+            .unwrap();
+        let owner = app.world().resource::<Wallet>().address();
+        app.world_mut()
+            .resource_mut::<Wallet>()
+            .finalize_as_guest_with_seed([42; 32]);
+        assert_eq!(app.world().resource::<Wallet>().address(), owner);
+        app.update();
+        assert!(app
+            .world()
+            .resource::<ActiveVoiceRoom>()
+            .routing
+            .active
+            .is_none());
+        assert!(app.world().get_entity(room).is_err());
+        assert!(!app.world().resource::<MicState>().enabled);
+    }
+
+    #[test]
     fn headless_cancellation_disables_mic() {
         let mut app = app();
         start_with_enabled_mic(&mut app);
@@ -541,13 +584,35 @@ mod lifecycle_tests {
         app.add_plugins(console::ConsolePlugin {
             add_bevy_console: false,
         })
-        .init_resource::<AccessStatus>()
+        .init_resource::<SocialClient>()
         .add_console_command::<VoiceRoomCommand, _>(voice_room_command);
         activate(&mut app, ADAPTER).unwrap();
 
         let status: serde_json::Value = serde_json::from_str(&invoke(&mut app, &[])).unwrap();
         assert_eq!(status["active"], true);
         assert_eq!(status["proximitySuppressed"], true);
+        let room = app
+            .world()
+            .resource::<ActiveVoiceRoom>()
+            .routing
+            .active
+            .unwrap();
+        for failure in [
+            crate::room_connection::FailureKind::Denied,
+            crate::room_connection::FailureKind::Invalid,
+            crate::room_connection::FailureKind::IdentityConflict,
+            crate::room_connection::FailureKind::CredentialsRequired,
+        ] {
+            app.world_mut()
+                .entity_mut(room)
+                .insert(crate::room_connection::RoomRecovery {
+                    failure: Some(failure),
+                    ..Default::default()
+                });
+            let status: serde_json::Value = serde_json::from_str(&invoke(&mut app, &[])).unwrap();
+            assert_eq!(status["phase"], "failed");
+            assert_eq!(status["failure"], serde_json::to_value(failure).unwrap());
+        }
 
         assert_eq!(invoke(&mut app, &["leave"]), "Voice room leave requested");
         app.update();
@@ -559,37 +624,39 @@ mod lifecycle_tests {
     }
 
     #[test]
-    fn voice_microphone_requires_current_room_owner_and_ready_unblocked_wallet() {
+    fn voice_microphone_waits_for_the_authoritative_social_snapshot() {
+        use bevy::ecs::system::RunSystemOnce;
         let mut app = app();
+        app.init_resource::<SocialClient>();
         activate(&mut app, ADAPTER).unwrap();
-        let active = app.world().resource::<ActiveVoiceRoom>();
-        let room = active.routing.active.unwrap();
-        let owner = app.world().resource::<Wallet>().address().unwrap();
-        let blocked = Address::from([1; 20]);
-        let blocked_by = Address::from([2; 20]);
-        let peer = Address::from([3; 20]);
-        let identity = format!("{peer:#x}");
-        let mut access = AccessStatus::default();
-        access.set_identity(Some(owner));
-        assert!(!active.allows_microphone_from(room, Some(owner), &identity, &access));
+        app.world_mut()
+            .run_system_once(
+                |active: Res<ActiveVoiceRoom>, wallet: Res<Wallet>, social: Res<SocialClient>| {
+                    let room = active.routing.active.unwrap();
+                    for identity in [
+                        "not-a-wallet".to_owned(),
+                        format!("{:#x}", Address::from([3; 20])),
+                    ] {
+                        assert!(!active.allows_microphone_from(room, &wallet, &identity, &social));
+                        assert!(!active.allows_microphone_from(
+                            Entity::PLACEHOLDER,
+                            &wallet,
+                            &identity,
+                            &social
+                        ));
+                    }
+                },
+            )
+            .unwrap();
+    }
 
-        access.replace_blocks(owner, [blocked], [blocked_by]);
-        assert!(active.allows_microphone_from(room, Some(owner), &identity, &access));
-        assert!(!active.allows_microphone_from(room, None, &identity, &access));
-        assert!(!active.allows_microphone_from(room, Some(peer), &identity, &access));
-        assert!(!active.allows_microphone_from(
-            Entity::PLACEHOLDER,
-            Some(owner),
-            &identity,
-            &access
-        ));
-        for identity in [
-            "not-a-wallet".to_owned(),
-            format!("{blocked:#x}"),
-            format!("{blocked_by:#x}"),
-        ] {
-            assert!(!active.allows_microphone_from(room, Some(owner), &identity, &access));
-        }
+    #[test]
+    fn headless_receive_system_needs_no_social_resource() {
+        let mut app = app();
+        app.insert_resource(NoRenderApp)
+            .add_systems(Update, subscribe_voice_tracks);
+        app.update();
+        assert!(!app.world().contains_resource::<SocialClient>());
     }
 
     #[test]

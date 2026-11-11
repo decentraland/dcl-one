@@ -1,10 +1,9 @@
 use bevy::{
-    app::{HierarchyPropagatePlugin, Propagate},
-    ecs::entity::EntityHashSet,
+    app::Propagate,
+    ecs::entity::{EntityHashMap, EntityHashSet},
     math::FloatOrd,
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    render::mesh::MeshTag,
 };
 use common::{
     inputs::InputMap,
@@ -20,7 +19,7 @@ use dcl_component::{
     SceneComponentId,
 };
 use dcl_types::interface::ComponentPosition;
-use scene_material::{SceneMaterial, SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG};
+use scene_material::highlight::{Highlight, HIGHLIGHT_INVALID, HIGHLIGHT_VALID, HIGHLIGHT_WIDTH};
 
 use crate::{
     renderer_context::RendererSceneContext,
@@ -35,17 +34,15 @@ use super::AddCrdtInterfaceExt;
 
 pub struct PointerEventsPlugin;
 
-/// Bevy entities the editor wants outlined as its active selection, driven by the `/highlight`
+/// Bevy entities the editor wants to glow as its active selection, driven by the `/highlight`
 /// console command. Unioned into the highlight pass below independent of pointer hover/proximity,
-/// so the selection outline persists without writing to the scene's `PointerEvents` (and so never
+/// so the selection glow persists without writing to the scene's `PointerEvents` (and so never
 /// enters the scene snapshot or the save).
 #[derive(Resource, Default)]
 pub struct EditorHighlight(pub EntityHashSet);
 
 impl Plugin for PointerEventsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(HierarchyPropagatePlugin::<SelectionOutline>::default());
-
         app.init_resource::<Highlit>();
         app.init_resource::<EditorHighlight>();
 
@@ -58,8 +55,6 @@ impl Plugin for PointerEventsPlugin {
             Update,
             (hover_text, propagate_avatar_events, entity_highlighting),
         );
-        app.add_observer(selection_outline_on_add);
-        app.add_observer(selection_outline_on_remove);
     }
 }
 
@@ -99,9 +94,6 @@ impl PointerEvents {
             .flat_map(|(_, events)| events.pointer_events.iter())
     }
 }
-
-#[derive(Default, Clone, Copy, PartialEq, Eq, Component)]
-struct SelectionOutline;
 
 pub fn propagate_avatar_events(
     mut commands: Commands,
@@ -291,79 +283,335 @@ fn hover_text(
 #[derive(Default, Resource, Deref, DerefMut)]
 struct Highlit(EntityHashSet);
 
+/// The glow on the hover target: the valid colour within reach of one of its entries, the invalid
+/// colour beyond it.
+pub fn hover_highlight(target: Option<&PointerTargetInfo>, in_range: bool) -> Option<Highlight> {
+    target.map(|_| Highlight {
+        color: if in_range {
+            HIGHLIGHT_VALID
+        } else {
+            HIGHLIGHT_INVALID
+        }
+        .into(),
+        width: HIGHLIGHT_WIDTH,
+    })
+}
+
+fn valid_highlight() -> Highlight {
+    Highlight {
+        color: HIGHLIGHT_VALID.into(),
+        width: HIGHLIGHT_WIDTH,
+    }
+}
+
 fn entity_highlighting(
     mut commands: Commands,
     pointer_events: Query<&PointerEvents, Without<ForeignPlayer>>,
+    current: Query<&Propagate<Highlight>>,
     hover_target: Res<PointerTarget>,
     proximity: Res<ProximityCandidates>,
     mut highlit: ResMut<Highlit>,
     editor: Res<EditorHighlight>,
 ) {
-    let mut highlight_pass = EntityHashSet::new();
+    let mut highlight_pass = EntityHashMap::<Highlight>::default();
 
-    let mut test_and_insert = |entity: Entity| {
-        let Ok(pointer_events) = pointer_events.get(entity) else {
-            return;
-        };
-        if pointer_events.iter().any(|entry| {
-            entry.event_info.as_ref().is_some_and(|info| {
-                info.show_feedback != Some(false) && info.show_highlight != Some(false)
+    // the entity's entries of one mode (cursor or proximity) that want feedback and a highlight
+    let highlit_entries = |entity: Entity, mode: ActionCandidateMode| {
+        pointer_events.get(entity).into_iter().flat_map(move |pe| {
+            pe.iter().filter(move |entry| {
+                mode.matches_entry(entry)
+                    && entry.event_info.as_ref().is_some_and(|info| {
+                        info.show_feedback != Some(false) && info.show_highlight != Some(false)
+                    })
             })
-        }) {
-            highlight_pass.insert(entity);
-        }
+        })
     };
 
     if let Some(ref hover_target) = hover_target.0 {
-        test_and_insert(hover_target.container);
+        if highlit_entries(hover_target.container, ActionCandidateMode::Cursor)
+            .next()
+            .is_some()
+        {
+            // green when the cursor reaches any of the target's entries, highlit or not: the same
+            // gate as the hover CRDT and the hover stream's `enabled`
+            let in_range = pointer_events
+                .get(hover_target.container)
+                .is_ok_and(|pe| pe.iter().any(|entry| hover_target.cursor_reaches(entry)));
+            if let Some(highlight) = hover_highlight(Some(hover_target), in_range) {
+                highlight_pass.insert(hover_target.container, highlight);
+            }
+        }
     }
+    // a proximity candidate glows valid, unless it is also hovered: the hover colour then tells
+    // whether a click would act
     for candidate in &proximity.0 {
-        test_and_insert(candidate.entity);
+        if highlit_entries(candidate.entity, ActionCandidateMode::Proximity)
+            .next()
+            .is_some()
+        {
+            highlight_pass
+                .entry(candidate.entity)
+                .or_insert_with(valid_highlight);
+        }
     }
-    // editor selection — always outlined, no PointerEvents / hover required.
-    highlight_pass.extend(editor.0.iter().copied());
+    // editor selection: always glows valid, no PointerEvents or hover required
+    highlight_pass.extend(editor.0.iter().map(|entity| (*entity, valid_highlight())));
 
-    let new_highlights = highlight_pass.difference(&highlit);
-    for entity in new_highlights {
-        debug!("Highlighting {}", entity);
-        commands
-            .entity(*entity)
-            .try_insert(Propagate(SelectionOutline));
+    for (entity, highlight) in &highlight_pass {
+        let source = Propagate(*highlight);
+        if current.get(*entity).ok() != Some(&source) {
+            debug!("Highlighting {}", entity);
+            commands.entity(*entity).try_insert(source);
+        }
     }
 
-    let expired_highlights = highlit.difference(&highlight_pass);
-    for entity in expired_highlights {
-        debug!("Highlight of {} expired.", entity);
-        commands
-            .entity(*entity)
-            .try_remove::<Propagate<SelectionOutline>>();
+    for entity in highlit.iter() {
+        if !highlight_pass.contains_key(entity) {
+            debug!("Highlight of {} expired.", entity);
+            commands
+                .entity(*entity)
+                .try_remove::<Propagate<Highlight>>();
+        }
     }
 
-    **highlit = highlight_pass;
+    **highlit = highlight_pass.into_keys().collect();
 }
 
-fn selection_outline_on_add(
-    trigger: Trigger<OnAdd, SelectionOutline>,
-    mut meshes: Query<(&mut Mesh3d, &mut MeshTag), With<MeshMaterial3d<SceneMaterial>>>,
-) {
-    let entity = trigger.target();
-    let Ok((mut mesh_3d, mut mesh_tag)) = meshes.get_mut(entity) else {
-        return;
+#[cfg(test)]
+mod test {
+    use bevy::app::PropagateSet;
+    use dcl_component::proto_components::sdk::components::common::{
+        InteractionType, PointerEventType,
     };
-    debug!("Selection outline on {entity}.");
-    mesh_3d.set_changed();
-    mesh_tag.0 |= SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG;
-}
+    use scene_material::highlight::HighlightPlugin;
 
-fn selection_outline_on_remove(
-    trigger: Trigger<OnRemove, SelectionOutline>,
-    mut meshes: Query<(&mut Mesh3d, &mut MeshTag), With<MeshMaterial3d<SceneMaterial>>>,
-) {
-    let entity = trigger.target();
-    let Ok((mut mesh_3d, mut mesh_tag)) = meshes.get_mut(entity) else {
-        return;
-    };
-    debug!("Selection outline removed from {entity}.");
-    mesh_3d.set_changed();
-    mesh_tag.0 &= !SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG;
+    use super::*;
+    use crate::update_scene::pointer_results::ProximityCandidate;
+
+    fn test_info() -> PointerTargetInfo {
+        PointerTargetInfo {
+            container: Entity::PLACEHOLDER,
+            mesh_name: None,
+            distance: FloatOrd(0.0),
+            camera_distance: FloatOrd(0.0),
+            in_scene: true,
+            position: None,
+            normal: None,
+            face: None,
+            ty: PointerTargetType::World,
+        }
+    }
+
+    #[test]
+    fn hover_colour_follows_range() {
+        let info = PointerTargetInfo {
+            distance: FloatOrd(12.0),
+            camera_distance: FloatOrd(14.0),
+            ..test_info()
+        };
+        assert_eq!(
+            hover_highlight(Some(&info), false).unwrap().color,
+            HIGHLIGHT_INVALID.into()
+        );
+        assert_eq!(
+            hover_highlight(Some(&info), true).unwrap().color,
+            HIGHLIGHT_VALID.into()
+        );
+        assert_eq!(
+            hover_highlight(Some(&info), true).unwrap().width,
+            HIGHLIGHT_WIDTH
+        );
+        assert!(hover_highlight(None, true).is_none());
+    }
+
+    fn pointer_events(max_distance: Option<f32>) -> PointerEvents {
+        PbPointerEvents {
+            pointer_events: vec![Entry {
+                event_type: PointerEventType::PetDown as i32,
+                event_info: Some(Info {
+                    max_distance,
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+        }
+        .into()
+    }
+
+    fn proximity_events() -> PointerEvents {
+        PbPointerEvents {
+            pointer_events: vec![Entry {
+                event_type: PointerEventType::PetDown as i32,
+                event_info: Some(Info::default()),
+                interaction_type: Some(InteractionType::Proximity as i32),
+            }],
+        }
+        .into()
+    }
+
+    fn highlight_app() -> App {
+        let mut app = App::new();
+        app.add_plugins(HighlightPlugin)
+            .init_resource::<PointerTarget>()
+            .init_resource::<ProximityCandidates>()
+            .init_resource::<Highlit>()
+            .init_resource::<EditorHighlight>()
+            .add_systems(
+                Update,
+                entity_highlighting.before(PropagateSet::<Highlight>::default()),
+            );
+        app
+    }
+
+    fn hover(app: &mut App, entity: Option<Entity>, distance: f32) {
+        app.world_mut().resource_mut::<PointerTarget>().0 =
+            entity.map(|container| PointerTargetInfo {
+                container,
+                distance: FloatOrd(distance),
+                camera_distance: FloatOrd(distance),
+                ..test_info()
+            });
+    }
+
+    fn highlights(app: &mut App) -> usize {
+        let world = app.world_mut();
+        world.query::<&Highlight>().iter(world).count()
+            + world.query::<&Propagate<Highlight>>().iter(world).count()
+    }
+
+    #[test]
+    fn hover_target_glows_until_released() {
+        let mut app = highlight_app();
+        let target = app.world_mut().spawn(pointer_events(None)).id();
+        let mesh = app.world_mut().spawn(ChildOf(target)).id();
+
+        // 12 m is beyond the default 10 m reach
+        hover(&mut app, Some(target), 12.0);
+        app.update();
+        let invalid = Highlight {
+            color: HIGHLIGHT_INVALID.into(),
+            width: HIGHLIGHT_WIDTH,
+        };
+        assert_eq!(
+            app.world().get::<Propagate<Highlight>>(target).map(|p| p.0),
+            Some(invalid)
+        );
+        assert_eq!(app.world().get::<Highlight>(mesh), Some(&invalid));
+
+        // within reach the same target turns valid
+        hover(&mut app, Some(target), 5.0);
+        app.update();
+        assert_eq!(
+            app.world().get::<Highlight>(mesh).map(|h| h.color),
+            Some(HIGHLIGHT_VALID.into())
+        );
+
+        // the entity's own max distance widens the reach
+        app.world_mut()
+            .entity_mut(target)
+            .insert(pointer_events(Some(20.0)));
+        hover(&mut app, Some(target), 12.0);
+        app.update();
+        assert_eq!(
+            app.world().get::<Highlight>(mesh).map(|h| h.color),
+            Some(HIGHLIGHT_VALID.into())
+        );
+
+        hover(&mut app, None, 0.0);
+        app.update();
+        assert_eq!(highlights(&mut app), 0);
+
+        // despawned while targeted: nothing panics and nothing is left behind
+        hover(&mut app, Some(target), 5.0);
+        app.update();
+        // the source and the mesh glow, the source carries the propagation
+        assert_eq!(highlights(&mut app), 3);
+        app.world_mut().entity_mut(target).despawn();
+        app.update();
+        app.update();
+        assert_eq!(highlights(&mut app), 0);
+        assert!(app.world().resource::<Highlit>().is_empty());
+    }
+
+    fn glow(app: &mut App, entity: Entity) -> Option<LinearRgba> {
+        app.world()
+            .get::<Propagate<Highlight>>(entity)
+            .map(|p| p.0.color)
+    }
+
+    /// The glow says what a click would do: a target outside every scene, or one whose only
+    /// entries are proximity ones, is not clickable.
+    #[test]
+    fn hover_glow_follows_the_click_gate() {
+        let mut app = highlight_app();
+        let target = app.world_mut().spawn(pointer_events(Some(20.0))).id();
+
+        // in reach but outside every scene: a click does nothing
+        hover(&mut app, Some(target), 5.0);
+        app.world_mut()
+            .resource_mut::<PointerTarget>()
+            .0
+            .as_mut()
+            .unwrap()
+            .in_scene = false;
+        app.update();
+        assert_eq!(glow(&mut app, target), Some(HIGHLIGHT_INVALID.into()));
+
+        // only proximity entries: the cursor never acts, so hovering shows nothing
+        let near = app.world_mut().spawn(proximity_events()).id();
+        hover(&mut app, Some(near), 1.0);
+        app.update();
+        assert_eq!(glow(&mut app, near), None);
+
+        // as a proximity candidate it glows valid
+        app.world_mut()
+            .resource_mut::<ProximityCandidates>()
+            .0
+            .push(ProximityCandidate {
+                entity: near,
+                distance: 1.0,
+                nearest_point: Vec3::ZERO,
+                entity_position: Vec3::ZERO,
+            });
+        app.update();
+        assert_eq!(glow(&mut app, near), Some(HIGHLIGHT_VALID.into()));
+
+        // a hovered candidate keeps the hover's verdict: out of the cursor's reach stays pink
+        app.world_mut()
+            .entity_mut(near)
+            .insert(pointer_events(None));
+        hover(&mut app, Some(near), 12.0);
+        app.update();
+        assert_eq!(glow(&mut app, near), Some(HIGHLIGHT_INVALID.into()));
+    }
+
+    /// An entry that hides its highlight still counts for the colour: the glow comes from the
+    /// highlit entries, its colour from every entry the cursor reaches.
+    #[test]
+    fn hidden_entry_in_reach_turns_the_glow_valid() {
+        let entry = |max_distance: f32, show_highlight: bool| Entry {
+            event_type: PointerEventType::PetDown as i32,
+            event_info: Some(Info {
+                max_distance: Some(max_distance),
+                show_highlight: Some(show_highlight),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut app = highlight_app();
+        let target = app
+            .world_mut()
+            .spawn(PointerEvents::from(PbPointerEvents {
+                pointer_events: vec![entry(5.0, true), entry(20.0, false)],
+            }))
+            .id();
+
+        hover(&mut app, Some(target), 12.0);
+        app.update();
+        assert_eq!(glow(&mut app, target), Some(HIGHLIGHT_VALID.into()));
+
+        hover(&mut app, Some(target), 25.0);
+        app.update();
+        assert_eq!(glow(&mut app, target), Some(HIGHLIGHT_INVALID.into()));
+    }
 }

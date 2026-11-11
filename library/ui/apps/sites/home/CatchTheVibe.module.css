@@ -1,0 +1,136 @@
+/* position and isolation keep the decorative glow behind the content. */
+.root {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-layout-section-gap);
+  overflow: hidden;
+  padding: var(--dcl-layout-section-padding-y) 0;
+  /* Source paint: decentraland/sites@5aabce35, CatchTheVibeContainer. */
+  background: #570f88;
+  color: var(--dcl-text-primary);
+}
+
+/* Decorative, desktop only (from breakpoints.desktop), as source. */
+.glow {
+  position: absolute;
+  inset: 0 auto 0 0;
+  z-index: -1;
+  display: none;
+  width: 60%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center left;
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .glow {
+    display: block;
+  }
+}
+
+.title {
+  margin: 0;
+  padding: 0 var(--dcl-layout-margin-x);
+  font-size: var(--dcl-font-size-heading-lg);
+  text-align: center;
+}
+
+/* breakpoints.desktop: the clips side by side. Below it, the carousel instead (source switches at
+   its 991px sm breakpoint). */
+.cards {
+  display: none;
+  gap: var(--dcl-space-24);
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 1024px) {
+  .root {
+    padding-inline: var(--dcl-layout-margin-x);
+  }
+
+  .title {
+    padding: 0;
+  }
+
+  .cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .carousel {
+    display: none;
+  }
+}
+
+/* Source: one rounded card per clip, the media on top and the creator bar at the bottom. */
+.card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-xl);
+  background: var(--dcl-transparencies-black-60);
+}
+
+.media {
+  position: relative;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--dcl-radius-xl);
+  background: var(--dcl-bg-surface);
+}
+
+.video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* Bottom left, where source keeps its duration chip. */
+.controls {
+  position: absolute;
+  left: var(--dcl-space-12);
+  bottom: var(--dcl-space-12);
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+.duration {
+  text-transform: none;
+}
+
+.footer {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-16) var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-16);
+}
+
+.avatar {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-bg-surface-raised);
+}
+
+.creator {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-neutrals-white);
+  text-decoration: none;
+}
+
+a.creator:hover {
+  text-decoration: underline;
+}
+
+a.creator:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}

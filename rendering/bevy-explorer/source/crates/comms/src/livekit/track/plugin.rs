@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
     render::render_resource::Extent3d,
 };
-use common::{access_status::AccessStatus, debug_panic, structs::AudioSettings, util::AsH160};
+use common::{debug_panic, structs::AudioSettings, util::AsH160};
 use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
@@ -15,6 +15,7 @@ use livestream_manager::{
 };
 #[cfg(target_arch = "wasm32")]
 use media::VideoData;
+use social::SocialClient;
 use wallet::Wallet;
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -39,6 +40,9 @@ use crate::livekit::{
     track::HtmlMediaEntity,
     web::{RemoteTrack, TrackKind, TrackSource},
 };
+use crate::voice_chat::VoiceRoom as CallRoom;
+#[cfg(target_arch = "wasm32")]
+use crate::voice_chat::VoiceRoomTrack as CallRoomTrack;
 use crate::{
     global_crdt::{PlayerMessage, PlayerUpdate},
     livekit::{
@@ -52,51 +56,55 @@ use crate::{
         },
         LivekitRuntimeRes,
     },
-    voice_room::{ActiveVoiceRoom, VoiceRoom},
+    voice_room::{ActiveVoiceRoom, VoiceRoom as OnDemandVoiceRoom},
 };
 
 pub struct LivekitTrackPlugin;
 
-/// Voice sessions use the voice setting and personal block contract on both backends.
+/// On-demand microphone subscriptions and playback use the same receive policy.
 #[derive(SystemParam)]
 struct AudioPolicy<'w, 's> {
-    settings: Res<'w, AudioSettings>,
-    access: Res<'w, AccessStatus>,
+    settings: Option<Res<'w, AudioSettings>>,
+    social: Option<Res<'w, SocialClient>>,
     wallet: Res<'w, Wallet>,
     active_voice: Res<'w, ActiveVoiceRoom>,
-    voice_rooms: Query<'w, 's, (), With<VoiceRoom>>,
+    voice_rooms: Query<'w, 's, (), With<OnDemandVoiceRoom>>,
     participants: Query<'w, 's, (&'static LivekitParticipant, &'static HostedBy)>,
 }
 
 impl AudioPolicy<'_, '_> {
-    fn is_voice(&self, publisher: &PublishedBy) -> bool {
+    fn is_on_demand(&self, publisher: &PublishedBy) -> bool {
         self.participants
             .get(publisher.get())
             .is_ok_and(|(_, room)| self.voice_rooms.contains(room.get()))
     }
 
-    fn allows_voice_microphone(&self, publisher: &PublishedBy) -> bool {
-        let owner = self.wallet.address();
+    fn allows_on_demand_microphone(&self, publisher: &PublishedBy) -> bool {
+        let Some(social) = self.social.as_deref() else {
+            return false;
+        };
         self.participants
             .get(publisher.get())
             .is_ok_and(|(participant, room)| {
                 self.active_voice.allows_microphone_from(
                     room.get(),
-                    owner,
+                    &self.wallet,
                     participant.identity().as_str(),
-                    &self.access,
+                    social,
                 )
             })
     }
 
-    fn volume(&self, publisher: &PublishedBy, microphone: bool) -> f32 {
-        if !self.is_voice(publisher) {
-            self.settings.scene()
-        } else if microphone && self.allows_voice_microphone(publisher) {
-            self.settings.voice()
-        } else {
-            0.0
-        }
+    fn on_demand_volume(&self, publisher: &PublishedBy, microphone: bool) -> Option<f32> {
+        self.is_on_demand(publisher).then(|| {
+            if microphone && self.allows_on_demand_microphone(publisher) {
+                self.settings
+                    .as_ref()
+                    .map_or(0.0, |settings| settings.voice())
+            } else {
+                0.0
+            }
+        })
     }
 }
 
@@ -406,7 +414,14 @@ fn subscribe_to_audio_track(
     mut commands: Commands,
     tracks: Query<(&LivekitTrack, &PublishedBy), With<Audio>>,
     participants: Query<&HostedBy>,
-    non_spatial_rooms: Query<(), Or<(With<crate::private_chat::PrivateChatRoom>, With<VoiceRoom>)>>,
+    non_spatial_rooms: Query<
+        (),
+        Or<(
+            With<crate::private_chat::PrivateChatRoom>,
+            With<CallRoom>,
+            With<OnDemandVoiceRoom>,
+        )>,
+    >,
     livekit_runtime: LivekitRuntimeRes,
 ) {
     let entity = trigger.target();
@@ -486,8 +501,10 @@ fn subscribe_to_track(
     {
         return;
     }
-    if policy.is_voice(publisher)
-        && !(audio_or_video.0.is_some() && microphone && policy.allows_voice_microphone(publisher))
+    if policy.is_on_demand(publisher)
+        && !(audio_or_video.0.is_some()
+            && microphone
+            && policy.allows_on_demand_microphone(publisher))
     {
         return;
     }
@@ -579,6 +596,8 @@ fn audio_track_is_now_subscribed(
         ),
         With<Subscribed>,
     >,
+    participants: Query<&HostedBy>,
+    call_rooms: Query<(), With<CallRoom>>,
     mut livekit_audio_manager: ResMut<LivekitAudioManager>,
     policy: AudioPolicy,
 ) {
@@ -615,10 +634,21 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    let volume = policy.volume(publisher, microphone) * multiplier.map_or(1.0, |volume| **volume);
-    let Ok(handle) =
-        livekit_audio_manager.play(StreamingSoundData::from_decoder(decoder).volume(volume as f64))
-    else {
+    let on_demand_volume = policy.on_demand_volume(publisher, microphone);
+    let in_call_room = participants
+        .get(publisher.get())
+        .is_ok_and(|hosted_by| call_rooms.contains(hosted_by.get()));
+    let destination = native_track_destination(
+        on_demand_volume.is_some(),
+        in_call_room,
+        &livekit_audio_manager.scene_track,
+        &livekit_audio_manager.voice_track,
+    );
+    let volume = native_track_volume(on_demand_volume, multiplier.map(|volume| **volume), true);
+    let sound = StreamingSoundData::from_decoder(decoder)
+        .output_destination(destination)
+        .volume(volume as f64);
+    let Ok(handle) = livekit_audio_manager.play(sound) else {
         error!("Failed to play track audio in LivekitAudioManager.");
         return;
     };
@@ -915,14 +945,44 @@ fn update_track_volume(
     for (mut audio_streaming_handle, multiplier, publisher, microphone, subscribed) in
         tracks.into_inner()
     {
-        let volume = if subscribed {
-            policy.volume(publisher, microphone) * multiplier.map_or(1.0, |volume| **volume)
-        } else {
-            0.0
-        };
+        let volume = native_track_volume(
+            policy.on_demand_volume(publisher, microphone),
+            multiplier.map(|volume| **volume),
+            subscribed,
+        );
         audio_streaming_handle
             .handle
             .set_volume(volume as f64, Tween::default());
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_track_destination(
+    on_demand: bool,
+    call: bool,
+    scene_track: &kira::track::TrackHandle,
+    call_track: &kira::track::TrackHandle,
+) -> kira::OutputDestination {
+    if on_demand {
+        kira::OutputDestination::MAIN_TRACK
+    } else if call {
+        call_track.into()
+    } else {
+        scene_track.into()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn native_track_volume(
+    on_demand_volume: Option<f32>,
+    multiplier: Option<f32>,
+    subscribed: bool,
+) -> f32 {
+    if subscribed {
+        // Scene and call settings are already applied by their mixer subtracks.
+        on_demand_volume.unwrap_or(1.0) * multiplier.unwrap_or(1.0)
+    } else {
+        0.0
     }
 }
 
@@ -940,39 +1000,78 @@ fn update_track_volume(
             &PublishedBy,
             Has<Microphone>,
             Has<ProximityMicrophone>,
+            Has<CallRoomTrack>,
         ),
         (With<Audio>, With<Subscribed>),
     >,
     policy: AudioPolicy,
 ) {
-    for (livekit_track, multiplier, publisher, microphone, proximity_microphone) in
+    for (livekit_track, multiplier, publisher, microphone, proximity_microphone, call_room) in
         tracks.into_inner()
     {
-        let Some(volume) = scene_track_volume(
+        let on_demand_volume = policy.on_demand_volume(publisher, microphone);
+        let Some(volume) = flat_track_volume(
             proximity_microphone,
+            call_room,
             multiplier.map(|volume| **volume),
-            policy.volume(publisher, microphone),
+            on_demand_volume.unwrap_or_else(|| {
+                policy
+                    .settings
+                    .as_ref()
+                    .map_or(0.0, |settings| settings.scene())
+            }),
         ) else {
             continue;
         };
         let Some(RemoteTrack::Audio(audio)) = livekit_track.track() else {
             debug_panic!("A subscribed audio track did not have an audio RemoteTrack.");
         };
-        audio.set_volume(volume);
+        if on_demand_volume.is_some() {
+            RemoteTrack::Audio(audio).pan_and_volume(0.5, volume);
+        } else {
+            audio.set_volume(volume);
+        }
     }
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
-fn scene_track_volume(
+fn flat_track_volume(
     proximity_microphone: bool,
+    call_room: bool,
     multiplier: Option<f32>,
     base_volume: f32,
 ) -> Option<f32> {
-    // Proximity microphone panning is owned by locate_foreign_streams.
-    if proximity_microphone {
+    // Nearby and call microphone gains are owned by their respective panning systems.
+    if proximity_microphone || call_room {
         return None;
     }
     Some(multiplier.unwrap_or(1.0) * base_volume)
+}
+
+#[cfg(test)]
+mod audio_policy_tests {
+    use super::*;
+    use bevy::ecs::system::RunSystemOnce;
+
+    #[test]
+    fn headless_audio_policy_accepts_missing_settings_and_denies_missing_social() {
+        for has_settings in [false, true] {
+            let mut world = World::new();
+            world.insert_resource(common::structs::NoRenderApp);
+            world.init_resource::<Wallet>();
+            world.init_resource::<ActiveVoiceRoom>();
+            if has_settings {
+                world.init_resource::<AudioSettings>();
+            }
+            world
+                .run_system_once(|policy: AudioPolicy| {
+                    let publisher = PublishedBy(Entity::PLACEHOLDER);
+                    assert!(!policy.allows_on_demand_microphone(&publisher));
+                    assert_eq!(policy.on_demand_volume(&publisher, true), None);
+                })
+                .unwrap();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -980,9 +1079,143 @@ mod browser_volume_tests {
     use super::*;
 
     #[test]
-    fn proximity_microphone_gain_is_never_written_by_the_scene_volume_system() {
-        assert_eq!(scene_track_volume(true, None, 0.5), None);
-        assert_eq!(scene_track_volume(true, Some(0.25), 0.5), None);
-        assert_eq!(scene_track_volume(false, Some(0.25), 0.5), Some(0.125));
+    fn proximity_microphone_gain_is_never_written_by_the_flat_volume_system() {
+        assert_eq!(flat_track_volume(true, false, None, 0.5), None);
+        assert_eq!(flat_track_volume(true, false, Some(0.25), 0.5), None);
+        assert_eq!(
+            flat_track_volume(false, false, Some(0.25), 0.5),
+            Some(0.125)
+        );
+    }
+
+    #[test]
+    fn call_microphone_gain_is_never_written_by_the_flat_volume_system() {
+        assert_eq!(flat_track_volume(false, true, None, 0.5), None);
+        assert_eq!(flat_track_volume(false, true, Some(0.25), 0.0), None);
+    }
+
+    #[test]
+    fn on_demand_receive_gain_changes_do_not_add_a_writer_to_other_routes() {
+        for receive_gain in [0.0, 0.4] {
+            assert_eq!(
+                flat_track_volume(true, false, Some(0.25), receive_gain),
+                None
+            );
+            assert_eq!(
+                flat_track_volume(false, true, Some(0.25), receive_gain),
+                None
+            );
+            assert_eq!(
+                flat_track_volume(false, false, Some(0.25), receive_gain),
+                Some(receive_gain * 0.25)
+            );
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod native_volume_tests {
+    use super::*;
+    use kira::{
+        manager::{
+            backend::mock::{MockBackend, MockBackendSettings},
+            AudioManager, AudioManagerSettings,
+        },
+        sound::static_sound::{StaticSoundData, StaticSoundSettings},
+        track::TrackBuilder,
+        Frame,
+    };
+
+    fn rendered_volume(settings: &AudioSettings, on_demand: bool, call: bool) -> Frame {
+        let mut manager = AudioManager::<MockBackend>::new(AudioManagerSettings {
+            backend_settings: MockBackendSettings { sample_rate: 100 },
+            ..Default::default()
+        })
+        .unwrap();
+        let scene_track = manager
+            .add_sub_track(TrackBuilder::new().volume(settings.scene() as f64))
+            .unwrap();
+        let call_track = manager
+            .add_sub_track(TrackBuilder::new().volume(settings.voice_chat() as f64))
+            .unwrap();
+        let destination = native_track_destination(on_demand, call, &scene_track, &call_track);
+        assert_eq!(
+            destination,
+            if on_demand {
+                kira::OutputDestination::MAIN_TRACK
+            } else if call {
+                (&call_track).into()
+            } else {
+                (&scene_track).into()
+            }
+        );
+        let volume = native_track_volume(on_demand.then(|| settings.voice()), Some(0.25), true);
+        let sound = StaticSoundData {
+            sample_rate: 100,
+            frames: vec![Frame::from_mono(1.0); 32].into(),
+            settings: StaticSoundSettings::default()
+                .output_destination(destination)
+                .volume(volume as f64),
+            slice: None,
+        };
+        let _sound = manager.play(sound).unwrap();
+        manager.backend_mut().on_start_processing();
+        let mut frame = Frame::ZERO;
+        for _ in 0..8 {
+            frame = manager.backend_mut().process();
+        }
+        frame
+    }
+
+    fn assert_volume(frame: Frame, expected: f32) {
+        assert!(
+            (frame.left - expected).abs() < 0.000_001,
+            "{frame:?} != {expected}"
+        );
+        assert!(
+            (frame.right - expected).abs() < 0.000_001,
+            "{frame:?} != {expected}"
+        );
+    }
+
+    #[test]
+    fn native_flat_routes_apply_each_volume_setting_once() {
+        for (master, voice, voice_chat, scene) in [
+            (50, 40, 60, 80),
+            (25, 40, 60, 80),
+            (50, 0, 60, 80),
+            (50, 40, 0, 80),
+            (50, 40, 60, 0),
+            (0, 40, 60, 80),
+        ] {
+            let settings = AudioSettings {
+                master,
+                voice,
+                voice_chat,
+                scene,
+                ..Default::default()
+            };
+            assert_volume(
+                rendered_volume(&settings, true, false),
+                settings.voice() * 0.25,
+            );
+            assert_volume(
+                rendered_volume(&settings, false, true),
+                settings.voice_chat() * 0.25,
+            );
+            assert_volume(
+                rendered_volume(&settings, false, false),
+                settings.scene() * 0.25,
+            );
+        }
+    }
+
+    #[test]
+    fn on_demand_sound_gain_is_zero_when_revoked_or_unsubscribed() {
+        assert_eq!(native_track_volume(Some(0.0), Some(0.25), true), 0.0);
+        assert_eq!(native_track_volume(Some(0.4), Some(0.25), false), 0.0);
+        assert_eq!(native_track_volume(None, Some(0.25), false), 0.0);
+        assert_eq!(native_track_volume(Some(0.4), Some(0.25), true), 0.1);
+        assert_eq!(native_track_volume(None, Some(0.25), true), 0.25);
     }
 }

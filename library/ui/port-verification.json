@@ -1,37 +1,36 @@
 {
-  "schema": 1,
-  "lockHash": "69027f87101b0fbe8ac82af10f7de168a1d09a2f49d0d4cb94d606df5ad56daa",
+  "schema": 2,
+  "portInputHash": "fb8150f8ae42b112b344ee5c0f171e27ea86258e7cb6f78741f66311da765778",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "dbffc0195e2a82e9d511dfc6d91c3a8254a27343",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "verified existing cache: 544 files match the pinned revision and digest table"
+      "detail": "Verified 544 cache files against the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "run on this tree: 440 files match the lock, every difference names a code"
+      "detail": "459 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
-      "detail": "run on this tree: 0 added, 0 changed, 0 removed, no ledger issues"
+      "detail": "Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues"
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "run on this tree: 0 public mappings, internal NavBar mapping omitted"
+      "detail": "Fresh check passes with 1 public mapping and no errors"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "run on this tree: 46 components, 561 variants, catalog unchanged"
+      "detail": "Fresh catalog regeneration is byte-identical, 46 components"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "run on this tree: 19 gallery bounds checks pass, internal source control holds remain"
+      "detail": "Fresh gallery build passes 19 bounds checks"
     },
     "install": {
       "result": "pass",
-      "detail": "39 foundation files reproduced with no-op repeat, 9-file internal component plan is deterministic"
+      "detail": "Private and canonical installs reproduce 39 foundation and 11 component files with no-op repeats"
     }
   }
 }

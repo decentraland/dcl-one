@@ -59,11 +59,10 @@ pub struct StartWsRoom {
 pub struct WebsocketRoomTransport {
     pub address: String,
     pub receiver: Option<Receiver<NetworkMessage>>,
-    pub retries: usize,
 }
 
 #[derive(Component)]
-pub struct WebSocketConnection(Task<(Receiver<NetworkMessage>, anyhow::Error, bool)>);
+pub struct WebSocketConnection(Task<(Receiver<NetworkMessage>, anyhow::Error)>);
 
 pub fn start_ws_room(
     mut commands: Commands,
@@ -101,7 +100,6 @@ pub fn start_ws_room(
             WebsocketRoomTransport {
                 address: ev.address.to_owned(),
                 receiver: Some(receiver),
-                retries: 0,
             },
         ));
     }
@@ -158,17 +156,19 @@ fn reconnect_websocket(
         &mut WebsocketRoomTransport,
         &mut WebSocketConnection,
         &mut RoomRecovery,
+        &ConnectionHealth,
         Has<CredentialRequest>,
     )>,
     time: Res<Time>,
 ) {
-    for (entity, mut transport, mut connection, mut recovery, refreshable) in &mut websockets {
-        if let Some((receiver, error, connected)) = connection.0.complete() {
-            if connected {
-                recovery.reset();
-            }
+    for (entity, mut transport, mut connection, mut recovery, health, refreshable) in
+        &mut websockets
+    {
+        if health.is_connected() && recovery.failure == Some(FailureKind::Transient) {
+            recovery.failure = None;
+        }
+        if let Some((receiver, error)) = connection.0.complete() {
             transport.receiver = Some(receiver);
-            transport.retries = transport.retries.saturating_add(1);
             let error = error
                 .downcast_ref::<AdmissionError>()
                 .copied()
@@ -190,24 +190,18 @@ async fn websocket_room_handler(
     mut receiver: Receiver<NetworkMessage>,
     sender: Sender<NetworkUpdate>,
     health: ConnectionHealth,
-) -> (Receiver<NetworkMessage>, anyhow::Error, bool) {
+) -> (Receiver<NetworkMessage>, anyhow::Error) {
     let _health_lifetime = health.reset_on_drop();
-    let mut connected = false;
     let res = websocket_room_handler_inner(
         transport_id,
         remote_address,
         wallet,
         &mut receiver,
         sender,
-        &mut connected,
         &health,
     )
     .await;
-    (
-        receiver,
-        res.err().unwrap_or(anyhow!("connection closed")),
-        connected,
-    )
+    (receiver, res.err().unwrap_or(anyhow!("connection closed")))
 }
 
 async fn websocket_room_handler_inner(
@@ -216,7 +210,6 @@ async fn websocket_room_handler_inner(
     wallet: Wallet,
     receiver: &mut Receiver<NetworkMessage>,
     sender: Sender<NetworkUpdate>,
-    connected: &mut bool,
     health: &ConnectionHealth,
 ) -> Result<(), anyhow::Error> {
     debug!("connecting websocket room");
@@ -264,7 +257,6 @@ async fn websocket_room_handler_inner(
 
         match message {
             ws_packet::Message::WelcomeMessage(welcome) => {
-                *connected = true;
                 health.connected();
                 debug!("websocket welcome received");
                 from_alias = welcome.alias;
@@ -457,5 +449,58 @@ async fn websocket_room_handler_inner(
     select! {
         read_res = f_read => read_res,
         write_res = f_write => write_res,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn direct_websocket_reconnect_preserves_backoff_until_stable() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_systems(Update, reconnect_websocket)
+            .add_systems(
+                PostUpdate,
+                crate::room_connection::observe_stable_connections,
+            );
+        let health = ConnectionHealth::default();
+        health.connected();
+        let mut recovery = RoomRecovery::default();
+        recovery.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        let task = IoTaskPool::get_or_init(bevy::tasks::TaskPool::new)
+            .spawn(futures_lite::future::pending());
+        let room = app
+            .world_mut()
+            .spawn((
+                WebsocketRoomTransport {
+                    address: "wss://rooms.example/direct".into(),
+                    receiver: None,
+                },
+                WebSocketConnection(task),
+                health,
+                recovery,
+            ))
+            .id();
+        app.update();
+        assert_eq!(app.world().get::<RoomRecovery>(room).unwrap().failure, None);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(10));
+        app.update();
+        {
+            let mut recovery = app.world_mut().get_mut::<RoomRecovery>(room).unwrap();
+            recovery.fail(10.0, AdmissionError::new(FailureKind::Transient));
+            assert_eq!(recovery.retry.due, 12.0);
+        }
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(30));
+        app.update();
+        let mut recovery = app.world_mut().get_mut::<RoomRecovery>(room).unwrap();
+        recovery.fail(40.0, AdmissionError::new(FailureKind::Transient));
+        assert_eq!(recovery.retry.due, 41.0);
     }
 }
