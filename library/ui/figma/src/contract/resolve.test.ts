@@ -832,6 +832,39 @@ describe('resolveComponent', () => {
       expect(result.ok && result.resolved.usageFor.basis).toBe('unspecified')
     })
 
+    it('should report booleans as requested, and the boolean the mapping reads as selected', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        booleanProperties: { Blocked: 'true', 'Show icon': 'false' }
+      })
+
+      expect(result.ok && result.resolved.usageFor).toEqual({
+        variantProperties: {},
+        booleanProperties: { Blocked: 'true', 'Show icon': 'false' },
+        basis: 'requested'
+      })
+      expect(
+        result.ok && result.resolved.propTranslation.find((entry) => entry.figmaType === 'BOOLEAN')
+      ).toMatchObject({ figmaProperty: 'Blocked', selected: { figma: 'true', code: 'disabled' } })
+    })
+
+    // The nearest false positive: a boolean local with no value given stays unselected.
+    it('should leave a boolean the instance does not give unselected', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        booleanProperties: { 'Show icon': 'true' }
+      })
+
+      const entry =
+        result.ok && result.resolved.propTranslation.find((item) => item.figmaType === 'BOOLEAN')
+      expect(entry && 'selected' in entry).toBe(false)
+      expect(result.ok && result.resolved.usageFor.basis).toBe('requested')
+    })
+
     it('should accept a declared state and warn about a text the mapping does not render', async () => {
       const { mappingRoot } = await library()
 

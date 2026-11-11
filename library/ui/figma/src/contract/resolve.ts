@@ -42,9 +42,11 @@ type PropTranslation = {
 type Resolved = {
   component: { exportName: string; importSpecifier: string; importStatements: string[] }
   usage: string
-  // `unspecified`: no capture and no variant properties, so the usage shows the mapping's empty selection.
+  // `unspecified`: no capture and no variant or boolean properties, so the usage shows the mapping's empty
+  // selection.
   usageFor: {
     variantProperties: Record<string, string>
+    booleanProperties: Record<string, string>
     basis: 'requested' | 'figma-defaults' | 'unspecified'
   }
   propTranslation: PropTranslation[]
@@ -238,10 +240,7 @@ function renderUsage(
       const picked = own(selection, local.figmaProperty)
       values.set(local.local, picked !== undefined ? (own(local.values, picked) ?? '') : '')
     } else if (local.kind === 'boolean') {
-      const picked = (
-        own(selection, local.figmaProperty) ??
-        (input.booleanProperties && own(input.booleanProperties, local.figmaProperty))
-      )?.toLowerCase()
+      const picked = booleanPick(local, selection, input.booleanProperties)?.toLowerCase()
       values.set(local.local, TRUE_WORDS.includes(picked ?? '') ? local.whenTrue : local.whenFalse)
     } else if (local.kind === 'string') {
       values.set(
@@ -285,7 +284,21 @@ function renderUsage(
   return { usage: errors.length ? undefined : usage, errors }
 }
 
-function translate(mapping: ParsedMapping, selection: Record<string, string>): PropTranslation[] {
+// The value a boolean local renders: the variant selection first, then the instance's BOOLEAN properties, as
+// renderUsage reads it.
+function booleanPick(
+  local: { figmaProperty: string },
+  selection: Record<string, string>,
+  booleans: Readonly<Record<string, string>> | undefined
+): string | undefined {
+  return own(selection, local.figmaProperty) ?? (booleans && own(booleans, local.figmaProperty))
+}
+
+function translate(
+  mapping: ParsedMapping,
+  selection: Record<string, string>,
+  booleans?: Readonly<Record<string, string>>
+): PropTranslation[] {
   return mapping.locals.map((local): PropTranslation => {
     const codeProp = codePropOf(local, mapping.example ?? '')
     if (local.kind === 'enum') {
@@ -303,7 +316,23 @@ function translate(mapping: ParsedMapping, selection: Record<string, string>): P
       }
     }
     if (local.kind === 'boolean') {
-      return { figmaProperty: local.figmaProperty, figmaType: 'BOOLEAN', codeProp }
+      const picked = booleanPick(local, selection, booleans)
+      return {
+        figmaProperty: local.figmaProperty,
+        figmaType: 'BOOLEAN',
+        codeProp,
+        ...(picked === undefined
+          ? {}
+          : {
+              selected: {
+                figma: picked,
+                code: (TRUE_WORDS.includes(picked.toLowerCase())
+                  ? local.whenTrue
+                  : local.whenFalse
+                ).trim()
+              }
+            })
+      }
     }
     if (local.kind === 'string') {
       return {
@@ -655,8 +684,15 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
         importStatements: mapping.imports
       },
       usage: rendered.usage!,
-      usageFor: { variantProperties: selection, basis },
-      propTranslation: translate(mapping, selection),
+      usageFor: {
+        variantProperties: selection,
+        booleanProperties: { ...input.booleanProperties },
+        basis:
+          basis === 'unspecified' && Object.keys(input.booleanProperties ?? {}).length > 0
+            ? 'requested'
+            : basis
+      },
+      propTranslation: translate(mapping, selection, input.booleanProperties),
       interactionStates: mapping.header.states,
       limits,
       provenance: {

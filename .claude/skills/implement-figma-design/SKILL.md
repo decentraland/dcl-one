@@ -29,12 +29,12 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    // No prototype, so a layer named like an Object method (constructor, toString) is plain data.
    const variantProperties = Object.create(null)
    const booleanProperties = Object.create(null)
-   const texts = Object.create(null)
+   const textProperties = Object.create(null)
    for (const [key, property] of Object.entries(instance.componentProperties)) {
      const name = key.replace(/#\d+:\d+$/, '')
      if (property.type === 'VARIANT') variantProperties[name] = String(property.value)
      else if (property.type === 'BOOLEAN') booleanProperties[name] = String(property.value)
-     else if (property.type === 'TEXT') texts[name] = property.value
+     else if (property.type === 'TEXT') textProperties[key] = name
    }
    // Only the instance's own visible text layers: a nested instance's layers belong to that instance, and a
    // hidden layer (a boolean turned off, say) shows nothing.
@@ -48,15 +48,23 @@ Only components with a public mapping in `library/ui/components` resolve. That s
              ? []
              : ownTexts(child)
      )
-   // A name that shows two different texts is ambiguous: it leaves texts and is reported instead.
+   // Each visible text under its layer name and, when the layer shows a TEXT property, under the property's
+   // name too; a text property shown by no visible layer is left out. A name that shows two different texts is
+   // ambiguous: it leaves texts and is reported instead.
+   const texts = Object.create(null)
    const duplicateTexts = new Set()
-   for (const node of ownTexts(instance)) {
-     if (duplicateTexts.has(node.name)) continue
-     if (!Object.hasOwn(texts, node.name)) texts[node.name] = node.characters
-     else if (texts[node.name] !== node.characters) {
-       delete texts[node.name]
-       duplicateTexts.add(node.name)
+   const show = (name, text) => {
+     if (duplicateTexts.has(name)) return
+     if (!Object.hasOwn(texts, name)) texts[name] = text
+     else if (texts[name] !== text) {
+       delete texts[name]
+       duplicateTexts.add(name)
      }
+   }
+   for (const node of ownTexts(instance)) {
+     show(node.name, node.characters)
+     const property = textProperties[node.componentPropertyReferences?.characters]
+     if (property !== undefined && property !== node.name) show(property, node.characters)
    }
    return {
      name: main.parent?.type === 'COMPONENT_SET' ? main.parent.name : main.name,
@@ -67,7 +75,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    }
    ```
 
-   A `refused` result is not a component instance you can resolve: list it in your report. Pass `name`, `variantProperties`, `booleanProperties` and `texts` to the resolver, never `duplicateTexts`. A name listed there belongs to two visible texts (layers or a text property) of the same instance that show different text; the script leaves it out of `texts`, so name it in your report instead of guessing which text the component shows. A boolean the mapping does not read comes back as an `unmapped-figma-property` warning; a variant it does not read makes the name not fit. Resolve each nested instance with its own script run.
+   A `refused` result is not a component instance you can resolve: list it in your report. Pass `name`, `variantProperties`, `booleanProperties` and `texts` to the resolver, never `duplicateTexts`. A name listed there belongs to two visible texts of the same instance (layers, or a layer and the text property another layer shows) that show different text; a hidden layer or a text property only a hidden layer shows never counts; the script leaves it out of `texts`, so name it in your report instead of guessing which text the component shows. A boolean the mapping does not read comes back as an `unmapped-figma-property` warning; a variant it does not read makes the name not fit. Resolve each nested instance with its own script run.
 
 2. **Resolve the instances** with the CLI, from `library/ui`, in one batch read from standard input, so no file is written in the repository:
 

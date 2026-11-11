@@ -667,8 +667,15 @@
             "skill-kit-followups"
           ]
         },
+        "library/ui/figma/agent-kit/skill-script.test.ts": {
+          "sha256": "4dd7d86353a9dfa5f3620f9b87dfad012c8113d70d9042405e5fed14afb1e790",
+          "fds": null,
+          "deviation": [
+            "skill-kit-followups"
+          ]
+        },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "d981eee84358ef3bf1d6d3580886057856d9e6e52c4208349cfe5df469a0bad6",
+          "sha256": "b7ca6271d50d99a0197076d54f84293c382275cd294c10cce10d0e06329262be",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -2539,12 +2546,15 @@
           }
         },
         "library/ui/figma/src/contract/integrity.test.ts": {
-          "sha256": "2a4082db905bc4cef7a49c8a799eac4bcfe78eae80d9a2f675dbceb3e4919dd9",
+          "sha256": "cc3d416f6bb75a4f3a44a541b8697665da360c0cdb9bdefb01761b97a0c448bf",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/integrity.test.ts",
             "sha256": "d98105f21c1079469fdb707ec0fc231dc8f92cc8a76076ccbfa31268060c8449"
           },
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "skill-kit-followups"
+          ]
         },
         "library/ui/figma/src/contract/library.ts": {
           "sha256": "b413acc351a598bf038ae8e3bf311e20f03b6978fff1865654e30c21b47fc7cc",
@@ -2586,7 +2596,7 @@
           ]
         },
         "library/ui/figma/src/contract/resolve.test.ts": {
-          "sha256": "add46399c0e04ec418a79d636c051253649f04017e47465b2ad0847acf97a0bf",
+          "sha256": "3bfda153e78515b0f11b1743ba9c0623d3a30ada7bec07de8513203894aa13e8",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.test.ts",
             "sha256": "d1b50c99ff3cf99f3e7dd425facf4ba9ad171fd8cbe214df0bc3a34bc1ee3bc5"
@@ -2600,7 +2610,7 @@
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
-          "sha256": "765921b01c4cb48d137ca6ad9839bdd4539ee718b23b13786842e56b2fd84285",
+          "sha256": "71bccb8ce316dd0baf9c3bba3b7a4eccab2abf45a3f3435620ec3437d8ed9e92",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.ts",
             "sha256": "cac48b26148bef9db5d087d2857a7e9eaf89ae33745125d47957678de71dc596"
@@ -4298,7 +4308,7 @@
         "review-followup-3": "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
         "single-component-module-pin": "The public component table pins components/generation.json once: output origins name the source and transform and no longer repeat the generator module list, and the policy checks every module in that record against the source lock and the index. A table that still carries a per-output module map is refused.",
-        "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, skips hidden layers, drops a layer name that shows two texts and reports it and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Figma BOOLEAN properties travel apart from variants as booleanProperties (batch, MCP, --boolean): one the mapping does not read is an unmapped-figma-property warning, one it reads as a variant does not fit, and an unread variant still refuses a name match. check reports an install hashed by an earlier kit as stale, not as edited; an unreadable manifest or one from another library's kit is refused without --force.",
+        "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, collects only visible text (a TEXT property only when a visible layer shows it), drops a name two visible texts disagree on and reports it and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Figma BOOLEAN properties travel apart from variants as booleanProperties (batch, MCP, --boolean): one the mapping does not read is an unmapped-figma-property warning, one it reads as a variant does not fit, an unread variant still refuses a name match, and usageFor and propTranslation report the booleans given. check reports an install hashed by an earlier kit as stale, not as edited; an unreadable manifest or one from another library's kit is refused without --force.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
     }
@@ -4694,7 +4704,7 @@
         }
       },
       "generation.json": {
-        "sha256": "e8e05249952a8f00e892099072a5a7a617a43515a076063c116f45319c5eab2e",
+        "sha256": "8570cdfdfbc1bd705ecffbd4980b542331038626d2d00ba23a6f37b40c67393d",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
