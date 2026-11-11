@@ -12,7 +12,7 @@ import {
 } from "../catalyst/marketplace/profile-collectibles";
 import { fetchFavoritePlaces, fetchProfilePlaces } from "../catalyst/places/profile-places";
 import { fetchUserBadges } from "../catalyst/social/badges";
-import { fetchUserPhotos } from "../catalyst/social/photos";
+import { fetchPhoto, fetchUserPhotos } from "../catalyst/social/photos";
 import { fetchMyCommunities } from "../catalyst/social/profile-communities";
 import {
   fetchProfile,
@@ -20,9 +20,8 @@ import {
   mapProfile,
   normalizeAddress,
 } from "../catalyst/social/profile";
-import { mapPhotos } from "./view";
 
-/** Page sizes the profile reads use. Creations and assets load more a page at a time, as the profile site does. */
+/** Page sizes the profile reads use. Creations, assets and photos load more a page at a time; photos keep the profile site's 24. */
 export const PROFILE_COLLECTIBLES_PAGE = 24;
 export const PROFILE_PLACES_LIMIT = 100;
 
@@ -44,6 +43,8 @@ export const profileKeys = {
     ["profile", "assets", normalizeAddress(address), category ?? "all"] as const,
   places: (address: string) => ["profile", "places", normalizeAddress(address)] as const,
   photos: (address: string) => ["profile", "photos", normalizeAddress(address)] as const,
+  /** One snapshot by id, for a link to a photo past the pages loaded. */
+  photo: (id: string) => ["profile", "photo", id] as const,
   badges: (address: string) => ["profile", "badges", normalizeAddress(address)] as const,
   /** The wallets behind a list of places, sorted so the same set is one entry. */
   placeOwners: (addresses: readonly string[]) =>
@@ -52,6 +53,8 @@ export const profileKeys = {
     ["private", normalizeAddress(account), "profile", "communities"] as const,
   myFavoritePlaces: (account: string) =>
     ["private", normalizeAddress(account), "profile", "favorite-places"] as const,
+  /** The owner's own gallery, private snapshots included; its pages live under the same key. */
+  myPhotos: (account: string) => ["private", normalizeAddress(account), "profile", "photos"] as const,
 };
 
 /** Reads only run for a wallet address; anything else is a profile that cannot exist. */
@@ -115,12 +118,37 @@ export const placesQuery = (address: string) =>
       fetchProfilePlaces(normalizeAddress(address), { limit: PROFILE_PLACES_LIMIT }, { signal }),
   });
 
-export const photosQuery = (address: string) =>
-  queryOptions({
-    queryKey: profileKeys.photos(address),
+/** Whether `identity` signs for the wallet whose profile this is, so it may read that wallet's private data. */
+export function signsFor(identity: AuthIdentity | null | undefined, address: string): identity is AuthIdentity {
+  return Boolean(identity) && normalizeAddress(identity!.signer) === normalizeAddress(address);
+}
+
+/**
+ * A wallet's snapshots, a page at a time. Signed by that wallet's own identity the list includes its
+ * private snapshots and sits under the account's private key; otherwise it is the public list anyone
+ * sees. Another wallet's identity is never sent, so it cannot widen what a visitor reads.
+ */
+export const photosQuery = (address: string, identity: AuthIdentity | null = null) => {
+  const owner = signsFor(identity, address) ? identity : undefined;
+  return infiniteQueryOptions({
+    queryKey: owner ? profileKeys.myPhotos(owner.signer) : profileKeys.photos(address),
     staleTime: PROFILE_STALE_MS,
-    queryFn: async ({ signal }) =>
-      mapPhotos(await fetchUserPhotos(normalizeAddress(address), { signal })),
+    initialPageParam: 0,
+    queryFn: ({ pageParam, signal }) =>
+      fetchUserPhotos(
+        normalizeAddress(address),
+        { limit: PROFILE_COLLECTIBLES_PAGE, offset: pageParam },
+        owner ? { signal, identity: owner } : { signal },
+      ),
+    getNextPageParam: nextCollectiblesPage,
+  });
+};
+
+export const photoQuery = (id: string) =>
+  queryOptions({
+    queryKey: profileKeys.photo(id),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchPhoto(id, { signal }),
   });
 
 export const badgesQuery = (address: string) =>

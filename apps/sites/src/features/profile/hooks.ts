@@ -9,12 +9,14 @@ import {
   creationsQuery,
   myCommunitiesQuery,
   myFavoritePlacesQuery,
+  photoQuery,
   photosQuery,
   placeOwnersQuery,
   placesQuery,
   PROFILE_STALE_MS,
   profileKeys,
   profileQuery,
+  signsFor,
 } from "@/data/lib/profile/queries";
 
 export function useProfile(address: string) {
@@ -67,8 +69,29 @@ export function useProfileBadges(address: string, hasProfile: boolean) {
   return useQuery({ ...badgesQuery(address), enabled: hasProfile && canReadProfile(address) });
 }
 
-export function useProfilePhotos(address: string) {
-  return useQuery({ ...photosQuery(address), enabled: canReadProfile(address) });
+/**
+ * A profile's snapshots, a page at a time: the owner's signed list (private ones included) with their
+ * identity, the public list otherwise. While the signed list first loads, the public one already on
+ * screen stays; never the other way round, so a signed-out page never keeps private rows.
+ */
+export function useProfilePhotos(address: string, identity: AuthIdentity | null) {
+  const signed = signsFor(identity, address);
+  const publicKey = profileKeys.photos(address);
+  return useInfiniteQuery({
+    ...photosQuery(address, identity),
+    enabled: canReadProfile(address),
+    placeholderData: (previous, previousQuery) =>
+      signed && previousQuery && sameKey(previousQuery.queryKey, publicKey) ? previous : undefined,
+  });
+}
+
+/** One snapshot by id; only read while a link names a photo the loaded pages do not hold. */
+export function useProfilePhoto(id: string | null) {
+  return useQuery({ ...photoQuery(id ?? ""), enabled: id !== null });
+}
+
+function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
+  return a.length === b.length && a.every((part, index) => part === b[index]);
 }
 
 /** The signed-in member's communities; nothing is requested without an identity. */

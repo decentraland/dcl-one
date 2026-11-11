@@ -17,6 +17,7 @@ const net = vi.hoisted(() => ({
   fetchProfilePlaces: vi.fn(),
   fetchProfileCreations: vi.fn(),
   fetchProfileAssets: vi.fn(),
+  fetchUserPhotos: vi.fn(),
   track: vi.fn(),
 }));
 const auth = vi.hoisted(() => ({
@@ -36,11 +37,15 @@ vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original)
   fetchProfileCreations: net.fetchProfileCreations,
   fetchProfileAssets: net.fetchProfileAssets,
 }));
+vi.mock("@/data/lib/catalyst/social/photos", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/social/photos")>()),
+  fetchUserPhotos: net.fetchUserPhotos,
+}));
 vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Promise.resolve([]) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
-// The tab components are today's ui3 pages; these stand-ins show what the route hands them.
+// The tabs still on ui3 pages; these stand-ins show what the route hands them.
 const { stub } = vi.hoisted(() => ({
   stub: (tab: string) => ({
     default: (props: { profile: { name: string }; isOwnProfile?: boolean }) => (
@@ -52,7 +57,6 @@ const { stub } = vi.hoisted(() => ({
   }),
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
-vi.mock("@ui/web/pages/StProfilePhotosTab", () => stub("photos"));
 vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
@@ -278,6 +282,31 @@ describe("profile route, creations and assets", () => {
 
     expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/token/0xabc/7");
     expect(screen.getByText("1 asset")).toBeTruthy();
+  });
+});
+
+describe("profile route, photos", () => {
+  const shot = {
+    id: "p-1",
+    url: "https://reel.example/p-1.jpg",
+    thumbnailUrl: "https://reel.example/p-1-thumbnail.jpg",
+    isPublic: true,
+    dateTime: "",
+    realm: "main",
+    scene: { name: "Genesis Plaza", x: "0", y: "1" },
+    author: { name: "Alice", address: A },
+    people: [],
+  };
+
+  it("shows a member's photos and opens the one the link names", async () => {
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchUserPhotos.mockResolvedValue({ items: [shot], received: 1, total: 1 });
+
+    mount(`/profile/${A}/photos?photo=p-1`);
+
+    expect(await screen.findByRole("dialog", { name: "Photo at Genesis Plaza, 1 of 1" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Photo at Genesis Plaza" })).toBeTruthy();
+    expect(screen.getByText("1 photo")).toBeTruthy();
   });
 });
 

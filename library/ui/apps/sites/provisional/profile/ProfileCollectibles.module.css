@@ -128,6 +128,35 @@
   min-width: 0;
 }
 
+/* The source's photo grid: one column on phones, two from 600px, three from 900px, four from
+ * 1200px (the MUI breakpoints), with its 13px gap on the nearest spacing token. */
+.photos {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dcl-space-12);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 600px) {
+  .photos {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 900px) {
+  .photos {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .photos {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .more {
   display: flex;
   flex-direction: column;
