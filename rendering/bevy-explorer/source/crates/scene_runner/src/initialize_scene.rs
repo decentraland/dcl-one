@@ -20,8 +20,8 @@ use common::{
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
-        IVec2Arg, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta, SceneTime, StartupScenes,
-        WorldHold,
+        IVec2Arg, NearbyVoiceDisabled, PreviewMode, SceneJsFile, SceneLoadDistance, SceneMeta,
+        SceneTime, StartupScenes, WorldHold,
     },
     terrain::{Occupancy, TerrainChange, TerrainTargets, BORDER_PADDING},
     util::{TaskExt, TryPushChildrenEx},
@@ -413,6 +413,14 @@ pub(crate) fn load_scene_javascript(
             commands
                 .entity(root)
                 .try_insert(SceneTime { time: fixed_time });
+        }
+
+        if meta
+            .feature_toggles
+            .as_ref()
+            .is_some_and(|toggles| !toggles.nearby_voice_chat_enabled())
+        {
+            commands.entity(root).try_insert(NearbyVoiceDisabled);
         }
 
         info!("{root:?}: started scene (location: {base:?}, scene thread id: {scene_id:?}, is sdk7: {is_sdk7:?}), storage root: {storage_root}");

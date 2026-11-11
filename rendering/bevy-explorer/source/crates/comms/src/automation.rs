@@ -318,7 +318,7 @@ impl VoiceState {
     fn to_json(&self) -> Value {
         let livekit = self.livekit.as_ref();
         json!({
-            "mic": { "available": self.mic.available, "enabled": self.mic.enabled },
+            "mic": { "available": self.mic.available, "enabled": self.mic.enabled, "sceneBlocked": self.mic.scene_blocked },
             "call": self.call,
             "livekit": livekit.is_some(),
             "connected": livekit.map(|livekit| livekit.connected()),
@@ -352,7 +352,8 @@ type VoiceRooms<'w, 's> = Query<
 #[cfg(feature = "livekit")]
 type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<ActiveSpeaker>>;
 
-/// Report, as JSON, the microphone as `mic` (`available`, `enabled`) and, in a build with the
+/// Report, as JSON, the microphone as `mic` (`available`, `enabled`, and `sceneBlocked` while the
+/// scene the player stands in turns nearby voice off) and, in a build with the
 /// `livekit` feature, `connected` (a realm or scene voice room is connected), `rooms` (each
 /// `scene` and `state`: connecting, connected, reconnecting, disconnected or failed),
 /// `speakers` (addresses speaking now, the local player's included) and `call` (the private
@@ -605,6 +606,7 @@ mod tests {
             mic: MicState {
                 available: true,
                 enabled: false,
+                scene_blocked: false,
             },
             livekit: None,
             call: None,
@@ -612,7 +614,7 @@ mod tests {
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": false },
+                "mic": { "available": true, "enabled": false, "sceneBlocked": false },
                 "call": null,
                 "livekit": false,
                 "connected": null,
@@ -628,6 +630,7 @@ mod tests {
             mic: MicState {
                 available: true,
                 enabled: true,
+                scene_blocked: false,
             },
             livekit: Some(LivekitVoice::new(
                 [
@@ -647,7 +650,7 @@ mod tests {
         assert_eq!(
             state.to_json(),
             json!({
-                "mic": { "available": true, "enabled": true },
+                "mic": { "available": true, "enabled": true, "sceneBlocked": false },
                 "call": { "status": "disconnected" },
                 "livekit": true,
                 "connected": true,

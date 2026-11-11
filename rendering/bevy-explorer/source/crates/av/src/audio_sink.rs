@@ -2,7 +2,7 @@ use std::marker::PhantomData;
 
 use bevy::{prelude::*, render::view::RenderLayers};
 use common::{
-    structs::{AudioDecoderError, AudioSettings},
+    structs::{AudioDecoderError, AudioSettings, MicState},
     util::VolumePanning,
 };
 use comms::global_crdt::{ForeignAudioSource, NearbyPanning, VoicePan};
@@ -196,13 +196,19 @@ fn update_foreign_audio_player_volume(
     >,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
+    mic_state: Res<MicState>,
     panning_settings: Res<NearbyPanning>,
     time: Res<Time>,
 ) {
     for (emitter_transform, render_layers, mut audio_spawned, mut voice_pan) in streams.iter_mut() {
         let (volume, panning) =
             pan.volume_and_panning(emitter_transform.translation(), render_layers);
-        let volume = volume * settings.voice();
+        // a scene that turns nearby voice off silences nearby players
+        let volume = if mic_state.scene_blocked {
+            0.0
+        } else {
+            volume * settings.voice()
+        };
         let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
 
         audio_spawned

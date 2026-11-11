@@ -804,6 +804,8 @@ export interface MicMessage {
   kind: 'mic'
   enabled: boolean
   available: boolean
+  /** The scene the player stands in turns nearby voice off. */
+  sceneBlocked?: boolean
 }
 
 export interface SetMicRequest {

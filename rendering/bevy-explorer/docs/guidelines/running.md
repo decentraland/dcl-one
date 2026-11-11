@@ -206,7 +206,8 @@ State, in every build:
 - `/chat_history [count]`: the last chat messages sent and received (200 kept), oldest first,
   with the sender's address and `messageId`, and `total` counting every message so far. Commands,
   emote markers and direct messages are left out; `/dm_history` has those.
-- `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
+- `/voice_state`: the mic (`available`, `enabled`, and `sceneBlocked` while the scene the player
+  stands in turns nearby voice off) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`

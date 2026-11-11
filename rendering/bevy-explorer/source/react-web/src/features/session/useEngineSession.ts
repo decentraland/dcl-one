@@ -127,6 +127,8 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
 // Fallbacks only: the menu reads the live clock with `/time` when it opens.
+/** The minimap's line for a scene that turns nearby voice off. */
+const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
 
@@ -352,6 +354,8 @@ export interface MinimapState {
    *  parcel (the header falls back to "Empty parcel"). Updates as the player crosses into
    *  another scene — unlike the entry overlay's title, which never does. */
   sceneTitle: string
+  /** What the scene the player is standing in turns off, for the header's restrictions list. */
+  restrictions: string[]
   /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
    *  engine; on the DOM styles the scene disposes its TextureCamera. */
   setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
@@ -936,7 +940,8 @@ export interface EngineSession {
   /** The password prompt for a password-protected world being travelled to. */
   worldPassword: WorldPasswordState
   editor: EditorHostState
-  mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** `sceneBlocked`: the scene the player stands in turns nearby voice off. */
+  mic: { enabled: boolean; available: boolean; sceneBlocked: boolean; toggle: () => void }
   /** Private calls and community streams. */
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
@@ -1241,7 +1246,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
-  const [mic, setMic] = useState({ enabled: false, available: false })
+  const [mic, setMic] = useState({ enabled: false, available: false, sceneBlocked: false })
   const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
   const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
   const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
@@ -1778,7 +1783,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setEmotes(msg.emotes)
           break
         case 'mic':
-          setMic({ enabled: msg.enabled, available: msg.available })
+          setMic({ enabled: msg.enabled, available: msg.available, sceneBlocked: msg.sceneBlocked === true })
           break
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
@@ -4146,8 +4151,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace]
   )
   const minimapSlice = useMemo(
-    () => ({ pose: poseRef, satelliteView, sceneTitle, setConfig: setMinimapConfig }),
-    [satelliteView, sceneTitle, setMinimapConfig]
+    () => ({
+      pose: poseRef,
+      satelliteView,
+      sceneTitle,
+      restrictions: mic.sceneBlocked ? [NEARBY_VOICE_RESTRICTION] : [],
+      setConfig: setMinimapConfig
+    }),
+    [satelliteView, sceneTitle, mic.sceneBlocked, setMinimapConfig]
   )
 
   return {
@@ -4312,7 +4323,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     },
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     editor: { mode: editorMode, setMode: setEditorMode },
-    mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    mic: { enabled: mic.enabled, available: mic.available, sceneBlocked: mic.sceneBlocked, toggle: toggleMic },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     setEngineViewport,

@@ -1202,7 +1202,27 @@ pub struct SceneMeta {
     pub spawn_points: Option<Vec<SpawnPoint>>,
     pub skybox_config: Option<SkyboxConfig>,
     pub authoritative_multiplayer: Option<bool>,
+    pub feature_toggles: Option<FeatureToggles>,
 }
+
+#[derive(Deserialize, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct FeatureToggles {
+    pub nearby_voice_chat: Option<String>,
+}
+
+impl FeatureToggles {
+    /// On unless the scene sets a value other than `enabled`.
+    pub fn nearby_voice_chat_enabled(&self) -> bool {
+        self.nearby_voice_chat
+            .as_deref()
+            .is_none_or(|value| value.is_empty() || value.eq_ignore_ascii_case("enabled"))
+    }
+}
+
+/// On a scene root: the scene turns nearby voice off for players standing in it.
+#[derive(Component)]
+pub struct NearbyVoiceDisabled;
 
 pub trait PermissionStrings {
     fn active(&self) -> &str;
@@ -1690,6 +1710,20 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
+    /// The scene the player stands in turns nearby voice off: the mic stays closed and nearby
+    /// players are not heard.
+    #[serde(default)]
+    pub scene_blocked: bool,
+}
+
+impl MicState {
+    /// Entering a scene that turns nearby voice off closes the mic; leaving does not reopen it.
+    pub fn set_scene_blocked(&mut self, blocked: bool) {
+        self.scene_blocked = blocked;
+        if blocked {
+            self.enabled = false;
+        }
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -1950,6 +1984,45 @@ mod tests {
                 avatar: 10,
             }
         );
+    }
+
+    #[test]
+    fn the_mic_stays_closed_after_leaving_a_scene_that_turns_nearby_voice_off() {
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+            scene_blocked: false,
+        };
+        mic.set_scene_blocked(true);
+        assert!(mic.scene_blocked && !mic.enabled);
+        mic.set_scene_blocked(false);
+        assert!(!mic.scene_blocked && !mic.enabled);
+    }
+
+    #[test]
+    fn a_scene_turns_nearby_voice_off_with_any_value_but_enabled() {
+        let enabled = |toggles: &str| {
+            let meta: SceneMeta = serde_json::from_str(&format!(
+                r#"{{"main":"index.js","scene":{{"base":"0,0","parcels":["0,0"]}}{toggles}}}"#
+            ))
+            .unwrap();
+            meta.feature_toggles
+                .is_none_or(|toggles| toggles.nearby_voice_chat_enabled())
+        };
+        assert!(enabled(""));
+        assert!(enabled(r#","featureToggles":{}"#));
+        assert!(enabled(r#","featureToggles":{"voiceChat":"disabled"}"#));
+        assert!(enabled(r#","featureToggles":{"nearbyVoiceChat":""}"#));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"enabled"}"#
+        ));
+        assert!(enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"ENABLED"}"#
+        ));
+        assert!(!enabled(
+            r#","featureToggles":{"nearbyVoiceChat":"disabled"}"#
+        ));
+        assert!(!enabled(r#","featureToggles":{"nearbyVoiceChat":"off"}"#));
     }
 
     #[test]

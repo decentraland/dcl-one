@@ -189,7 +189,8 @@ fn add_ping_systems(world: &mut World) {
         schedules.add_systems(OnEnter(MicrophoneTransmissionState::Enabled), ping_enabled);
         schedules.add_systems(
             OnEnter(MicrophoneTransmissionState::Disabled),
-            ping_disabled,
+            // a mic closed by the scene makes no sound
+            ping_disabled.run_if(|mic_state: Res<MicState>| !mic_state.scene_blocked),
         );
     });
 }
@@ -317,9 +318,10 @@ fn tear_down_microphone(mut commands: Commands) {
     commands.remove_resource::<MicrophoneDevice>();
 }
 
-/// A call holds the nearby mic off without changing the user's setting.
+/// A call holds the nearby mic off without changing the user's setting, and so does a scene that
+/// turns nearby voice off.
 fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
-    mic_state.enabled && !call_mic.suppress_nearby
+    mic_state.enabled && !mic_state.scene_blocked && !call_mic.suppress_nearby
 }
 
 fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
@@ -635,6 +637,7 @@ fn locate_foreign_streams(
     tracks: Query<&LivekitTrack, (With<Subscribed>, With<Audio>)>,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
+    mic_state: Res<MicState>,
     panning_settings: Res<NearbyPanning>,
     time: Res<Time>,
 ) {
@@ -668,7 +671,12 @@ fn locate_foreign_streams(
 
             let (volume, panning) =
                 pan.volume_and_panning(emitter_transform.translation(), render_layers);
-            let volume = volume * settings.voice();
+            // a scene that turns nearby voice off silences nearby players
+            let volume = if mic_state.scene_blocked {
+                0.0
+            } else {
+                volume * settings.voice()
+            };
             let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
             for livekit_track in tracks.iter_many(publishing) {
                 if let Some(track) = livekit_track.track() {
@@ -765,6 +773,7 @@ mod tests {
         app.insert_resource(MicState {
             available: true,
             enabled: true,
+            scene_blocked: false,
         })
         .init_resource::<CallMic>()
         .add_systems(Update, scope_microphones);
@@ -785,6 +794,31 @@ mod tests {
         assert!(app.world().resource::<MicState>().enabled);
 
         app.world_mut().resource_mut::<CallMic>().suppress_nearby = false;
+        app.update();
+        assert!(app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+    }
+
+    #[test]
+    fn a_scene_that_disables_nearby_voice_holds_the_nearby_mic_off() {
+        let mut app = App::new();
+        app.insert_resource(MicState {
+            available: true,
+            enabled: true,
+            scene_blocked: true,
+        })
+        .init_resource::<CallMic>()
+        .add_systems(Update, scope_microphones);
+        let nearby = app.world_mut().spawn(LivekitLocalParticipant).id();
+        app.update();
+        assert!(!app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+
+        app.world_mut().resource_mut::<MicState>().scene_blocked = false;
         app.update();
         assert!(app
             .world()

@@ -216,7 +216,8 @@ fn respond_to_audio_settings_change(
         .set_volume(audio_settings.voice_chat() as f64, Tween::default());
 }
 
-/// The microphone key toggles the nearby mic, or the call mic while a call is connected.
+/// The microphone key toggles the nearby mic, or the call mic while a call is connected. It does
+/// nothing to the nearby mic while the scene turns nearby voice off.
 fn handle_input(
     input_manager: InputManager,
     mut mic_state: ResMut<MicState>,
@@ -246,6 +247,7 @@ fn handle_input(
                 .0
                 .push_back(VoiceInput::SetMic(!call_mic.enabled));
         }
+        _ if mic_state.scene_blocked => {}
         _ => mic_state.enabled = !mic_state.enabled,
     }
 }
@@ -257,7 +259,7 @@ fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<Mic
                 rpc_result_sender.send(mic.clone());
             }
             SystemApi::SetMicEnabled(enabled) => {
-                mic.enabled = mic.available && *enabled;
+                mic.enabled = mic.available && !mic.scene_blocked && *enabled;
             }
             _ => (),
         }

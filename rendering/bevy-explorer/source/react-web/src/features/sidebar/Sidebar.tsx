@@ -6,7 +6,7 @@
 
 import { useCallback, useContext, useEffect, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
+import { Button, ControlButton, IconButton, Panel, showToast, Toggle } from '../../design'
 import { useDebugPanel } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '../../engine/protocol'
@@ -120,6 +120,8 @@ const BOTTOM: Item[] = [
   { kind: 'friends', icon: 'friends', label: 'Friends', hotkey: 'Friends' },
   { kind: 'chat', icon: 'chat', label: 'Chat', hotkey: 'ChatPanel' }
 ]
+
+const NEARBY_VOICE_BLOCKED = 'Nearby voice chat unavailable in this scene.'
 
 type VoiceProps = NearbyVoice & { onOpen: (button: HTMLElement) => void }
 type PermissionsProps = { open: boolean; onOpen: (button: HTMLElement) => void }
@@ -248,15 +250,16 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
       />
     )
   if (item.kind === 'mic') {
-    const state = !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
+    // blocked: the scene turns nearby voice off, so the button explains instead of opening
+    const state = voice.blocked ? 'blocked' : !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
     return (
       <RailButton
         key="mic"
-        icon={`voice-${state}`}
+        icon={state === 'blocked' ? 'voice-off' : `voice-${state}`}
         size={34}
         label="Nearby Voice"
         data-voice={state}
-        indicator={state !== 'off'}
+        indicator={state !== 'off' && state !== 'blocked'}
         onClick={(e) => voice.onOpen(e.currentTarget)}
       >
         {state === 'speaking' && (
@@ -345,7 +348,16 @@ export function Sidebar({
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
   const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null)
   const nearby = useNearbyVoice(session)
-  const voice: VoiceProps = { ...nearby, onOpen: (button) => setVoiceAnchor((a) => (a == null ? button : null)) }
+  const voice: VoiceProps = {
+    ...nearby,
+    onOpen: (button) => {
+      if (nearby.blocked) showToast(NEARBY_VOICE_BLOCKED)
+      else setVoiceAnchor((a) => (a == null ? button : null))
+    }
+  }
+  useEffect(() => {
+    if (nearby.blocked) setVoiceAnchor(null)
+  }, [nearby.blocked])
   const closeVoice = useCallback(() => setVoiceAnchor(null), [])
   const permissions: PermissionsProps = {
     open: permissionsAnchor != null,

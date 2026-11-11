@@ -34,6 +34,7 @@ import {
   saveZoom
 } from './minimapPrefs'
 import { MinimapSettings } from './MinimapSettings'
+import { SceneRestrictions } from './SceneRestrictions'
 import type { MapState, MinimapState } from '../session/useEngineSession'
 import type { MinimapStyle } from '../../engine/protocol'
 import { hudInsetRef } from '../../lib/hudInset'
@@ -243,6 +244,7 @@ export const Minimap = memo(function Minimap({
         <span className={styles.coords}>
           {map.x},{map.y}
         </span>
+        {minimap.restrictions.length > 0 && <SceneRestrictions restrictions={minimap.restrictions} />}
         <button
           type="button"
           className={styles.collapse}

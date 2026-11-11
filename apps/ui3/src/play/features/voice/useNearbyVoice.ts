@@ -1,5 +1,6 @@
 // Nearby voice state for the sidebar button and its popover: hearing others (the engine's Voice
-// volume, zeroed while off), the mic, and whether we're being heard right now.
+// volume, zeroed while off), the mic, whether we're being heard right now, and whether the scene
+// turns nearby voice off.
 
 import { useCallback, useEffect, useState } from 'react'
 import type { EngineSession } from '../session/useEngineSession'
@@ -17,6 +18,8 @@ export interface NearbyVoice {
   talking: boolean
   micAvailable: boolean
   toggleSpeak: () => void
+  /** The scene the player stands in turns nearby voice off. */
+  blocked: boolean
 }
 
 export function useNearbyVoice(session: EngineSession): NearbyVoice {
@@ -50,5 +53,5 @@ export function useNearbyVoice(session: EngineSession): NearbyVoice {
     toggle()
   }, [enabled, toggle])
 
-  return { hearing, setHearing, volume, setVolume, speaking: enabled, talking, micAvailable: session.mic.available, toggleSpeak }
+  return { hearing, setHearing, volume, setVolume, speaking: enabled, talking, micAvailable: session.mic.available, toggleSpeak, blocked: session.mic.sceneBlocked }
 }
