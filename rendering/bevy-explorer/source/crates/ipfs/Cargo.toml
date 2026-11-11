@@ -9,9 +9,6 @@ edition = "2021"
 default = ["ipfs_debug"]
 hot_reload = []
 ipfs_debug = ["bevy/bevy_ui_picking_backend"]
-# Takes `glb-meshopt` model variants: only for a binary whose glTF loader decodes
-# EXT_meshopt_compression (decentra-bevy, src/meshopt_ext.rs).
-meshopt-variants = []
 
 [dependencies]
 common = { workspace = true }

@@ -114,10 +114,9 @@ Excluded from variants: source maps, audio, video and scene code.
 - A content file reads as a variant only when its original CID has a variant of
   a class the Explorer supports for that file type and GPU: original CID, first
   supported variant, fetch from `{base}/{path}`, decode. Any failure (fetch, a
-  KTX2 that does not unwrap, a model that does not load) falls back to the
+  KTX2 that does not unwrap, a texture that does not load) falls back to the
   original, per file; a variant that failed is not tried again in the session and
-  the asset is reloaded from the original. An avatar waits for that reload
-  before it gives up on a body or wearable. Repeated transport failures turn the
+  the asset is reloaded from the original. Repeated transport failures turn the
   service off for the session.
 - Variant bytes are cached under a digest of the URL they came from, never under
   the original's content hash, so a variant can never stand in for an original
@@ -125,14 +124,11 @@ Excluded from variants: source maps, audio, video and scene code.
   DDS it unwraps to, cached beside it.
 - The supported classes are one table in the manifest client
   (`crates/ipfs/src/bevy_variants`): the class, the file types it may replace,
-  what the GPU must support and what the bytes decode as. The table holds the
-  BC texture class (BC1, BC5 or BC7, read from the KTX2 header) and, behind the
-  `ipfs` crate's `meshopt-variants` feature, `glb-meshopt`: its bytes are handed
-  as they are to the loader of the original `.glb`/`.gltf` path (the meshopt
-  pre-pass glTF loader). The `decentra-bevy` crate, which
-  compiles that loader's decoder in, enables the feature; a build without it
-  keeps reading the original GLB. `glb` is not taken because the glTF loader
-  rejects a file that requires `KHR_texture_basisu`.
+  what the GPU must support and what the bytes decode as. The table holds only
+  the BC texture class (BC1, BC5 or BC7, read from the KTX2 header). Models
+  always load their originals: `glb-meshopt` needs an `EXT_meshopt_compression`
+  decoder the glTF loader does not have, and `glb` is not taken because the glTF
+  loader rejects a file that requires `KHR_texture_basisu`.
 
 ## Consequences
 

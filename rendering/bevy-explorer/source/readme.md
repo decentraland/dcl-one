@@ -146,7 +146,7 @@ The launch parameters shared with the web build — realm, spawn parcel, ui scen
 
 ### Bevy variants (prototype)
 
-abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures and models: KTX2 files holding BC7, BC1 or BC5 blocks with full mip chains, each level zstd-supercompressed, and `glb-meshopt` models. The explorer uses them only when a variants base url is given: `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file. Without one nothing changes.
+abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures: KTX2 files holding BC7, BC1 or BC5 blocks with full mip chains, each level zstd-supercompressed. The explorer uses them only when a variants base url is given: `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file. Without one nothing changes.
 
 With a base url set:
 
@@ -154,7 +154,7 @@ With a base url set:
 - Nothing in preview mode asks for a manifest, including wearables and emotes, nor do `b64-` entity ids or entities served from a loopback or `file://` content server.
 - When a content file `.png`, `.jpg`, `.jpeg`, `.webp` or `.ktx2`, or one without an extension, has a texture variant and the GPU supports BC textures, the file is read from `{base}/{path}` instead. The bytes are cached under a digest of that url, never under the original's hash.
 - The KTX2 is unwrapped into a DDS with a DX10 header, in the BC format (BC1, BC5 or BC7) its header names: each level is zstd-decoded, and its size must be exactly the block bytes its dimensions need. Dimensions above 8192, a level 0 that is not whole 4×4 blocks, more levels than the mip chain, sRGB or other formats, and any other supercompression are rejected. The image loaders recognise DDS from its bytes, so the asset keeps its original path, and the texture is sRGB or linear as it is requested. The DDS is cached beside the KTX2, so a warm visit skips the zstd decode.
-- When a `.glb` or `.gltf` file has a `glb-meshopt` variant, the file is read from `{base}/{path}` instead and cached the same way. The bytes go to the original path's glTF loader as they are; its meshopt pre-pass decodes the `EXT_meshopt_compression` meshes before the stock loader sees them. A model that fails to load from its variant is reloaded from the original, and an avatar waits for that reload instead of finishing without the body or wearable. This needs the ipfs feature `meshopt-variants`, which the explorer build turns on.
+- Models always load their originals. abgen's `glb-meshopt` variants need an `EXT_meshopt_compression` decoder the glTF loader does not have (decentraland/dcl-one#628).
 - `glb` variants are not used. They embed their textures as KTX2 under `KHR_texture_basisu`, and the glTF loader rejects a file that requires that extension.
 - Any failure falls back to the original for that file: no variant of a supported class, a failed fetch, a KTX2 that does not unwrap, or an image that fails to load from the variant. A failed variant is not tried again that session. Five consecutive failed requests to the service turn variants off for the session.
 - Image processing skips assets loaded from a variant, so their bytes are never re-encoded or written over the original's cache entry.

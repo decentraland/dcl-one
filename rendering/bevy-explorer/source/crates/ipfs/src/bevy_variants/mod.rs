@@ -18,13 +18,11 @@
 //! most [`MANIFEST_DEADLINE`] from the request, then read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
-//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Of the
-//! model variants, `glb-meshopt` (meshes under `EXT_meshopt_compression` and
-//! `KHR_mesh_quantization`, textures untouched) is taken behind the `meshopt-variants` feature,
-//! for the binary whose glTF loader decodes meshopt streams: its bytes are handed to that loader
-//! as they are, at the original `.glb`/`.gltf` path (the asset server picks the loader by that
-//! path's extension, not by the cache file's name). `glb` embeds its textures as KTX2 under
-//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it, and is not taken.
+//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Only
+//! texture variants are taken. `glb-meshopt` models need an `EXT_meshopt_compression` decoder
+//! the glTF loader does not have, and `glb` embeds its textures as KTX2 under
+//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it; both are ignored,
+//! so their originals load.
 //!
 //! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
@@ -64,9 +62,6 @@ use crate::{
 /// through), so a dds decodes at the original path. A path without an extension goes to the
 /// last image loader, which guesses too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
-/// Model paths the glTF loader reads (and the meshopt pre-pass loader stands in for).
-#[cfg(feature = "meshopt-variants")]
-const MODEL_EXTENSIONS: [&str; 2] = ["glb", "gltf"];
 /// Every variant class the manifest schema (v3) names by a path's prefix letter, taken or not.
 const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-meshopt", "glb"];
 const RECENT_FALLBACKS: usize = 20;
@@ -77,10 +72,6 @@ pub enum Decoded {
     /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), unwrapped to the DDS the image
     /// loaders read.
     BcTexture,
-    /// Handed to the loader of the original path as it is: a `glb-meshopt` model, whose meshopt
-    /// streams the glTF loader's pre-pass decodes.
-    #[cfg(feature = "meshopt-variants")]
-    AsIs,
 }
 
 /// A variant class this client takes: its `kind`/`format` (from the path's prefix letter), the
@@ -110,26 +101,14 @@ impl SupportedFormat {
 
 /// The variant classes this client takes. A variant is loaded only through a row here; the
 /// manifest's order of preference decides between rows.
-pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
-    SupportedFormat {
-        kind: "texture",
-        format: "ktx2-bc",
-        extensions: &TEXTURE_EXTENSIONS,
-        without_extension: true,
-        needs_bc: true,
-        decoded: Decoded::BcTexture,
-    },
-    // the bytes pass through: the meshopt pre-pass glTF loader decodes the streams
-    #[cfg(feature = "meshopt-variants")]
-    SupportedFormat {
-        kind: "model",
-        format: "glb-meshopt",
-        extensions: &MODEL_EXTENSIONS,
-        without_extension: false,
-        needs_bc: false,
-        decoded: Decoded::AsIs,
-    },
-];
+pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[SupportedFormat {
+    kind: "texture",
+    format: "ktx2-bc",
+    extensions: &TEXTURE_EXTENSIONS,
+    without_extension: true,
+    needs_bc: true,
+    decoded: Decoded::BcTexture,
+}];
 
 /// The row for a manifest variant's `kind`/`format`, if this client takes it.
 pub fn supported_format(variant: &Variant) -> Option<&'static SupportedFormat> {
@@ -151,8 +130,6 @@ pub fn taken_formats() -> String {
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, loaded as DDS",
-            #[cfg(feature = "meshopt-variants")]
-            Decoded::AsIs => "meshopt streams decoded by the glTF loader",
         };
         match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
             Some((formats, _)) => formats.push(row.format),
@@ -381,9 +358,6 @@ struct Session {
     transport_failures: u32,
     bad: HashSet<String>,
     served: HashMap<PathBuf, ServedVariant>,
-    /// Paths whose variant failed to load and whose reload from the original has not finished
-    /// (`track_reloads`).
-    reloading: HashSet<PathBuf>,
     downloaded: u64,
     cached: u64,
     fallbacks: u64,
@@ -513,22 +487,6 @@ impl BevyVariants {
         self.session.lock().unwrap().served.contains_key(path)
     }
 
-    /// The reload of `path` is over: the original loaded, failed for good, or nothing holds the
-    /// asset any more (`track_reloads`).
-    fn reload_finished(&self, path: &Path) {
-        self.session.lock().unwrap().reloading.remove(path);
-    }
-
-    /// Whether a failed load at `path` is not final yet: it was read from a variant whose
-    /// failure has not been handled, or its reload from the original has not finished. The
-    /// asset server keeps reporting the handle as failed for the whole reload, so the reload
-    /// is tracked here until it ends (`track_reloads`); a variant that fails is never selected
-    /// again, so this cannot keep a path pending.
-    fn fallback_pending(&self, path: &Path) -> bool {
-        let session = self.session.lock().unwrap();
-        session.served.contains_key(path) || session.reloading.contains(path)
-    }
-
     /// Marks the variant served for `path` bad, if there was one; true when the asset should be
     /// reloaded (from its original).
     fn decode_failed(&self, path: &Path, error: &str) -> bool {
@@ -537,7 +495,6 @@ impl BevyVariants {
             return false;
         };
         session.bad.insert(served.variant.clone());
-        session.reloading.insert(path.to_owned());
         session.fallback(
             &served.scene,
             &served.file,
@@ -574,14 +531,6 @@ impl IpfsIo {
     /// reprocessed as if it were the original).
     pub fn served_bevy_variant(&self, path: &Path) -> bool {
         self.bevy_variants.is_served(path)
-    }
-
-    /// Whether a load at `path` that the asset server reports as failed is not final: the asset
-    /// was read from a variant, and its reload from the original has not finished. The asset
-    /// server reports the handle as failed until the reload ends, so a caller that gives up on
-    /// a failed asset (avatars) waits while this holds.
-    pub fn bevy_variant_fallback_pending(&self, path: &Path) -> bool {
-        self.bevy_variants.fallback_pending(path)
     }
 
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A
@@ -830,13 +779,6 @@ impl IpfsIo {
                 }
                 dds
             }
-            // the loader of the original path (a `.glb`/`.gltf`: the meshopt pre-pass glTF
-            // loader) reads the variant's bytes as they are; the cache keeps them under the
-            // variant's url digest alone
-            #[cfg(feature = "meshopt-variants")]
-            Decoded::AsIs => {
-                Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone())
-            }
         };
         variants.served(path, served, from_cache);
         Some(VariantRead {
@@ -851,14 +793,11 @@ pub(crate) fn build(app: &mut App) {
     debug_panel::register(app);
 }
 
-/// After the asset plugins exist: an app without images or models has nothing to fall back.
+/// After the asset plugins exist: an app without images has nothing to fall back.
 pub(crate) fn finish(app: &mut App) {
     if app
         .world()
         .contains_resource::<Events<AssetLoadFailedEvent<Image>>>()
-        && app
-            .world()
-            .contains_resource::<Events<AssetLoadFailedEvent<bevy::gltf::Gltf>>>()
     {
         app.add_systems(Update, fall_back_from_failed_variants);
     }
@@ -881,60 +820,18 @@ fn detect_gpu_formats(
     let _ = ipfs.bevy_variants.bc.set(bc);
 }
 
-/// A reload from the original that has not finished: its asset path, and when it began.
-type Reloads = HashMap<PathBuf, (bevy::asset::AssetPath<'static>, web_time::Instant)>;
-
-/// A reload that has neither finished nor failed after this long stops holding its path
-/// pending. Downloads time out on their own long before; this only bounds a lost event.
-const RELOAD_DEADLINE: Duration = Duration::from_secs(180);
-
+/// Reloads from its original each texture whose variant failed to load.
 fn fall_back_from_failed_variants(
     mut images: EventReader<AssetLoadFailedEvent<Image>>,
-    mut models: EventReader<AssetLoadFailedEvent<bevy::gltf::Gltf>>,
     ipfs: Res<IpfsResource>,
     server: Res<AssetServer>,
-    mut reloads: Local<Reloads>,
 ) {
-    let failed = images
-        .read()
-        .map(|event| (event.path.clone(), event.error.to_string()))
-        .chain(
-            models
-                .read()
-                .map(|event| (event.path.clone(), event.error.to_string())),
-        );
-    track_reloads(&ipfs.bevy_variants, &server, &mut reloads, failed);
-}
-
-/// Reloads from its original each asset whose variant failed, and keeps its path pending
-/// (`BevyVariants::fallback_pending`) until the reload is over. The asset server reports the
-/// handle as failed for the whole reload, so the end is read here: the asset loaded, the
-/// original failed too, nothing holds the asset any more, or the deadline passed.
-fn track_reloads(
-    variants: &BevyVariants,
-    server: &AssetServer,
-    reloads: &mut Reloads,
-    failed: impl Iterator<Item = (bevy::asset::AssetPath<'static>, String)>,
-) {
-    for (asset_path, error) in failed {
-        let path = asset_path.path().to_owned();
-        if variants.decode_failed(&path, &error) {
-            let asset_path = asset_path.without_label().into_owned();
-            server.reload(asset_path.clone());
-            reloads.insert(path, (asset_path, web_time::Instant::now()));
-        } else if reloads.remove(&path).is_some() {
-            // the original failed too: final
-            variants.reload_finished(&path);
+    for event in images.read() {
+        if ipfs
+            .bevy_variants
+            .decode_failed(event.path.path(), &event.error.to_string())
+        {
+            server.reload(event.path.without_label().into_owned());
         }
     }
-    reloads.retain(|path, (asset_path, began)| {
-        let ids = server.get_path_ids(&*asset_path);
-        let over = ids.is_empty()
-            || ids.iter().any(|id| server.load_state(*id).is_loaded())
-            || began.elapsed() > RELOAD_DEADLINE;
-        if over {
-            variants.reload_finished(path);
-        }
-        !over
-    });
 }
