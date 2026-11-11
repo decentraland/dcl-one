@@ -340,29 +340,38 @@ fn a_model_whose_material_is_gone_is_spawned_again() {
         .instance_is_ready(instance));
 }
 
+/// Nodes of every model that processing has reached.
+fn processed_nodes(app: &mut App) -> usize {
+    app.world_mut()
+        .query_filtered::<(), (With<Name>, With<ContainerEntity>)>()
+        .iter(app.world())
+        .count()
+}
+
 #[test]
 fn a_gltf_in_progress_finishes_before_the_next_one_starts() {
     let mut app = app();
-    let root = scene_root(&mut app);
-    let (first, _) = spawn_container(&mut app, root, &["top", "a"]);
-    let (second, _) = spawn_container(&mut app, root, &["top", "a"]);
+    let (first_scene, second_scene) = (scene_root(&mut app), scene_root(&mut app));
+    let (first, _) = spawn_container(&mut app, first_scene, &["top", "a"]);
+    let (second, _) = spawn_container(&mut app, second_scene, &["top", "a"]);
     app.update();
-    give_context(&mut app, root);
     one_node_per_frame(&mut app);
+    // the later model starts first: the earlier one's scene has no context yet
+    give_context(&mut app, second_scene);
+    app.update();
+    give_context(&mut app, first_scene);
+    assert_eq!(processed_nodes(&mut app), 1);
+
+    // the earlier model comes first in the query: only the order processing keeps puts the
+    // started one before it
+    app.update();
+    assert!(is_processed(&app, second));
+    assert!(!is_processed(&app, first));
+    assert_eq!(processed_nodes(&mut app), 2);
 
     app.update();
     app.update();
-    assert_eq!(
-        [is_processed(&app, first), is_processed(&app, second)]
-            .iter()
-            .filter(|done| **done)
-            .count(),
-        1
-    );
-
-    app.update();
-    app.update();
-    assert!(is_processed(&app, first) && is_processed(&app, second));
+    assert!(is_processed(&app, first));
 }
 
 #[test]
@@ -387,7 +396,9 @@ fn removing_the_container_drops_its_progress() {
     give_context(&mut app, root);
     one_node_per_frame(&mut app);
     app.update();
-    assert!(app.world().get::<GltfProcessing>(container).is_some());
+    // processing has started: one node is done
+    assert_eq!(processed_nodes(&mut app), 1);
+    assert!(!is_processed(&app, container));
 
     app.world_mut()
         .entity_mut(container)
