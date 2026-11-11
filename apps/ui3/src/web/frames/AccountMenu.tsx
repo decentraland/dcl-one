@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import type { ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { ChromeNavigate } from "./chrome-nav";
 import ChromeLink from "./ChromeLink";
@@ -19,6 +19,10 @@ type AccountMenuProps = {
   align?: "left" | "right";
   placement?: "below" | "above";
   className?: string;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
+  outsideClickRef?: RefObject<HTMLElement | null>;
   children: ReactNode;
 };
 
@@ -34,15 +38,29 @@ export default function AccountMenu({
   align = "right",
   placement = "below",
   className = "",
+  open: controlledOpen = undefined,
+  onOpenChange = undefined,
+  hideTrigger = false,
+  outsideClickRef = undefined,
   children,
 }: AccountMenuProps) {
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (next: boolean) => {
+    if (controlledOpen === undefined) setInternalOpen(next);
+    onOpenChange?.(next);
+  };
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
-      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
+      if (
+        rootRef.current &&
+        !rootRef.current.contains(e.target as Node) &&
+        !outsideClickRef?.current?.contains(e.target as Node)
+      )
+        setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
@@ -53,7 +71,7 @@ export default function AccountMenu({
       document.removeEventListener("mousedown", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, outsideClickRef]);
 
   const close = () => setOpen(false);
   const run = (fn: () => void) => () => {
@@ -63,16 +81,18 @@ export default function AccountMenu({
 
   return (
     <div className={"acm" + (className ? " " + className : "")} ref={rootRef}>
-      <button
-        type="button"
-        className={triggerClassName}
-        aria-label={triggerLabel}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
-      >
-        {children}
-      </button>
+      {!hideTrigger ? (
+        <button
+          type="button"
+          className={triggerClassName}
+          aria-label={triggerLabel}
+          aria-haspopup="menu"
+          aria-expanded={open}
+          onClick={() => setOpen(!open)}
+        >
+          {children}
+        </button>
+      ) : null}
       {open ? (
         <div
           className={`acm__menu acm__menu--${align} acm__menu--${placement}`}
@@ -82,7 +102,9 @@ export default function AccountMenu({
           <div className="acm__head">
             <span className="acm__name">{name || "My Account"}</span>
             {account ? (
-              <span className="acm__addr" title={account}>{truncateAddress(account)}</span>
+              <span className="acm__addr" title={account}>
+                {truncateAddress(account)}
+              </span>
             ) : null}
           </div>
           {links.map((l) => (
@@ -90,17 +112,22 @@ export default function AccountMenu({
               key={l.href + l.label}
               className="acm__item"
               role="menuitem"
-              href={l.href} onNavigate={onNavigate}
+              href={l.href}
+              onNavigate={onNavigate}
               onClick={() => {
                 close();
-
               }}
             >
               {l.label}
             </ChromeLink>
           ))}
           {onSwitchAccount ? (
-            <button type="button" className="acm__item" role="menuitem" onClick={run(onSwitchAccount)}>
+            <button
+              type="button"
+              className="acm__item"
+              role="menuitem"
+              onClick={run(onSwitchAccount)}
+            >
               Switch account
             </button>
           ) : null}

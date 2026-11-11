@@ -1,8 +1,15 @@
 import { useCallback, useMemo } from "react";
 import type { ComponentPropsWithRef, ReactNode } from "react";
 import { Link, useNavigate } from "react-router";
+import { NavBar } from "@dcl/one-ui";
+import type { NavBarProps } from "@dcl/one-ui";
 
-import { ChromeNavContext, isSameDocumentHref, type ChromeNavigate } from "@ui/web/frames/chrome-nav";
+import {
+  ChromeNavContext,
+  isSameDocumentHref,
+  type ChromeNavigate,
+  type SitesNavBarProps,
+} from "@ui/web/frames/chrome-nav";
 
 import { legacyShopTarget } from "@/core/lib/shop/redirects";
 
@@ -12,6 +19,14 @@ type ChromeHrefTarget = { kind: "app"; to: string } | { kind: "document" };
 
 const UPSTREAM_SITE = /^(?:www\.)?decentraland\.(?:org|zone|today)$/;
 const UPSTREAM_MARKETPLACE = /^marketplace\.decentraland\.(?:org|zone|today)$/;
+
+function renderSitesNavBar({ signedIn, ...props }: SitesNavBarProps) {
+  const shared = { ...props, style: { width: "100%" } };
+  const navProps: NavBarProps = signedIn
+    ? { ...shared, signedIn: true, balances: "none", theme: "dark" }
+    : { ...shared, signedIn: false, theme: "dark" };
+  return <NavBar {...navProps} />;
+}
 
 /**
  * This site's Shop page for a link to the upstream Shop or Marketplace (decentraland.org/shop/...,
@@ -26,14 +41,24 @@ export function upstreamShopPath(href: string): string | null {
     return null;
   }
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
-  if (UPSTREAM_MARKETPLACE.test(url.hostname)) return legacyShopTarget(`/marketplace${url.pathname}`, url.search, url.hash);
+  if (UPSTREAM_MARKETPLACE.test(url.hostname))
+    return legacyShopTarget(
+      `/marketplace${url.pathname}`,
+      url.search,
+      url.hash,
+    );
   if (!UPSTREAM_SITE.test(url.hostname)) return null;
-  if (/^\/marketplace(?=\/|$)/i.test(url.pathname)) return legacyShopTarget(url.pathname, url.search, url.hash);
-  if (/^\/shop(?=\/|$)/i.test(url.pathname)) return `${url.pathname}${url.search}${url.hash}`;
+  if (/^\/marketplace(?=\/|$)/i.test(url.pathname))
+    return legacyShopTarget(url.pathname, url.search, url.hash);
+  if (/^\/shop(?=\/|$)/i.test(url.pathname))
+    return `${url.pathname}${url.search}${url.hash}`;
   return null;
 }
 
-export function chromeHrefTarget(href: string, origin: string): ChromeHrefTarget {
+export function chromeHrefTarget(
+  href: string,
+  origin: string,
+): ChromeHrefTarget {
   let url: URL;
   try {
     url = new URL(href, origin);
@@ -44,17 +69,25 @@ export function chromeHrefTarget(href: string, origin: string): ChromeHrefTarget
   if (shop) return { kind: "app", to: shop };
   if (url.origin !== origin) return { kind: "document" };
   const outside = SERVED_OUTSIDE_THE_APP.some(
-    (prefix) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`),
+    (prefix) =>
+      url.pathname === prefix || url.pathname.startsWith(`${prefix}/`),
   );
   if (outside) return { kind: "document" };
   return { kind: "app", to: `${url.pathname}${url.search}${url.hash}` };
 }
 
-function SiteLink({ href = "", download, ...props }: ComponentPropsWithRef<"a">) {
+function SiteLink({
+  href = "",
+  download,
+  ...props
+}: ComponentPropsWithRef<"a">) {
   const shop = download == null ? upstreamShopPath(href) : null;
   if (shop) return <Link to={shop} prefetch="intent" {...props} />;
-  if (download != null || !isSameDocumentHref(href) ||
-    chromeHrefTarget(href, "https://sites.invalid").kind === "document") {
+  if (
+    download != null ||
+    !isSameDocumentHref(href) ||
+    chromeHrefTarget(href, "https://sites.invalid").kind === "document"
+  ) {
     return <a href={href} download={download} {...props} />;
   }
   return <Link to={href} prefetch="intent" {...props} />;
@@ -72,6 +105,13 @@ export default function ChromeNavBridge({ children }: { children: ReactNode }) {
     },
     [navigate],
   );
-  const value = useMemo(() => ({ navigate: go, Link: SiteLink }), [go]);
-  return <ChromeNavContext.Provider value={value}>{children}</ChromeNavContext.Provider>;
+  const value = useMemo(
+    () => ({ navigate: go, Link: SiteLink, renderSitesNavBar }),
+    [go],
+  );
+  return (
+    <ChromeNavContext.Provider value={value}>
+      {children}
+    </ChromeNavContext.Provider>
+  );
 }

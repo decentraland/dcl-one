@@ -69,7 +69,11 @@ const LEGAL: FooterLink[] = [
 
 type Language = { code: string; label: string; flag: string };
 
-const DEFAULT_LANG: Language = { code: "en", label: "English", flag: "1f1ec-1f1e7" };
+const DEFAULT_LANG: Language = {
+  code: "en",
+  label: "English",
+  flag: "1f1ec-1f1e7",
+};
 const LANGUAGES: Language[] = [
   DEFAULT_LANG,
   { code: "es", label: "Espa\u{F1}ol", flag: "1f1ea-1f1f8" },
@@ -88,7 +92,9 @@ type Social = { name: string; href: string; path: string };
 
 function socialMask(path: string): CSSProperties {
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="${path}"/></svg>`;
-  return { "--mi": `url("data:image/svg+xml,${encodeURIComponent(svg)}")` } as CSSProperties;
+  return {
+    "--mi": `url("data:image/svg+xml,${encodeURIComponent(svg)}")`,
+  } as CSSProperties;
 }
 
 const SOCIALS: Social[] = [
@@ -138,7 +144,11 @@ type SitesChromeProps = {
   onSignIn?: () => void;
   overlayNav?: boolean;
   hideNav?: boolean;
-  secondaryNavigation?: { title: string; active?: string; items: readonly { id: string; label: string; href: string }[] };
+  secondaryNavigation?: {
+    title: string;
+    active?: string;
+    items: readonly { id: string; label: string; href: string }[];
+  };
 };
 
 type NewsletterState =
@@ -160,12 +170,20 @@ export default function SitesChrome({
   const pageId = useId();
   const profileNav = useContext(ProfileNavigationContext);
   const [openCols, setOpenCols] = useState<Record<string, boolean>>({});
-  const toggleCol = (title: string) => setOpenCols((o) => ({ ...o, [title]: !o[title] }));
+  const toggleCol = (title: string) =>
+    setOpenCols((o) => ({ ...o, [title]: !o[title] }));
   const auth = useChromeAuth();
   const isIn = signedIn ?? auth.signedIn;
   const acct = account ?? auth.account;
   const signIn = onSignIn ?? auth.onSignIn;
-  const { navigate: go } = useChromeNav();
+  const { navigate: go, renderSitesNavBar } = useChromeNav();
+  const siteLayoutClass = [
+    renderSitesNavBar ? "site-layout--shared-navbar" : "",
+    renderSitesNavBar && !isIn ? "site-layout--shared-navbar-signed-out" : "",
+    renderSitesNavBar && overlayNav ? "site-layout--overlay-navbar" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   const [email, setEmail] = useState("");
   const [news, setNews] = useState<NewsletterState>({ phase: "idle" });
@@ -179,7 +197,10 @@ export default function SitesChrome({
     setNews({ phase: "sending" });
     fetch("/v1/newsletter", {
       method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
+      headers: {
+        "content-type": "application/json",
+        accept: "application/json",
+      },
       body: JSON.stringify({ email: value, source: siteHost() }),
     })
       .then((res) => {
@@ -188,7 +209,10 @@ export default function SitesChrome({
         setEmail("");
       })
       .catch(() => {
-        setNews({ phase: "error", message: "Something went wrong. Please try again." });
+        setNews({
+          phase: "error",
+          message: "Something went wrong. Please try again.",
+        });
       });
   };
 
@@ -204,14 +228,14 @@ export default function SitesChrome({
         setLang(found);
         document.documentElement.lang = found.code;
       }
-    } catch {
-    }
+    } catch {}
   }, []);
 
   useEffect(() => {
     if (!langOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (langRef.current && !langRef.current.contains(e.target as Node)) setLangOpen(false);
+      if (langRef.current && !langRef.current.contains(e.target as Node))
+        setLangOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setLangOpen(false);
@@ -230,130 +254,224 @@ export default function SitesChrome({
     try {
       window.localStorage.setItem(LANG_STORAGE_KEY, l.code);
       document.cookie = `lang=${l.code}; path=/; max-age=31536000; samesite=lax`;
-    } catch {
-    }
+    } catch {}
     document.documentElement.lang = l.code;
   };
 
   return (
-    <SiteLayout navigation={!hideNav ? <DclTopBar
-      variant="sites" active={ACTIVE_MAP[active]} signedIn={isIn} account={acct}
-      onSignIn={signIn} fetchNotifications={auth.fetchNotifications}
-    /> : null} sections={profileNav ? closeMenu => <SiteSectionNavigation
-      title="Profile" label="Profile sections" items={profileNav.tabs} active={profileNav.active}
-      onSelect={profileNav.onTab} closeMenu={closeMenu}
-    /> : secondaryNavigation ? closeMenu => <SiteSectionNavigation
-      title={secondaryNavigation.title} items={secondaryNavigation.items} active={secondaryNavigation.active} closeMenu={closeMenu}
-    /> : undefined}>
-    <div className={"st ui2" + (overlayNav ? " st--overlay" : "")} data-label="Decentraland">
-      <a className="st__skip" href={"#" + pageId}>Skip to content</a>
-
-      <div className="st__page" id={pageId} tabIndex={-1}>{children}</div>
-
-      <footer className="st__footer">
-        <div className="st__footin">
-          <div className="st__footbrand">
-            <a className="st__footlogo" {...chromeLinkProps("/", go)} aria-label="Decentraland Home">
-              <span className="st__wordmark">Decentraland</span>
-            </a>
-            <div className="st__news">
-              <p className="st__newstitle">Get the weekly highlights in your inbox</p>
-              <form className="st__newsform" onSubmit={submitNewsletter} noValidate>
-                <input
-                  className="st__newsinput"
-                  type="email"
-                  placeholder="Enter Your Email"
-                  aria-label="Email"
-                  value={email}
-                  onChange={(e) => {
-                    setEmail(e.target.value);
-                    if (news.phase !== "idle") setNews({ phase: "idle" });
-                  }}
-                  disabled={news.phase === "sending"}
+    <SiteLayout
+      className={siteLayoutClass}
+      navigation={
+        !hideNav ? (
+          <DclTopBar
+            variant="sites"
+            active={ACTIVE_MAP[active]}
+            signedIn={isIn}
+            account={acct}
+            onSignIn={signIn}
+            fetchNotifications={auth.fetchNotifications}
+          />
+        ) : null
+      }
+      sections={
+        profileNav
+          ? (closeMenu) => (
+              <SiteSectionNavigation
+                title="Profile"
+                label="Profile sections"
+                items={profileNav.tabs}
+                active={profileNav.active}
+                onSelect={profileNav.onTab}
+                closeMenu={closeMenu}
+              />
+            )
+          : secondaryNavigation
+            ? (closeMenu) => (
+                <SiteSectionNavigation
+                  title={secondaryNavigation.title}
+                  items={secondaryNavigation.items}
+                  active={secondaryNavigation.active}
+                  closeMenu={closeMenu}
                 />
-                <button type="submit" className="st__newsbtn" disabled={news.phase === "sending"}>
-                  {news.phase === "sending" ? "Sending\u{2026}" : "Subscribe"}
-                </button>
-              </form>
-              {news.phase === "ok" && (
-                <p className="st__newsnote st__newsnote--ok" role="status">Subscribed!</p>
-              )}
-              {news.phase === "error" && (
-                <p className="st__newsnote st__newsnote--err" role="alert">{news.message}</p>
-              )}
-            </div>
-            <div className="st__connect">
-              <div className="st__foottitle">Connect</div>
-              <div className="st__socials">
-                {SOCIALS.map((s) => (
-                  <a key={s.name} href={s.href} className="st__social" style={socialMask(s.path)} aria-label={s.name} target="_blank" rel="noopener noreferrer" />
-                ))}
-              </div>
-            </div>
-          </div>
+              )
+            : undefined
+      }
+    >
+      <div
+        className={"st ui2" + (overlayNav ? " st--overlay" : "")}
+        data-label="Decentraland"
+      >
+        <a className="st__skip" href={"#" + pageId}>
+          Skip to content
+        </a>
 
-          <div className="st__footcols">
-            {FOOTER_COLS.map((col) => (
-              <div key={col.title} className={"st__footcol" + (openCols[col.title] ? " is-open" : "")}>
-                <div className="st__foottitle" onClick={() => toggleCol(col.title)}>
-                  {col.title}
-                </div>
-                <div className="st__footlist">
-                  {col.links.map((link) => (
-                    <a key={link.label} {...chromeLinkProps(link.href, go)} className="st__footlink">
-                      {link.label}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="st__page" id={pageId} tabIndex={-1}>
+          {children}
         </div>
 
-        <div className="st__footbar">
-          <div className="st__footbarleft">
-            <div className="st__langwrap" ref={langRef}>
-              <button
-                type="button"
-                className="st__lang"
-                aria-label={`Change language: ${lang.label}`}
-                aria-haspopup="listbox"
-                aria-expanded={langOpen}
-                onClick={() => setLangOpen((o) => !o)}
+        <footer className="st__footer">
+          <div className="st__footin">
+            <div className="st__footbrand">
+              <a
+                className="st__footlogo"
+                {...chromeLinkProps("/", go)}
+                aria-label="Decentraland Home"
               >
-                <img className="st__flag" src={flagUrl(lang.flag)} alt="" width="18" height="18" />
-                {lang.label}
-              </button>
-              {langOpen && (
-                <div className="st__langmenu" role="listbox" aria-label="Language">
-                  {LANGUAGES.map((l) => (
-                    <button
-                      key={l.code}
-                      type="button"
-                      role="option"
-                      aria-selected={l.code === lang.code}
-                      className={"st__langopt" + (l.code === lang.code ? " is-active" : "")}
-                      onClick={() => pickLang(l)}
-                    >
-                      <img className="st__flag" src={flagUrl(l.flag)} alt="" width="18" height="18" />
-                      {l.label}
-                    </button>
+                <span className="st__wordmark">Decentraland</span>
+              </a>
+              <div className="st__news">
+                <p className="st__newstitle">
+                  Get the weekly highlights in your inbox
+                </p>
+                <form
+                  className="st__newsform"
+                  onSubmit={submitNewsletter}
+                  noValidate
+                >
+                  <input
+                    className="st__newsinput"
+                    type="email"
+                    placeholder="Enter Your Email"
+                    aria-label="Email"
+                    value={email}
+                    onChange={(e) => {
+                      setEmail(e.target.value);
+                      if (news.phase !== "idle") setNews({ phase: "idle" });
+                    }}
+                    disabled={news.phase === "sending"}
+                  />
+                  <button
+                    type="submit"
+                    className="st__newsbtn"
+                    disabled={news.phase === "sending"}
+                  >
+                    {news.phase === "sending" ? "Sending\u{2026}" : "Subscribe"}
+                  </button>
+                </form>
+                {news.phase === "ok" && (
+                  <p className="st__newsnote st__newsnote--ok" role="status">
+                    Subscribed!
+                  </p>
+                )}
+                {news.phase === "error" && (
+                  <p className="st__newsnote st__newsnote--err" role="alert">
+                    {news.message}
+                  </p>
+                )}
+              </div>
+              <div className="st__connect">
+                <div className="st__foottitle">Connect</div>
+                <div className="st__socials">
+                  {SOCIALS.map((s) => (
+                    <a
+                      key={s.name}
+                      href={s.href}
+                      className="st__social"
+                      style={socialMask(s.path)}
+                      aria-label={s.name}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    />
                   ))}
                 </div>
-              )}
+              </div>
             </div>
-            <div className="st__legal">
-              {LEGAL.map((l) => (
-                <a key={l.label} href={l.href} className="st__legallink">
-                  {l.label}
-                </a>
+
+            <div className="st__footcols">
+              {FOOTER_COLS.map((col) => (
+                <div
+                  key={col.title}
+                  className={
+                    "st__footcol" + (openCols[col.title] ? " is-open" : "")
+                  }
+                >
+                  <div
+                    className="st__foottitle"
+                    onClick={() => toggleCol(col.title)}
+                  >
+                    {col.title}
+                  </div>
+                  <div className="st__footlist">
+                    {col.links.map((link) => (
+                      <a
+                        key={link.label}
+                        {...chromeLinkProps(link.href, go)}
+                        className="st__footlink"
+                      >
+                        {link.label}
+                      </a>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           </div>
-          <span className="st__copy">&copy; {new Date().getFullYear()} Decentraland</span>
-        </div>
-      </footer>
-    </div>
+
+          <div className="st__footbar">
+            <div className="st__footbarleft">
+              <div className="st__langwrap" ref={langRef}>
+                <button
+                  type="button"
+                  className="st__lang"
+                  aria-label={`Change language: ${lang.label}`}
+                  aria-haspopup="listbox"
+                  aria-expanded={langOpen}
+                  onClick={() => setLangOpen((o) => !o)}
+                >
+                  <img
+                    className="st__flag"
+                    src={flagUrl(lang.flag)}
+                    alt=""
+                    width="18"
+                    height="18"
+                  />
+                  {lang.label}
+                </button>
+                {langOpen && (
+                  <div
+                    className="st__langmenu"
+                    role="listbox"
+                    aria-label="Language"
+                  >
+                    {LANGUAGES.map((l) => (
+                      <button
+                        key={l.code}
+                        type="button"
+                        role="option"
+                        aria-selected={l.code === lang.code}
+                        className={
+                          "st__langopt" +
+                          (l.code === lang.code ? " is-active" : "")
+                        }
+                        onClick={() => pickLang(l)}
+                      >
+                        <img
+                          className="st__flag"
+                          src={flagUrl(l.flag)}
+                          alt=""
+                          width="18"
+                          height="18"
+                        />
+                        {l.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <div className="st__legal">
+                {LEGAL.map((l) => (
+                  <a key={l.label} href={l.href} className="st__legallink">
+                    {l.label}
+                  </a>
+                ))}
+              </div>
+            </div>
+            <span className="st__copy">
+              &copy; {new Date().getFullYear()} Decentraland
+            </span>
+          </div>
+        </footer>
+      </div>
     </SiteLayout>
   );
 }
