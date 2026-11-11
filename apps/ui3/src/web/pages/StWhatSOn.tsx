@@ -157,7 +157,7 @@ function UpcomingCard({ event, priority }: { event: WoUpcomingCard; priority: bo
     <div className="wo-sm">
       <a
         className="wo-card__overlay"
-        href={`/events?id=${encodeURIComponent(event.id)}`}
+        href={`/whats-on/${encodeURIComponent(event.id)}`}
         aria-label={event.name}
       />
       <Poster className="wo-sm__thumbwrap" hue={event.hue} image={event.image} label={event.name} priority={priority} />
@@ -192,7 +192,7 @@ function UpcomingCard({ event, priority }: { event: WoUpcomingCard; priority: bo
             onClick={() => {
               try {
                 navigator.clipboard?.writeText(
-                  `${window.location.origin}/events?id=${encodeURIComponent(event.id)}`,
+                  `${window.location.origin}/whats-on/${encodeURIComponent(event.id)}`,
                 );
               } catch {
               }
@@ -225,7 +225,7 @@ function FutureCard({ event }: { event: WoDayEvent }) {
     <div className="wo-fc">
       <a
         className="wo-card__overlay"
-        href={`/events?id=${encodeURIComponent(event.id)}`}
+        href={`/whats-on/${encodeURIComponent(event.id)}`}
         aria-label={event.name}
       />
       <Poster className="wo-fc__imgwrap" hue={event.hue} image={event.image} label={event.name} />
@@ -244,7 +244,7 @@ function FutureCard({ event }: { event: WoDayEvent }) {
         <div className="wo-fc__actions" data-role="hover-actions">
           <a
             className="wo-fc__textbtn"
-            href={`/events?id=${encodeURIComponent(event.id)}`}
+            href={`/whats-on/${encodeURIComponent(event.id)}`}
           >
             <JumpInIcon />
             <span>View hangout</span>
@@ -256,7 +256,7 @@ function FutureCard({ event }: { event: WoDayEvent }) {
             onClick={() => {
               try {
                 navigator.clipboard?.writeText(
-                  `${window.location.origin}/events?id=${encodeURIComponent(event.id)}`,
+                  `${window.location.origin}/whats-on/${encodeURIComponent(event.id)}`,
                 );
               } catch {
               }
@@ -275,7 +275,7 @@ function LiveCard({ event }: { event: WoDayEvent }) {
     <div className="wo-lc">
       <a
         className="wo-card__overlay"
-        href={`/events?id=${encodeURIComponent(event.id)}`}
+        href={`/whats-on/${encodeURIComponent(event.id)}`}
         aria-label={event.name}
       />
       <Poster className="wo-lc__media" hue={event.hue} image={event.image} label={event.name}>

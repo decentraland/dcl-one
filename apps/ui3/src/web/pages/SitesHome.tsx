@@ -93,7 +93,7 @@ export default function SitesHome({
         <section className="sh__sec sh__whatson">
           <div className="sh__sechead">
             <h2 className="sh__h2">Discover</h2>
-            <a className="sh__viewall" href="/events">
+            <a className="sh__viewall" href="/whats-on">
               View All <Chevron />
             </a>
           </div>
@@ -141,7 +141,7 @@ export default function SitesHome({
           <h2 className="sh__h2">Your Weekly Rituals</h2>
           <div className="sh__ritualrow">
             {ritualCards.map((r) => (
-              <a className="sh__ritual" key={r.id} href={r.href ?? "/events"} style={{ background: r.grad }}>
+              <a className="sh__ritual" key={r.id} href={r.href ?? "/whats-on"} style={{ background: r.grad }}>
                 <CardImage image={r.image} width={320} />
                 {r.day ? <span className="sh__ritualwhen">{r.day}</span> : null}
                 <span className="sh__ritualday">{r.title}</span>

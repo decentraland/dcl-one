@@ -32,7 +32,7 @@ const LEARN_MENU: NavMenuItem[] = [
 
 const PLAY_MENU: NavMenuItem[] = [
   { label: "Jump in", href: "/play/" },
-  { label: "What's on", href: "/events" },
+  { label: "What's on", href: "/whats-on" },
 ];
 
 const LINK_DEFS = {
@@ -42,7 +42,7 @@ const LINK_DEFS = {
   shop: { id: "shop", label: "Shop", href: "/shop" },
   create: { id: "create", label: "Create", href: "/create" },
   learn: { id: "learn", label: "Learn", href: "/blog", caret: true, menu: LEARN_MENU },
-  events: { id: "events", label: "Events", href: "/events" },
+  events: { id: "events", label: "Events", href: "/whats-on" },
 } satisfies Record<string, NavLink>;
 
 export type DclTopBarNavId = keyof typeof LINK_DEFS;
