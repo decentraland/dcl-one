@@ -7,8 +7,9 @@ use bevy::{
     app::{App, PostUpdate, Update},
     ecs::{
         change_detection::DetectChanges,
+        event::{Event, EventReader, EventWriter},
         resource::Resource,
-        schedule::IntoScheduleConfigs,
+        schedule::{common_conditions::resource_changed, IntoScheduleConfigs},
         system::{Local, Res, ResMut},
     },
     log::{info, warn},
@@ -226,9 +227,6 @@ fn cross_feed_admission_refusal(
     mut status: ResMut<PlatformBanStatus>,
     time: Res<Time>,
 ) {
-    if !admission.is_changed() {
-        return;
-    }
     let AdmissionView::Refused {
         scope: BanScope::Platform,
         message,
@@ -258,34 +256,37 @@ impl Default for PlatformBanStatus {
 #[command(name = "/ban_block_refresh")]
 struct BanBlockRefreshCommand;
 
-/// A check was asked for; repeated requests fold into the one pending check.
-#[derive(Resource, Default)]
-struct RefreshRequested(bool);
+/// A check was asked for.
+#[derive(Event)]
+struct PlatformBanRefreshRequested;
 
 fn ban_block_refresh(
     mut input: ConsoleCommand<BanBlockRefreshCommand>,
     wallet: Res<Wallet>,
-    mut refresh: ResMut<RefreshRequested>,
+    mut refresh: EventWriter<PlatformBanRefreshRequested>,
 ) {
     if let Some(Ok(_)) = input.take() {
         if wallet.address().is_none() {
             input.reply_failed("not signed in");
             return;
         }
-        refresh.0 = true;
+        refresh.write(PlatformBanRefreshRequested);
         input.reply_ok("platform ban check requested");
     }
 }
 
 pub(crate) fn register(app: &mut App) {
     app.insert_resource(PlatformBanStatus::new())
-        .init_resource::<RefreshRequested>()
+        .add_event::<PlatformBanRefreshRequested>()
         .add_console_command::<BanBlockRefreshCommand, _>(ban_block_refresh)
         .add_systems(
             Update,
             check_platform_ban.run_if(|| !common::structs::server_mode()),
         )
-        .add_systems(PostUpdate, cross_feed_admission_refusal);
+        .add_systems(
+            PostUpdate,
+            cross_feed_admission_refusal.run_if(resource_changed::<SceneAdmission>),
+        );
 }
 
 /// Why a check gave no answer, with the delay the server asked for before the next one.
@@ -364,7 +365,7 @@ fn check_platform_ban(
     realm: Option<Res<CurrentRealm>>,
     admission: Res<SceneAdmission>,
     time: Res<Time>,
-    mut refresh: ResMut<RefreshRequested>,
+    mut refresh: EventReader<PlatformBanRefreshRequested>,
     mut schedule: Local<BanCheckSchedule>,
 ) {
     let now = time.elapsed_secs_f64();
@@ -374,11 +375,7 @@ fn check_platform_ban(
     let Some(address) = wallet.address() else {
         return;
     };
-    // written only when set, so the resource is not marked changed every frame
-    let refresh_requested = refresh.0;
-    if refresh_requested {
-        refresh.0 = false;
-    }
+    let refresh_requested = refresh.read().count() > 0;
     let triggered =
         refresh_requested || realm.is_some_and(|realm| realm.is_changed() && realm.connected);
 
@@ -588,7 +585,10 @@ mod tests {
         app.init_resource::<Time>()
             .init_resource::<SceneAdmission>()
             .insert_resource(PlatformBanStatus::new())
-            .add_systems(Update, cross_feed_admission_refusal);
+            .add_systems(
+                Update,
+                cross_feed_admission_refusal.run_if(resource_changed::<SceneAdmission>),
+            );
         app
     }
 
