@@ -31,18 +31,18 @@ export type NavBarProps = {
   | { viewport?: "largeDesktop"; signedIn?: false; balances?: "none"; theme: "light" }
   | { viewport?: "largeDesktop"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
   | { viewport?: "largeDesktop"; signedIn: true; balances: "credits"; theme?: "dark" }
-  | { viewport: "mobile"; signedIn?: false; balances?: "none"; theme?: "dark" }
-  | { viewport: "mobile"; signedIn: true; balances?: "none"; theme?: "dark" }
-  | { viewport: "mobile"; signedIn: true; balances?: "none"; theme: "light" }
-  | { viewport: "mobile"; signedIn?: false; balances?: "none"; theme: "light" }
-  | { viewport: "mobile"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
-  | { viewport: "mobile"; signedIn: true; balances: "credits"; theme?: "dark" }
-  | { viewport: "desktop"; signedIn?: false; balances?: "none"; theme?: "dark" }
-  | { viewport: "desktop"; signedIn: true; balances?: "none"; theme?: "dark" }
-  | { viewport: "desktop"; signedIn: true; balances?: "none"; theme: "light" }
-  | { viewport: "desktop"; signedIn?: false; balances?: "none"; theme: "light" }
-  | { viewport: "desktop"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
-  | { viewport: "desktop"; signedIn: true; balances: "credits"; theme?: "dark" }
+  | { viewport?: "mobile"; signedIn?: false; balances?: "none"; theme?: "dark" }
+  | { viewport?: "mobile"; signedIn: true; balances?: "none"; theme?: "dark" }
+  | { viewport?: "mobile"; signedIn: true; balances?: "none"; theme: "light" }
+  | { viewport?: "mobile"; signedIn?: false; balances?: "none"; theme: "light" }
+  | { viewport?: "mobile"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
+  | { viewport?: "mobile"; signedIn: true; balances: "credits"; theme?: "dark" }
+  | { viewport?: "desktop"; signedIn?: false; balances?: "none"; theme?: "dark" }
+  | { viewport?: "desktop"; signedIn: true; balances?: "none"; theme?: "dark" }
+  | { viewport?: "desktop"; signedIn: true; balances?: "none"; theme: "light" }
+  | { viewport?: "desktop"; signedIn?: false; balances?: "none"; theme: "light" }
+  | { viewport?: "desktop"; signedIn: true; balances: "creditsMana"; theme?: "dark" }
+  | { viewport?: "desktop"; signedIn: true; balances: "credits"; theme?: "dark" }
 ) & Omit<HTMLAttributes<HTMLElement>, 'children'>
 
 export const navBarViews: Record<string, ViewNode> = {
@@ -2318,7 +2318,7 @@ export const navBarCases: MatrixCase[] = [
 const navBarSuppressedProps = Object.freeze(['label', 'label2', 'label3', 'label4', 'label5', 'label6', 'label7', 'label8'] as const)
 
 export const NavBar = ({
-  viewport = 'largeDesktop',
+  viewport,
   signedIn = false,
   balances = 'none',
   theme = 'dark',
@@ -2345,6 +2345,7 @@ export const NavBar = ({
     }}
     slots={{}}
     semanticProps={{ label2Href, label3Href, label4Href, labelHref, logoHref, onMenu, onNotifications, onProfile, onSignIn }}
+    responsive={{ prop: 'viewport', classes: { 'mobile': styles.responsiveMobile, 'desktop': styles.responsiveDesktop, 'largeDesktop': styles.responsiveLargeDesktop } }}
     forceState={forceState}
     attributes={rest}
     suppressed={navBarSuppressedProps}

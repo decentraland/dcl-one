@@ -715,12 +715,15 @@
           "sha256": "38d308ab445b98b80cfda2175f3a7dcd26ea723413dfa43b62fefb882d85c1ad"
         },
         "library/ui/figma/figma.config.json": {
-          "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
+          "sha256": "601bfe0e26501a323aca9af6667ed184faa390d25db5836eda946db39f1f7e25",
           "fds": {
             "path": "dcl-mcp-figma/figma.config.json",
             "sha256": "bbdff04e92ef00d38110f067b97882744179f82b842dc7e770f478c8ca9f0efe"
           },
-          "deviation": "port:7ade025b"
+          "deviation": [
+            "port:7ade025b",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/image-metadata-allow.json": {
           "sha256": "22d8202bfeaf950da1f7c2875391bd12fe8fc8fc92be178fa16c2f7b16fd0bc8",
@@ -962,20 +965,26 @@
           "deviation": "predates"
         },
         "library/ui/figma/review/src/components/figma-module-runtime.tsx": {
-          "sha256": "6d91dc9f3535d33e23aba38e09bf7f52be6582504f971a5943dcb91d9c298817",
+          "sha256": "a25a3157683a45e60932964608c85d2bd1711d1c15acf45b155134c8169e2476",
           "fds": {
             "path": "dcl-ui-review/src/components/figma-module-runtime.tsx",
             "sha256": "09a3ab9cb421ca19303f55ebfaeaf7a821986ede430547171f7c6aee7335cce5"
           },
-          "deviation": "port:15940fd7"
+          "deviation": [
+            "port:15940fd7",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/review/src/components/figma-view-state.ts": {
-          "sha256": "ad52fd3d7a3da36bbb896ca7b3780c0e42f9713e41f88ccba995bf980ab2b8d2",
+          "sha256": "95882b20b338599463ae5cb2d2ba542f254610a89225de8b18f0d98a37623cae",
           "fds": {
             "path": "dcl-ui-review/src/components/figma-view-state.ts",
             "sha256": "bafb9d709fd795feba187f707493e8bcabb08c77b7d3c4f75f4423f1829e28f8"
           },
-          "deviation": "predates"
+          "deviation": [
+            "predates",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/review/src/css.d.ts": {
           "sha256": "2da21a8ab49f7d201ac3c6f8a03ff94ebe6e95cf285261ebe8ff4ece4af0674b",
@@ -1409,7 +1418,7 @@
           "deviation": "generated"
         },
         "library/ui/figma/review/src/generated/components/nav-bar/NavBar.module.css": {
-          "sha256": "b3ec0889de4c8d3173caa9d38ad5a6b584f999b1767be7234c5d514d4672158a",
+          "sha256": "227052c849060315ff04f017e9b0026adf02e60dffd0150f637c2ea5cce54307",
           "fds": {
             "path": "dcl-ui-review/src/generated/components/nav-bar/NavBar.module.css",
             "sha256": "f7d440a742aec1c877ab306d3a6e6be247ab693f093fdb7c9cadfa0b6444954f"
@@ -1417,7 +1426,7 @@
           "deviation": "generated"
         },
         "library/ui/figma/review/src/generated/components/nav-bar/NavBar.tsx": {
-          "sha256": "b1b52df2910bb34f35eef3f9de450102fff579ac8f614572217dcb64051a1969",
+          "sha256": "5da0af1b45647fc62569046c48234fb14d3389864b49397f39504c3a5c606448",
           "fds": {
             "path": "dcl-ui-review/src/generated/components/nav-bar/NavBar.tsx",
             "sha256": "1b8ebe8adbc09bc0dd5842eca4344da1335d3c5a43f2e3a7c82328261aeb0099"
@@ -2228,8 +2237,13 @@
           "fds": null,
           "deviation": "dcl-one-only"
         },
+        "library/ui/figma/review/test/figma-runtime-responsive.dom.test.tsx": {
+          "sha256": "c0bcf2f92480ad93953e807dc9cb5baed0869521d3ad57c22a6f9259997d4d82",
+          "fds": null,
+          "deviation": "dcl-one-only"
+        },
         "library/ui/figma/review/test/figma-runtime.dom.test.tsx": {
-          "sha256": "bdb8d14a306882c4c564d60e111cbd455f3ff6cfe7c76102faccf61eebbfa9a6",
+          "sha256": "59d1bc5949f4f576f2623103f7322bace3615c64e1cb88e4879ef9ab9046adf0",
           "fds": null,
           "deviation": "dcl-one-only"
         },
@@ -2492,7 +2506,7 @@
           "sha256": "9881770dae853f7c6efea7d88fb5bfbc82766a294adcc851688c268aa36d18a4"
         },
         "library/ui/figma/src/config.ts": {
-          "sha256": "fc2364bfeeb8bbf2e8f30c1f1841f37db30d69b7c139bde54bbb5b348ac43e83",
+          "sha256": "e72c603118b10ce8d1dce9eec0f7297e56f7f2835248c858fbfe07d7b4c87506",
           "fds": {
             "path": "dcl-mcp-figma/src/config.ts",
             "sha256": "838416c663acba33f08d62575a7e20e8fd4c208fec52e6638ad485d78c2d2b2a"
@@ -2502,7 +2516,8 @@
             "port:30ca0608",
             "live-access-removed",
             "live-read-restored",
-            "resolver-contract"
+            "resolver-contract",
+            "responsive-viewport"
           ]
         },
         "library/ui/figma/src/consumer.test.ts": {
@@ -2729,22 +2744,26 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/generators/components.test.ts": {
-          "sha256": "f30d61d61be4867ff7cd59a1262661df9a33058a2a6f7f0ba176c1d780e73a97",
+          "sha256": "8e76fa88b1950134979faf0d0fc9a7f3eda01dd85707e7d2d5c2687b25186624",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/components.test.ts",
             "sha256": "3b5ec10c17fc65b8e494621d7f9419c4b659bf1b904dce89a861019defa040a0"
           },
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/src/generators/components.ts": {
-          "sha256": "a7576cd4b8f68e0c40789be5c17dd68db881ad73f0a68289c57330d82eb9b650",
+          "sha256": "7571fb052ae7f234859f4e9f43e063528f44af69065b38e06148417bce3f0ef5",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/components.ts",
             "sha256": "51e48d357757f25844040c8a9d381864d9b37cff96451c098d96b2deb36adc25"
           },
           "deviation": [
             "port:30ca0608",
-            "gallery-disclosure"
+            "gallery-disclosure",
+            "responsive-viewport"
           ]
         },
         "library/ui/figma/src/generators/css-layers.ts": {
@@ -2839,7 +2858,7 @@
           "deviation": "port:7ade025b"
         },
         "library/ui/figma/src/generators/public-props.types.test.ts": {
-          "sha256": "7768ef5a6c51803cc06061faf9c3c41eb865bec89cde325d9ce4d1243e429491",
+          "sha256": "d23823e6e72ff6a716c56539c8efde633d1b487b898015a848dbca870a0ed795",
           "fds": null,
           "deviation": "dcl-one-only"
         },
@@ -2880,12 +2899,15 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/generators/tokens.ts": {
-          "sha256": "6bd11a3f8708933ed98dc8f83e5806c1b73b07d0a8dd30885f57b43bbeb352de",
+          "sha256": "37f1fe2d706e7710517504cc77137305d5f0eb03d6541fd51d38d8bfa33f72d0",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/tokens.ts",
             "sha256": "24ee8392483a7d73c27f552f0dfea4ee896246b5a2a895a5f0c1df8773253bcf"
           },
-          "deviation": "port:7ade025b"
+          "deviation": [
+            "port:7ade025b",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/src/generators/types.ts": {
           "sha256": "7aba1990f9d633da660c4f62f8563e4d1802c724a15ef8c0e6b92589f9a7537e",
@@ -2896,7 +2918,7 @@
           "deviation": "port:30ca0608"
         },
         "library/ui/figma/src/generators/variant-contract.census.test.ts": {
-          "sha256": "b2e5665e18cab75cf39097cf2df0edc9f2ac4de5daabec9eaa8f9e3eb7bc4007",
+          "sha256": "e1abb2e7f1e3bf1de9c87ae3c6a61dadf7485fcaa52e946cedef4b7d25d95031",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -3398,12 +3420,15 @@
           "sha256": "8946fd13bc558edb1e93dc089150928cb498ff807dd72fb9bb494142f0b77e47"
         },
         "library/ui/figma/src/ir/components.ts": {
-          "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
+          "sha256": "e4e08e59344ca031539221b01dfc0d65a53ce2ee2e1481be9fff50aab5809bf3",
           "fds": {
             "path": "dcl-mcp-figma/src/ir/components.ts",
             "sha256": "b2817b18aded12913c355b2ed6e881079ea4d4be294c635e56a35c426f5520e7"
           },
-          "deviation": "predates"
+          "deviation": [
+            "predates",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/src/ir/raw-components.ts": {
           "sha256": "e447e2fd1bbe05dd2993067cde5e717168b6aed62098c01b1a05b535c976feba",
@@ -3467,12 +3492,15 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/mappers/component-spec.ts": {
-          "sha256": "098cdf3d2109cfd379f6420e40d90fab0cc077697538bc40e42b669d1f0573ec",
+          "sha256": "7a85b946f6f96cb0f6b6f0d295fe41c4d7ecf19b3ddc3db81e9c5aaa4de40749",
           "fds": {
             "path": "dcl-mcp-figma/src/mappers/component-spec.ts",
             "sha256": "1b4eaf7c02350fd7db122f506f373fac58ec49060857c78861f6b2e963534075"
           },
-          "deviation": "port:7ade025b"
+          "deviation": [
+            "port:7ade025b",
+            "responsive-viewport"
+          ]
         },
         "library/ui/figma/src/mappers/loop.test.ts": {
           "sha256": "85ba4ea8120a2d28eefd7758743db1573cb43b6fb82cbee850b4bebe0c3eacbe",
@@ -3503,6 +3531,16 @@
             "sha256": "6985c6fcbd27a75d849e22f05d334abc0ba56b541e4a98bcfbb86a98013a2c64"
           },
           "deviation": "live-access-removed"
+        },
+        "library/ui/figma/src/mappers/responsive.test.ts": {
+          "sha256": "403fd4bfaa2cbdd4d8fdffc62eb787d188c87f8efa5ab970b4f1af8bd77236de",
+          "fds": null,
+          "deviation": "dcl-one-only"
+        },
+        "library/ui/figma/src/mappers/responsive.ts": {
+          "sha256": "29474b41b84c98f679b755c98e55aae2d02cc1cf884553c2fc9a6b354df6e8c5",
+          "fds": null,
+          "deviation": "dcl-one-only"
         },
         "library/ui/figma/src/mappers/text-roles.test.ts": {
           "sha256": "badde2d6128b6bca83d69ffd20ae763582a2c146c4634a966d32f1d2ca785656",
@@ -4381,6 +4419,7 @@
         "request-scope-hardening": "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port.",
         "resolver-contract": "One diagnostic registry (src/contract/diagnostics.ts) gives every code its severity, audience and action, with per-reason actions for contract-incompatible; diagnostics-docs.test.ts fails when the SKILL.md or MAINTENANCE.md table differs from it. The unused mapping-unreadable code is removed. mapping-missing is returned only for a captured library component and carries the contributor report context; an unmapped node without a capture is the new identity-uncertain, and a node outside the capture is identity-not-found. --mapping-only (CLI and MCP server) loads no Figma config beyond its contract block, never reads the capture cache and registers only figma_resolve_component and figma_check_mappings; its mapping root defaults to library/ui/components. The CLI gains --text for parity with the MCP texts input and refuses malformed or repeated Name=Value flags. Resolve provenance names the capture revision the tracked lock pins. The cache error names both routes: fetch-source for maintainers, --mapping-only for consumers. Review follow-up: identity codes carry a details.reason with their own action (a name lookup without a capture sends the caller back for a set node id; several mappings on one node and the check-mappings collisions are library defects with file details); an unreadable lock is the capture-revision-unknown warning instead of a thrown error; --mapping-only reads the contract block of the Figma config (argument, DCL_FIGMA_CONFIG or working directory) so its mapping root and library range still apply; record lookups use own keys only, so names such as __proto__ or toString never match inherited members. Second review follow-up: reasons only check-mappings emits carry the maintainer audience and reason names are checked at compile time; every failed resolve carries its library and capture context; with a capture a node outside it is identity-not-found even when a stale mapping targets it; without a capture an unread variant property or a non-boolean value is variant-unsupported and an unrendered text is a warning; check-mappings reports captureChecked and a warning when no capture was read; the capture revision comes from the same pin reader as fetch-source; flags are parsed before the runtime and a missing explicit config fails at startup; the documentation tables are read after a marker and per-reason rows must point at action. Third review follow-up: without a capture an unread property is the same unmapped-figma-property warning the capture path gives, booleans are checked in both modes, a mapping that targets a node outside the capture is identity-not-found stale-mapping with its files, check-mappings fails without a mapping source and reports a missing capture with the maintainer code capture-unchecked, usage without a capture or properties says basis unspecified, and the lock is named by package. A mapping root that is unset, not an existing directory or outside a package is mapping-root-not-configured in resolve and check-mappings, never a raw file-system error.",
         "resolver-followups": "Resolver, CLI and registry follow-ups: the library (mappings, registry, lock) is loaded once per command, so a batch shares it and check-mappings cannot turn a root that breaks mid-check into an empty pass; an unreadable root, package.json or subdirectory is mapping-root-not-configured and an unreadable or invalid component registry is contract-incompatible (component-registry) with a fixed message that never quotes the registry, never a raw error; the registry is found from the mapping root up to the package root. Without a capture an alias of a mapping that reads no variant property does not resolve, the figma-identity-unverified warning names mapped variant properties the instance did not give, and a double-quoted template id is read. In batch mode a broken invocation or an unusable configuration exits 2. Registry entries need an identifier name, at most ten limits and a name no other entry uses, limit and retirement text share one plain-text rule (no control, format or separator characters, markup or link), the installer reports registry errors under a neutral prefix, and generation.json pins the registry by digest without copying its limits.",
+        "responsive-viewport": "A component variant axis can be made responsive (components.<Figma name>.responsive in figma.config.json): each option of the prop names a foundations breakpoint, resolved from the Layout collection's layout/breakpoint-min, and generation fails for an unknown prop or breakpoint, an unmapped option, two options on one breakpoint, a narrowest option above 0px or an option missing a combination another draws. The generated component gives the prop no default; left unset, FigmaView renders every option's view and generated media queries hide each outside its breakpoint, so server and client render the same markup without reading the window. A set prop renders exactly as before. NavBar's viewport is configured this way, with the foundations mobile, desktop and largeDesktop breakpoints.",
         "review-followup-2": "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "review-followup-3": "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
@@ -4547,7 +4586,7 @@
         }
       },
       "source.json": {
-        "sha256": "52139f3222137e7fa7edb3c429d31e7534e73da65406be2a6b9982574005368f",
+        "sha256": "aa62059bc2565664aa7e60a8e226024b013ff5859531a6d33ff114d6fde39b78",
         "origin": {
           "kind": "source",
           "repository": "https://github.com/decentraland/dcl-one"
@@ -4702,7 +4741,7 @@
         }
       },
       "NavBar/NavBar.module.css": {
-        "sha256": "66fbb388dafcb2a1f3f45fee33b6ff10051f8628c23fe63cc2b475f49504d22d",
+        "sha256": "fce5ebb617b694ecc0fbc32a195f534590350222c4267e09aa23c6eb6ff6dc60",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
@@ -4710,7 +4749,7 @@
         }
       },
       "NavBar/NavBar.module.css.d.ts": {
-        "sha256": "5f1b3339b4a64df47a83203d93f023240d63956e7a2ef49bfd56b2b6b417a945",
+        "sha256": "828d14307f527ce92821af3cbf08f5953a7255c5ce2ce82ec498bd9ce71822e2",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
@@ -4718,7 +4757,7 @@
         }
       },
       "NavBar/NavBar.tsx": {
-        "sha256": "6bda828337404f6df27072abb5f923e029cb1ac328f743e47b9559078e648184",
+        "sha256": "64676cdc20bce71e34d60a9fa1439a8faf4361f304cf5f4577244a24c0678709",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
@@ -4761,27 +4800,27 @@
         }
       },
       "runtime/figma-module-runtime.tsx": {
-        "sha256": "842d9c73638f4604635d53a4f665153bc98fa5b64836b462475bfa8d331248e2",
+        "sha256": "4f3790181edb0aab454895459b50bee59a80e047bc8880a5c5006a331d5306db",
         "origin": {
           "kind": "runtime",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "path": "library/ui/figma/review/src/components/figma-module-runtime.tsx",
-          "sha256": "6d91dc9f3535d33e23aba38e09bf7f52be6582504f971a5943dcb91d9c298817"
+          "sha256": "a25a3157683a45e60932964608c85d2bd1711d1c15acf45b155134c8169e2476"
         }
       },
       "runtime/figma-view-state.ts": {
-        "sha256": "ad52fd3d7a3da36bbb896ca7b3780c0e42f9713e41f88ccba995bf980ab2b8d2",
+        "sha256": "95882b20b338599463ae5cb2d2ba542f254610a89225de8b18f0d98a37623cae",
         "origin": {
           "kind": "runtime",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
           "transform": "public-runtime-imports-v1",
           "path": "library/ui/figma/review/src/components/figma-view-state.ts",
-          "sha256": "ad52fd3d7a3da36bbb896ca7b3780c0e42f9713e41f88ccba995bf980ab2b8d2"
+          "sha256": "95882b20b338599463ae5cb2d2ba542f254610a89225de8b18f0d98a37623cae"
         }
       },
       "generation.json": {
-        "sha256": "3ed79693f147924df8c37e2cd096897de29e2973907491f7460b0aba7e267396",
+        "sha256": "49df08d7795e07f0a211dae90b906b905da67fefd9f91930f918e2877792f4b5",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
