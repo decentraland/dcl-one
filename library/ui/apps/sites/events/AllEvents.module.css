@@ -30,15 +30,13 @@
 .tab {
   composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
   padding: 0 0 var(--dcl-space-4);
-  border: 0;
   border-bottom: 2px solid transparent;
-  background: none;
   color: var(--dcl-text-secondary);
-  cursor: pointer;
+  text-decoration: none;
   font-weight: 500;
 }
 
-.tab[aria-selected='true'] {
+.tab[aria-current='page'] {
   border-bottom-color: var(--dcl-brand-ruby);
   color: var(--dcl-text-primary);
 }
@@ -117,28 +115,36 @@
   color: var(--dcl-text-primary);
 }
 
-/* One bordered column per day; each scrolls on its own, 616px tall (source measurement). */
+/* Source's day columns: 16px apart, each as tall as the viewport less 280px (header, title, date bar
+   and padding) and scrolling on its own when its day holds more events. Phones list one day instead. */
 .columns {
   display: grid;
   grid-template-columns: repeat(var(--columns), minmax(0, 1fr));
-  gap: var(--dcl-space-24);
+  gap: var(--dcl-space-16);
 }
 
 .column {
   display: flex;
   flex-direction: column;
-  gap: var(--dcl-space-12);
+  gap: var(--dcl-space-8);
   box-sizing: border-box;
-  height: 616px;
+  height: calc(100vh - 280px);
   margin: 0;
   padding: var(--dcl-space-8);
   overflow-y: auto;
-  /* Drawn inside, so the cards keep the column's full width (source). */
-  box-shadow: inset 0 0 0 2px var(--dcl-brand-violet);
-  border-radius: var(--dcl-radius-lg);
-  background: var(--dcl-transparencies-black-20);
+  border: 2px solid var(--dcl-transparencies-white-10);
+  border-radius: var(--dcl-space-24);
+  background: color-mix(in srgb, var(--dcl-brand-violet) 25%, transparent);
   list-style: none;
   scrollbar-width: none;
+}
+
+/* What the day's cards leave of the column, as source's filler. */
+.filler {
+  flex: 1;
+  min-height: var(--dcl-space-12);
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-white-10);
 }
 
 .empty {

@@ -41,7 +41,9 @@ function useScrollPages<T extends HTMLElement = HTMLDivElement>(count: number) {
   const goTo = useCallback((page: number) => {
     const el = ref.current
     if (!el) return
-    el.scrollTo({ left: page * el.clientWidth, behavior: 'smooth' })
+    // A visitor who asks for less motion gets the page at once.
+    const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+    el.scrollTo({ left: page * el.clientWidth, behavior: reduce ? 'auto' : 'smooth' })
   }, [])
   return { ref, ...paging, sync, goTo }
 }

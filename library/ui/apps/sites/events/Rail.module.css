@@ -75,7 +75,7 @@
 .dot::before {
   content: '';
   position: absolute;
-  inset: 8px;
+  inset: var(--dcl-space-8);
   border-radius: var(--dcl-radius-full);
   background: var(--dcl-transparencies-white-40);
 }

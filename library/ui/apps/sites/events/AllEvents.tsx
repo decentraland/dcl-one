@@ -1,4 +1,4 @@
-import { useId, useRef, type CSSProperties, type KeyboardEvent } from 'react'
+import { useId, type CSSProperties, type MouseEvent } from 'react'
 import { GeneralLeftArrow, GeneralRightArrow } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
 import { ExperienceCardSlot } from './cards/ExperienceCardSlot'
@@ -24,54 +24,42 @@ type AllEventsProps = {
   /** One column per day from tablet up; one list on phones, as source. */
   layout: 'columns' | 'list'
   canGoBack: boolean
+  /** False at the last day the page offers. */
+  canGoForward?: boolean
   onPrevious: () => void
   onNext: () => void
-  /** Shown to signed-in members only, as source; omitted, the section shows its title. */
-  tabs?: { active: AllEventsTab; onSelect: (tab: AllEventsTab) => void }
+  /** All Events and My Events, for signed-in members only, as source; omitted, the section shows its title. */
+  views?: {
+    active: AllEventsTab
+    hrefs: Record<AllEventsTab, string>
+    /** Runs before a link is followed, so the page can navigate in place. */
+    onFollow?: (view: AllEventsTab, event: MouseEvent<HTMLAnchorElement>) => void
+  }
   status?: 'ready' | 'loading' | 'unavailable'
   onRetry?: () => void
 }
 
-const TABS: readonly { id: AllEventsTab; label: string }[] = [
+const VIEWS: readonly { id: AllEventsTab; label: string }[] = [
   { id: 'all', label: 'All Events' },
   { id: 'my', label: 'My Events' }
 ]
 
-// TODO(figma-ds): a minimal accessible tablist until the design system ships Tabs.
-function Tabs({
-  active,
-  onSelect,
-  panelId
-}: NonNullable<AllEventsProps['tabs']> & { panelId: string }) {
-  const list = useRef<HTMLDivElement | null>(null)
-  const onKeyDown = (event: KeyboardEvent<HTMLButtonElement>) => {
-    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
-    event.preventDefault()
-    const index = TABS.findIndex((tab) => tab.id === active)
-    const next = TABS[(index + (event.key === 'ArrowRight' ? 1 : -1) + TABS.length) % TABS.length]
-    if (!next) return
-    onSelect(next.id)
-    list.current?.querySelector<HTMLButtonElement>(`[data-tab="${next.id}"]`)?.focus()
-  }
+/** All Events and My Events are two pages, so they are links, the current one marked. */
+function Views({ active, hrefs, onFollow }: NonNullable<AllEventsProps['views']>) {
   return (
-    <div ref={list} role="tablist" aria-label="All Events" className={styles.tabs}>
-      {TABS.map((tab) => (
-        <button
-          key={tab.id}
-          type="button"
-          role="tab"
-          data-tab={tab.id}
-          aria-selected={tab.id === active}
-          aria-controls={panelId}
-          tabIndex={tab.id === active ? 0 : -1}
+    <nav aria-label="Events views" className={styles.tabs}>
+      {VIEWS.map((view) => (
+        <a
+          key={view.id}
+          href={hrefs[view.id]}
+          aria-current={view.id === active ? 'page' : undefined}
           className={styles.tab}
-          onClick={() => onSelect(tab.id)}
-          onKeyDown={onKeyDown}
+          onClick={onFollow && ((event) => onFollow(view.id, event))}
         >
-          {tab.label}
-        </button>
+          {view.label}
+        </a>
       ))}
-    </div>
+    </nav>
   )
 }
 
@@ -87,6 +75,7 @@ function DayColumn({ day }: { day: AllEventsDay }) {
       ) : (
         <li className={styles.empty}>No events this day.</li>
       )}
+      <li className={styles.filler} aria-hidden="true" />
     </ul>
   )
 }
@@ -96,29 +85,29 @@ function AllEvents({
   days,
   layout,
   canGoBack,
+  canGoForward = true,
   onPrevious,
   onNext,
-  tabs,
+  views,
   status = 'ready',
   onRetry
 }: AllEventsProps) {
   const titleId = useId()
-  const panelId = useId()
   const list = days.flatMap((day) => day.cards)
   return (
     <section
       className={styles.root}
-      aria-labelledby={tabs ? undefined : titleId}
-      aria-label={tabs ? 'All Events' : undefined}
+      aria-labelledby={views ? undefined : titleId}
+      aria-label={views ? 'All Events' : undefined}
     >
-      {tabs ? (
-        <Tabs {...tabs} panelId={panelId} />
+      {views ? (
+        <Views {...views} />
       ) : (
         <h2 id={titleId} className={styles.title}>
           All Events
         </h2>
       )}
-      <div id={panelId} role={tabs ? 'tabpanel' : undefined} className={styles.panel}>
+      <div className={styles.panel}>
         <nav className={styles.dates} aria-label="Event days">
           <button
             type="button"
@@ -145,6 +134,7 @@ function AllEvents({
             type="button"
             className={styles.dateArrow}
             aria-label="Navigate to next dates"
+            disabled={!canGoForward}
             onClick={onNext}
           >
             <GeneralRightArrow size={20} aria-hidden="true" />

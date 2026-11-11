@@ -385,12 +385,13 @@ a.creator:focus-visible {
   background: var(--dcl-neutrals-onix);
 }
 
+/* Source's day card body: about 99px under a 16:9 cover. */
 .dayBody {
   display: flex;
   flex-direction: column;
-  gap: var(--dcl-space-12);
+  gap: var(--dcl-space-4);
   min-width: 0;
-  padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-16);
+  padding: var(--dcl-space-8) var(--dcl-space-12);
 }
 
 .dayTitle {
