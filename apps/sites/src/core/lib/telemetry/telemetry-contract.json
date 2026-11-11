@@ -2840,6 +2840,19 @@
         }
       }
     },
+    "lp_help_creator_fund_clicked": {
+      "loose": false,
+      "props": {
+        "button": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_help_viewed": {
+      "loose": false,
+      "props": {}
+    },
     "lp_home_download_clicked": {
       "loose": false,
       "props": {
@@ -3240,28 +3253,6 @@
         },
         "search": {
           "kind": "unknown",
-          "optional": false
-        }
-      }
-    },
-    "profile_card_clicked": {
-      "loose": false,
-      "props": {
-        "item_id": {
-          "kind": "string",
-          "optional": false
-        },
-        "tab": {
-          "kind": "enum-string",
-          "values": [
-            "assets",
-            "communities",
-            "creations",
-            "overview",
-            "photos",
-            "places",
-            "referral-rewards"
-          ],
           "optional": false
         }
       }

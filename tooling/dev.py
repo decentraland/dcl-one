@@ -251,7 +251,10 @@ def runtime_env(config):
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
-        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS
+        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS,
+        # Sites' blog CMS base, taken from the shell when set (unset: the blog answers 503).
+        # TODO(cms-migration): point it at the in-tree area once cms-server is migrated.
+        'BLOG_CMS_URL',
     ) if key in os.environ}
     base = config['port']
     env.update({
