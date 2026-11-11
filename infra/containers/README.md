@@ -7,12 +7,14 @@ are external. Explorer images: pipeline.
 | --- | --- | --- |
 | `image-apis` (`foundation-apis:nix`) | `catalyst serve`, `index`, `pulse`, `schema` | `/data`; PostgreSQL, blobs |
 | `image-sites` (`foundation-sites:nix`) | `sites-server` | `/data` |
+| `image-sites-polygon-credits` (`foundation-sites-polygon-credits:nix`) | `sites-server`, its Shop settling credits on Polygon through dcl-one's own CreditsManager | `/data` |
 | `image-gateway` (`foundation-gateway:nix`) | `gateway` (8080) | `/tmp` |
 
 - Run API, indexer, Pulse and migrations from one `apis` digest; domain crates are not separate services.
 - The APIs image has no SDK Play embed (`PLAY_EMBED_DIR` unset) and no `scene-build.wasm`.
 - Workflows are `<component>-<task>.yml`; Quay variables `QUAY_<COMPONENT>_REPOSITORY` hold full destinations without tags.
 - Tags: `sha-<full-commit>[-<arch>]`, `main`, `v*` (not Bevy). Bevy SHA tags can change on replay: pin `repository@sha256:<digest>`.
+- `image-sites-polygon-credits` is the Sites build with `VITE_SHOP_CHAIN_ID=137` and `VITE_SHOP_CREDITS_MANAGER` set to dcl-one's Polygon manager (`infra/containers/images.nix`, `shopSettlement` in `infra/packages/sites.nix`); the plain `image-sites` is unchanged. It is published to the Sites repository under its own suffix only (`sha-<full-commit>-polygon-credits`, `main-polygon-credits`), and names its settlement in `/shop-settlement.json` and the `org.decentraland.shop.*` labels.
 
 ## Sites Explorer build input
 
@@ -65,7 +67,7 @@ python3 tooling/image-smoke.py
   also start cold and publication remains blocked until a successful build.
 - Cache quota and idle eviction apply; dependency keys remain stable across
   source-only changes. Runtime caches exclude Cargo target trees. Hosted image
-  jobs fetch only the docs media from Git LFS and remove unused SDKs only when
+  jobs fetch Sites content and page media plus shared UI fonts from Git LFS and remove unused SDKs only when
   the runner starts with less than 50 GiB free. Smaller hosted disks still need
   that cleanup; larger runners skip it. Jobs log disk space before and after
   this check, memory before checkout, and disk space after cache import and image

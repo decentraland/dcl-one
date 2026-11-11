@@ -70,11 +70,14 @@ describe('when the CLI receives an explicit configuration outside its working di
     }
   )
 
-  it('should refuse installing from the live source', async () => {
-    await expect(run(['install', 'foundations', '--source', 'rest'])).rejects.toMatchObject({
-      stderr: expect.stringContaining('never rest')
-    })
-  })
+  it.each(['foundations', 'components'])(
+    'should refuse installing %s from the live source',
+    async (target) => {
+      await expect(run(['install', target, '--source', 'rest'])).rejects.toMatchObject({
+        stderr: expect.stringContaining('never rest')
+      })
+    }
+  )
 
   it('should reject an unknown install target', async () => {
     await expect(run(['install', 'unknown'])).rejects.toMatchObject({

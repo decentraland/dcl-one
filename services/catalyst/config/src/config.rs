@@ -217,7 +217,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 78] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 79] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -396,6 +396,7 @@ impl Config {
             ),
             ("CREDITS_SIGNER_KEY", &mut self.shop.credits_signer_key),
             ("CREDITS_REVOKER_KEY", &mut self.shop.credits_revoker_key),
+            ("CREDITS_TRIAL_BUYERS", &mut self.shop.credits_trial_buyers),
             (
                 "CATALYRST_RPC_ADMIN_TOKEN",
                 &mut self.rpc.catalyrst_rpc_admin_token,
