@@ -149,6 +149,28 @@ describe("carousel pointer lifecycle", () => {
     expect(track.getAttribute("style")).toContain("--carousel-position: 3");
   });
 
+  it("disables an in-range transition before a drag starts", () => {
+    const { container } = renderCarousel();
+    const carousel = container.querySelector(
+      '[aria-roledescription="carousel"]',
+    )!;
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(container.querySelector('[data-animated="true"]')).toBeTruthy();
+
+    fireEvent.pointerDown(carousel, {
+      button: 0,
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 100,
+      clientY: 0,
+    });
+
+    expect(container.querySelector('[data-animated="false"]')).toBeTruthy();
+    expect(
+      container.querySelector("[data-animated]")?.getAttribute("style"),
+    ).toContain("--carousel-position: 3");
+  });
+
   it("clears a short drag released outside before capture and ignores later buttonless movement", () => {
     const { container } = renderCarousel();
     const carousel = container.querySelector(

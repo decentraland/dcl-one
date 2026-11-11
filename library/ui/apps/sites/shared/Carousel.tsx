@@ -164,7 +164,7 @@ function Carousel<T>({
     drag.current = { x: event.clientX, y: event.clientY }
     dragged.current = false
     if (animated) settle()
-    else setAnimated(false)
+    setAnimated(false)
     setDragging(true)
   }
   const onPointerMove = (event: PointerEvent<HTMLDivElement>) => {
