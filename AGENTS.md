@@ -9,6 +9,7 @@
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
+- For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
 
 ## Agentic roles documentation
@@ -107,6 +108,10 @@ migrates), `library/ui/` or
 `rendering/bevy-explorer/source/react-web/`, read and follow
 [`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
 shared foundations and components, accessibility, migration and verification.
+To implement a Figma design, follow the `implement-figma-design` skill in
+`.claude/skills/`; it resolves each component to the library instead of
+recreating it. To port a capture into `library/ui`, follow
+`maintain-figma-library`.
 
 State, data fetching and structure follow [`docs/web-app-standards.md`](docs/web-app-standards.md), and tests follow [`docs/frontend-testing.md`](docs/frontend-testing.md).
 

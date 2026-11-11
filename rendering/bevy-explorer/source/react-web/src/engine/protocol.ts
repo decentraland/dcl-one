@@ -7,7 +7,16 @@
 // Domain types mirror scene/src/bevy-api/interface.ts so the bridge scene can
 // forward SystemApi results verbatim.
 
-import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, WelcomeState } from './generated'
+import type {
+  Color3,
+  CommunityVoiceStatus,
+  HomeScene,
+  SatelliteView,
+  SceneLoadingUi,
+  VoiceChatAction,
+  VoiceChatState,
+  WelcomeState,
+} from './generated'
 import type { AvatarLook } from './avatarEquip'
 
 export const BRIDGE_CHANNEL = 'bevy-ui-bridge'
@@ -155,6 +164,7 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
@@ -206,6 +216,7 @@ export type PageToScene =
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
+  | BrowseCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
   | UpdateCommunityRequest
@@ -346,6 +357,60 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+// ---- voice chat: private calls and community streams ----------------------
+
+export type { VoiceChatParticipant, VoiceChatRole, VoiceChatState } from './generated'
+
+export interface VoiceChatStateMessage {
+  kind: 'voiceChatState'
+  state: VoiceChatState
+}
+
+/** A voice chat command (page → scene → engine), the engine's own shape; its outcome shows on
+ *  `voiceChatState`. */
+export type VoiceChatActionWire = VoiceChatAction
+
+export interface VoiceChatActionRequest {
+  kind: 'voiceChatAction'
+  action: VoiceChatActionWire
+}
+
+/** A community stream started or ended, as the social service broadcasts it (scene → page). */
+export interface CommunityVoiceUpdateMessage {
+  kind: 'communityVoiceUpdate'
+  communityId: string
+  status: CommunityVoiceStatus
+  createdAt: number
+  endedAt: number | null
+  /** Parcels ('x,y') of the community's places, sent to non-members. */
+  positions: string[]
+  /** World names of the community's places, sent to non-members. */
+  worlds: string[]
+  isMember: boolean
+  communityName: string
+  communityImage: string | null
+}
+
+/** A live community stream the local user may see (social-api `/v1/community-voice-chats/active`). */
+export interface ActiveCommunityVoiceChat {
+  communityId: string
+  communityName: string
+  communityImage?: string
+  isMember: boolean
+  positions: string[]
+  worlds: string[]
+  participantCount: number
+  moderatorCount: number
+}
+
+/** Every live community stream, re-read on start and on each broadcast (scene → page). */
+export interface ActiveCommunityVoiceChatsMessage {
+  kind: 'activeCommunityVoiceChats'
+  chats: ActiveCommunityVoiceChat[]
+  /** False when the list was cleared (no account), not read: it says nothing about what is live. */
+  loaded?: boolean
 }
 
 /** Nearby members + count, polled by the scene (chat header "Nearby · N"). */
@@ -1103,6 +1168,19 @@ export interface Community {
   visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
+  /** The community's voice stream, as the social-api reports it. */
+  voiceChatStatus?: { isActive: boolean; participantCount: number; moderatorCount: number }
+  /** The first three of the user's friends who are members, for the browse card. Only the paged
+   *  browse read carries them. */
+  friends?: CommunityFriend[]
+}
+
+/** A friend who is a member of a community, for the browse card. */
+export interface CommunityFriend {
+  address: string
+  name: string
+  picture?: string
+  hasClaimedName: boolean
 }
 
 /** A page request's handler threw, so its reply never came (scene → page). */
@@ -1118,6 +1196,7 @@ export interface AvatarSaveFailedMessage {
   message: string
 }
 
+/** The communities the user is a member of: My Communities (scene → page). */
 export interface CommunitiesMessage {
   kind: 'communities'
   communities: Community[]
@@ -1125,6 +1204,29 @@ export interface CommunitiesMessage {
 
 export interface GetCommunitiesRequest {
   kind: 'getCommunities'
+}
+
+/** One page of the browse grid: 20 communities a page, by name on the
+ *  server when `search` is set (page → scene → social-api GET /v2/communities). */
+export interface BrowseCommunitiesRequest {
+  kind: 'browseCommunities'
+  /** '' lists every community. */
+  search: string
+  /** From 1. */
+  page: number
+}
+
+/** The answer to BrowseCommunitiesRequest, naming the search and page it is for, so the page drops
+ *  an answer to an older search (scene → page). */
+export interface CommunityBrowseMessage {
+  kind: 'communityBrowse'
+  search: string
+  page: number
+  communities: Community[]
+  /** How many communities the search has in all. */
+  total: number
+  /** The read failed; `communities` is empty. */
+  failed?: boolean
 }
 
 /** One community by id (page → scene → social-api GET /v2/communities/{id}), for a card opened
@@ -1909,6 +2011,9 @@ export interface AvatarClickMessage {
 export type SceneToPage =
   | BridgeReadyMessage
   | BridgeUnavailableMessage
+  | VoiceChatStateMessage
+  | CommunityVoiceUpdateMessage
+  | ActiveCommunityVoiceChatsMessage
   | RpcResponse
   | HoverMessage
   | CursorLockMessage
@@ -1951,6 +2056,7 @@ export type SceneToPage =
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
+  | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage

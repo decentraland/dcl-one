@@ -48,6 +48,57 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
+  3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.
+  - Don't add hold-to-talk to the call mic: `T` opens the chat. The `Microphone` key (`V`) toggles
+    the call mic while a call is connected and the nearby mic otherwise. A community listener's
+    `V` does nothing, since a listener can't speak.
+  - Don't start a call's mic from a stored setting. It goes up on the call's first connect for
+    whoever may speak (both sides of a private call, a stream's speakers). Don't turn it back on
+    after a re-dial: what the user chose since then stands.
+  - Don't keep a muted mic's track published. Muting unpublishes it, so no audio leaves a muted
+    user. In a stream `MuteSpeakerFromCommunityVoiceChat` is still sent, so every client shows the
+    same state.
+  - Don't play calls at the nearby-voice volume. Calls and streams follow `Voice Chat Volume` and
+    nearby players `Voice Volume`, both scaled by `Master`. Capture uses the system's default
+    microphone; a device picker is next work.
+  - Don't loop the call tune in the audio layer, which has no loop: the one-shot clip is
+    re-triggered every 3.056 s (its length) while ringing.
+  - Don't auto-subscribe the voice room. Like every room it joins with `auto_subscribe: false`,
+    and the voice module subscribes to each microphone track itself.
+  - Don't also play someone the user shares a voice room with (a call or a stream) through
+    nearby voice: their spatial track is unsubscribed while they share it.
+  - Don't skip the re-dial when the user is alone in the room. A stream's creator before anyone
+    joins, or a caller whose partner is still connecting, would lose the call to a network blip.
+    A call that has really ended has its room deleted, and that disconnect ends the call without
+    a re-dial.
+  - Don't count the user's own call room for the community chat's "Live Voice Stream" banner: it
+    shows the backend's participant count for the stream (1 for a stream known only from its
+    start update, until the next read). Don't let it catch clicks while the chat is unfocused: it
+    is hidden, not just transparent.
+  - Don't wait for an update about the user's own stream. Expected: once the user's stream starts
+    it shows as live (rail icon, chat banner, sidebar badge, scene banner) with current counts.
+    Actual: the social service leaves the starter out of the stream's STARTED update, and neither
+    update carries counts; ENDED reaches everyone, the ender included. So the bridge re-reads the
+    live list when the user's own stream is entered or left.
+  - Don't let a ringing private call carry on next to a stream: joining or starting a stream
+    while one rings refuses it first, and the stream starts a second later.
+  - Don't leave a stream running with nobody in it: one whose start succeeds after its creator
+    left (or moved to another stream) is ended with `EndCommunityVoiceChat`.
+  - Don't hold a hung-up private call in an ending state. One whose id is known ends at once,
+    and `EndPrivateVoiceChat` is sent behind it. With the social link down the request waits for
+    the reconnect (up to 30 s of backoff), and an ending state would keep the nearby mic off and
+    refuse new calls all that time. That request is not retried if it fails. A call whose start
+    is still in flight at sign-out is not ended by the client either: its reply comes back after
+    the account's link is gone, so the end goes out on the next account's link, where the server
+    refuses it (only a party ends a call), or on none. The server ends both anyway: leaving the
+    room makes the gatekeeper delete a private room, and a closed social socket ends that user's
+    pending call (`social-service-ea` `logic/subscriptions/lifecycle.ts`, mirrored by the
+    catalyst).
+  - Don't ring a call again on reconnect. A call left ringing when the social link dropped is
+    rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
+    ignored: the server tells only the caller about a reject, so a second ring would never stop.
+  - Don't show the "stream in this scene" banner to guests: they can't join.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:
@@ -113,6 +164,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
   members without unity-explorer's paging.
+  The Communities page's browse grid is unity-explorer's: 20 communities a page, the next read as
+  the grid's end comes into view, the name searched on the server a second after typing stops (at
+  once on Enter), and each card's Public or Private, Join, Request to Join or Cancel, its
+  description on hover, and the first three of the user's friends in it. Whether a join request is
+  pending comes from the user's own join requests, read when the grid's first page loads and when a
+  closed community's card opens, and kept from the request's answer, as unity-explorer's. The
+  card always shows its member count; unity-explorer shows it only behind its members-counter
+  flag. The Voice
+  Streaming section is left out until community voice exists, and a card offers no accept or
+  reject for an invite until the invites task. A failed read shows unity-explorer's error toast
+  and leaves the grid empty, with no count, where unity-explorer leaves its spinner running. A
+  card shows no spinner while its join or request runs. My Communities is every membership, read
+  apart from the grid; when that read fails the list stays as it was and the page asks again the
+  next time it opens, without unity-explorer's "error loading My Communities" toast.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
@@ -152,6 +217,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   waiting to authenticate, 32 per address, so the excess is refused (codes 8 and 7), and the 10 s
   floor would send every refused client back together again. The Pulse server's documentation
   calls jitter mandatory for those codes.
+- **Scene raycasts are capped only outside the scenes the player is in.** The system scene, every
+  portable and the scenes the player stands in run all their raycasts every frame, with no cap;
+  every other scene shares a tenth of the target frame (1.67 ms at 60 fps, 0.69 ms at 144),
+  nearest scene first, and what does not fit waits for a later frame. unity-explorer instead caps
+  the current scene at 3 ms and runs no other scene's raycasts. We differ because scenes drive
+  frame-sensitive logic from ray results: `movement-scene`, the default avatar movement driver,
+  runs its ground and wall checks on continuous `RS_AVATAR` rays, and for it a slower frame is
+  better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
+  part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag

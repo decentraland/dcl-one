@@ -2,12 +2,14 @@
 // age, and where clicking it leads. Shared by the panel and the new-notification toast.
 
 import type { AppNotification } from '../../engine/protocol'
-import type { FriendsState } from '../session/useEngineSession'
+import type { ChatState, FriendsState, VoiceChatSession } from '../session/useEngineSession'
 import { nativeProfileImage } from '../../lib/baseDomain'
 import { notificationTimeMs } from '../../lib/notificationTime'
 import { relationshipOf } from '../../lib/relationship'
 import { openPassport } from '../profile/Passport'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
+import { showToast } from '../../design'
+import { inCommunityStream, streamAct, streamLive } from '../voiceChat/callGate'
 
 function humanize(s: string): string {
   return s.replace(/[_-]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
@@ -109,4 +111,28 @@ export function friendshipTarget(n: AppNotification, friends?: FriendsState): ((
     }
   }
   return () => openPassport(address)
+}
+
+/** A community stream notification joins the stream if it is still live (an old one would hang up the
+ *  user's call for nothing) and the user is not in it (a rejoin comes back as a listener), then opens
+ *  that community's chat. */
+export function streamTarget(n: AppNotification, voiceChat?: VoiceChatSession, chat?: ChatState): (() => void) | undefined {
+  if (n.type !== 'community_voice_chat_started' || voiceChat == null) return undefined
+  const communityId = str(n.metadata, 'communityId')
+  if (communityId == null) return undefined
+  return () => {
+    // before the live list is read the notification is all there is to go by
+    if (!inCommunityStream(voiceChat.state, communityId)) {
+      if (streamLive(voiceChat, communityId, true)) streamAct(voiceChat, { op: 'joinCommunityCall', communityId })
+      else showToast('This stream has ended.')
+    }
+    if (chat == null) return
+    const known = chat.communities.find((c) => c.id === communityId)
+    chat.openCommunity({
+      id: communityId,
+      name: known?.name ?? str(n.metadata, 'communityName') ?? '',
+      thumbnail: known?.thumbnail ?? str(n.metadata, 'communityImage', 'thumbnail', 'thumbnailUrl') ?? '',
+      role: known?.role ?? 'member'
+    })
+  }
 }

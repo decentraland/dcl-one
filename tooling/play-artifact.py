@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -18,22 +19,12 @@ SOURCE = 'rendering/bevy-explorer/source/'
 BEVY = 'rendering/bevy-explorer/bevy/'
 PROTO = 'library/protocol/proto/'
 HUD = SOURCE + 'react-web/src/'
-# Sources the HUD compiles from outside react-web: its aliases (react-web/vite.shared.ts, with the
-# matching tsconfig.json paths). A trailing slash names a tree, anything else one file. They build into
-# the HUD, never the engine. They are not part of the Sites HUD review (`hud_inputs`) either: they are
-# shared code, with no adaptation of them to review. tooling/bevy-ci.py reads them from here;
-# infra/packages/play.nix lists them too, and tests keep it, the HUD's aliases and library/ui's import
-# graph together with this.
-HUD_SHARED = ('library/shop/', 'library/catalyst-api/', 'library/ui/index.ts', 'library/ui/foundations/')
-# Inside those, what the HUD never reads, so no input: library/ui's Inter files. They are Git LFS objects,
-# which a checkout without LFS holds as pointers and a `git+file:.?lfs=1` Nix source as their bytes, so
-# hashing them would key one tree two ways. The HUD takes the same faces from its own
-# @fontsource-variable/inter (react-web/vite.shared.ts).
-HUD_UNREAD = ('library/ui/foundations/typography/fonts/',)
+# Shared inputs come from the checked compiler/resolver graph, never a directory allowlist.
+_SPEC = importlib.util.spec_from_file_location('hud_shared_inputs', Path(__file__).with_name('hud_shared_inputs.py'))
+shared_inputs = importlib.util.module_from_spec(_SPEC)
+_SPEC.loader.exec_module(shared_inputs)
 
 
-def hud_shared(path):
-    return any(path.startswith(entry) if entry.endswith('/') else path == entry for entry in HUD_SHARED)
 MANIFEST = 'sites-play.json'
 PARTS = ('engine', 'bridge-scene', 'service_worker.js', 'preview_realm.js')
 # Source is maintained here. Hash its tracked files directly, alongside the build tools and
@@ -43,7 +34,7 @@ INPUTS = ('apps/bevy-explorer/build-web.py',
           'apps/bevy-explorer/install-web-tools.py',
           'apps/bevy-explorer/install-linux-deps.py', 'apps/bevy-explorer/install-tools.sh',
           '.github/actions/bevy-explorer-tools/action.yml', 'flake.lock', 'infra/packages/default.nix', 'infra/packages/tools.nix',
-          'tooling/play-artifact.py',
+          'tooling/play-artifact.py', 'tooling/hud_shared_inputs.py',
           '.github/workflows/bevy-explorer-ci.yml')
 TOOLCHAINS = ('rust-toolchain', 'rust-toolchain.toml')
 # Compiled into the engine (option_env!): a value change must miss the engine cache like a source
@@ -76,17 +67,18 @@ def read_json(path):
 
 
 def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
+    shared = shared_inputs.input_hashes(root, revision) if not hud_only and not engine_only else {}
     def selected(path):
         if hud_only:
             return path.startswith(HUD)
         # Native npm packaging is not consumed by the web builder or WASM.
-        if path.startswith((SOURCE + 'deploy/headless/', *HUD_UNREAD)):
+        if path.startswith(SOURCE + 'deploy/headless/'):
             return False
-        if engine_only and (path.startswith(SOURCE + 'react-web/') or hud_shared(path) or path in (
+        if engine_only and (path.startswith(SOURCE + 'react-web/') or path in (
                 SOURCE + 'deploy/web/package.json', SOURCE + 'deploy/web/package-lock.json')):
             # Web npm metadata still invalidates the assembled artifact, not WASM.
             return False
-        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or hud_shared(path) or path in INPUTS
+        return (path.startswith((SOURCE, BEVY, PROTO, '.cargo/')) or path in shared or path in INPUTS
                 or path in TOOLCHAINS)
     if revision:
         tree = subprocess.check_output(['git', 'ls-tree', '-rz', revision], cwd=root, text=True)
@@ -123,10 +115,10 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
             tracked = subprocess.check_output(['git', 'ls-files', '-z'], cwd=root, text=True).split('\0')
         else:
             # Nix's filtered contract has no .git and contains only tracked inputs.
-            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo', *HUD_SHARED)
+            tracked = [p.relative_to(root).as_posix() for base in (SOURCE, BEVY, PROTO, '.cargo')
                        for p in ([root / base] if (root / base).is_file() else (root / base).rglob('*'))
                        if p.is_file()]
-            tracked += list(INPUTS)
+            tracked += list(INPUTS) + list(shared)
             tracked += [name for name in TOOLCHAINS if (root / name).is_file()]
         hashes = {}
         for path in sorted(set(filter(selected, tracked))):
@@ -138,6 +130,7 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
     if not any(path.startswith(HUD if hud_only else SOURCE) for path in hashes) or any(
             path not in hashes for path in required):
         raise ValueError('Incomplete Explorer source inputs')
+    hashes.update(shared)
     return hashes
 
 

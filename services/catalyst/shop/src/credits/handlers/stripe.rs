@@ -1,8 +1,25 @@
 //! `POST /stripe/webhook`: the signature is verified over the raw body
 //! before any row is touched; then ONE transaction lands the event claim,
 //! the purchase flip and the wallet move, granting `purchases.credits`
-//! (captured at intent/session creation), never the event's metadata. A
-//! reversal REVOKES the granted Credits, bounded by the purchase.
+//! (captured at intent/session creation), never the event's metadata, and
+//! only for a settled payment in the purchase's currency and amount. A
+//! reversal REVOKES the granted Credits, bounded by the purchase. Stripe
+//! does not order deliveries, so a reversal is also recorded against its
+//! PaymentIntent, and a grant that lands after it applies it in the same
+//! transaction; both serialize on the PaymentIntent.
+//!
+//! The Stripe endpoint must deliver every event handled below, among them
+//! `checkout.session.completed`, `checkout.session.async_payment_succeeded`,
+//! `checkout.session.async_payment_failed` and `payment_intent.succeeded`. A
+//! delayed payment method completes its session unpaid, which records the
+//! session's payment intent on the order. When the payment clears, whichever
+//! of `async_payment_succeeded` and `payment_intent.succeeded` lands first
+//! credits it, through the same grant, and the other adds nothing. Both are
+//! needed: a `payment_intent.succeeded` that arrives before the completion
+//! recorded the intent finds no order, and only the session's event credits
+//! it then. `payment_intent.payment_failed` is not handled: it also fires for
+//! an attempt the buyer retried in the open session, and a late delivery of
+//! one would fail an order whose debit is still on its way.
 
 use axum::Json;
 use axum::body::Bytes;
@@ -14,7 +31,7 @@ use serde_json::{Value as JsonValue, json};
 use crate::credits::SharedState;
 use crate::credits::admin_store::GrantRequest;
 use crate::credits::errors::ApiError;
-use crate::credits::packs::{MarkPaidOutcome, ReversalOutcome};
+use crate::credits::packs::{Charge, MarkPaidOutcome, ReversalOutcome};
 use crate::credits::store::Credits;
 use crate::credits::stripe::{SIGNATURE_TOLERANCE_SECS, verify_stripe_signature};
 
@@ -83,106 +100,20 @@ pub async fn webhook(
                 .get("id")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| ApiError::bad_request("payment_intent missing id"))?;
-            let charged_cents = object
-                .get("amount")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| ApiError::bad_request("payment_intent missing amount"))?;
-
-            match state
+            let charged = charge(&object, "amount", "payment_intent")?;
+            let outcome = state
                 .credits
-                .mark_purchase_paid_in_tx(&mut tx, pi_id, &event_id, charged_cents)
-                .await?
-            {
-                MarkPaidOutcome::Granted { address, credits } => {
-                    let detail = json!({
-                        "source": "stripe",
-                        "eventId": event_id,
-                        "paymentIntent": pi_id,
-                        "sku": object.get("metadata").and_then(|m| m.get("sku")),
-                    });
-                    state
-                        .credits
-                        .admin_grant_credits_in_tx(
-                            &mut tx,
-                            GrantRequest {
-                                address: &address,
-                                amount: &credits,
-                                kind: "purchase",
-                                reason: Some("stripe purchase"),
-                                actor: Some(STRIPE_ACTOR),
-                                idempotency_key: Some(&event_id),
-                                detail: &detail,
-                            },
-                        )
-                        .await?;
-                }
-                MarkPaidOutcome::AmountMismatch {
-                    expected_cents,
-                    charged_cents,
-                } => {
-                    tracing::warn!(event_id = %event_id, payment_intent = %pi_id, expected_cents, charged_cents, "payment_intent.succeeded amount mismatch; NOT granting credits");
-                }
-                MarkPaidOutcome::NoPendingPurchase => {
-                    tracing::warn!(event_id = %event_id, payment_intent = %pi_id, "payment_intent.succeeded matched no pending purchase; no grant");
-                }
-            }
+                .mark_purchase_paid_in_tx(&mut tx, pi_id, &event_id, charged)
+                .await?;
+            let settled = Settled {
+                event_id: &event_id,
+                event_type: &event_type,
+                by: SettledBy::PaymentIntent(pi_id),
+            };
+            credit_settled(&state, &mut tx, outcome, settled).await?;
         }
-        "checkout.session.completed" => {
-            let session_id = object
-                .get("id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| ApiError::bad_request("checkout.session missing id"))?;
-            let charged_cents = object
-                .get("amount_total")
-                .and_then(|v| v.as_i64())
-                .ok_or_else(|| ApiError::bad_request("checkout.session missing amount_total"))?;
-
-            let payment_intent = object.get("payment_intent").and_then(|v| v.as_str());
-            match state
-                .credits
-                .mark_order_paid_by_session_in_tx(
-                    &mut tx,
-                    session_id,
-                    &event_id,
-                    charged_cents,
-                    payment_intent,
-                )
-                .await?
-            {
-                MarkPaidOutcome::Granted { address, credits } => {
-                    let detail = json!({
-                        "source": "stripe",
-                        "eventId": event_id,
-                        "checkoutSession": session_id,
-                        "sku": object.get("metadata").and_then(|m| m.get("sku")),
-                        "orderId": object.get("metadata").and_then(|m| m.get("orderId")),
-                    });
-                    state
-                        .credits
-                        .admin_grant_credits_in_tx(
-                            &mut tx,
-                            GrantRequest {
-                                address: &address,
-                                amount: &credits,
-                                kind: "purchase",
-                                reason: Some("stripe checkout purchase"),
-                                actor: Some(STRIPE_ACTOR),
-                                idempotency_key: Some(&event_id),
-                                detail: &detail,
-                            },
-                        )
-                        .await?;
-                }
-                MarkPaidOutcome::AmountMismatch {
-                    expected_cents,
-                    charged_cents,
-                } => {
-                    tracing::warn!(event_id = %event_id, checkout_session = %session_id, expected_cents, charged_cents, "checkout.session.completed amount mismatch; NOT granting credits");
-                }
-                MarkPaidOutcome::NoPendingPurchase => {
-                    tracing::warn!(event_id = %event_id, checkout_session = %session_id, "checkout.session.completed matched no pending order; no grant");
-                }
-            }
+        "checkout.session.completed" | "checkout.session.async_payment_succeeded" => {
+            settle_session(&state, &mut tx, &object, &event_id, &event_type).await?;
         }
         "checkout.session.expired" => {
             mark_session_terminal(&mut tx, &object, &event_id, "abandoned", None).await?;
@@ -207,6 +138,203 @@ pub async fn webhook(
     Ok(ok("processed"))
 }
 
+/// The amount and currency an event says were charged; both are required,
+/// since the amount is only meaningful in its currency's minor unit.
+fn charge<'a>(
+    object: &'a JsonValue,
+    amount_field: &str,
+    what: &str,
+) -> Result<Charge<'a>, ApiError> {
+    let cents = object
+        .get(amount_field)
+        .and_then(|v| v.as_i64())
+        .ok_or_else(|| ApiError::bad_request(format!("{what} missing {amount_field}")))?;
+    let currency = object
+        .get("currency")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request(format!("{what} missing currency")))?;
+    Ok(Charge { cents, currency })
+}
+
+/// Whether a Checkout Session's money has arrived: Stripe says `paid`.
+/// `checkout.session.completed` also fires for a delayed method (a bank
+/// debit) while it is still `unpaid`; that one settles later as
+/// `checkout.session.async_payment_succeeded` or `_failed`. An absent
+/// status is not settled, and neither is `no_payment_required`: every
+/// pack has a price, so a session that needs no payment grants nothing.
+pub(crate) fn session_payment_settled(session: &JsonValue) -> bool {
+    session.get("payment_status").and_then(|v| v.as_str()) == Some("paid")
+}
+
+/// `checkout.session.completed` / `async_payment_succeeded`: the order is
+/// marked paid and credited only once the session is settled. An unpaid
+/// completion marks it processing instead (pending, with the session's
+/// payment intent), so nothing but the async outcome retires it. Whichever
+/// settled event lands first flips it; any later one finds it paid.
+async fn settle_session(
+    state: &SharedState,
+    tx: &mut Tx<'_>,
+    object: &JsonValue,
+    event_id: &str,
+    event_type: &str,
+) -> Result<(), ApiError> {
+    let session_id = object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| ApiError::bad_request("checkout.session missing id"))?;
+    let payment_intent = object.get("payment_intent").and_then(|v| v.as_str());
+    if !session_payment_settled(object) {
+        let payment_status = object.get("payment_status").and_then(|v| v.as_str());
+        match (payment_status, payment_intent) {
+            (Some("unpaid"), Some(payment_intent)) => {
+                let marked =
+                    Credits::mark_order_processing_by_session_in_tx(tx, session_id, payment_intent)
+                        .await?;
+                tracing::info!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, marked, "checkout.session payment still processing; no grant until it settles");
+            }
+            _ => {
+                tracing::warn!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, payment_status = payment_status.unwrap_or("absent"), "checkout.session not paid; NOT granting credits");
+            }
+        }
+        return Ok(());
+    }
+    let charged = charge(object, "amount_total", "checkout.session")?;
+    let outcome = state
+        .credits
+        .mark_order_paid_by_session_in_tx(tx, session_id, event_id, charged, payment_intent)
+        .await?;
+    let settled = Settled {
+        event_id,
+        event_type,
+        by: SettledBy::Session(session_id),
+    };
+    credit_settled(state, tx, outcome, settled).await
+}
+
+/// The settled event a purchase flip answers, for its logs.
+struct Settled<'a> {
+    event_id: &'a str,
+    event_type: &'a str,
+    by: SettledBy<'a>,
+}
+
+/// The key the event matched its purchase by.
+#[derive(Clone, Copy)]
+enum SettledBy<'a> {
+    PaymentIntent(&'a str),
+    Session(&'a str),
+}
+
+impl<'a> SettledBy<'a> {
+    /// The key's name and value, for the logs.
+    fn parts(self) -> (&'static str, &'a str) {
+        match self {
+            Self::PaymentIntent(id) => ("payment_intent", id),
+            Self::Session(id) => ("checkout_session", id),
+        }
+    }
+}
+
+/// Credits the purchase a settled event flipped to `paid`, or logs why it
+/// did not. `payment_intent.succeeded` and the session events land here
+/// alike: for a delayed Checkout payment either can settle the order, and
+/// the grant is the same whichever lands first. Its ledger row is described
+/// from the purchase row, and the reversals recorded before it are applied
+/// for the payment intent the purchase holds, which an unpaid completion
+/// may have recorded before an event that names none.
+async fn credit_settled(
+    state: &SharedState,
+    tx: &mut Tx<'_>,
+    outcome: MarkPaidOutcome,
+    settled: Settled<'_>,
+) -> Result<(), ApiError> {
+    let Settled {
+        event_id,
+        event_type,
+        by,
+    } = settled;
+    let (matched_by, matched) = by.parts();
+    match outcome {
+        MarkPaidOutcome::Granted(purchase) => {
+            let mut detail = json!({
+                "source": "stripe",
+                "eventId": event_id,
+                "sku": purchase.sku,
+            });
+            for (key, value) in [
+                ("paymentIntent", &purchase.payment_intent),
+                ("checkoutSession", &purchase.checkout_session),
+                ("orderId", &purchase.order_id),
+            ] {
+                if let Some(value) = value {
+                    detail[key] = json!(value);
+                }
+            }
+            let reason = if purchase.checkout_session.is_some() {
+                "stripe checkout purchase"
+            } else {
+                "stripe purchase"
+            };
+            state
+                .credits
+                .admin_grant_credits_in_tx(
+                    tx,
+                    GrantRequest {
+                        address: &purchase.address,
+                        amount: &purchase.credits,
+                        kind: "purchase",
+                        reason: Some(reason),
+                        actor: Some(STRIPE_ACTOR),
+                        idempotency_key: Some(event_id),
+                        detail: &detail,
+                    },
+                )
+                .await?;
+            match purchase.payment_intent.as_deref() {
+                Some(payment_intent) => {
+                    apply_recorded_reversals(state, tx, payment_intent, event_id).await?;
+                }
+                None => {
+                    tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled purchase holds no payment_intent: a later refund or dispute cannot find it");
+                }
+            }
+        }
+        MarkPaidOutcome::AmountMismatch {
+            expected_cents,
+            charged_cents,
+        } => {
+            tracing::error!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, expected_cents, charged_cents, "settled payment's amount differs from its purchase; NOT granting credits: verify the payment at Stripe");
+        }
+        MarkPaidOutcome::CurrencyMismatch { expected, charged } => {
+            tracing::error!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, expected = %expected, charged = %charged, "settled payment's currency differs from its purchase; NOT granting credits: verify the payment at Stripe");
+        }
+        MarkPaidOutcome::NotSettleable { status } if status == "failed" => {
+            tracing::error!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled payment for an order whose payment failed; NOT granting credits: verify the payment at Stripe");
+        }
+        MarkPaidOutcome::NotSettleable { status } => {
+            // The other settled event of a delayed payment, or a later
+            // one: Stripe delivers both, in no set order.
+            tracing::info!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, order_status = %status, "settled payment already credited by an earlier event; no grant");
+        }
+        MarkPaidOutcome::NoPurchase => match by {
+            // A Checkout payment's intent is unknown until its session's
+            // event records it, and that event credits the order then.
+            SettledBy::PaymentIntent(_) => {
+                tracing::info!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled payment intent matched no purchase; no grant");
+            }
+            SettledBy::Session(_) => {
+                tracing::warn!(event_id = %event_id, event_type = %event_type, matched_by, matched = %matched, "settled checkout.session matched no order; no grant");
+            }
+        },
+    }
+    Ok(())
+}
+
+/// Retires a pending order, and closes one already retired as `abandoned`
+/// when its payment fails ([`Credits::mark_order_status_by_session_on`]).
+/// Stripe does not order deliveries, so a failure reaching an order already
+/// credited is a conflict to verify against the session at Stripe, never a
+/// reason to revoke on its own.
 async fn mark_session_terminal(
     tx: &mut Tx<'_>,
     object: &JsonValue,
@@ -222,7 +350,13 @@ async fn mark_session_terminal(
         Credits::mark_order_status_by_session_on(&mut **tx, session_id, status, failure_reason)
             .await?;
     if !changed {
-        tracing::info!(event_id = %event_id, checkout_session = %session_id, status = %status, "checkout.session terminal event matched no pending order");
+        let current = Credits::order_status_by_session_on(&mut **tx, session_id).await?;
+        let credited = matches!(current.as_deref(), Some("paid" | "refunded" | "disputed"));
+        if status == "failed" && credited {
+            tracing::error!(event_id = %event_id, checkout_session = %session_id, order_status = current.as_deref().unwrap_or("none"), "checkout.session payment failure for an order already credited; credits NOT revoked: verify the session at Stripe");
+        } else {
+            tracing::info!(event_id = %event_id, checkout_session = %session_id, status = %status, order_status = current.as_deref().unwrap_or("none"), "checkout.session terminal event matched no pending order");
+        }
     }
     Ok(())
 }
@@ -296,7 +430,25 @@ fn log_reversal(outcome: &ReversalOutcome, event_id: &str, pi_id: &str, kind: &s
             tracing::info!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, "reversal added no new reversed amount; no credits revoked");
         }
         ReversalOutcome::NoPaidPurchase => {
-            tracing::warn!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, "reversal matched no paid purchase; nothing revoked");
+            tracing::warn!(event_id = %event_id, payment_intent = %pi_id, kind = %kind, "reversal matched no paid purchase; recorded, and applied if the purchase is credited later");
         }
     }
+}
+
+/// After a grant: the refunds and disputes Stripe delivered for this
+/// PaymentIntent before it settled, applied in the same transaction.
+async fn apply_recorded_reversals(
+    state: &SharedState,
+    tx: &mut Tx<'_>,
+    payment_intent: &str,
+    event_id: &str,
+) -> Result<(), ApiError> {
+    if let Some(outcome) = state
+        .credits
+        .apply_recorded_reversals_in_tx(tx, payment_intent, event_id)
+        .await?
+    {
+        log_reversal(&outcome, event_id, payment_intent, "recorded reversal");
+    }
+    Ok(())
 }

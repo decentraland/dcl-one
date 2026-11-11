@@ -220,6 +220,24 @@ CREATE UNIQUE INDEX purchases_order_id_uidx ON credits.purchases (order_id) WHER
 -- The reconciler's paid-vs-granted sums per wallet and /admin/credits/purchases?address=.
 CREATE INDEX purchases_address_idx ON credits.purchases (address, id DESC);
 
+-- Stripe reversals per PaymentIntent, recorded whether or not its purchase is
+-- credited yet: Stripe does not order deliveries, so a `charge.refunded` or
+-- `charge.dispute.*` can arrive before the settlement that credits the
+-- purchase. The webhook writes it under the PaymentIntent's advisory lock and
+-- the grant applies it in its own transaction (same lock), bounded by the
+-- purchase. `refunded_cents` is the highest cumulative `amount_refunded`
+-- seen; `disputed` latches on the first dispute. One row per reversed
+-- PaymentIntent (refunds and disputes are rare), read by primary key once
+-- per grant; no foreign key, since the purchase may not be linked yet.
+CREATE TABLE credits.payment_reversals (
+    payment_intent text NOT NULL,
+    refunded_cents bigint NOT NULL DEFAULT 0,
+    disputed boolean NOT NULL DEFAULT false,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT payment_reversals_pkey PRIMARY KEY (payment_intent),
+    CONSTRAINT payment_reversals_refunded_check CHECK (refunded_cents >= 0)
+);
+
 -- One open cart per wallet; the address is the natural key.
 CREATE TABLE credits.carts (
     id bigint GENERATED ALWAYS AS IDENTITY,

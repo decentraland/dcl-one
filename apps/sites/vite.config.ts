@@ -242,13 +242,14 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui"] },
     proxy: nodeProxy(),
   },
   resolve: {
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
+      "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@catalyst-api": catalystApi,
       "@shop": shopCore,
       "@": src,

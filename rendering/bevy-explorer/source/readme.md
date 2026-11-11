@@ -175,14 +175,24 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
-  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
-  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
-  `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+  `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
+  player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
+  `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`), `/entity_screen_position <entity>
+  [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
+  close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
+  names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
+  and the scene commands.
 - Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
   and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
   <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
   the HUD sets from the user's communities (the engine drops community messages on any other).
+- Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
+  rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
+  or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`
+  ends it for everyone, `/voice hand up|down`, `/voice mic on|off` (the call microphone; the
+  nearby one is the `Microphone` key) and `/voice promote|demote|kick|deny <address>`. Each only
+  queues the request; read `/voice_state` `call` for the outcome. The debug panel's "Voice call"
+  section shows the call and binds these actions.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
@@ -209,6 +219,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
+- Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
+  entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
+  hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
+  lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+- Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
+  uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
+  capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go
+  to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
+  and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
+  has the options, replies and diagnoses.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
