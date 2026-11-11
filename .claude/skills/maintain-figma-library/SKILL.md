@@ -1,6 +1,6 @@
 ---
 name: maintain-figma-library
-description: Use when porting a figma-design-system capture into library/ui, refreshing the generated foundations or components, acting on a "Missing library mapping" report from the implement-figma-design skill, adding a public component mapping, or answering why a component is needs-manual. Triggers on "port the capture", "refresh library/ui from Figma", "port prepare", "port verify", "port-verification.json", "needs-manual", "add this component to the library".
+description: Use when porting a figma-design-system capture into library/ui, refreshing the generated foundations or components, acting on an "Unresolved component" report from the implement-figma-design skill, adding a public component mapping, or answering why a component is needs-manual. Triggers on "port the capture", "refresh library/ui from Figma", "port prepare", "port verify", "port-verification.json", "needs-manual", "add this component to the library".
 ---
 
 # Maintain the Figma-generated library
@@ -9,7 +9,7 @@ You change `library/ui` from the capture that figma-design-system (FDS) owns. Yo
 
 ## 1. Intake
 
-- **A consumer report** ("Missing library mapping": component, code, variant properties, library version, capture revision). A `mapping-missing` component is a known library component without a public mapping. An identity code (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) is not a missing mapping: check the name and the capture first.
+- **A consumer report** ("Unresolved component": component, code, variant properties, library version, capture revision). A `mapping-missing` component is a known library component without a public mapping. An identity code (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) is not a missing mapping: check the name and the capture first.
 - **A capture refresh**: the new FDS commit to pin.
 
 Before any work, report the `needs-manual` flags and their reasons for the components involved (`pnpm --silent figma diff` and the sync report list them; `figma/MAINTENANCE.md` explains each reason). Never clear a flag to make a count look better. Extractor limits behind a flag (a truncated capture, an unresolved instance) belong to FDS: report them there instead of patching around them here. When generation cannot express a component, start from the hand-written template in `library/ui/templates/component/` and follow `docs/ui-standards.md`.
@@ -40,4 +40,4 @@ The privileged key scan reads the URL allowlist from the default branch. A publi
 
 ## 5. Hand back
 
-Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components now resolve (`pnpm --silent figma resolve --mapping-only --name <set name> --variant ...`) so they can rerun the consumer skill.
+Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components now resolve (`pnpm --silent figma resolve --mapping-only --name '<set name>' --variant 'Prop=Value'`; a set name and its values come from the design, so keep them in single quotes and write a `'` inside as `'\''`) so they can rerun the consumer skill.

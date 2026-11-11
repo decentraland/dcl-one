@@ -17,6 +17,11 @@ pub const SCHEMA_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/schema.sql"
 /// steps `catalyst schema migrate` applies to a database stamped before them
 /// (`schema_migrate`); `catalyst schema print --migrations` writes the same text.
 pub const MIGRATIONS_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/migrations.sql"));
+/// The reviewed release that takes a database stamped `SCHEMA_VERSION - 1` to
+/// `SCHEMA_VERSION` (`schemas/releases/v3-private-voice-pending.sql`, rendered
+/// by build.rs without its psql commands, transaction lines and includes).
+/// `catalyst schema migrate --release` runs it in its own transaction.
+pub const RELEASE_SQL: &str = include_str!(concat!(env!("OUT_DIR"), "/release.sql"));
 
 /// Every connection runs with this path and clock; application SQL is
 /// schema-qualified anyway, and no request ever changes either.
@@ -644,6 +649,31 @@ mod tests {
         assert!(
             SCHEMA_SQL.contains(&stamp),
             "schema.sql must insert {stamp}"
+        );
+    }
+
+    /// `schema migrate --release` runs RELEASE_SQL on a database one version
+    /// behind; a version bump without its own release must fail here.
+    #[test]
+    fn release_sql_takes_the_previous_version_to_this_one() {
+        let accepts = format!("IS DISTINCT FROM {} THEN", SCHEMA_VERSION - 1);
+        assert_eq!(
+            RELEASE_SQL.matches(&accepts).count(),
+            1,
+            "the release requires the previous version"
+        );
+        let stamps = format!("UPDATE meta.schema SET version = {SCHEMA_VERSION},");
+        assert_eq!(
+            RELEASE_SQL.matches(&stamps).count(),
+            1,
+            "the release stamps this version"
+        );
+        assert!(!RELEASE_SQL.contains("BEGIN;") && !RELEASE_SQL.contains("COMMIT;"));
+        assert!(
+            RELEASE_SQL
+                .lines()
+                .all(|line| !line.trim_start().starts_with('\\')),
+            "no psql meta-command reaches the migrator"
         );
     }
 

@@ -14,6 +14,7 @@ const entrySchema = z
     nodeId: z.string().min(1).optional(),
     name: z.string().min(1).optional(),
     variantProperties: record.optional(),
+    booleanProperties: record.optional(),
     texts: record.optional()
   })
   .strict()
@@ -21,7 +22,7 @@ const entrySchema = z
 // `repeats` names the earlier entry an identical instance shares its answer with.
 type BatchEntry = { index: number; input: unknown; result: ResolveResult; repeats?: number }
 
-const FIELDS = ['nodeId', 'name', 'variantProperties', 'texts'] as const
+const FIELDS = ['nodeId', 'name', 'variantProperties', 'booleanProperties', 'texts'] as const
 
 // What a refused entry echoes: only the fields a batch accepts, plus the names of any others, so an unknown
 // field (a component key, say) is never printed back.
@@ -76,7 +77,7 @@ async function resolveBatch(ctx: ResolveContext, entries: unknown): Promise<Batc
         index,
         input: echo(input),
         result: invalid(
-          `Entry ${index} must hold nodeId or name, and string variantProperties and texts only.`,
+          `Entry ${index} must hold nodeId or name, and string variantProperties, booleanProperties and texts only.`,
           { index }
         )
       })
@@ -87,6 +88,7 @@ async function resolveBatch(ctx: ResolveContext, entries: unknown): Promise<Batc
       entry.nodeId === undefined ? undefined : normalizeNodeId(entry.nodeId),
       entry.name,
       Object.entries(entry.variantProperties ?? {}).sort(),
+      Object.entries(entry.booleanProperties ?? {}).sort(),
       Object.entries(entry.texts ?? {}).sort()
     ])
     // A design often repeats an instance (two identical buttons): the repeat shares the earlier answer.
