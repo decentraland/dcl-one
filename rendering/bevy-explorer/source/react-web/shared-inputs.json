@@ -3930,7 +3930,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "e45983f50463af41653b154e9b629712e0b135eedd6f9529829aad0ff1fc58e1"
+      "sha256": "7ed3a910fe84057d41106a58e1c95b735b934cdfe5fd9d1826560445ff93c4ab"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -4106,7 +4106,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "8bdd6a5afecc785e3612afb4cef15c8bb540960708f7c8822acebefe50dc7896"
+      "sha256": "5a77f5c3c5a11ff17c045b08d4c4cc7cb4ebae34fa57ac852595b14f69f4bfd0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
@@ -4378,7 +4378,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "f71de2d436df28299fdb6aff3947ef783db38ef28aff9e5f803c5f72e28771a8"
+      "sha256": "d5694625e312b57229b7ad8f20a4d32506740f9af9b49abd09a474f5250d620b"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4402,7 +4402,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "7a38e2008453057327b828667c3a273d58d6288901c5601e502245e84a2e7b49"
+      "sha256": "7c4d7ecc501d802a3a2b99e6d720a9102a297f99e4821283d3aeb96614c2bab3"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5718,11 +5718,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/CountBadge.module.css",
-      "sha256": "5732efa422d022742860a33959685fca2731fe57e56da3781773faec4e455e18"
+      "sha256": "88d46d213083a4f75d426fe070305792c81042676e62478844b0177384fda2bd"
     },
     {
       "path": "library/ui/apps/hud/design/CountBadge.tsx",
-      "sha256": "589d96217857e9d1f630f8af3375b14455b6573d609a9d3afd97f71278f61c8d"
+      "sha256": "1ef1f247c6f79057cb023ca9d393584fd25eb1e7be04cc129180c008ed301c60"
     },
     {
       "path": "library/ui/apps/hud/design/DateField.module.css",
@@ -5918,11 +5918,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.module.css",
-      "sha256": "6aa2bbe72a86d41776f547479f2c99741596f49c890f2f76cf87627016966e9e"
+      "sha256": "b7449284b330bae8ec87ba8ae2a1e724c5ed42e4696220fd836f8fc7288897d5"
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
-      "sha256": "e2fabe09e70287751ac5c5725e6139f46e1f64fbba53b5c4063b7f6a873ac0f6"
+      "sha256": "8d0acddb022a8e9e980e4f232730bdbfe2f69ecf0c6067c92f0a56305913f384"
     },
     {
       "path": "library/ui/apps/hud/design/SwapLabel.module.css",
@@ -5934,11 +5934,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.module.css",
-      "sha256": "d340223209ba35ad571b3b5fc6bfafbad3289955ac58724bcc2608adfa6a92ca"
+      "sha256": "4e5fb327e2b390dee813374a7cab72150abb151c378f05f6d40769d902b66b6b"
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.tsx",
-      "sha256": "4adadf86ae9e4df744ed991e97835cb06a94c32a9270b0d228a1c92ab300dce5"
+      "sha256": "6f814e88014983e73212f3301253f7587d694f74eafa7e3b14c7346f1c90729f"
     },
     {
       "path": "library/ui/apps/hud/design/TextArea.module.css",
@@ -6078,7 +6078,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "70242a9c637dc36a2736ddc74077b996e03746219eeb68b7834a7b2a473ce383"
+      "sha256": "7f2cdb471c87714a6a8cb951e1bb5ace47f60b71962e18a644674ce6c341127c"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -6118,7 +6118,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "bc2903f56ff8f6914d19eaeb65ccfaa5477cb19f19fd91a39cfc8db21a06b1fb"
+      "sha256": "d875558405c81aa0742278a3ff78903a4d732a27d71cb3bb5135ad9c49beddcf"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -6138,7 +6138,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
-      "sha256": "8b0aa71a41ca4ce2d284817d5c2ee7295dd3c3f7c0f42e0cd0a96b84e003d6ac"
+      "sha256": "f383b76c50519752e46c959ee56a080d1d49784ad2b7b6233fd08e596470638a"
     },
     {
       "path": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
@@ -6530,7 +6530,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "55b68eb51bd595cc852c8839670e566903d4a701a13a1f55ff5a7df76aae914f"
+      "sha256": "1e5cb5faafc87a30d5d36296d5cc90f1d5e0909fb012983f16c834b1747dd729"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -6554,11 +6554,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "3ec3481749b3b0697488f2377baca20459e990eb7dc3499573a10d2cae2f3792"
+      "sha256": "11db7a71329f4c4f4d31763130700e97b2196b54ad3f3302af9128c733f9f095"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
-      "sha256": "ac543e7310f672578b0039ad8b6890606236f133118738a919ec3ec621ec45f0"
+      "sha256": "58aad04ceb3d71936ed0a6255312318c1854691ede88742f3633e0f111d9a963"
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.module.css",
@@ -6594,7 +6594,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "bfb4d44840eea9898270ed5e19f05f7c66d4a33530e9c548110e763856359980"
+      "sha256": "86a88a5ca62d6070715f54f5df9b24fc5282271aeaf49fb9211ff4abb56110c0"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6850,7 +6850,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
-      "sha256": "d7f0c1ca75cf73e32f16b8b6b6c515eac3d0b2fc57a7c7cc09ac2cbe7248311f"
+      "sha256": "f9d7611954ef81e75973c82b28ca088c66bc8a6227ac8aa0bff8b46699891a64"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.join.test.tsx",
@@ -11145,6 +11145,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Submenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Submenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Submenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Submenu.tsx",
       "to": "library/ui/apps/hud/design/Submenu.module.css",
       "kind": "native:runtime"
     },
@@ -11175,6 +11190,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Tabs.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Tabs.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Tabs.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Tabs.tsx",
       "to": "library/ui/apps/hud/design/Tabs.module.css",
       "kind": "native:runtime"
     },
@@ -23876,6 +23906,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/communities.clicks.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
