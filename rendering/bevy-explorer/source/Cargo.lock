@@ -7097,6 +7097,7 @@ name = "imposters"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "async-fs",
  "bevy",
  "bevy_console",
@@ -7107,6 +7108,7 @@ dependencies = [
  "crc",
  "futures-lite",
  "ipfs",
+ "naga_oil",
  "platform",
  "reqwest",
  "scene_material",

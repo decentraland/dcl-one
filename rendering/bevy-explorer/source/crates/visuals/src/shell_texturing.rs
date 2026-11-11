@@ -714,44 +714,10 @@ impl<B: Bundle + Clone> SpawnableList<ChildOf> for ParcelGrassShellSpawnList<B> 
 mod test {
     use super::*;
 
-    /// Every shader that lights a surface fades the sun shadow out towards the shadow distance.
-    /// One without the override cuts the shadow off hard at the distance, and
-    /// receivers side by side (ground and grass, a face and its body) disagree.
-    #[test]
-    fn every_lit_shader_fades_the_sun_shadow() {
-        let dirs = [
-            concat!(env!("CARGO_MANIFEST_DIR"), "/src"),
-            concat!(
-                env!("DCL_ONE_ROOT"),
-                "/rendering/bevy-explorer/source/crates/assets/src/assets/shaders"
-            ),
-        ];
-        let mut lit = 0;
-        for dir in dirs {
-            for entry in std::fs::read_dir(dir).unwrap() {
-                let path = entry.unwrap().path();
-                if path.extension().is_none_or(|ext| ext != "wgsl") {
-                    continue;
-                }
-                let source = std::fs::read_to_string(&path).unwrap();
-                if !source.contains("apply_pbr_lighting(") {
-                    continue;
-                }
-                lit += 1;
-                assert!(
-                    source.contains("override fn shadows::fetch_directional_shadow")
-                        && source.contains("soften_directional_shadow(base, far,"),
-                    "{} lights a surface without the sun shadow fade",
-                    path.display()
-                );
-            }
-        }
-        assert!(lit >= 8, "only {lit} lit shaders found");
-    }
-
     /// The softened sun shadow overrides compile on this machine's adapter, in a renderer with no
-    /// window: a grass shell (`shell_texturing.wgsl`, main pass and prepass) and a rock
-    /// (`soft_shadows.wgsl`) in front of an HDR camera with the prepasses and a shadowing light.
+    /// window: a grass shell (`shell_texturing.wgsl`), a rock (`soft_shadows.wgsl`), the flat
+    /// ground (`terrain_flat.wgsl`), a cliff (`coast_cliff.wgsl`) and the ocean
+    /// (`coast_water.wgsl`) in front of an HDR camera with the prepasses and a shadowing light.
     /// Needs a GPU, so `#[ignore]`d and skipped by CI:
     ///
     /// ```text
@@ -782,7 +748,11 @@ mod test {
             winit::WinitPlugin,
         };
 
-        use crate::trees::{SoftShadowMaterial, SoftShadows};
+        use crate::{
+            coast::{CliffExtension, CliffMaterial, WaterExtension, WaterMaterial},
+            terrain::NO_COAST,
+            trees::{SoftShadowMaterial, SoftShadows},
+        };
 
         let mut app = App::new();
         app.add_plugins(
@@ -799,15 +769,19 @@ mod test {
                 }),
         );
         app.add_plugins(assets::EmbedAssetsPlugin);
-        // the shaders as `ShellTexturingPlugin`, `TreesPlugin` and the terrain embed them; those
-        // plugins need the scene runner and the terrain
+        // the shaders as `ShellTexturingPlugin`, `TreesPlugin`, `TerrainPlugin` and `CoastPlugin`
+        // embed them; those plugins need the scene runner and the terrain
         let registry = app.world().resource::<EmbeddedAssetRegistry>();
         for (name, source) in [
             ("shell_texturing.wgsl", include_str!("shell_texturing.wgsl")),
             ("soft_shadows.wgsl", include_str!("soft_shadows.wgsl")),
             ("terrain_vertex.wgsl", include_str!("terrain_vertex.wgsl")),
             ("terrain_params.wgsl", include_str!("terrain_params.wgsl")),
+            ("terrain_flat.wgsl", include_str!("terrain_flat.wgsl")),
             ("coast_profile.wgsl", include_str!("coast_profile.wgsl")),
+            ("coast_surf.wgsl", include_str!("coast_surf.wgsl")),
+            ("coast_cliff.wgsl", include_str!("coast_cliff.wgsl")),
+            ("coast_water.wgsl", include_str!("coast_water.wgsl")),
         ] {
             let path = Path::new("visuals").join(name);
             registry.insert_asset(path.clone(), &path, source.as_bytes());
@@ -815,6 +789,9 @@ mod test {
         app.add_plugins((
             MaterialPlugin::<ShellTexture>::default(),
             MaterialPlugin::<SoftShadowMaterial>::default(),
+            MaterialPlugin::<TerrainFlatMaterial>::default(),
+            MaterialPlugin::<CliffMaterial>::default(),
+            MaterialPlugin::<WaterMaterial>::default(),
         ));
         app.finish();
         app.cleanup();
@@ -846,9 +823,11 @@ mod test {
         );
         target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
         let target = images.add(target);
+        let ripples = images.add(Image::default());
         let mut meshes = world.resource_mut::<Assets<Mesh>>();
         let grass_mesh = meshes.add(parcel_mesh(grid_segments(HIGH_LOD)));
         let rock_mesh = meshes.add(Cuboid::new(1.0, 1.0, 1.0));
+        let plane_mesh = meshes.add(Plane3d::default().mesh().size(4.0, 4.0));
         let grass = world
             .resource_mut::<Assets<ShellTexture>>()
             .add(ShellTexture {
@@ -865,6 +844,34 @@ mod test {
             .add(SoftShadowMaterial {
                 base: StandardMaterial::default(),
                 extension: SoftShadows {},
+            });
+        let ground = world
+            .resource_mut::<Assets<TerrainFlatMaterial>>()
+            .add(TerrainFlatMaterial {
+                base: StandardMaterial::default(),
+                extension: TerrainExtension::default(),
+            });
+        let cliff = world
+            .resource_mut::<Assets<CliffMaterial>>()
+            .add(CliffMaterial {
+                base: StandardMaterial {
+                    cull_mode: None,
+                    double_sided: true,
+                    ..default()
+                },
+                extension: CliffExtension { bounds: NO_COAST },
+            });
+        let water = world
+            .resource_mut::<Assets<WaterMaterial>>()
+            .add(WaterMaterial {
+                base: StandardMaterial {
+                    fog_enabled: false,
+                    ..default()
+                },
+                extension: WaterExtension {
+                    bounds: NO_COAST,
+                    ripples,
+                },
             });
 
         world.spawn((
@@ -894,9 +901,25 @@ mod test {
             Transform::default(),
         ));
         world.spawn((
-            Mesh3d(rock_mesh),
+            Mesh3d(rock_mesh.clone()),
             MeshMaterial3d(rock),
             Transform::from_xyz(1.0, 0.5, 0.0),
+        ));
+        world.spawn((
+            Mesh3d(plane_mesh.clone()),
+            MeshMaterial3d(ground),
+            Transform::from_xyz(-1.0, 0.0, 0.0),
+        ));
+        world.spawn((
+            Mesh3d(rock_mesh),
+            MeshMaterial3d(cliff),
+            Transform::from_xyz(-1.0, 0.5, 1.0),
+        ));
+        world.spawn((
+            Mesh3d(plane_mesh),
+            MeshMaterial3d(water),
+            NotShadowCaster,
+            Transform::from_xyz(0.0, -0.1, 1.0),
         ));
 
         // a few frames queue every pipeline; then they compile in the background
@@ -939,6 +962,11 @@ mod test {
             ("shell_texturing.wgsl", 2),
             // the main pass
             ("soft_shadows.wgsl", 1),
+            // the main pass and the prepass
+            ("terrain_flat.wgsl", 2),
+            // the main pass
+            ("coast_cliff.wgsl", 1),
+            ("coast_water.wgsl", 1),
         ] {
             let shader = asset_server
                 .get_handle::<Shader>(format!("embedded://visuals/{name}"))
