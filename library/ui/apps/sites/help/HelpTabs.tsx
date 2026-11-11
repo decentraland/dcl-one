@@ -39,6 +39,7 @@ function HelpTabs<Id extends string>({
 
   const select = (index: number) => {
     const tab = tabs[(index + tabs.length) % tabs.length]
+    if (!tab) return
     onChange(tab.id)
     refs.current.get(tab.id)?.focus()
   }
