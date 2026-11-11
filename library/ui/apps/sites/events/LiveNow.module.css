@@ -1,0 +1,66 @@
+/* Source's Live Now panel: a lit purple card on desktop, an edge-to-edge band on phones. */
+.root {
+  position: relative;
+  margin-top: var(--dcl-space-32);
+  padding: var(--dcl-space-32) var(--dcl-space-24);
+  border-radius: var(--dcl-radius-lg);
+  background: radial-gradient(63.39% 112.69% at 49.33% 50.11%, #a042cd 0%, #32134c 100%);
+  box-shadow: 0 4px 25px 0 var(--dcl-transparencies-white-20);
+}
+
+@media (max-width: 767px) {
+  .root {
+    margin-top: 0;
+    padding: var(--dcl-space-24) var(--dcl-space-16);
+    border-radius: 0;
+    box-shadow: none;
+  }
+}
+
+.title {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin: 0 0 var(--dcl-space-24);
+}
+
+.icon {
+  color: var(--dcl-system-red);
+}
+
+@media (max-width: 767px) {
+  .title {
+    justify-content: center;
+    font-size: var(--dcl-font-size-heading-2);
+  }
+
+  .icon {
+    display: none;
+  }
+}
+
+/* Room for the hover lift and glow inside the scroller. */
+.track {
+  gap: var(--dcl-space-16);
+  margin: calc(-1 * var(--dcl-space-24)) calc(-1 * var(--dcl-space-16))
+    calc(-1 * var(--dcl-space-16));
+  padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-16);
+  scroll-padding-inline: var(--dcl-space-16);
+}
+
+/* Four cards share a desktop row, each at least 300px and at most 850px (source). */
+.slide {
+  flex: 1 1 0;
+  min-width: max(300px, calc((100% - 48px) / 4));
+  max-width: 850px;
+  scroll-snap-align: start;
+}
+
+@media (max-width: 767px) {
+  .slide {
+    flex: 0 0 100%;
+    min-width: 0;
+    max-width: none;
+  }
+}

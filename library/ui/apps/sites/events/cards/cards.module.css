@@ -1,0 +1,384 @@
+/* TODO(shared-card): provisional card styles matching decentraland.org/events; they go when the
+   slots render the shared EventCard and PlaceCard. */
+
+.card {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--dcl-radius-lg);
+  color: var(--dcl-text-primary);
+}
+
+.card:focus-within {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+/* The title link covers the card, so the whole card opens its detail. */
+.cover {
+  color: inherit;
+  text-decoration: none;
+  outline: none;
+}
+
+.cover::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+/* Live Now */
+
+.liveCard {
+  flex-direction: column;
+  height: 100%;
+  container-type: inline-size;
+  transition:
+    transform 0.3s,
+    box-shadow 0.3s;
+}
+
+@media (hover: hover) and (min-width: 768px) {
+  .liveCard:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 2px 12px 12px var(--dcl-transparencies-white-20);
+  }
+}
+
+/* Source's cover: 62.5% of the card width, at most 297px (design measurements). */
+.liveMedia {
+  position: relative;
+  flex: none;
+  height: min(62.5cqw, 297px);
+  background: var(--dcl-neutrals-onix);
+}
+
+.liveBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  min-height: 123px;
+  padding: var(--dcl-space-16);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.liveTitle {
+  composes: text68656164696e672f35 from '../../../../foundations/typography/text-styles.module.css';
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.jumpIn {
+  composes: text627574746f6e2f6d64 from '../../../../foundations/typography/text-styles.module.css';
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  min-height: 46px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+  text-decoration: none;
+}
+
+.jumpIn:hover {
+  background: var(--dcl-action-primary-hover);
+}
+
+.jumpIn:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* From desktop, Jump In appears on hover or focus, as source; phones always show it. */
+@media (hover: hover) and (min-width: 768px) {
+  .liveCard .jumpIn {
+    position: absolute;
+    right: var(--dcl-space-16);
+    bottom: var(--dcl-space-16);
+    left: var(--dcl-space-16);
+    opacity: 0;
+    transform: translateY(8px);
+    transition:
+      opacity 0.2s,
+      transform 0.2s;
+  }
+
+  .liveCard:hover .jumpIn,
+  .liveCard:focus-within .jumpIn {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Badges */
+
+.badgesInline {
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+.badges {
+  position: absolute;
+  top: var(--dcl-space-16);
+  left: var(--dcl-space-16);
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+.badge {
+  composes: text6c6162656c2f746167 from '../../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  height: var(--dcl-space-24);
+  padding: 0 var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-neutrals-white);
+}
+
+.live {
+  composes: badge;
+  background: var(--dcl-system-red);
+  text-transform: uppercase;
+}
+
+.users {
+  composes: badge;
+  background: var(--dcl-neutrals-shadow);
+}
+
+.dot {
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-system-green);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Creator */
+
+.creatorRow {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+}
+
+.avatar {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-lavender);
+  color: var(--dcl-neutrals-white);
+  object-fit: cover;
+}
+
+.liveCard .avatar {
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+}
+
+.by {
+  composes: text626f64792f7873 from '../../../../foundations/typography/text-styles.module.css';
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.creator {
+  position: relative;
+  z-index: 1;
+  color: var(--dcl-brand-ruby);
+  text-decoration: none;
+}
+
+.liveCard .creator {
+  color: inherit;
+  font-weight: 700;
+}
+
+a.creator:hover {
+  text-decoration: underline;
+}
+
+a.creator:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* Start time */
+
+.time {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: var(--dcl-space-8);
+  max-width: 100%;
+  margin: 0;
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  overflow: hidden;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-40);
+  white-space: nowrap;
+}
+
+.time time {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Upcoming */
+
+.smallCard {
+  min-height: 112px;
+  background: var(--dcl-transparencies-black-40);
+}
+
+.smallMedia {
+  flex: none;
+  width: 42%;
+  max-width: 128px;
+  background: var(--dcl-neutrals-onix);
+}
+
+.smallBody {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  /* Clear of the action in the top corner. */
+  padding: var(--dcl-space-12) 44px var(--dcl-space-12) var(--dcl-space-12);
+}
+
+.smallTitle {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  display: -webkit-box;
+  overflow: hidden;
+  margin: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+/* Remind me and Add to calendar */
+
+.actions {
+  position: absolute;
+  top: var(--dcl-space-8);
+  right: var(--dcl-space-8);
+  z-index: 1;
+  display: flex;
+  gap: var(--dcl-space-4);
+}
+
+.action {
+  display: grid;
+  place-items: center;
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+}
+
+.action:hover:not(:disabled) {
+  background: var(--dcl-neutrals-onix);
+}
+
+.action:disabled {
+  cursor: progress;
+  opacity: 0.6;
+}
+
+.action:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.reminded {
+  color: var(--dcl-brand-ruby);
+}
+
+@media (hover: hover) and (min-width: 768px) {
+  .card .actions {
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .card:hover .actions,
+  .card:focus-within .actions {
+    opacity: 1;
+  }
+}
+
+/* All Events day column */
+
+.dayCard {
+  flex: none;
+  flex-direction: column;
+  background: var(--dcl-transparencies-black-40);
+}
+
+.dayCardLive {
+  box-shadow: inset 4px 0 0 var(--dcl-system-red);
+}
+
+.dayMedia {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--dcl-neutrals-onix);
+}
+
+.dayBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  padding: var(--dcl-space-12);
+}
+
+.dayTitle {
+  composes: text626f64792f6d642d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  overflow: hidden;
+  margin: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liveCard,
+  .liveCard .jumpIn,
+  .card .actions {
+    transition: none;
+  }
+}

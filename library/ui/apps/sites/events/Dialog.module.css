@@ -1,0 +1,37 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  /* Above the site header (z-index 20) and its menus. */
+  z-index: 1000;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 90px var(--dcl-space-24) var(--dcl-space-24);
+  background: var(--dcl-transparencies-shadow-75);
+}
+
+/* Source's dialog: up to 960px wide, dark surface; full screen on phones. */
+.panel {
+  position: relative;
+  width: 100%;
+  max-width: 880px;
+  max-height: calc(100vh - 114px);
+  overflow-y: auto;
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-bg-surface);
+  color: var(--dcl-text-primary);
+  outline: none;
+}
+
+/* Phones keep the site header in view above a full-height sheet (source). */
+@media (max-width: 767px) {
+  .backdrop {
+    padding: 64px 0 0;
+  }
+
+  .panel {
+    height: 100%;
+    max-height: none;
+    border-radius: 0;
+  }
+}

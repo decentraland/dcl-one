@@ -1,0 +1,64 @@
+.root {
+  padding: var(--dcl-space-64) 0 var(--dcl-space-48);
+}
+
+@media (max-width: 767px) {
+  .root {
+    padding: var(--dcl-space-48) var(--dcl-space-16) var(--dcl-space-32);
+  }
+}
+
+.title {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0 0 var(--dcl-space-24);
+  font-weight: 400;
+}
+
+@media (max-width: 767px) {
+  .title {
+    text-align: center;
+    font-size: var(--dcl-font-size-heading-2);
+  }
+}
+
+/* Phones: two rows per page, paging sideways. */
+.grid {
+  display: grid;
+  grid-auto-columns: 100%;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(2, auto);
+  gap: var(--dcl-space-16);
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+  list-style: none;
+}
+
+.grid::-webkit-scrollbar {
+  display: none;
+}
+
+.item {
+  scroll-snap-align: start;
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-rows: none;
+    grid-auto-flow: row;
+    overflow: visible;
+  }
+
+  .dots {
+    display: none;
+  }
+}
+
+@media (min-width: 1024px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
