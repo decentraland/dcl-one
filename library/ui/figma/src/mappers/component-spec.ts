@@ -330,6 +330,11 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
   }
   const specs = pending.map((entry) => {
     const spec = buildSpec(entry, env)
+    const control = input.config.components[entry.raw.name]?.control
+    if (control) {
+      if (spec.tag !== 'button') throw new Error(`${spec.name}: button control needs a button root`)
+      spec.control = control
+    }
     const exposeTextSlots = input.config.components[entry.raw.name]?.exposeTextSlots
     if (exposeTextSlots !== undefined) spec.exposeTextSlots = exposeTextSlots
     const textRoles = input.config.components[entry.raw.name]?.textRoles

@@ -324,6 +324,27 @@ function emitComponent(
   folders: Map<string, string>,
   cssRules: string[]
 ): string {
+  const control = spec.control === 'button'
+  const variantValues = spec.props.find((prop) => prop.name === 'variant')?.values ?? []
+  const actionAliases = control
+    ? Object.fromEntries(
+        Object.entries({
+          tertiary: 'outline',
+          quaternary: 'dark',
+          inverse: 'primary',
+          iconOnly: 'primary'
+        }).filter(
+          ([alias, target]) => !variantValues.includes(alias) && variantValues.includes(target)
+        )
+      )
+    : {}
+  const extraVariants = Object.keys(actionAliases)
+  const actionVariant = [
+    ...Object.entries(actionAliases).map(
+      ([alias, target]) => `variant === ${quote(alias)} ? ${quote(target)} : `
+    ),
+    'variant'
+  ].join('')
   const varName = lowerFirst(spec.name)
   const enums = spec.props.filter((prop) => prop.kind === 'enum')
   const flagProps = spec.props.filter((prop) => FLAG_PROPS.includes(prop.name))
@@ -378,7 +399,10 @@ function emitComponent(
   const typeLines = [
     ...spec.props
       .filter((prop) => !contract || FLAG_PROPS.includes(prop.name))
-      .map((prop) => `  ${prop.name}?: ${propType(prop)}`),
+      .map(
+        (prop) =>
+          `  ${prop.name}?: ${propType(prop)}${control && prop.name === 'variant' ? extraVariants.map((name) => ` | ${quote(name)}`).join('') : ''}`
+      ),
     ...slots
       .map((slot) => {
         const role = roles.get(slot.name)
@@ -398,6 +422,7 @@ function emitComponent(
     ...slots.map((slot) => slot.name),
     ...labelRoles,
     ...semanticNames,
+    ...(control ? ['children', 'leadingIcon', 'trailingIcon', 'iconOnly'] : []),
     'forceState',
     '...rest'
   ]
@@ -407,7 +432,7 @@ function emitComponent(
   const repeated = bindingNames.find((name, index) => bindingNames.indexOf(name) !== index)
   if (repeated) throw new Error(`${spec.name}: generated prop ${repeated} is declared twice`)
   const selection = [
-    `values: { ${enums.map((prop) => prop.name).join(', ')} }`,
+    `values: { ${enums.map((prop) => (control && prop.name === 'variant' ? `variant: ${actionVariant}` : prop.name)).join(', ')} }`,
     `booleans: { ${booleans.map((prop) => prop.name).join(', ')} }`,
     `flags: { ${flagProps.map((prop) => prop.name).join(', ')} }`
   ].join(',\n      ')
@@ -424,9 +449,13 @@ function emitComponent(
   })
 
   const importLines = [
-    `import type { HTMLAttributes${reactNodeSlots.length > 0 ? ', ReactNode' : ''} } from 'react'`,
+    ...(!control || reactNodeSlots.length > 0
+      ? [
+          `import type { ${control ? 'ReactNode' : `HTMLAttributes${reactNodeSlots.length > 0 ? ', ReactNode' : ''}`} } from 'react'`
+        ]
+      : []),
     `import styles from './${spec.name}.module.css'`,
-    "import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '../../../components/figma-module-runtime'",
+    `import { FigmaView, registerComponent, type ForcedState, type ViewNode${control ? ', type ActionProps' : ''} } from '../../../components/figma-module-runtime'`,
     "import type { MatrixCase } from '../../../components/StateMatrix'",
     ...refImports.map((name) => `import '../${folders.get(name) ?? pageFolder(spec.page)}/${name}'`)
   ]
@@ -441,7 +470,7 @@ function emitComponent(
     '',
     `export type ${spec.name}Props = {`,
     ...typeLines,
-    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
+    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & ${control ? 'ActionProps' : "Omit<HTMLAttributes<HTMLElement>, 'children'>"}`,
     '',
     `export const ${varName}Views: Record<string, ViewNode> = {`,
     views.join(',\n'),
@@ -476,7 +505,11 @@ function emitComponent(
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
     // The caller's props go in as data, never spread over the generated configuration above.
-    '    attributes={rest}',
+    ...(control
+      ? [
+          "    action={{ ...rest, children, leadingIcon, trailingIcon, iconOnly, appearance: variant === 'inverse' || variant === 'iconOnly' ? variant : undefined }}"
+        ]
+      : ['    attributes={rest}']),
     ...(omittedTextSlots.length ? [`    suppressed={${varName}SuppressedProps}`] : []),
     '  />',
     ')',

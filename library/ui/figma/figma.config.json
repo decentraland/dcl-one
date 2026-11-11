@@ -237,6 +237,9 @@
     "H6 Regular": "body/md"
   },
   "components": {
+    "Button": {
+      "control": "button"
+    },
     "FriendCTA": {
       "stateWords": ["hover", "pressed", "loading"],
       "optionAliases": {
@@ -344,6 +347,6 @@
     ]
   },
   "promotion": {
-    "include": ["NavBar"]
+    "include": ["NavBar", "Button"]
   }
 }

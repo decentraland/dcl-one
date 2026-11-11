@@ -5,6 +5,8 @@ import {
   useEffect,
   useRef,
   type ComponentType,
+  type AnchorHTMLAttributes,
+  type ButtonHTMLAttributes,
   type HTMLAttributes,
   type ReactNode
 } from 'react'
@@ -265,6 +267,7 @@ type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
 // The list is the runtime's: the installed library carries this file without the generator.
 const RESERVED_PROPS: ReadonlySet<string> = new Set([
   'as',
+  'action',
   'attributes',
   'component',
   'counts',
@@ -300,8 +303,30 @@ function resolveCounts(
   return labels
 }
 
+type ActionProps = {
+  children?: ReactNode
+  leadingIcon?: ReactNode
+  trailingIcon?: ReactNode
+  iconOnly?: boolean
+  appearance?: 'inverse' | 'iconOnly'
+} & (
+  | (ButtonHTMLAttributes<HTMLButtonElement> & { href?: never })
+  | (Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'type'> & {
+      href: string
+      disabled?: boolean
+      type?: never
+    })
+)
+
+function safeRel(rel: string | undefined): string {
+  return [...new Set([...(rel ?? '').split(/\s+/).filter(Boolean), 'noopener', 'noreferrer'])].join(
+    ' '
+  )
+}
+
 type FigmaViewProps = {
   as?: 'button' | 'div'
+  action?: ActionProps
   views: Record<string, ViewNode>
   select: Selection
   slots: Record<string, ReactNode>
@@ -322,6 +347,7 @@ type FigmaViewProps = {
 
 function FigmaView({
   as: Tag = 'div',
+  action,
   views,
   select,
   slots,
@@ -397,6 +423,96 @@ function FigmaView({
           .map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
       </div>
     )
+  if (action && Tag === 'button') {
+    const {
+      children,
+      leadingIcon,
+      trailingIcon,
+      iconOnly,
+      appearance,
+      className: actionClass,
+      ...native
+    } = Object.fromEntries(
+      Object.entries(action).filter(
+        ([name]) => !RESERVED_PROPS.has(name) && !suppressed.includes(name)
+      )
+    ) as ActionProps
+    const compact = iconOnly || appearance === 'iconOnly'
+    if (compact && !native['aria-label']?.trim() && !native['aria-labelledby']?.trim())
+      throw new Error(`${component ?? 'Button'}: iconOnly requires an accessible name`)
+    const content = (
+      <>
+        {leadingIcon != null && (
+          <span className={styles.controlIcon} aria-hidden="true">
+            {leadingIcon}
+          </span>
+        )}
+        {!compact &&
+          view.children?.map((child) =>
+            renderNode(
+              child,
+              children === undefined ? slots : { ...slots, label: children },
+              interaction,
+              semanticProps,
+              countLabels
+            )
+          )}
+        {trailingIcon != null && (
+          <span className={styles.controlIcon} aria-hidden="true">
+            {trailingIcon}
+          </span>
+        )}
+        {compact && leadingIcon == null && trailingIcon == null && children}
+      </>
+    )
+    const common = {
+      ...rest,
+      className: [
+        styles.node,
+        styles.control,
+        view.className,
+        compact && styles.iconOnly,
+        appearance === 'inverse' && styles.inverse,
+        className,
+        actionClass
+      ]
+        .filter(Boolean)
+        .join(' '),
+      'data-n': '',
+      'data-force-state': forceState
+    }
+    if (typeof native.href === 'string') {
+      const { href, target, rel, onClick, disabled: actionDisabled, ...anchor } = native
+      const inactive = disabled || actionDisabled
+      return (
+        <a
+          {...common}
+          {...anchor}
+          href={inactive ? undefined : href}
+          role={inactive ? 'link' : undefined}
+          target={target}
+          rel={target === '_blank' ? safeRel(rel) : rel}
+          aria-disabled={inactive || undefined}
+          tabIndex={inactive ? -1 : native.tabIndex}
+          onClick={(event) => {
+            if (inactive) {
+              event.preventDefault()
+              return
+            }
+            onClick?.(event)
+          }}
+        >
+          {content}
+        </a>
+      )
+    }
+    const { type = 'button', ...button } = native as ButtonHTMLAttributes<HTMLButtonElement>
+    return (
+      <button {...common} {...button} type={type} disabled={disabled || button.disabled}>
+        {content}
+      </button>
+    )
+  }
   // A root navigation landmark replaces the default div; button roots keep their element.
   const Root = view.semantic?.role === 'navigation' && Tag === 'div' ? 'nav' : Tag
   return (
@@ -418,4 +534,4 @@ function FigmaView({
 }
 
 export { FigmaView, registerComponent }
-export type { ForcedState, ViewNode }
+export type { ActionProps, ForcedState, ViewNode }

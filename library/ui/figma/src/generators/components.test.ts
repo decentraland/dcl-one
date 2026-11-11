@@ -332,3 +332,18 @@ describe('generateComponents with Figma motion', () => {
     })
   })
 })
+
+describe('when a component opts into the public button control contract', () => {
+  it('should keep capture variants while adding link, icon and native control props', async () => {
+    const spec = (await componentSpecs()).find((entry) => entry.name === 'Button')!
+    spec.control = 'button'
+    const output = generateComponents([spec], context)
+    const source = output.files.find((file) => file.path.endsWith('/Button.tsx'))!.content
+    expect(source).toContain('ActionProps')
+    expect(source).toContain('action={')
+    expect(source).toContain('leadingIcon')
+    expect(source).toContain('trailingIcon')
+    expect(source).toContain("'inverse'")
+    expect(source).toContain("'iconOnly'")
+  })
+})
