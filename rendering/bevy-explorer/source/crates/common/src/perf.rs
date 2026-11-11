@@ -200,7 +200,8 @@ pub struct FrameTimeBreakdown {
     pub scene_runtime_loop_ms: f32,
     /// The frame limiter's sleep inside `run_scene_loop` (native only; 0 on web).
     pub frame_limiter_sleep_ms: f32,
-    /// Render world, extract through cleanup, CPU side, the present wait excluded.
+    /// Render world, `ExtractCommands` through cleanup, CPU side; extraction and the present wait
+    /// excluded.
     pub render_world_cpu_ms: f32,
     /// Blocking wait for the swapchain image (vsync); `None` when not measurable.
     pub swapchain_present_wait_ms: Option<f32>,
@@ -291,7 +292,7 @@ pub enum ProfiledScopeKind {
     RenderGraphNode,
     /// Any other span of Bevy's: the app update, the render graph run, the present.
     BevyInternal,
-    /// A span the explorer opens inside a function (`js startup`, `js update`, `av-thread`).
+    /// Any other span whose target is not a Bevy crate.
     ExplorerSpan,
 }
 

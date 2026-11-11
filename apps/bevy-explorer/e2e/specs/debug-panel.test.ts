@@ -106,6 +106,7 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       emote?.source === 'triggeredEmote' && !emote.finished && /(?:^|:)wave$/i.test(emote.urn),
       { timeoutMs: 20_000, intervalMs: 100, what: 'the debug action to play the wave emote' })
   } finally {
+    await explorer.run('/profile_enable off')
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
     if (await explorer.hud.isVisible(panel)) await explorer.escape()
     await explorer.hud.waitHidden(panel)
@@ -148,6 +149,7 @@ scenario('the performance sampler samples in world and scales the hiccup thresho
     assert.ok(capped.cpuFrameTimes!.sampleCount > 0)
     assert.ok(capped.cpuFrameTimes!.p99Ms > 0)
   } finally {
+    await explorer.run('/profile_enable off')
     await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
   }
 }, { session: { signIn: 'guest' } })

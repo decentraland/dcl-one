@@ -66,9 +66,9 @@ native-debug *ARGS: _bundle-native-if-stale
 # build + run the native app (release) with Tracy's wire layer, for a Tracy capture
 # (docs/guidelines/profiling.md); start the Tracy client first
 native-tracy *ARGS: _bundle-native-if-stale
-    cargo build --package dcl_deno_ipc
-    cargo build --bin decentra-bevy-cef
-    cargo run --release --features tracy --bin decentra-bevy -- "$@"
+    cargo build --release --package dcl_deno_ipc
+    cargo build --release --bin decentra-bevy-cef
+    {{nixos_vulkan}} cargo run --release --features tracy --bin decentra-bevy -- "$@"
 
 # build + run the native app (release) with the CEF react HUD
 native-release *ARGS: _bundle-native-if-stale

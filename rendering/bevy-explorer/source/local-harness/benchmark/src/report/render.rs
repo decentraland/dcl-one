@@ -153,9 +153,13 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     CPU_HICCUPS_METRIC,
                     cpu_hiccups_cell(base),
                     cpu_hiccups_cell(change),
-                    signed_hundredths(f64::from(
-                        change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median
-                    )),
+                    if change.perf_summary_run_count > 0 && base.perf_summary_run_count > 0 {
+                        signed_hundredths(f64::from(
+                            change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median,
+                        ))
+                    } else {
+                        "-".to_owned()
+                    },
                     hiccups_verdict_text(comparison.cpu_hiccups_per_run_verdict)
                 );
                 let _ = writeln!(
@@ -164,7 +168,11 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     PEAK_MEMORY_METRIC,
                     peak_memory_cell(base),
                     peak_memory_cell(change),
-                    signed_mib(change.peak_memory_mib.median - base.peak_memory_mib.median),
+                    if change.perf_summary_run_count > 0 && base.perf_summary_run_count > 0 {
+                        signed_mib(change.peak_memory_mib.median - base.peak_memory_mib.median)
+                    } else {
+                        "-".to_owned()
+                    },
                     peak_memory_verdict_text(comparison.peak_memory_verdict)
                 );
             }

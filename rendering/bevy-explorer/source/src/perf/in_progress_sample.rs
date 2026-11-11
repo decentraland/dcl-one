@@ -138,6 +138,12 @@ pub fn sample_frame_times_system(
     mut snapshots: EventWriter<PerformanceSnapshot>,
     mut commands: Commands,
 ) {
+    // taken every frame, so a GPU reading from the pause is consumed before sampling resumes
+    let frame_times = &mut *frame_times;
+    let new_gpu_ms = new_gpu_frame_time_ms(
+        &diagnostics,
+        &mut frame_times.last_gpu_frame_time_measured_at,
+    );
     // `is_changed` on the frame the status was written: the transition into `Sampling`
     if !status.is_sampling() || status.is_changed() {
         return;
@@ -145,11 +151,7 @@ pub fn sample_frame_times_system(
     frame_times
         .cpu_frame_times_ms
         .push(time.delta_secs_f64() as f32 * 1000.0);
-    let frame_times = &mut *frame_times;
-    if let Some(gpu_ms) = new_gpu_frame_time_ms(
-        &diagnostics,
-        &mut frame_times.last_gpu_frame_time_measured_at,
-    ) {
+    if let Some(gpu_ms) = new_gpu_ms {
         frame_times.gpu_frame_times_ms.push(gpu_ms);
     }
     let memory_reading = memory.reading();

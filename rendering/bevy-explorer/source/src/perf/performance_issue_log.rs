@@ -32,21 +32,22 @@ pub fn log_performance_issue_system(
             );
         }
     }
-    if sample_completed {
-        *logged_this_sample = false;
-        return;
-    }
-    if !status.is_sampling() || status.is_changed() || *logged_this_sample {
-        return;
-    }
+    // the frame that completes a sample belongs to it, so it is checked before the reset
     let frame_ms = time.delta_secs_f64() as f32 * 1000.0;
-    if frame_ms >= LONG_FRAME_THRESHOLD_MS {
+    if status.is_sampling()
+        && !status.is_changed()
+        && !*logged_this_sample
+        && frame_ms >= LONG_FRAME_THRESHOLD_MS
+    {
         *logged_this_sample = true;
         warn!(
             target: PERFORMANCE_ISSUE_LOG_TARGET,
             "a frame took {frame_ms:.0} ms; {}",
             describe_frame_time_breakdown(&breakdown),
         );
+    }
+    if sample_completed {
+        *logged_this_sample = false;
     }
 }
 

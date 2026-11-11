@@ -88,7 +88,8 @@ struct BuildBenchmarkRunsStatistics {
     cpu_hiccup_threshold_ms: Option<f32>,
     /// Peak engine memory per run, MiB, across those runs.
     peak_memory_mib: MedianAndRange,
-    /// Self time per run, ms, of the scopes the summaries name, highest first.
+    /// Self time per run, ms, of the scopes the summaries name, over the runs that name each,
+    /// highest first.
     scope_self_ms_per_run: Vec<(String, f32)>,
 }
 
@@ -451,16 +452,19 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
         .iter()
         .filter_map(|run| run.perf_summary.as_ref())
         .collect();
-    let mut scope_sums: BTreeMap<&str, f32> = BTreeMap::new();
+    // a scope's summed self time and the number of runs whose top scopes name it
+    let mut scope_sums: BTreeMap<&str, (f32, usize)> = BTreeMap::new();
     for (name, ms) in summaries
         .iter()
         .flat_map(|summary| &summary.top_scope_self_ms)
     {
-        *scope_sums.entry(name).or_default() += ms;
+        let (sum, runs) = scope_sums.entry(name).or_default();
+        *sum += ms;
+        *runs += 1;
     }
     let mut scope_self_ms_per_run: Vec<(String, f32)> = scope_sums
         .into_iter()
-        .map(|(name, sum)| (name.to_owned(), sum / summaries.len() as f32))
+        .map(|(name, (sum, runs))| (name.to_owned(), sum / runs as f32))
         .collect();
     scope_self_ms_per_run.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     BuildBenchmarkRunsStatistics {

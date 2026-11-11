@@ -31,7 +31,8 @@ numbers.
   override (`/session_graphics fps`), else the configured one.
 - **Frame time breakdown.** Where the previous frame's wall time went, smoothed: the main world's
   schedules (`First` through `Last`), the scene loop until its deadline, the frame limiter's sleep
-  (native), the render world's CPU time without the swapchain wait, the swapchain wait itself
+  (native), the render world's CPU time from `ExtractCommands` on (extraction and the swapchain wait
+  excluded), the swapchain wait itself
   (vsync shows here) and the GPU time. The parts are measured separately and overlap in part
   (the render world runs in parallel with the next main-world frame), so they do not sum to the
   frame. The same numbers are the diagnostics `perf/main_world_schedules_ms`,
@@ -57,8 +58,9 @@ adapter supports them. The GPU frame time of the whole frame is the explorer's o
 
 The in-app scope profiler. Every build carries Bevy's tracing spans (the `trace` feature is on):
 one per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule
-run and per render-graph node, plus the explorer's own spans inside functions (`js startup`,
-`js update`, `av-thread`). A `tracing` layer in every build times them, but records
+run and per render-graph node, plus the explorer's own in-process spans (`av-thread`). Scene JavaScript runs in
+its own process on native (`dcl_deno_ipc`), so its `js startup` and `js update` spans are not
+recorded here. A `tracing` layer in every build times them, but records
 nothing until the table is enabled: **Enable profiler** in the section, `/profile_enable on` in
 the console, or the benchmark autopilot for its measured phase. Enabled, it costs two clock reads
 per span and a map update per exit, tens of microseconds a frame on native.

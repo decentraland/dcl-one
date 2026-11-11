@@ -300,6 +300,9 @@ pub fn peak_memory_verdict(
     if base.median <= 0.0 {
         return PeakMemoryVerdict::Withheld("no baseline memory");
     }
+    if change.median <= 0.0 {
+        return PeakMemoryVerdict::Withheld("no change memory");
+    }
     let delta = change.median - base.median;
     let improvement = -delta / base.median;
     let separated = change.min > base.max || change.max < base.min;
@@ -521,6 +524,20 @@ mod tests {
             "under 1.5x"
         );
         assert_eq!(v(0.0, 2.0), IncidentsPerRunVerdict::Fewer);
+    }
+
+    #[test]
+    fn peak_memory_needs_a_reading_in_both_builds() {
+        let reading = agg(900.0, 890.0, 910.0);
+        let none = agg(0.0, 0.0, 0.0);
+        assert_eq!(
+            peak_memory_verdict(&none, &reading, None),
+            PeakMemoryVerdict::Withheld("no change memory")
+        );
+        assert_eq!(
+            peak_memory_verdict(&reading, &none, None),
+            PeakMemoryVerdict::Withheld("no baseline memory")
+        );
     }
 
     #[test]

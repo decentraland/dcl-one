@@ -1,8 +1,8 @@
 //! The in-app scope profiler: a `tracing` layer that times Bevy's spans (`system`, `schedule`,
 //! `node`) and the explorer's own, folded once a frame into [`ProfiledScopesTable`].
 //!
-//! The layer records nothing while the table is disabled: `on_enter` and `on_exit` return on one
-//! atomic load.
+//! The layer records nothing while the table is disabled: `on_enter` returns on one atomic load,
+//! `on_exit` after popping the scope from this thread's stack if it is there.
 //!
 //! Self time excludes the child scopes entered on the same thread: each thread keeps a stack of
 //! the scopes it has entered, and a scope's inclusive time is added to the one below it when it
@@ -13,7 +13,7 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, LazyLock, Mutex, MutexGuard,
     },
     time::Duration,
@@ -54,12 +54,15 @@ struct ProfiledScopeFrameAccumulation {
 /// What the layer and the table share.
 struct ProfiledScopesShared {
     enabled: AtomicBool,
+    /// Moves on every enable; a scope entered under an older one is not recorded.
+    recording_epoch: AtomicU64,
     frame: Mutex<HashMap<ProfiledScopeKey, ProfiledScopeFrameAccumulation>>,
 }
 
 static PROFILED_SCOPES_SHARED: LazyLock<ProfiledScopesShared> =
     LazyLock::new(|| ProfiledScopesShared {
         enabled: AtomicBool::new(false),
+        recording_epoch: AtomicU64::new(0),
         frame: Mutex::new(HashMap::new()),
     });
 
@@ -85,6 +88,7 @@ struct EnteredProfiledScope {
     key: ProfiledScopeKey,
     started: Instant,
     child_inclusive_time: Duration,
+    recording_epoch: u64,
 }
 
 thread_local! {
@@ -167,14 +171,16 @@ where
             key: key.clone(),
             started: Instant::now(),
             child_inclusive_time: Duration::ZERO,
+            recording_epoch: PROFILED_SCOPES_SHARED
+                .recording_epoch
+                .load(Ordering::Relaxed),
         };
         ENTERED_SCOPE_STACK.with(|stack| stack.borrow_mut().push(entered));
     }
 
+    /// Pops the scope even while recording is off, so no entry outlives its span; records it only
+    /// when recording is on and was already on, without a disable, when the scope was entered.
     fn on_exit(&self, id: &Id, _: Context<'_, S>) {
-        if !profiler_recording_enabled() {
-            return;
-        }
         let Some((entered, inclusive)) = ENTERED_SCOPE_STACK.with(|stack| {
             let mut stack = stack.borrow_mut();
             if !stack.last().is_some_and(|top| top.id == *id) {
@@ -189,6 +195,14 @@ where
         }) else {
             return;
         };
+        if !profiler_recording_enabled()
+            || entered.recording_epoch
+                != PROFILED_SCOPES_SHARED
+                    .recording_epoch
+                    .load(Ordering::Relaxed)
+        {
+            return;
+        }
         let self_time = inclusive.saturating_sub(entered.child_inclusive_time);
         let mut frame = lock_current_frame_accumulations();
         let accum = frame.entry(entered.key).or_default();
@@ -231,6 +245,9 @@ impl ProfiledScopesTable {
     pub fn set_recording_enabled(&mut self, enabled: bool) {
         if enabled && !self.recording_enabled() {
             self.reset();
+            PROFILED_SCOPES_SHARED
+                .recording_epoch
+                .fetch_add(1, Ordering::Relaxed);
         }
         PROFILED_SCOPES_SHARED
             .enabled
@@ -422,5 +439,23 @@ mod tests {
             outer.self_time_ms < inner.self_time_ms,
             "{outer:?} {inner:?}"
         );
+
+        // a scope open across a disable is popped at its exit and never recorded, also when
+        // recording is back on by then
+        let subscriber = registry().with(profiled_scopes_layer());
+        with_default(subscriber, || {
+            table.set_recording_enabled(true);
+            let exited_while_off = info_span!("exited_while_off").entered();
+            let exited_after_reenable = info_span!("exited_after_reenable").entered();
+            table.set_recording_enabled(false);
+            table.set_recording_enabled(true);
+            drop(exited_after_reenable);
+            table.set_recording_enabled(false);
+            drop(exited_while_off);
+        });
+        assert!(ENTERED_SCOPE_STACK.with(|stack| stack.borrow().is_empty()));
+        table.fold_frame_accumulations(take_current_frame_accumulations());
+        let rows = table.top_scope_summaries(10, ProfiledScopeSortMetric::SelfTime);
+        assert!(rows.is_empty(), "{rows:?}");
     }
 }

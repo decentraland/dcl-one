@@ -568,7 +568,9 @@ fn debug_memory(
     let ram_reason = "No platform memory sample.";
     cmd.reply_ok(json!({
         "used": reading.map(|r| r.used_bytes >> 20), "capacity": reading.map(|r| r.capacity_mib),
-        "usedPeakMiBInSample": reading.map(|_| frame_times.used_peak_bytes_in_sample >> 20),
+        "usedPeakMiBInSample": reading
+            .and((frame_times.used_peak_bytes_in_sample > 0).then_some(()))
+            .map(|_| frame_times.used_peak_bytes_in_sample >> 20),
         "cap": reading.map(|r| r.cap_mib), "limit": memory.limit_mib.map_or(0, |n| n.get()),
         "pressure": reading.map(|r| format!("{:?}", r.pressure())), "gpu": pools,
         "thresholds": reading.map(|r| { let t = r.thresholds(); json!({
@@ -580,7 +582,8 @@ fn debug_memory(
         "textures": current_scene_content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
         "meshes": current_scene_content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
         "unavailable": {
-            "used":ram_reason, "capacity":ram_reason, "cap":ram_reason, "usedPeakMiBInSample":ram_reason,
+            "used":ram_reason, "capacity":ram_reason, "cap":ram_reason,
+            "usedPeakMiBInSample": if reading.is_some() { "Waiting for the first sampled frame." } else { ram_reason },
             "pressure":ram_reason, "thresholds":ram_reason,
             "gpu":match gpu.as_deref() {
                 Some(GpuMemoryBudget::NotApplicable) => "This platform does not expose a GPU memory budget.",
