@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "3a30dfe9bd3bc788cee9d731c522015b4f9e44ff2c2e372182ff6175b088f1e0",
+          "sha256": "9b4b38b7fe78fd2e1ac38ee2558f1cb3c187b06e91f9c564a1ff990be4976b1b",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -697,7 +697,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "c2b084271d74af96af5849e4dd8cca24c74c52fed1010deebfdd5e2f848cce01",
+          "sha256": "e52688ce2880b4571040350bdd22b6f131016b0d6deba9067deec4c7dbc035c2",
           "fds": null,
           "deviation": [
             "port-command",
