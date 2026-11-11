@@ -29,7 +29,7 @@ const EVENTS_HREF = "/whats-on";
 /** An unknown id, a malformed position or no event at the target lands on the invalid page; a failed read is a 503. */
 export async function loader({ request }: Route.LoaderArgs) {
   const target = readJumpTarget(new URL(request.url).searchParams);
-  if (!target.id && !target.validPosition) throw redirect(INVALID);
+  if (!target.validRealm || !target.validId || (!target.id && !target.validPosition)) throw redirect(INVALID);
   const opts = { signal: request.signal };
   const event = await loadJumpEvent(target, opts).catch(() => {
     throw new Response("Events are temporarily unavailable", { status: 503 });
@@ -71,7 +71,7 @@ export function headers() {
 export default function JumpEvents({ loaderData }: Route.ComponentProps) {
   const { eventId, card, state, shareUrl, calendarHref, shareText, launch } = loaderData;
   const { identity } = useAuth();
-  const remind = useRemindMe(identity, eventId, () => openSignIn({ inPlace: true }));
+  const remind = useRemindMe(identity, eventId, () => openSignIn({ inPlace: true }), state === "upcoming");
   const [shareNotice, setShareNotice] = useState<string>();
 
   async function share() {

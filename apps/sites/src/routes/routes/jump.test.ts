@@ -9,11 +9,16 @@ const server = vi.hoisted(() => ({
 }));
 vi.mock("@/data/lib/catalyst/jump/jump.server", () => server);
 
+import { headers as jumpHeaders } from "./jump._index";
 import { loader as jumpEventLoader } from "./jump.event";
+import { loader as invalidEventLoader } from "./jump.events.invalid";
+import { loader as invalidPlaceLoader } from "./jump.places.invalid";
 import { loader as eventsLoader } from "./jump.events._index";
 import { loader as placesLoader } from "./jump.places._index";
 
 const WALLET = "0x" + "ab".repeat(20);
+const EVENT_ID = "d275788c-2e03-4163-b7aa-2d997f679936";
+const UNKNOWN_ID = "00000000-0000-4000-8000-000000000000";
 
 const args = (path: string, userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)") =>
   ({ request: new Request(`https://site.example${path}`, { headers: { "user-agent": userAgent } }) }) as never;
@@ -41,7 +46,7 @@ const placeRow = {
 };
 
 const eventRow = {
-  id: "e1",
+  id: EVENT_ID,
   name: "Party",
   image: null,
   description: "Come",
@@ -105,13 +110,14 @@ describe("/jump/places loader", () => {
     await expect(redirectOf(placesLoader(args("/jump/places?position=1,2")))).resolves.toEqual({ status: 503, location: null });
   });
 
-  it("should treat a realm that is not a World name as Genesis City", async () => {
-    server.loadJumpPlace.mockResolvedValue(null);
-    const data = await placesLoader(args("/jump?realm=https://evil.example&position=1,2"));
-    expect(server.loadWorldEntity).not.toHaveBeenCalled();
-    expect(data.card.location).toEqual({ world: undefined, parcel: "1, 2" });
-    expect(data.card.jumpInHref).not.toContain("evil");
-  });
+  it.each(["/jump?world=brai", "/jump/places?realm=https://evil.example&position=1,2"])(
+    "should send %s, whose realm is not a World name, to the invalid page",
+    async (path) => {
+      await expect(redirectOf(placesLoader(args(path)))).resolves.toEqual({ status: 302, location: "/jump/places/invalid" });
+      expect(server.loadJumpPlace).not.toHaveBeenCalled();
+      expect(server.loadWorldEntity).not.toHaveBeenCalled();
+    },
+  );
 
   it("should render a generic card for an uncatalogued parcel", async () => {
     server.loadJumpPlace.mockResolvedValue(null);
@@ -152,33 +158,49 @@ describe("/jump/events loader", () => {
     });
   });
 
+  it("should send an event link whose realm is not a World name to the invalid page", async () => {
+    await expect(redirectOf(eventsLoader(args(`/jump/events?id=${EVENT_ID}&world=brai`)))).resolves.toEqual({
+      status: 302,
+      location: "/jump/events/invalid",
+    });
+    expect(server.loadJumpEvent).not.toHaveBeenCalled();
+  });
+
+  it("should send a malformed event id to the invalid page without asking the events service", async () => {
+    await expect(redirectOf(eventsLoader(args("/jump/events?id=not-a-uuid")))).resolves.toEqual({
+      status: 302,
+      location: "/jump/events/invalid",
+    });
+    expect(server.loadJumpEvent).not.toHaveBeenCalled();
+  });
+
   it("should send an unknown event to the invalid page", async () => {
     server.loadJumpEvent.mockResolvedValue(null);
-    await expect(redirectOf(eventsLoader(args("/jump/events?id=nope")))).resolves.toMatchObject({
+    await expect(redirectOf(eventsLoader(args(`/jump/events?id=${UNKNOWN_ID}`)))).resolves.toMatchObject({
       location: "/jump/events/invalid",
     });
   });
 
   it("should answer a failed events read with 503, not the invalid page", async () => {
     server.loadJumpEvent.mockRejectedValue(new Error("500"));
-    await expect(redirectOf(eventsLoader(args("/jump/events?id=e1")))).resolves.toEqual({ status: 503, location: null });
+    await expect(redirectOf(eventsLoader(args(`/jump/events?id=${EVENT_ID}`)))).resolves.toEqual({ status: 503, location: null });
   });
 
   it("should share and calendar the event by its id", async () => {
     server.loadJumpEvent.mockResolvedValue(eventRow);
     const data = await eventsLoader(args("/jump/events?position=5,-3"));
-    expect(new URL(data.shareUrl).searchParams.get("id")).toBe("e1");
-    expect(data.calendarHref).toContain(encodeURIComponent("id=e1"));
+    expect(new URL(data.shareUrl).searchParams.get("id")).toBe(EVENT_ID);
+    expect(data.calendarHref).toContain(encodeURIComponent(`id=${EVENT_ID}`));
   });
 
   it("should still show a deleted event's notice when it has no start", async () => {
     server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_start_at: null, deleted_by_admin: true });
-    await expect(eventsLoader(args("/jump/events?id=e1"))).resolves.toMatchObject({ state: "deleted" });
+    await expect(eventsLoader(args(`/jump/events?id=${EVENT_ID}`))).resolves.toMatchObject({ state: "deleted" });
   });
 
   it("should offer the upcoming actions with a calendar link", async () => {
     server.loadJumpEvent.mockResolvedValue(eventRow);
-    const data = await eventsLoader(args("/jump/events?id=e1"));
+    const data = await eventsLoader(args(`/jump/events?id=${EVENT_ID}`));
     expect(data.state).toBe("upcoming");
     expect(data.calendarHref).toContain("calendar.google.com");
     expect(data.card.jumpInHref).toBeUndefined();
@@ -197,40 +219,40 @@ describe("/jump/events loader", () => {
   it("should fall back to no occupancy when a live event's scene lookup fails", async () => {
     server.loadJumpEvent.mockResolvedValue({ ...eventRow, live: true });
     server.loadJumpPlace.mockRejectedValue(new Error("500"));
-    const data = await eventsLoader(args("/jump/events?id=e1"));
+    const data = await eventsLoader(args(`/jump/events?id=${EVENT_ID}`));
     expect(data.card.badge).toEqual({ kind: "live", count: 0 });
   });
 
   it("should keep the event's own host name when the profile lookup fails", async () => {
     server.loadJumpEvent.mockResolvedValue(eventRow);
     server.loadCreator.mockRejectedValue(new Error("down"));
-    const data = await eventsLoader(args("/jump/events?id=e1"));
+    const data = await eventsLoader(args(`/jump/events?id=${EVENT_ID}`));
     expect(data.card.creator).toMatchObject({ name: "host", href: `/profile/${WALLET}` });
   });
 
   it("should render the start in UTC on the server", async () => {
     server.loadJumpEvent.mockResolvedValue(eventRow);
-    const data = await eventsLoader(args("/jump/events?id=e1"));
+    const data = await eventsLoader(args(`/jump/events?id=${EVENT_ID}`));
     expect(data.card.when).toEqual({ label: expect.stringContaining("10:00 AM UTC"), ended: false, dateTime: eventRow.next_start_at });
   });
 
   it("should offer nothing for an event without a start unless it is live", async () => {
     server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_start_at: null });
-    await expect(eventsLoader(args("/jump/events?id=e1"))).resolves.toMatchObject({ state: "none" });
+    await expect(eventsLoader(args(`/jump/events?id=${EVENT_ID}`))).resolves.toMatchObject({ state: "none" });
     server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_start_at: null, live: true });
-    await expect(eventsLoader(args("/jump/events?id=e1"))).resolves.toMatchObject({ state: "live" });
+    await expect(eventsLoader(args(`/jump/events?id=${EVENT_ID}`))).resolves.toMatchObject({ state: "live" });
   });
 
   it("should mark a deleted event and drop its actions", async () => {
     server.loadJumpEvent.mockResolvedValue({ ...eventRow, live: true, deleted_by_user: true });
-    const data = await eventsLoader(args("/jump/events?id=e1"));
+    const data = await eventsLoader(args(`/jump/events?id=${EVENT_ID}`));
     expect(data.state).toBe("deleted");
     expect(data.card.jumpInHref).toBeUndefined();
   });
 
   it("should offer only Explore events once the event has ended", async () => {
     server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_finish_at: "2000-01-01T00:00:00.000Z" });
-    const data = await eventsLoader(args("/jump/events?id=e1"));
+    const data = await eventsLoader(args(`/jump/events?id=${EVENT_ID}`));
     expect(data.state).toBe("ended");
     expect(data.card.when).toEqual({ label: "Event has ended", ended: true });
   });
@@ -241,5 +263,17 @@ describe("/jump/event", () => {
     const response = jumpEventLoader(args("/jump/event?position=0,5&realm=foo.dcl.eth"));
     expect(response.status).toBe(308);
     expect(response.headers.get("location")).toBe("/jump/events?position=0,5&realm=foo.dcl.eth");
+  });
+});
+
+describe("/jump", () => {
+  it("should vary on the User-Agent like /jump/places", () => {
+    expect(jumpHeaders()).toEqual({ Vary: "User-Agent" });
+  });
+});
+
+describe("the invalid landings", () => {
+  it.each([invalidPlaceLoader, invalidEventLoader])("should answer 404", (load) => {
+    expect(load()).toMatchObject({ init: { status: 404 } });
   });
 });

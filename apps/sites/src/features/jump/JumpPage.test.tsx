@@ -164,21 +164,41 @@ describe("JumpPage", () => {
     }
   });
 
-  it("should ask a fresh canvas for its context on every mount, so a remount never reuses a lost one", () => {
-    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+  it("should draw from a fresh canvas after a StrictMode remount and leave exactly one in the page", () => {
+    // A stand-in context: every call succeeds, and the cleanup's context release is recorded.
+    const loseContext = vi.fn();
+    const fakeContext = () =>
+      new Proxy({} as Record<string, unknown>, {
+        get: (target, key) => {
+          if (key in target) return target[key as string];
+          if (key === "getExtension") return () => ({ loseContext });
+          if (key === "getShaderParameter" || key === "getProgramParameter") return () => true;
+          if (typeof key === "string" && /^[A-Z_0-9]+$/.test(key)) return 0;
+          return () => ({});
+        },
+      });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(
+      () => fakeContext() as unknown as RenderingContext,
+    );
+    const raf = vi.spyOn(window, "requestAnimationFrame").mockReturnValue(1);
     try {
-      render(
+      const { container } = render(
         <StrictMode>
           <JumpPage>
             <p>Card</p>
           </JumpPage>
         </StrictMode>,
       );
-      const canvases = getContext.mock.contexts;
-      expect(canvases).toHaveLength(2);
-      expect(canvases[0]).not.toBe(canvases[1]);
+      const asked = getContext.mock.contexts;
+      expect(asked).toHaveLength(2);
+      expect(asked[0]).not.toBe(asked[1]);
+      expect(loseContext).toHaveBeenCalledOnce();
+      expect(container.querySelectorAll("canvas")).toHaveLength(1);
+      expect(container.querySelector("canvas")).toBe(asked[1]);
+      expect(raf).toHaveBeenCalled();
     } finally {
       getContext.mockRestore();
+      raf.mockRestore();
     }
   });
 

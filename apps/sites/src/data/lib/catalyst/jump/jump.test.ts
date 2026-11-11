@@ -56,7 +56,7 @@ describe("parsePosition", () => {
     expect(parsePosition(value)).toEqual({ coordinates, isValid: true });
   });
 
-  it.each(["", "10", "a,b", "1,2,3", ","])("should reject %j", (value) => {
+  it.each(["", "10", "a,b", "1,2,3", ",", "1abc,2", "1,2x", "3000000000,0", "0,-2147483649", "1.5,2"])("should reject %j", (value) => {
     expect(parsePosition(value)).toEqual({ coordinates: [0, 0], isValid: false });
   });
 });
@@ -66,7 +66,9 @@ describe("readJumpTarget", () => {
     expect(readJumpTarget(new URLSearchParams())).toEqual({
       coordinates: [0, 0],
       validPosition: true,
+      validRealm: true,
       lookup: [0, 0],
+      validId: true,
       realm: undefined,
       id: null,
     });
@@ -77,9 +79,17 @@ describe("readJumpTarget", () => {
   });
 
   it("should read only a World name as a realm, lowercased", () => {
-    expect(readJumpTarget(new URLSearchParams("realm=Foo.DCL.eth")).realm).toBe("foo.dcl.eth");
-    expect(readJumpTarget(new URLSearchParams("realm=https://evil.example")).realm).toBeUndefined();
-    expect(readJumpTarget(new URLSearchParams("world=brai")).realm).toBeUndefined();
+    expect(readJumpTarget(new URLSearchParams("realm=Foo.DCL.eth"))).toMatchObject({ realm: "foo.dcl.eth", validRealm: true });
+    expect(readJumpTarget(new URLSearchParams("realm=main"))).toMatchObject({ realm: undefined, validRealm: true });
+    expect(readJumpTarget(new URLSearchParams())).toMatchObject({ realm: undefined, validRealm: true });
+  });
+
+  it("should read an empty realm as Genesis City", () => {
+    expect(readJumpTarget(new URLSearchParams("realm=&position=1,2"))).toMatchObject({ realm: undefined, validRealm: true });
+  });
+
+  it.each(["brai", "https://evil.example", "brai.dcl"])("should flag the realm %j as invalid", (value) => {
+    expect(readJumpTarget(new URLSearchParams({ world: value }))).toMatchObject({ realm: undefined, validRealm: false });
   });
 
   it("should accept ?world= as the realm alias", () => {
@@ -92,6 +102,10 @@ describe("readJumpTarget", () => {
 
   it("should flag a position that is not a coordinate pair", () => {
     expect(readJumpTarget(new URLSearchParams("position=nope")).validPosition).toBe(false);
+  });
+
+  it.each([["abc", false], ["d275788c-2e03-4163-b7aa-2d997f679936", true]])("should flag the id %j as valid=%s", (id, valid) => {
+    expect(readJumpTarget(new URLSearchParams({ id })).validId).toBe(valid);
   });
 
   it("should ignore a blank id", () => {
@@ -130,6 +144,10 @@ describe("genericPlaceCard", () => {
 });
 
 describe("toEventCard", () => {
+  it("should not travel to an event server that is not a World name", () => {
+    expect(toEventCard(event({ world: true, server: "https://other.example" })).realm).toBeUndefined();
+  });
+
   it("should travel to a World event's server", () => {
     expect(toEventCard(event({ world: true, server: "Foo.DCL.eth" })).realm).toBe("foo.dcl.eth");
   });

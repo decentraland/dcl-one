@@ -5,15 +5,22 @@ const DEFAULT_REALM = "main";
 
 export type ParsedPosition = { coordinates: [number, number]; isValid: boolean };
 
-/** "x,y" and "x.y" are the same pair: the dot is a separator, not a decimal. */
+const COORDINATE = /^-?\d+$/;
+/** The backend reads a parcel as a pair of 32-bit integers and rejects anything wider. */
+const I32 = 2 ** 31;
+
+/** "x,y" and "x.y" are the same pair: the dot is a separator, not a decimal. Each side is a whole 32-bit integer. */
 export function parsePosition(value: string): ParsedPosition {
-  const tokens = value.split(/[,.]/);
-  if (tokens.length !== 2) return { coordinates: [0, 0], isValid: false };
-  const x = Number.parseInt(tokens[0], 10);
-  const y = Number.parseInt(tokens[1], 10);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return { coordinates: [0, 0], isValid: false };
+  const tokens = value.split(/[,.]/).map((token) => token.trim());
+  if (tokens.length !== 2 || !tokens.every((token) => COORDINATE.test(token))) {
+    return { coordinates: [0, 0], isValid: false };
+  }
+  const [x, y] = tokens.map(Number);
+  if (![x, y].every((n) => n >= -I32 && n < I32)) return { coordinates: [0, 0], isValid: false };
   return { coordinates: [x, y], isValid: true };
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ENS = /^[a-zA-Z0-9._-]+\.eth$/;
 
@@ -26,6 +33,10 @@ export type JumpTarget = {
   coordinates: [number, number];
   /** False when the link carries a position that is not a coordinate pair. */
   validPosition: boolean;
+  /** False when the link names a realm that is neither `main` nor a World name. */
+  validRealm: boolean;
+  /** False when the link carries an event id that is not a UUID, which the events service rejects. */
+  validId: boolean;
   /** The pair to look up, or undefined for a World link without one (the World-level record). */
   lookup: [number, number] | undefined;
   /** A lowercase World name, or undefined for Genesis City. */
@@ -34,21 +45,25 @@ export type JumpTarget = {
 };
 
 /**
- * `?world=` is the alias older clients emit for `?realm=`. Only a World name is a realm here: anything
- * else (`main`, a server name, a URL) is Genesis City, so a link can never point the explorer at a
- * realm of its choosing.
+ * `?world=` is the alias older clients emit for `?realm=`. Only `main` (Genesis City) and a World name
+ * are realms: anything else (`brai`, a server name, a URL) makes the link invalid, so it never lands on
+ * an unrelated Genesis City card nor points the explorer at a realm of its choosing.
  */
 export function readJumpTarget(params: URLSearchParams): JumpTarget {
   const rawPosition = params.get("position");
   const parsed = parsePosition(rawPosition ?? DEFAULT_POSITION);
-  const realmParam = (params.get("realm") ?? params.get("world") ?? DEFAULT_REALM).trim().toLowerCase();
+  // An empty `realm=` is the default, as the source and the explorer read it.
+  const realmParam = (params.get("realm") ?? params.get("world") ?? "").trim().toLowerCase() || DEFAULT_REALM;
   const realm = isEnsRealm(realmParam) ? realmParam : undefined;
+  const id = params.get("id")?.trim() ?? "";
   return {
     coordinates: parsed.coordinates,
     validPosition: parsed.isValid,
+    validRealm: realmParam === DEFAULT_REALM || realm !== undefined,
     lookup: rawPosition !== null || !realm ? parsed.coordinates : undefined,
     realm,
-    id: params.get("id")?.trim() || null,
+    id: id || null,
+    validId: !id || UUID.test(id),
   };
 }
 
@@ -133,8 +148,10 @@ export type JumpEventRecord = {
 };
 
 /** A World event travels to its server; a Genesis City one to its parcel. */
+/** Held to the same rule as a link's realm: only a World name travels as a realm. */
 function eventRealm(event: Pick<JumpEventRecord, "world" | "server">): string | undefined {
-  return event.world && event.server ? event.server.toLowerCase() : undefined;
+  const realm = event.world && event.server ? event.server.toLowerCase() : undefined;
+  return isEnsRealm(realm) ? realm : undefined;
 }
 
 /** A deleted event never advertises itself as live or ended. */

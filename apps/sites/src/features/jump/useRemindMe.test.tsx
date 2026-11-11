@@ -22,7 +22,7 @@ vi.mock("@/data/lib/catalyst/client", async (actual) => ({
 const attendingReply = (attending: boolean) => http.signedGetJSON.mockResolvedValue({ ok: true, data: { attending } });
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { jumpKeys } from "@/data/lib/catalyst/jump/attendance";
+import { attendanceKeys } from "@/data/lib/catalyst/places/attendance";
 import { useRemindMe } from "./useRemindMe";
 
 const identity = { signer: "0xAB" } as unknown as AuthIdentity;
@@ -99,7 +99,7 @@ describe("useRemindMe", () => {
     http.signedGetJSON.mockReturnValue(new Promise(() => {}));
     act(() => hook.result.current.toggle());
     await waitFor(() => expect(hook.result.current.failed).toBe(true));
-    expect(client.getQueryData(jumpKeys.attending("0xab", "e1"))).toBe(true);
+    expect(client.getQueryData(attendanceKeys.attending("0xab", "e1"))).toBe(true);
   });
 
   it("should not bring back an account's flag removed during a failing save", async () => {
@@ -109,13 +109,13 @@ describe("useRemindMe", () => {
     const { hook, client } = setup(identity);
     await waitFor(() => expect(hook.result.current.pending).toBe(false));
     act(() => hook.result.current.toggle());
-    await waitFor(() => expect(client.getQueryData(jumpKeys.attending("0xab", "e1"))).toBe(true));
+    await waitFor(() => expect(client.getQueryData(attendanceKeys.attending("0xab", "e1"))).toBe(true));
     // Sign-out as the app orders it: the account leaves the context, then usePrivateQueryLifecycle removes its entries.
     hook.rerender({ who: null });
     client.removeQueries({ queryKey: ["private", "0xab"] });
     await act(async () => fail(new Error("401")));
     await waitFor(() => expect(hook.result.current.failed).toBe(true));
-    expect(client.getQueryState(jumpKeys.attending("0xab", "e1"))).toBeUndefined();
+    expect(client.getQueryState(attendanceKeys.attending("0xab", "e1"))).toBeUndefined();
   });
 
   it("should not report attending when the flag cannot be read", async () => {
@@ -126,6 +126,6 @@ describe("useRemindMe", () => {
   });
 
   it("should key the flag under the member's private entries", () => {
-    expect(jumpKeys.attending("0xAB", "e1")).toEqual(["private", "0xab", "jump", "attending", "e1"]);
+    expect(attendanceKeys.attending("0xAB", "e1")).toEqual(["private", "0xab", "attendance", "e1"]);
   });
 });

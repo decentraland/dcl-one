@@ -1,8 +1,12 @@
 import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { attendingQuery, jumpKeys, JUMP_STALE_MS } from "@/data/lib/catalyst/jump/attendance";
-import { writeAttendance } from "@/data/lib/catalyst/places/attendance";
+import {
+  attendanceKeys,
+  attendingQuery,
+  ATTENDANCE_STALE_MS,
+  writeAttendance,
+} from "@/data/lib/catalyst/places/attendance";
 
 type Toggle = { identity: AuthIdentity; eventId: string; attending: boolean };
 
@@ -11,17 +15,18 @@ type Toggle = { identity: AuthIdentity; eventId: string; attending: boolean };
  * The identity travels in the mutation variables, so a write started before an account switch signs as the
  * account that started it.
  */
-export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSignIn: () => void) {
+/** `enabled` is false where the page offers no Remind me, so no signed read goes out for it. */
+export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSignIn: () => void, enabled = true) {
   const client = useQueryClient();
   const query = useQuery(
-    identity
+    identity && enabled
       ? attendingQuery(identity, eventId)
-      : { queryKey: jumpKeys.attending("", eventId), queryFn: skipToken, staleTime: JUMP_STALE_MS },
+      : { queryKey: attendanceKeys.attending("", eventId), queryFn: skipToken, staleTime: ATTENDANCE_STALE_MS },
   );
   const mutation = useMutation({
     mutationFn: ({ identity, eventId, attending }: Toggle) => writeAttendance(identity, eventId, attending),
     onMutate: async ({ identity, eventId, attending }: Toggle) => {
-      const key = jumpKeys.attending(identity.signer, eventId);
+      const key = attendanceKeys.attending(identity.signer, eventId);
       await client.cancelQueries({ queryKey: key });
       const previous = client.getQueryData<boolean>(key);
       client.setQueryData(key, attending);
@@ -36,7 +41,7 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
     },
     // Not awaited: a slow re-read must not keep the toggle disabled after the write settled.
     onSettled: (_data, _error, { identity, eventId }) => {
-      void client.invalidateQueries({ queryKey: jumpKeys.attending(identity.signer, eventId) });
+      void client.invalidateQueries({ queryKey: attendanceKeys.attending(identity.signer, eventId) });
     },
   });
 

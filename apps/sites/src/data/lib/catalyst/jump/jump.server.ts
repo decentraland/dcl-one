@@ -2,33 +2,40 @@ import { z } from "zod";
 
 import { CatalystError, catalystBase, errorFromResponse, getJSON, worldsBase, type GetOptions } from "../client";
 import { EventRecordSchema } from "../generated-schemas/events";
+import { ApiDataTotalSchema, PlaceRowSchema, WorldRowSchema } from "../generated-schemas/places";
+import { reportSchemaDrift } from "../schema-drift";
 import { fetchEvent, fetchEvents } from "../places/events";
 import { fetchProfile } from "../social/profile";
 import { placesApiPath } from "../typed";
 import { isEnsRealm, type JumpEventRecord, type JumpPlaceRecord } from "./jump";
 
-/** Lenient on purpose: a catalogue row with one odd field still makes a card. */
-const PlaceRow = z.object({
-  title: z.string().nullable().catch(null),
-  description: z.string().nullable().catch(null),
-  image: z.string().nullable().catch(null),
-  base_position: z.string(),
-  owner: z.string().nullable().catch(null),
-  contact_name: z.string().nullable().catch(null),
-  user_count: z.number().nullable().catch(null),
-  world: z.boolean(),
-  world_name: z.string().nullable().catch(null),
-});
-const PlaceList = z.object({ data: z.array(z.unknown()) });
+const CARD_FIELDS = {
+  title: true,
+  description: true,
+  image: true,
+  base_position: true,
+  owner: true,
+  contact_name: true,
+  user_count: true,
+  world: true,
+  world_name: true,
+} as const;
+const PlaceRow = PlaceRowSchema.pick(CARD_FIELDS);
+const WorldRow = WorldRowSchema.pick(CARD_FIELDS);
 
-function parsePlaces(raw: unknown): JumpPlaceRecord[] {
+/** A row that fails the generated schema is reported as drift and left out, never shown half-parsed. */
+function parseRows(kind: "Place" | "World", raw: unknown): JumpPlaceRecord[] {
+  const schema = kind === "Place" ? PlaceRow : WorldRow;
   const rows: JumpPlaceRecord[] = [];
-  for (const row of PlaceList.parse(raw).data) {
-    const parsed = PlaceRow.safeParse(row);
+  for (const row of ApiDataTotalSchema(z.unknown()).parse(raw).data) {
+    const parsed = schema.safeParse(row);
     if (parsed.success) rows.push(parsed.data);
+    else reportSchemaDrift(kind, parsed.error.issues);
   }
   return rows;
 }
+const parsePlaces = (raw: unknown) => parseRows("Place", raw);
+const parseWorlds = (raw: unknown) => parseRows("World", raw);
 
 const PLACES = placesApiPath("get", "/api/places");
 const WORLDS = placesApiPath("get", "/api/worlds");
@@ -46,11 +53,11 @@ export async function loadJumpPlace(
   const positions = lookup ? lookup.join(",") : undefined;
   if (realm && isEnsRealm(realm)) {
     const names = realm;
-    if (!positions) return parsePlaces(await getJSON(WORLDS, { ...opts, query: { names } }))[0] ?? null;
+    if (!positions) return parseWorlds(await getJSON(WORLDS, { ...opts, query: { names } }))[0] ?? null;
     const [scene] = parsePlaces(await getJSON(PLACES, { ...opts, query: { names, positions } }));
     if (!scene) return null;
     const world = await getJSON(WORLDS, { ...opts, query: { names } })
-      .then((raw) => parsePlaces(raw)[0] ?? null)
+      .then((raw) => parseWorlds(raw)[0] ?? null)
       .catch(() => null);
     return world?.user_count != null ? { ...scene, user_count: world.user_count } : scene;
   }
@@ -129,18 +136,20 @@ const toJumpEvent = (event: unknown): JumpEventRecord => JumpEventRow.parse(even
  * Genesis City lookup excludes World events, which mostly sit at 0,0 too. Null when there is none.
  */
 export async function loadJumpEvent(
-  target: { id: string | null; coordinates: [number, number]; realm: string | undefined },
+  target: { id: string | null; lookup: [number, number] | undefined; realm: string | undefined },
   opts: GetOptions = {},
 ): Promise<JumpEventRecord | null> {
   if (target.id) {
     try {
       return toJumpEvent(await fetchEvent(target.id, opts));
     } catch (error) {
-      if (error instanceof CatalystError && error.status === 404) return null;
+      // 400: the events service rejects an id that is not a UUID; to a visitor it is the same unknown event.
+      if (error instanceof CatalystError && (error.status === 400 || error.status === 404)) return null;
       throw error;
     }
   }
-  const position = target.coordinates.join(",");
+  // A World link without a position asks for the World's events wherever they are in it.
+  const position = target.lookup?.join(",");
   const params = target.realm ? { position, world_names: target.realm } : { position, world: false };
   const [first] = (await fetchEvents(params, opts)).data;
   return first ? toJumpEvent(first) : null;

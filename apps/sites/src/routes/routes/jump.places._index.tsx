@@ -24,7 +24,7 @@ const INVALID = "/jump/places/invalid";
  */
 export async function loader({ request }: Route.LoaderArgs) {
   const target = readJumpTarget(new URL(request.url).searchParams);
-  if (!target.validPosition) throw redirect(INVALID);
+  if (!target.validPosition || !target.validRealm) throw redirect(INVALID);
   const opts = { signal: request.signal };
   const world = target.realm ?? null;
   const [entity, place, parcelCreator] = await Promise.all([

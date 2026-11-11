@@ -112,10 +112,9 @@ function AnimatedBackground({ patternTiling = 1.66 }: { patternTiling?: number }
 
     // If the GPU reclaims the context (mobile memory pressure), stop the now no-op loop and reveal the
     // static fallback (behind the canvas) instead of spinning rAF forever.
-    const onContextLost = (e: Event) => {
-      e.preventDefault()
+    const onContextLost = () => {
       cancelAnimationFrame(animFrameRef.current)
-      canvas.style.opacity = '0'
+      canvas.remove()
     }
     canvas.addEventListener('webglcontextlost', onContextLost, false)
 
