@@ -115,8 +115,8 @@
     },
     {
       "path": "library/ui/figma/review/src/components/figma-module-runtime.tsx",
-      "sha256": "981b402bf815ec0cca81a4333db5bbb31740dd3574c71ee2632e8402710373c7",
-      "indexBlobSha": "2f7ca01d63000bd46665f269833656c36a433094"
+      "sha256": "a25a3157683a45e60932964608c85d2bd1711d1c15acf45b155134c8169e2476",
+      "indexBlobSha": "5d83d3f9d319fd3309242f32d86282f07c955805"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-view-state.ts",
@@ -235,8 +235,8 @@
     },
     {
       "path": "library/ui/figma/src/generators/components.ts",
-      "sha256": "07c9bca9cb7e3b88e2673f1c17cda3b4f19df0ee67dd8747cef2c1ff213314f1",
-      "indexBlobSha": "a887a750c458f7ef7ff51f6ec3fa33c737e823e8"
+      "sha256": "7571fb052ae7f234859f4e9f43e063528f44af69065b38e06148417bce3f0ef5",
+      "indexBlobSha": "97902eb8759fafdda145e4cab28f6c0d3f0763fb"
     },
     {
       "path": "library/ui/figma/src/generators/css-layers.ts",
@@ -285,8 +285,8 @@
     },
     {
       "path": "library/ui/figma/src/generators/tokens.ts",
-      "sha256": "c0a00f7348129cf4aa3d3e52b342de72712f8aadd987a527a6892412283a8122",
-      "indexBlobSha": "e1f7d70b6cebcdc5c2221a071549857c1d7aa510"
+      "sha256": "37f1fe2d706e7710517504cc77137305d5f0eb03d6541fd51d38d8bfa33f72d0",
+      "indexBlobSha": "141d80670450fc5dd4a7ed73688e8ec6ef9af2ea"
     },
     {
       "path": "library/ui/figma/src/generators/types.ts",
@@ -611,7 +611,7 @@
     },
     {
       "path": "NavBar/NavBar.module.css",
-      "sha256": "169bf3b385f2404ad358edffd0b7978b25b4f9e76a01c5f1195f0eff63e7c79b"
+      "sha256": "fce5ebb617b694ecc0fbc32a195f534590350222c4267e09aa23c6eb6ff6dc60"
     },
     {
       "path": "NavBar/NavBar.module.css.d.ts",
@@ -639,7 +639,7 @@
     },
     {
       "path": "runtime/figma-module-runtime.tsx",
-      "sha256": "d2f48a0d53cecb30b474b680cfcf320cf5533e267fc486be5ffadcdaed00d1cf"
+      "sha256": "4f3790181edb0aab454895459b50bee59a80e047bc8880a5c5006a331d5306db"
     },
     {
       "path": "runtime/figma-view-state.ts",

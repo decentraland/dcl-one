@@ -329,12 +329,19 @@ type FigmaViewProps = {
 // or a component without a responsive axis, renders exactly one view as before. The views share the caller's
 // attributes, so an id or a ref, which must name one element, needs the prop set.
 function FigmaView({ responsive, ...props }: FigmaViewProps) {
+  const disclosure = useContext(FigmaInteractions)?.disclosure
   if (!responsive || props.select.values[responsive.prop] !== undefined)
     return <FigmaViewRoot {...props} />
+  const component = props.component ?? 'A generated component'
   const attributes: Attributes & { ref?: unknown } = props.attributes ?? {}
-  if (attributes.id !== undefined || attributes.ref !== undefined)
+  if (attributes.id != null || attributes.ref != null)
     throw new Error(
-      `${props.component ?? 'A generated component'}: an id or a ref names one element, so pass ${responsive.prop} to render a single view`
+      `${component}: an id or a ref names one element, so pass ${responsive.prop} to render a single view`
+    )
+  // Each disclosure root closes on a pointer outside itself, so a hidden view would close the visible one at once.
+  if (disclosure)
+    throw new Error(
+      `${component}: a disclosure controls one element, so pass ${responsive.prop} to render a single view`
     )
   return (
     <>
