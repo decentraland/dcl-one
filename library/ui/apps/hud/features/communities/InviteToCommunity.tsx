@@ -7,9 +7,9 @@ import { useEffect } from 'react'
 import type { ContextMenuItem } from '../../design'
 import { useSession } from '../session/SessionContext'
 
-export const INVITE_TO_COMMUNITY = 'Invite to Community'
+const INVITE_TO_COMMUNITY = 'Invite to Community'
 
-export function InviteToCommunityIcon(): React.JSX.Element {
+function InviteToCommunityIcon(): React.JSX.Element {
   return (
     <svg viewBox="0 0 24 24" width="20" height="20" fill="none" aria-hidden="true">
       <circle cx="8" cy="9" r="2.6" stroke="currentColor" strokeWidth="1.7" />

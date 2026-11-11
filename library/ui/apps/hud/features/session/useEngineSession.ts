@@ -147,8 +147,8 @@ export const INVITES_LOAD_ERROR: Record<CommunityInvitesMessage['failed'][number
   requestsSent: 'There was an error loading requests. Please try again.'
 }
 export const INVITE_SENT = 'Invite to Community Sent'
-export const INVITE_FAILED = 'Error sending invitation. Please try again.'
-export const INVITABLE_FAILED = "Error loading 'Invite to Community' menu option. Reopen menu to try again."
+const INVITE_FAILED = 'Error sending invitation. Please try again.'
+const INVITABLE_FAILED = "Error loading 'Invite to Community' menu option. Reopen menu to try again."
 // A community member as the profile store keeps them: an unclaimed name with its #tag, as every
 // explorer shows it (the card reads a bare name as claimed).
 function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfiles>[0] {
