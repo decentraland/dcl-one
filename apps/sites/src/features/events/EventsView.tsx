@@ -35,7 +35,7 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
-import { useReminders, type Reminder } from "../jump/useRemindMe";
+import { useEventReminders, type Reminder } from "./useEventReminders";
 import {
   bucketByDay,
   calendarHref,
@@ -190,14 +190,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
   );
 
   const upcomingEvents = upcoming.data ?? [];
-  const remindIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const event of upcomingEvents) ids.add(event.id);
-    for (const bucket of buckets) for (const occurrence of bucket) if (!occurrence.live) ids.add(occurrence.event.id);
-    if (detail.data && !detail.data.live) ids.add(detail.data.id);
-    return [...ids];
-  }, [upcomingEvents, buckets, detail.data]);
-  const reminders = useReminders(identity, remindIds, () => openSignIn({ inPlace: true }));
+  const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
 
   const [notice, setNotice] = useState<string>();
   useEffect(() => {

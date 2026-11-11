@@ -95,7 +95,7 @@ beforeEach(() => {
     return found;
   });
   vi.mocked(loadJumpPlace).mockResolvedValue(null);
-  http.signedGetJSON.mockReset().mockResolvedValue({ ok: true, data: { attending: false } });
+  http.signedGetJSON.mockReset().mockResolvedValue({ ok: true, data: [] });
   http.postJSON.mockReset();
   signIn.openSignIn.mockReset();
 });

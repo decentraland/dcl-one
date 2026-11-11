@@ -11,8 +11,9 @@ export const ATTENDANCE_STALE_MS = 30_000;
 
 /** Whether the member is attending is their own read, so it sits under `["private", account, ...]`. */
 export const attendanceKeys = {
-  attending: (account: string, eventId: string) =>
-    ["private", account.toLowerCase(), "attendance", eventId] as const,
+  attending: (account: string, eventId: string) => ["private", account.toLowerCase(), "attendance", eventId] as const,
+  /** Every unfinished event the member attends, read in one signed request. */
+  list: (account: string) => ["private", account.toLowerCase(), "attendance", "list"] as const,
 };
 
 const AttendingEnvelope = z.object({ data: z.object({ attending: z.boolean() }).passthrough() }).passthrough();
@@ -24,6 +25,22 @@ async function fetchAttending(identity: AuthIdentity, eventId: string, signal?: 
   });
   return AttendingEnvelope.parse(raw).data.attending;
 }
+
+const AttendingListEnvelope = z.object({ data: z.array(z.object({ id: z.string() }).passthrough()) }).passthrough();
+
+/** The ids of every unfinished event the member attends (`GET /api/events/attending`). */
+async function fetchAttendingIds(identity: AuthIdentity, signal?: AbortSignal): Promise<string[]> {
+  const raw = await signedGetJSON(eventsApiPath("get", "/api/events/attending"), { identity, signal });
+  return AttendingListEnvelope.parse(raw).data.map((event) => event.id);
+}
+
+/** One signed read for a page of events: the member's attending list, under their account. */
+export const attendingListQuery = (identity: AuthIdentity) =>
+  queryOptions({
+    queryKey: attendanceKeys.list(identity.signer),
+    staleTime: ATTENDANCE_STALE_MS,
+    queryFn: ({ signal }) => fetchAttendingIds(identity, signal),
+  });
 
 /** The identity signs the request and is never cached; the key names only its account. */
 export const attendingQuery = (identity: AuthIdentity, eventId: string) =>
