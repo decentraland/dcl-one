@@ -3,7 +3,6 @@ import type { NamedVariant } from "./NamedVariant";
 
 export type SettingInfo = { name: string, category: string, description: string, minValue: number, maxValue: number, namedVariants: Array<NamedVariant>, stepSize: number, value: number, default: number, 
 /**
- * Shown but not editable, because another setting makes it moot (e.g. the frame-rate
- * target while VSync paces frames).
+ * Shown but not editable: another setting makes it moot.
  */
 disabled: boolean, };
