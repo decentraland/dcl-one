@@ -16,16 +16,17 @@ import { useState } from 'react'
 import { Button, DclLogo, ModalShell } from '../../design'
 import { inShell, postToShell } from '@explorer-core/lib/shell'
 import styles from './UntrustedLaunchGate.module.css'
-import { siteUrl } from '@hud-host'
+import { exitUrl } from '@hud-host'
 import type { UntrustedParam } from '@explorer-core/hostContract'
 
 
-// A tab the user opened themselves can't be closed by script, so send them somewhere safe instead.
+// A tab the user opened themselves can't be closed by script, so send them somewhere safe instead: the
+// host's fixed exit, never an address the untrusted link chose.
 // Inside the shell, the shell does it: from here it would only navigate the app's iframe.
 function exitApplication(): void {
   if (inShell) return postToShell({ type: 'bevy-shell:exit' })
   window.close()
-  window.location.replace(siteUrl('/'))
+  window.location.replace(exitUrl())
 }
 
 const TITLE = 'This Launch Link Is Not Trusted'

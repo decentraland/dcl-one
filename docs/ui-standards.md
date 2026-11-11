@@ -357,7 +357,8 @@ Both layers keep the conventions of `react-web`, under
 `rendering/bevy-explorer/source/react-web/AGENTS.md`: `react-web` type-checks
 them, tests included, under its compiler profile, and `library/ui`'s lint and
 formatting skip `apps/hud`. Their tests live beside them: `react-web`'s Vitest
-runs all of them, and `library/ui`'s `hud` project runs the UI tests that need
+runs all of them against its host, `apps/ui3`'s `play-shared` project runs them
+again against `/play`'s host (`apps/ui3/src/play/host.ts`), and `library/ui`'s `hud` project runs the UI tests that need
 no package only the hosts install (all but `apps/hud/test/hosted/`) against a
 web host (`apps/hud/test/host.ts`). Tests of a host's own files stay in that host. The Sites host does not load the shared
 foundations yet.

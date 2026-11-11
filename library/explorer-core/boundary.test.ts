@@ -4,8 +4,9 @@
 // holds it to:
 //
 // - it is TypeScript modules only: no components, styles or assets;
-// - its modules import only the core itself, the host module (`@hud-host`) and packages; never the HUD
-//   UI (`@hud/*` or library/ui), and never React or a React-only package.
+// - its modules import only the core itself, the host module (`@hud-host`) and the `@noble` hashing and
+//   curves; its tests and `test/` helpers also `vitest` and `node:`. Anything else, such as React, the HUD UI (`@hud/*`) or a
+//   host's own alias, needs adding here on purpose.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -22,7 +23,8 @@ function walk(dir: string): string[] {
 
 const all = walk(ROOT)
 const isTest = (file: string): boolean => /\.test\.tsx?$/.test(file)
-const modules = all.filter((file) => !isTest(file) && file !== 'README.md')
+const sources = all.filter((file) => file !== 'README.md')
+const modules = sources.filter((file) => !isTest(file))
 
 // Static imports and re-exports, dynamic imports and require, read from the raw source: a
 // commented-out import counts too, which can only fail the check.
@@ -34,17 +36,20 @@ function specifiers(source: string): string[] {
   ].map((m) => m[1] as string)
 }
 
-const REACT = /^(react|react-dom|@tanstack\/react-query|@testing-library\/react)(\/|$)/
+const PACKAGES = [/^@hud-host$/, /^@noble\/(hashes|curves)\/[\w./-]+$/]
+const TEST_PACKAGES = [/^vitest$/, /^node:\w+$/]
 
 describe('library/explorer-core', () => {
   it('holds TypeScript modules only', () => {
     expect(modules.filter((file) => !file.endsWith('.ts'))).toEqual([])
   })
 
-  it.each(modules)('%s imports no HUD UI and no React', (file) => {
+  it.each(sources)('%s imports only the core and the allowed packages', (file) => {
+    const testCode = isTest(file) || file.startsWith('test/')
+    const allowed = testCode ? [...PACKAGES, ...TEST_PACKAGES] : PACKAGES
     const wrong = specifiers(readFileSync(join(ROOT, file), 'utf8')).filter((spec) => {
       if (spec.startsWith('.')) return !resolve(dirname(join(ROOT, file)), spec).startsWith(ROOT + '/')
-      return spec.startsWith('@hud/') || spec.includes('library/ui') || REACT.test(spec)
+      return !allowed.some((pattern) => pattern.test(spec))
     })
     expect(wrong).toEqual([])
   })

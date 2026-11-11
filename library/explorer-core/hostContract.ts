@@ -61,6 +61,9 @@ export interface HudHost {
   /** A page of the Decentraland site (`/terms/`, `/marketplace`, ...) for the deployment this HUD
    *  runs against. */
   siteUrl(path: string): string
+  /** Where the untrusted-link gate's Exit sends the player: an address no entry url can change, never
+   *  one built from `?baseDomain=`. */
+  exitUrl(): string
   /** Where this host's deployment serves the service named in the service table. */
   serviceUrl(name: string): string
   /** The domain this HUD's deployment runs on. */

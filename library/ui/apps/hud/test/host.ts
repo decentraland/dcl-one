@@ -22,3 +22,8 @@ export const engineLaunch: HudHost['engineLaunch'] = () => ({ options: {} as Ret
 export const untrustedLaunchParams: HudHost['untrustedLaunchParams'] = () => []
 export const unrecognisedEntryParams: HudHost['unrecognisedEntryParams'] = () => []
 export const hostEntryParams: HudHost['hostEntryParams'] = () => []
+export const exitUrl: HudHost['exitUrl'] = () => 'https://decentraland.org'
+
+// Fails the type check when the contract gains a member this stub lacks, as each real host does.
+const host: HudHost = { acceptedEntryParams, exitUrl, hostEntryParams, unrecognisedEntryParams, untrustedLaunchParams, BASE_DOMAIN, bootMode, engineExited, engineLaunch, seedBridgeSession, DEFAULT_REALM, entryRealm, IN_WORLD_SHOP, isNativeHud, nativeProfileImage, ownShopItemUrl, PAGE_DIR, publicUrl, serviceUrl, siteUrl, unattendedRun }
+void host

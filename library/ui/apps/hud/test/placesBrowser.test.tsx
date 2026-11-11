@@ -36,6 +36,21 @@ afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 beforeEach(clearPlacesCache)
 
 describe('places browser', () => {
+  it('shows the places a search finds when the worlds search is down', async () => {
+    const fetchMock = vi.fn((url: string) =>
+      url.includes('/worlds')
+        ? Promise.reject(new Error('worlds down'))
+        : Promise.resolve(new Response(JSON.stringify({ ok: true, total: 1, data: url.includes('search=other') ? [other] : [busy] })))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(<PlacesBrowser onPick={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Most active' }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Most liked' }))
+    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'other' } })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining('/worlds?'), expect.anything()))
+    expect(await screen.findByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
+    expect(screen.queryByText(/Couldn't load/)).toBeNull()
+  })
   it('keeps loaded cards visible while Retry requests the failed next page', async () => {
     let failed = false
     vi.stubGlobal('fetch', vi.fn(async (input: string) => {

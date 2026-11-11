@@ -43,7 +43,8 @@ The rules both layers follow:
 - **No packages of their own.** Neither layer adds to a `package.json`. Each host resolves React
   and the other packages to its own copy (`paths`, `resolve.dedupe`), at the versions it pins.
 - **The HUD's conventions.** Both layers keep the compiler profile and style of `react-web`, which
-  type-checks them and runs their tests. `library/ui`'s lint and formatting skip `apps/hud`; its
+  type-checks them and runs their tests; `apps/ui3`'s `play-shared` Vitest project runs the same
+  tests against `/play`'s host, so each host's own behaviors are covered. `library/ui`'s lint and formatting skip `apps/hud`; its
   `hud` Vitest project also runs the UI tests that need only `library/ui`'s packages (all but
   `apps/hud/test/hosted/`). Tests of a host's own files stay in that host.
 - **One copy of the bindings.** The TypeScript generated from the Explorer's Rust structs is tracked
@@ -64,7 +65,7 @@ rules do not apply.
 
 ## Consequences
 
-Changing shared code changes both hosts. `react-web` type-checks both layers and runs their tests;
+Changing shared code changes both hosts. `react-web` type-checks both layers, and both hosts run their tests;
 the HUD artifact's inputs and CI selection include both (the computed
 `rendering/bevy-explorer/source/react-web/shared-inputs.json` contract).
 The Explorer client team owns both folders. Server reads live in the core and their React hooks in the

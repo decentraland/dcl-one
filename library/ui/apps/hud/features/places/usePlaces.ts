@@ -95,7 +95,9 @@ export function usePlaces(account?: string | null): UsePlaces {
     const legacySort = async (): Promise<{ data: DiscoverPlace[]; more: boolean }> => {
       const args = { limit: BROWSE_ARGS.limit, offset, order_by: effectiveSort as PlacesOrderBy, order: 'desc' as const, search: q || undefined }
       if (q) {
-        const [p, w] = await Promise.all([fetchPlaces(args), fetchWorlds(args)])
+        // Each source on its own: one that is down leaves the other's results, as an empty page.
+        const orEmpty = (pr: Promise<PlacesResponse>): Promise<PlacesResponse> => pr.catch(() => ({ ok: false, data: [], total: 0 }))
+        const [p, w] = await Promise.all([orEmpty(fetchPlaces(args)), orEmpty(fetchWorlds(args))])
         return { data: [...p.data, ...w.data], more: offset + p.data.length < p.total || offset + w.data.length < w.total }
       }
       const response = await fetchPlaces({ ...args, only_pois: category === 'featured' ? true : undefined, categories })

@@ -9,4 +9,4 @@ shell messaging, analytics, the server reads written without React, and the host
 
 It imports no React and nothing of the HUD UI (`boundary.test.ts`). It has no `package.json`:
 each host resolves its packages to its own copy. `react-web` type-checks it and runs its tests
-(`npm test` there). Decision: [ADR](../../docs/adr/2026-11-10-shared-explorer-hud-ui.md).
+(`npm test` there); `apps/ui3`'s `play-shared` Vitest project runs them again against `/play`'s host. Decision: [ADR](../../docs/adr/2026-11-10-shared-explorer-hud-ui.md).

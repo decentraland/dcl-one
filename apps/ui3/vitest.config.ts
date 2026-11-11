@@ -60,6 +60,18 @@ export default defineConfig({
           css: false,
         },
       },
+      {
+        // The shared HUD UI's and the Explorer page core's tests against /play's host (src/play/host.ts);
+        // react-web runs the same tests against its own.
+        extends: true,
+        test: {
+          name: "play-shared",
+          include: ["../../library/ui/apps/hud/**/*.test.{ts,tsx}", "../../library/explorer-core/**/*.test.{ts,tsx}"],
+          setupFiles: ["src/play/test/setup.ts"],
+          css: false,
+          sequence: { hooks: "list" },
+        },
+      },
     ],
   },
 });
