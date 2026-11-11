@@ -137,6 +137,22 @@ describe('componentRegistryEntries', () => {
     ).toHaveLength(10)
   })
 
+  it.each([
+    ['a public name twice', { components: ['NavBar', { name: 'NavBar', limits: [limit] }] }],
+    ['a name both public and internal', { components: ['NavBar'], internal: ['NavBar'] }],
+    ['a name twice in another case', { components: ['NavBar', 'navbar'] }]
+  ])('should refuse %s', (_label, registry) => {
+    expect(() => componentRegistryEntries(registry)).toThrow('Duplicate component registry name')
+  })
+
+  // The nearest false positive: distinct names, one with limits, are kept apart.
+  it('should accept distinct names', () => {
+    expect(
+      componentRegistryEntries({ components: ['Button', { name: 'NavBar', limits: [limit] }] })
+        .components
+    ).toEqual(['Button', 'NavBar'])
+  })
+
   it('should refuse limits on an internal name', () => {
     expect(() =>
       componentRegistryEntries({ components: [], internal: [{ name: 'NavBar', limits: [limit] }] })

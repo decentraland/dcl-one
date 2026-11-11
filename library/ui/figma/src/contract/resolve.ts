@@ -414,10 +414,17 @@ async function registryLimits(
         if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') continue
         return registryError(file, `cannot be read (${errorCode(error) ?? 'error'})`)
       }
+      // A JSON.parse message quotes the input, so it is never passed on; the schema errors name no input text.
+      let parsed: unknown
       try {
-        return componentRegistryEntries(JSON.parse(text)).limits
+        parsed = JSON.parse(text)
+      } catch {
+        return registryError(file, 'is not JSON')
+      }
+      try {
+        return componentRegistryEntries(parsed).limits
       } catch (error) {
-        return registryError(file, (error as Error).message)
+        return registryError(file, `is not valid: ${(error as Error).message}`)
       }
     }
     if (dir === top || path.dirname(dir) === dir) return {}
@@ -425,11 +432,9 @@ async function registryLimits(
 }
 
 const registryError = (file: string, problem: string) => ({
-  error: diagnostic(
-    'contract-incompatible',
-    `The library component registry ${file} is not valid: ${problem}.`,
-    { reason: 'component-registry' }
-  )
+  error: diagnostic('contract-incompatible', `The library component registry ${file} ${problem}.`, {
+    reason: 'component-registry'
+  })
 })
 
 async function loadSource(ctx: ResolveContext): Promise<LibrarySource | { error: Diagnostic }> {

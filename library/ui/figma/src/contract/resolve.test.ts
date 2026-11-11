@@ -1,4 +1,5 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -1035,20 +1036,57 @@ describe('resolveComponent', () => {
 
     // The nearest false positive: a registry outside the library package is not the library's.
     it('should not read a registry outside the library package', async () => {
-      const { root, mappingRoot } = await library()
-      const outside = path.join(path.dirname(root), 'promotion.json')
-      const existed = await readFile(outside, 'utf8').then(
-        () => true,
-        () => false
-      )
-      if (!existed) await writeFile(outside, '{')
-      try {
-        const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+      // The package sits inside its own temporary directory, which holds the outside registry.
+      const outer = await mkdtemp(path.join(tmpdir(), 'dcl-figma-outer-'))
+      created.push(outer)
+      const { root } = await library()
+      const pkg = path.join(outer, 'pkg')
+      await rename(root, pkg)
+      await writeFile(path.join(outer, 'promotion.json'), '{')
 
-        expect(result.ok && result.resolved.limits).toEqual([])
-      } finally {
-        if (!existed) await rm(outside, { force: true })
-      }
+      const result = await resolveComponent(context(path.join(pkg, 'src')), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual([])
+    })
+
+    // The nearest false positive: the same outside registry is read once it is inside the package.
+    it('should read that registry once it is inside the package', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(!result.ok && result.errors[0]!.message).toContain('promotion.json is not JSON')
+    })
+
+    it('should not quote the input of a registry that is not JSON', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(path.join(mappingRoot, 'promotion.json'), '{"components": [ see https://x')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(!result.ok && result.errors[0]!.message).toMatch(/promotion\.json is not JSON\.$/)
+      expect(JSON.stringify(result)).not.toContain('https://x')
+    })
+
+    it('should refuse a registry that names a component twice instead of keeping the later limits', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({
+          components: [
+            { name: 'Button', limits: [{ id: 'a', text: 'First.' }] },
+            { name: 'Button', limits: [{ id: 'b', text: 'Second.' }] }
+          ]
+        })
+      )
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(codes(result)).toEqual(['contract-incompatible'])
+      expect(!result.ok && result.errors[0]!.message).toContain(
+        'Duplicate component registry name: Button'
+      )
     })
   })
 

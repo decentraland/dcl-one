@@ -182,6 +182,17 @@ export function componentRegistryEntries(registry) {
   if ((registry.internal ?? []).some((entry) => typeof entry !== 'string'))
     throw new Error('Internal component registry entries are names only, without limits')
   const publicEntries = registry.components.map(accepted)
+  // One entry per name, compared the way visibility() compares them, so no reader keeps a later entry's limits.
+  const seen = new Set()
+  for (const name of [...publicEntries.map((entry) => entry.name), ...(registry.internal ?? [])]) {
+    const key = String(name).normalize('NFC').toLowerCase()
+    if (seen.has(key))
+      throw new Error(
+        'Duplicate component registry name: ' +
+          (COMPONENT_NAME.test(String(name)) ? name : '(not an identifier)')
+      )
+    seen.add(key)
+  }
   return {
     components: publicEntries.map((entry) => entry.name),
     internal: [...(registry.internal ?? [])],

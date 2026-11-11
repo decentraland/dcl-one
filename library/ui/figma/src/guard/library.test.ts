@@ -60,7 +60,7 @@ describe.each([
   },
   {
     registry: JSON.stringify({ components: ['Button'], internal: ['Button'] }),
-    error: 'Invalid or duplicate library component registry name'
+    error: 'Invalid library component registry: Duplicate component registry name: Button'
   },
   {
     registry: JSON.stringify({ components: [{ name: 'Button', limits: [] }] }),

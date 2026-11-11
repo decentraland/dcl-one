@@ -122,7 +122,7 @@ describe('when planning public components from verified installer inputs', () =>
     })
     it('should reject a component listed with both public and internal visibility', async () => {
       context.registry = { components: ['DemoNav'], internal: ['DemoNav'] }
-      await expect(planComponents(context)).rejects.toThrow('unique component names')
+      await expect(planComponents(context)).rejects.toThrow('Duplicate component registry name')
     })
     it('should reject an unknown internal component', async () => {
       context.registry = { components: [], internal: ['Missing'] }
@@ -220,7 +220,7 @@ describe('when planning public components from verified installer inputs', () =>
   it.each([
     {
       components: ['DemoNav', 'DemoNav'],
-      error: 'Component registry must contain unique component names only'
+      error: 'Invalid component registry: Duplicate component registry name: DemoNav'
     },
     { components: ['../DemoNav'], error: 'Invalid generated TypeScript identifier' },
     { components: ['3D Card'], error: 'Invalid generated TypeScript identifier' },
