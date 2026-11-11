@@ -25,16 +25,25 @@
       "@dcl/one-ui/foundations": ["../../../../library/ui/foundations/index.ts"],
       "@dcl/one-ui/foundations.css": ["../../../../library/ui/foundations/foundations.css"],
       "@dcl/one-ui/text-styles.module.css": ["../../../../library/ui/foundations/typography/text-styles.module.css"],
+      "@hud/*": ["../../../../library/ui/apps/hud/*"],
+      "@explorer-core/*": ["../../../../library/explorer-core/*"],
+      "@hud-host": ["./src/host.ts"],
       "viem": ["./node_modules/viem"],
       "viem/*": ["./node_modules/viem/*"],
       "zod": ["./node_modules/zod"],
       "zod/*": ["./node_modules/zod/*"],
       "@tanstack/react-query": ["./node_modules/@tanstack/react-query"],
+      "@noble/*": ["./node_modules/@noble/*"],
       "react": ["./node_modules/@types/react"],
-      "react/*": ["./node_modules/@types/react/*"]
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      "vitest": ["./node_modules/vitest"],
+      "@testing-library/*": ["./node_modules/@testing-library/*"]
     }
   },
-  "include": ["src", "vite.config.ts", "vite.shared.ts"],
+  // The shared HUD UI and the Explorer page's core are type-checked here, under the compiler profile it was written for, tests included.
+  "include": ["src", "vite.config.ts", "vite.shared.ts", "../../../../library/ui/apps/hud", "../../../../library/explorer-core"],
   // Loads bridge domains that need the scene SDK's ~system types; the bridge build checks those.
   // The signing test loads @dcl/crypto out of the bridge scene's tree, installed after this check.
   "exclude": ["src/test/bridgeConnectivity.test.tsx", "src/test/bridgeSession.test.ts", "src/test/bridgeFriends.test.ts", "src/test/bridgeNotifications.test.ts", "src/test/bridgeCommunities.test.ts", "src/test/bridgeEditor.test.ts", "src/test/bridgeVoiceChat.test.ts", "src/test/bridgeRandomizer.test.ts", "src/test/bridgeRandomizerTokens.test.ts", "src/test/bridgeAvatarDraft.test.ts", "src/test/editorHostSigning.test.tsx"]

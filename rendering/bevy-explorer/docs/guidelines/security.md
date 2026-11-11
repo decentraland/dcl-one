@@ -46,8 +46,8 @@ signature.
 **On web, the HUD never touches `localStorage`.** The app page and the sandbox workers share an
 origin with the shell page that holds the key. The first `localStorage` read loads the origin's
 whole storage area into the app process, where scene code runs. `app.html` throws on any access
-in shell mode; HUD preferences go through `src/lib/prefs.ts` (IndexedDB). Only the shell
-(`src/shell/main.ts` and the sign-in code it owns) may read it. The same reasoning applies to
+in shell mode; HUD preferences go through `library/explorer-core/lib/prefs.ts` (IndexedDB). Only the shell
+(each host's shell, such as `react-web/src/shell/main.ts`, and the sign-in code it owns) may read it. The same reasoning applies to
 anything secret: it must not be in the app process at all.
 
 **On native, never `Path::join` or `PathBuf::push` with a component from outside.** Content

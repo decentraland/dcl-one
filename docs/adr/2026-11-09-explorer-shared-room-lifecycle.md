@@ -71,7 +71,9 @@ worlds. Terminal or suspended rooms are excluded from the required-room sample;
 their failures do not suppress monitoring of other required rooms. A healthy required transport suppresses an
 offline warning. The HUD presents this shared state through the existing engine
 bridge stream, receiving an initial snapshot and subsequent changes, and supplies
-Retry and Exit controls. It does not implement another recovery or probe policy.
+Retry and Exit controls. The two HUD hosts use one connectivity component and session
+hook in `library/ui/apps/hud`, with their wire types in `library/explorer-core`.
+The HUD does not implement another recovery or probe policy.
 Debug sections and the authenticated automation surface expose the same safe status
 and actions. One room-state calculation reads the shared failure record, suspension
 marker and transport phase for connectivity and room diagnostics. First admission
