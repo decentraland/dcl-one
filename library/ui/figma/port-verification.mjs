@@ -35,6 +35,8 @@ export const REQUIRED_CHECKS = [
   'install'
 ]
 const RECORD_KEYS = ['schema', 'portInputHash', 'fdsRevision', 'snapshotRevision', 'checks']
+/** The only free text a record carries: a short check detail. `port verify` writes to the same rule. */
+export const RECORD_DETAIL = /^[\w ,.:=()/-]{0,120}$/
 const CHECK_KEYS = ['result', 'detail']
 
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
@@ -375,7 +377,7 @@ export function recordProblems(record, { lock, inputHash }) {
         if (check.result !== 'pass') problems.push(`check ${name} did not pass`)
         if (
           check.detail !== undefined &&
-          (typeof check.detail !== 'string' || !/^[\w ,.:=()/-]{0,120}$/.test(check.detail))
+          (typeof check.detail !== 'string' || !RECORD_DETAIL.test(check.detail))
         )
           problems.push(`check ${name} has an unsupported detail`)
       }
@@ -465,7 +467,9 @@ export function main(argv, root = process.cwd()) {
     }
     const blobs = trackedBlobsAt(top, head)
     const scan = scanProblems(blobs)
-    for (const problem of scan) process.stdout.write(`port-verification: ${problem}\n`)
+    // --print-hash keeps stdout for the hash alone, so a script reading it never takes a problem for a hash.
+    for (const problem of scan)
+      (printHash ? process.stderr : process.stdout).write(`port-verification: ${problem}\n`)
     if (scan.length) return 1
     const inputHash = portInputHash(lock, digestsOf(blobs))
     if (printHash) {

@@ -55,8 +55,8 @@
     },
     {
       "path": "library/ui/figma/key-guard.mjs",
-      "sha256": "42fa80d4220953735be5a71dc8f5888c7410bc60e105a38c2f9c4aeb2049ffb0",
-      "indexBlobSha": "95d36bb87a15c7015cfa8f6f345a2a28e54b4d07"
+      "sha256": "7578f2b5d8eb14a06bf3f22375ca49e965b12b202dd338c338bfb7036c5408e2",
+      "indexBlobSha": "9f171502d11fcb114f23675b611f1db495f7b487"
     },
     {
       "path": "library/ui/figma/ledger/retirements.json",
@@ -80,8 +80,8 @@
     },
     {
       "path": "library/ui/figma/port-verification.mjs",
-      "sha256": "5885517af1ba58e72bac20cf6c28e58e740c6958d24ee79cafb1c69a1c239fe4",
-      "indexBlobSha": "9f7ff92bb95c1ffe089cec0aad57031351f5d0a9"
+      "sha256": "3fa22e1fd7156d6f2c5973b290f88fac491eea6108384f03384ac9d7f637a3b2",
+      "indexBlobSha": "597fb5038db5fe5d230d74e77564d597ef751b23"
     },
     {
       "path": "library/ui/figma/public-components-policy.mjs",
@@ -500,8 +500,8 @@
     },
     {
       "path": "library/ui/figma/src/port.ts",
-      "sha256": "02fe0f46df2371847d61a7b473119b4d3a9c5146e3d712117248e652437f4034",
-      "indexBlobSha": "7d2eb2e393e06a64debc7f73357a582392e4b85b"
+      "sha256": "b7ab5b2f588f6cad940c88ca18cb785ee2031e1cc52e1eb3856e3cb8fa8b7eee",
+      "indexBlobSha": "2fc298ac593bbd934168a17c5275902c15e214a2"
     },
     {
       "path": "library/ui/figma/src/probe.ts",
