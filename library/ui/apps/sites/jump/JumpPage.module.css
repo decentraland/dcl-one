@@ -1,0 +1,25 @@
+.root {
+  box-sizing: border-box;
+  display: flex;
+  min-height: calc(100vh - var(--site-header-h, 64px));
+  min-height: calc(100svh - var(--site-header-h, 64px));
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-64) var(--dcl-layout-margin-x) var(--dcl-space-48);
+  background: var(--dcl-gradient-radial-background), var(--dcl-background-web-dark);
+  color: var(--dcl-text-primary);
+}
+
+@media (max-width: 1023px) {
+  .root {
+    align-items: stretch;
+    padding-inline: 0;
+    padding-bottom: 0;
+  }
+}
+
+@media (max-width: 767px) {
+  .root {
+    padding-top: 0;
+  }
+}
