@@ -13,7 +13,22 @@ jobs:
         with:
           fetch-depth: 0
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y ripgrep
+        run: |
+          set -euo pipefail
+          ripgrep_version=15.1.0
+          ripgrep_archive="ripgrep-${ripgrep_version}-x86_64-unknown-linux-musl"
+          ripgrep_dir="$RUNNER_TEMP/ripgrep-${ripgrep_version}"
+          mkdir -p "$ripgrep_dir"
+          curl --fail --location --retry 2 --connect-timeout 15 --max-time 60 \
+            --output "$ripgrep_dir/ripgrep.tar.gz" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${ripgrep_version}/${ripgrep_archive}.tar.gz"
+          printf '%s  %s\n' \
+            '1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599' \
+            "$ripgrep_dir/ripgrep.tar.gz" | sha256sum --check --strict
+          tar --extract --gzip --file "$ripgrep_dir/ripgrep.tar.gz" \
+            --directory "$ripgrep_dir" --strip-components=1 "$ripgrep_archive/rg"
+          "$ripgrep_dir/rg" --version
+          printf '%s\n' "$ripgrep_dir" >> "$GITHUB_PATH"
       - name: Validate the ownership catalogue
         run: python3 tooling/owners.py --check
       - name: Validate the single proto source

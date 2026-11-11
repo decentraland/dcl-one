@@ -134,6 +134,7 @@ values to pass arbitrary colours or palette values from props.
 
 ### Composition
 
+- Build components from custom browser primitives (native elements, ARIA attributes and DOM events). Do not introduce Base UI or another component kit, headless or styled, as the base of a component.
 - Once `library/ui` is implemented and adopted by a surface, reuse its shared
   components before creating a new one, and put components shared by multiple
   apps or the Bevy HUD there. Until then, reuse the surface's existing

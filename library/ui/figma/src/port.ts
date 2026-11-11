@@ -7,7 +7,9 @@
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
+  copyFileSync,
   existsSync,
+  mkdirSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -16,6 +18,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import path from 'node:path'
+import { toPosix } from './guard/fs-safe.js'
 import {
   RECORD_DETAIL,
   REQUIRED_CHECKS,
@@ -73,12 +76,23 @@ const json = (text: string, what: string): Record<string, unknown> => {
 const cli = (run: Run, figma: string, args: string[]) =>
   run(process.execPath, [...process.execArgv, process.argv[1]!, ...args], figma)
 
+// A repository-relative path in the form Git prints and accepts: '/' separators on every platform.
+const gitPath = (p: Paths, absolute: string) => toPosix(path.relative(p.repository, absolute))
+
 // library/ui without its installed packages and private working files: what a port may change.
 const uiPathspec = (p: Paths) => [
-  path.relative(p.repository, p.ui),
-  `:!${path.relative(p.repository, path.join(p.ui, 'node_modules'))}`,
-  `:!${path.relative(p.repository, path.join(p.figma, 'node_modules'))}`,
-  `:!${path.relative(p.repository, path.join(p.ui, '.agent-work'))}`
+  gitPath(p, p.ui),
+  `:!${gitPath(p, path.join(p.ui, 'node_modules'))}`,
+  `:!${gitPath(p, path.join(p.figma, 'node_modules'))}`,
+  `:!${gitPath(p, path.join(p.ui, '.agent-work'))}`
+]
+
+// The directories the checks regenerate (review-manifest writes the Review, install writes foundations and
+// components). After a failed check only these are restored; anything else stays as the maintainer left it.
+const checkOutputs = (p: Paths) => [
+  gitPath(p, path.join(p.figma, 'review')) + '/',
+  gitPath(p, path.join(p.ui, 'foundations')) + '/',
+  gitPath(p, path.join(p.ui, 'components')) + '/'
 ]
 
 // Uncommitted or untracked files under library/ui. A failing git status is an error, never an empty answer.
@@ -289,9 +303,20 @@ function verifyStages(run: Run, p: Paths): Record<string, () => Stage> {
   }
 }
 
+type Restore = {
+  /** Paths put back to HEAD, in Git form. */
+  restored: string[]
+  /** Where the replaced bytes were copied first, relative to library/ui; absent when nothing was restored. */
+  backup?: string
+  /** Changed paths outside the check outputs, left untouched. */
+  kept: string[]
+  /** Why the restore stopped, when it failed; the failed check is still reported. */
+  error?: string
+}
+
 type VerifyResult =
   | { ok: true; record: string; portInputHash: string; checks: StageResult[] }
-  | { ok: false; failed: string; reason: string; checks: StageResult[]; restored?: boolean }
+  | { ok: false; failed: string; reason: string; checks: StageResult[]; restore?: Restore }
 
 // Runs one stage. Any error, not only a StageError, fails that stage by name, so the report says which check broke.
 function runStage(name: string, stage: (() => Stage) | undefined): StageResult {
@@ -304,18 +329,68 @@ function runStage(name: string, stage: (() => Stage) | undefined): StageResult {
   }
 }
 
-// Verify starts from a clean tree, so whatever is uncommitted under library/ui after a failed check was written by
-// the checks (review-manifest, install): it is put back, so the next verify does not refuse a dirty tree.
-function restoreTree(run: Run, p: Paths): boolean {
-  if (!changes(run, p)) return false
-  for (const args of [
-    ['checkout', '--', ...uiPathspec(p)],
-    ['clean', '-fdq', '--', ...uiPathspec(p)]
-  ]) {
-    const result = run('git', ['-C', p.repository, ...args], p.ui)
-    if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${firstLine(result.stderr)}`)
+/**
+ * After a failed check, puts back what the checks regenerated so the next verify does not refuse a dirty tree. Verify
+ * starts from a clean tree, but it runs for minutes, so only paths under the check outputs are touched; each one is
+ * copied to a backup directory under .agent-work first, so an edit made there during the run can be recovered. Other
+ * changes are reported as kept. A restore that fails reports its error instead of hiding the failed check.
+ */
+function restoreTree(run: Run, p: Paths): Restore {
+  const outcome: Restore = { restored: [], kept: [] }
+  try {
+    const status = run(
+      'git',
+      [
+        '-C',
+        p.repository,
+        'status',
+        '--porcelain=v1',
+        '-z',
+        '--untracked-files=all',
+        '--no-renames',
+        '--',
+        ...uiPathspec(p)
+      ],
+      p.ui
+    )
+    if (status.code !== 0) throw new Error(`git status failed: ${firstLine(status.stderr)}`)
+    const outputs = checkOutputs(p)
+    const tracked: string[] = []
+    const untracked: string[] = []
+    for (const entry of status.stdout.split('\0').filter(Boolean)) {
+      const file = entry.slice(3)
+      if (!outputs.some((root) => file.startsWith(root))) outcome.kept.push(file)
+      else (entry.startsWith('??') ? untracked : tracked).push(file)
+    }
+    const touched = [...tracked, ...untracked].sort()
+    if (touched.length === 0) return outcome
+    const backup = path.join(
+      p.ui,
+      '.agent-work',
+      'figma-port',
+      `restored-${new Date().toISOString().replace(/[:.]/g, '-')}`
+    )
+    for (const file of touched) {
+      const source = path.join(p.repository, ...file.split('/'))
+      if (!existsSync(source)) continue
+      const target = path.join(backup, ...file.split('/'))
+      mkdirSync(path.dirname(target), { recursive: true })
+      copyFileSync(source, target)
+    }
+    outcome.backup = path.relative(p.ui, backup).split(path.sep).join('/')
+    for (const [args, files] of [
+      [['checkout', '--'], tracked],
+      [['clean', '-fq', '--'], untracked]
+    ] as const) {
+      if (files.length === 0) continue
+      const result = run('git', ['-C', p.repository, ...args, ...files], p.ui)
+      if (result.code !== 0) throw new Error(`git ${args[0]} failed: ${firstLine(result.stderr)}`)
+    }
+    outcome.restored = touched
+  } catch (error) {
+    outcome.error = error instanceof Error ? error.message : String(error)
   }
-  return true
+  return outcome
 }
 
 const headOf = (run: Run, p: Paths): string => {
@@ -356,7 +431,7 @@ function portVerify(
         failed: name,
         reason: result.detail,
         checks,
-        restored: restoreTree(run, p)
+        restore: restoreTree(run, p)
       }
   }
   if (changes(run, p))
@@ -365,7 +440,7 @@ function portVerify(
       failed: 'clean-tree',
       reason: 'the checks changed tracked files',
       checks,
-      restored: restoreTree(run, p)
+      restore: restoreTree(run, p)
     }
   // The checks take minutes: the record must name the commit they ran on.
   if (headOf(run, p) !== head)
@@ -396,7 +471,7 @@ function portVerify(
   const temporary = `${file}.tmp`
   writeFileSync(temporary, JSON.stringify(record, null, 2) + '\n')
   renameSync(temporary, file)
-  return { ok: true, record: path.relative(p.repository, file), portInputHash: inputHash, checks }
+  return { ok: true, record: gitPath(p, file), portInputHash: inputHash, checks }
 }
 
 /** The ordered, mutating preparation of a port. It stops at the first stage that fails and names it. */
@@ -444,11 +519,7 @@ function prepareStages(run: Run, p: Paths): Record<string, () => Stage> {
     'lock-digests': () => {
       // lock-digests reads the index, so what sync and install just wrote is staged first; otherwise it would pin the
       // previous bytes and leave new generated files unpinned.
-      const staged = run(
-        'git',
-        ['-C', p.repository, 'add', '-A', '--', path.relative(p.repository, p.ui)],
-        p.ui
-      )
+      const staged = run('git', ['-C', p.repository, 'add', '-A', '--', gitPath(p, p.ui)], p.ui)
       if (staged.code !== 0) fail(`git add failed: ${firstLine(staged.stderr)}`)
       const result = run(
         process.execPath,
@@ -481,7 +552,7 @@ type PrepareResult = {
 
 // The one uncommitted file a port may start from: the lock whose capture pin was just bumped (fetch-source --seal).
 function unexpectedChanges(run: Run, p: Paths): string[] {
-  const lock = path.relative(p.repository, path.join(p.ui, 'upstream.lock.json'))
+  const lock = gitPath(p, path.join(p.ui, 'upstream.lock.json'))
   return changes(run, p)
     .split('\n')
     .filter(Boolean)

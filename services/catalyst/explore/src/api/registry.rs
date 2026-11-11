@@ -27,8 +27,9 @@ use tokio::sync::Semaphore;
 
 use super::{Settings, Shared};
 
-/// Largest backend response buffered for one request.
-const BODY_CAP: usize = 32 << 20;
+/// Largest backend response buffered for one request. Registry answers are
+/// far smaller; this bounds the worst case at `IN_FLIGHT * BODY_CAP` (512 MiB).
+const BODY_CAP: usize = 8 << 20;
 /// Backend requests in flight at once, so the buffered responses stay bounded
 /// at `IN_FLIGHT * BODY_CAP`. Nothing is cached: every read is a backend call.
 const IN_FLIGHT: usize = 64;
