@@ -23,7 +23,8 @@ permissions:
 
 concurrency:
   group: creator-hub-ci-${{ github.ref }}
-  cancel-in-progress: true
+  # A newer push cancels a branch's run, never main's: main's run may be mid-publish.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   changes:
