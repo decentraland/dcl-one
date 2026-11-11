@@ -81,7 +81,7 @@ export function communitiesUrl(env: BaseEnv = processEnv()): string {
 }
 
 /**
- * The blog's CMS (cms-server, the Contentful cache decentraland.org reads), as the full
+ * The blog's CMS (cms-server, the Contentful cache decentraland/sites reads), as the full
  * `<origin>/spaces/<space>/environments/<environment>` base; undefined when unset, and the blog
  * then answers 503.
  */

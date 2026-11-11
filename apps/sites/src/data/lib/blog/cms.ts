@@ -35,7 +35,7 @@ export class BlogUnavailableError extends Error {
 
 /** One CMS request; shared (memoized) reads outlive the visitor's request, so they carry their own deadline. */
 export const CMS_REQUEST_TIMEOUT_MS = 6_000;
-// cms-server serves en-US, es and zh; the blog is English only, as decentraland.org's.
+// cms-server serves en-US, es and zh; the blog is English only, as decentraland/sites'.
 const LOCALE = "en-US";
 const MEMO_TTL_MS = 5 * 60_000;
 /** How long an expired list page is still served while one reload runs behind it (/create's 1s budget). */
@@ -145,7 +145,7 @@ export type BlogScope = { category?: string; author?: string };
 
 export type BlogPage = { posts: BlogCmsPost[]; total: number };
 
-/** Page `n` (1-based) of a list: 7 posts first, then 6 each, as decentraland.org. */
+/** Page `n` (1-based) of a list: 7 posts first, then 6 each, as decentraland/sites. */
 export function listPageWindow(n: number): { skip: number; limit: number } {
   return n === 1 ? { skip: 0, limit: FIRST_PAGE_SIZE } : { skip: FIRST_PAGE_SIZE + (n - 2) * NEXT_PAGE_SIZE, limit: NEXT_PAGE_SIZE };
 }

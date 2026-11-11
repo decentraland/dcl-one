@@ -23,7 +23,7 @@ describe('formatBlogDate', () => {
 })
 
 describe('links', () => {
-  it('builds decentraland.org-shaped paths and encodes each segment', () => {
+  it('builds decentraland/sites-shaped paths and encodes each segment', () => {
     expect(blogPostHref('platform', 'a b')).toBe('/blog/platform/a%20b')
     expect(blogPostHref('x/y', 'p?q')).toBe('/blog/x%2Fy/p%3Fq')
     expect(blogCategoryHref('')).toBe('/blog')

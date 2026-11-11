@@ -3,7 +3,7 @@
 //       shared/blog/utils/string.ts (slugify, decodeHtmlEntities)
 // decentraland/sites is Apache-2.0.
 // Turns raw cms-server entries into the blog's view values: the same entry yields the same slug,
-// title and fallbacks as decentraland.org. Links (category, author, images) resolve from lookups the
+// title and fallbacks as decentraland/sites. Links (category, author, images) resolve from lookups the
 // caller builds; nothing here fetches or caches.
 import {
   BLOG_QUERY_MAX,
@@ -31,10 +31,10 @@ export type BlogCmsPost = BlogCard & { id: string; body: BlogRichTextNode | null
 /** Assets the caller fetched, by id; null for one the CMS did not return. */
 export type AssetLookup = ReadonlyMap<string, BlogImage | null>;
 
-/** Home, category and author lists page as decentraland.org does: 7 posts, then 6 per "Load more". */
+/** Home, category and author lists page as decentraland/sites does: 7 posts, then 6 per "Load more". */
 export const FIRST_PAGE_SIZE = 7;
 export const NEXT_PAGE_SIZE = 6;
-/** Search pages hold 10 posts; a query under 3 characters is not sent (as decentraland.org). */
+/** Search pages hold 10 posts; a query under 3 characters is not sent (as decentraland/sites). */
 export const SEARCH_PAGE_SIZE = 10;
 export const SEARCH_MIN_LENGTH = 3;
 /** The deepest `?page=` a list loads: each page is one CMS request, so the cap bounds a request's fan-out. */

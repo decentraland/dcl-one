@@ -134,7 +134,7 @@ export function loadBlogAuthor(request: Request, slug: string, env?: BaseEnv) {
   });
 }
 
-/** `/blog/search?q=`: cms-server's full-text search, as decentraland.org; an empty `q` goes to the home. */
+/** `/blog/search?q=`: cms-server's full-text search, as decentraland/sites; an empty `q` goes to the home. */
 export function loadBlogSearch(request: Request, env?: BaseEnv) {
   const url = new URL(request.url);
   const q = parseBlogQuery(url.searchParams.get("q"));

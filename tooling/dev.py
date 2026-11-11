@@ -251,7 +251,10 @@ def runtime_env(config):
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
-        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS
+        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS,
+        # Sites' blog CMS base, taken from the shell when set (unset: the blog answers 503).
+        # TODO(cms-migration): point it at the in-tree area once cms-server is migrated.
+        'BLOG_CMS_URL',
     ) if key in os.environ}
     base = config['port']
     env.update({
@@ -316,8 +319,6 @@ def runtime_env(config):
             'WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS': 'true',
             'EVENTS_MIRROR_UPSTREAM': 'true', 'EVENTS_UPSTREAM_URL': 'https://events.decentraland.org',
             'EVENTS_POSTER_UPSTREAM_URL': 'https://events-assets-099ac00.decentraland.org',
-            # Sites' blog reads decentraland.org's cms-server (TODO(cms-migration): the in-tree area once migrated).
-            'BLOG_CMS_URL': 'https://cms-api.decentraland.org/spaces/ea2ybdmmn1kv/environments/master',
             'EXPLORER_MIRRORS_ENABLED': 'true',
             'EXPLORER_LISTS_SOURCE_URL': 'https://dcl-lists.decentraland.org',
             'EXPLORER_DENYLIST_SOURCE_URL': 'https://config.decentraland.org/denylist.json',

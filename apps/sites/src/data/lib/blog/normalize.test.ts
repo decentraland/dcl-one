@@ -132,7 +132,7 @@ describe("parsers", () => {
     expect(readMinutes(null)).toBe(1);
   });
 
-  it("slugifies and decodes as decentraland.org", () => {
+  it("slugifies and decodes as decentraland/sites", () => {
     expect(slugify("  Hello, World_again ")).toBe("hello-world-again");
     expect(decodeHtmlEntities("&amp;lt; &nbsp;")).toBe("&lt;  ");
   });
