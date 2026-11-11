@@ -88,8 +88,7 @@ impl Plugin for PerformanceMonitoringPlugin {
             );
     }
 
-    /// The render-world timers need the render app, which exists once the render plugin has
-    /// finished (on the web, `finish` runs on the render worker).
+    /// Adds the render-world timers to the render app.
     fn finish(&self, app: &mut App) {
         frame_time_breakdown::add_render_world_timers(app);
     }

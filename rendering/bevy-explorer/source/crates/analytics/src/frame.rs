@@ -1,5 +1,4 @@
-//! The "Performance Metrics" event, one per completed performance sample
-//! (`common::perf::PerformanceSnapshot`, taken by the engine's sampler in `src/perf/`).
+//! The "Performance Metrics" event, one per `common::perf::PerformanceSnapshot` event read.
 
 use bevy::prelude::*;
 use common::perf::PerformanceSnapshot;

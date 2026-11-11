@@ -9,7 +9,7 @@ pub const PERFORMANCE_ISSUE_LOG_TARGET: &str = "perf";
 pub const LONG_FRAME_THRESHOLD_MS: f32 = 1000.0;
 pub const LOW_MEAN_FPS_THRESHOLD: f32 = 15.0;
 
-/// `Update`, after the sampler: logs at most one issue per sample.
+/// Logs at most one issue per sample.
 pub fn log_performance_issue_system(
     status: Res<SamplingStatus>,
     time: Res<Time<Real>>,

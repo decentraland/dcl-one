@@ -172,7 +172,7 @@ fn mark_render_world_frame_end_system(
     }
 }
 
-/// `PreUpdate`: assembles [`FrameTimeBreakdown`] from the previous frame's timers and records
+/// Assembles [`FrameTimeBreakdown`] from the previous frame's timers and records
 /// the `perf/*` diagnostics. The bottleneck is classified from the diagnostics' smoothed values,
 /// so it does not flicker with one frame.
 #[allow(clippy::too_many_arguments)]

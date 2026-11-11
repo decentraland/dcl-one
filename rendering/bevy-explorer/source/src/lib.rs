@@ -715,9 +715,9 @@ impl DecentralandApp {
         // (the first render frame warns, under `gpu_time`, about any node they do not)
         app.add_plugins(GpuTimePlugin);
 
-        // what the explorer measures about itself (`docs/guidelines/profiling.md`): the sampler,
-        // the frame-time breakdown, the scope profiler; Bevy's per-pass render timings on native
-        // and its system information where the `sysinfo_plugin` feature is on (Cargo.toml)
+        // what the explorer measures about itself: the sampler, the frame-time breakdown, the scope
+        // profiler; Bevy's per-pass render timings on native, its system information on Windows
+        // and Linux
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(not(target_arch = "wasm32"))]
         app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);

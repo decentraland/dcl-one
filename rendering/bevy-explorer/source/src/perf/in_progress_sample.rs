@@ -78,7 +78,7 @@ pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
         .map(|count| count as u32)
 }
 
-/// `First`: sets [`SamplingStatus`] from the world state, the loading screen and the primary
+/// Sets [`SamplingStatus`] from the world state, the loading screen and the primary
 /// window's focus; advances the in-progress sample by the `Time<Real>` delta while `Sampling`,
 /// except on the frame sampling resumed, whose delta spans the pause.
 #[allow(clippy::too_many_arguments)]
@@ -98,7 +98,7 @@ pub fn update_sampling_status_system(
     let world_held = world_hold.is_some();
     let realm_connected = realm.as_ref().is_some_and(|realm| realm.connected);
     let out_of_world = player.single().ok();
-    // the loading screen's own rule (`system_ui/oow.rs`): signed in, out of world, not held
+    // the loading screen: signed in, out of world, not held
     let loading_screen = signed_in && !world_held && out_of_world == Some(true);
     let in_world = signed_in && !world_held && realm_connected && out_of_world == Some(false);
     let focused = window.single().map_or(true, |window| window.focused);
@@ -118,7 +118,7 @@ pub fn update_sampling_status_system(
     }
 }
 
-/// `Update`: while `Sampling`, takes the frame's `Time<Real>` delta and any new GPU frame time,
+/// While `Sampling`, takes the frame's `Time<Real>` delta and any new GPU frame time,
 /// except on the frame sampling resumed; when the sample reaches [`SAMPLE_DURATION_SECONDS`],
 /// builds the [`PerformanceSnapshot`], inserts it as the resource, sends it as an event and
 /// starts the next sample.
@@ -200,8 +200,7 @@ pub fn sample_frame_times_system(
     frame_times.reset();
 }
 
-/// The frame-rate target the hiccup threshold scales to: the session override, else the
-/// configured target; `None` with vsync on (the monitor sets the rate) or uncapped.
+/// The effective frame-rate target: the session override, else the configured target; `None` with vsync on (the monitor sets the rate) or uncapped.
 pub fn effective_target_fps(config: &AppConfig, session: Option<&SessionGraphics>) -> Option<f32> {
     if config.graphics.vsync {
         return None;

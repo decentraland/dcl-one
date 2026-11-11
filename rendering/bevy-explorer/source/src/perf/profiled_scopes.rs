@@ -91,7 +91,7 @@ thread_local! {
     static ENTERED_SCOPE_STACK: RefCell<Vec<EnteredProfiledScope>> = const { RefCell::new(Vec::new()) };
 }
 
-/// The layer to install through `LogPlugin::custom_layer`.
+/// The scope profiler's `tracing` layer.
 pub fn profiled_scopes_layer() -> ProfiledScopesLayer {
     ProfiledScopesLayer
 }
@@ -296,7 +296,7 @@ impl ProfiledScopesTable {
     }
 }
 
-/// `Last`: folds the frame's recording into the table.
+/// Folds the frame's recording into the table.
 pub fn fold_profiled_scopes_system(mut table: ResMut<ProfiledScopesTable>) {
     if !profiler_recording_enabled() {
         return;

@@ -42,7 +42,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for CountingAllocator<A> {
     }
 }
 
-/// `Last`: records the counts since the last frame and resets them; zero when nothing was
+/// Records the counts since the last frame and resets them; zero when nothing was
 /// counted.
 pub fn publish_frame_allocations_system(mut diagnostics: Diagnostics) {
     let allocation_count = ALLOCATION_COUNT.swap(0, Ordering::Relaxed);

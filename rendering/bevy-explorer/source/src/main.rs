@@ -29,7 +29,7 @@ use webgpu_build::{
     CONFIG_READ_RETRY_PAUSE,
 };
 
-// mimalloc, counted for `perf/allocation_count_per_frame` (src/perf/allocation_counter.rs)
+// mimalloc, wrapped to count every allocation and its bytes
 #[global_allocator]
 static GLOBAL: CountingAllocator<MiMalloc> = CountingAllocator(MiMalloc);
 static SESSION_LOG: OnceLock<String> = OnceLock::new();

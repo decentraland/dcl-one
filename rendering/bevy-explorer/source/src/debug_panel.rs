@@ -1,6 +1,5 @@
 //! The engine's own debug panel sections: Performance, Render, Profiler and Memory and limits.
-//! The measurements come from `src/perf/` (`docs/guidelines/profiling.md`); each query builds
-//! its JSON only when asked.
+//! Each query builds its JSON only when asked.
 
 use std::collections::BTreeMap;
 
@@ -242,7 +241,6 @@ fn performance_state(
         gpu_ms,
     ]
     .map(|ms| ms.map(tenths));
-    // Bevy's system information is compiled where the `sysinfo_plugin` feature is on (Cargo.toml)
     #[cfg(any(windows, target_os = "linux"))]
     let system = {
         use bevy::diagnostic::SystemInformationDiagnosticsPlugin;

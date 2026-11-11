@@ -50,7 +50,7 @@ pub struct BenchmarkMeasuredPhaseAccumulator {
     perf_summary_logged: bool,
 }
 
-/// `Update`, after the sampler. Runs only under the autopilot (the phase resource exists then).
+/// Does nothing without an [`AutopilotPhase`] resource.
 #[allow(clippy::too_many_arguments)]
 pub fn accumulate_benchmark_measured_phase_system(
     phase: Option<Res<AutopilotPhase>>,
