@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "9b4b38b7fe78fd2e1ac38ee2558f1cb3c187b06e91f9c564a1ff990be4976b1b",
+          "sha256": "4d1678b4128fed431e5b095b416136754bcc4a818bf6d54d2fd8c132376197bb",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -697,7 +697,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "e52688ce2880b4571040350bdd22b6f131016b0d6deba9067deec4c7dbc035c2",
+          "sha256": "673761cba539f24af40be188337e59971e1b9b055090e1c4251e49a3ec6efc18",
           "fds": null,
           "deviation": [
             "port-command",
@@ -3416,7 +3416,7 @@
             "hand-written-components",
             "install-file-ownership"
           ],
-          "sha256": "fd3f399d6838bf87980a771fbad20f1329058ea47e43a1d3c3c67e1bbdb8a18c"
+          "sha256": "d1119e10303246da1d4a32ff5aaafdeab1283b3a2c8defd2d64dc048102aa2ad"
         },
         "library/ui/figma/src/install.ts": {
           "fds": null,
@@ -3430,7 +3430,7 @@
             "hand-written-components",
             "install-file-ownership"
           ],
-          "sha256": "52bd88ad9d28c6c9048d0f8a1149f40b7cf81477e9dd849970d07dc748c03e43"
+          "sha256": "a4eddfb59e86e7950d68dcde9025d9e1cf350ad3364360bc36a06eb8bf7513bd"
         },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e4e08e59344ca031539221b01dfc0d65a53ce2ee2e1481be9fff50aab5809bf3",
@@ -4784,7 +4784,7 @@
         }
       },
       "generation.json": {
-        "sha256": "4a68ac42282851e991642846a8ea25abe39bebe60e5e68b136f1ab2a0a271db6",
+        "sha256": "d4ecd0761dfb42184056f20dfbfdd25cc4d4fa72cd4cb42f0f8c555515d75b7e",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
