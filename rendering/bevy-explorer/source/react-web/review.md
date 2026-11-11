@@ -165,6 +165,9 @@ these by hand (or have an agent drive the Chrome extension against a live world)
       community chat by a player standing nearby shows as their bubble with the community's name on
       a smaller, dimmer, left-aligned row above their name, cut short with an ellipsis (and over
       your own head for your own); a Nearby message shows no such row, and a DM no bubble at all.
+- [ ] **Hushed badge** (`bridge-scene/src/domains/{nearbyMutes,nametags}.*`): while a player whose
+      nearby voice you muted (profile menu, Hush) is talking, their tag shows the red hushed icon in
+      place of the green speaking bars, and nothing when they are quiet; Hear brings the bars back.
 - [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
       page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
       Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
@@ -284,6 +287,8 @@ back as `analyticsSession`). Expectations:
   {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
 - **Social**: Friend Request, Friend Accept, Unfriend, Block User on the action.
+- **Nearby voice**: `nearby_voice_user_mute` {wallet_id, is_muted} on the profile menu's Hush or
+  Hear; not for the mutes read from the saved list.
 - **In world**: the engine's First Move In World (an `analytics` message over the bridge, which
   relays the engine's own Segment events by name; a metre walked since logging in), once per page load, with the terms accepted (the welcome
   flow's answer, or the engine's persisted config), posts `bevy-shell:in-world` {login_type,

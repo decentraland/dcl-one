@@ -57,6 +57,8 @@ export function ProfileCard({
       onMention={session.chat.mention}
       onMessage={(u) => (onMessage != null ? onMessage(u.address) : session.chat.openConversation(u.address))}
       onCall={(u) => startCallWith(session, u.address)}
+      hushed={session.nearbyMutes.muted.has(userId.toLowerCase())}
+      onSetHushed={(u, hushed) => session.nearbyMutes.set(u.address, hushed)}
       onViewProfile={() => openPassport(userId)}
       onClose={onClose}
     />

@@ -636,6 +636,7 @@ fn locate_foreign_streams(
     pan: VolumePanning,
     settings: Res<AudioSettings>,
     panning_settings: Res<NearbyPanning>,
+    mutes: Res<crate::nearby_mutes::NearbyMutes>,
     time: Res<Time>,
 ) {
     for (emitter_transform, render_layers, source, player, mut voice_pan) in streams.iter_mut() {
@@ -668,7 +669,11 @@ fn locate_foreign_streams(
 
             let (volume, panning) =
                 pan.volume_and_panning(emitter_transform.translation(), render_layers);
-            let volume = volume * settings.voice();
+            let volume = if mutes.is_muted(player.address) {
+                0.0
+            } else {
+                volume * settings.voice()
+            };
             let panning = voice_pan.update(panning, &panning_settings, time.delta_secs());
             for livekit_track in tracks.iter_many(publishing) {
                 if let Some(track) = livekit_track.track() {

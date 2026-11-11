@@ -444,6 +444,26 @@ module.exports.getVoiceStream = async function() {
   return streamGenerator();
 }
 
+// mute or unmute a wallet's nearby voice for the local user; saved per account
+module.exports.setNearbyMuted = async function(address, muted) {
+  await Deno.core.ops.op_set_nearby_muted(address, muted);
+}
+
+// the wallets whose nearby voice is muted (string[]): the list now, then again on every change
+module.exports.getNearbyMuteStream = async function() {
+  const rid = await Deno.core.ops.op_get_nearby_mute_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_nearby_mute_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
 // get hover events as a stream
 // type HoverAction = {
 //   enabled: bool,

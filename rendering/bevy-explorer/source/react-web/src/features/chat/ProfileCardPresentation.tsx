@@ -9,6 +9,8 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
 import callIcon from '../../assets/voice/call.png'
+import hearIcon from '../../assets/voice/hear.png'
+import hushIcon from '../../assets/voice/hush.png'
 import { shortAddr, splitName, userColor } from '../../lib/identity'
 import { looksClaimed, mentionName } from '../../engine/mention'
 import { peekProfile } from '../session/profileStore'
@@ -97,6 +99,8 @@ export function ProfileCardPresentation({
   onMention,
   onMessage,
   onCall,
+  hushed = false,
+  onSetHushed,
   onViewProfile,
   onClose
 }: {
@@ -125,6 +129,10 @@ export function ProfileCardPresentation({
   onMessage?: (user: ChatUser) => void
   /** Ring the user (a private voice call). */
   onCall?: (user: ChatUser) => void
+  /** The user's nearby voice is muted for the local user: the row reads Hear instead of Hush. */
+  hushed?: boolean
+  /** Mute (true) or unmute the user's nearby voice. */
+  onSetHushed?: (user: ChatUser, hushed: boolean) => void
   onViewProfile?: (user: ChatUser) => void
   onClose: () => void
 }): React.JSX.Element {
@@ -173,6 +181,8 @@ export function ProfileCardPresentation({
   // unity-explorer's member menu offers Chat to every other member
   const showMessage = other && (community || (relationship !== 'blocked' && context !== 'blocked')) && !!onMessage
   const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
+  // offered for a blocked user too
+  const showHush = other && (context === 'default' || context === 'friend') && !!onSetHushed
 
   let cta: React.ReactNode = null
   // the member menu's header button only shows a friendship (to remove it): the row carries the rest
@@ -225,7 +235,7 @@ export function ProfileCardPresentation({
     </button>
   )
   const hasDestructive = !!block || !!report
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || hasDestructive || communityActions.length > 0)
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || showHush || hasDestructive || communityActions.length > 0)
   const message = showMessage && (
     <button type="button" className={styles.row} onClick={run(onMessage)}>
       <MessageIcon />
@@ -303,6 +313,12 @@ export function ProfileCardPresentation({
                 <button type="button" className={styles.row} onClick={run(onCall)}>
                   <MaskIcon src={callIcon} size={16} />
                   <span>Call</span>
+                </button>
+              )}
+              {showHush && (
+                <button type="button" className={styles.row} onClick={() => { onClose(); onSetHushed?.(user, !hushed) }}>
+                  <MaskIcon src={hushed ? hearIcon : hushIcon} size={16} />
+                  <span>{hushed ? 'Hear' : 'Hush'}</span>
                 </button>
               )}
               {showMention && (

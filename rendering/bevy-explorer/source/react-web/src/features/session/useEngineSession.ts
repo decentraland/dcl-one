@@ -937,6 +937,8 @@ export interface EngineSession {
   worldPassword: WorldPasswordState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** Saved mutes for nearby voice: lowercased addresses the user hushed, kept per account by the engine. */
+  nearbyMutes: { muted: ReadonlySet<string>; set: (address: string, muted: boolean) => void }
   /** Private calls and community streams. */
   voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
@@ -1139,6 +1141,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   closedCommunitiesRef.current = closedCommunities
   const [members, setMembers] = useState<NearbyMember[]>([])
   const [speaking, setSpeaking] = useState<ReadonlySet<string>>(() => new Set())
+  const [nearbyMuted, setNearbyMuted] = useState<ReadonlySet<string>>(() => new Set())
   // Mirror cursor-lock into a ref so the run-once message handler reads it without a stale closure —
   // avatarClick uses it to centre the card while the camera has the pointer locked.
   const cursorLockedRef = useRef(false)
@@ -1779,6 +1782,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'mic':
           setMic({ enabled: msg.enabled, available: msg.available })
+          break
+        case 'nearbyMutes':
+          setNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
           break
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
@@ -3315,6 +3321,19 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return { ...m, enabled: !m.enabled } // optimistic; relay confirms
     })
   }, [])
+  const setNearbyMute = useCallback((address: string, muted: boolean) => {
+    const wallet_id = address.toLowerCase()
+    // optimistic; the engine's list confirms or puts it back
+    setNearbyMuted((prev) => {
+      if (prev.has(wallet_id) === muted) return prev
+      const next = new Set(prev)
+      if (muted) next.add(wallet_id)
+      else next.delete(wallet_id)
+      return next
+    })
+    track('nearby_voice_user_mute', { wallet_id, is_muted: muted })
+    driverRef.current?.send({ kind: 'setNearbyMute', address: wallet_id, muted })
+  }, [])
   const markNotificationsRead = useCallback(() => {
     const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id)
     if (unreadIds.length === 0) return
@@ -4313,6 +4332,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    nearbyMutes: { muted: nearbyMuted, set: setNearbyMute },
     voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     setEngineViewport,

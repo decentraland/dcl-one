@@ -80,6 +80,19 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     rejected on reconnect (one the user placed is ended), and the reconnect's own report of it is
     ignored: the server tells only the caller about a reject, so a second ring would never stop.
   - Don't show the "stream in this scene" banner to guests: they can't join.
+- **Saved mutes for nearby voice** follow unity-explorer's: the profile menu's Hush and Hear, the
+  list kept by the social service (`/v1/mutes`), a mute that holds for the session when saving it
+  fails, a saved list that only adds to what the user did before it arrived, and a muted player
+  silenced but still subscribed, with the hushed badge in place of the speaking bars. These differ:
+  - The list belongs to the account. A change of account drops it and reads the new account's;
+    unity-explorer reads it once at start and keeps it for whoever signs in next.
+  - `nearby_voice_user_mute` is sent for the user's Hush or Hear only; unity-explorer also sends
+    it for every mute read from the saved list.
+  - Muting oneself is refused, as the service refuses it; the menu never offers it.
+  - Hush and Hear are on the profile card's default and friend menus, for a blocked user too, as
+    unity-explorer's user menu has them; the request, blocked-list and community-member menus
+    do not carry them.
+  - Don't apply it to calls or community streams: as in unity-explorer it is nearby voice only.
 - **Profiles from the centralized catalyst.** unity-explorer switches between the
   asset-bundle registry and a catalyst with `USE_CENTRALIZED_PROFILES` and reads a remote
   player's catalyst from their LiveKit metadata. We read the base-domain catalyst's lambdas:

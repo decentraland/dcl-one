@@ -123,6 +123,8 @@ const MOCK_NEARBY = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat' },
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
+// Saved mutes for nearby voice (lowercased addresses), as the engine would report them.
+const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
 
 // The places the mock user can link to a community, and what each community links.
 const MOCK_OWNED_PLACES = [
@@ -610,6 +612,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     )
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
+    // One nearby player is already hushed, so both Hush and Hear show in ?mock=1.
+    setTimeout(() => reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] }), 1500)
 
     // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
     const pushVoice = (next: Partial<VoiceChatState>): void => {
@@ -1049,6 +1053,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         for (const w of mockWearables) w.equipped = set.has(w.urn)
         reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
       }
+      return
+    }
+    if (msg.kind === 'setNearbyMute') {
+      if (msg.muted) mockNearbyMuted.add(msg.address)
+      else mockNearbyMuted.delete(msg.address)
+      reply({ kind: 'nearbyMutes', addresses: [...mockNearbyMuted] })
       return
     }
     if (msg.kind === 'setMic') {

@@ -191,6 +191,11 @@ export type BevyApiInterface = {
   consoleCommand?: (cmd: string, args: string[]) => Promise<string>
   getMicState: () => Promise<MicState>
   setMicEnabled: (enabled: boolean) => void
+  /** Mute or unmute a wallet's nearby voice; the engine saves it per account. Optional: absent on
+   *  runtimes whose SystemApi predates it. */
+  setNearbyMuted?: (address: string, muted: boolean) => Promise<void>
+  /** The wallets whose nearby voice is muted: the list now, then again on every change. */
+  getNearbyMuteStream?: () => Promise<AsyncIterable<string[]>>
   getAvatarModifiers: () => Promise<AvatarModifierState[]>
   getPermissionRequestStream: () => Promise<AsyncIterable<PermissionRequestRaw>>
   setSinglePermission: (body: SetSinglePermission) => void

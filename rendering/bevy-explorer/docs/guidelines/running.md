@@ -208,6 +208,10 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/nearby_mutes`: the wallets whose nearby voice the account muted (`muted`, the first 32 of
+  `count`), the `account` and where its saved list stands (`load`: `idle` signed out, `loading`,
+  `loaded`, `failed`). `/nearby_mute on|off <address>` mutes or unmutes one, as the profile
+  menu's Hush and Hear do, and saves it on the social service.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the
