@@ -1,0 +1,151 @@
+/*
+ * Source: decentraland/sites StatusDropdown (src/components/Support/StatusDropdown.styled.ts), StatusResult and
+ * the Status*Icon marks. The popover fill (#280d2be5) has no token: it is the accordion's violet mix at 90%.
+ */
+.root {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.mark {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--dcl-radius-full);
+  color: var(--dcl-neutrals-white);
+}
+
+.root > .mark {
+  margin-right: var(--dcl-space-8);
+}
+
+.ok {
+  background: var(--dcl-feedback-success);
+}
+
+.slow {
+  background: var(--dcl-feedback-warning);
+}
+
+.down {
+  background: var(--dcl-feedback-error);
+}
+
+.toggle {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  padding: 6px var(--dcl-space-8);
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  background: transparent;
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+  line-height: 1.75;
+  text-align: left;
+}
+
+.toggle:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.toggle:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + var(--dcl-space-8));
+  /* Opens leftwards from the control's right edge, so it never runs past the viewport. */
+  right: 0;
+  z-index: 20;
+  min-width: 240px;
+  overflow: hidden;
+  border: 1px solid var(--dcl-border-default);
+  border-radius: var(--dcl-radius-xs);
+  background: color-mix(
+    in srgb,
+    color-mix(in srgb, var(--dcl-brand-violet) 20%, var(--dcl-bg-page)) 90%,
+    transparent
+  );
+  box-shadow: 0 8px 32px var(--dcl-transparencies-black-40);
+}
+
+.popover[hidden] {
+  display: none;
+}
+
+.header {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  padding: 10px var(--dcl-space-16);
+  border-radius: 4px 4px 0 0;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 700;
+}
+
+.services {
+  margin: 0;
+  padding: var(--dcl-space-8) 0;
+  list-style: none;
+}
+
+.service {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding: 6px var(--dcl-space-16);
+  color: var(--dcl-text-primary);
+}
+
+.details {
+  display: flex;
+  justify-content: flex-end;
+  padding: 10px var(--dcl-space-16);
+}
+
+.detailsLink {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  color: var(--dcl-text-secondary);
+  text-decoration: none;
+}
+
+.detailsLink:hover {
+  text-decoration: underline;
+}
+
+.detailsLink:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.spinner {
+  box-sizing: border-box;
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--dcl-transparencies-white-20);
+  border-top-color: var(--dcl-action-primary);
+  border-radius: var(--dcl-radius-full);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+
+.visuallyHidden {
+  composes: visuallyHidden from '../shared/a11y.module.css';
+}
