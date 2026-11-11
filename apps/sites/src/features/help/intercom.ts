@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 
 /**
  * The Intercom chat widget, ported from decentraland/sites src/components/Intercom (IntercomWidget, Intercom). The
@@ -90,9 +90,11 @@ export function showIntercom(): boolean {
 /**
  * Boots the widget for this page and shuts it down when the page unmounts. `wallet` rides along as the `Wallet`
  * attribute, as on decentraland.org, so support sees which account is asking. An empty `appId` loads nothing.
+ * Returns whether the chat can open: false when it is switched off or its script failed to load.
  */
-export function useIntercom(appId: string, settings: IntercomSettings, wallet?: string | null): void {
+export function useIntercom(appId: string, settings: IntercomSettings, wallet?: string | null): boolean {
   const { alignment, horizontalPadding, verticalPadding } = settings;
+  const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
     if (!appId) return;
     let active = true;
@@ -105,10 +107,12 @@ export function useIntercom(appId: string, settings: IntercomSettings, wallet?: 
       })
       .catch((error: unknown) => {
         console.error("Could not render Intercom", error instanceof Error ? error.message : error);
+        if (active) setFailed(appId);
       });
     return () => {
       active = false;
       client()?.("shutdown");
     };
   }, [appId, alignment, horizontalPadding, verticalPadding, wallet]);
+  return Boolean(appId) && failed !== appId;
 }

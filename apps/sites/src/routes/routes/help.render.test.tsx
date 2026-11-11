@@ -38,7 +38,7 @@ describe("/help route", () => {
           help: {
             services: [{ name: "Node", url: "https://node.example/about" }],
             statusPageUrl: "https://status.example/",
-            intercomAppId: "",
+            intercomAppId: "app-test",
             sid: "sid-example",
             wallet: null,
           },

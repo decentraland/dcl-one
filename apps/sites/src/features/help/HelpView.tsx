@@ -82,7 +82,7 @@ export function HelpView({
 }: HelpViewProps) {
   const [tab, setTab] = useState<HelpTabId>(initialTab);
   const report = useServiceStatus(services);
-  useIntercom(intercomAppId, INTERCOM_SETTINGS, wallet);
+  const chatAvailable = useIntercom(intercomAppId, INTERCOM_SETTINGS, wallet);
 
   return (
     <HelpPage
@@ -106,12 +106,15 @@ export function HelpView({
         />
       }
       banner={
+        // No chat widget (switched off, or its script failed): no button that would do nothing.
+        chatAvailable && (
         <HelpChatBanner
           title={HELP_COPY.chat.title}
           subtitle={HELP_COPY.chat.subtitle}
           actionLabel={HELP_COPY.chat.button}
           onAction={showIntercom}
         />
+        )
       }
     >
       {tab === "faq" ? (

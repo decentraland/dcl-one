@@ -224,11 +224,29 @@ describe("HelpView system status", () => {
 });
 
 describe("HelpView chat banner", () => {
-  it("opens the chat widget once it has loaded", async () => {
-    const intercom = vi.fn();
-    (window as Window & { Intercom?: unknown }).Intercom = intercom;
-    renderView();
+  afterEach(() => {
+    document.querySelectorAll("script[data-intercom]").forEach((script) => script.remove());
+    delete (window as Window & { Intercom?: unknown }).Intercom;
+  });
+
+  it("hides the banner when the chat is switched off", () => {
+    renderView({ intercomAppId: "" });
+    expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull();
+  });
+
+  it("queues the chat to open while the widget script is loading", async () => {
+    renderView({ intercomAppId: "app-test" });
+    expect(document.querySelector('script[data-intercom="app-test"]')).not.toBeNull();
     await userEvent.setup().click(screen.getByRole("button", { name: "CHAT NOW" }));
-    expect(intercom).toHaveBeenCalledWith("show");
+    const queued = (window as Window & { Intercom?: { q?: unknown[][] } }).Intercom?.q ?? [];
+    expect(queued).toContainEqual(["show"]);
+  });
+
+  it("hides the banner once the widget script fails to load", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    renderView({ intercomAppId: "app-test" });
+    const script = document.querySelector('script[data-intercom="app-test"]');
+    script?.dispatchEvent(new Event("error"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull());
   });
 });
