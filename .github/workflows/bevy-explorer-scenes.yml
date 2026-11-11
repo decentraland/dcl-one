@@ -109,10 +109,7 @@ jobs:
           echo "CEF_PATH=$HOME/.local/share/cef" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$HOME/.local/share/cef:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
       - name: install xvfb, llvmpipe and lavapipe
-        run: |
-          sudo add-apt-repository ppa:kisak/kisak-mesa -y
-          sudo apt-get update
-          sudo apt install -y xvfb libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
+        run: sudo apt install -y xvfb libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
       - name: Build the graphical test engine and scene runtime sidecar
         # Cargo unifies the engine and sidecar features here, including dcl_deno/inspect.
         # Desktop and Headless packaging build their sidecars in separate invocations.

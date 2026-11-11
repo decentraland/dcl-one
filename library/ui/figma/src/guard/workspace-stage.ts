@@ -2,7 +2,7 @@ import { copyManagedTree } from './copy.js'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { isMissing, readIfExists, resolveContained } from './fs-safe.js'
+import { isMissing, readIfExists, resolveContained, toPosix } from './fs-safe.js'
 import { applyRetirements } from './apply-retirements.js'
 import type { Retirements } from './retirements.js'
 
@@ -24,7 +24,7 @@ async function copyIfPresent(from: string, to: string) {
 }
 async function stageWorkspace(root: string, configFile: string) {
   const stagedDir = await mkdtemp(path.join(os.tmpdir(), 'figma-retire-stage-'))
-  const configRelative = path.relative(root, configFile)
+  const configRelative = toPosix(path.relative(root, configFile))
   const cleanup = () => rm(stagedDir, { recursive: true, force: true })
   try {
     for (const directory of WORKSPACE_DIRECTORIES)

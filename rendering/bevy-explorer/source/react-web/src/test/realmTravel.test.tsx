@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { SceneLoadingOverlay } from '../features/session/SceneLoadingOverlay'
+import { SceneLoadingOverlay } from '@hud/features/session/SceneLoadingOverlay'
 import { DEFAULT_REALM } from '../lib/baseDomain'
-import { enterAsGuest, renderSession } from './harness'
+import { enterAsGuest, renderSession } from '@hud/test/harness'
 
 // Audit P0 onboarding-realm-1: a failed in-world realm change stranded the player on "Reconnecting…".
 // The engine now validates the destination before leaving the current realm and reports the outcome;

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Carousel } from "@dcl/one-ui/apps/sites/shared/Carousel";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
-import { homeActions } from "./actions";
+import { downloadActions } from "../download/actions";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -39,6 +39,7 @@ const clips = [
 let play: ReturnType<typeof vi.spyOn>;
 let pause: ReturnType<typeof vi.spyOn>;
 let wide: boolean;
+let reduced: boolean;
 let mediaListeners: Map<string, () => void>;
 function renderCarousel(autoplayDelay = 0) {
   return render(
@@ -72,11 +73,13 @@ function renderVibe() {
 
 beforeEach(() => {
   wide = true;
+  reduced = false;
   mediaListeners = new Map();
   vi.stubGlobal(
     "matchMedia",
     vi.fn((query: string) => ({
       get matches() {
+        if (query === "(prefers-reduced-motion: reduce)") return reduced;
         return query.includes("min-width")
           ? wide
           : query.includes("no-preference");
@@ -113,6 +116,61 @@ afterEach(() => {
 });
 
 describe("carousel pointer lifecycle", () => {
+  it.each(["Previous", "Next"])(
+    "keeps reduced-motion %s wraparound on the canonical copy",
+    (direction) => {
+      reduced = true;
+      const { container } = renderCarousel();
+      fireEvent.click(screen.getByRole("button", { name: direction }));
+
+      const track = container.querySelector("[data-animated]")!;
+      expect(track.getAttribute("style")).toContain("--carousel-position: 3");
+    },
+  );
+
+  it("settles an in-flight clone before a drag interrupts its transition", () => {
+    const { container } = renderCarousel();
+    const carousel = container.querySelector(
+      '[aria-roledescription="carousel"]',
+    )!;
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    expect(container.querySelector('[data-animated="true"]')).toBeTruthy();
+
+    fireEvent.pointerDown(carousel, {
+      button: 0,
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 100,
+      clientY: 0,
+    });
+
+    const track = container.querySelector("[data-animated]")!;
+    expect(track.getAttribute("data-animated")).toBe("false");
+    expect(track.getAttribute("style")).toContain("--carousel-position: 3");
+  });
+
+  it("disables an in-range transition before a drag starts", () => {
+    const { container } = renderCarousel();
+    const carousel = container.querySelector(
+      '[aria-roledescription="carousel"]',
+    )!;
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    expect(container.querySelector('[data-animated="true"]')).toBeTruthy();
+
+    fireEvent.pointerDown(carousel, {
+      button: 0,
+      pointerId: 1,
+      pointerType: "mouse",
+      clientX: 100,
+      clientY: 0,
+    });
+
+    expect(container.querySelector('[data-animated="false"]')).toBeTruthy();
+    expect(
+      container.querySelector("[data-animated]")?.getAttribute("style"),
+    ).toContain("--carousel-position: 3");
+  });
+
   it("clears a short drag released outside before capture and ignores later buttonless movement", () => {
     const { container } = renderCarousel();
     const carousel = container.querySelector(
@@ -358,7 +416,10 @@ describe("clip playback intent", () => {
       expect(video.getAttribute("preload")).toBe("none");
   });
   it("renders the mobile store branch without a desktop installer action", () => {
-    const { store } = homeActions({ kind: "mobile", os: "android" }, "+438K");
+    const { store } = downloadActions(
+      { kind: "mobile", os: "android" },
+      "+438K",
+    );
     render(<ComeHangOut title="Come" store={store} />);
     const anchor = screen.getByRole("link");
     expect(anchor.getAttribute("href")).toContain("play.google.com");

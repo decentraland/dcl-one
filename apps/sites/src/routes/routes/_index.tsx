@@ -9,9 +9,13 @@ import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
-import { homeActions } from "@/features/home/actions";
-import { detectPlatform } from "@/features/home/options";
-import { VIBE_CLIPS, WEEKLY_RITUALS } from "@/features/home/content";
+import { downloadActions } from "@/features/download/actions";
+import { detectPlatform } from "@/features/download/options";
+import {
+  homeAgentContent,
+  VIBE_CLIPS,
+  WEEKLY_RITUALS,
+} from "@/features/home/content";
 
 import { heroEventCards } from "@/data/lib/catalyst/landings/home";
 import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
@@ -34,10 +38,11 @@ export function meta() {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = sidLoader(request, context);
-  const [{ content }, downloads] = await Promise.all([
+  const [{ content: loadedContent }, downloads] = await Promise.all([
     loadHomeEvents(),
     loadDownloadsLabel(),
   ]);
+  const content = homeAgentContent(loadedContent);
   const payload = {
     sid,
     content,
@@ -57,7 +62,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     track("lp_discover_viewed", {}, { sid, story: STORY });
   }, [sid]);
 
-  const { actions, store } = homeActions(platform, downloads);
+  const { actions, store } = downloadActions(platform, downloads);
   const labels = {
     previous: "Previous slide",
     next: "Next slide",
@@ -118,8 +123,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <ComeHangOut
           title="Come Hang Out"
           background={<AnimatedBackground />}
-          actions={platform.kind === "mobile" ? undefined : actions}
-          store={platform.kind === "mobile" ? store : undefined}
+          actions={actions}
+          store={store}
         />
       </main>
     </SitesChrome>
