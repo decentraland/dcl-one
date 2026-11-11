@@ -269,7 +269,10 @@ function caseProps(view: ViewSpec): Record<string, string | boolean> {
 // A caller that omits every axis prop gets the defaults, so that selection must be a drawn view: the runtime throws
 // for any undrawn one, and a default the generator itself produces must never be one.
 function assertDrawnDefaults(spec: ComponentSpec): void {
-  const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
+  // A responsive axis has no default; resolveResponsive already requires every option to draw the same rows.
+  const axes = spec.props.filter(
+    (prop) => !FLAG_PROPS.includes(prop.name) && prop.name !== spec.responsive?.prop
+  )
   const drawn = spec.views.some((view) =>
     axes.every((prop) =>
       prop.kind === 'boolean'
@@ -327,9 +330,10 @@ function responsiveCss(spec: ComponentSpec, cssRules: string[]): [string, string
   return breakpoints.map(({ value, min }, index) => {
     const name = assertIdentifier(`responsive${value.charAt(0).toUpperCase()}${value.slice(1)}`)
     const next = breakpoints[index + 1]?.min
+    // min-width, as the foundations emit; `not all and` is its exact complement, with no max-width fraction.
     const hidden = [
-      ...(min > 0 ? [`(width < ${min}px)`] : []),
-      ...(next !== undefined ? [`(width >= ${next}px)`] : [])
+      ...(min > 0 ? [`not all and (min-width: ${min}px)`] : []),
+      ...(next !== undefined ? [`(min-width: ${next}px)`] : [])
     ]
     if (hidden.length)
       cssRules.push(

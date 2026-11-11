@@ -282,13 +282,13 @@ describe('generateComponents with a responsive axis', () => {
       const css = file(await withResponsive(), 'components/demo-nav/DemoNav.module.css')
 
       expect(css).toContain(
-        '@media (width >= 1024px) {\n  .responsiveMobile {\n    display: none !important;\n  }\n}'
+        '@media (min-width: 1024px) {\n  .responsiveMobile {\n    display: none !important;\n  }\n}'
       )
       expect(css).toContain(
-        '@media (width < 1024px), (width >= 1536px) {\n  .responsiveDesktop {\n    display: none !important;\n  }\n}'
+        '@media not all and (min-width: 1024px), (min-width: 1536px) {\n  .responsiveDesktop {\n    display: none !important;\n  }\n}'
       )
       expect(css).toContain(
-        '@media (width < 1536px) {\n  .responsiveLargeDesktop {\n    display: none !important;\n  }\n}'
+        '@media not all and (min-width: 1536px) {\n  .responsiveLargeDesktop {\n    display: none !important;\n  }\n}'
       )
     })
 

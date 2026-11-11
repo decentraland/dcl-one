@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { snapshotDir, snapshotSource, testConfig } from '../../test/snapshot.js'
 import type { ComponentSpec, ResponsiveConfig } from '../ir/components.js'
 import type { RawComponentPage } from '../ir/raw-components.js'
+import type { TokenCollection } from '../ir/schemas.js'
 import { buildComponentSpecs } from './component-spec.js'
 
 const NAV_BREAKPOINTS = { mobile: 'mobile', desktop: 'desktop', largeDesktop: 'largeDesktop' }
@@ -12,7 +13,8 @@ const NAV_BREAKPOINTS = { mobile: 'mobile', desktop: 'desktop', largeDesktop: 'l
 // (mobile 0, tablet 768, desktop 1024, large-desktop 1536).
 async function demoNav(
   responsive: ResponsiveConfig | undefined,
-  edit?: (data: RawComponentPage) => void
+  edit?: (data: RawComponentPage) => void,
+  collections?: (all: TokenCollection[]) => TokenCollection[]
 ): Promise<ComponentSpec> {
   const config = await testConfig()
   const data = JSON.parse(
@@ -23,7 +25,7 @@ async function demoNav(
   const specs = buildComponentSpecs({
     pages: [{ name: 'Demo Nav', category: 'Navigation', data }],
     config: { ...config, components },
-    collections: await snapshotSource().getTokenCollections(),
+    collections: (collections ?? ((all) => all))(await snapshotSource().getTokenCollections()),
     textStyles: [],
     icons: new Map()
   })
@@ -88,6 +90,31 @@ describe('resolveResponsive', () => {
       await expect(build({ ...NAV_BREAKPOINTS, desktop: 'laptop' })).rejects.toThrow(
         'DemoNav responsive: desktop names the unknown breakpoint laptop (foundations: mobile, tablet, desktop, largeDesktop)'
       )
+    })
+  })
+
+  describe('when the capture holds no breakpoints', () => {
+    const responsive = { prop: 'viewport', breakpoints: NAV_BREAKPOINTS }
+
+    it('should fail generation without a Layout collection', async () => {
+      await expect(
+        demoNav(responsive, undefined, (all) => all.filter((item) => item.name !== 'Layout'))
+      ).rejects.toThrow('names the unknown breakpoint largeDesktop (foundations: none)')
+    })
+
+    it('should fail generation, instead of using mode positions, without layout/breakpoint-min', async () => {
+      await expect(
+        demoNav(responsive, undefined, (all) =>
+          all.map((item) =>
+            item.name === 'Layout'
+              ? {
+                  ...item,
+                  variables: item.variables.filter((v) => v.name !== 'layout/breakpoint-min')
+                }
+              : item
+          )
+        )
+      ).rejects.toThrow('(foundations: none)')
     })
   })
 

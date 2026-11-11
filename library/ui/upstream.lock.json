@@ -955,7 +955,7 @@
           "deviation": "predates"
         },
         "library/ui/figma/review/src/components/figma-module-runtime.tsx": {
-          "sha256": "981b402bf815ec0cca81a4333db5bbb31740dd3574c71ee2632e8402710373c7",
+          "sha256": "a25a3157683a45e60932964608c85d2bd1711d1c15acf45b155134c8169e2476",
           "fds": {
             "path": "dcl-ui-review/src/components/figma-module-runtime.tsx",
             "sha256": "09a3ab9cb421ca19303f55ebfaeaf7a821986ede430547171f7c6aee7335cce5"
@@ -1408,7 +1408,7 @@
           "deviation": "generated"
         },
         "library/ui/figma/review/src/generated/components/nav-bar/NavBar.module.css": {
-          "sha256": "28e0a78e6fb40f5963577ed6b9cf03c46083820b8b06d7ada8ea7b25826abe67",
+          "sha256": "227052c849060315ff04f017e9b0026adf02e60dffd0150f637c2ea5cce54307",
           "fds": {
             "path": "dcl-ui-review/src/generated/components/nav-bar/NavBar.module.css",
             "sha256": "f7d440a742aec1c877ab306d3a6e6be247ab693f093fdb7c9cadfa0b6444954f"
@@ -2228,7 +2228,7 @@
           "deviation": "dcl-one-only"
         },
         "library/ui/figma/review/test/figma-runtime-responsive.dom.test.tsx": {
-          "sha256": "fe0c51d810d5131209996f7c07fcea8706b57a89323ab7ee9dd2ab13636ed13f",
+          "sha256": "c0bcf2f92480ad93953e807dc9cb5baed0869521d3ad57c22a6f9259997d4d82",
           "fds": null,
           "deviation": "dcl-one-only"
         },
@@ -2726,7 +2726,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/generators/components.test.ts": {
-          "sha256": "9d714e8a119f13b3a8ffa84d185d59b7fd4f97d58ecaa3c44abc047d088dc85a",
+          "sha256": "8e76fa88b1950134979faf0d0fc9a7f3eda01dd85707e7d2d5c2687b25186624",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/components.test.ts",
             "sha256": "3b5ec10c17fc65b8e494621d7f9419c4b659bf1b904dce89a861019defa040a0"
@@ -2737,7 +2737,7 @@
           ]
         },
         "library/ui/figma/src/generators/components.ts": {
-          "sha256": "07c9bca9cb7e3b88e2673f1c17cda3b4f19df0ee67dd8747cef2c1ff213314f1",
+          "sha256": "7571fb052ae7f234859f4e9f43e063528f44af69065b38e06148417bce3f0ef5",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/components.ts",
             "sha256": "51e48d357757f25844040c8a9d381864d9b37cff96451c098d96b2deb36adc25"
@@ -2881,7 +2881,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/generators/tokens.ts": {
-          "sha256": "c0a00f7348129cf4aa3d3e52b342de72712f8aadd987a527a6892412283a8122",
+          "sha256": "37f1fe2d706e7710517504cc77137305d5f0eb03d6541fd51d38d8bfa33f72d0",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/tokens.ts",
             "sha256": "24ee8392483a7d73c27f552f0dfea4ee896246b5a2a895a5f0c1df8773253bcf"
@@ -3504,7 +3504,7 @@
           "deviation": "live-access-removed"
         },
         "library/ui/figma/src/mappers/responsive.test.ts": {
-          "sha256": "751afc28d8c8382fa7550c26ab6b64c385f48ae13f32e16f122d9a1a3e131e10",
+          "sha256": "403fd4bfaa2cbdd4d8fdffc62eb787d188c87f8efa5ab970b4f1af8bd77236de",
           "fds": null,
           "deviation": "dcl-one-only"
         },

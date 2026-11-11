@@ -3,6 +3,7 @@ import { createRef, type ComponentType, type ReactElement } from 'react'
 import { hydrateRoot } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { FigmaInteractions } from '../src/components/figma-interactions'
 import { FigmaView, type ViewNode } from '../src/components/figma-module-runtime'
 import { NavBar } from '../src/generated/components/nav-bar/NavBar'
 
@@ -149,6 +150,39 @@ describe('FigmaView with a responsive axis', () => {
           )
         )
       ).toContain('an id or a ref names one element')
+    })
+
+    it('should accept a null id and ref, which name no element', () => {
+      const { container } = render(
+        <FigmaView
+          views={views}
+          select={select(undefined)}
+          slots={{}}
+          responsive={responsive}
+          attributes={{ id: null, ref: null } as never}
+        />
+      )
+
+      expect(container.children).toHaveLength(2)
+    })
+
+    it('should reject a disclosure, whose outside-pointer close would fire from the hidden views', () => {
+      const disclosure = { label: 'Menu', open: true, headerCount: 1, onToggle() {}, onClose() {} }
+      expect(
+        String(
+          renderError(
+            <FigmaInteractions.Provider value={{ disclosure }}>
+              <FigmaView
+                views={views}
+                select={select(undefined)}
+                slots={{}}
+                responsive={responsive}
+                component="Demo"
+              />
+            </FigmaInteractions.Provider>
+          )
+        )
+      ).toContain('Demo: a disclosure controls one element, so pass size to render a single view')
     })
   })
 
