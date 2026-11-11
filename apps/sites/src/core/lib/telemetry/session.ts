@@ -168,8 +168,9 @@ export function markPublicResponse(context: Readonly<RouterContextProvider>): vo
   context.set(publicResponseContext, true);
 }
 
+/** `public` or `s-maxage`: either lets a shared cache store the response. */
 function isPublic(response: Response): boolean {
-  return /(^|,)\s*public\b/i.test(response.headers.get("Cache-Control") ?? "");
+  return /(^|,)\s*(public|s-maxage)\b/i.test(response.headers.get("Cache-Control") ?? "");
 }
 
 /**
@@ -215,7 +216,9 @@ export function pageSid(request: Request, context: Readonly<RouterContextProvide
   return context.get(publicResponseContext) ? null : requestSession(request, context).sid;
 }
 
+/** A page loader's session. Under `markPublicResponse` it throws: shared page data must carry no sid. */
 export function sidLoader(request: Request, context: Readonly<RouterContextProvider>) {
+  if (context.get(publicResponseContext)) throw new Error("sidLoader called on a publicly cacheable response");
   const { sid, created, ownsCookie } = requestSession(request, context);
   const wallet = readVerifiedWallet(request);
   const cookies = ownsCookie ? sidCookieHeaders(request, { sid, created }) : [];

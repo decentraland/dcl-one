@@ -80,6 +80,11 @@ function app(seen: Seen) {
         default: undefined,
         loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=60" } }),
       }),
+      // A reply only a shared cache may store, by s-maxage alone.
+      "routes/shared": route("routes/shared", "root", "shared", {
+        default: undefined,
+        loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "s-maxage=60" } }),
+      }),
       // A public document route, like the docs: its middleware marks it before the loaders run.
       "routes/docs": route("routes/docs", "root", "docs", {
         middleware: [({ context }: Args, next: () => Promise<Response>) => (markPublicResponse(context), next())],
@@ -107,6 +112,7 @@ function app(seen: Seen) {
         "routes/move": manifest("routes/move", "root"),
         "routes/crash": manifest("routes/crash", "root"),
         "routes/asset": { ...manifest("routes/asset", "root"), hasErrorBoundary: false },
+        "routes/shared": { ...manifest("routes/shared", "root"), hasErrorBoundary: false },
         "routes/docs": manifest("routes/docs", "root"),
         "routes/early": manifest("routes/early", "root"),
         "routes/frozen": manifest("routes/frozen", "root"),
@@ -228,6 +234,13 @@ describe("session middleware and shared caches", () => {
     expect(sidCookies(response)).toEqual([]);
   });
 
+  it("sets no cookie on a reply only a shared cache may store (s-maxage)", async () => {
+    const response = await app({})(get("/shared"));
+
+    expect(response.status).toBe(200);
+    expect(sidCookies(response)).toEqual([]);
+  });
+
   it("gives a public document route neither a session id in root data nor a cookie", async () => {
     const seen: Seen = {};
 
@@ -293,5 +306,12 @@ describe("sidLoader without the middleware", () => {
 
     expect(session.created).toBe(true);
     expect(new Headers(wrapped.init?.headers).getSetCookie().map(cookieSid)).toEqual([session.sid]);
+  });
+
+  it("refuses a route marked public, so no sid reaches shared page data", () => {
+    const context = new RouterContextProvider();
+    markPublicResponse(context);
+
+    expect(() => sidLoader(get("/docs"), context)).toThrow(/publicly cacheable/);
   });
 });
