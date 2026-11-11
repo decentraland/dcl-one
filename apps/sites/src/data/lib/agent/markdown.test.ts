@@ -382,10 +382,9 @@ describe("whatsOnToMarkdown", () => {
         x: 0, y: 0, scene_name: "Gallery", recurrent: true, recurrent_frequency: "weekly",
       },
     ] as unknown as Parameters<typeof whatsOnToMarkdown>[0]["upcoming"];
-    const md = whatsOnToMarkdown({ live, upcoming, filter: "week" });
+    const md = whatsOnToMarkdown({ live, upcoming });
     expect(md.startsWith("# What's On in Decentraland")).toBe(true);
     expect(md).toContain("1 live now, 1 upcoming.");
-    expect(md).toContain("(filter: week)");
     expect(md).toContain("## Live now");
     expect(md).toContain("[DJ Night](/events?id=e1)");
     expect(md).toContain("LIVE");

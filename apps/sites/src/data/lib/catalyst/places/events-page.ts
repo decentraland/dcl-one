@@ -155,3 +155,9 @@ export function eventsAgentData(state: DehydratedState | null | undefined): { li
     upcoming: read<Event[]>(eventsPageKeys.upcoming()) ?? [],
   };
 }
+
+/** The event a `?id=` link opened, when the page's first document dehydrated it, for its agent markdown. */
+export function eventsAgentDetail(state: DehydratedState | null | undefined): Event | null {
+  const query = state?.queries.find((entry) => entry.queryKey[0] === "events" && entry.queryKey[1] === "detail");
+  return (query?.state.data as Event | null | undefined) ?? null;
+}

@@ -1,7 +1,7 @@
 import type { DehydratedState } from "@tanstack/react-query";
 import type { EntryContext } from "react-router";
 
-import { eventsAgentData } from "../catalyst/places/events-page";
+import { eventsAgentData, eventsAgentDetail } from "../catalyst/places/events-page";
 
 import { LEGAL_DOCS } from "@ui/data/legalPageConfig";
 
@@ -46,7 +46,10 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   whatsOn: (data) => {
     const d = data as { tab?: "my" | null; dehydratedState?: DehydratedState | null } | undefined;
     if (!d) return null;
-    return whatsOnToMarkdown(d.tab === "my" ? { tab: "my" } : eventsAgentData(d.dehydratedState));
+    if (d.tab === "my") return whatsOnToMarkdown({ tab: "my" });
+    // An event link (`?id=`) describes that event, as its old `/whats-on/:id` page did.
+    const event = eventsAgentDetail(d.dehydratedState);
+    return event ? eventDetailToMarkdown(event) : whatsOnToMarkdown(eventsAgentData(d.dehydratedState));
   },
   eventDetail: (data) => {
     const d = data as { event?: Parameters<typeof eventDetailToMarkdown>[0] | null } | undefined;

@@ -276,8 +276,6 @@ type AgentWhatsOnData = {
   tab?: "my";
   live?: Event[];
   upcoming?: Event[];
-  filter?: string;
-  search?: string;
 };
 
 function eventLine(e: Event): string {
@@ -303,14 +301,9 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
   }
   const live = data.live ?? [];
   const upcoming = data.upcoming ?? [];
-  const note = inlineParts([
-    data.filter ? `filter: ${data.filter}` : null,
-    data.search ? `search: "${data.search}"` : null,
-  ]);
-
   const blocks: string[] = [
     heading(1, "What's On in Decentraland"),
-    `${live.length} live now, ${upcoming.length} upcoming.${note ? ` (${note})` : ""}`,
+    `${live.length} live now, ${upcoming.length} upcoming.`,
   ];
   if (live.length) blocks.push(heading(2, "Live now"), live.map(eventLine).join("\n"));
   if (upcoming.length) blocks.push(heading(2, "Upcoming"), upcoming.map(eventLine).join("\n"));

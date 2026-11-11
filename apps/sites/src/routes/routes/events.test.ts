@@ -27,10 +27,37 @@ describe("legacy events links", () => {
   });
 
   it("should send a deeper /whats-on path to /events with its query", () => {
-    expect(location(whatsOnDeeper({ request: new Request("https://example.org/whats-on/a/b?tab=my") }))).toEqual([
+    expect(
+      location(
+        whatsOnDeeper({
+          request: new Request("https://example.org/whats-on/a/b?tab=my"),
+          params: { "*": "a/b" },
+        } as never),
+      ),
+    ).toEqual([302, "/events?tab=my"]);
+  });
+
+  it("should keep a moderation link on its admin page under /events, with its query", () => {
+    const request = new Request("https://example.org/whats-on/admin/pending-events?id=ev-1");
+    expect(location(whatsOnDeeper({ request, params: { "*": "admin/pending-events" } } as never))).toEqual([
       302,
-      "/events?tab=my",
+      "/events/admin/pending-events?id=ev-1",
     ]);
+  });
+
+  it("should open an edit-hangout link in the event editor, with its query", () => {
+    const request = new Request("https://example.org/whats-on/edit-hangout/ev-1?openPreview");
+    expect(location(whatsOnDeeper({ request, params: { "*": "edit-hangout/ev-1" } } as never))).toEqual([
+      302,
+      "/events/edit-event/ev-1?openPreview",
+    ]);
+  });
+
+  it("should not treat a bare /whats-on/admin or an edit link without an id as a target", () => {
+    for (const splat of ["admin", "edit-hangout/ev-1/extra"]) {
+      const request = new Request(`https://example.org/whats-on/${splat}`);
+      expect(location(whatsOnDeeper({ request, params: { "*": splat } } as never))).toEqual([302, "/events"]);
+    }
   });
 
   it("should send the events site's /events/event?id= link to the same event on /events", () => {
