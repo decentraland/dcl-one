@@ -81,12 +81,11 @@ impl SceneRooms<'_, '_> {
         self.running.get(self.room(scene_hash)?).ok()
     }
 
-    /// Whether `transport` is the running room that carries the scene's messages.
-    pub fn carries(&self, transport: Entity, scene_hash: &str) -> bool {
+    pub(crate) fn carries(&self, transport: Entity, scene_hash: &str) -> bool {
         self.room(scene_hash) == Some(transport)
     }
 
-    pub fn isolated(&self) -> bool {
+    pub(crate) fn isolated(&self) -> bool {
         scene_rooms_isolated(&self.realm)
     }
 }

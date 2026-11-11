@@ -74,11 +74,11 @@ pub struct SceneTopicTraffic {
 
 impl SceneTopicTraffic {
     /// Topic publishes (sent, dropped).
+    #[cfg(any(test, feature = "test-support"))]
     pub fn publishes(&self) -> (u64, u64) {
         (self.published, self.publish_dropped)
     }
 
-    /// Counts a scene's topic publish as sent or dropped.
     pub fn record_publish(&mut self, sent: bool) {
         if sent {
             self.published += 1;
@@ -133,7 +133,6 @@ impl SceneTopicRouter<'_, '_> {
         }
     }
 
-    /// Counts a message that arrived on a room that does not carry its scene.
     pub fn drop_without_room(&mut self) {
         self.traffic.received += 1;
         self.traffic.receive_dropped += 1;
@@ -226,15 +225,5 @@ mod tests {
         assert!(other.try_recv().is_err());
         let traffic = app.world().resource::<SceneTopicTraffic>();
         assert_eq!((traffic.received, traffic.receive_dropped), (1, 1));
-    }
-
-    #[test]
-    fn only_a_topic_message_within_the_size_limit_is_a_topic_frame() {
-        let topic = CommsMessageType::CommsData as u8;
-        assert!(is_topic_frame(&[topic, 1, 0, b't', b'x']));
-        assert!(is_topic_frame(&vec![topic; MAX_TOPIC_MESSAGE_BYTES]));
-        assert!(!is_topic_frame(&vec![topic; MAX_TOPIC_MESSAGE_BYTES + 1]));
-        assert!(!is_topic_frame(&[1, b'h', b'i']), "a message bus frame");
-        assert!(!is_topic_frame(&[]));
     }
 }

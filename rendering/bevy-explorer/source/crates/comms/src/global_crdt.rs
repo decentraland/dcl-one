@@ -1370,7 +1370,6 @@ fn process_messagebus(
         address, scene.scene_id, comms_type, scene.data
     );
 
-    // a scene's messages count only on the running room that carries the scene
     if !scene_rooms.carries(transport, &scene.scene_id) {
         debug!(
             "dropping message for scene {} from {address}: not its scene room",

@@ -1658,13 +1658,14 @@ fn event_scene_ready(
     *previously_unready = now_unready;
 }
 
-/// A server is the auth server: it keeps the scene's own recipient, or it would address the
-/// message to itself.
 fn message_bus_recipient(
     peer: Option<Address>,
     authoritative: bool,
     server: bool,
 ) -> NetworkMessageRecipient {
+    // A client routes authoritative-scene traffic to the auth server. WE are the
+    // auth server, so keep the scene's intended recipient (targeted peer or broadcast)
+    // — otherwise the server would address messages to itself and clients never receive them.
     if authoritative && !server {
         NetworkMessageRecipient::AuthServer
     } else {
@@ -1695,24 +1696,29 @@ fn send_scene_messages(
                 let recipient = message_bus_recipient(*recipient, authoritative, server_mode());
                 (data, recipient, false)
             }
-            RpcCall::PublishSceneTopic { data } => (data, NetworkMessageRecipient::All, true),
+            RpcCall::PublishSceneTopic { data } => {
+                if !is_topic_frame(data) {
+                    topic_traffic.record_publish(false);
+                    continue;
+                }
+                (data, NetworkMessageRecipient::All, true)
+            }
             _ => continue,
         };
 
-        let sent = (!topic || is_topic_frame(data))
-            && scene_rooms.transport(hash).is_some_and(|transport| {
-                let message = rfc4::Packet {
-                    message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
-                        scene_id: hash.to_string(),
-                        data: data.clone(),
-                    })),
-                    protocol_version: 100,
-                };
-                transport
-                    .sender
-                    .try_send(NetworkMessage::targetted_reliable(&message, recipient))
-                    .is_ok()
-            });
+        let sent = scene_rooms.transport(hash).is_some_and(|transport| {
+            let message = rfc4::Packet {
+                message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
+                    scene_id: hash.to_string(),
+                    data: data.clone(),
+                })),
+                protocol_version: 100,
+            };
+            transport
+                .sender
+                .try_send(NetworkMessage::targetted_reliable(&message, recipient))
+                .is_ok()
+        });
         if topic {
             topic_traffic.record_publish(sent);
         }
