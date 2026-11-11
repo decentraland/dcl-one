@@ -131,7 +131,8 @@ describe('selection census over every generated component', () => {
       }
 
       // Every non-empty flag subset over each flag-free case: the expected view is the first generated key found by
-      // dropping flags from the end, computed with the production viewKey.
+      // dropping flags from the end, computed with the production viewKey. The public Button keeps its loading
+      // view while unavailable; native disabled semantics are enforced separately from captured view selection.
       for (const item of cases.filter((entry) =>
         flagProps.every((flag) => entry.props[flag] !== true)
       )) {
@@ -170,9 +171,10 @@ describe('selection census over every generated component', () => {
             booleans: Object.fromEntries(
               Object.entries(base).filter(([, value]) => typeof value === 'boolean')
             ) as Record<string, boolean>,
-            flags
+            flags:
+              name === 'Button' && flags.loading === true ? { ...flags, disabled: false } : flags
           }
-          const count = Object.keys(flags).length
+          const count = Object.values(selection.flags).filter(Boolean).length
           let expectedKey = ''
           let dropped = 0
           for (; dropped <= count; dropped++) {

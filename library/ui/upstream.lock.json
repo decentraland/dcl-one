@@ -2304,9 +2304,12 @@
           ]
         },
         "library/ui/figma/review/test/selection-census.dom.test.tsx": {
-          "sha256": "1946892472bee597be5fac354db9fb4bdf212d34e6190333b34a91cfc655a0fe",
+          "sha256": "577898fe95ebb22949b06eef24b0f3e7539202e88a701a198d062156fba99e83",
           "fds": null,
-          "deviation": "dcl-one-only"
+          "deviation": [
+            "dcl-one-only",
+            "native-button-control"
+          ]
         },
         "library/ui/figma/review/test/selection.test.ts": {
           "sha256": "b5bd9b8b9ec6c1c5c968a78d2c1a3352447e5f7044e74c11b2f125a6caba0dcc",
