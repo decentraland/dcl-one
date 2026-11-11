@@ -48,7 +48,8 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
   return {
     active: identity ? query.data === true : false,
     pending: Boolean(identity) && (query.isPending || mutation.isPending),
-    failed: mutation.isError,
+    // A failed write belongs to the account that made it, not to whoever is signed in now.
+    failed: mutation.isError && mutation.variables?.identity.signer === identity?.signer,
     toggle: () => {
       if (!identity) {
         onSignIn();

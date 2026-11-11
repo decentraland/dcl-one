@@ -70,6 +70,7 @@ describe("JumpCard", () => {
 
   it.each([
     [{ kind: "live", count: 4 } as const, "LIVE +4"],
+    [{ kind: "live", count: 0 } as const, "LIVE"],
     [{ kind: "attendees", count: 9 } as const, "+9"],
     [{ kind: "players", count: 2 } as const, "2"],
   ])("should show the %o badge", (badge, text) => {

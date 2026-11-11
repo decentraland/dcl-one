@@ -48,7 +48,8 @@ export type JumpTarget = {
  * an unrelated Genesis City card nor points the explorer at a realm of its choosing.
  */
 export function readJumpTarget(params: URLSearchParams): JumpTarget {
-  const rawPosition = params.get("position");
+  // An empty `position=` is the default, as an empty `realm=` is.
+  const rawPosition = params.get("position")?.trim() || null;
   const parsed = parsePosition(rawPosition ?? DEFAULT_POSITION);
   // An empty `realm=` is the default, as the source and the explorer read it.
   const realmParam = (params.get("realm")?.trim() || params.get("world")?.trim() || DEFAULT_REALM).toLowerCase();
@@ -106,9 +107,14 @@ const ETH_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
  * The scene's own contact wins over `owner`: the owner is whoever holds the land or name.
  * A wallet `owner` never stands in as the name; a non-wallet `owner` is a display string and can.
  */
-export function toPlaceCard(place: JumpPlaceRecord): JumpCard {
-  const coordinates = parsePosition(place.base_position).coordinates;
+/**
+ * `parcel` is the parcel the link asked for: a scene spans several parcels and its base is only one of
+ * them, so the card keeps the visitor's parcel and falls back to the base for a World-level record.
+ */
+export function toPlaceCard(place: JumpPlaceRecord, parcel?: [number, number]): JumpCard {
+  const coordinates = parcel ?? parsePosition(place.base_position).coordinates;
   const ownerAddress = place.owner && ETH_ADDRESS.test(place.owner) ? place.owner : undefined;
+  const worldName = place.world_name?.toLowerCase();
   return {
     kind: "place",
     title: place.title ?? "",
@@ -117,7 +123,7 @@ export function toPlaceCard(place: JumpPlaceRecord): JumpCard {
     image: place.image || undefined,
     description: place.description || undefined,
     coordinates,
-    realm: place.world ? (place.world_name ?? undefined) : undefined,
+    realm: place.world && isEnsRealm(worldName) ? worldName : undefined,
     userCount: place.user_count ?? 0,
   };
 }

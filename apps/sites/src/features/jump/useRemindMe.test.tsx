@@ -114,8 +114,20 @@ describe("useRemindMe", () => {
     hook.rerender({ who: null });
     client.removeQueries({ queryKey: ["private", "0xab"] });
     await act(async () => fail(new Error("401")));
-    await waitFor(() => expect(hook.result.current.failed).toBe(true));
+    await waitFor(() => expect(client.getMutationCache().getAll()[0]?.state.status).toBe("error"));
     expect(client.getQueryState(attendanceKeys.attending("0xab", "e1"))).toBeUndefined();
+    expect(hook.result.current.failed).toBe(false);
+  });
+
+  it("should not show another account's failed reminder after an account switch", async () => {
+    attendingReply(false);
+    http.postJSON.mockRejectedValue(new Error("401"));
+    const { hook } = setup(identity);
+    await waitFor(() => expect(hook.result.current.pending).toBe(false));
+    act(() => hook.result.current.toggle());
+    await waitFor(() => expect(hook.result.current.failed).toBe(true));
+    hook.rerender({ who: { signer: "0xCD" } as unknown as AuthIdentity });
+    expect(hook.result.current.failed).toBe(false);
   });
 
   it("should not report attending when the flag cannot be read", async () => {

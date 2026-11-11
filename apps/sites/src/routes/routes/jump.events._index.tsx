@@ -31,7 +31,9 @@ export async function loader({ request }: Route.LoaderArgs) {
   const target = readJumpTarget(new URL(request.url).searchParams);
   if (!target.validRealm || !target.validId || (!target.id && !target.validPosition)) throw redirect(INVALID);
   const opts = { signal: request.signal };
-  const event = await loadJumpEvent(target, opts).catch(() => {
+  const event = await loadJumpEvent(target, opts).catch((error: unknown) => {
+    // A visitor who navigated away aborted the read: that is not an outage.
+    if (request.signal.aborted) throw error;
     throw new Response("Events are temporarily unavailable", { status: 503 });
   });
   if (!event) throw redirect(INVALID);

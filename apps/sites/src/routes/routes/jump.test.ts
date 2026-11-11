@@ -119,6 +119,30 @@ describe("/jump/places loader", () => {
     },
   );
 
+  it("should keep the parcel the link asked for, not the scene's base parcel", async () => {
+    server.loadJumpPlace.mockResolvedValue({ ...placeRow, base_position: "-3,-2" });
+    const data = await placesLoader(args("/jump?position=0,0"));
+    expect(data.card.location.parcel).toBe("0, 0");
+    expect(data.card.jumpInHref).toContain("position=0%2C0");
+    const ios = await placesLoader(args("/jump?position=0,0", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"));
+    expect(ios.launch?.href).toBe("decentraland://open");
+  });
+
+  it("should read an empty position as Genesis City origin", async () => {
+    server.loadJumpPlace.mockResolvedValue(null);
+    const data = await placesLoader(args("/jump?position="));
+    expect(data.card.location.parcel).toBe("0, 0");
+  });
+
+  it("should not count a visitor's aborted request as an outage", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const aborted = new DOMException("aborted", "AbortError");
+    server.loadJumpPlace.mockRejectedValue(aborted);
+    const request = new Request("https://site.example/jump?position=1,2", { signal: controller.signal });
+    await expect(placesLoader({ request } as never)).rejects.toBe(aborted);
+  });
+
   it("should render a generic card for an uncatalogued parcel", async () => {
     server.loadJumpPlace.mockResolvedValue(null);
     const data = await placesLoader(args("/jump/places?position=7,8"));

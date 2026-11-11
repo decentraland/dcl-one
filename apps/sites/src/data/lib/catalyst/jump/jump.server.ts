@@ -151,6 +151,6 @@ export async function loadJumpEvent(
   // A World link without a position asks for the World's events wherever they are in it.
   const position = target.lookup?.join(",");
   const params = target.realm ? { position, world_names: target.realm } : { position, world: false };
-  const [first] = (await fetchEvents(params, opts)).data;
+  const [first] = (await fetchEvents({ ...params, limit: 1 }, opts)).data;
   return first ? toJumpEvent(first) : null;
 }

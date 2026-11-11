@@ -48,7 +48,7 @@ function Badge({ badge }: { badge: JumpCardBadge }) {
     return (
       <span className={`${styles.badge} ${styles.live}`}>
         <GeneralLive size={16} aria-hidden="true" />
-        <span>LIVE +{badge.count}</span>
+        <span>{badge.count > 0 ? `LIVE +${badge.count}` : 'LIVE'}</span>
       </span>
     )
   }

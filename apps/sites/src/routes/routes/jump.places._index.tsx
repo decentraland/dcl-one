@@ -32,7 +32,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     world ? loadWorldEntity(world, opts).catch(() => undefined) : undefined,
     loadJumpPlace(target, opts).then(
       (record) => ({ record }),
-      () => {
+      (error: unknown) => {
+        // A visitor who navigated away aborted the read: that is not an outage.
+        if (request.signal.aborted) throw error;
         throw new Response("Places are temporarily unavailable", { status: 503 });
       },
     ),
@@ -41,7 +43,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (entity === null) throw redirect(INVALID);
   const owner = entity?.metadata?.owner;
   const creator = owner ? await loadCreator(owner, opts).catch(() => null) : parcelCreator;
-  const card = place.record ? toPlaceCard(place.record) : genericPlaceCard(target.coordinates, target.realm);
+  const card = place.record ? toPlaceCard(place.record, target.lookup) : genericPlaceCard(target.coordinates, target.realm);
   return {
     card: cardProps(card, creator),
     launch: mobileLaunch(detectPlatform(request.headers.get("user-agent")), card),
