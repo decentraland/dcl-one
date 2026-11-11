@@ -442,6 +442,32 @@ describe('resolveComponent', () => {
       })
     })
 
+    it('should resolve with an unread boolean property and warn that the mapping does not read it', async () => {
+      const result = await named('Button', { Kind: 'Secondary', 'Show icon': 'false' })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'unmapped-figma-property',
+          details: expect.objectContaining({ property: 'Show icon' })
+        })
+      )
+    })
+
+    it.each([
+      ['a boolean alone', { 'Show icon': 'true' }, 'name-unconfirmed'],
+      [
+        'an unread property with a value other than true or false',
+        { Kind: 'Primary', Size: 'True' },
+        'name-incompatible'
+      ]
+    ])('should still refuse %s', async (_label, properties, reason) => {
+      const result = await named('Button', properties)
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason })
+    })
+
     it('should refuse a value the mapping does not support as incompatible, not as a missing variant', async () => {
       const result = await named('Button', { Kind: 'Tertiary' })
 

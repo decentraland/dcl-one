@@ -2579,7 +2579,8 @@
           "sha256": "35a4f8aee5dd2478b0cc308e148c4f57567e910e215d0d2d05d09da2bc83096f",
           "fds": null,
           "deviation": [
-            "name-identity"
+            "name-identity",
+            "skill-kit-followups"
           ]
         },
         "library/ui/figma/src/contract/resolve.test.ts": {
@@ -2592,7 +2593,8 @@
             "predates",
             "resolver-contract",
             "name-identity",
-            "accepted-limits"
+            "accepted-limits",
+            "skill-kit-followups"
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
@@ -4292,7 +4294,7 @@
         "review-followup-3": "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
         "single-component-module-pin": "The public component table pins components/generation.json once: output origins name the source and transform and no longer repeat the generator module list, and the policy checks every module in that record against the source lock and the index. A table that still carries a per-output module map is refused.",
-        "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, reports repeated layer names and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory pnpm was run in.",
+        "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, reports repeated layer names and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Without a capture, an unread property valued true or false (a Figma boolean) no longer refuses a name match; it is reported as unmapped-figma-property. check reports an install hashed by an earlier kit as stale, not as edited.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
     }

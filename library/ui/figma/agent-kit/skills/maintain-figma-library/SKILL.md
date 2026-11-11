@@ -40,4 +40,4 @@ The privileged key scan reads the URL allowlist from the default branch. A publi
 
 ## 5. Hand back
 
-Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components now resolve (`pnpm --silent figma resolve --mapping-only --name <set name> --variant ...`) so they can rerun the consumer skill.
+Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components now resolve (`pnpm --silent figma resolve --mapping-only --name '<set name>' --variant 'Prop=Value'`; a set name and its values come from the design, so keep them in single quotes and write a `'` inside as `'\''`) so they can rerun the consumer skill.

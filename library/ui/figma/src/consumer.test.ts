@@ -273,39 +273,57 @@ describe('figma from a consuming project', () => {
       expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
     }, 30_000)
 
-    // `pnpm figma` changes into library/ui/figma and sets INIT_CWD to the directory pnpm was run in.
-    it('should read a relative batch path from the directory pnpm was run in', async () => {
-      await writeFile(path.join(consumer, 'relative.json'), JSON.stringify(entries.slice(0, 1)))
-
-      const { stdout } = await run(
-        process.execPath,
-        ['--import', import.meta.resolve('tsx'), 'src/cli.ts', ...args, 'relative.json'],
-        { cwd: projectRoot, env: { PATH: process.env.PATH ?? '', INIT_CWD: consumer } }
-      )
-
-      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
-    }, 30_000)
-
-    it('should exit 2 when the relative batch exists only in the working directory, not where pnpm was run', async () => {
-      const elsewhere = path.join(consumer, 'elsewhere')
-      await mkdir(elsewhere, { recursive: true })
-      await writeFile(path.join(elsewhere, 'only-here.json'), JSON.stringify(entries.slice(0, 1)))
-      const failure = run(
+    // `pnpm figma` changes into library/ui/figma and sets INIT_CWD to the directory pnpm was run in, with
+    // npm_lifecycle_event and npm_package_name naming this package's figma script.
+    const figmaScript = { npm_lifecycle_event: 'figma', npm_package_name: '@dcl/one-ui' }
+    const runFrom = (cwd: string, env: Record<string, string>, file: string) =>
+      run(
         process.execPath,
         [
           '--import',
           import.meta.resolve('tsx'),
           path.join(projectRoot, 'src/cli.ts'),
           ...args,
-          'only-here.json'
+          file
         ],
-        { cwd: elsewhere, env: { PATH: process.env.PATH ?? '', INIT_CWD: consumer } }
+        { cwd, env: { PATH: process.env.PATH ?? '', ...env } }
       )
 
-      await expect(failure).rejects.toMatchObject({
-        code: 2,
-        stderr: expect.stringContaining('ENOENT')
-      })
+    it('should read a relative batch path from the directory pnpm figma was run in', async () => {
+      await writeFile(path.join(consumer, 'relative.json'), JSON.stringify(entries.slice(0, 1)))
+
+      const { stdout } = await runFrom(
+        projectRoot,
+        { INIT_CWD: consumer, ...figmaScript },
+        'relative.json'
+      )
+
+      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
+    }, 30_000)
+
+    it('should exit 2 when the relative batch exists only in the working directory, not where pnpm figma was run', async () => {
+      const elsewhere = path.join(consumer, 'elsewhere')
+      await mkdir(elsewhere, { recursive: true })
+      await writeFile(path.join(elsewhere, 'only-here.json'), JSON.stringify(entries.slice(0, 1)))
+
+      await expect(
+        runFrom(elsewhere, { INIT_CWD: consumer, ...figmaScript }, 'only-here.json')
+      ).rejects.toMatchObject({ code: 2, stderr: expect.stringContaining('ENOENT') })
+    }, 30_000)
+
+    // The dcl-figma bin run from another package's script inherits that script's INIT_CWD.
+    it('should read from its working directory when INIT_CWD comes from another script', async () => {
+      const tools = path.join(consumer, 'tools')
+      await mkdir(tools, { recursive: true })
+      await writeFile(path.join(tools, 'b.json'), JSON.stringify(entries.slice(0, 1)))
+
+      const { stdout } = await runFrom(
+        tools,
+        { INIT_CWD: consumer, npm_lifecycle_event: 'resolve', npm_package_name: 'consumer' },
+        'b.json'
+      )
+
+      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
     }, 30_000)
 
     it.each([

@@ -379,6 +379,48 @@ describe('checkKit', () => {
     })
   })
 
+  describe('when the install was made by a kit that hashed files the earlier way', () => {
+    const legacyHash = async (dir: string) => {
+      const hash = createHash('sha256')
+      for (const file of (await readdir(dir)).filter((name) => name !== '.kit.json').sort()) {
+        hash.update(file)
+        hash.update(await readFile(path.join(dir, file)))
+      }
+      return hash.digest('hex')
+    }
+
+    it('should report it as stale, not as edited, and let install repair it', async () => {
+      const target = await temp('consumer-')
+      await installKit({ target })
+      for (const name of ['implement-figma-design', 'maintain-figma-library']) {
+        const dir = path.join(target, '.claude/skills', name)
+        const manifest = JSON.parse(await readFile(path.join(dir, '.kit.json'), 'utf8'))
+        await writeFile(
+          path.join(dir, '.kit.json'),
+          JSON.stringify({ ...manifest, hash: await legacyHash(dir) })
+        )
+      }
+
+      expect((await checkKit({ target })).problems.map((p) => p.reason)).toEqual(['stale', 'stale'])
+      expect((await installKit({ target })).installed).toHaveLength(2)
+      expect(await checkKit({ target })).toMatchObject({ ok: true })
+    })
+
+    it('should still report an edit made after such an install as modified', async () => {
+      const target = await temp('consumer-')
+      await installKit({ target })
+      const dir = path.join(target, '.claude/skills/implement-figma-design')
+      const manifest = JSON.parse(await readFile(path.join(dir, '.kit.json'), 'utf8'))
+      await writeFile(
+        path.join(dir, '.kit.json'),
+        JSON.stringify({ ...manifest, hash: await legacyHash(dir) })
+      )
+      await writeFile(path.join(dir, 'SKILL.md'), 'edited')
+
+      expect((await checkKit({ target })).problems.map((p) => p.reason)).toEqual(['modified'])
+    })
+  })
+
   describe('when a file is renamed and its content shifted into the name', () => {
     it('should report it as modified', async () => {
       const target = await temp('consumer-')

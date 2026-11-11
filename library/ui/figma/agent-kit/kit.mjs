@@ -52,6 +52,17 @@ async function hashDirectory(dir) {
   return hash.digest('hex')
 }
 
+// The hash earlier kits of the same library version recorded (raw bytes, unframed, OS path separators), so check
+// tells an untouched older install from a hand edit.
+async function legacyHashDirectory(dir) {
+  const hash = createHash('sha256')
+  for (const file of await listFiles(dir)) {
+    hash.update(file.split('/').join(path.sep))
+    hash.update(await readFile(path.join(dir, file)))
+  }
+  return hash.digest('hex')
+}
+
 // The manifest, or { invalid } when it exists but is not a kit manifest; undefined when there is none.
 async function readManifest(dir) {
   const file = path.join(dir, MANIFEST)
@@ -301,11 +312,15 @@ async function checkKit({ target, kitRoot = defaultKitRoot }) {
             : `${name} is ${recorded.version}, newer than or not comparable with ${library.name}@${library.version}. Upgrade the library, or run install --force to downgrade.`
       })
     } else if ((await hashDirectory(destination)) !== recorded.hash) {
-      problems.push({
-        skill: name,
-        reason: 'modified',
-        message: `${name} was edited after install`
-      })
+      problems.push(
+        recorded.hash === (await legacyHashDirectory(destination))
+          ? {
+              skill: name,
+              reason: 'stale',
+              message: `${name} was installed by an earlier kit that hashed files differently. Run install.`
+            }
+          : { skill: name, reason: 'modified', message: `${name} was edited after install` }
+      )
     } else if ((await hashDirectory(path.join(kitRoot, 'skills', name))) !== recorded.hash) {
       problems.push({
         skill: name,

@@ -79,8 +79,10 @@ function nameCompatibility(
   if (enums.size > 0 && !requested.some(([property]) => enums.has(property)))
     return { ok: false, reason: 'name-unconfirmed', reads: [...enums.keys()] }
   if (requested.length === 0) return { ok: true }
+  // A Figma BOOLEAN component property arrives as "true" or "false". Like a state, it does not tell two
+  // components apart, so one the mapping does not read is left to the unmapped-figma-property warning.
   const unknown = requested
-    .filter(([property]) => !known.has(property))
+    .filter(([property, value]) => !known.has(property) && value !== 'true' && value !== 'false')
     .map(([property]) => property)
   const unsupported = requested.flatMap(([property, value]) => {
     const supported = enums.get(property)

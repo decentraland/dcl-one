@@ -38,6 +38,16 @@ const USAGE = `Usage:
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
 
+// The `figma` script of this package runs `cd figma`, and pnpm sets INIT_CWD to where it was run, so a path
+// reads as typed. Any other launch (the dcl-figma bin from another package's script, which inherits that
+// script's INIT_CWD) reads paths from its own working directory.
+function invocationDirectory(): string {
+  const { INIT_CWD, npm_lifecycle_event, npm_package_name } = process.env
+  return INIT_CWD && npm_lifecycle_event === 'figma' && npm_package_name === '@dcl/one-ui'
+    ? INIT_CWD
+    : process.cwd()
+}
+
 // Repeated "Key=Value" flags. A pair without "=", an empty key or a repeated key is refused, never guessed.
 function pairs(flag: string, entries: string[] | undefined): Record<string, string> | undefined {
   if (!entries?.length) return undefined
@@ -162,11 +172,7 @@ async function main(argv: string[]): Promise<number> {
         text =
           values.batch === '-'
             ? await readStdin()
-            : // `pnpm figma` runs in library/ui/figma; INIT_CWD is where pnpm was run, so a path reads as typed.
-              await readFile(
-                path.resolve(process.env.INIT_CWD ?? process.cwd(), values.batch),
-                'utf8'
-              )
+            : await readFile(path.resolve(invocationDirectory(), values.batch), 'utf8')
       } catch (error) {
         process.stderr.write(
           `--batch cannot read ${values.batch}: ${(error as NodeJS.ErrnoException).code ?? 'error'}\n`
