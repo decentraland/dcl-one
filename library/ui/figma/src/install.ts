@@ -1,6 +1,7 @@
 // port:9c6dfbe6, promotion/promote.ts installation subset. Seal, manifest verification and release publication removed.
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { lstatSync, readFileSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -15,7 +16,7 @@ import {
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
-import type { App, SourceKind } from './app.js'
+import type { App, SourceKind } from './app-context.js'
 import { generateFoundations } from './generators/tokens.js'
 import { generateIcons } from './generators/icons.js'
 import { canonicalPath, isMissing, resolveContained, toPosix } from './guard/fs-safe.js'
@@ -25,8 +26,11 @@ import { planComponents } from './install-components.js'
 import { runtimeFiles } from './promotion/eligibility.js'
 import {
   componentDependencyPaths,
+  componentModuleCandidates,
   componentModulePaths,
+  componentPackages,
   createComponentGeneration,
+  handWrittenComponentDirectories,
   isComponentModulePath
 } from '../component-generation.mjs'
 
@@ -426,15 +430,18 @@ async function assertInstallResolverBoundary(ui: string, modules: readonly strin
       directory = path.posix.dirname(directory)
     }
   }
-  const dependencies = ['postcss', 'postcss-modules', 'svgo', 'zod', 'semver', 'typescript']
+  const dependencies = componentPackages
   const installed = await canonicalPath(path.join(ui, 'node_modules'))
-  const sanctioned = createRequire(path.join(ui, 'package.json'))
+  // createRequire is used only to resolve paths, inline, so the generation import reader can prove it loads nothing.
   for (const relative of directories) {
     const directory = await resolveContained(ui, relative)
-    const resolver = createRequire(path.join(directory, '__component_resolution__.cjs'))
     for (const dependency of dependencies) {
-      const expected = await canonicalPath(sanctioned.resolve(dependency))
-      const actual = await canonicalPath(resolver.resolve(dependency))
+      const expected = await canonicalPath(
+        createRequire(path.join(ui, 'package.json')).resolve(dependency)
+      )
+      const actual = await canonicalPath(
+        createRequire(path.join(directory, '__component_resolution__.cjs')).resolve(dependency)
+      )
       if (!expected.startsWith(installed + path.sep) || actual !== expected)
         throw new Error(
           'Component dependency resolves outside the sanctioned UI installation: ' + dependency
@@ -490,7 +497,7 @@ async function componentPhysicalInventory(
 async function installComponents(
   app: App,
   outDir: string,
-  lock: { sources: ComponentSource[] },
+  lock: { sources: ComponentSource[]; publicComponents?: { files?: Record<string, unknown> } },
   source: ReturnType<App['createSource']>,
   configFile: string,
   configBytes: Buffer,
@@ -506,7 +513,15 @@ async function installComponents(
   )
   if (!pinned) throw new Error('Missing component source pin')
   const configPath = toPosix(path.relative(repository, await canonicalPath(configFile)))
-  const modulePaths = componentModulePaths(pinned)
+  // The read-set is the installer's import closure, selected from locked bytes; a regular file only.
+  const readModule = (file: string) => {
+    const full = path.join(repository, file)
+    if (!lstatSync(full, { throwIfNoEntry: false })?.isFile())
+      throw new Error('Component implementation is not a regular file: ' + file)
+    return readFileSync(full)
+  }
+  const modulePaths = componentModulePaths(pinned, readModule)
+  const candidates = componentModuleCandidates(pinned)
   const assertInventory = async () => {
     await assertInstallResolverBoundary(root, modulePaths)
     const listing = (
@@ -526,8 +541,8 @@ async function installComponents(
     for (const file of physical.executable) {
       if (!tracked.has(file))
         throw new Error('Untracked or ignored component implementation override: ' + file)
-      if (!modulePaths.includes(file))
-        throw new Error('Component implementation is absent from the locked read-set: ' + file)
+      if (!candidates.includes(file))
+        throw new Error('Component implementation is absent from the source lock: ' + file)
     }
     const scoped = (file: string) =>
       file.startsWith('library/ui/figma/src/') || path.posix.dirname(file) === 'library/ui/figma'
@@ -538,7 +553,7 @@ async function installComponents(
     if (JSON.stringify(physicalModules) !== JSON.stringify(trackedPhysicalModules))
       throw new Error('Component physical source inventory differs from the committed source lock')
     const inventory = [...tracked].filter(isComponentModulePath).sort()
-    if (JSON.stringify(inventory) !== JSON.stringify([...modulePaths].sort()))
+    if (JSON.stringify(inventory) !== JSON.stringify(candidates))
       throw new Error('Component module inventory differs from the committed source lock')
   }
   await assertInventory()
@@ -590,6 +605,7 @@ async function installComponents(
     Buffer.from(
       createComponentGeneration({
         source: pinned,
+        read: readModule,
         modules,
         dependencies: [...dependencies].map((file) => {
           const { path, sha256, indexBlobSha } = initial.get(file)!
@@ -614,7 +630,49 @@ async function installComponents(
     await assertLock()
   }
   await verifyInputs()
-  return publishInstall(root, 'components', outDir, planned, verifyInputs)
+  return publishInstall(root, 'components', outDir, planned, verifyInputs, (current) =>
+    handWrittenComponents(current, lock.publicComponents?.files, planned)
+  )
+}
+
+/**
+ * Hand-written components in the current target: directories that hold none of the outputs the lock's public table
+ * pins or the current generation record lists, read from the same snapshot the transaction publishes over. They are carried into the published tree byte for byte, never
+ * planned, regenerated or deleted, and a plan that would write into one is refused.
+ */
+function handWrittenComponents(
+  current: Map<string, Buffer> | undefined,
+  table: Record<string, unknown> | undefined,
+  planned: ReadonlyMap<string, Buffer>
+): Map<string, Buffer> {
+  const kept = new Map<string, Buffer>()
+  if (!current) return kept
+  const owned = new Set(Object.keys(table ?? {}))
+  // The installed record also names outputs a lock not yet resealed does not; an unreadable record adds nothing,
+  // which can only keep more, never delete a hand-written file.
+  try {
+    const output = (
+      JSON.parse(current.get('generation.json')?.toString('utf8') ?? '{}') as { output?: unknown }
+    ).output
+    if (Array.isArray(output))
+      for (const entry of output as { path?: unknown }[])
+        if (typeof entry?.path === 'string') owned.add(entry.path)
+  } catch {
+    // The lock table alone decides.
+  }
+  const directories = new Set(handWrittenComponentDirectories(current.keys(), owned))
+  const fold = (name: string) => name.normalize('NFC').toLowerCase()
+  const plannedDirectories = new Set(
+    [...planned.keys()]
+      .filter((file) => file.includes('/'))
+      .map((file) => fold(file.split('/')[0]!))
+  )
+  for (const directory of directories)
+    if (plannedDirectories.has(fold(directory)))
+      throw new Error('Component install would overwrite a hand-written component: ' + directory)
+  for (const [file, bytes] of current)
+    if (file.includes('/') && directories.has(file.split('/')[0]!)) kept.set(file, bytes)
+  return kept
 }
 
 type FoundationSource = {
@@ -679,14 +737,18 @@ async function publishInstall(
   target: string,
   outDir: string,
   planned: Map<string, Buffer>,
-  verifyInputs: () => Promise<void>
+  verifyInputs: () => Promise<void>,
+  keep: (current: Map<string, Buffer> | undefined) => Map<string, Buffer> = () => new Map()
 ): Promise<InstallResult> {
   const current = await tree(outDir)
-  await cleanTarget(root, target, outDir, current, planned)
+  const kept = keep(current)
+  // Kept files are published as they are and are not reported as install output.
+  const publication = new Map([...planned, ...kept])
+  await cleanTarget(root, target, outDir, current, publication)
   const result = {
     target,
     outDir,
-    changed: !same(current, planned),
+    changed: !same(current, publication),
     files: [...planned]
       .sort(([a], [b]) => a.localeCompare(b, 'en'))
       .map(([file, bytes]) => ({ path: file, sha256: digest(bytes) }))
@@ -706,7 +768,7 @@ async function publishInstall(
       throw new Error('Install target changed concurrently')
     if (!result.changed) return result
     temporary = await mkdtemp(path.join(path.dirname(outDir), `.${target}-install-`))
-    for (const [file, bytes] of planned) {
+    for (const [file, bytes] of publication) {
       const target = await resolveContained(temporary, file)
       await mkdir(path.dirname(target), { recursive: true })
       await writeFile(target, bytes)

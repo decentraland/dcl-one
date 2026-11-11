@@ -24,6 +24,7 @@ import {
   prepareStages,
   type Stage
 } from './port.js'
+import { toPosix } from './guard/fs-safe.js'
 
 const REQUIRED = [
   'fetch-source',
@@ -192,11 +193,14 @@ describe('when a maintainer runs the port commands', () => {
         })
       })
 
-      expect(result).toMatchObject({ ok: false, failed: 'clean-tree', restored: true })
+      expect(result).toMatchObject({
+        ok: false,
+        failed: 'clean-tree',
+        restore: { restored: [], kept: ['library/ui/figma/synthetic.mjs'] }
+      })
       expect(existsSync(path.join(root, 'library/ui/port-verification.json'))).toBe(false)
-      expect(readFileSync(path.join(figma, 'synthetic.mjs'), 'utf8')).toBe(
-        'export const synthetic = true\n'
-      )
+      // Outside the check outputs, so it may be a maintainer's edit: left as it is.
+      expect(readFileSync(path.join(figma, 'synthetic.mjs'), 'utf8')).toBe('rewritten\n')
     })
   })
 
@@ -602,13 +606,102 @@ describe('when the real port stages run against canned command output', () => {
         }
       }
 
-      expect(portVerify(figma, { run })).toMatchObject({
+      const result = portVerify(figma, { run })
+
+      expect(result).toMatchObject({
         failed: 'review-manifest',
         reason: 'review-manifest failed: boom',
-        restored: true
+        restore: {
+          restored: ['library/ui/figma/review/catalog.json', 'library/ui/figma/review/new.json'],
+          kept: []
+        }
       })
       expect(readFileSync(path.join(figma, 'review/catalog.json'), 'utf8')).toBe('{}\n')
       expect(existsSync(path.join(figma, 'review/new.json'))).toBe(false)
+      // The replaced bytes are recoverable from the backup.
+      const backup = path.join(ui, (result as { restore: { backup: string } }).restore.backup)
+      expect(readFileSync(path.join(backup, 'library/ui/figma/review/catalog.json'), 'utf8')).toBe(
+        '{"changed":true}\n'
+      )
+      expect(existsSync(path.join(backup, 'library/ui/figma/review/new.json'))).toBe(true)
+    })
+
+    it('should keep an edit made outside the check outputs during the run', () => {
+      replies['review-manifest'] = {
+        code: 1,
+        stderr: 'boom\n',
+        effect: () => {
+          writeFileSync(path.join(figma, 'synthetic.mjs'), 'edited by the maintainer\n')
+          writeFileSync(path.join(ui, 'notes.txt'), 'draft\n')
+          writeFileSync(path.join(ui, 'components/a.css'), '/* regenerated */\n')
+        }
+      }
+
+      const result = portVerify(figma, { run })
+
+      expect(result).toMatchObject({
+        failed: 'review-manifest',
+        restore: {
+          restored: ['library/ui/components/a.css'],
+          kept: ['library/ui/figma/synthetic.mjs', 'library/ui/notes.txt']
+        }
+      })
+      expect(readFileSync(path.join(figma, 'synthetic.mjs'), 'utf8')).toBe(
+        'edited by the maintainer\n'
+      )
+      expect(readFileSync(path.join(ui, 'notes.txt'), 'utf8')).toBe('draft\n')
+      expect(readFileSync(path.join(ui, 'components/a.css'), 'utf8')).toBe('/* components */\n')
+    })
+
+    it('should still name the failed check when the restore itself fails', () => {
+      replies['review-manifest'] = {
+        code: 1,
+        stderr: 'boom\n',
+        effect: () => writeFileSync(path.join(figma, 'review/catalog.json'), '{"changed":true}\n')
+      }
+      const failingCheckout = (command: string, args: string[], cwd: string) =>
+        command === 'git' && args.includes('checkout')
+          ? { code: 128, stdout: '', stderr: 'fatal: Unable to create index.lock: File exists.\n' }
+          : run(command, args, cwd)
+
+      const result = portVerify(figma, { run: failingCheckout })
+
+      expect(result).toMatchObject({
+        failed: 'review-manifest',
+        reason: 'review-manifest failed: boom',
+        restore: {
+          restored: [],
+          error: 'git checkout failed: fatal: Unable to create index.lock: File exists.'
+        }
+      })
+      expect(readFileSync(path.join(figma, 'review/catalog.json'), 'utf8')).toBe(
+        '{"changed":true}\n'
+      )
+    })
+  })
+
+  describe('and the components hold a hand-written component the installer never writes', () => {
+    beforeEach(() => {
+      mkdirSync(path.join(ui, 'components/Badge'), { recursive: true })
+      writeFileSync(path.join(ui, 'components/Badge/Badge.tsx'), 'export const Badge = 1\n')
+      commit('hand-written')
+    })
+
+    it('should compare only installer outputs with the private install', () => {
+      expect(portVerify(figma, { run })).toMatchObject({ ok: true })
+    })
+
+    it('should still fail when the private install misses a directory the lock pins', () => {
+      const lockPath = path.join(ui, 'upstream.lock.json')
+      const lock = JSON.parse(readFileSync(lockPath, 'utf8'))
+      lock.publicComponents.files['Badge/Badge.tsx'] = {}
+      writeFileSync(lockPath, JSON.stringify(lock))
+      commit('pinned')
+
+      expect(portVerify(figma, { run })).toMatchObject({
+        failed: 'install',
+        reason: 'the private components install differs from the canonical one'
+      })
     })
   })
 
@@ -731,5 +824,12 @@ describe('when the real port stages run against canned command output', () => {
         reason: 'lock-digests --write failed: deviation codes are not sorted'
       })
     })
+  })
+})
+
+describe('when a path is handed to Git on Windows', () => {
+  it('should use forward slashes, as Git prints them', () => {
+    expect(toPosix('library\\ui\\upstream.lock.json', '\\')).toBe('library/ui/upstream.lock.json')
+    expect(toPosix('library/ui/upstream.lock.json', '/')).toBe('library/ui/upstream.lock.json')
   })
 })

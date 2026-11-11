@@ -3,12 +3,13 @@
 // isolated on its own; this page is deliberately NOT isolated, so the browser keeps the two in
 // separate processes. The signed-in identity's key stays here: the app asks for the public
 // identity and for signatures, and never reads the origin's localStorage itself.
-import { authLoginUrl, authReturnUrl } from '../features/auth/sso'
-import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '../lib/analytics'
-import { AUTH_RETURN_PARAM } from '../lib/entryParams'
-import { migratePrefs } from '../lib/prefs'
+import { exitUrl } from '../host'
+import { authLoginUrl, authReturnUrl } from '@explorer-core/features/auth/sso'
+import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '@explorer-core/lib/analytics'
+import { AUTH_RETURN_PARAM } from '@explorer-core/features/auth/sso'
+import { migratePrefs } from '@explorer-core/lib/prefs'
 import { request } from './login'
-import { onInWorld } from './googleTag'
+import { onInWorld } from '@explorer-core/shell/googleTag'
 
 // The service worker's scope is the package DIRECTORY, but the production entry URL has no
 // trailing slash, which puts this page outside it: the worker never sees the request, so the
@@ -113,10 +114,10 @@ addEventListener('message', async (e: MessageEvent) => {
     case 'bevy-shell:in-world':
       if (f.contentWindow) onInWorld(m, f.contentWindow)
       break
-    // the untrusted-link gate's exit (see src/features/gate/UntrustedLaunchGate.tsx)
+    // the untrusted-link gate's exit (see library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx)
     case 'bevy-shell:exit':
       window.close()
-      location.replace('https://decentraland.org')
+      location.replace(exitUrl())
       break
   }
 })

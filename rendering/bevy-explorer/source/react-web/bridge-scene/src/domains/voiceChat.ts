@@ -10,7 +10,7 @@ import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { serviceBase, signed } from '../http'
 import { relay } from '../system-helpers'
-import type { ActiveCommunityVoiceChat, CommunityVoiceUpdateMessage } from '../../../src/engine/protocol'
+import type { ActiveCommunityVoiceChat, CommunityVoiceUpdateMessage } from '@explorer-core/engine/protocol'
 
 type ActiveChatRaw = {
   communityId?: string
