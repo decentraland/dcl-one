@@ -49,7 +49,6 @@ describe('saved mutes for nearby voice', () => {
     const from = events().length
     const asked = (): number => h.driver.sent.filter((m) => m.kind === 'setNearbyMute').length
     const before = asked()
-    // twice in one turn: the second sees the first
     act(() => {
       h.session().nearbyMutes.set(ADDR, true)
       h.session().nearbyMutes.set(ADDR, true)

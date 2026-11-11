@@ -232,23 +232,22 @@ async fn load_mutes(
     Ok(muted)
 }
 
-/// One change to save, signed by the account that made it.
 struct Save {
     address: Address,
     muted: bool,
     wallet: Wallet,
 }
 
-/// The changes still to save, oldest first, and the one being sent. The service applies each
-/// request on its own, so they go out one at a time: two in flight could land in either order.
+/// The service applies each request on its own, so changes go out one at a time: two in flight
+/// could land in either order.
 #[derive(Resource, Default)]
 struct Saves {
     queue: VecDeque<Save>,
     sending: Option<Task<()>>,
 }
 
-/// The change to send now, if any. Nothing is sent while the saved list is being read: a row
-/// removed between two pages moves the rest up, and the next page would skip one.
+/// Nothing is sent while the saved list is being read: a row removed between two pages moves
+/// the rest up, and the next page would skip one.
 fn next_save<T>(queue: &mut VecDeque<T>, sending: bool, load: Load) -> Option<T> {
     if sending || load == Load::Loading {
         return None;
@@ -290,8 +289,6 @@ fn send_saves(mut saves: ResMut<Saves>, mutes: Res<NearbyMutes>, ipfs: IpfsAsset
 
 type LoadTask = Task<(Address, Result<Vec<Address>, anyhow::Error>)>;
 
-/// How long to wait before reading the saved list again after `failures` failed reads in a row,
-/// or `None` when the list stays failed until the account changes.
 fn retry_delay(failures: u32) -> Option<Duration> {
     (1..=3)
         .contains(&failures)
@@ -302,7 +299,6 @@ fn retry_delay(failures: u32) -> Option<Duration> {
 struct LoadState {
     task: Option<LoadTask>,
     failures: u32,
-    /// On the app's clock.
     retry_at: Option<Duration>,
 }
 
@@ -582,7 +578,6 @@ mod tests {
     fn saves_go_out_in_order_one_at_a_time() {
         let mut queue = VecDeque::from(["hush", "hear"]);
         assert_eq!(next_save(&mut queue, false, Load::Loaded), Some("hush"));
-        // the first is still in flight
         assert_eq!(next_save(&mut queue, true, Load::Loaded), None);
         assert_eq!(next_save(&mut queue, false, Load::Loaded), Some("hear"));
         assert_eq!(next_save(&mut queue, false, Load::Loaded), None);
@@ -592,7 +587,6 @@ mod tests {
     fn saves_wait_for_the_saved_list() {
         let mut queue = VecDeque::from(["hear"]);
         assert_eq!(next_save(&mut queue, false, Load::Loading), None);
-        // a list that could not be read holds nothing back, nor does a signed-out session
         assert_eq!(next_save(&mut queue, false, Load::Failed), Some("hear"));
         queue.push_back("hush");
         assert_eq!(next_save(&mut queue, false, Load::Idle), Some("hush"));

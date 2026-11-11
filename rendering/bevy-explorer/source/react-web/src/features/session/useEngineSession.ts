@@ -1142,7 +1142,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [members, setMembers] = useState<NearbyMember[]>([])
   const [speaking, setSpeaking] = useState<ReadonlySet<string>>(() => new Set())
   const [nearbyMuted, setNearbyMuted] = useState<ReadonlySet<string>>(() => new Set())
-  // what `nearbyMuted` holds, readable before the next render: two changes in one turn each see the other
+  // `nearbyMuted`, readable before the next render
   const nearbyMutedRef = useRef<ReadonlySet<string>>(nearbyMuted)
   const applyNearbyMuted = useCallback((next: ReadonlySet<string>) => {
     nearbyMutedRef.current = next
@@ -3329,7 +3329,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const setNearbyMute = useCallback((address: string, muted: boolean) => {
     const wallet_id = address.toLowerCase()
-    // nothing to change: no event for a mute that did not happen
     if (nearbyMutedRef.current.has(wallet_id) === muted) return
     // optimistic; the engine's list confirms or puts it back
     const next = new Set(nearbyMutedRef.current)
