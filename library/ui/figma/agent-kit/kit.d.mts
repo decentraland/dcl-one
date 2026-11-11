@@ -1,6 +1,6 @@
 export type KitProblem = {
   skill: string
-  reason: 'not-installed' | 'stale' | 'modified'
+  reason: 'not-installed' | 'stale' | 'modified' | 'agents-link-mismatch'
   message: string
 }
 export function installKit(options: {
@@ -11,7 +11,8 @@ export function installKit(options: {
 }): Promise<{
   library: { name: string; version: string }
   installed: string[]
-  agentsLink: 'created' | 'already-present' | 'skipped'
+  unchanged: string[]
+  agentsLink: 'created' | 'already-linked' | 'replaced' | 'skipped'
 }>
 export function checkKit(options: { target: string; kitRoot?: string }): Promise<{
   library: { name: string; version: string }

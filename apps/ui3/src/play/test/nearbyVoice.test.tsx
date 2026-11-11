@@ -7,7 +7,7 @@ import { fakeSession } from './harness'
 function renderSidebar(over: { enabled?: boolean; available?: boolean } = {}) {
   const s = fakeSession()
   s.mic = { ...s.mic, available: true, enabled: false, toggle: vi.fn(), ...over }
-  s.settings = { ...s.settings, list: [{ name: 'Voice', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1, disabled: false }], set: vi.fn(), load: vi.fn() }
+  s.settings = { ...s.settings, list: [{ name: 'Voice Volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 70, default: 100, stepSize: 1, disabled: false }], set: vi.fn(), load: vi.fn() }
   render(<Sidebar session={s} />)
   return s
 }
@@ -36,20 +36,20 @@ describe('nearby voice', () => {
     const slider = screen.getByRole('slider', { name: 'Voice volume' })
     expect(slider).toHaveValue('70')
     fireEvent.change(slider, { target: { value: '40' } })
-    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice', 40)
+    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice Volume', 40)
   })
 
   it('turning hearing off mutes voices, closes the popover, and turning it on restores the volume', async () => {
     const s = renderSidebar({ enabled: true })
     await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
     await userEvent.click(screen.getByRole('switch', { name: 'Hear others' }))
-    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice', 0)
+    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice Volume', 0)
     expect(vi.mocked(s.mic.toggle)).toHaveBeenCalledTimes(1)
     expect(screen.queryByRole('dialog', { name: 'Nearby voice' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Nearby Voice' })).toHaveAttribute('data-voice', 'off')
     await userEvent.click(screen.getByRole('button', { name: 'Nearby Voice' }))
     await userEvent.click(screen.getByRole('switch', { name: 'Hear others' }))
-    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice', 70)
+    expect(vi.mocked(s.settings.set)).toHaveBeenLastCalledWith('Voice Volume', 70)
   })
 
   it('without a microphone, Speak is disabled and says why', async () => {

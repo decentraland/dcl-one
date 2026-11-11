@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { act } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
+import { ToastHost } from '../design'
 import type { Community } from '../engine/protocol'
 import { renderSession, enterAsGuest } from './harness'
 import { peekProfile } from '../features/session/profileStore'
@@ -181,5 +182,76 @@ describe('communities domain', () => {
     expect(h.session().communities.deleted).toBeNull()
     act(() => h.driver.emit({ kind: 'communities', communities: [withThumb] }))
     expect(h.session().communities.list[0].thumbnail).toBe('https://cdn/c1.png')
+  })
+
+  // DOMAIN: the browse grid — a paged, server-searched list.
+  describe('browse grid', () => {
+    const page = (n: number, from = 0): Community[] => Array.from({ length: n }, (_, i) => ({ ...community, id: `b${from + i}`, name: `B${from + i}` }))
+
+    it('reads the first page for a search, then the next, appending it', async () => {
+      const h = renderSession()
+      await enterAsGuest(h)
+      act(() => h.session().communities.loadBrowse('pix'))
+      expect(h.driver.last('browseCommunities')).toEqual({ kind: 'browseCommunities', search: 'pix', page: 1 })
+      expect(h.session().communities.browse.loading).toBe(true)
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: 'pix', page: 1, communities: page(20), total: 25 }))
+      expect(h.session().communities.browse).toMatchObject({ search: 'pix', total: 25, loading: false })
+      expect(h.session().communities.browse.items).toHaveLength(20)
+      act(() => h.session().communities.loadMoreBrowse())
+      expect(h.driver.last('browseCommunities')).toEqual({ kind: 'browseCommunities', search: 'pix', page: 2 })
+      expect(h.session().communities.browse.loadingMore).toBe(true)
+      // a second ask while that page is read sends nothing
+      act(() => h.session().communities.loadMoreBrowse())
+      expect(h.driver.sentOf('browseCommunities')).toHaveLength(2)
+      // a community already listed (it moved up the order) is listed once
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: 'pix', page: 2, communities: [...page(1, 19), ...page(5, 20)], total: 25 }))
+      expect(h.session().communities.browse.items).toHaveLength(25)
+      // every one is read: no further page
+      act(() => h.session().communities.loadMoreBrowse())
+      expect(h.driver.sentOf('browseCommunities')).toHaveLength(2)
+    })
+
+    it('drops the answer to an older search', async () => {
+      const h = renderSession()
+      await enterAsGuest(h)
+      act(() => h.session().communities.loadBrowse('zz'))
+      act(() => h.session().communities.loadBrowse('zzzz'))
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: 'zz', page: 1, communities: page(3), total: 3 }))
+      expect(h.session().communities.browse).toMatchObject({ search: 'zzzz', items: [], loading: true })
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: 'zzzz', page: 1, communities: page(1), total: 1 }))
+      expect(h.session().communities.browse).toMatchObject({ search: 'zzzz', total: 1, loading: false })
+    })
+
+    it('a failed read stops loading and shows the error toast', async () => {
+      render(<ToastHost />)
+      const h = renderSession()
+      await enterAsGuest(h)
+      act(() => h.session().communities.loadBrowse(''))
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: '', page: 1, communities: [], total: 0, failed: true }))
+      expect(h.session().communities.browse).toMatchObject({ loading: false, failed: true })
+      expect(screen.getByText('There was an error loading Communities. Please try again.')).toBeInTheDocument()
+    })
+
+    it('a community read again after a write replaces its card in the grid, keeping its friends', async () => {
+      const h = renderSession()
+      await enterAsGuest(h)
+      const friends = [{ address: '0xf', name: 'Mojito', hasClaimedName: true }]
+      act(() => h.session().communities.loadBrowse(''))
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: '', page: 1, communities: [{ ...community, privacy: 'private', friends }], total: 1 }))
+      act(() => h.driver.emit({ kind: 'community', community: { ...community, privacy: 'private', pendingRequestId: 'r1' } }))
+      expect(h.session().communities.browse.items[0]).toMatchObject({ pendingRequestId: 'r1', friends })
+    })
+
+    it('a save reads the grid again for its search; a delete takes the community out', async () => {
+      const h = renderSession()
+      await enterAsGuest(h)
+      act(() => h.session().communities.loadBrowse('b'))
+      act(() => h.driver.emit({ kind: 'communityBrowse', search: 'b', page: 1, communities: page(2), total: 2 }))
+      act(() => h.driver.emit({ kind: 'communityDeleted', id: 'b0' }))
+      expect(h.session().communities.browse).toMatchObject({ total: 1, items: [{ id: 'b1' }] })
+      act(() => h.session().communities.update({ id: 'b1', name: 'New' }))
+      act(() => h.driver.emit({ kind: 'communitySaveResult', mode: 'update', id: 'b1' }))
+      expect(h.driver.last('browseCommunities')).toEqual({ kind: 'browseCommunities', search: 'b', page: 1 })
+    })
   })
 })

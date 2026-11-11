@@ -138,8 +138,31 @@ const mockCommunities: Community[] = [
   { id: 'c5', name: 'Toxic Events', description: 'The wildest parties and events in DCL.', thumbnail: '', membersCount: 601, role: 'member', ownerName: 'ToxicWaifu' },
   { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum' },
   { id: 'c7', name: 'SheFi', description: 'Empowering women in web3 and DeFi.', thumbnail: '', membersCount: 310, role: 'none', ownerName: 'msjoedor' },
-  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' }
+  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' },
+  // more than two browse pages (20 a page), every third private, some with friends in them
+  ...Array.from({ length: 40 }, (_, i): Community => ({
+    id: `b${i + 1}`,
+    name: `${['Pixel', 'Neon', 'Genesis', 'Lunar', 'Voxel'][i % 5]} ${['Builders', 'Club', 'Guild', 'Collective', 'Lounge', 'Crew', 'Society', 'Hub'][i % 8]} ${i + 1}`,
+    description: `Mock community ${i + 1}, here so the browse grid has pages to load.`,
+    thumbnail: '',
+    membersCount: 20 + ((i * 37) % 400),
+    role: 'none',
+    ownerName: `owner${i + 1}`,
+    privacy: i % 3 === 2 ? 'private' : 'public'
+  }))
 ]
+// The user's friends in a community (the browse card's faces).
+const mockFriend = (n: number): { address: string; name: string; picture: string; hasClaimedName: boolean } => ({
+  address: `0x${(n + 100).toString(16).padStart(40, '0')}`,
+  name: ['Mojito', 'KazeNoKai', 'laurenmae', 'Kimbo'][n % 4],
+  picture: `https://picsum.photos/seed/friend${n}/64/64`,
+  hasClaimedName: n % 2 === 0
+})
+mockCommunities[0].friends = [mockFriend(0), mockFriend(1), mockFriend(2)]
+mockCommunities[2].friends = [mockFriend(3)]
+mockCommunities[9].friends = [mockFriend(1), mockFriend(2)]
+// My Communities: the ones the user is a member of
+const mockMine = (): Community[] => mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator' || c.role === 'member')
 
 const RARITIES = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const thumb = (urn: string): string => `https://peer.decentraland.org/lambdas/collections/contents/${urn}/thumbnail`
@@ -241,7 +264,8 @@ const mockSettings: Setting[] = [
   { name: 'graphics_quality', category: 'graphics', description: 'Overall visual quality.', minValue: 0, maxValue: 3, namedVariants: [v('Low'), v('Medium'), v('High'), v('Ultra')], value: 2, default: 1, stepSize: 1, disabled: false },
   { name: 'VSync', category: 'graphics', description: 'Sync frames to the monitor refresh.', minValue: 0, maxValue: 2, namedVariants: [v('Off'), v('On')], value: 0, default: 0, stepSize: 1, disabled: false },
   { name: 'fps_limit', category: 'graphics', description: 'Cap the frame rate.', minValue: 30, maxValue: 144, namedVariants: [], value: 60, default: 60, stepSize: 1, disabled: false },
-  { name: 'Voice', category: 'audio', description: 'The volume of incoming voice audio from other players.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1, disabled: false },
+  { name: 'Voice Volume', category: 'audio', description: "The volume of nearby players' voices.", minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1, disabled: false },
+  { name: 'Voice Chat Volume', category: 'audio', description: 'The volume of private calls and community voice streams.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1, disabled: false },
   { name: 'master_volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 80, default: 100, stepSize: 1, disabled: false },
   { name: 'voice_chat', category: 'audio', description: 'Enable voice chat.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1, disabled: false }
 ]
@@ -931,7 +955,18 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getCommunities') {
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
+      return
+    }
+    if (msg.kind === 'browseCommunities') {
+      // a name search on the "server", 20 a page; a search for "error" fails, to show the toast
+      const term = msg.search.trim().toLowerCase()
+      const found = mockCommunities.filter((c) => c.visibility !== 'unlisted' && c.name.toLowerCase().includes(term))
+      const from = (msg.page - 1) * 20
+      setTimeout(() => {
+        if (term === 'error') reply({ kind: 'communityBrowse', search: msg.search, page: msg.page, communities: [], total: 0, failed: true })
+        else reply({ kind: 'communityBrowse', search: msg.search, page: msg.page, communities: found.slice(from, from + 20).map((c) => ({ ...c })), total: found.length })
+      }, 500)
       return
     }
     if (msg.kind === 'getCommunity') {
@@ -975,7 +1010,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (msg.action === 'transfer' && c != null) {
         c.role = 'moderator'
         reply({ kind: 'community', community: { ...c } })
-        reply({ kind: 'communities', communities: mockCommunities })
+        reply({ kind: 'communities', communities: mockMine() })
       }
       const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
       setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
@@ -1012,7 +1047,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       })
       setTimeout(() => {
         reply({ kind: 'communitySaveResult', mode: 'create', id })
-        reply({ kind: 'communities', communities: mockCommunities })
+        reply({ kind: 'communities', communities: mockMine() })
       }, 600)
       return
     }
@@ -1021,7 +1056,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       if (at >= 0) mockCommunities.splice(at, 1)
       setTimeout(() => {
         reply({ kind: 'communityDeleted', id: msg.id })
-        reply({ kind: 'communities', communities: mockCommunities })
+        reply({ kind: 'communities', communities: mockMine() })
       }, 300)
       return
     }
@@ -1046,7 +1081,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       setTimeout(() => {
         reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
         if (c != null) reply({ kind: 'community', community: { ...c } })
-        reply({ kind: 'communities', communities: mockCommunities })
+        reply({ kind: 'communities', communities: mockMine() })
       }, 600)
       return
     }
@@ -1056,20 +1091,23 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         c.role = 'member'
         c.membersCount += 1
         reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
+        reply({ kind: 'community', community: { ...c } })
       }
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
-      reply({ kind: 'communities', communities: mockCommunities })
+      if (c) reply({ kind: 'community', community: { ...c } })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
-      reply({ kind: 'communities', communities: mockCommunities })
+      if (c) reply({ kind: 'community', community: { ...c } })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'leaveCommunity') {
@@ -1078,8 +1116,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         c.role = 'none'
         c.membersCount = Math.max(0, c.membersCount - 1)
         reply({ kind: 'communityChannelRemoved', id: c.id })
+        reply({ kind: 'community', community: { ...c } })
       }
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'getCommunityDetail') {

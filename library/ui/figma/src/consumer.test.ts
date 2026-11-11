@@ -1,14 +1,23 @@
-import { mkdtemp, rm, symlink, mkdir, readFile } from 'node:fs/promises'
+import { mkdtemp, rm, symlink, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
+import { execFile } from 'node:child_process'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+const run = promisify(execFile)
 const projectRoot = path.resolve(import.meta.dirname, '..')
 const libraryRoot = path.resolve(projectRoot, 'test/fixtures/library')
 const libraryVersion = JSON.parse(await readFile(path.join(libraryRoot, 'package.json'), 'utf8'))
   .version as string
+
+const cli = (args: string[]) =>
+  run(process.execPath, ['--import', import.meta.resolve('tsx'), 'src/cli.ts', ...args], {
+    cwd: projectRoot,
+    env: { PATH: process.env.PATH ?? '' }
+  })
 
 type TextResult = { isError?: boolean; content: { type: string; text: string }[] }
 
@@ -125,5 +134,211 @@ describe('figma from a consuming project', () => {
       expect(resolved.isError).toBe(true)
       expect(resolved.body.errors[0].details.reason).toBe('library-version')
     }, 30_000)
+  })
+
+  describe('when started with --mapping-only in a checkout that has a Figma config', () => {
+    const input = {
+      nodeId: '20:1',
+      variantProperties: { 'Property 1': 'Terciary', Blocked: 'Yes' },
+      texts: { Label: 'Go <now>' }
+    }
+    let mcp: Record<string, unknown>
+    let tools: string[]
+    beforeAll(async () => {
+      // The config would load the capture; --mapping-only must ignore it and register only the contract tools.
+      const { client, call } = await startServer(
+        projectRoot,
+        ['--mapping-only', '--mapping-root', path.join(libraryRoot, 'components')],
+        { DCL_FIGMA_CONFIG: 'test/fixtures/figma.config.json' }
+      )
+      tools = (await client.listTools()).tools.map((t) => t.name).sort()
+      mcp = (await call('figma_resolve_component', input)).body
+      await client.close()
+    }, 30_000)
+
+    it('should register exactly the resolve and check tools', () => {
+      expect(tools).toEqual(['figma_check_mappings', 'figma_resolve_component'])
+    })
+
+    it('should return the same result from the CLI, texts included', async () => {
+      const { stdout } = await cli([
+        'resolve',
+        '--mapping-only',
+        '--mapping-root',
+        path.join(libraryRoot, 'components'),
+        '--node-id',
+        input.nodeId,
+        '--variant',
+        'Property 1=Terciary',
+        '--variant',
+        'Blocked=Yes',
+        '--text',
+        'Label=Go <now>'
+      ])
+      expect(JSON.parse(stdout)).toEqual(mcp)
+      expect(mcp).toMatchObject({
+        ok: true,
+        resolved: {
+          usage: '<Button variant="tertiary" disabled>Go &lt;now&gt;</Button>',
+          provenance: { figma: { identity: 'mapping-only' } }
+        }
+      })
+    }, 30_000)
+
+    it('should name no Figma file other than the placeholder', () => {
+      const text = JSON.stringify(mcp)
+      expect(text).not.toMatch(/figma\.com/i)
+      expect(
+        (mcp as { resolved: { provenance: { figma: { url: string } } } }).resolved.provenance.figma
+          .url
+      ).toMatch(/^<DCL_FIGMA_FILE>/)
+    })
+  })
+
+  describe('when the CLI checks mappings without a capture', () => {
+    it('should say the capture checks did not run', async () => {
+      const { stdout } = await cli([
+        'check-mappings',
+        '--mapping-only',
+        '--mapping-root',
+        path.join(libraryRoot, 'components')
+      ])
+
+      expect(JSON.parse(stdout)).toMatchObject({
+        ok: true,
+        captureChecked: false,
+        warnings: [expect.objectContaining({ code: 'capture-unchecked', audience: 'maintainer' })]
+      })
+    }, 30_000)
+
+    it('should fail without a mapping source instead of passing an empty check', async () => {
+      await expect(
+        cli(['check-mappings', '--mapping-only', '--mapping-root', tmpdir()])
+      ).rejects.toMatchObject({
+        code: 1,
+        stdout: expect.stringContaining('mapping-root-not-configured')
+      })
+    }, 30_000)
+  })
+
+  describe('when a malformed flag meets a configuration that cannot load', () => {
+    it('should report the flag before touching the runtime', async () => {
+      await expect(
+        cli(['resolve', '--config', 'missing.json', '--node-id', '20:1', '--text', 'Label'])
+      ).rejects.toMatchObject({
+        code: 1,
+        stderr: expect.stringContaining('--text takes "Name=Value"')
+      })
+    }, 30_000)
+  })
+
+  describe('when the CLI resolves a batch', () => {
+    const root = path.join(libraryRoot, 'components')
+    const args = ['resolve', '--mapping-only', '--mapping-root', root, '--batch']
+    const entries = [
+      { name: 'Button', variantProperties: { 'Property 1': 'Terciary' }, texts: { Label: 'Go' } },
+      { name: 'Nothing' }
+    ]
+
+    it('should read standard input and print every entry with the summary', async () => {
+      const child = execFile(
+        process.execPath,
+        ['--import', import.meta.resolve('tsx'), 'src/cli.ts', ...args, '-'],
+        { cwd: projectRoot, env: { PATH: process.env.PATH ?? '' } }
+      )
+      child.stdin!.end(JSON.stringify(entries))
+      const [code, stdout] = await new Promise<[number | null, string]>((resolve) => {
+        let out = ''
+        child.stdout!.on('data', (chunk) => (out += chunk))
+        child.on('close', (exit) => resolve([exit, out]))
+      })
+      const batch = JSON.parse(stdout)
+
+      expect(code).toBe(1)
+      expect(batch.results[0].result.resolved.usage).toBe('<Button variant="tertiary">Go</Button>')
+      expect(batch.summary).toEqual({
+        requested: 2,
+        resolved: 1,
+        unmapped: [],
+        failed: [{ index: 1, code: 'identity-uncertain' }]
+      })
+    }, 30_000)
+
+    it('should read a file and exit 0 when every entry resolves', async () => {
+      const file = path.join(consumer, 'instances.json')
+      await writeFile(file, JSON.stringify(entries.slice(0, 1)))
+
+      const { stdout } = await cli([...args, file])
+
+      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
+    }, 30_000)
+
+    it.each([
+      ['malformed JSON', '{not json'],
+      ['an empty array', '[]'],
+      ['an object', '{"name":"Button"}']
+    ])(
+      'should exit 2 on %s, apart from a failed entry',
+      async (_label, text) => {
+        const file = path.join(consumer, 'bad.json')
+        await writeFile(file, text)
+
+        await expect(cli([...args, file])).rejects.toMatchObject({
+          code: 2,
+          stderr: expect.stringContaining('--batch needs a non-empty JSON array of instances')
+        })
+      },
+      30_000
+    )
+
+    it('should exit 2 when the batch file is missing', async () => {
+      await expect(cli([...args, path.join(consumer, 'missing.json')])).rejects.toMatchObject({
+        code: 2,
+        stderr: expect.stringContaining('ENOENT')
+      })
+    }, 30_000)
+  })
+
+  describe('when the CLI receives malformed resolve flags', () => {
+    it.each([
+      [['--text', 'Label'], '--text takes "Name=Value"'],
+      [['--text', '=Go'], '--text takes "Name=Value"'],
+      [['--text', 'Label=a', '--text', 'Label=b'], '--text names "Label" twice'],
+      [['--variant', 'Blocked'], '--variant takes "Name=Value"'],
+      [['--text', '__proto__=a', '--text', '__proto__=b'], '--text names "__proto__" twice'],
+      [['--config', 'missing.json'], 'Figma config not found'],
+      [['--batch', '-'], '--batch takes its instances from the file']
+    ])(
+      'should refuse %j without resolving',
+      async (flags, message) => {
+        const failure = cli(['resolve', '--mapping-only', '--node-id', '20:1', ...flags])
+        await expect(failure).rejects.toMatchObject({
+          code: 1,
+          stderr: expect.stringContaining(message)
+        })
+      },
+      30_000
+    )
+
+    it.each([
+      [
+        ['check-mappings', '--mapping-only', '--text', 'Label=Go'],
+        '--text applies only to resolve'
+      ],
+      [
+        ['review-manifest', '--mapping-only'],
+        '--mapping-only applies only to resolve and check-mappings'
+      ],
+      [['check-mappings', '--mapping-only', '--batch', 'x.json'], '--batch applies only to resolve']
+    ])(
+      'should refuse %j',
+      async (args, message) => {
+        await expect(cli(args)).rejects.toMatchObject({
+          code: 1,
+          stderr: expect.stringContaining(message)
+        })
+      },
+      30_000
+    )
   })
 })

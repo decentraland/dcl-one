@@ -10,6 +10,7 @@ import { NOTIFICATIONS_PREFIX } from "@/data/lib/catalyst/bases";
 import { catalystBase } from "@/data/lib/catalyst/client";
 import { openSignIn } from "../auth/signin-store";
 import { hubAccountActions } from "./explorer-host";
+import { usePrivateQueryLifecycle } from "./usePrivateQueryLifecycle";
 
 export default function ChromeAuthBridge({ children }: { children: ReactNode }) {
   const rootData = useRouteLoaderData("root") as
@@ -26,6 +27,8 @@ export default function ChromeAuthBridge({ children }: { children: ReactNode }) 
   const { isConnected, address, fetch: signedFetch, disconnect } = useAuth();
   const effSignedIn = mounted ? isConnected : !!seedWallet;
   const effAddress = mounted ? (address ?? "") : seedWallet;
+
+  usePrivateQueryLifecycle(effSignedIn ? effAddress : null);
 
   const { name, avatarUrl } = useProfileIdentity(effAddress || null, effSignedIn);
 

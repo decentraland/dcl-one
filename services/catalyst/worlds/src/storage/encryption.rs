@@ -88,9 +88,12 @@ impl Encryptor {
     }
 }
 
-/// `ENCRYPTION_KEY`: exactly 64 hex characters (32 bytes).
+/// `ENCRYPTION_KEY`: exactly 64 hex characters (32 bytes), untrimmed, checked
+/// in upstream's order (hex digits, then length).
 pub fn parse_encryption_key(key_hex: &str) -> anyhow::Result<[u8; 32]> {
-    let key_hex = key_hex.trim();
+    if key_hex.is_empty() || !key_hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+        anyhow::bail!("invalid ENCRYPTION_KEY: contains non-hexadecimal characters");
+    }
     if key_hex.len() != 64 {
         anyhow::bail!(
             "invalid ENCRYPTION_KEY length: expected 64 hex characters, got {}",
@@ -131,9 +134,17 @@ mod tests {
     fn the_key_is_64_hex_characters() {
         assert_eq!(parse_encryption_key(&"0".repeat(64)).unwrap(), [0u8; 32]);
         assert_eq!(
-            parse_encryption_key(&format!(" {} \n", "ff".repeat(32))).unwrap(),
+            parse_encryption_key(&"fF".repeat(32)).unwrap(),
             [0xffu8; 32]
         );
+        // Untrimmed, as upstream: surrounding whitespace is not hex.
+        for padded in [
+            format!(" {}", "ff".repeat(32)),
+            format!("{}\n", "ff".repeat(32)),
+        ] {
+            let err = parse_encryption_key(&padded).unwrap_err().to_string();
+            assert!(err.contains("non-hexadecimal"), "{err}");
+        }
         let short = parse_encryption_key("abc").unwrap_err().to_string();
         assert!(
             short.contains("expected 64 hex characters, got 3"),

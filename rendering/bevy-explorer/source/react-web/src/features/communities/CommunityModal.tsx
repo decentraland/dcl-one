@@ -4,7 +4,10 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import joinStreamIcon from '../../assets/voice/join-stream.png'
+import streamIcon from '../../assets/voice/stream-small.png'
+import endStreamIcon from '../../assets/voice/end-stream.png'
 import { nameColor, splitName } from '../../lib/identity'
 import { relationshipOf, type Relationship } from '../../lib/relationship'
 import { knownUserColor } from '../session/profileStore'
@@ -26,6 +29,7 @@ import type {
   CommunityPlace,
   CommunityPost
 } from '../../engine/protocol'
+import { inCommunityStream, streamAct, streamLive, streamPending } from '../voiceChat/callGate'
 import styles from './CommunityModal.module.css'
 
 type Tab = 'announcements' | 'members' | 'places' | 'photos'
@@ -304,6 +308,7 @@ export function CommunityModal({
   onMemberMenu = () => undefined,
   onMemberAction,
   onOpenChat,
+  stream,
   onEdit,
   onDelete,
   onRemovePlace,
@@ -331,6 +336,9 @@ export function CommunityModal({
   /** Run an owner's or moderator's action on a member (asked first where unity-explorer asks). */
   onMemberAction?: (id: string, address: string, action: CommunityMemberAction) => void
   onOpenChat: () => void
+  /** The community's voice stream: live, whether the local user is in it, and whether they may
+   *  open one (owner or moderator). */
+  stream?: { live: boolean; inStream: boolean; canStart: boolean; pending: boolean; participants: number; onStart: () => void; onJoin: () => void; onLeave: () => void }
   /** Open the Edit Community form (owners and moderators). */
   onEdit?: () => void
   /** Delete the community (owner only; asked first). */
@@ -467,6 +475,13 @@ export function CommunityModal({
             {error && <p className={styles.error} role="alert">{error}</p>}
           </div>
           <div className={styles.headActions}>
+            {stream != null && stream.inStream ? (
+              <Button size="sm" variant="secondary" onClick={stream.onLeave}><MaskIcon src={endStreamIcon} size={14} /> Leave stream</Button>
+            ) : stream != null && stream.live ? (
+              <Button size="sm" variant="accent" aria-label="Join stream" disabled={stream.pending} onClick={stream.onJoin}><MaskIcon src={joinStreamIcon} size={14} /> Live · Join stream</Button>
+            ) : stream != null && stream.canStart ? (
+              <Button size="sm" variant="secondary" disabled={stream.pending} onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
+            ) : null}
             {(community.role === 'owner' || community.role === 'moderator') && onEdit != null && (
               <button type="button" className={styles.iconBtn} aria-label="Edit Community" onClick={onEdit}><Pencil size={16} /></button>
             )}
@@ -577,15 +592,16 @@ export function CommunityModal({
  *  in place — never a frozen snapshot from when it was opened. */
 function CommunityModalContainer({ communityId, onClose }: { communityId: string; onClose: () => void }): React.JSX.Element | null {
   const session = useSession()
-  const { communities, friends, chat } = session
+  const { communities, friends, chat, voiceChat } = session
   const { loadDetail } = communities
 
   const { fetch } = communities
-  // the browse list only holds what the Communities page fetched; a card opened from elsewhere
-  // (the chat's "View Community") has its community fetched by id, and a join or leave that
-  // re-reads the list (its first page) does not take it away
+  // My Communities and the browse grid only hold what the Communities page read; a card opened
+  // from elsewhere (the chat's "View Community") has its community fetched by id
   const community =
-    communities.list.find((c) => c.id === communityId) ?? communities.cards[communityId]
+    communities.list.find((c) => c.id === communityId) ??
+    communities.browse.items.find((c) => c.id === communityId) ??
+    communities.cards[communityId]
   const listed = community != null
   useEffect(() => {
     if (!listed) fetch(communityId)
@@ -612,9 +628,21 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   }
 
   const detail = communities.detail != null && communities.detail.id === communityId ? communities.detail : null
+  const live = voiceChat.active.find((c) => c.communityId === communityId)
+  const stream = {
+    live: streamLive(voiceChat, communityId, community.voiceChatStatus?.isActive),
+    inStream: inCommunityStream(voiceChat.state, communityId),
+    canStart: community.role === 'owner' || community.role === 'moderator',
+    pending: streamPending(voiceChat.state),
+    participants: live?.participantCount ?? community.voiceChatStatus?.participantCount ?? 0,
+    onStart: () => streamAct(voiceChat, { op: 'startCommunityCall', communityId }),
+    onJoin: () => streamAct(voiceChat, { op: 'joinCommunityCall', communityId }),
+    onLeave: () => voiceChat.act({ op: 'leaveCall' })
+  }
 
   return (
     <CommunityModal
+      stream={stream}
       community={community}
       detail={detail}
       error={error}

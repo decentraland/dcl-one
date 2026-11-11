@@ -1,4 +1,5 @@
 import { posix } from 'node:path'
+import { componentRegistryEntries } from '../component-generation.mjs'
 import postcss from 'postcss'
 import postcssModules from 'postcss-modules'
 import type { FigmaConfig } from './config.js'
@@ -17,7 +18,8 @@ import { loadSpecsFromSource } from './specs.js'
 type ComponentPlanContext = {
   source: FigmaSource
   config: FigmaConfig
-  registry: { components: readonly string[]; internal?: readonly string[] }
+  // Public entries are names or { name, limits }; internal entries are names.
+  registry: { components: readonly unknown[]; internal?: readonly string[] }
   runtime: ReadonlyMap<string, Buffer>
 }
 type ComponentInstallPlan = {
@@ -168,9 +170,18 @@ export default {
 `
 }
 
-function registryBytes(components: readonly string[], publicNames: ReadonlySet<string>): Buffer {
+type AcceptedLimit = { id: string; text: string }
+
+// The registry the install writes back: public names keep their accepted limits, in the { name, limits } form.
+function registryBytes(
+  components: readonly string[],
+  publicNames: ReadonlySet<string>,
+  limits: Readonly<Record<string, readonly AcceptedLimit[]>> = {}
+): Buffer {
   const visibility = {
-    components: components.filter((name) => publicNames.has(name)),
+    components: components
+      .filter((name) => publicNames.has(name))
+      .map((name) => (Object.hasOwn(limits, name) ? { name, limits: limits[name] } : name)),
     ...(components.some((name) => !publicNames.has(name))
       ? { internal: components.filter((name) => !publicNames.has(name)) }
       : {})
@@ -183,23 +194,24 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
   const { source, config, registry, runtime } = context
   if (config.imageFills !== 'placeholder')
     throw new Error('Public component installation requires the placeholder raster policy')
-  if (
-    !registry ||
-    typeof registry !== 'object' ||
-    Array.isArray(registry) ||
-    Object.keys(registry).some((key) => key !== 'components' && key !== 'internal') ||
-    !Array.isArray(registry.components) ||
-    (registry.internal !== undefined && !Array.isArray(registry.internal))
-  )
-    throw new Error('Component registry must contain public and internal name lists only')
-  const requested = [...registry.components, ...(registry.internal ?? [])]
+  let entries: { components: string[]; internal: string[]; limits: Record<string, AcceptedLimit[]> }
+  try {
+    entries = componentRegistryEntries(registry)
+  } catch (error) {
+    throw new Error(
+      'Component registry must contain public and internal name lists only: ' +
+        (error as Error).message,
+      { cause: error }
+    )
+  }
+  const requested = [...entries.components, ...entries.internal]
   if (
     requested.some((name) => typeof name !== 'string') ||
     new Set(requested).size !== requested.length
   )
     throw new Error('Component registry must contain unique component names only')
   for (const name of requested) assertIdentifier(name)
-  const publicNames = new Set(registry.components)
+  const publicNames = new Set(entries.components)
   if (!requested.length)
     return { components: [], files: new Map([['promotion.json', registryBytes([], publicNames)]]) }
   for (const file of runtimeFiles)
@@ -292,7 +304,7 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
   for (const [file, bytes] of await cssDeclarations(files, textStyleModule.content))
     files.set(file, bytes)
   const components = specs.map((spec) => spec.name)
-  files.set('promotion.json', registryBytes(components, publicNames))
+  files.set('promotion.json', registryBytes(components, publicNames, entries.limits))
   return { components, files }
 }
 

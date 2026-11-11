@@ -1,17 +1,16 @@
 {
-  "schema": 1,
-  "lockHash": "f8d27a5030b279e44c1e691710efdf9399bce7117fb0c1f297e2b9d99587d5e6",
+  "schema": 2,
+  "portInputHash": "57accd252489c8f801ea2677b4f17a06899493c23a237b998305b482b2de8b9b",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
-  "figmaTree": "bf56735a9eabfba846d59790e93e35a090efcc00",
   "checks": {
     "fetch-source": {
       "result": "pass",
-      "detail": "Verified existing 544 cache files against the pinned revision and digest table"
+      "detail": "Verified 544 cache files against the pinned revision and digest table"
     },
     "deviations": {
       "result": "pass",
-      "detail": "450 tooling pins, 39 foundation origins and 10 component outputs pass the common guard"
+      "detail": "458 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
@@ -19,19 +18,19 @@
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "Fresh check passes with 0 public mappings for the internal NavBar"
+      "detail": "Fresh check passes with 1 public mapping and no errors"
     },
     "review-manifest": {
       "result": "pass",
-      "detail": "Fresh catalog regeneration is byte-identical, 46 components and 561 variants"
+      "detail": "Fresh catalog regeneration is byte-identical, 46 components"
     },
     "navbar-bounds": {
       "result": "pass",
-      "detail": "Fresh gallery build passes 19 bounds checks, source control holds remain"
+      "detail": "Fresh gallery build passes 19 bounds checks"
     },
     "install": {
       "result": "pass",
-      "detail": "Private and canonical installs reproduce 39 foundation and 10 component files with no-op repeats"
+      "detail": "Private and canonical installs reproduce 39 foundation and 11 component files with no-op repeats"
     }
   }
 }
