@@ -28,7 +28,8 @@ use scene_runner::{
         CurrentImposterScene, CurrentSceneLoading, LiveScenes, PointerResult, SceneLoading,
         ScenePointers, PARCEL_SIZE,
     },
-    renderer_context::{RendererSceneContext, FROZEN_BLOCK},
+    renderer_context::RendererSceneContext,
+    scene_lod::{LodState, SceneLod},
 };
 
 use crate::{
@@ -208,6 +209,7 @@ pub fn spawn_imposters(
     ingredients: Res<BakingIngredients>,
     live_scenes: Res<LiveScenes>,
     scenes: Query<&RendererSceneContext, Without<SceneLoading>>,
+    lods: Query<&SceneLod>,
     current_imposter_scene: Res<CurrentImposterScene>,
     current_scene_loading: Res<CurrentSceneLoading>,
     mut manager: ImposterSpecManager,
@@ -265,20 +267,19 @@ pub fn spawn_imposters(
             let Ok(ctx) = scenes.get(*e) else {
                 return None;
             };
-            if ctx.is_portable {
-                return None;
-            }
-            // a frozen scene counts as ready: it never advances its tick, and its content
-            // is rendered, so its parcels must be live or an imposter draws over it
-            let frozen = ctx.blocked.contains(FROZEN_BLOCK);
-            if !ctx.broken() && !frozen && (ctx.tick_number <= 5 || !ctx.blocked.is_empty()) {
-                // not ready
+            if ctx.is_portable || !ctx.content_shown() {
                 return None;
             }
             Some(&ctx.parcels)
         })
         .flatten()
         .copied()
+        // a shown near LOD covers its parcels too: imposters draw beyond the stand-ins
+        .chain(
+            lods.iter()
+                .filter(|lod| matches!(lod.state, LodState::Shown(_)))
+                .flat_map(|lod| lod.parcels.iter().copied()),
+        )
         .collect::<HashSet<_>>();
 
     // skip the full tile recompute when nothing that affects the result has changed.

@@ -63,6 +63,12 @@ export const WEB_PARAMS: WebParam[] = [
     "doc": "Local-preview comms gatekeeper; absent = `https://comms-gatekeeper-local.<base>`"
   },
   {
+    "name": "abgenCdn",
+    "kind": "string",
+    "delivery": "resolved",
+    "doc": "Asset-bundle generator CDN (the scenes' LOD descriptors and meshes); absent = `https://abgen-cdn.<base>`"
+  },
+  {
     "name": "storage",
     "kind": "string",
     "delivery": "resolved",

@@ -81,6 +81,7 @@ pub mod load_timing;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_lod;
 pub mod scene_partition;
 mod scene_traffic;
 #[cfg(test)]
@@ -441,6 +442,7 @@ impl Plugin for SceneRunnerPlugin {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             debug_panel::register(app);
             app.add_plugins(LightsPlugin);
+            app.add_plugins(scene_lod::SceneLodPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
 
