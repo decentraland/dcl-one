@@ -1362,6 +1362,14 @@ export interface RequestToJoinCommunityRequest {
   id: string
 }
 
+/** The user's join request to a community was sent (with its id) or cancelled (no id), told as
+ *  soon as the write succeeds, before the community is read again (scene → page). */
+export interface CommunityJoinRequestMessage {
+  kind: 'communityJoinRequest'
+  id: string
+  requestId?: string
+}
+
 export interface CancelJoinRequestRequest {
   kind: 'cancelJoinRequest'
   id: string
@@ -2198,6 +2206,7 @@ export type SceneToPage =
   | CommunityDetailMessage
   | CommunityInvitesMessage
   | CommunityInvitesCountMessage
+  | CommunityJoinRequestMessage
   | CommunityMemberSectionMessage
   | InvitableCommunitiesMessage
   | CommunityInviteSentMessage

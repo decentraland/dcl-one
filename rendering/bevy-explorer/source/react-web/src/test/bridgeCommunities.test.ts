@@ -340,9 +340,12 @@ describe('bridge community browse', () => {
     })
     const h = fakeCtx()
     await h.req({ kind: 'requestToJoinCommunity', id: 'p1' })
+    // told first, before the community is read again
+    expect(h.sent[0]).toEqual({ kind: 'communityJoinRequest', id: 'p1', requestId: 'r9' })
     expect(sentCommunity(h.sent)?.pendingRequestId).toBe('r9')
     await h.req({ kind: 'cancelJoinRequest', id: 'p1', requestId: 'r9' })
     expect(signed).toHaveBeenCalledWith('https://socialApi.example/v1/communities/p1/requests/r9', 'PATCH', { intention: 'cancelled' })
+    expect(h.sent).toContainEqual({ kind: 'communityJoinRequest', id: 'p1' })
     expect(sentCommunity(h.sent)?.pendingRequestId).toBeUndefined()
   })
 
@@ -578,7 +581,7 @@ describe('bridge community invites and requests', () => {
     })
     const h = fakeCtx()
     await h.req({ kind: 'cancelJoinRequest', id: 'c2', requestId: 'rq1' })
-    expect(h.sent.map((m) => m.kind)).toEqual(['community', 'communities', 'communityChannels', 'communityInvites'])
+    expect(h.sent.map((m) => m.kind)).toEqual(['communityJoinRequest', 'community', 'communities', 'communityChannels', 'communityInvites'])
     expect(last(h.sent, 'communityInvites')?.requestsSent).toEqual([])
   })
 

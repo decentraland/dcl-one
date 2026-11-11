@@ -351,6 +351,29 @@ describe('the session’s invites and requests', () => {
     expect(h.driver.sentOf('getCommunityDetail').at(-1)).toEqual({ kind: 'getCommunityDetail', id: 'c2' })
   })
 
+  it('a sent join request shows on every copy of the community at once, and a cancel clears it', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const c = { id: 'p1', name: 'Locked', description: '', membersCount: 3, role: 'none', ownerName: 'O', privacy: 'private' }
+    act(() => h.driver.emit({ kind: 'community', community: c }))
+    act(() => h.driver.emit({ kind: 'communityJoinRequest', id: 'p1', requestId: 'r1' }))
+    expect(h.session().communities.cards.p1?.pendingRequestId).toBe('r1')
+    act(() => h.driver.emit({ kind: 'communityJoinRequest', id: 'p1' }))
+    expect(h.session().communities.cards.p1?.pendingRequestId).toBeUndefined()
+  })
+
+  it('a failed request from a grid card is toasted; with its card open it shows on the card only', async () => {
+    render(<ToastHost />)
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'p1', action: 'requestToJoin', message: 'HTTP 500' }))
+    expect(await screen.findByText('There was an error requesting to join community. Please try again.')).toBeInTheDocument()
+    act(() => h.session().communities.cardOpen('p2'))
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'p2', action: 'requestToJoin', message: 'HTTP 500' }))
+    expect(screen.getAllByText('There was an error requesting to join community. Please try again.')).toHaveLength(1)
+    expect(h.session().communities.error).toEqual({ id: 'p2', message: 'There was an error requesting to join community. Please try again.' })
+  })
+
   it("keeps only the open card's sections", async () => {
     const h = renderSession()
     await enterAsGuest(h)

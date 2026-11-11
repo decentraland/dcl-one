@@ -12,6 +12,7 @@ import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
 import { CountBadge } from './CountBadge'
+import { SwapLabel } from './SwapLabel'
 import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
@@ -497,6 +498,10 @@ export function Showcase(): React.JSX.Element {
             { label: 'Delete chat history', danger: true }
           ]}
         />
+      </Section>
+
+      <Section title="SwapLabel (hover the button)">
+        <Button size="sm" variant="ghost" aria-label="Cancel join request"><SwapLabel idle="Request Sent" hover="Cancel Request" /></Button>
       </Section>
 
       <Section title="CountBadge (count · capped)">

@@ -4,7 +4,7 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, Button, ControlButton, EmptyState, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, Button, ControlButton, EmptyState, SwapLabel, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
@@ -582,7 +582,7 @@ export function CommunityModal({
               <Button size="sm" variant="ghost" className={styles.joined} disabled>✓ Joined</Button>
             ) : isPrivate && community.pendingRequestId != null ? (
               <Button size="sm" variant="ghost" aria-label="Cancel join request" onClick={() => onCancelRequest(community.id, community.pendingRequestId!)}>
-                Requested
+                <SwapLabel idle="Request Sent" hover="Cancel Request" />
               </Button>
             ) : isPrivate ? (
               <Button size="sm" onClick={() => onRequestToJoin(community.id)}>Request to Join</Button>
@@ -742,6 +742,11 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   useEffect(() => {
     fetch(communityId)
   }, [fetch, communityId])
+  const { cardOpen } = communities
+  useEffect(() => {
+    cardOpen(communityId)
+    return () => cardOpen(null)
+  }, [cardOpen, communityId])
   useEffect(() => {
     loadDetail(communityId)
   }, [loadDetail, communityId])

@@ -2132,6 +2132,14 @@
           "kind": "regular"
         },
         {
+          "name": "SwapLabel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "SwapLabel.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "Tabs.module.css",
           "kind": "regular"
         },
@@ -3906,7 +3914,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "9e8a700567b3e4f6ac8ca0fcf9c05736b58b6e8b17d3acd0842bd226a90d86e0"
+      "sha256": "aea88fbff7da33041d92592505934ca0068f40714b0de3ce78f56e155f28cfb2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -3922,7 +3930,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "7cbdcd7cd32ee05015df5a16c450d06fc2b2d6c47d7596a4c3467709aa423141"
+      "sha256": "e45983f50463af41653b154e9b629712e0b135eedd6f9529829aad0ff1fc58e1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -4098,7 +4106,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "c2ccc3d135409ea8da34259591a06116671644b777b89ac42dfc7493fb8e0efe"
+      "sha256": "8bdd6a5afecc785e3612afb4cef15c8bb540960708f7c8822acebefe50dc7896"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
@@ -4246,7 +4254,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "4ad58e33d5e40e37875d130347d7dbd254d76cfe06cf8121abf6e01fd8047023"
+      "sha256": "59b843d6c022149964d0bee0ee00162e13a04dfe4e182588e597ec7e3ecdbfab"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -4394,7 +4402,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "aa2a0524039672f163ede46d068a076c736c1f5d9d7555d79ff6fe1664dd541b"
+      "sha256": "7a38e2008453057327b828667c3a273d58d6288901c5601e502245e84a2e7b49"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5890,7 +5898,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "368386f9fef92a729e737c57f3ab54a2bc009bb88873fa6e999d8220373fe79f"
+      "sha256": "921b4c2db10ec9676f6b99478c272fa6c563d7be761dc5df8bdbcad198b59f84"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -5915,6 +5923,14 @@
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
       "sha256": "e2fabe09e70287751ac5c5725e6139f46e1f64fbba53b5c4063b7f6a873ac0f6"
+    },
+    {
+      "path": "library/ui/apps/hud/design/SwapLabel.module.css",
+      "sha256": "81a3700cd1f3df28e476e10b64d3ff912e0b29069a77929e3c087ce6c8776abe"
+    },
+    {
+      "path": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "sha256": "cf21eb699850a4052ce74494487f08bd31c2e5dba8edf1fce394d13fe9ffe37f"
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.module.css",
@@ -5986,7 +6002,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "9aa1368b4c620f51b470d5bed97bf2e8f648512b7be07d185ec46c93226c1bb1"
+      "sha256": "cc4fa10ecbe788f651a05b015b27f3253c0f383bbb3b2b30327d84ffdffc30a9"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -6102,7 +6118,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "be75e27bf3d52cee2182084417a4eddf0e21b3a6b270a02e42f6e8eb4af1c2d1"
+      "sha256": "bc2903f56ff8f6914d19eaeb65ccfaa5477cb19f19fd91a39cfc8db21a06b1fb"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -6118,7 +6134,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "d07e74a52a76f194df47483db6062750fa130fc9b15271263f9ef9f01d90ffbd"
+      "sha256": "77069015c8bf38a73e47467bef9e353bc44aaba687858b5a1e2297b7471f19f5"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
@@ -6410,7 +6426,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationToast.module.css",
-      "sha256": "4a6882263f64af61849885c3c73cd2373afd5cf8c520520531338a45b1aef417"
+      "sha256": "798f4fe7fc9a7d2da9337f1813be81fb9d91605525bcd88fe8e2451a588481ff"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
@@ -6578,7 +6594,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "fdca73fdab1ab9a3f5449e90dfab39fae891ad0976450897aa9bcacb93390900"
+      "sha256": "bfb4d44840eea9898270ed5e19f05f7c66d4a33530e9c548110e763856359980"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6742,7 +6758,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "60612d479f22233640bc32251c758a3fe7843f61729c4b03af1cb3411f90c9ba"
+      "sha256": "709a43e096c70c3aba171e36776aa48193a73322507adec5711d43ec0bd90ae1"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -6834,11 +6850,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
-      "sha256": "8f2528584f5477236cc20a2d06ca6cd7b588a5559e9a365c9c0fd81c43b2b190"
+      "sha256": "d7f0c1ca75cf73e32f16b8b6b6c515eac3d0b2fc57a7c7cc09ac2cbe7248311f"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.join.test.tsx",
-      "sha256": "9ae3fd9ea5adcf85d44cd89206a47e56d34702311303ba563886a059e6027119"
+      "sha256": "f35dfdbcafd1fc15fd4742d80cbafe4ccea90637cf98cef2881a2c05abf3bda7"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.test.tsx",
@@ -10904,6 +10920,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/Tabs.tsx",
       "kind": "native:runtime"
     },
@@ -11125,6 +11156,21 @@
     {
       "from": "library/ui/apps/hud/design/Submenu.tsx",
       "to": "library/ui/apps/hud/design/Submenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "to": "library/ui/apps/hud/design/SwapLabel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "to": "library/ui/apps/hud/design/SwapLabel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "to": "library/ui/apps/hud/design/SwapLabel.module.css",
       "kind": "test:runtime"
     },
     {
@@ -12130,6 +12176,21 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/Submenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -28515,6 +28576,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/Submenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/SwapLabel.tsx",
       "kind": "type"
     },
     {

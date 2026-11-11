@@ -8,7 +8,7 @@
 // join requests their communities received and their own requests.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, Tooltip } from '../../design'
+import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, SwapLabel, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { confirmRejectInvite, MemberRow, openCommunityModal } from './CommunityModal'
@@ -88,7 +88,7 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcc
   if (requestId != null) {
     return (
       <Button size="sm" variant="ghost" className={styles.cardBtn} aria-label="Cancel join request" onClick={act(() => onCancelRequest(c.id, requestId))}>
-        Requested
+        <SwapLabel idle="Request Sent" hover="Cancel Request" />
       </Button>
     )
   }

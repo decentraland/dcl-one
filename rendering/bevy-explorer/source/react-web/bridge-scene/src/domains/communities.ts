@@ -743,6 +743,10 @@ export function registerCommunities(ctx: Ctx): void {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests`
       const res = await signed<{ id?: string }>(url, 'POST', { targetedAddress: getPlayer()?.userId ?? '', type: 'request_to_join' })
       setPending('request_to_join', msg.id, typeof res?.id === 'string' ? res.id : undefined)
+      // an answer without the request's id: the user's requests are read for it
+      if (pendingFor('request_to_join').get(msg.id.toLowerCase()) == null) await tryLoadPending('request_to_join')
+      // the buttons show the request at once, whether or not the community can be read again
+      ctx.send({ kind: 'communityJoinRequest', id: msg.id, requestId: pendingFor('request_to_join').get(msg.id.toLowerCase()) })
     })
   })
   ctx.on('cancelJoinRequest', async (msg) => {
@@ -750,6 +754,7 @@ export function registerCommunities(ctx: Ctx): void {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests/${encodeURIComponent(msg.requestId)}`
       await signed(url, 'PATCH', { intention: 'cancelled' })
       setPending('request_to_join', msg.id, undefined)
+      ctx.send({ kind: 'communityJoinRequest', id: msg.id })
     })
     // the Invites & Requests section lists the user's requests: a cancelled one leaves it
     await sendInvites()
