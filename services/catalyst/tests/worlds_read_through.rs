@@ -1019,6 +1019,51 @@ async fn a_world_of_many_scenes_is_filled_whole_on_a_miss_from_its_listing_chain
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_older_scene_signed_by_one_who_may_not_publish_is_left_out_of_the_fill() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "older", true).await;
+    let ids = add_scenes(&fake, "older.dcl.eth", 3).await;
+    // The source pages oldest first, so `ids[0]` is the oldest scene. It carries a valid
+    // signature by an address that holds no NAME, as a former owner's or a collaborator's would.
+    let (newest, older) = (&ids[2], &ids[0]);
+    let intruder = chain(INTRUDER_KEY, older, older).await;
+    fake.lock().chains.insert(older.clone(), intruder);
+
+    let (status, about) = node.get("/world/older.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    let mut kept = vec![ids[1].clone(), ids[2].clone()];
+    kept.sort();
+    let rows: Vec<String> = node
+        .scene_rows("older.dcl.eth")
+        .await
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect();
+    assert_eq!(rows, kept);
+    // Nothing of the scene left out is fetched or stored.
+    assert_eq!(content_calls(&fake, older), 0);
+    assert!(!node.storage.exist(older).await.unwrap());
+    assert!(node.storage.exist(newest).await.unwrap());
+
+    // The newest scene still decides: signed by the same address, the world is not filled.
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "newest", true).await;
+    let ids = add_scenes(&fake, "newest.dcl.eth", 3).await;
+    let intruder = chain(INTRUDER_KEY, &ids[2], &ids[2]).await;
+    fake.lock().chains.insert(ids[2].clone(), intruder);
+    let (status, _) = node.get("/world/newest.dcl.eth/about").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(node.scene_rows("newest.dcl.eth").await.is_empty());
+
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_world_that_becomes_local_or_blocked_mid_fill_is_left_alone() {
     let Some(scratch) = db::scratch_database().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");

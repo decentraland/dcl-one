@@ -55,7 +55,7 @@ use crate::explore::places::scene_identity;
 use crate::http::{is_safe_http_url, read_body_capped};
 use crate::jobs::JobContext;
 use crate::policy::Policy;
-use crate::shared::identity::{Address, PermissionDecision};
+use crate::shared::identity::{Address, AuthorityNotEstablished, PermissionDecision};
 use catalyst_storage::Storage;
 
 /// The upstream index measured 4.3 MB for 1,667 worlds (2026-09-24); the
@@ -1052,10 +1052,19 @@ impl<'a> Signatures<'a> {
     /// `WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS`, only for a read-through fill (a local
     /// deployment keeps the policy's own grants), and only when the owner the upstream names is
     /// the one this node's own NAME authority names. Anything else refuses, an unreachable or
-    /// malformed permissions answer included.
-    async fn upstream_grant(&self, client: &crate::http::Outbound, signer: &Address) -> Result<()> {
+    /// malformed permissions answer included. `Ok(Err(why))` is a refusal on the answers this
+    /// node has; `Err` means an answer could not be read (an unreachable permissions endpoint or
+    /// NAME authority).
+    async fn upstream_grant(
+        &self,
+        client: &crate::http::Outbound,
+        signer: &Address,
+    ) -> Result<std::result::Result<(), String>> {
         let Some(url) = &self.permissions_url else {
-            bail!("upstream grants are not trusted (WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS)");
+            return Ok(Err(
+                "upstream grants are not trusted (WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS)"
+                    .into(),
+            ));
         };
         let grant = self
             .grant
@@ -1082,7 +1091,9 @@ impl<'a> Signatures<'a> {
             .as_ref()
             .map_err(|e| anyhow!("{e}"))?;
         if !grant.deployers.contains(signer) {
-            bail!("{signer} is not on the upstream deployment allow-list");
+            return Ok(Err(format!(
+                "{signer} is not on the upstream deployment allow-list"
+            )));
         }
         match self
             .verify
@@ -1090,11 +1101,18 @@ impl<'a> Signatures<'a> {
             .may_have_published(&self.world, &grant.owner)
             .await
         {
-            PermissionDecision::Allowed => Ok(()),
-            PermissionDecision::Refused(why) => bail!(
-                "the upstream names {} as the owner, which this node's NAME authority does not: {why}",
-                grant.owner
-            ),
+            PermissionDecision::Allowed => Ok(Ok(())),
+            PermissionDecision::Refused(why) => {
+                let refusal = format!(
+                    "the upstream names {} as the owner, which this node's NAME authority does not: {why}",
+                    grant.owner
+                );
+                if definite(&why) {
+                    Ok(Err(refusal))
+                } else {
+                    bail!(refusal)
+                }
+            }
         }
     }
 
@@ -1109,14 +1127,24 @@ impl<'a> Signatures<'a> {
         } = scene;
         let cid = id.as_str();
         if chain_bytes > MAX_CHAIN_BYTES {
-            bail!("the auth chain of scene {cid} is {chain_bytes} bytes, over {MAX_CHAIN_BYTES}");
+            return Err(Unacceptable(format!(
+                "the auth chain of scene {cid} is {chain_bytes} bytes, over {MAX_CHAIN_BYTES}"
+            ))
+            .into());
         }
-        let chain: AuthChain = serde_json::from_value(json.clone())
-            .with_context(|| format!("the auth chain of scene {cid} is malformed"))?;
+        let chain: AuthChain = serde_json::from_value(json.clone()).map_err(|e| {
+            Unacceptable(format!("the auth chain of scene {cid} is malformed: {e}"))
+        })?;
         let signer = chain
             .first()
-            .map(|link| Address::parse(&link.payload))
-            .with_context(|| format!("the auth chain of scene {cid} is empty"))??;
+            .ok_or_else(|| Unacceptable(format!("the auth chain of scene {cid} is empty")))
+            .and_then(|link| {
+                Address::parse(&link.payload).map_err(|e| {
+                    Unacceptable(format!(
+                        "the auth chain of scene {cid} names no signer: {e}"
+                    ))
+                })
+            })?;
         match self
             .verify
             .policy
@@ -1129,17 +1157,24 @@ impl<'a> Signatures<'a> {
                 signer,
                 size,
             }),
-            PermissionDecision::Refused(why) => match self.upstream_grant(client, &signer).await {
+            PermissionDecision::Refused(why) => match self.upstream_grant(client, &signer).await? {
                 Ok(()) => Ok(Signed {
                     chain,
                     json,
                     signer,
                     size,
                 }),
-                Err(grant) => bail!(
-                    "{signer} may not have published scene {cid} to {}: {why}; not granted upstream: {grant:#}",
-                    self.world
-                ),
+                Err(grant) => {
+                    let refusal = format!(
+                        "{signer} may not have published scene {cid} to {}: {why}; not granted upstream: {grant}",
+                        self.world
+                    );
+                    if definite(&why) {
+                        Err(Unacceptable(refusal).into())
+                    } else {
+                        bail!(refusal)
+                    }
+                }
             },
         }
     }
@@ -1167,6 +1202,18 @@ impl<'a> Signatures<'a> {
             .with_context(|| format!("the auth chain of scene {cid} does not verify"))?;
         Ok(())
     }
+}
+
+/// A scene whose chain this node will not accept, on answers it has: an over-size, malformed or
+/// empty chain, or a signer the NAME authority says may not publish the world and no trusted
+/// upstream grant covers. An answer that could not be read is a plain error instead.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+struct Unacceptable(String);
+
+/// A refusal the authority gave on what it read, not one because it could not read.
+fn definite(why: &AuthorityNotEstablished) -> bool {
+    matches!(why, AuthorityNotEstablished::RefusedLacksAuthority { .. })
 }
 
 /// Where a checked scene's entity file is when the world is stored.
@@ -1308,13 +1355,24 @@ async fn mirror_world(
     // Every scene entity fetched and, on a read-through, its signature and signer checked
     // before any file of the world is stored; the bytes checked are the bytes stored.
     let mut scenes = Vec::with_capacity(refs.len());
-    for (scene, base) in refs {
+    for (index, (scene, base)) in refs.into_iter().enumerate() {
         let cid = scene.id.clone();
         if !settings.base_url_allowed(&base) {
             bail!("scene {cid} of {name} names a baseUrl this node will not fetch: {base}");
         }
         let signed = match &signatures {
-            Some(signatures) => Some(signatures.signer(client, scene).await?),
+            Some(signatures) => match signatures.signer(client, scene).await {
+                Ok(signed) => Some(signed),
+                // The newest scene decides whether the world is filled. An older one this node
+                // will not accept (a former owner's, a collaborator's) is left out of the fill,
+                // and nothing of it is fetched. An answer that could not be read still fails it.
+                Err(error) if index > 0 && error.downcast_ref::<Unacceptable>().is_some() => {
+                    tracing::warn!(world = name, scene = %cid, error = %format!("{error:#}"),
+                        "read-through leaves out an older scene whose chain it will not accept");
+                    continue;
+                }
+                Err(error) => return Err(error),
+            },
             None => None,
         };
         // The slot ends with this scene's checks: holding it to the store could wait on itself
