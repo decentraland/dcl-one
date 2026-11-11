@@ -6,7 +6,7 @@ import { fetchMostActivePlaces } from "@/data/lib/catalyst/places/index";
 import { loadJumpPlace } from "@/data/lib/catalyst/jump/place-lookup";
 import { eventsPageKeys } from "@/data/lib/catalyst/places/events-page";
 import { eventRecord, placeRecord } from "@/features/events/fixtures";
-import { loader } from "./events";
+import { headers, loader } from "./events";
 
 vi.mock("@/data/lib/catalyst/places/events", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/events")>()),
@@ -100,5 +100,29 @@ describe("the /events loader", () => {
   it("should detect a phone from the request, for Jump In's app launch", async () => {
     const { data } = await load("/events", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)");
     expect(data.platform.kind).toBe("mobile");
+  });
+
+  it("should stop its upstream reads when the visitor leaves, and not answer 503", async () => {
+    const seen: AbortSignal[] = [];
+    vi.mocked(fetchEvents).mockImplementation(
+      (_params, opts) =>
+        new Promise((_resolve, reject) => {
+          const signal = opts?.signal;
+          if (signal) seen.push(signal);
+          signal?.addEventListener("abort", () => reject(signal.reason), { once: true });
+        }),
+    );
+    const controller = new AbortController();
+    const pending = loader({
+      request: new Request("https://example.org/events", { signal: controller.signal }),
+    } as never);
+    await vi.waitFor(() => expect(seen.length).toBeGreaterThanOrEqual(3));
+    controller.abort();
+    await expect(pending).rejects.toBeDefined();
+    expect(seen.every((signal) => signal.aborted)).toBe(true);
+  });
+
+  it("should keep the document, which carries the session id, out of shared caches", () => {
+    expect(headers()).toMatchObject({ "Cache-Control": "private, no-cache" });
   });
 });

@@ -48,13 +48,21 @@ export async function loader({ request }: Route.LoaderArgs) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const eventId = readEventId(url.searchParams);
   const place = eventId ? null : readPlaceTarget(url.searchParams);
+  // A visitor who leaves stops the page's upstream reads: cancelling aborts each query's own signal.
+  const stop = () => void client.cancelQueries();
+  request.signal.addEventListener("abort", stop, { once: true });
   const [calendar] = await Promise.allSettled([
     client.fetchQuery(calendarQuery()),
     client.prefetchQuery(liveNowQuery()),
     client.prefetchQuery(upcomingQuery()),
     eventId ? client.prefetchQuery(eventDetailQuery(eventId)) : null,
     place ? client.prefetchQuery(placeDetailQuery(place)) : null,
-  ]);
+  ]).finally(() => request.signal.removeEventListener("abort", stop));
+  if (request.signal.aborted) {
+    // Nobody is waiting for this page: that is not an outage, so it never answers 503.
+    client.clear();
+    throw request.signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+  }
   const unavailable = calendar.status === "rejected";
   const dehydratedState = dehydrate(client, { shouldDehydrateQuery: (query) => query.state.status === "success" });
   client.clear();
@@ -74,9 +82,12 @@ export function shouldRevalidate({ currentUrl, nextUrl, defaultShouldRevalidate 
   return currentUrl.pathname === nextUrl.pathname ? false : defaultShouldRevalidate;
 }
 
-/** Jump In's target depends on the visitor's device. */
+/**
+ * Jump In's target depends on the visitor's device. The document carries the visitor's session id
+ * (and may set its cookie), so no shared cache may store it.
+ */
 export function headers() {
-  return { Vary: "User-Agent" };
+  return { Vary: "User-Agent", "Cache-Control": "private, no-cache" };
 }
 
 export default function Events({ loaderData }: Route.ComponentProps) {
