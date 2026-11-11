@@ -224,9 +224,14 @@
   }
 
   .body {
+    flex: none;
     max-width: none;
     padding: var(--dcl-space-32) var(--dcl-space-24) 0;
     background: transparent;
+  }
+
+  .content {
+    flex: none;
   }
 
   .avatar {

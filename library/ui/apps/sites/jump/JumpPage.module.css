@@ -1,5 +1,7 @@
+/* Its own stacking context, so the backdrop stays behind this page and never above the footer. */
 .root {
   position: relative;
+  isolation: isolate;
   box-sizing: border-box;
   display: flex;
   min-height: calc(100vh - var(--site-header-h, 64px));
@@ -13,7 +15,7 @@
 }
 
 .backdrop {
-  position: fixed;
+  position: absolute;
   inset: 0;
   z-index: 0;
 }

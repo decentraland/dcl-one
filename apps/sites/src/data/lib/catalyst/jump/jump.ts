@@ -134,7 +134,7 @@ export type JumpEventRecord = {
 
 /** A World event travels to its server; a Genesis City one to its parcel. */
 function eventRealm(event: Pick<JumpEventRecord, "world" | "server">): string | undefined {
-  return event.world && event.server ? event.server : undefined;
+  return event.world && event.server ? event.server.toLowerCase() : undefined;
 }
 
 /** A deleted event never advertises itself as live or ended. */

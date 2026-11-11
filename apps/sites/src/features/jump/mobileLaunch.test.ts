@@ -83,9 +83,20 @@ describe("openOnIos", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("should stay put when the app takes the link", async () => {
+  it.each([
+    ["blur", () => window.dispatchEvent(new Event("blur"))],
+    ["pagehide", () => window.dispatchEvent(new Event("pagehide"))],
+    [
+      "visibilitychange to hidden",
+      () => {
+        Object.defineProperty(document, "hidden", { value: true, configurable: true });
+        document.dispatchEvent(new Event("visibilitychange"));
+        Object.defineProperty(document, "hidden", { value: false, configurable: true });
+      },
+    ],
+  ])("should stay put when the app takes the link (%s)", async (_signal, leave) => {
     const opened = openOnIos(launch, 1500);
-    window.dispatchEvent(new Event("blur"));
+    leave();
     await vi.advanceTimersByTimeAsync(1500);
     await expect(opened).resolves.toBe(true);
     expect(assign.mock.calls).toEqual([["decentraland://open"]]);

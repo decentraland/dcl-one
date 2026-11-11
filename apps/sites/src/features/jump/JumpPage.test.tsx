@@ -147,7 +147,7 @@ describe("JumpInvalid", () => {
 });
 
 describe("JumpPage", () => {
-  it("should render its content over a decorative background that stays still without WebGL", () => {
+  it("should render its content over a decorative canvas, falling back to the still image without WebGL", () => {
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     const { container } = render(
       <JumpPage>
@@ -164,14 +164,17 @@ describe("JumpPage", () => {
     const matchMedia = vi.fn().mockReturnValue({ matches: true });
     Object.assign(window, { matchMedia });
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
-    render(
-      <JumpPage>
-        <p>Card</p>
-      </JumpPage>,
-    );
-    expect(matchMedia).toHaveBeenCalledWith("(prefers-reduced-motion: reduce)");
-    expect(getContext).not.toHaveBeenCalled();
-    getContext.mockRestore();
-    Object.assign(window, { matchMedia: undefined });
+    try {
+      render(
+        <JumpPage>
+          <p>Card</p>
+        </JumpPage>,
+      );
+      expect(matchMedia).toHaveBeenCalledWith("(prefers-reduced-motion: reduce)");
+      expect(getContext).not.toHaveBeenCalled();
+    } finally {
+      getContext.mockRestore();
+      Object.assign(window, { matchMedia: undefined });
+    }
   });
 });

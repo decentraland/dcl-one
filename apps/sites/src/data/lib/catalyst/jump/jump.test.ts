@@ -131,7 +131,7 @@ describe("genericPlaceCard", () => {
 
 describe("toEventCard", () => {
   it("should travel to a World event's server", () => {
-    expect(toEventCard(event({ world: true, server: "foo.dcl.eth" })).realm).toBe("foo.dcl.eth");
+    expect(toEventCard(event({ world: true, server: "Foo.DCL.eth" })).realm).toBe("foo.dcl.eth");
   });
 
   it("should never show a deleted event as live or ended", () => {
