@@ -81,7 +81,8 @@ jobs:
       # The checks against the Figma capture run where it is readable (locally, after pnpm figma fetch-source). When a
       # port input changes (the lock outside its provenance text, or a tracked file under library/ui/figma other than
       # tests, fixtures and Markdown), this step requires the record of their results for exactly those inputs. It also
-      # fails on any head with a lock when a port input names an exempt file, even if no port input changed.
+      # fails on any head with a lock when a port input names an exempt file, or the validator imports beyond its own
+      # modules, loads code with require or names an exempt path outside its rule, even if no port input changed.
       - name: Require the port verification record when a port input changes
         env:
           EVENT: ${{ github.event_name }}

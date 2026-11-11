@@ -526,6 +526,12 @@ describe('when deciding which files are port inputs', () => {
     ["import a from './a.md#top'", 'a Markdown import with a fragment'],
     ["glob('./**/*.{md,tsx}')", 'a glob that matches Markdown'],
     ["globSync('*.md', { cwd: figmaDir })", 'a bare Markdown glob'],
+    ["join(here, 'Test', 'a.json')", 'a capitalized directory word in a path call'],
+    ['.a { background: url(./test/x.png) }', 'an unquoted CSS url'],
+    ['@import url(../test/x.css);', 'an unquoted CSS import'],
+    ['<img src=../test/x.png>', 'an unquoted HTML attribute'],
+    ["read('.\\/test\\/x.json')", 'a path with escaped slashes'],
+    ["globSync('agent-kit/skills/*/*')", 'a one-level glob over a directory'],
     ["glob('*.MD')", 'a bare Markdown glob in another case'],
     ["glob('*.{mdx,md}')", 'a bare brace glob with Markdown'],
     ["await import('./src/a.test.ts')", 'a dynamic import of a test']
@@ -537,7 +543,8 @@ describe('when deciding which files are port inputs', () => {
     const code = [
       "const label = 'testing'; const re = /test/; run('./src/a.ts'); log('mdx')",
       "const title = 'Test'; const size = 'spacing.md'; const sizes = 'sm,md,lg'",
-      "const hint = 'see docs/ui-standards.md'; const open = '/*'; const close = '*/'"
+      "const hint = 'see docs/ui-standards.md'; const open = '/*'; const close = '*/'",
+      "throw new Error('run the test again'); const label = 'Test'"
     ].join('\n')
     expect(exemptReferences('library/ui/figma/tool.mjs', code)).toEqual([])
   })
@@ -578,6 +585,30 @@ describe('when deciding which files are port inputs', () => {
     )
     expect(problems("const a = 1; import './rule.mjs'\n")).toContain(`${self} imports ./rule.mjs`)
     expect(problems("  import './rule.mjs'\n")).toContain(`${self} imports ./rule.mjs`)
+  })
+
+  it('should count an exempt Markdown basename only when it stands alone', () => {
+    const blobs = {
+      'library/ui/figma/agent-kit/skills/x/SKILL.md': Buffer.from('# x\n'),
+      'library/ui/figma/tool.mjs': Buffer.from("log('see SKILL.md for details')\n")
+    }
+    expect(scanProblems(blobs)).toEqual([])
+  })
+
+  it('should allow exempt roots only in the rule declarations of the validator', () => {
+    const self = 'library/ui/figma/port-verification.mjs'
+    const declarations = "const TEST_ROOTS = ['test/', 'review/test/']\n"
+    expect(scanProblems({ [self]: Buffer.from(declarations) })).toEqual([])
+    expect(scanProblems({ [self]: Buffer.from(declarations + "const extra = 'test/'\n") })).toEqual(
+      [`${self} names the exempt path "test/"`]
+    )
+  })
+
+  it('should strip comments in linear time when a glob leaves a comment opener unclosed', () => {
+    const text = "const g = 'src/*'\n".repeat(60000)
+    const started = Date.now()
+    exemptReferences('library/ui/figma/tool.mjs', text)
+    expect(Date.now() - started).toBeLessThan(2000)
   })
 
   it('should not treat require named in a validator comment as a load', () => {
@@ -665,6 +696,15 @@ describe('when printing the port input hash', () => {
     [['--print-hash', '--print-hash']],
     [['--base', 'HEAD', '--base', 'HEAD']]
   ])('should refuse the arguments %j', (argv) => {
+    expect(main(argv, repo)).toBe(2)
+  })
+
+  it.each([
+    [['--base']],
+    [['--base', '--print-hash']],
+    [['--base', '']],
+    [['--print-hash', '--head', '']]
+  ])('should refuse the missing or empty value in %j', (argv) => {
     expect(main(argv, repo)).toBe(2)
   })
 
