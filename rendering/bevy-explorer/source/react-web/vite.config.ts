@@ -152,6 +152,15 @@ function coiHeadersExceptAuth(): Plugin {
   }
 }
 
+/** Resolves react-dom/client to React's profiling build, the production build in which
+ *  <Profiler> reports commits. */
+function reactProfilingBuild(): Plugin {
+  return {
+    name: 'react-profiling-build',
+    config: () => ({ resolve: { alias: [{ find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }] } })
+  }
+}
+
 export default defineConfig(({ command, mode }) => ({
   // ?native=1 (CEF HUD mode) is honoured only where it's legitimate: the bundle:native build
   // (--mode native) that CEF loads from disk, and the dev server (react_hud_cef.rs supports
@@ -166,14 +175,10 @@ export default defineConfig(({ command, mode }) => ({
   // The editor host's signing script's own deps: it is outside the page's import graph, so they
   // would be found when it first loads, and a late find reloads the page.
   optimizeDeps: { include: ['@noble/curves/secp256k1.js', '@noble/hashes/sha3.js'] },
-  resolve: {
-    // Web builds resolve react-dom/client to React's profiling build, the production build in
-    // which <Profiler> reports commits.
-    alias: mode === 'native' ? SHARED_ALIASES : [...SHARED_ALIASES, { find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }],
-    dedupe: SHARED_DEDUPE
-  },
+  resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   plugins: [
     react(),
+    ...(mode === 'native' ? [] : [reactProfilingBuild()]),
     bridgeScenePreview(),
     coiHeadersExceptAuth(),
     serveStatic('/engine/', '../deploy/web/engine'),
