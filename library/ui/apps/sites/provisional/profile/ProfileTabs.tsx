@@ -43,7 +43,7 @@ function ProfileTabs({
             <li key={tab.id} className={styles.item}>
               <LinkComponent
                 to={tab.href}
-                className={current ? `${styles.tab} ${styles.active}` : styles.tab}
+                className={current ? `${styles.tab} ${styles.active}` : (styles.tab ?? '')}
                 aria-current={current ? 'page' : undefined}
                 onClick={() => onSelect?.(tab.id)}
               >

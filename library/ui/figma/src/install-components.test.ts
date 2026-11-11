@@ -68,7 +68,7 @@ describe('when planning public components from verified installer inputs', () =>
     async ({ registry }) => {
       const read = vi.spyOn(context.source, 'getComponentPage')
       context.registry = registry as unknown as ComponentPlanContext['registry']
-      await expect(planComponents(context)).rejects.toThrow('Component registry')
+      await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
       expect(read).not.toHaveBeenCalled()
     }
   )
@@ -122,7 +122,7 @@ describe('when planning public components from verified installer inputs', () =>
     })
     it('should reject a component listed with both public and internal visibility', async () => {
       context.registry = { components: ['DemoNav'], internal: ['DemoNav'] }
-      await expect(planComponents(context)).rejects.toThrow('unique component names')
+      await expect(planComponents(context)).rejects.toThrow('Duplicate component registry name')
     })
     it('should reject an unknown internal component', async () => {
       context.registry = { components: [], internal: ['Missing'] }
@@ -130,7 +130,7 @@ describe('when planning public components from verified installer inputs', () =>
     })
     it('should reject malformed internal names instead of omitting them', async () => {
       context.registry = { components: [], internal: 'DemoNav' as unknown as string[] }
-      await expect(planComponents(context)).rejects.toThrow('public and internal name lists')
+      await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
     })
   })
 
@@ -220,11 +220,23 @@ describe('when planning public components from verified installer inputs', () =>
   it.each([
     {
       components: ['DemoNav', 'DemoNav'],
-      error: 'Component registry must contain unique component names only'
+      error: 'Invalid component registry: Duplicate component registry name: DemoNav'
     },
     { components: ['../DemoNav'], error: 'Invalid generated TypeScript identifier' },
     { components: ['3D Card'], error: 'Invalid generated TypeScript identifier' },
-    { components: ['Missing'], error: 'Unknown component or missing dependency: Missing' }
+    { components: ['Missing'], error: 'Unknown component or missing dependency: Missing' },
+    {
+      components: [
+        {
+          name: 'DemoNav',
+          limits: [
+            { id: 'a', text: 'x.' },
+            { id: 'a', text: 'y.' }
+          ]
+        }
+      ],
+      error: 'Invalid or duplicate accepted limit'
+    }
   ])(
     'should reject invalid or unavailable registry names $components',
     async ({ components, error }) => {
@@ -233,12 +245,57 @@ describe('when planning public components from verified installer inputs', () =>
     }
   )
 
+  it('should write the accepted limits back with the public name', async () => {
+    const limits = [{ id: 'logo-size', text: 'The logo is pending.' }]
+    context.registry = { components: [{ name: 'DemoNav', limits }] }
+
+    const plan = await planComponents(context)
+
+    expect(JSON.parse(plan.files.get('promotion.json')!.toString())).toEqual({
+      components: [{ name: 'DemoNav', limits }]
+    })
+  })
+
+  // A public component with accepted limits whose spec left the capture: the plan stops instead of writing the
+  // registry back without that component and its limits.
+  it('should refuse, not drop the limits, when a limited component is missing from the capture', async () => {
+    context.registry = {
+      components: ['DemoNav', { name: 'Gone', limits: [{ id: 'a', text: 'Pending.' }] }]
+    }
+
+    await expect(planComponents(context)).rejects.toThrow(
+      'Unknown component or missing dependency: Gone'
+    )
+  })
+
+  it.each([
+    ['a limit text with a bidi override', 'Logo \u202Eis pending.'],
+    ['a limit text with a line separator', 'Logo\u2028pending.'],
+    ['a limit text with a www link', 'See www.example.org.'],
+    ['a limit text with a javascript link', 'Click javascript:alert(1).'],
+    ['a limit text with markup', 'Logo <img> pending.']
+  ])('should report %s under the neutral registry prefix', async (_label, text) => {
+    context.registry = { components: [{ name: 'DemoNav', limits: [{ id: 'a', text }] }] }
+
+    await expect(planComponents(context)).rejects.toThrow(
+      'Invalid component registry: Invalid or duplicate accepted limit of component DemoNav'
+    )
+  })
+
+  it('should refuse limits on an internal name', async () => {
+    context.registry = {
+      components: [],
+      internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }] as unknown as string[]
+    }
+    await expect(planComponents(context)).rejects.toThrow('names only, without limits')
+  })
+
   it('should reject a legacy seal in place of the names-only registry', async () => {
     context.registry = {
       components: ['DemoNav'],
       files: {}
     } as ComponentPlanContext['registry']
-    await expect(planComponents(context)).rejects.toThrow('public and internal name lists only')
+    await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
   })
 
   it('should consume a live source supplied by the core without selecting a fallback', async () => {

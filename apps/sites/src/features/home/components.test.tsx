@@ -6,7 +6,7 @@ import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { Carousel } from "@dcl/one-ui/apps/sites/shared/Carousel";
-import { homeActions } from "./actions";
+import { downloadActions } from "../download/actions";
 
 vi.hoisted(() =>
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true }),
@@ -34,7 +34,7 @@ describe("home sections", () => {
     vi.unstubAllGlobals();
   });
   it("renders both counters with the single solid white product badge", () => {
-    const { actions, store } = homeActions({ kind: "unknown" }, "+438K");
+    const { actions, store } = downloadActions({ kind: "unknown" }, "+438K");
     const html = renderToString(
       <>
         <Hero
@@ -43,7 +43,7 @@ describe("home sections", () => {
           actions={actions}
           mobile={{ title: "Anywhere", subtitle: "Mobile", store }}
         />
-        <ComeHangOut title="Come Hang Out" actions={actions} />
+        <ComeHangOut title="Come Hang Out" actions={actions} store={store} />
       </>,
     );
     expect(html.match(/Total Downloads: \+438K/g)).toHaveLength(2);
@@ -51,6 +51,7 @@ describe("home sections", () => {
     expect(html).not.toContain("linearGradient");
     expect(html).not.toContain("/download_success");
     expect(html).toContain("Decentraland_installer.exe");
+    expect(html).toContain("Download on the App Store");
   });
   it("does not invent event cards when the backend has none", () => {
     expect(

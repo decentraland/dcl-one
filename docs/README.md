@@ -2,6 +2,7 @@
 
 - [Development](development.md)
 - [UI standards](ui-standards.md)
+- [UI component adoption](ui-components.md)
 - [Web app architecture standards](web-app-standards.md)
 - [Frontend testing standards](frontend-testing.md)
 - [Database contract](../DATABASE.md)
@@ -18,6 +19,7 @@
 - [Explorer tests through the console](adr/2026-10-29-explorer-tests-through-the-console.md)
 - [Vendored Basis Universal transcoder](adr/2026-11-04-vendored-basisu.md)
 - [Shared UI library](adr/2026-10-30-shared-ui-library.md)
+- [Explorer HUD UI in `library/ui/apps/hud`](adr/2026-11-10-shared-explorer-hud-ui.md)
 - [Explorer vendored Bevy](adr/2026-11-05-explorer-vendored-bevy.md)
 - [Dormant schema release definitions (proposed)](adr/2026-11-04-dormant-schema-release-definitions.md)
 - [Referral trusted proxy ingress (proposed)](adr/2026-11-04-referral-trusted-proxy-ingress.md)

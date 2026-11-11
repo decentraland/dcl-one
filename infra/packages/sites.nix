@@ -62,6 +62,7 @@ let
       (lib.fileset.maybeMissing (root + /library/ui/tsconfig.json))
       (lib.fileset.maybeMissing (root + /library/ui/foundations))
       (lib.fileset.maybeMissing (root + /library/ui/apps/sites))
+      (root + /library/ui/apps/hud) (root + /library/explorer-core)
     ];
   };
   # A build whose Shop settles credits on one chain through one CreditsManager: the two VITE_*

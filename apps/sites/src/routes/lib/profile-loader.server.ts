@@ -1,5 +1,5 @@
 import { dehydrate, QueryClient, type DehydratedState } from "@tanstack/react-query";
-import { data, redirect } from "react-router";
+import { data, redirect, type RouterContextProvider } from "react-router";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
@@ -67,6 +67,7 @@ function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
  */
 export async function profileLoader(
   request: Request,
+  context: Readonly<RouterContextProvider>,
   params: { address?: string; tab?: string },
 ): Promise<ReturnType<ReturnType<typeof sidLoader>["wrap"]>> {
   const url = new URL(request.url);
@@ -76,7 +77,7 @@ export async function profileLoader(
     throw data({ address: raw, reason: "not-found" } satisfies ProfileErrorData, { status: 404 });
   }
 
-  const session = sidLoader(request);
+  const session = sidLoader(request, context);
   // The wallet cookie every sign-in method sets (the root loader reads the same one); the verified
   // cookie only exists after a thirdweb sign-in.
   const own = isOwnProfile(address, readWallet(request));

@@ -62,8 +62,9 @@
 //! their unlock, when the broker is configured) and `credits-usage-index`
 //! (with `CREDITS_USAGE_INDEX_ENABLED`, `RPC_ENDPOINT_POLYGON` and
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
-//! reconciler did, so it is local authority too and runs its fold only
-//! with `OPS_WRITES_ENABLED`, indexing the log either way). Not carried: the `ts-rs`
+//! reconciler did, so it is local authority too: it runs in `serve` and
+//! folds only with `OPS_WRITES_ENABLED` and fresh restore stamps, indexing
+//! the log either way). Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -722,8 +723,11 @@ impl State {
     }
 
     /// The fulfilment worker (always: it idles without a broker), the
-    /// escrow release worker (only with one), the settlement job and the
-    /// wallet flags listener, all under the shared lifecycle.
+    /// escrow release worker (only with one), the settlement job, the
+    /// wallet flags listener and the CreditUsed index, all under the shared
+    /// lifecycle. `serve` runs them: the usage index's fold debits the
+    /// ledger, so it runs beside the other credits writers, under the
+    /// restore stamps `serve` installs before its jobs start.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         checkout::OutboxWorker {
             credits: self.credits.clone(),
@@ -747,6 +751,7 @@ impl State {
             self.settings.checkout_worker_interval,
         );
         wallet_flags::spawn(jobs, self.credits.clone(), self.settings.writes_enabled);
+        self.spawn_usage_index(jobs);
         if self.settings.writes_enabled {
             tracing::warn!(
                 "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger, checkouts and authorizations"
@@ -764,8 +769,10 @@ impl State {
     /// (the authorize lane closes once the fold is 10 minutes old). The fold
     /// debits wallets, so with `OPS_WRITES_ENABLED` off, or a pass the
     /// restore stamps hold, the job indexes the log (regenerable from the
-    /// chain) and publishes nothing: the lane stays closed.
-    pub fn spawn_usage_index(self: &Arc<Self>, jobs: &Jobs) {
+    /// chain) and publishes nothing: the lane stays closed. Private: only
+    /// [`Self::spawn_jobs`] starts it, in a process whose restore stamps are
+    /// installed.
+    fn spawn_usage_index(self: &Arc<Self>, jobs: &Jobs) {
         let settings = &self.settings.usage;
         if !settings.enabled {
             tracing::info!(
@@ -791,8 +798,13 @@ impl State {
                 .with_error_backoff(Duration::from_secs(600).max(interval)),
             move |ctx| {
                 let index = index.clone();
-                let fold = gate.check(writes_enabled).is_none();
-                async move { index.run_pass(Some(&ctx), fold).await.map(|_| ()) }
+                let gate = gate.clone();
+                async move {
+                    index
+                        .gated_pass(Some(&ctx), &gate, writes_enabled)
+                        .await
+                        .map(|_| ())
+                }
             },
         );
     }
