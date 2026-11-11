@@ -5,9 +5,8 @@ use crate::{
 };
 use bevy_asset::{AssetId, RenderAssetTransferPriority};
 use bevy_ecs::system::{lifetimeless::SRes, SystemParamItem};
-use bevy_image::{Image, ImageSampler, TextureFormatPixelInfo};
+use bevy_image::{Image, ImageSampler};
 use bevy_math::{AspectRatio, UVec2};
-use tracing::{error, warn};
 use wgpu::{Extent3d, TexelCopyBufferLayout, TextureFormat, TextureUsages};
 use wgpu_types::{TextureDescriptor, TextureViewDescriptor};
 

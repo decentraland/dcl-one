@@ -688,13 +688,39 @@ impl UsageIndex {
         Ok(())
     }
 
+    /// The `credits-usage-index` job's pass ([`super::State::spawn_jobs`]):
+    /// [`Self::run_pass`], folding only when `gate` lets this pass write. The
+    /// gate is asked as the pass starts, so `OPS_WRITES_ENABLED` and the
+    /// restore stamps the process installed decide each pass; a held pass
+    /// reports why in the job's progress (the switch, or which stamp).
+    pub(super) async fn gated_pass(
+        &self,
+        ctx: Option<&JobContext>,
+        gate: &crate::shared::writes::PassGate,
+        writes_enabled: bool,
+    ) -> anyhow::Result<PassOutcome> {
+        let refusal = gate.check(writes_enabled);
+        let outcome = self.run_pass(ctx, refusal.is_none()).await?;
+        if let (Some(refusal), Some(ctx)) = (&refusal, ctx) {
+            ctx.progress(format!(
+                "indexed to {}; not folded, not published: {}",
+                outcome.indexed_to,
+                refusal.message(
+                    "operator-plane",
+                    crate::shared::writes::WRITES_DISABLED_MESSAGE
+                )
+            ));
+        }
+        Ok(outcome)
+    }
+
     /// One pass: replay if asked, catch up to the finalized block under the
     /// request budget, fold the new usages, publish when still at the head.
     /// With `fold_enabled` false (`OPS_WRITES_ENABLED` off or held by the
     /// restore stamps: the fold debits the ledger) the pass indexes the log
     /// and stops before the fold, so nothing is published and the authorize
     /// lane stays closed.
-    pub async fn run_pass(
+    pub(super) async fn run_pass(
         &self,
         ctx: Option<&JobContext>,
         fold_enabled: bool,

@@ -43,7 +43,8 @@ use super::deploy::{
     parse_entity, raw_strings, read_entity_file,
 };
 use super::metrics as worlds_metrics;
-use super::store::{self, PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
+use super::store::{PARTIAL_UPLOAD_EXPIRED, PartialCompletion};
+use super::upload_limits;
 use super::upload_spool::SpooledFile;
 use super::{CoreState, SharedState};
 
@@ -52,7 +53,7 @@ pub const QUERY_WITHOUT_FIELD_MESSAGE: &str =
 const OWNERSHIP_MESSAGE: &str = "This upload was started by another account.";
 const NOT_FOUND_MESSAGE: &str = "Upload no longer exists; resend its manifest.";
 const TOO_BIG_MESSAGE: &str = "The deployment is too big.";
-const NEWER_SCENE_MESSAGE: &str =
+pub(super) const NEWER_SCENE_MESSAGE: &str =
     "a newer scene is already deployed on one or more of these parcels.";
 const PERSONAL_FIRST_MESSAGE: &str = "Partial uploads to a personal world start once it is published here; publish it in a single request first.";
 
@@ -252,21 +253,6 @@ fn millis(t: NaiveDateTime) -> i64 {
     t.and_utc().timestamp_millis()
 }
 
-/// Upstream's `formatBytes`.
-fn format_bytes(bytes: i64) -> String {
-    let b = bytes as f64;
-    const K: f64 = 1024.0;
-    if b < K {
-        format!("{bytes} bytes")
-    } else if b < K * K {
-        format!("{:.1} KiB", b / K)
-    } else if b < K * K * K {
-        format!("{:.1} MiB", b / (K * K))
-    } else {
-        format!("{:.1} GiB", b / (K * K * K))
-    }
-}
-
 fn expired() -> Response {
     err_one(PARTIAL_UPLOAD_EXPIRED)
 }
@@ -276,9 +262,12 @@ fn pins(state: &CoreState) -> catalyst_storage::gc::Pins<'_> {
     catalyst_storage::gc::Pins::new(&state.storage, &state.settings.global_scenes_urn)
 }
 
+/// A database failure while staging; the `partial upload` span of [`stage`] names the entity.
 fn db_error(error: impl std::fmt::Display) -> Response {
-    tracing::error!(%error, "partial upload: database error");
-    internal("Failed to stage the deployment").into_response()
+    internal(format!(
+        "partial upload: failed to stage the deployment: {error}"
+    ))
+    .into_response()
 }
 
 /// 429 for a staging budget other uploads or traffic filled; `reason` is the metric label.
@@ -435,15 +424,6 @@ fn success(
         .into_response()
 }
 
-/// The first file a batch carries more than once, as upstream refuses a repeated form field.
-fn repeated_file(files: &[SpooledFile]) -> Option<&str> {
-    let mut seen = HashSet::new();
-    files
-        .iter()
-        .find(|f| !seen.insert(f.hash.as_str()))
-        .map(|f| f.hash.as_str())
-}
-
 /// One partial batch, authenticated by the caller.
 pub(super) async fn stage(
     state: &SharedState,
@@ -454,7 +434,14 @@ pub(super) async fn stage(
     files: &[SpooledFile],
     now_ms: i64,
 ) -> Response {
-    match stage_batch(state, headers, entity_id, chain, signer, files, now_ms).await {
+    // Every log line of the batch, the one 500 line of `rejection` included, names the entity.
+    let span = tracing::error_span!("partial upload", entity_id = %entity_id);
+    match tracing::Instrument::instrument(
+        stage_batch(state, headers, entity_id, chain, signer, files, now_ms),
+        span,
+    )
+    .await
+    {
         Ok(resp) | Err(resp) => resp,
     }
 }
@@ -469,9 +456,6 @@ async fn stage_batch(
     now_ms: i64,
 ) -> Result<Response, Response> {
     let limits = state.settings.partial_uploads;
-    if let Some(hash) = repeated_file(files) {
-        return Err(err_one(format!("Duplicate form field '{hash}'")));
-    }
     let uploads = Uploads::new(files);
 
     // Batches of one entity run one at a time in this process; each step below is atomic across replicas.
@@ -485,7 +469,7 @@ async fn stage_batch(
     }
     let own_upload = pending.as_ref().filter(|p| p.deployer == signer.as_str());
 
-    let entity = match uploads.by_hash.get(entity_id) {
+    let entity = match uploads.by_name.get(entity_id) {
         Some(file) => read_entity_file(file).await?,
         None => {
             // Only the upload's own signer resumes without the manifest: anyone can sign an id.
@@ -539,14 +523,7 @@ async fn stage_batch(
                 return Err(err_one(PERSONAL_FIRST_MESSAGE));
             }
         }
-        let timestamp = store::entity_timestamp(&entity).map_err(IntoResponse::into_response)?;
-        let mut conn = state.pool.acquire().await.map_err(db_error)?;
-        if store::newer_scene_deployed(&mut conn, &staged.world, &parcels, entity_id, timestamp)
-            .await
-            .map_err(db_error)?
-        {
-            return Err(failed(NEWER_SCENE_MESSAGE).into_response());
-        }
+        deploy::refuse_if_newer_scene(state, &staged.world, &parcels, entity_id, &entity).await?;
     }
 
     let mut content: Vec<String> = Vec::new();
@@ -589,7 +566,7 @@ async fn stage_batch(
         .order
         .iter()
         .filter(|h| !stored.contains_key(*h) && !receipts.iter().any(|r| &r.hash == *h))
-        .filter_map(|h| uploads.by_hash.get(h))
+        .filter_map(|h| uploads.by_name.get(h))
         .collect();
     let incoming: i64 = files.iter().map(|f| f.len() as i64).sum();
     receipts.extend(to_store.iter().map(|f| Receipt {
@@ -659,8 +636,11 @@ async fn stage_batch(
 
     for file in &to_store {
         if let Err(e) = state.storage.store_file(&file.hash, &file.path).await {
-            tracing::error!(error = %e, hash = %file.hash, "partial upload: could not store blob");
-            return Err(internal("Failed to persist deployment content").into_response());
+            return Err(internal(format!(
+                "partial upload: failed to persist deployment content {}: {e}",
+                file.hash
+            ))
+            .into_response());
         }
     }
     let hashes: Vec<String> = to_store.iter().map(|f| f.hash.clone()).collect();
@@ -1002,8 +982,8 @@ async fn reserve(
     if incoming > per_minute {
         return Err(err_one(format!(
             "This batch is {}, above the partial upload limit of {} per minute. Send smaller batches.",
-            format_bytes(incoming),
-            format_bytes(per_minute)
+            upload_limits::format_bytes(incoming.max(0) as u64),
+            upload_limits::format_bytes(per_minute.max(0) as u64)
         )));
     }
     if rate_bytes > per_minute {
@@ -1011,8 +991,8 @@ async fn reserve(
             "bytes_per_minute",
             format!(
                 "This account sent {} of partial uploads this minute, above the limit of {} per minute. Retry in {rate_retry} s.",
-                format_bytes(rate_bytes),
-                format_bytes(per_minute)
+                upload_limits::format_bytes(rate_bytes.max(0) as u64),
+                upload_limits::format_bytes(per_minute.max(0) as u64)
             ),
             i64::from(rate_retry),
         ));
@@ -1117,15 +1097,15 @@ async fn reserve(
     if t.own > account_bytes {
         return Err(err_one(format!(
             "This upload needs {} of staging, above the per-account partial upload limit of {}. Reduce its size.",
-            format_bytes(t.own),
-            format_bytes(account_bytes)
+            upload_limits::format_bytes(t.own.max(0) as u64),
+            upload_limits::format_bytes(account_bytes.max(0) as u64)
         )));
     }
     if t.own_content > world_bytes {
         return Err(err_one(format!(
             "This upload needs {} of staging, above the per-world partial upload limit of {}. Reduce its size.",
-            format_bytes(t.own_content),
-            format_bytes(world_bytes)
+            upload_limits::format_bytes(t.own_content.max(0) as u64),
+            upload_limits::format_bytes(world_bytes.max(0) as u64)
         )));
     }
     if t.account > account_bytes {
@@ -1133,8 +1113,8 @@ async fn reserve(
             "bytes_per_account",
             format!(
                 "This batch would stage {} for this account, above its limit of {}. Complete an upload or wait for expired uploads to be cleaned up.",
-                format_bytes(t.account),
-                format_bytes(account_bytes)
+                upload_limits::format_bytes(t.account.max(0) as u64),
+                upload_limits::format_bytes(account_bytes.max(0) as u64)
             ),
             retry_after(limits, t.account_oldest),
         ));
@@ -1144,8 +1124,8 @@ async fn reserve(
             "bytes_per_world",
             format!(
                 "This batch would stage {} for this world, above its limit of {}. Complete an upload or wait for one to expire.",
-                format_bytes(t.world),
-                format_bytes(world_bytes)
+                upload_limits::format_bytes(t.world.max(0) as u64),
+                upload_limits::format_bytes(world_bytes.max(0) as u64)
             ),
             retry_after(limits, t.world_oldest),
         ));
@@ -1155,8 +1135,8 @@ async fn reserve(
             "bytes_per_source",
             format!(
                 "This batch would stage {} for uploads from this source, above its limit of {}. Complete an upload or wait for one to expire.",
-                format_bytes(t.source),
-                format_bytes(source_bytes)
+                upload_limits::format_bytes(t.source.max(0) as u64),
+                upload_limits::format_bytes(source_bytes.max(0) as u64)
             ),
             retry_after(limits, t.source_oldest),
         ));
@@ -1166,8 +1146,8 @@ async fn reserve(
             "bytes_per_server",
             format!(
                 "This batch would stage {} on the server, above its limit of {}. Retry later.",
-                format_bytes(t.total),
-                format_bytes(node_bytes)
+                upload_limits::format_bytes(t.total.max(0) as u64),
+                upload_limits::format_bytes(node_bytes.max(0) as u64)
             ),
             retry_after(limits, t.oldest),
         ));
@@ -1499,14 +1479,6 @@ async fn prune_and_report(pool: &PgPool, limits: &PartialUploadLimits) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn bytes_are_formatted_as_upstream() {
-        assert_eq!(format_bytes(512), "512 bytes");
-        assert_eq!(format_bytes(1536), "1.5 KiB");
-        assert_eq!(format_bytes(536_870_912), "512.0 MiB");
-        assert_eq!(format_bytes(1_073_741_824), "1.0 GiB");
-    }
 
     #[test]
     fn the_query_flag_is_read_from_the_query_string() {

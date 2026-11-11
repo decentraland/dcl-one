@@ -53,3 +53,47 @@ describe('profile-card actions', () => {
     expect(onBlock).toHaveBeenCalledWith(expect.objectContaining({ address: '0xalice' }))
   })
 })
+
+// A community card's member menu (context 'community'), as unity-explorer's: View Profile and Chat,
+// the owner's or moderators' actions, then Block and Report; no Mention; the header button only for
+// a friend.
+describe('profile-card as the community member menu', () => {
+  const handlers = { onViewProfile: vi.fn(), onMessage: vi.fn(), onMention: vi.fn(), onBlock: vi.fn(), onReport: vi.fn(), onAddFriend: vi.fn(), onUnfriend: vi.fn() }
+  const rows = (): string[] => screen.getAllByRole('button').map((b) => b.textContent ?? '').filter((t) => !/Copy|^0x/.test(t) && t !== 'Alice')
+
+  it("lists unity-explorer's member menu in its order", async () => {
+    const promote = vi.fn()
+    const { onClose } = renderCard({ ...handlers, context: 'community', communityActions: [{ label: 'Promote Moderator', icon: null, onClick: promote }] })
+    expect(rows()).toEqual(['View Profile', 'Chat', 'Promote Moderator', 'Block', 'Report'])
+    await userEvent.click(screen.getByRole('button', { name: 'Promote Moderator' }))
+    expect(promote).toHaveBeenCalledTimes(1)
+    expect(onClose).toHaveBeenCalled()
+  })
+
+  it('shows the header button only to remove a friendship', () => {
+    renderCard({ ...handlers, context: 'community', relationship: 'none' })
+    expect(screen.queryByRole('button', { name: /Add Friend/ })).toBeNull()
+  })
+
+  it('offers removing a friend in the header', () => {
+    renderCard({ ...handlers, context: 'community', relationship: 'friend' })
+    expect(screen.getByRole('button', { name: /Remove Friend/ })).toBeInTheDocument()
+  })
+
+  it('hides Block from a member who blocked you, and still offers Chat', () => {
+    renderCard({ ...handlers, context: 'community', blockedBy: true })
+    expect(rows()).toEqual(['View Profile', 'Chat', 'Report'])
+  })
+
+  it('greys out an action that cannot run, with its reason', async () => {
+    const transfer = vi.fn()
+    renderCard({ ...handlers, context: 'community', communityActions: [{ label: 'Make Community Owner', icon: null, onClick: transfer, disabledReason: 'Needs a NAME.' }] })
+    const row = screen.getByRole('button', { name: 'Make Community Owner' })
+    // greyed but focusable, its reason both on hover and to assistive tech
+    expect(row).toHaveAttribute('aria-disabled', 'true')
+    expect(row).toHaveAccessibleDescription('Needs a NAME.')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Needs a NAME.')
+    await userEvent.click(row)
+    expect(transfer).not.toHaveBeenCalled()
+  })
+})

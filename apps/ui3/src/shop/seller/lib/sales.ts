@@ -6,7 +6,8 @@
 
 import type { Sale } from "@catalyst-api/market/Sale";
 import type { SalesSummary } from "@catalyst-api/market/SalesSummary";
-import { shopClient, type ShopClient } from "../../api/shop";
+import { type ShopClient } from "@shop/api/shop";
+import { shopClient } from "../../api/host";
 
 export type { SalesSummary };
 

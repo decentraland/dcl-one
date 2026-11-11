@@ -805,9 +805,26 @@ fn community_state(
     if input.take().is_none() {
         return;
     }
-    let router = message_router_identity();
     let room = rooms.single().ok();
     let router_in_room = room.is_some_and(|(index, _)| router_in_room(index));
+    let state = community_state_json(
+        &message_router_identity(),
+        router_in_room,
+        &channels,
+        room.map(|(_, stats)| stats),
+    );
+    input.reply_ok(state.to_string());
+}
+
+/// `/community_state`'s reply: the routing, the channels, and the room's counters once it has
+/// spawned. A reading the reply leaves out or null says why under `unavailable`, as the debug
+/// panel's readings do: the counters before the room spawns, `lastError` while there is none.
+fn community_state_json(
+    router: &str,
+    router_in_room: bool,
+    channels: &CommunityChannels,
+    stats: Option<&CommunityChatStats>,
+) -> serde_json::Value {
     let mut listed: Vec<_> = channels.0.iter().cloned().collect();
     listed.sort();
     let mut state = json!({
@@ -815,16 +832,27 @@ fn community_state(
         "routerInRoom": router_in_room,
         "channels": listed,
         "channelCount": channels.0.len(),
-        "roomSpawned": room.is_some(),
+        "roomSpawned": stats.is_some(),
     });
-    if let Some((_, stats)) = room {
-        if let (serde_json::Value::Object(state), Ok(serde_json::Value::Object(stats))) =
-            (&mut state, serde_json::to_value(stats))
-        {
-            state.extend(stats);
+    match stats {
+        Some(stats) => {
+            if let (serde_json::Value::Object(state), Ok(serde_json::Value::Object(stats))) =
+                (&mut state, serde_json::to_value(stats))
+            {
+                state.extend(stats);
+            }
+            if stats.last_error.is_none() {
+                state["unavailable"] =
+                    json!({ "lastError": "No community chat error since the room spawned." });
+            }
+        }
+        None => {
+            state["unavailable"] = json!({
+                "": "The private chat room has not spawned: the counters start with it."
+            });
         }
     }
-    input.reply_ok(state.to_string());
+    state
 }
 
 /// `/dm_room` prints the private chat room's connection state and who is in it.
@@ -1124,5 +1152,30 @@ mod tests {
         assert_eq!(reactions_received(&world), 0);
         let stats = world.get::<CommunityChatStats>(room).unwrap();
         assert_eq!((stats.received, stats.reactions_received), (0, 0));
+    }
+
+    /// The debug panel needs every reading answered or explained.
+    #[test]
+    fn community_state_explains_the_readings_it_leaves_out() {
+        let channels = CommunityChannels::default();
+        let before = community_state_json(ALICE, false, &channels, None);
+        assert_eq!(before["roomSpawned"], false);
+        assert!(before.get("sent").is_none());
+        assert!(before["unavailable"][""].is_string());
+
+        let quiet =
+            community_state_json(ALICE, true, &channels, Some(&CommunityChatStats::default()));
+        assert_eq!(quiet["sent"], 0);
+        assert!(quiet["lastError"].is_null());
+        assert!(quiet["unavailable"]["lastError"].is_string());
+        assert!(quiet["unavailable"].get("").is_none());
+
+        let failed = CommunityChatStats {
+            last_error: Some("the router refused the message".to_owned()),
+            ..Default::default()
+        };
+        let failed = community_state_json(ALICE, true, &channels, Some(&failed));
+        assert_eq!(failed["lastError"], "the router refused the message");
+        assert!(failed.get("unavailable").is_none());
     }
 }

@@ -1,24 +1,40 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { act, render, screen, within } from '@testing-library/react'
+import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../features/sidebar/Sidebar'
-import { fakeSession } from './harness'
+import { renderSettled, fakeSession } from './harness'
 import { PopupHost } from '../design/popups'
 import { requestDebugPanel } from '../features/debug/useDebugPanel'
 import * as boot from '../lib/bootMode'
 
 // Unity parity for the nav rail (unity-explorer DCL/UI/Sidebar/SidebarView.cs).
 describe('sidebar parity', () => {
-  it.each(['Gallery', 'Places'])('%s uses the Unity art (mask), not a Material glyph', (name) => {
-    render(<Sidebar session={fakeSession()} />)
+  it.each(['Gallery', 'Places'])('%s uses the Unity art (mask), not a Material glyph', async (name) => {
+    await renderSettled(<Sidebar session={fakeSession()} />)
     const button = screen.getByRole('button', { name })
     expect(button.querySelector('svg')).toBeNull()
     expect(button.querySelector('span[aria-hidden="true"]')).not.toBeNull()
   })
 
+  it.each([
+    [true, true],
+    [false, false]
+  ])('Communities carries the live badge when a member community streams (member %s)', async (isMember, shown) => {
+    const s = fakeSession()
+    s.voiceChat = { ...s.voiceChat, active: [{ communityId: 'c1', communityName: 'C', isMember, positions: [], worlds: [], participantCount: 3, moderatorCount: 1 }] }
+    await renderSettled(<Sidebar session={s} />)
+    const badge = within(screen.getByRole('button', { name: 'Communities' })).queryByRole('img', { name: 'A community stream is live' })
+    expect(badge != null).toBe(shown)
+  })
+
+  it('Communities has no live badge while nothing streams', async () => {
+    await renderSettled(<Sidebar session={fakeSession()} />)
+    expect(within(screen.getByRole('button', { name: 'Communities' })).queryByRole('img', { name: 'A community stream is live' })).toBeNull()
+  })
+
   it('Shop opens the shop with the web client utm source, between Backpack and Camera', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    render(<Sidebar session={fakeSession()} />)
+    await renderSettled(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
     expect(labels.slice(labels.indexOf('Backpack'), labels.indexOf('Camera') + 1)).toEqual(['Backpack', 'Shop', 'Camera'])
     await userEvent.click(screen.getByRole('button', { name: 'Shop' }))
@@ -27,7 +43,7 @@ describe('sidebar parity', () => {
 
   it('Bug report follows Help and opens public support', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    render(<Sidebar session={fakeSession()} />)
+    await renderSettled(<Sidebar session={fakeSession()} />)
     const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
     expect(labels[labels.indexOf('Help & Support') + 1]).toBe('Report a bug')
     await userEvent.click(screen.getByRole('button', { name: 'Report a bug' }))
@@ -39,11 +55,11 @@ describe('sidebar parity', () => {
     [true, false, 'hearing', true],
     [true, true, 'speaking', true],
     [false, false, 'off', false]
-  ])('voice button shows the nearby-voice state (hearing %s, mic %s)', (hearing, enabled, state, dot) => {
+  ])('voice button shows the nearby-voice state (hearing %s, mic %s)', async (hearing, enabled, state, dot) => {
     if (!hearing) localStorage.setItem('nearbyVoiceDisabled', 'true')
     const s = fakeSession()
     s.mic = { ...s.mic, available: true, enabled }
-    render(<Sidebar session={s} />)
+    await renderSettled(<Sidebar session={s} />)
     const button = screen.getByRole('button', { name: 'Nearby Voice' })
     expect(button).toHaveAttribute('data-voice', state)
     expect(button.querySelector('[data-indicator]') != null).toBe(dot)
@@ -58,7 +74,7 @@ it.each([true, false])('routes the Session support action through the host that 
   const open = vi.spyOn(window, 'open').mockReturnValue(null)
   const session = fakeSession()
   session.runDebugCommand = vi.fn(async (line) => line === '/debug_panel' ? '[]' : 'false')
-  render(<><Sidebar session={session} /><PopupHost /></>)
+  await renderSettled(<><Sidebar session={session} /><PopupHost /></>)
   act(() => requestDebugPanel('Session', vi.fn()))
   const panel = within(await screen.findByRole('dialog', { name: 'Debug panel' }))
   await userEvent.click(await panel.findByRole('button', { name: 'Report a bug' }))

@@ -171,7 +171,7 @@ fn fragment(
     if (mesh_tag & #{OUTLINE_MESH_TAGS}) != 0 {
         let outline_color = vec3(
             f32((mesh_tag & #{OUTLINE_RED_MESH_TAG}) != 0),
-            f32((mesh_tag & #{OUTLINE_GREEN_MESH_TAG}) != 0),
+            0.0,
             f32((mesh_tag & #{OUTLINE_BLUE_MESH_TAG}) != 0),
         );
         let black = (mesh_tag & (#{OUTLINE_MESH_TAGS} & ~#{OUTLINE_BLACK_MESH_TAG})) == 0;

@@ -26,7 +26,8 @@
 //!   (`pricing::LocalMarket`; a source that is unset or not ready answers 503,
 //!   a quote miss prices to `null`);
 //! - the packs, intents, orders and the Stripe webhook: local
-//!   (`credits.packs`, `purchases`, `stripe_events`) plus Stripe's API;
+//!   (`credits.packs`, `purchases`, `payment_reversals`, `stripe_events`) plus
+//!   Stripe's API;
 //! - the MANA top-up, the fulfilment and the escrow ops: the economy module
 //!   (`escrow::EconomyBroker`, the old HTTP hops to `/v1/payments/verify`,
 //!   `/v1/broker/buy`, `/v1/escrow/{reclaim,release}` as handler calls with
@@ -61,8 +62,9 @@
 //! their unlock, when the broker is configured) and `credits-usage-index`
 //! (with `CREDITS_USAGE_INDEX_ENABLED`, `RPC_ENDPOINT_POLYGON` and
 //! `CREDITS_MANAGER_CONTRACT`; it debits the ledger it folds, as the old
-//! reconciler did, so it is local authority too and runs its fold only
-//! with `OPS_WRITES_ENABLED`, indexing the log either way). Not carried: the `ts-rs`
+//! reconciler did, so it is local authority too: it runs in `serve` and
+//! folds only with `OPS_WRITES_ENABLED` and fresh restore stamps, indexing
+//! the log either way). Not carried: the `ts-rs`
 //! bindings, the per-service `/health`, `/ping` (the content server owns
 //! them), `CREDITS_PG_CONNECTION_STRING`, `MARKET_BASE_URL`,
 //! `PRICE_BASE_URL`, `ECONOMY_BASE_URL`, `CATALYRST_ECONOMY_ADMIN_TOKEN` and
@@ -91,6 +93,7 @@ pub mod reconcile;
 pub mod settlement;
 pub mod store;
 pub mod stripe;
+pub mod trial;
 pub mod usage;
 pub mod wallet;
 pub mod wallet_flags;
@@ -204,6 +207,10 @@ pub struct RawSettings {
     pub credit_buffer_bps: u32,
     /// `CREDITS_REVOKER_KEY_FILE` (the plain variable is refused): the `CREDITS_REVOKER_ROLE` signer of `revokeCredits`; unset, revocations queue and wait.
     pub credits_revoker_key: Option<String>,
+    /// `CREDITS_TRIAL_MODE` (false): a closed trial (`trial.rs`).
+    pub trial_mode: bool,
+    /// `CREDITS_TRIAL_BUYERS` (or `_FILE`): the trial's buyers.
+    pub trial_buyers: Option<String>,
     /// `SHOP_BASE_URL`: the grant notification's link (the old `${DECENTRALAND_URL}/shop`).
     pub shop_base_url: String,
 }
@@ -248,6 +255,8 @@ impl Default for RawSettings {
             credit_cap_headroom_pct: batch::DEFAULT_CAP_HEADROOM_PCT,
             credit_buffer_bps: batch::DEFAULT_ORACLE_BUFFER_BPS,
             credits_revoker_key: None,
+            trial_mode: false,
+            trial_buyers: None,
             shop_base_url: crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string(),
         }
     }
@@ -286,6 +295,9 @@ pub struct Settings {
     pub credit_cap_headroom_pct: u32,
     pub credit_buffer_bps: u32,
     pub credits_revoker_key: Option<String>,
+    /// `Some` under `CREDITS_TRIAL_MODE`: only these buyers get new credit authorizations, and
+    /// the MANA top-up routes refuse.
+    pub trial: Option<trial::TrialBuyers>,
     pub shop_base_url: String,
 }
 
@@ -434,6 +446,69 @@ impl Settings {
                 "CREDITS_REVOKER_KEY is set but the CreditUsed index is not configured: revocations queue and are never sent"
             );
         }
+        // A trial issues credits through the on-chain authorization alone, to the buyers it
+        // names, and revokes each credit it sees consumed: no card rail, no mock card, and a
+        // revoker, or it does not start. An unreadable CREDITS_TRIAL_BUYERS_FILE already failed
+        // the start (Config::resolve_secret_files) and can't reach here as an empty list.
+        let trial = if raw.trial_mode {
+            if !raw.writes_enabled {
+                anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs OPS_WRITES_ENABLED=true: with the switch off every credit write, an authorization or an admin grant, answers 503"
+                );
+            }
+            if stripe_secret_key.is_some() {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no card rail: unset STRIPE_SECRET_KEY");
+            }
+            // The webhook alone still credits a card payment started before the trial.
+            if non_empty(raw.stripe_webhook_secret.clone()).is_some() {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no card rail: unset STRIPE_WEBHOOK_SECRET");
+            }
+            // Closed and complete: a trial that would answer every authorization with 503 does
+            // not start either.
+            if !(raw.credits_onchain_authorize_enabled
+                && credits_signer_key.is_some()
+                && credits_manager_contract.is_some()
+                && usage.is_configured())
+            {
+                anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs on-chain authorization: CREDITS_ONCHAIN_AUTHORIZE_ENABLED=true, CREDITS_SIGNER_KEY_FILE, CREDITS_MANAGER_CONTRACT and the CreditUsed index (CREDITS_USAGE_INDEX_ENABLED, RPC_ENDPOINT_POLYGON)"
+                );
+            }
+            if raw.mock_card {
+                anyhow::bail!("CREDITS_TRIAL_MODE takes no mock card: unset CREDITS_MOCK_CARD");
+            }
+            // Parsed as the revoker's signer parses it: a key that would fail there (malformed, or
+            // a 32-byte scalar off the curve such as zero) would leave the node issuing without a
+            // revoker, since a revoker that can't be built is only logged.
+            match credits_revoker_key.as_deref() {
+                None => anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs CREDITS_REVOKER_KEY_FILE: every consumed credit is revoked"
+                ),
+                Some(key) if crate::evm::signer::parse_signing_key(key).is_err() => anyhow::bail!(
+                    "CREDITS_TRIAL_MODE needs a valid CREDITS_REVOKER_KEY_FILE: not a 32-byte secp256k1 key"
+                ),
+                Some(_) => {}
+            }
+            let buyers = trial::TrialBuyers::parse(raw.trial_buyers.as_deref())?;
+            if buyers.is_empty() {
+                tracing::warn!(
+                    "CREDITS_TRIAL_MODE is on and CREDITS_TRIAL_BUYERS names no one: no new credit is authorized"
+                );
+            } else {
+                tracing::info!(
+                    buyers = buyers.len(),
+                    "CREDITS_TRIAL_MODE: new credit authorizations only for the trial's buyers; MANA top-ups refuse"
+                );
+            }
+            Some(buyers)
+        } else {
+            if non_empty(raw.trial_buyers).is_some() {
+                tracing::warn!(
+                    "CREDITS_TRIAL_BUYERS is set but CREDITS_TRIAL_MODE is false: ignored"
+                );
+            }
+            None
+        };
         Ok(Self {
             writes_enabled: raw.writes_enabled,
             admin_token: non_empty(raw.admin_token),
@@ -469,6 +544,7 @@ impl Settings {
             credit_cap_headroom_pct: raw.credit_cap_headroom_pct,
             credit_buffer_bps: raw.credit_buffer_bps,
             credits_revoker_key,
+            trial,
             shop_base_url: non_empty(Some(raw.shop_base_url))
                 .unwrap_or_else(|| crate::subscriptions::DEFAULT_SHOP_BASE_URL.to_string())
                 .trim_end_matches('/')
@@ -647,8 +723,11 @@ impl State {
     }
 
     /// The fulfilment worker (always: it idles without a broker), the
-    /// escrow release worker (only with one), the settlement job and the
-    /// wallet flags listener, all under the shared lifecycle.
+    /// escrow release worker (only with one), the settlement job, the
+    /// wallet flags listener and the CreditUsed index, all under the shared
+    /// lifecycle. `serve` runs them: the usage index's fold debits the
+    /// ledger, so it runs beside the other credits writers, under the
+    /// restore stamps `serve` installs before its jobs start.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         checkout::OutboxWorker {
             credits: self.credits.clone(),
@@ -672,6 +751,7 @@ impl State {
             self.settings.checkout_worker_interval,
         );
         wallet_flags::spawn(jobs, self.credits.clone(), self.settings.writes_enabled);
+        self.spawn_usage_index(jobs);
         if self.settings.writes_enabled {
             tracing::warn!(
                 "OPS_WRITES_ENABLED=true: this node is the authority for the credits ledger, checkouts and authorizations"
@@ -689,8 +769,10 @@ impl State {
     /// (the authorize lane closes once the fold is 10 minutes old). The fold
     /// debits wallets, so with `OPS_WRITES_ENABLED` off, or a pass the
     /// restore stamps hold, the job indexes the log (regenerable from the
-    /// chain) and publishes nothing: the lane stays closed.
-    pub fn spawn_usage_index(self: &Arc<Self>, jobs: &Jobs) {
+    /// chain) and publishes nothing: the lane stays closed. Private: only
+    /// [`Self::spawn_jobs`] starts it, in a process whose restore stamps are
+    /// installed.
+    fn spawn_usage_index(self: &Arc<Self>, jobs: &Jobs) {
         let settings = &self.settings.usage;
         if !settings.enabled {
             tracing::info!(
@@ -716,8 +798,13 @@ impl State {
                 .with_error_backoff(Duration::from_secs(600).max(interval)),
             move |ctx| {
                 let index = index.clone();
-                let fold = gate.check(writes_enabled).is_none();
-                async move { index.run_pass(Some(&ctx), fold).await.map(|_| ()) }
+                let gate = gate.clone();
+                async move {
+                    index
+                        .gated_pass(Some(&ctx), &gate, writes_enabled)
+                        .await
+                        .map(|_| ())
+                }
             },
         );
     }
@@ -1104,6 +1191,7 @@ mod schema_tests {
             "packs",
             "stripe_events",
             "purchases",
+            "payment_reversals",
             "carts",
             "cart_items",
             "checkouts",

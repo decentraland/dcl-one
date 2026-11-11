@@ -1,0 +1,36 @@
+{
+  "schema": 2,
+  "portInputHash": "fb8150f8ae42b112b344ee5c0f171e27ea86258e7cb6f78741f66311da765778",
+  "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
+  "checks": {
+    "fetch-source": {
+      "result": "pass",
+      "detail": "Verified 544 cache files against the pinned revision and digest table"
+    },
+    "deviations": {
+      "result": "pass",
+      "detail": "459 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
+    },
+    "diff": {
+      "result": "pass",
+      "detail": "Fresh diff reports 0 added, 0 changed, 0 removed and no ledger issues"
+    },
+    "check-mappings": {
+      "result": "pass",
+      "detail": "Fresh check passes with 1 public mapping and no errors"
+    },
+    "review-manifest": {
+      "result": "pass",
+      "detail": "Fresh catalog regeneration is byte-identical, 46 components"
+    },
+    "navbar-bounds": {
+      "result": "pass",
+      "detail": "Fresh gallery build passes 19 bounds checks"
+    },
+    "install": {
+      "result": "pass",
+      "detail": "Private and canonical installs reproduce 39 foundation and 11 component files with no-op repeats"
+    }
+  }
+}

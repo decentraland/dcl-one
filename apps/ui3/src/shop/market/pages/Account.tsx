@@ -8,16 +8,17 @@ import { useInfiniteQuery } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router";
 
-import { fetchCatalogItems } from "../../discovery/api";
+import { fetchCatalogItems } from "@shop/discovery/api";
 import AssetCard from "../../discovery/components/AssetCard";
-import type { CatalogItem } from "../../discovery/lib/catalogItem";
-import { parseEvmAddress, sameAddress } from "../../model/address";
+import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
+import { parseEvmAddress, sameAddress } from "@shop/model/address";
 import { useShopWallet } from "../../wallet/context";
 import { EnsureQueryClient, LoadFailure } from "../components/kit";
 import AccountBanner from "./account/AccountBanner";
 import AccountSidebar from "./account/AccountSidebar";
 import NftCard from "./account/NftCard";
 import { fetchAccountNfts, isWearableSection, parseSection, sortOptions, wearableCategoriesOf, type AccountNft, type AssetType, type Section } from "./account/api";
+import { shopReads } from "../../discovery/reads";
 import "./account/account.css";
 
 const PAGE_SIZE = 24;
@@ -52,7 +53,7 @@ function useAccountBrowse(address: string, b: Browse) {
           rarities: b.rarities.length ? b.rarities : undefined,
           search: b.search || undefined,
           sortBy: b.sortBy,
-        });
+        }, shopReads());
         return { kind: "item", items: res.items, total: res.total };
       }
       const res = await fetchAccountNfts(address, {

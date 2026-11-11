@@ -32,8 +32,8 @@ use common::{
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
         GraphicsSettings, ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage,
-        PointAtMarkerVisibility, PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting,
-        WindowSetting,
+        PointAtMarkerVisibility, PreviewMode, PrimaryCamera, SessionGraphics, ShadowSetting,
+        SkyReflectionSetting, WindowSetting,
     },
 };
 use constrain_ui::ConstrainUiSetting;
@@ -49,7 +49,7 @@ use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanc
 use video_threads::VideoThreadsSetting;
 use volume_settings::{
     AvatarVolumeSetting, MasterVolumeSetting, SceneVolumeSetting, SystemVolumeSetting,
-    VoiceVolumeSetting,
+    VoiceChatVolumeSetting, VoiceVolumeSetting,
 };
 
 pub mod aa_settings;
@@ -85,18 +85,27 @@ pub mod video_threads;
 pub mod volume_settings;
 pub mod window_settings;
 
-/// The prepasses exist for the avatar outline (edge detection) and SSAO; nothing else reads
-/// them (DoF, stars and the fork's focus target use the main-pass depth).
+/// Both prepasses exist for the avatar outline (edge detection) and SSAO. Apart from them, only
+/// the jump marker reads the primary camera's depth prepass, so that camera always keeps it (DoF,
+/// stars and the fork's focus target use the main-pass depth; the hover glow follows whatever
+/// prepasses the view has).
 pub fn prepasses_needed(graphics: &GraphicsSettings) -> bool {
     graphics.avatar_outline || graphics.ssao != SsaoSetting::Off
 }
 
-/// Inserts or removes both prepass components to match `prepasses_needed`.
+/// Inserts or removes the prepass components to match `prepasses_needed`, keeping the primary
+/// camera's depth prepass.
 pub fn sync_prepasses(cmds: &mut EntityCommands, graphics: &GraphicsSettings) {
     if prepasses_needed(graphics) {
         cmds.try_insert((DepthPrepass, NormalPrepass));
     } else {
-        cmds.remove::<(DepthPrepass, NormalPrepass)>();
+        cmds.queue(|mut camera: EntityWorldMut| {
+            if camera.contains::<PrimaryCamera>() {
+                camera.remove::<NormalPrepass>();
+            } else {
+                camera.remove::<(DepthPrepass, NormalPrepass)>();
+            }
+        });
     }
 }
 
@@ -210,6 +219,7 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<MasterVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SceneVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<VoiceVolumeSetting>(app, &mut settings, &mut schedule, &config);
+        add_int_setting::<VoiceChatVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SystemVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
 
@@ -578,5 +588,27 @@ mod tests {
             ..Default::default()
         };
         assert!(prepasses_needed(&g));
+    }
+
+    #[test]
+    fn primary_camera_keeps_the_depth_prepass() {
+        let mut world = World::new();
+        let primary = world
+            .spawn((PrimaryCamera::default(), DepthPrepass, NormalPrepass))
+            .id();
+        let texture = world.spawn((DepthPrepass, NormalPrepass)).id();
+        let off = GraphicsSettings {
+            avatar_outline: false,
+            ssao: SsaoSetting::Off,
+            ..Default::default()
+        };
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &off);
+        sync_prepasses(&mut commands.entity(texture), &off);
+        world.flush();
+        assert!(world.entity(primary).contains::<DepthPrepass>());
+        assert!(!world.entity(primary).contains::<NormalPrepass>());
+        assert!(!world.entity(texture).contains::<DepthPrepass>());
+        assert!(!world.entity(texture).contains::<NormalPrepass>());
     }
 }
