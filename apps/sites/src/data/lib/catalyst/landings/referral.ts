@@ -3,17 +3,12 @@ import { z } from "zod";
 import { getJSON } from "../client";
 import type { GetOptions } from "../client";
 import { shortAddress, ETH_ADDRESS_RE } from "../format/address";
-import { NameColorSchema } from "../generated-schemas/communities";
-import { absentWhenNull } from "../absent";
-
-const Color3Schema = NameColorSchema.partial();
 
 const AvatarSchema = z.object({
   userId: z.string().optional(),
   name: z.string().optional(),
   ethAddress: z.string().optional(),
   hasClaimedName: z.boolean().optional(),
-  nameColor: absentWhenNull(z.union([z.string(), Color3Schema])),
 });
 
 const ProfileLambdaSchema = z.object({

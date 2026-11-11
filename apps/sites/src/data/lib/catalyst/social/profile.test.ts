@@ -1,12 +1,29 @@
-import { describe, expect, it } from "vitest";
-
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), getJSON: vi.fn() }));
+import { getJSON } from "../client";
 import { fetchProfile, mapProfile } from "./profile";
+import type { ProfileVM } from "./profile";
 
 const ADDRESS = "0x1111111111111111111111111111111111111111";
 
+const NULLABLE_FIELDS = [
+  "nameColor",
+  "links",
+  "country",
+  "gender",
+  "pronouns",
+  "relationshipStatus",
+  "sexualOrientation",
+  "language",
+  "profession",
+  "realName",
+  "hobbies",
+  "birthdate",
+] as const;
+
 // Shaped like a real `/lambdas/profile/{address}` answer for a profile that never
 // filled its optional fields: lambdas sends each of them as an explicit null.
-function nullFieldsProfile(): Record<string, unknown> {
+function nullFieldsAvatar(): Record<string, unknown> {
   return {
     userId: ADDRESS,
     name: "ExampleUser#1111",
@@ -25,10 +42,7 @@ function nullFieldsProfile(): Record<string, unknown> {
       skin: { color: { r: 0.1, g: 0.2, b: 0.3, a: 1 } },
       wearables: ["urn:decentraland:off-chain:base-avatars:eyebrows_00"],
       emotes: [],
-      snapshots: {
-        face256: "https://example.com/face256.png",
-        body: "https://example.com/body.png",
-      },
+      snapshots: { face256: "https://example.com/face256.png", body: "https://example.com/body.png" },
       forceRender: [],
       showOnlyWearables: false,
     },
@@ -48,112 +62,173 @@ function nullFieldsProfile(): Record<string, unknown> {
   };
 }
 
-function serving(avatar: Record<string, unknown>) {
-  return (async () =>
-    new Response(JSON.stringify({ timestamp: 1700000000000, avatars: [avatar] }), {
-      status: 200,
-    })) as unknown as typeof fetch;
-}
+const envelope = (avatar: Record<string, unknown>) => ({ timestamp: 1700000000000, avatars: [avatar] });
 
-describe("fetchProfile", () => {
-  it("parses a profile whose unset fields arrive as explicit nulls, reading each null as absent", async () => {
-    const avatar = await fetchProfile(ADDRESS, { fetchImpl: serving(nullFieldsProfile()) });
+describe("when fetching a profile", () => {
+  let avatar: Record<string, unknown>;
+  beforeEach(() => {
+    avatar = nullFieldsAvatar();
+  });
+  afterEach(() => vi.resetAllMocks());
 
-    expect(avatar).not.toBeNull();
-    for (const key of [
-      "nameColor",
-      "links",
-      "country",
-      "gender",
-      "pronouns",
-      "relationshipStatus",
-      "sexualOrientation",
-      "language",
-      "profession",
-      "realName",
-      "hobbies",
-      "birthdate",
-    ] as const) {
-      expect(avatar?.[key], key).toBeUndefined();
-    }
+  describe("and the lambdas answer sends the unset optional fields as null", () => {
+    beforeEach(() => {
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
+
+    it.each(NULLABLE_FIELDS)("should parse %s as absent", async (field) => {
+      await expect(fetchProfile(ADDRESS).then((a) => a?.[field])).resolves.toBeUndefined();
+    });
   });
 
-  it("renders the null-field profile as a live profile with no info rows and no links", async () => {
-    const avatar = await fetchProfile(ADDRESS, { fetchImpl: serving(nullFieldsProfile()) });
-    const vm = mapProfile(avatar!, ADDRESS);
+  describe("and the avatar snapshots object is null", () => {
+    beforeEach(() => {
+      (avatar.avatar as Record<string, unknown>).snapshots = null;
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
 
-    expect(vm.name).toBe("ExampleUser#1111");
-    expect(vm.nameColor).toBe("#FF8362");
-    expect(vm.info).toEqual([]);
-    expect(vm.links).toEqual([]);
-    expect(vm.avatarUrl).toBeTruthy();
+    it("should parse the snapshots as absent", async () => {
+      await expect(fetchProfile(ADDRESS).then((a) => a?.avatar?.snapshots)).resolves.toBeUndefined();
+    });
   });
 
-  it("reads a null snapshots object as absent", async () => {
-    const raw = nullFieldsProfile();
-    (raw.avatar as Record<string, unknown>).snapshots = null;
+  describe("and the lambdas answer omits the optional fields", () => {
+    beforeEach(() => {
+      for (const field of NULLABLE_FIELDS) delete avatar[field];
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
 
-    const avatar = await fetchProfile(ADDRESS, { fetchImpl: serving(raw) });
-
-    expect(avatar?.avatar?.snapshots).toBeUndefined();
-    expect(mapProfile(avatar!, ADDRESS).avatarUrl).toBeFalsy();
+    it.each(NULLABLE_FIELDS)("should parse %s as absent", async (field) => {
+      await expect(fetchProfile(ADDRESS).then((a) => a?.[field])).resolves.toBeUndefined();
+    });
   });
 
-  it("parses a profile that omits the optional fields altogether", async () => {
-    const raw = nullFieldsProfile();
-    for (const key of Object.keys(raw)) {
-      if (raw[key] === null) delete raw[key];
-    }
+  describe("and the optional fields are set", () => {
+    beforeEach(() => {
+      avatar = { ...avatar, country: "Exampleland", birthdate: 946684800 };
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
 
-    const avatar = await fetchProfile(ADDRESS, { fetchImpl: serving(raw) });
-
-    expect(avatar?.country).toBeUndefined();
-    expect(avatar?.links).toBeUndefined();
-    expect(mapProfile(avatar!, ADDRESS).info).toEqual([]);
+    it("should keep their values", async () => {
+      await expect(fetchProfile(ADDRESS)).resolves.toMatchObject({ country: "Exampleland", birthdate: 946684800 });
+    });
   });
 
-  it("keeps the values of fields that are set", async () => {
-    const raw = {
-      ...nullFieldsProfile(),
-      country: "Exampleland",
-      birthdate: 946684800,
-      links: [{ title: "Site", url: "https://example.com" }],
-      nameColor: { r: 1, g: 0, b: 0 },
-    };
-
-    const avatar = await fetchProfile(ADDRESS, { fetchImpl: serving(raw) });
-    const vm = mapProfile(avatar!, ADDRESS);
-
-    expect(avatar?.birthdate).toBe(946684800);
-    expect(vm.nameColor).toBe("#ff0000");
-    expect(vm.info).toEqual([
-      { key: "country", label: "Country", value: "Exampleland", icon: "globe" },
-    ]);
-    expect(vm.links).toEqual([{ title: "Site", url: "https://example.com" }]);
-  });
-
-  it.each([
+  describe.each([
     ["country", 42],
     ["birthdate", "2000-01-01"],
     ["links", "https://example.com"],
     ["nameColor", 7],
     ["hobbies", false],
-  ])("still rejects a %s of the wrong type", async (key, value) => {
-    const raw = { ...nullFieldsProfile(), [key]: value };
+  ])("and %s has the wrong type", (field, value) => {
+    beforeEach(() => {
+      avatar = { ...avatar, [field]: value };
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
 
-    await expect(fetchProfile(ADDRESS, { fetchImpl: serving(raw) })).rejects.toThrow();
+    it("should reject the profile with an issue at that field", async () => {
+      await expect(fetchProfile(ADDRESS)).rejects.toMatchObject({
+        issues: [expect.objectContaining({ path: ["avatars", 0, field] })],
+      });
+    });
   });
 
-  it("still rejects a snapshots value of the wrong type", async () => {
-    const raw = nullFieldsProfile();
-    (raw.avatar as Record<string, unknown>).snapshots = "https://example.com/face256.png";
+  describe("and the snapshots value has the wrong type", () => {
+    beforeEach(() => {
+      (avatar.avatar as Record<string, unknown>).snapshots = "https://example.com/face256.png";
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
 
-    await expect(fetchProfile(ADDRESS, { fetchImpl: serving(raw) })).rejects.toThrow();
+    it("should reject the profile with an issue at the snapshots", async () => {
+      await expect(fetchProfile(ADDRESS)).rejects.toMatchObject({
+        issues: [expect.objectContaining({ path: ["avatars", 0, "avatar", "snapshots"] })],
+      });
+    });
   });
 
-  it("still rejects a null required field", async () => {
-    const raw = { ...nullFieldsProfile(), name: null };
+  describe("and the required name is null", () => {
+    beforeEach(() => {
+      avatar = { ...avatar, name: null };
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+    });
 
-    await expect(fetchProfile(ADDRESS, { fetchImpl: serving(raw) })).rejects.toThrow();
+    it("should reject the profile with an invalid type issue at the name", async () => {
+      await expect(fetchProfile(ADDRESS)).rejects.toMatchObject({
+        issues: [expect.objectContaining({ code: "invalid_type", path: ["avatars", 0, "name"] })],
+      });
+    });
+  });
+});
+
+describe("when mapping a fetched profile", () => {
+  let avatar: Record<string, unknown>;
+  let vm: ProfileVM;
+  beforeEach(() => {
+    avatar = nullFieldsAvatar();
+  });
+  afterEach(() => vi.resetAllMocks());
+
+  describe("and its unset optional fields arrived as null", () => {
+    beforeEach(async () => {
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
+    });
+
+    it("should show the profile name instead of the address", () => {
+      expect(vm.name).toBe("ExampleUser#1111");
+    });
+
+    it("should use the default name color", () => {
+      expect(vm.nameColor).toBe("#FF8362");
+    });
+
+    it("should show no info rows", () => {
+      expect(vm.info).toEqual([]);
+    });
+
+    it("should show no links", () => {
+      expect(vm.links).toEqual([]);
+    });
+
+    it("should show the face snapshot", () => {
+      expect(vm.avatarUrl).toBe("https://example.com/face256.png");
+    });
+  });
+
+  describe("and its snapshots object arrived as null", () => {
+    beforeEach(async () => {
+      (avatar.avatar as Record<string, unknown>).snapshots = null;
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
+    });
+
+    it("should show no face image", () => {
+      expect(vm.avatarUrl).toBe("");
+    });
+  });
+
+  describe("and its optional fields are set", () => {
+    beforeEach(async () => {
+      avatar = {
+        ...avatar,
+        country: "Exampleland",
+        links: [{ title: "Site", url: "https://example.com" }],
+        nameColor: { r: 1, g: 0, b: 0 },
+      };
+      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
+    });
+
+    it("should convert the name color to hex", () => {
+      expect(vm.nameColor).toBe("#ff0000");
+    });
+
+    it("should show the country info row", () => {
+      expect(vm.info).toEqual([{ key: "country", label: "Country", value: "Exampleland", icon: "globe" }]);
+    });
+
+    it("should show the links", () => {
+      expect(vm.links).toEqual([{ title: "Site", url: "https://example.com" }]);
+    });
   });
 });
