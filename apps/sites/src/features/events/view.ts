@@ -12,6 +12,7 @@ import {
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
 import { DEFAULT_MIN_USERS, type LiveNowData } from "@/data/lib/catalyst/places/events-page";
 import type { Place } from "@/data/lib/catalyst/schema";
+import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
 
 /**
  * The /events page's view model: API records mapped to the card and modal props of
@@ -98,22 +99,40 @@ export function placeShareUrl(origin: string, target: Target): string {
   return new URL(placeHref(target), origin).toString();
 }
 
-export function eventCreator(event: Pick<Event, "user" | "user_name">): EventCardCreator {
+/** The face a batched profile read found for this wallet, when it found one. */
+function faceOf(address: string | undefined, profiles: CreatorProfiles): { avatarUrl?: string } {
+  const avatarUrl = address ? profiles[address.toLowerCase()]?.avatarUrl : undefined;
+  return avatarUrl ? { avatarUrl } : {};
+}
+
+export function eventCreator(
+  event: Pick<Event, "user" | "user_name">,
+  profiles: CreatorProfiles = {},
+): EventCardCreator {
   const address = event.user && ETH_ADDRESS.test(event.user) ? event.user : undefined;
   return {
     name: event.user_name || (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Unknown"),
     href: address ? profileHref(address) : undefined,
+    ...faceOf(address, profiles),
   };
 }
 
-export function placeCreator(place: Pick<JumpPlaceRecord, "owner" | "contact_name">): EventCardCreator {
+export function placeCreator(
+  place: Pick<JumpPlaceRecord, "owner" | "contact_name">,
+  profiles: CreatorProfiles = {},
+): EventCardCreator {
   const owner = place.owner && ETH_ADDRESS.test(place.owner) ? place.owner : undefined;
   const name = place.contact_name || (owner ? `${owner.slice(0, 6)}…${owner.slice(-4)}` : place.owner) || "Unknown";
-  return {
-    name,
-    href: owner ? profileHref(owner) : undefined,
-    foundation: name === FOUNDATION_CONTACT_NAME,
-  };
+  // The Foundation keeps its logo, as source does for Genesis Plaza.
+  if (name === FOUNDATION_CONTACT_NAME) return { name, href: owner ? profileHref(owner) : undefined, foundation: true };
+  return { name, href: owner ? profileHref(owner) : undefined, ...faceOf(owner, profiles) };
+}
+
+/** The wallets behind a list of events' and places' by-lines, for one batched profile read. */
+export function creatorWallets(items: readonly ({ user?: string | null } | { owner: string | null })[]): string[] {
+  return items
+    .map((item) => ("owner" in item ? item.owner : item.user) ?? "")
+    .filter((value) => ETH_ADDRESS.test(value));
 }
 
 /** Distinct wallets in the event's scene now; undefined when the record does not say. */

@@ -4,11 +4,13 @@ import { eventRecord, placeRecord } from "./fixtures";
 import {
   bucketByDay,
   closedHref,
+  creatorWallets,
   eventCreator,
   eventHref,
   eventShareUrl,
   legacyEventsHref,
   liveNowItems,
+  placeCreator,
   placeHref,
   readDayOffset,
   relativeStart,
@@ -179,5 +181,30 @@ describe("scheduleLine", () => {
 
   it("should have no schedule for an event without a valid start", () => {
     expect(scheduleLine(eventRecord({ start_at: null, next_start_at: "not a date" }), "UTC")).toBeUndefined();
+  });
+});
+
+describe("creator faces", () => {
+  const wallet = "0xabcdef0000000000000000000000000000000001";
+  const profiles = { [wallet]: { name: "Ana", avatarUrl: "/profile-images/entities/x/face.png" } };
+
+  it("should show the face a profile read found, and the initial without one", () => {
+    expect(eventCreator({ user: wallet.toUpperCase().replace("0X", "0x"), user_name: "Ana" }, profiles).avatarUrl).toBe(
+      "/profile-images/entities/x/face.png",
+    );
+    expect(eventCreator({ user: wallet, user_name: "Ana" }, {}).avatarUrl).toBeUndefined();
+  });
+
+  it("should keep the Foundation logo for its places instead of a wallet face", () => {
+    const creator = placeCreator({ owner: wallet, contact_name: "Decentraland Foundation" }, profiles);
+    expect(creator).toMatchObject({ foundation: true });
+    expect(creator.avatarUrl).toBeUndefined();
+  });
+
+  it("should collect only wallets from events and places", () => {
+    expect(creatorWallets([{ user: wallet }, { user: "someone" }, { owner: null }, { owner: wallet }])).toEqual([
+      wallet,
+      wallet,
+    ]);
   });
 });

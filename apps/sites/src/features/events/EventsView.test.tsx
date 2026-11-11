@@ -43,7 +43,7 @@ import { loadJumpPlace } from "@/data/lib/catalyst/jump/place-lookup";
 import { fetchEvent, fetchEvents, type Event } from "@/data/lib/catalyst/places/events";
 import { fetchMostActivePlaces } from "@/data/lib/catalyst/places/index";
 import type { DetectedPlatform } from "../download/options";
-import { EventsView } from "./EventsView";
+import { columnsFor, EventsView } from "./EventsView";
 import { eventRecord, placeRecord } from "./fixtures";
 
 const DESKTOP: DetectedPlatform = { kind: "desktop", os: "macos", arch: "arm64" } as DetectedPlatform;
@@ -98,12 +98,22 @@ beforeEach(() => {
   http.signedGetJSON.mockReset().mockResolvedValue({ ok: true, data: [] });
   http.postJSON.mockReset();
   signIn.openSignIn.mockReset();
+  // Creator faces: no profiles unless a test says otherwise, and never the real network.
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json([])),
+  );
 });
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
 });
+
+const FACE = "https://profile-images.decentraland.org/entities/bafyface/face.png";
+const profilesReply = (address: string) =>
+  Response.json([{ avatars: [{ ethAddress: address, name: "OtoLam", avatar: { snapshots: { face256: FACE } } }] }]);
 
 describe("EventsView", () => {
   it("should render no Live Now section when nothing is live and mark empty days", async () => {
@@ -239,5 +249,41 @@ describe("EventsView", () => {
     await act(async () => fail(new Error("401")));
     await waitFor(() => expect(button.getAttribute("aria-pressed")).toBe("false"));
     expect(await screen.findByText("Couldn't update your reminder. Try again.")).toBeTruthy();
+  });
+
+  it("should show creator faces from one batched profile read per section", async () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const fetchMock = vi.fn(async () => profilesReply(wallet));
+    vi.stubGlobal("fetch", fetchMock);
+    calendar = [soon("cal", "Poker Night"), soon("cal2", "Dance Night", 3)];
+    setup("/events");
+    await waitFor(() =>
+      expect(
+        document.querySelectorAll('img[src*="/profile-images/entities/bafyface/face.png"]').length,
+      ).toBeGreaterThan(1),
+    );
+    // Upcoming and All Events share the creator: the second section asks for no wallet the first did.
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body))).toEqual({
+      ids: [wallet],
+    });
+  });
+
+  it("should keep the creator's initial when the profile read fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("down", { status: 502 })),
+    );
+    setup("/events");
+    await screen.findAllByRole("link", { name: "Watch Party" });
+    await waitFor(() => expect(fetch).toHaveBeenCalled());
+    expect(document.querySelector('img[src*="/profile-images/"]')).toBeNull();
+    expect(screen.getAllByText("O").length).toBeGreaterThan(0);
+  });
+});
+
+describe("columnsFor", () => {
+  it("should show five days on wide screens, four from desktop, two on tablets and a list on phones", () => {
+    expect([1920, 1536, 1535, 1024, 1023, 768, 767, 390].map(columnsFor)).toEqual([5, 5, 4, 4, 2, 2, 1, 1]);
   });
 });

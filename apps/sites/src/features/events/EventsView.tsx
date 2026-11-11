@@ -35,9 +35,12 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { openSignIn } from "../components/auth/signin-store";
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
+import { useCreatorProfiles } from "./useCreatorProfiles";
 import { useEventReminders, type Reminder } from "./useEventReminders";
+import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
 import {
   bucketByDay,
+  creatorWallets,
   calendarHref,
   closedHref,
   DAY_PARAM,
@@ -82,8 +85,9 @@ export type EventsViewProps = {
   initial: { now: number; unavailable: boolean } | null;
 };
 
-/** One column per day from 1024px, two from 768px, a single list below, as source. */
-function columnsFor(width: number): number {
+/** Day columns: five on wide screens (source's 1536px), four from 1024px, two from 768px, a list below. */
+export function columnsFor(width: number): number {
+  if (width >= 1536) return 5;
   if (width >= 1024) return 4;
   if (width >= 768) return 2;
   return 1;
@@ -189,7 +193,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
     [calendar.data, days, now, zone],
   );
 
-  const upcomingEvents = upcoming.data ?? [];
+  const upcomingEvents = useMemo(() => upcoming.data ?? [], [upcoming.data]);
   const reminders = useEventReminders(identity, () => openSignIn({ inPlace: true }));
 
   const [notice, setNotice] = useState<string>();
@@ -197,14 +201,27 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
     setNotice(reminders.failed ? REMIND_FAILED : undefined);
   }, [reminders.failed]);
 
-  useViewedOnce(sid, live.data ? liveNowItems(live.data).length : 0, upcomingEvents.length, offset);
-
   const minUsers = Number(params.get("minUsers"));
-  const liveCards: LiveEventCardProps[] = (
-    live.data
-      ? liveNowItems(live.data, Number.isFinite(minUsers) && params.has("minUsers") ? minUsers : DEFAULT_MIN_USERS)
-      : []
-  ).map((item, index): LiveEventCardProps => {
+  const liveItems = useMemo(
+    () =>
+      live.data
+        ? liveNowItems(live.data, Number.isFinite(minUsers) && params.has("minUsers") ? minUsers : DEFAULT_MIN_USERS)
+        : [],
+    [live.data, minUsers, params],
+  );
+  // One batched profile read per section, each asking only for wallets an earlier section did not.
+  const creatorGroups = useMemo(
+    () => [
+      creatorWallets(liveItems.map((item) => (item.kind === "event" ? item.event : item.place))),
+      creatorWallets(upcomingEvents),
+      creatorWallets(buckets.flat().map((occurrence) => occurrence.event)),
+      creatorWallets(detail.data ? [detail.data] : place.data ? [place.data] : []),
+    ],
+    [liveItems, upcomingEvents, buckets, detail.data, place.data],
+  );
+  const profiles = useCreatorProfiles(creatorGroups);
+  useViewedOnce(sid, liveItems.length, upcomingEvents.length, offset);
+  const liveCards: LiveEventCardProps[] = liveItems.map((item, index): LiveEventCardProps => {
     if (item.kind === "event") {
       const href = eventHref(item.event.id, search);
       return {
@@ -215,7 +232,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         onOpen: open(href, item.event.id),
         users: item.users,
         usersLabel: item.users === undefined ? undefined : usersLabel(item.users),
-        creator: eventCreator(item.event),
+        creator: eventCreator(item.event, profiles),
         live: true,
         jumpIn: jumpIn(eventTarget(item.event)),
         eager: index === 0,
@@ -231,7 +248,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       onOpen: open(href),
       users: item.users,
       usersLabel: usersLabel(item.users),
-      creator: placeCreator(item.place),
+      creator: placeCreator(item.place, profiles),
       live: false,
       jumpIn: jumpIn(target),
       eager: index === 0,
@@ -247,7 +264,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       image: event.image,
       href,
       onOpen: open(href, event.id),
-      creator: eventCreator(event),
+      creator: eventCreator(event, profiles),
       time: start ? { label: relativeStart(start, now, zone), dateTime: start } : { label: "Soon" },
       remind: remindControl(reminders.get(event.id)),
       calendarHref: calendarHref(event, eventShareUrl(origin, event)),
@@ -271,7 +288,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         onOpen: open(href, event.id),
         users: users ?? (occurrence.live ? (event.total_attendees ?? undefined) : undefined),
         usersLabel: users === undefined ? undefined : usersLabel(users),
-        creator: eventCreator(event),
+        creator: eventCreator(event, profiles),
         live: occurrence.live,
         time: {
           label: columns === 1 ? relativeStart(occurrence.start, now, zone) : formatTime(occurrence.start, zone),
@@ -310,6 +327,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
               origin={origin}
               jumpIn={jumpIn}
               reminder={detail.data.live ? undefined : reminders.get(detail.data.id)}
+              profiles={profiles}
               onClose={close}
             />
           ) : null}
@@ -319,6 +337,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
               parcel={"position" in placeTargetParam ? placeTargetParam.position : undefined}
               origin={origin}
               jumpIn={jumpIn}
+              profiles={profiles}
               onClose={close}
             />
           ) : null}
@@ -358,8 +377,10 @@ function EventDetail({
   origin,
   jumpIn,
   reminder,
+  profiles,
   onClose,
 }: {
+  profiles: CreatorProfiles;
   sid: string;
   event: Event;
   zone: Zone;
@@ -396,7 +417,7 @@ function EventDetail({
       image={event.image}
       live={event.live}
       when={event.live ? undefined : heroWhen(event, zone)}
-      creator={eventCreator(event)}
+      creator={eventCreator(event, profiles)}
       location={{
         label: locationLabel(target, event.scene_name ?? event.estate_name),
         world: Boolean(target.realm),
@@ -418,8 +439,10 @@ function PlaceDetail({
   parcel,
   origin,
   jumpIn,
+  profiles,
   onClose,
 }: {
+  profiles: CreatorProfiles;
   place: JumpPlaceRecord;
   /** The parcel the link asked for: a scene spans several, and its base is only one of them. */
   parcel?: [number, number];
@@ -433,7 +456,7 @@ function PlaceDetail({
     <PlaceDetailModal
       title={place.title || target.realm || "Untitled place"}
       image={place.image}
-      creator={placeCreator(place)}
+      creator={placeCreator(place, profiles)}
       location={{ label: locationLabel(target), world: Boolean(target.realm) }}
       description={place.description ?? undefined}
       users={place.user_count ?? undefined}
