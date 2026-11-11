@@ -14,9 +14,9 @@ const REPOSITORY = 'https://github.com/decentraland/dcl-one'
  * under library/ui/foundations (relative to it) and `readStaged` returns a non-LFS path's staged bytes. Generated
  * files take the digest source.json emitted and the pinned capture revision, the Inter fonts and license take the
  * digests font-source.json pins and the npm origin, and every other staged file is dcl-one source pinned at its
- * staged bytes. publicFoundationProblems still checks the materialized bytes against this table.
+ * staged bytes, except a file `previous` pinned as generated or npm, which keeps that pin. publicFoundationProblems still checks the materialized bytes against this table.
  */
-export function publicFoundationTable(lock, files, readStaged) {
+export function publicFoundationTable(lock, files, readStaged, previous) {
   const json = (file) => JSON.parse(readStaged(ROOT + '/' + file).toString('utf8'))
   const generated = json('source.json').output
   const fontSource = json('typography/font-source.json')
@@ -33,14 +33,22 @@ export function publicFoundationTable(lock, files, readStaged) {
     sha256: fontSource.licenseSha256,
     origin: npm('LICENSE')
   })
-  for (const file of files)
-    if (!table.has(file))
-      table.set(file, {
-        sha256: createHash('sha256')
-          .update(readStaged(ROOT + '/' + file))
-          .digest('hex'),
-        origin: { kind: 'source', repository: REPOSITORY }
-      })
+  for (const file of files) {
+    if (table.has(file)) continue
+    // A file the manifests no longer list keeps a generated or npm pin, so the check reports it instead of the
+    // table quietly calling it dcl-one source.
+    const kind = previous?.[file]?.origin?.kind
+    if (kind === 'generated' || kind === 'npm') {
+      table.set(file, previous[file])
+      continue
+    }
+    table.set(file, {
+      sha256: createHash('sha256')
+        .update(readStaged(ROOT + '/' + file))
+        .digest('hex'),
+      origin: { kind: 'source', repository: REPOSITORY }
+    })
+  }
   return Object.fromEntries([...table].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
 }
 

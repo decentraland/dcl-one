@@ -630,19 +630,14 @@ async function installComponents(
     await assertLock()
   }
   await verifyInputs()
-  return publishInstall(
-    root,
-    'components',
-    outDir,
-    planned,
-    verifyInputs,
-    handWrittenComponents(await tree(outDir), lock.publicComponents?.files, planned)
+  return publishInstall(root, 'components', outDir, planned, verifyInputs, (current) =>
+    handWrittenComponents(current, lock.publicComponents?.files, planned)
   )
 }
 
 /**
  * Hand-written components in the current target: directories that hold none of the outputs the lock's public table
- * pins or the current generation record lists. They are carried into the published tree byte for byte, never
+ * pins or the current generation record lists, read from the same snapshot the transaction publishes over. They are carried into the published tree byte for byte, never
  * planned, regenerated or deleted, and a plan that would write into one is refused.
  */
 function handWrittenComponents(
@@ -653,18 +648,17 @@ function handWrittenComponents(
   const kept = new Map<string, Buffer>()
   if (!current) return kept
   const owned = new Set(Object.keys(table ?? {}))
-  const record = current.get('generation.json')
-  if (record) {
-    let output: unknown
-    try {
-      output = (JSON.parse(record.toString('utf8')) as { output?: unknown }).output
-    } catch {
-      throw new Error('The installed component generation record is not valid JSON')
-    }
-    if (!Array.isArray(output))
-      throw new Error('The installed component generation record has no output')
-    for (const entry of output as { path?: unknown }[])
-      if (typeof entry?.path === 'string') owned.add(entry.path)
+  // The installed record also names outputs a lock not yet resealed does not; an unreadable record adds nothing,
+  // which can only keep more, never delete a hand-written file.
+  try {
+    const output = (
+      JSON.parse(current.get('generation.json')?.toString('utf8') ?? '{}') as { output?: unknown }
+    ).output
+    if (Array.isArray(output))
+      for (const entry of output as { path?: unknown }[])
+        if (typeof entry?.path === 'string') owned.add(entry.path)
+  } catch {
+    // The lock table alone decides.
   }
   const directories = new Set(handWrittenComponentDirectories(current.keys(), owned))
   const fold = (name: string) => name.normalize('NFC').toLowerCase()
@@ -744,9 +738,10 @@ async function publishInstall(
   outDir: string,
   planned: Map<string, Buffer>,
   verifyInputs: () => Promise<void>,
-  kept: ReadonlyMap<string, Buffer> = new Map()
+  keep: (current: Map<string, Buffer> | undefined) => Map<string, Buffer> = () => new Map()
 ): Promise<InstallResult> {
   const current = await tree(outDir)
+  const kept = keep(current)
   // Kept files are published as they are and are not reported as install output.
   const publication = new Map([...planned, ...kept])
   await cleanTarget(root, target, outDir, current, publication)

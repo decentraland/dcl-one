@@ -292,7 +292,8 @@ function verifyStages(run: Run, p: Paths): Record<string, () => Stage> {
           `private install ${target}`
         )
         const privateFiles = treeFiles(path.join(proof, target))
-        // Hand-written components are Git's, not the installer's, so a private install never reproduces them.
+        // Hand-written components are Git's, not the installer's, so a private install never reproduces them. The
+        // lock-digests check above refuses one that is untracked or carries generated output.
         const canonical = treeFiles(path.join(p.ui, target))
         if (target === 'components')
           for (const directory of handWrittenComponentDirectories(

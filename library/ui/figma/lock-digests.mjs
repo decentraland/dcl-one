@@ -271,16 +271,18 @@ export function main(argv, root = process.cwd()) {
         [
           'publicFoundations',
           'library/ui/foundations',
-          (files) => publicFoundationTable(lock, files, staged)
+          (files) => publicFoundationTable(lock, files, staged, lock.publicFoundations?.files)
         ],
         ['publicComponents', 'library/ui/components', () => publicComponentTable(lock, staged)]
       ]
+      let kept = 0
       for (const [name, scope, build] of tables) {
         const files = listed(scope)
         if (!files.length) continue
         try {
           lock[name] = { ...lock[name], files: build(files) }
         } catch (error) {
+          kept++
           process.stderr.write(
             `lock-digests: kept the ${name} table: ${error instanceof Error ? error.message : String(error)}\n`
           )
@@ -288,7 +290,8 @@ export function main(argv, root = process.cwd()) {
       }
       writeFileSync(lockFile, JSON.stringify(lock, null, 2) + '\n')
       process.stdout.write(`lock-digests: pinned ${Object.keys(tracked).length} files\n`)
-      return 0
+      // The resealed digests are written either way; a kept table is a failure until its target is reinstalled.
+      return kept ? 1 : 0
     }
     const { digests, problems } = pinnedFiles(lock)
     const { mismatched, missing, unpinned } = compare(digests, tracked)

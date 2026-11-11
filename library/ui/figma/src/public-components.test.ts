@@ -341,6 +341,24 @@ describe('when the offline component guard checks a staged internal plan', () =>
           'generated or captured output in hand-written component file: Badge/Badge.tsx'
         ],
         [
+          'a nested import of the generated runtime',
+          'Badge/parts/Inner.tsx',
+          "import { FigmaView } from '../../runtime/figma-module-runtime'\nexport { FigmaView }\n",
+          'generated or captured output in hand-written component file: Badge/parts/Inner.tsx'
+        ],
+        [
+          'an import of the generated runtime directory',
+          'Badge/Badge.tsx',
+          "import * as runtime from './../runtime'\nexport { runtime }\n",
+          'generated or captured output in hand-written component file: Badge/Badge.tsx'
+        ],
+        [
+          'the generated mapping header',
+          'Badge/Badge.figma.ts',
+          '// url=<DCL_FIGMA_FILE>?node-id=1-2\n// source=components/Badge/Badge.tsx\n// component=Badge\nexport {}\n',
+          'generated or captured output in hand-written component file: Badge/Badge.figma.ts'
+        ],
+        [
           'a capture file',
           'Badge/capture.json',
           '{"nodes":[]}\n',
@@ -377,7 +395,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
         ])
       })
 
-      it('should refuse a lock entry that claims a generated origin for a hand-written file', () => {
+      it('should check the whole directory as installer output when the lock claims a generated origin for one of its files', () => {
         const file = 'Badge/Badge.tsx'
         lock.publicComponents.files[file] = {
           sha256: hash(readFileSync(path.join(root, scope + file))),
@@ -387,6 +405,18 @@ describe('when the offline component guard checks a staged internal plan', () =>
         // Pinning one file hands the directory to the installer, so its other files are extra outputs.
         expect(problems).toContain('extra public file: Badge/Badge.module.css')
         expect(problems).not.toEqual([])
+      })
+
+      it('should refuse a lock entry that claims a generated origin for a one-file hand-written directory', () => {
+        put(scope + 'Tag/Tag.tsx', 'export const Tag = () => null\n')
+        git('add', '--', 'library/ui/components')
+        lock.publicComponents.files['Tag/Tag.tsx'] = {
+          sha256: hash(readFileSync(path.join(root, scope + 'Tag/Tag.tsx'))),
+          origin: { ...lock.publicComponents.files['NavBar/NavBar.tsx']!.origin }
+        }
+        expect(publicComponentsProblems(root, lock)).toContain(
+          'unexpected public component: Tag/Tag.tsx'
+        )
       })
 
       it('should refuse an untracked hand-written file', () => {
@@ -469,7 +499,28 @@ describe('when the offline component guard checks a staged internal plan', () =>
           expect(run()).toMatchObject({ status: 0 })
         })
 
-        it('should keep the component table and fail the check when the generation record is stale', () => {
+        it('should keep a generated foundation pin the manifest no longer lists, so the check still fails', () => {
+          const sourceJson = JSON.parse(
+            readFileSync(path.join(root, 'library/ui/foundations/source.json'), 'utf8')
+          )
+          sourceJson.output = sourceJson.output.filter(
+            (entry: { path: string }) => entry.path !== 'theme.ts'
+          )
+          put('library/ui/foundations/source.json', JSON.stringify(sourceJson, null, 2) + '\n')
+          git('add', '--', 'library/ui/foundations/source.json')
+          expect(run('--write')).toMatchObject({ status: 0 })
+          expect(writtenLock().publicFoundations.files['theme.ts']).toEqual(
+            foundationTable['theme.ts']
+          )
+          expect(run()).toMatchObject({
+            status: 1,
+            stdout: expect.stringContaining(
+              'PUBLIC generated origin classification differs: theme.ts'
+            )
+          })
+        })
+
+        it('should keep the component table, exit 1 and fail the check when the generation record is stale', () => {
           put('library/ui/figma/src/install.ts', '// a changed installer\n')
           git(
             'add',
@@ -480,7 +531,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
             'library/ui/foundations/index.ts'
           )
           const written = run('--write')
-          expect(written.status).toBe(0)
+          expect(written.status).toBe(1)
           expect(written.stderr).toContain(
             'kept the publicComponents table: Component module differs from source lock: library/ui/figma/src/install.ts'
           )
