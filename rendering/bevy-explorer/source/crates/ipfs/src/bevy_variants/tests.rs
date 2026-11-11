@@ -26,7 +26,7 @@ fn variant_bytes() -> Vec<u8> {
 /// its prefix letter is the class.
 fn served_path_of(format: &str, id: &str) -> String {
     let prefix = match format {
-        "glb-meshopt" => "m1",
+        "glb-br" => "m2",
         "glb" => "g1",
         _ => "t2",
     };
@@ -91,7 +91,7 @@ fn parses_a_v3_manifest() {
                 "texture",
                 "ktx2-bc"
             ),
-            (&*format!("bevy/m1/{ORIGINAL_CID}"), "model", "glb-meshopt"),
+            (&*format!("bevy/m1/{ORIGINAL_CID}"), "model", "glb-br"),
             (&*format!("bevy/g1/{ORIGINAL_CID}"), "model", "glb"),
         ]
     );
@@ -146,16 +146,18 @@ fn selects_the_first_variant_this_client_takes() {
     let glb = [variant(VARIANT_CID, "model", "glb")];
     assert!(supported_format(&glb[0]).is_none());
     assert!(select_variant(&glb, "models/a.glb", true, none_bad).is_none());
-    // `glb-meshopt` needs a meshopt decoder the glTF loader does not have: never taken
-    let meshopt = [variant(VARIANT_CID, "model", "glb-meshopt")];
-    assert!(supported_format(&meshopt[0]).is_none());
-    assert!(select_variant(&meshopt, "models/a.glb", true, none_bad).is_none());
-    assert!(select_variant(&meshopt, "models/a.gltf", true, none_bad).is_none());
+    // `glb-br` is fetched as a Brotli copy only a browser decodes: native leaves it untaken and
+    // loads the original model (the web build takes it for `.glb` files)
+    let brotli = [variant(VARIANT_CID, "model", "glb-br")];
+    assert!(supported_format(&brotli[0]).is_none());
+    assert!(select_variant(&brotli, "models/a.glb", true, none_bad).is_none());
     assert_eq!(
         taken_formats(),
-        "ktx2-bc (BC1/BC5/BC7, loaded as DDS); not glb-meshopt, glb"
+        "ktx2-bc (BC1/BC5/BC7, loaded as DDS); not glb-br, glb"
     );
     assert!(!could_have_variant("a.glb"));
+    // the earlier mesh format is not in the schema any more
+    assert!(supported_format(&variant(VARIANT_CID, "model", "glb-meshopt")).is_none());
     // a kind/format pair the schema does not have
     assert!(select_variant(
         &[variant(VARIANT_CID, "model", "ktx2-bc")],

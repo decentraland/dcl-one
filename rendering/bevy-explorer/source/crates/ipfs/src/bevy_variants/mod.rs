@@ -7,7 +7,7 @@
 //! explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once (schema v3); it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class
-//! (`t` a BC KTX2 texture, `m` a `glb-meshopt` model, `g` a GLB). A content file read whose
+//! (`t` a BC KTX2 texture, `m` a `glb-br` model, `g` a GLB). A content file read whose
 //! original CID has a variant of a class this client takes is answered with
 //! `{base}/{variantPath}` instead and cached under a digest of that url, never under the
 //! original's hash. abgen keeps a path's bytes fixed for the life of its generation, and the
@@ -19,11 +19,13 @@
 //! most [`MANIFEST_DEADLINE`] from the request, then read their originals.
 //!
 //! The formats taken are the [`SUPPORTED_FORMATS`] table: a manifest variant is loaded when its
-//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has. Only
-//! texture variants are taken. `glb-meshopt` models need an `EXT_meshopt_compression` decoder
-//! the glTF loader does not have, and `glb` embeds its textures as KTX2 under
-//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it; both are ignored,
-//! so their originals load.
+//! `kind`/`format` pair has a row whose file types, GPU needs and decoder this client has: BC
+//! KTX2 textures everywhere, and on web `glb-br` models, the original `.glb` byte for byte,
+//! fetched as its Brotli copy (`{path}.br`, stored with `Content-Encoding: br`) which the
+//! browser decodes. Native leaves `glb-br` to a later change (it has no Brotli decoder on its
+//! http client) and loads the original model. `glb` embeds its textures as KTX2 under
+//! `KHR_texture_basisu`, which the glTF loader rejects when a file requires it, and is ignored,
+//! so its original loads.
 //!
 //! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
@@ -64,7 +66,10 @@ use crate::{
 /// last image loader, which guesses too.
 const TEXTURE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "webp", "ktx2"];
 /// Every variant class the manifest schema (v3) names by a path's prefix letter, taken or not.
-const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-meshopt", "glb"];
+const SCHEMA_FORMATS: [&str; 3] = ["ktx2-bc", "glb-br", "glb"];
+/// Model paths a `glb-br` variant stands in for: only a binary glTF, which is what it holds.
+#[cfg(target_arch = "wasm32")]
+const MODEL_EXTENSIONS: [&str; 1] = ["glb"];
 const RECENT_FALLBACKS: usize = 20;
 
 /// What a supported variant's bytes are handed to the loaders as.
@@ -73,6 +78,10 @@ pub enum Decoded {
     /// A BC KTX2 texture (BC1, BC5 or BC7, as its header says), unwrapped to the DDS the image
     /// loaders read.
     BcTexture,
+    /// A `glb-br` model: the original `.glb`, fetched as its Brotli copy that the browser
+    /// decodes, handed to the glTF loader of the original path. Web only.
+    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    BrotliGlb,
 }
 
 /// A variant class this client takes: its `kind`/`format` (from the path's prefix letter), the
@@ -102,14 +111,26 @@ impl SupportedFormat {
 
 /// The variant classes this client takes. A variant is loaded only through a row here; the
 /// manifest's order of preference decides between rows.
-pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[SupportedFormat {
-    kind: "texture",
-    format: "ktx2-bc",
-    extensions: &TEXTURE_EXTENSIONS,
-    without_extension: true,
-    needs_bc: true,
-    decoded: Decoded::BcTexture,
-}];
+pub const SUPPORTED_FORMATS: &[SupportedFormat] = &[
+    SupportedFormat {
+        kind: "texture",
+        format: "ktx2-bc",
+        extensions: &TEXTURE_EXTENSIONS,
+        without_extension: true,
+        needs_bc: true,
+        decoded: Decoded::BcTexture,
+    },
+    // web only: the browser decodes the Brotli copy; native has no decoder on its http client
+    #[cfg(target_arch = "wasm32")]
+    SupportedFormat {
+        kind: "model",
+        format: "glb-br",
+        extensions: &MODEL_EXTENSIONS,
+        without_extension: false,
+        needs_bc: false,
+        decoded: Decoded::BrotliGlb,
+    },
+];
 
 /// The row for a manifest variant's `kind`/`format`, if this client takes it.
 pub fn supported_format(variant: &Variant) -> Option<&'static SupportedFormat> {
@@ -131,6 +152,7 @@ pub fn taken_formats() -> String {
     for row in SUPPORTED_FORMATS {
         let how = match row.decoded {
             Decoded::BcTexture => "BC1/BC5/BC7, loaded as DDS",
+            Decoded::BrotliGlb => "Brotli, decoded by the browser",
         };
         match groups.iter_mut().find(|(_, group_how)| *group_how == how) {
             Some((formats, _)) => formats.push(row.format),
@@ -178,7 +200,7 @@ impl Variant {
         let prefix = path.split('/').nth(1)?;
         let (kind, format) = match prefix.as_bytes().first()? {
             b't' => ("texture", "ktx2-bc"),
-            b'm' => ("model", "glb-meshopt"),
+            b'm' => ("model", "glb-br"),
             b'g' => ("model", "glb"),
             _ => return None,
         };
@@ -683,7 +705,12 @@ impl IpfsIo {
 
         // the manifest names no hash for a variant, so its bytes are cached under a digest of
         // the url they came from, never under a content hash
-        let url = format!("{base}/{}", variant.path);
+        // a `glb-br` variant is fetched as its Brotli copy: a CDN does not choose it by
+        // `Accept-Encoding`, so it is asked for by name and the browser decodes it
+        let url = match decoded {
+            Decoded::BcTexture => format!("{base}/{}", variant.path),
+            Decoded::BrotliGlb => format!("{base}/{}.br", variant.path),
+        };
         let key = CacheKey::Url(content_hash::url_cache_name(&url));
         // a BC texture's unwrapped DDS, under a name of its own
         #[cfg(not(target_arch = "wasm32"))]
@@ -779,6 +806,15 @@ impl IpfsIo {
                     warn!("failed to cache the DDS of `{}`: {error:?}", variant.path);
                 }
                 dds
+            }
+            Decoded::BrotliGlb => {
+                // the browser hands over the decoded bytes; anything but a GLB falls back
+                if !fetched.starts_with(b"glTF") {
+                    let reason = "the Brotli copy did not decode to a GLB".to_owned();
+                    variants.fail(scene, file, Some(&variant.path), reason);
+                    return None;
+                }
+                Arc::try_unwrap(fetched.0).unwrap_or_else(|shared| shared.as_ref().clone())
             }
         };
         variants.served(path, served, from_cache);
