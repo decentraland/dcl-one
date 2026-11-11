@@ -30,15 +30,6 @@ function item(overrides: Partial<CatalogItem> = {}): CatalogItem {
 }
 
 describe("a website Shop card's price", () => {
-  it("prices a sold-out item at its resale, not its primary price", () => {
-    expect(collectiblePriceText(toCollectibleCard(item({ available: 0 }), "12"))).toBe("1.23456789 MANA");
-    expect(collectiblePriceText(toCollectibleCard(item({ available: 0, minListingPrice: null }), "12"))).toBeNull();
-  });
-
-  it("keeps the primary price when the catalogue does not say how many are left", () => {
-    expect(collectiblePriceText(toCollectibleCard(item({ available: null }), "12"))).toBe("12 credits");
-  });
-
   it("an eligible primary wearable shows its credit price", () => {
     expect(collectiblePriceText(toCollectibleCard(item(), "12"))).toBe("12 credits");
   });

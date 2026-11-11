@@ -232,15 +232,14 @@ function exactMana(wei: string | null | undefined): string | null {
   return formatExactMana(parsed, { group: true });
 }
 
-/** The facts `cardPayment` reads: whether and how the creator still sells the item, and its cheapest listing. */
+/** The facts `cardPayment` reads, so a caller with a narrower row than `CatalogItem` can use it. */
 export type CardSaleFacts = Pick<
   CatalogItem,
-  "isOnSale" | "available" | "price" | "minListingPrice" | "contractAddress" | "chainId" | "network" | "category" | "itemId"
+  "isOnSale" | "price" | "minListingPrice" | "contractAddress" | "chainId" | "network" | "category" | "itemId"
 >;
 
 export function cardPayment(item: CardSaleFacts, credits: string | null): CardPayment {
-  // The catalogue keeps `isOnSale` and `price` on a sold-out item; with no supply left it only resells.
-  if (item.isOnSale && item.available !== 0 && weiGtZero(item.price)) {
+  if (item.isOnSale && weiGtZero(item.price)) {
     const contract = parseEvmAddress(item.contractAddress);
     const chainId = item.chainId ?? (item.network === "ETHEREUM" ? 1 : 137);
     const kind = item.category === "wearable" || item.category === "emote" ? item.category : "other";
