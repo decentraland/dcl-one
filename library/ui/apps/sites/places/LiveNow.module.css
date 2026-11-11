@@ -1,0 +1,145 @@
+/* Source's Live Now section (Figma 1850:43355): 32px padding and 40px radius at the 1920 frame, a
+   soft white glow and the brand radial from web-light to web-dark. */
+.root {
+  padding: clamp(20px, 1.667vw, 32px);
+  border-radius: clamp(28px, 2.083vw, 40px);
+  background: radial-gradient(
+    63.4% 112.7% at 50% 50%,
+    var(--dcl-background-web-light) 0%,
+    var(--dcl-background-web-dark) 100%
+  );
+  box-shadow: 0 4px 25px color-mix(in srgb, var(--dcl-neutrals-white) 25%, transparent);
+}
+
+.heading {
+  composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  margin: 0 0 clamp(20px, 1.667vw, 32px);
+  font-size: clamp(24px, 1.667vw, 32px);
+  font-weight: 500;
+  line-height: 1.235;
+}
+
+.headingIcon {
+  width: clamp(20px, 1.377vw, 26.4px);
+  height: clamp(20px, 1.377vw, 26.4px);
+  color: var(--dcl-system-red);
+}
+
+.layer {
+  position: relative;
+}
+
+/* Desktop: a row whose cards grow to share the width (up to 850px each), scrolling sideways once
+   four 300px cards outgrow it. The padding and negative margin keep the hover glow inside the
+   scrollport. */
+.rail {
+  display: flex;
+  justify-content: safe center;
+  gap: var(--dcl-space-24);
+  margin: calc(-1 * var(--dcl-space-24)) calc(-1 * var(--dcl-space-16));
+  padding: var(--dcl-space-24) var(--dcl-space-16);
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.rail::-webkit-scrollbar {
+  display: none;
+}
+
+.slide {
+  flex: 1 1 0;
+  min-width: max(300px, calc((100% - 72px) / 4));
+  max-width: 850px;
+}
+
+.arrow {
+  position: absolute;
+  top: 50%;
+  z-index: 2;
+  transform: translateY(-50%);
+}
+
+.arrowStart {
+  left: var(--dcl-space-8);
+}
+
+.arrowEnd {
+  right: var(--dcl-space-8);
+}
+
+.dots {
+  display: none;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  margin-top: var(--dcl-space-16);
+}
+
+/* An 8px dot inside a 24px hit target. */
+.dot {
+  display: grid;
+  place-items: center;
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: none;
+  cursor: pointer;
+}
+
+.dot::before {
+  content: '';
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: color-mix(in srgb, var(--dcl-neutrals-white) 35%, transparent);
+}
+
+.dotActive::before {
+  background: var(--dcl-neutrals-snow);
+}
+
+.dot:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* Phones: one card per swipe, snapping, with dots instead of arrows. */
+@media (max-width: 767px) {
+  .root {
+    padding: var(--dcl-space-16);
+    border-radius: var(--dcl-radius-xl);
+  }
+
+  .heading {
+    justify-content: center;
+    margin-bottom: var(--dcl-space-16);
+    font-size: var(--dcl-font-size-heading-2);
+  }
+
+  .rail {
+    justify-content: flex-start;
+    gap: var(--dcl-space-16);
+    margin: 0;
+    padding: 0;
+    scroll-snap-type: x mandatory;
+  }
+
+  .slide {
+    flex: 0 0 100%;
+    min-width: 0;
+    scroll-snap-align: center;
+  }
+
+  .arrow {
+    display: none;
+  }
+
+  .dots {
+    display: flex;
+  }
+}

@@ -1,0 +1,147 @@
+/* TODO(shared-card): provisional card, source LiveEventCard (Figma EventCard/Live 405.25×329). Sizes
+   are cqw of the cell, capped at the design pixel value so a grown card keeps its chrome. */
+.cell {
+  container-type: inline-size;
+  height: 100%;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+  border-radius: min(3.948cqw, 16px);
+  box-shadow: 0 2px 2px color-mix(in srgb, var(--dcl-neutrals-black) 4%, transparent);
+  color: var(--dcl-text-primary);
+  transition: box-shadow 0.25s ease;
+}
+
+.card:hover {
+  box-shadow: 0 2px 12px 12px color-mix(in srgb, var(--dcl-neutrals-white) 30%, transparent);
+}
+
+.card:has(.titleLink:focus-visible) {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.media {
+  position: relative;
+  flex: none;
+  aspect-ratio: 405.25 / 253;
+  max-height: 280px;
+  padding: min(3.208cqw, 13px);
+  background: var(--dcl-neutrals-onix-dark-1);
+}
+
+.bar {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: min(1.974cqw, 8px);
+  padding: min(2.961cqw, 12px) min(2.961cqw, 12px) min(3.948cqw, 16px) min(3.948cqw, 16px);
+  background: var(--dcl-transparencies-black-60);
+}
+
+.title {
+  composes: text68656164696e672f34 from '../../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  margin: 0;
+  font-size: min(4.935cqw, 20px);
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.titleLink {
+  min-width: 0;
+}
+
+.swap {
+  position: relative;
+  height: min(11.764cqw, 47.674px);
+}
+
+.byRow {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  transition: opacity 0.375s ease;
+}
+
+.jumpIn {
+  position: absolute;
+  inset: 0;
+  font-size: min(4.091cqw, 16.58px);
+  opacity: 0;
+  transform: translateY(calc(100% + min(3.948cqw, 16px)));
+  transition:
+    opacity 0.375s ease,
+    transform 0.375s ease,
+    background-color 0.15s ease;
+}
+
+.card:hover .jumpIn,
+.jumpIn:focus-visible {
+  opacity: 1;
+  transform: none;
+}
+
+.card:hover .byRow,
+.card:has(.jumpIn:focus-visible) .byRow {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Phones (source's mobile carousel card): no hover, so the by-line and Jump In both show. */
+@media (max-width: 767px) {
+  .card {
+    border-radius: var(--dcl-radius-lg);
+  }
+
+  .media {
+    aspect-ratio: 16 / 10;
+    max-height: none;
+  }
+
+  .swap {
+    display: flex;
+    flex-direction: column;
+    gap: min(1.974cqw, 8px);
+    height: auto;
+  }
+
+  .byRow,
+  .card:hover .byRow {
+    position: static;
+    min-height: 24px;
+    opacity: 1;
+  }
+
+  .jumpIn,
+  .card:hover .jumpIn {
+    position: static;
+    height: min(11.764cqw, 47.674px);
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jumpIn,
+  .card:hover .jumpIn {
+    transform: none;
+    transition: opacity 0.1s linear;
+  }
+}
+
+.skeleton .media,
+.skeleton .bar {
+  background: var(--dcl-transparencies-white-10);
+}
+
+.skeleton .bar {
+  min-height: 96px;
+}
