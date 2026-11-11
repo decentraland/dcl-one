@@ -828,7 +828,6 @@ async fn live_usage_index_over_the_production_manager() {
 /// OPS_WRITES_ENABLED is on and the restore stamps vouch for the node: with the switch off, or
 /// the installed stamps' files missing or stale, it indexes the log and neither folds nor
 /// publishes, and the authorize lane stays closed; fresh stamps fold the same usage and publish.
-/// (A process with no stamps installed, `WRITES_RESTORE_STAMP_DIR` unset, is the switch alone.)
 #[tokio::test]
 async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restore_stamps_let_it() {
     use crate::shared::writes::restore::{
@@ -870,12 +869,12 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
         .route("/", axum::routing::post(chain_rpc))
         .with_state(chain.clone());
     tokio::spawn(async move { axum::serve(listener, stub).await.unwrap() });
-    let index = super::usage::UsageIndex::new(
+    let index = Arc::new(super::usage::UsageIndex::new(
         Credits::new(pool.clone()).with_usage_index(chain_id),
         Outbound::for_tests(),
         usage_settings(&rpc, chain_id, &contract, 50),
-    );
-    let gate = PassGate::new(super::usage::JOB_NAME, ops_refusal);
+    ));
+    let gate = Arc::new(PassGate::new(super::usage::JOB_NAME, ops_refusal));
 
     let out = index.gated_pass(None, &gate, false).await.unwrap();
     assert!(
@@ -908,6 +907,62 @@ async fn the_usage_pass_folds_and_publishes_only_while_the_switch_and_the_restor
     assert!(out.published && out.consumed == 1, "fresh stamps: {out:?}");
     assert_eq!(auth_status(&pool, &pledge).await, "consumed");
     assert!(index.ready_at(chrono::Utc::now()).await.is_some());
+
+    // A held pass says why in the job's report: the switch, or the stamp that holds it.
+    let jobs = crate::jobs::Jobs::new();
+    let stale_backup = StampLab::fresh();
+    stale_backup.advance(27 * HOUR);
+    for (name, writes_enabled, lab) in [
+        ("usage-switch-off", false, StampLab::fresh()),
+        ("usage-stale-backup", true, stale_backup),
+    ] {
+        let (index, gate) = (index.clone(), gate.clone());
+        jobs.spawn(name, move |ctx| async move {
+            scoped(
+                lab.stamps.clone(),
+                index.gated_pass(Some(&ctx), &gate, writes_enabled),
+            )
+            .await
+            .map(|_| ())
+        });
+    }
+    let done = |r: &crate::jobs::JobReport| {
+        matches!(
+            r.state,
+            crate::jobs::JobState::Finished | crate::jobs::JobState::Failed
+        )
+    };
+    let mut reports = jobs.report();
+    for _ in 0..200 {
+        if reports.iter().all(done) {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        reports = jobs.report();
+    }
+    assert!(
+        reports
+            .iter()
+            .all(|r| matches!(r.state, crate::jobs::JobState::Finished)),
+        "both passes finish"
+    );
+    let progress = |name: &str| {
+        reports
+            .iter()
+            .find(|r| r.name == name)
+            .and_then(|r| r.progress.clone())
+            .unwrap_or_default()
+    };
+    let off = progress("usage-switch-off");
+    assert!(
+        off.contains("not folded, not published") && off.contains("OPS_WRITES_ENABLED=false"),
+        "{off}"
+    );
+    let held = progress("usage-stale-backup");
+    assert!(
+        held.contains("held on this node") && held.contains("backup.json"),
+        "{held}"
+    );
     db.drop().await;
 }
 

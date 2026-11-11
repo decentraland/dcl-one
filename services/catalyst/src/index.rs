@@ -47,8 +47,6 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
         Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
-    // The CreditUsed index is not here: its fold debits the credits ledger, so it runs in
-    // `serve`, under the restore stamps `serve` installs (`credits::State::spawn_jobs`).
     let shutdown = crate::serve::shutdown_signal();
     tracing::info!(jobs = ?jobs.report().iter().map(|j| &j.name).collect::<Vec<_>>(), "index worker started");
     shutdown.await;
