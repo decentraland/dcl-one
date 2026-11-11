@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { CMS_BASE, installFakeCms } from "@/data/lib/blog/cms.test-utils";
@@ -11,7 +12,7 @@ import { loader as searchLoader } from "./blog.search";
 type Result = { data: Record<string, unknown>; init: ResponseInit | null };
 
 const call = async (loader: (args: never) => unknown, path: string, params: Record<string, string> = {}) =>
-  (await loader({ request: new Request(`https://sites.test${path}`), params } as never)) as Result;
+  (await loader({ request: new Request(`https://sites.test${path}`), context: new RouterContextProvider(), params } as never)) as Result;
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -57,10 +58,10 @@ describe("blog routes", () => {
 
   it("redirect an empty search to the home and a post under another category to its own URL", async () => {
     installFakeCms();
-    const empty = await searchLoader({ request: new Request("https://sites.test/blog/search?q=") } as never).catch((r: unknown) => r);
+    const empty = await searchLoader({ request: new Request("https://sites.test/blog/search?q="), context: new RouterContextProvider() } as never).catch((r: unknown) => r);
     expect(empty).toBeInstanceOf(Response);
     expect((empty as Response).headers.get("Location")).toBe("/blog");
-    const moved = await postLoader({ request: new Request("https://sites.test/blog/x/first-post"), params: { category: "x", post: "first-post" } } as never).catch((r: unknown) => r);
+    const moved = await postLoader({ request: new Request("https://sites.test/blog/x/first-post"), context: new RouterContextProvider(), params: { category: "x", post: "first-post" } } as never).catch((r: unknown) => r);
     expect((moved as Response).status).toBe(301);
     expect((moved as Response).headers.get("Location")).toBe("/blog/platform/first-post");
   });
