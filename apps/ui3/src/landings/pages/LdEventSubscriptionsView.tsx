@@ -29,11 +29,11 @@ export default function LdEventSubscriptionsView({
           <strong>You&apos;re signed out.</strong> Sign in to load and manage
           your real email notification settings. Browse{" "}
           {LinkComponent ? (
-            <LinkComponent prefetch="intent" to="/whats-on" style={signedOutLinkStyle}>
+            <LinkComponent prefetch="intent" to="/events" style={signedOutLinkStyle}>
               what&apos;s on
             </LinkComponent>
           ) : (
-            <a href="/whats-on" style={signedOutLinkStyle}>
+            <a href="/events" style={signedOutLinkStyle}>
               what&apos;s on
             </a>
           )}{" "}
