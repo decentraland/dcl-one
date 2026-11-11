@@ -172,7 +172,7 @@ pub fn assemble(
 
     register_gltf_scene_types(app);
 
-    // embedded assets: the scene-loading material (grid.png / loading.wgsl)
+    // embedded assets (the preview grid plane's grid.png among them)
     app.add_plugins(assets::EmbedAssetsPlugin);
 
     // the shared launch options' resources and plugins (--log-fps logs the tick rate, against
