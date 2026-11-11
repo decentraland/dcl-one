@@ -814,7 +814,7 @@
           ]
         },
         "library/ui/figma/module-graph.mjs": {
-          "sha256": "1e452ea11e005dde0a5ff93a6d41310124bc311c919145e35e3c641bb05991db",
+          "sha256": "dfb828b5234140d7501be68374beea2204af5a61b288f3b49a8f140a1108434b",
           "fds": null,
           "deviation": "generation-import-closure"
         },
@@ -2447,7 +2447,7 @@
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
         "library/ui/figma/src/cli.test.ts": {
-          "sha256": "47cf1095d9d61265abb3c4884de3ecc608c3f57b289487ffede30554cc33c72f",
+          "sha256": "f16b9d9eaa0c0c183b0365f271a391d98bdb929a078626c214fff6356c2ea559",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.test.ts",
             "sha256": "e0a6f001d53d1eb8e69c5601873d52c348bff503c067b3804f749e834ff8acd5"
@@ -2461,7 +2461,7 @@
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "bf8f298d3d36d27debd73eefa47e3d6a3deec4baef0801a315c3c54b54da7009",
+          "sha256": "f505dffc399d91cbab6cffcdc244f959939ab854e672b318e6afe64e1bc1ab5f",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2489,7 +2489,7 @@
             "resolver-followups",
             "generation-import-closure"
           ],
-          "sha256": "0e4cfe1b9549e8e1117574736a221743786898233c5132b9fdf19896d3ec9ccb"
+          "sha256": "9881770dae853f7c6efea7d88fb5bfbc82766a294adcc851688c268aa36d18a4"
         },
         "library/ui/figma/src/config.ts": {
           "sha256": "fc2364bfeeb8bbf2e8f30c1f1841f37db30d69b7c139bde54bbb5b348ac43e83",
@@ -3368,7 +3368,7 @@
           ]
         },
         "library/ui/figma/src/install-main.ts": {
-          "sha256": "4a6c9554b87b19ca4a674d6fe15eba3239facf8e825b65b631201a4dcb7bc44e",
+          "sha256": "82e05ef7a18043735d1aaf5ac59ef41e25dd2d5d981b9039ef78c8d4be29d585",
           "fds": null,
           "deviation": "generation-import-closure"
         },
@@ -3585,7 +3585,7 @@
           ]
         },
         "library/ui/figma/src/module-graph.test.ts": {
-          "sha256": "118150ac387a7615e23efa8136aa9488f00ab43bc49504e18b37f27456a56d66",
+          "sha256": "1c020c3aede26a7324d92df4ce0aab0ee41cb020626d585d763c2355aa8a1863",
           "fds": null,
           "deviation": "generation-import-closure"
         },

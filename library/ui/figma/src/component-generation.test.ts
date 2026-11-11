@@ -332,7 +332,21 @@ describe('when validating component generation as an offline consistency record'
       "const of = 4\nof / 2\nimport './unrelated-tool.js' //'",
       'ambiguous / after of'
     ],
-    ['a / after type arguments', 'const n = x as Array<number> / 2', 'ambiguous / after >']
+    ['a / after type arguments', 'const n = x as Array<number> / 2', 'ambiguous / after >'],
+    [
+      'a / after nested type arguments',
+      "q as Id<Id<number>> / 1\nconst m = [await import('./unrelated-tool.js')]\nconst z = 1 / 1",
+      'ambiguous / after >>'
+    ],
+    [
+      'a / after continue',
+      "for (const a of [1]) {\n  continue\n  /`/\n}\nawait import('./unrelated-tool.js') // ` }",
+      'ambiguous / after continue'
+    ],
+    ['a / after break', "while (a) {\n  break\n  /'/\n}", 'ambiguous / after break'],
+    ['a / after debugger', "debugger\n/'/", 'ambiguous / after debugger'],
+    ['a non-ASCII identifier', 'const \u{1D465} = 2\nconst y = \u{1D465} / 1', 'non-ASCII'],
+    ['an accented identifier', 'const \u00e9 = 1', 'non-ASCII']
   ])('should fail closed when a bound module has %s', (_case, text, message) => {
     lock('src/helper.test.ts')
     lock('src/fixtures/data.json', '{}')
@@ -368,7 +382,13 @@ describe('when validating component generation as an offline consistency record'
     ['a method named for divided', "const y = Symbol.for('a') / 2\nimport './cycle.js' //'"],
     ['a method named if divided', "const y = x.if(a) / 2\nimport './cycle.js' //'"],
     ['a comment ended by a carriage return', "// note\rimport './cycle.js'"],
-    ['a comment ended by a line separator', "// note\u2028import './cycle.js'"]
+    ['a comment ended by a line separator', "// note\u2028import './cycle.js'"],
+    ['a hashbang ended by a carriage return', "#!/usr/bin/env node\rawait import('./cycle.js')"],
+    ['a / after this', "const y = this / 2\nimport './cycle.js' //'"],
+    [
+      'non-ASCII text in strings, templates, comments and regular expressions',
+      "const a = '\u00e9'\nconst b = `\u00e9`\n// \u00e9\nconst c = /\u00e9/\nimport './cycle.js'"
+    ]
   ])('should find the import after %s', (_case, text) => {
     lock('src/extra-production.ts', text)
     expect(componentModulePaths(source, read)).toContain(prefix + 'src/cycle.ts')

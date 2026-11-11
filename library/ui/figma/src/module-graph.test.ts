@@ -151,7 +151,7 @@ describe('when the install process runs with a hook that reports every module it
         '  return next(url, context)\n' +
         '} })\n'
     )
-  // An unknown target fails after every static import has loaded and before anything is read or written.
+  // The process fails after every static import has loaded and before anything is read or written.
   const run = () => {
     try {
       execFileSync(
@@ -181,7 +181,8 @@ describe('when the install process runs with a hook that reports every module it
       .map((line) => fileURLToPath(line.slice('LOADED '.length)))
       .map((file) => scope + path.relative(root, file).split(path.sep).join('/'))
       .sort()
-    expect(output).toContain('Unknown install target')
+    // The hook is a preload the install process refuses, after every static import has loaded.
+    expect(output).toContain('runs only with the tsx loader')
     expect(loaded).toEqual(
       componentModulePaths(source, read).filter(
         (file) => /\.(?:mjs|ts)$/.test(file) && !file.includes('/review/')

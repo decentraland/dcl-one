@@ -26,9 +26,73 @@ const KEYWORDS_BEFORE_EXPRESSION = new Set([
   'extends'
 ])
 const CONTEXTUAL = new Set(['of', 'as', 'satisfies'])
+// Words that are values, so a `/` after them divides. Any other reserved or contextual word before `/` fails: the
+// allowlists above are explicit, so a word missing from both is an error, never a guess.
+const VALUE_WORDS = new Set(['this', 'super', 'null', 'true', 'false', 'undefined'])
+const RESERVED = new Set([
+  'break',
+  'case',
+  'catch',
+  'class',
+  'const',
+  'continue',
+  'debugger',
+  'default',
+  'delete',
+  'do',
+  'else',
+  'enum',
+  'export',
+  'extends',
+  'finally',
+  'for',
+  'function',
+  'if',
+  'import',
+  'in',
+  'instanceof',
+  'new',
+  'return',
+  'switch',
+  'throw',
+  'try',
+  'typeof',
+  'var',
+  'void',
+  'while',
+  'with',
+  'yield',
+  'await',
+  'let',
+  'static',
+  'implements',
+  'interface',
+  'package',
+  'private',
+  'protected',
+  'public',
+  'async',
+  'get',
+  'set',
+  'from',
+  'type',
+  'declare',
+  'readonly',
+  'keyof',
+  'infer',
+  'is',
+  'asserts',
+  'abstract',
+  'override',
+  'namespace',
+  'module',
+  'unique'
+])
 const LINE_TERMINATOR = /[\n\r\u2028\u2029]/
-const IDENTIFIER_START = /[\p{ID_Start}$_\\]/u
-const IDENTIFIER_PART = /[\p{ID_Continue}$\\]/u
+// Code outside literals and comments is ASCII: a non-ASCII identifier or character there fails instead of being
+// tokenized one UTF-16 unit at a time.
+const IDENTIFIER_START = /[A-Za-z$_\\]/
+const IDENTIFIER_PART = /[\w$\\]/
 const PUNCTUATORS = [
   '>>>=',
   '...',
@@ -96,13 +160,15 @@ export function tokenize(text, file) {
     if (last.type === 'template') return !last.tail
     if (last.type === 'name') {
       if (memberName(tokens.length - 1)) return false
-      if (CONTEXTUAL.has(last.value)) fail(file, 'An ambiguous / after ' + last.value)
-      return KEYWORDS_BEFORE_EXPRESSION.has(last.value)
+      if (KEYWORDS_BEFORE_EXPRESSION.has(last.value)) return true
+      if (CONTEXTUAL.has(last.value) || (RESERVED.has(last.value) && !VALUE_WORDS.has(last.value)))
+        fail(file, 'An ambiguous / after ' + last.value)
+      return false
     }
     if (last.type !== 'punct') return false
     if (last.value === ')') return last.control === true
     if (last.value === ']') return false
-    if (['}', '++', '--', '>'].includes(last.value))
+    if (['}', '++', '--', '>', '>>', '>>>'].includes(last.value))
       fail(file, 'An ambiguous / after ' + last.value)
     if (last.value === '!') {
       const before = tokens[tokens.length - 2]
@@ -152,7 +218,7 @@ export function tokenize(text, file) {
       if (end < 0) fail(file, 'Unterminated comment')
       at = end + 2
     } else if (character === '#' && at === 0 && text[1] === '!') {
-      const end = text.indexOf('\n')
+      const end = text.search(LINE_TERMINATOR)
       at = end < 0 ? text.length : end
     } else if (character === '"' || character === "'") {
       let value = ''
@@ -186,6 +252,8 @@ export function tokenize(text, file) {
       }
       while (at < text.length && /[a-z]/i.test(text[at])) at += 1
       tokens.push({ type: 'regex', value: '' })
+    } else if (character.charCodeAt(0) > 127) {
+      fail(file, 'A non-ASCII character outside a literal or comment is not read')
     } else if (IDENTIFIER_START.test(character) || character === '#') {
       const start = at
       at += 1

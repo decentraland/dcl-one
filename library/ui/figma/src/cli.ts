@@ -2,7 +2,7 @@
 import { componentOwnerById } from './guard/component-identity.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { spawnSync } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
@@ -149,18 +149,36 @@ async function main(argv: string[]): Promise<number> {
     // name=value keeps a value that starts with '-' a value in the child's strict parser.
     if (values.out !== undefined) forwarded.push(`--out=${values.out}`)
     if (values.config !== undefined) forwarded.push(`--config=${values.config}`)
-    const child = spawnSync(
+    // Only the tsx loader flags reach the child (install-main.ts refuses any other), and tsx resolves through the
+    // bound figma/tsconfig.json whatever the working directory.
+    const loader: string[] = []
+    for (let index = 0; index < process.execArgv.length; index += 1) {
+      const flag = process.execArgv[index]!
+      if ((flag === '--require' || flag === '--import') && index + 1 < process.execArgv.length)
+        loader.push(flag, process.execArgv[++index]!)
+    }
+    const child = spawn(
       process.execPath,
-      [
-        ...process.execArgv,
-        fileURLToPath(new URL('./install-main.ts', import.meta.url)),
-        ...forwarded
-      ],
-      { stdio: 'inherit' }
+      [...loader, fileURLToPath(new URL('./install-main.ts', import.meta.url)), ...forwarded],
+      {
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          TSX_TSCONFIG_PATH: fileURLToPath(new URL('../tsconfig.json', import.meta.url))
+        }
+      }
     )
-    if (child.error) throw child.error
-    if (child.signal) throw new Error(`The install process ended on signal ${child.signal}`)
-    return child.status ?? 1
+    // A stop sent to the CLI alone (a timeout, an IDE, a CI step) reaches the install too.
+    const forward = (signal: NodeJS.Signals) => child.kill(signal)
+    process.on('SIGINT', forward).on('SIGTERM', forward)
+    const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(
+      (resolve, reject) => {
+        child.once('error', reject)
+        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]))
+      }
+    ).finally(() => process.off('SIGINT', forward).off('SIGTERM', forward))
+    if (signal) throw new Error(`The install process ended on signal ${signal}`)
+    return code ?? 1
   }
 
   if (command === 'review-manifest') {
