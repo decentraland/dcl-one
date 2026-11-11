@@ -50,9 +50,11 @@ beforeAll(async () => {
   session = await openSession(
     await findBrowser([
       process.env.BROWSER_PATH,
+      process.env.CHROME_PATH,
       '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
       '/usr/bin/google-chrome',
-      '/usr/bin/chromium'
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser'
     ])
   )
   await session.send('Page.navigate', { url: server.resolvedUrls!.local[0] })
