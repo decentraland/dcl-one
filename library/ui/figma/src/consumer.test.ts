@@ -273,6 +273,41 @@ describe('figma from a consuming project', () => {
       expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
     }, 30_000)
 
+    // `pnpm figma` changes into library/ui/figma and sets INIT_CWD to the directory pnpm was run in.
+    it('should read a relative batch path from the directory pnpm was run in', async () => {
+      await writeFile(path.join(consumer, 'relative.json'), JSON.stringify(entries.slice(0, 1)))
+
+      const { stdout } = await run(
+        process.execPath,
+        ['--import', import.meta.resolve('tsx'), 'src/cli.ts', ...args, 'relative.json'],
+        { cwd: projectRoot, env: { PATH: process.env.PATH ?? '', INIT_CWD: consumer } }
+      )
+
+      expect(JSON.parse(stdout)).toMatchObject({ ok: true, summary: { requested: 1, resolved: 1 } })
+    }, 30_000)
+
+    it('should exit 2 when the relative batch exists only in the working directory, not where pnpm was run', async () => {
+      const elsewhere = path.join(consumer, 'elsewhere')
+      await mkdir(elsewhere, { recursive: true })
+      await writeFile(path.join(elsewhere, 'only-here.json'), JSON.stringify(entries.slice(0, 1)))
+      const failure = run(
+        process.execPath,
+        [
+          '--import',
+          import.meta.resolve('tsx'),
+          path.join(projectRoot, 'src/cli.ts'),
+          ...args,
+          'only-here.json'
+        ],
+        { cwd: elsewhere, env: { PATH: process.env.PATH ?? '', INIT_CWD: consumer } }
+      )
+
+      await expect(failure).rejects.toMatchObject({
+        code: 2,
+        stderr: expect.stringContaining('ENOENT')
+      })
+    }, 30_000)
+
     it.each([
       ['malformed JSON', '{not json'],
       ['an empty array', '[]'],

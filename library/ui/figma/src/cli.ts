@@ -32,7 +32,7 @@ const USAGE = `Usage:
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
-  dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--text "Layer=Value"]... [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma resolve (--node-id <id> | --name <name>) [--variant 'Prop=Value']... [--text 'Layer=Value']... [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma resolve --batch <file|-> [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
@@ -162,7 +162,11 @@ async function main(argv: string[]): Promise<number> {
         text =
           values.batch === '-'
             ? await readStdin()
-            : await readFile(path.resolve(values.batch), 'utf8')
+            : // `pnpm figma` runs in library/ui/figma; INIT_CWD is where pnpm was run, so a path reads as typed.
+              await readFile(
+                path.resolve(process.env.INIT_CWD ?? process.cwd(), values.batch),
+                'utf8'
+              )
       } catch (error) {
         process.stderr.write(
           `--batch cannot read ${values.batch}: ${(error as NodeJS.ErrnoException).code ?? 'error'}\n`

@@ -185,8 +185,8 @@
     },
     {
       "path": "library/ui/figma/src/cli.ts",
-      "sha256": "48638d2629850595f5f4c6637fd9722780043bf742eb991e66a1236af21647c4",
-      "indexBlobSha": "30d71f405319589f724c8730f2fecf01f5cd0903"
+      "sha256": "3317027b777b06f2f61eeed3e4d11b07b1152a28647e1e4396ca3726c602790a",
+      "indexBlobSha": "03cf0ce7c46626a659074ea0a3e30477c5e024bf"
     },
     {
       "path": "library/ui/figma/src/config.ts",
