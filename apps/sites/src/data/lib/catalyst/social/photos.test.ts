@@ -15,6 +15,7 @@ import { fetchPhoto, fetchUserPhotos, formatPhotoDate } from "./photos";
 const OWNER = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const PATH = `/camera-reel-service/api/users/${OWNER}/images`;
 const identity = { signer: OWNER } as AuthIdentity;
+const ID = "7f554ad3-ea9c-4153-89cd-5b1f6c03bfbb";
 
 function image(id: string, overrides: Record<string, unknown> = {}) {
   return {
@@ -150,31 +151,46 @@ describe("fetchPhoto", () => {
   it("reads one snapshot's metadata by id", async () => {
     vi.mocked(getJSON).mockResolvedValue(image("x"));
 
-    const photo = await fetchPhoto("x");
+    const photo = await fetchPhoto(ID.toUpperCase());
 
-    expect(getJSON).toHaveBeenCalledWith("/camera-reel-service/api/images/x/metadata", expect.anything());
+    expect(getJSON).toHaveBeenCalledWith(`/camera-reel-service/api/images/${ID}/metadata`, expect.anything());
     expect(photo?.id).toBe("x");
+  });
+
+  it.each(["..", "", "x/../../users", `${ID}/x`])("never requests an id that is not one: %j", async (id) => {
+    expect(await fetchPhoto(id)).toBeNull();
+    expect(getJSON).not.toHaveBeenCalled();
   });
 
   it("is null for a snapshot the service does not have, or cannot show", async () => {
     vi.mocked(getJSON).mockRejectedValueOnce(new CatalystError("Catalyst returned 404", "/x", 404)).mockResolvedValueOnce({ id: "broken" });
 
-    expect(await fetchPhoto("gone")).toBeNull();
-    expect(await fetchPhoto("broken")).toBeNull();
+    expect(await fetchPhoto(ID)).toBeNull();
+    expect(await fetchPhoto(ID)).toBeNull();
   });
 
   it("passes any other failure through", async () => {
     vi.mocked(getJSON).mockRejectedValue(new CatalystError("Catalyst returned 503", "/x", 503));
 
-    await expect(fetchPhoto("x")).rejects.toMatchObject({ status: 503 });
+    await expect(fetchPhoto(ID)).rejects.toMatchObject({ status: 503 });
   });
 });
 
 describe("formatPhotoDate", () => {
   it("reads Unix seconds and ISO dates as the profile site prints them", () => {
     expect(formatPhotoDate("1794327859")).toBe(new Date(1794327859 * 1000).toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric" }));
-    expect(formatPhotoDate("2026-11-08T12:00:00Z")).toMatch(/^November 0[78], 2026$/);
+    expect(formatPhotoDate("2026-11-08T12:00:00Z")).toBe("November 08, 2026");
     expect(formatPhotoDate(" 1794327859 ")).toBe(formatPhotoDate("1794327859"));
+  });
+
+  it("prints the UTC day whatever the browser's time zone, as the server renders it", () => {
+    const zone = process.env.TZ;
+    process.env.TZ = "Asia/Tokyo";
+    try {
+      expect(formatPhotoDate("2026-11-08T23:30:00Z")).toBe("November 08, 2026");
+    } finally {
+      process.env.TZ = zone;
+    }
   });
 
   it.each(["", "   ", "not a date"])("is empty for %j", (value) => {

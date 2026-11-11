@@ -7,9 +7,9 @@ import type { CollectiblePage } from "../marketplace/profile-collectibles";
 import { warnInvalid } from "../warn";
 
 /** The node mounts the camera reel here (`services/catalyst/src/serve.rs`). */
-export const CAMERA_REEL_PREFIX = "/camera-reel-service";
+const CAMERA_REEL_PREFIX = "/camera-reel-service";
 
-export type PhotoPerson = { name: string; address: string; isGuest: boolean };
+type PhotoPerson = { name: string; address: string; isGuest: boolean };
 
 /** A snapshot as the profile's Photos tab and its viewer show it. */
 export type ProfilePhoto = {
@@ -28,7 +28,7 @@ export type ProfilePhoto = {
 };
 
 /** One read of a gallery: its photos, how many rows it sent and how many the gallery holds. */
-export type PhotoPage = CollectiblePage<ProfilePhoto>;
+type PhotoPage = CollectiblePage<ProfilePhoto>;
 
 /**
  * Only the fields the grid and the viewer show are required, so a field the tab does not read
@@ -96,12 +96,18 @@ export async function fetchUserPhotos(
   return { items, received: page.data.images.length, total: page.data.currentImages };
 }
 
+/** The service's image ids are UUIDs; anything else is not a photo and is never requested. */
+export function isPhotoId(value: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 /**
- * One snapshot by id, for a link to a photo past the pages loaded. `null` when the service does not
- * have it (or withholds it) or the row cannot be shown.
+ * One snapshot by id, for a link to a photo past the pages loaded. `null` when the id is not one,
+ * the service does not have it (or withholds it), or the row cannot be shown.
  */
 export async function fetchPhoto(id: string, opts: Pick<GetOptions, "signal" | "base"> = {}): Promise<ProfilePhoto | null> {
-  const path = `${CAMERA_REEL_PREFIX}/api/images/${encodeURIComponent(id.trim())}/metadata`;
+  if (!isPhotoId(id)) return null;
+  const path = `${CAMERA_REEL_PREFIX}/api/images/${id.toLowerCase()}/metadata`;
   try {
     return toPhoto(await getJSON<unknown>(path, opts));
   } catch (error) {
@@ -110,11 +116,14 @@ export async function fetchPhoto(id: string, opts: Pick<GetOptions, "signal" | "
   }
 }
 
-/** The date the viewer prints, as the profile site does ("November 08, 2026"); empty when unreadable. */
+/**
+ * The date the viewer prints, as the profile site does ("November 08, 2026"); empty when unreadable.
+ * In UTC, so the server's render and the browser's agree.
+ */
 export function formatPhotoDate(dateTime: string): string {
   const value = dateTime.trim();
   const numeric = Number(value);
   const date = value !== "" && Number.isFinite(numeric) ? new Date(numeric * 1000) : new Date(value);
   if (Number.isNaN(date.getTime())) return "";
-  return date.toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric" });
+  return date.toLocaleDateString("en-US", { month: "long", day: "2-digit", year: "numeric", timeZone: "UTC" });
 }

@@ -1,4 +1,4 @@
-import { skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { hashKey, skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import type { AssetCategory, CreationsCategory } from "@/data/lib/catalyst/marketplace/profile-collectibles";
@@ -81,18 +81,16 @@ export function useProfilePhotos(address: string, identity: AuthIdentity | null)
     ...photosQuery(address, identity),
     enabled: canReadProfile(address),
     placeholderData: (previous, previousQuery) =>
-      signed && previousQuery && sameKey(previousQuery.queryKey, publicKey) ? previous : undefined,
+      signed && previousQuery && hashKey(previousQuery.queryKey) === hashKey(publicKey) ? previous : undefined,
   });
 }
 
 /** One snapshot by id; only read while a link names a photo the loaded pages do not hold. */
 export function useProfilePhoto(id: string | null) {
-  return useQuery({ ...photoQuery(id ?? ""), enabled: id !== null });
+  const options = photoQuery(id ?? "");
+  return useQuery({ ...options, queryFn: id === null ? skipToken : options.queryFn });
 }
 
-function sameKey(a: readonly unknown[], b: readonly unknown[]): boolean {
-  return a.length === b.length && a.every((part, index) => part === b[index]);
-}
 
 /** The signed-in member's communities; nothing is requested without an identity. */
 export function useMyCommunities(identity: AuthIdentity | null, enabled = true) {

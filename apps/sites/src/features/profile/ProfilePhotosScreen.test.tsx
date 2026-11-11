@@ -13,14 +13,33 @@ vi.hoisted(() => {
   });
 });
 const net = vi.hoisted(() => ({ fetchUserPhotos: vi.fn(), fetchPhoto: vi.fn(), fetchCommunityProfiles: vi.fn() }));
-const auth = vi.hoisted(() => ({ state: { identity: null as unknown, isConnected: false, address: null as string | null } }));
+const auth = vi.hoisted(() => {
+  type State = { identity: unknown; isConnected: boolean; address: string | null };
+  const listeners = new Set<() => void>();
+  const store = {
+    state: { identity: null, isConnected: false, address: null } as State,
+    /** Changes the signed-in state of a mounted page, as signing in in the browser does. */
+    set(next: State) {
+      store.state = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  return store;
+});
 vi.mock("@/data/lib/catalyst/social/photos", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/social/photos")>()),
   fetchUserPhotos: net.fetchUserPhotos,
   fetchPhoto: net.fetchPhoto,
 }));
 vi.mock("@ui/data/hooks/useCommunityProfiles", () => ({ fetchCommunityProfiles: net.fetchCommunityProfiles }));
-vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
+vi.mock("@/data/lib/auth/index", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return { useAuth: () => useSyncExternalStore(auth.subscribe, () => auth.state) };
+});
 
 import { playUrl } from "@/data/lib/catalyst/bases";
 import { formatPhotoDate, type ProfilePhoto } from "@/data/lib/catalyst/social/photos";
@@ -76,6 +95,8 @@ function show({ own = false, path = `/profile/${A}/photos` } = {}) {
 }
 
 const tile = (n: number) => screen.findByRole("button", { name: tileName(n) });
+/** An id in the service's UUID format, for photos a link reads by id. */
+const uuid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 
 beforeEach(() => {
   auth.state = { identity: null, isConnected: false, address: null };
@@ -215,6 +236,46 @@ describe("profile photos, the owner's visibility filter", () => {
     expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   });
 
+  it("waits for the signed list instead of saying the owner has no photos", async () => {
+    // The page first reads the public list (no identity yet), then the owner's identity arrives.
+    auth.state = { identity: null, isConnected: true, address: A };
+    let release!: (value: unknown) => void;
+    net.fetchUserPhotos.mockImplementation((_a: string, _p: unknown, opts: { identity?: unknown }) =>
+      opts.identity ? new Promise((resolve) => (release = resolve)) : Promise.resolve(page([])),
+    );
+    show({ own: true });
+    expect(await screen.findByText("No photos yet", { selector: "p" })).toBeTruthy();
+
+    act(() => auth.set({ identity, isConnected: true, address: A }));
+
+    expect(screen.queryByText("No photos yet", { selector: "p" })).toBeNull();
+    expect(screen.getByText("Loading photos")).toBeTruthy();
+    await act(async () => release(page([photo(1, { isPublic: false })])));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Private" }));
+    expect(screen.getByRole("button", { name: `${tileName(1)}, private` })).toBeTruthy();
+  });
+
+  it("keeps the public grid when the signed read fails, without the filter, and tries again", async () => {
+    const user = userEvent.setup();
+    auth.state = { identity: null, isConnected: true, address: A };
+    net.fetchUserPhotos.mockImplementation(async (_a: string, _p: unknown, opts: { identity?: unknown }) => {
+      if (opts.identity) throw new Error("401");
+      return page([photo(0)]);
+    });
+    show({ own: true });
+    await tile(0);
+
+    act(() => auth.set({ identity, isConnected: true, address: A }));
+
+    expect(await screen.findByText("Your private photos could not be loaded.", { exact: false })).toBeTruthy();
+    expect(screen.getByRole("button", { name: tileName(0) })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Photos shown" })).toBeNull();
+    expect(screen.queryByText("Photos are unavailable right now.")).toBeNull();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1, { isPublic: false })]));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByRole("group", { name: "Photos shown" })).toBeTruthy();
+  });
+
   it("reads the public gallery, without the filter, when the owner has no identity in this browser", async () => {
     auth.state = { identity: null, isConnected: true, address: A };
     net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
@@ -269,7 +330,7 @@ describe("profile photos, the viewer", () => {
     expect(net.fetchCommunityProfiles.mock.calls[0]?.[0]).toEqual([FRIEND, "0x2222222222222222222222222222222222222222"].sort());
   });
 
-  it("jumps in to the realm a photo was taken in, and offers no Jump In without coordinates", async () => {
+  it("jumps in to the world a photo was taken in, never to an uploaded realm URL, and offers no Jump In without coordinates", async () => {
     const user = userEvent.setup();
     net.fetchUserPhotos.mockResolvedValue(
       page([
@@ -289,9 +350,10 @@ describe("profile photos, the viewer", () => {
     const dialog = screen.getByRole("dialog", { name: `Photo at Nowhere, ${date}, 2 of 3` });
     expect(within(dialog).queryByRole("link", { name: /Jump in/ })).toBeNull();
     await user.keyboard("{ArrowRight}");
-    expect(screen.getByRole("link", { name: "Jump in to Server 5,5" }).getAttribute("href")).toBe(
-      playUrl({ position: "5,5", realm: "https://peer.example" }),
-    );
+    // An uploaded realm URL is never forwarded: it could send the Explorer to the uploader's server.
+    const server = screen.getByRole("link", { name: "Jump in to Server 5,5" }).getAttribute("href")!;
+    expect(server).toBe(playUrl({ position: "5,5" }));
+    expect(server).not.toContain("peer.example");
   });
 
   it("moves between the photos shown with the arrow keys and buttons", async () => {
@@ -393,18 +455,26 @@ describe("profile photos, the viewer", () => {
     expect(await screen.findByRole("dialog", { name: `${tileName(1)}, 2 of 2` })).toBeTruthy();
     cleanup();
 
-    const { router } = show({ path: `/profile/${A}/photos?photo=gone&tab=x` });
+    const { router } = show({ path: `/profile/${A}/photos?photo=${uuid(9)}&tab=x` });
     await tile(0);
 
     await waitFor(() => expect(router.state.location.search).toBe("?tab=x"));
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(net.fetchPhoto.mock.calls[0]?.[0]).toBe("gone");
+    expect(net.fetchPhoto.mock.calls[0]?.[0]).toBe(uuid(9));
+  });
+
+  it.each(["..", "", "not-a-photo"])("drops a link to %j without reading anything", async (id) => {
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)], 40));
+    const { router } = show({ path: `/profile/${A}/photos?photo=${encodeURIComponent(id)}` });
+
+    await waitFor(() => expect(router.state.location.search).toBe(""));
+    expect(net.fetchPhoto).not.toHaveBeenCalled();
   });
 
   it("reads a linked photo past the pages loaded by id, and shows it alone", async () => {
     net.fetchUserPhotos.mockResolvedValue(page([photo(0)], 40));
-    net.fetchPhoto.mockResolvedValue(photo(33));
-    show({ path: `/profile/${A}/photos?photo=p-33` });
+    net.fetchPhoto.mockResolvedValue(photo(33, { id: uuid(33) }));
+    show({ path: `/profile/${A}/photos?photo=${uuid(33)}` });
 
     const dialog = await screen.findByRole("dialog", { name: `${tileName(33)}, 1 of 1` });
 
@@ -413,12 +483,12 @@ describe("profile photos, the viewer", () => {
   });
 
   it.each([
-    ["another member's photo", photo(5, { author: { name: "x", address: FRIEND } })],
-    ["a private photo, to a visitor", photo(5, { isPublic: false })],
+    ["another member's photo", photo(5, { id: uuid(5), author: { name: "x", address: FRIEND } })],
+    ["a private photo, to a visitor", photo(5, { id: uuid(5), isPublic: false })],
   ])("drops a link to %s", async (_case, linked) => {
     net.fetchUserPhotos.mockResolvedValue(page([photo(0)], 40));
     net.fetchPhoto.mockResolvedValue(linked);
-    const { router } = show({ path: `/profile/${A}/photos?photo=p-5` });
+    const { router } = show({ path: `/profile/${A}/photos?photo=${uuid(5)}` });
 
     await waitFor(() => expect(router.state.location.search).toBe(""));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -427,14 +497,24 @@ describe("profile photos, the viewer", () => {
   it("keeps the link, opening nothing, while the photo cannot be read", async () => {
     net.fetchUserPhotos.mockResolvedValue(page([photo(0)], 40));
     net.fetchPhoto.mockRejectedValue(new Error("503"));
-    const { router } = show({ path: `/profile/${A}/photos?photo=p-5` });
+    const { router } = show({ path: `/profile/${A}/photos?photo=${uuid(5)}` });
     await tile(0);
 
     await waitFor(() => expect(net.fetchPhoto).toHaveBeenCalled());
     await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 
-    expect(router.state.location.search).toBe("?photo=p-5");
+    expect(router.state.location.search).toBe(`?photo=${uuid(5)}`);
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("opens the owner's link to their own private photo past the pages loaded", async () => {
+    auth.state = { identity, isConnected: true, address: A };
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)], 40));
+    net.fetchPhoto.mockResolvedValue(photo(30, { id: uuid(30), isPublic: false }));
+
+    show({ own: true, path: `/profile/${A}/photos?photo=${uuid(30)}` });
+
+    expect(await screen.findByRole("dialog", { name: `${tileName(30)}, 1 of 1` })).toBeTruthy();
   });
 
   it("opens the owner's link to their own private photo, showing every photo", async () => {
@@ -447,14 +527,71 @@ describe("profile photos, the viewer", () => {
     expect(net.fetchPhoto).not.toHaveBeenCalled();
   });
 
-  it("counts the position against the gallery's total", async () => {
+  it("counts the position against the photos loaded, the ones Next can reach", async () => {
     const user = userEvent.setup();
     net.fetchUserPhotos.mockResolvedValue(page([photo(0)], 30));
     show();
 
     await user.click(await tile(0));
 
-    expect(screen.getByRole("dialog", { name: `${tileName(0)}, 1 of 30` })).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: `${tileName(0)}, 1 of 1` })).toBeTruthy();
+  });
+
+  it("closes on Back after opening a photo from the grid, and steps without adding history", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1)]));
+    const { router } = show();
+    await user.click(await tile(0));
+    await user.keyboard("{ArrowRight}");
+    expect(router.state.location.search).toBe("?photo=p-1");
+
+    await act(async () => {
+      await router.navigate(-1);
+    });
+
+    expect(router.state.location.search).toBe("");
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("names the download after who took it and the day", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0, { author: { name: "kurd #1", address: A }, dateTime: "2026-11-10T23:30:00Z" })]));
+    show();
+
+    await user.click(await screen.findByRole("button", { name: /^Photo at Plaza 0/ }));
+
+    expect(screen.getByRole("link", { name: "Download photo" }).getAttribute("download")).toBe("kurd_1-2026-11-10.jpg");
+  });
+
+  it("keeps Shift+Tab inside after a click on the photo", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0)]));
+    show();
+    await user.click(await tile(0));
+    const dialog = screen.getByRole("dialog");
+
+    await user.click(screen.getByRole("img", { name: "Plaza 0" }));
+    expect(document.activeElement).toBe(dialog);
+    await user.keyboard("{Shift>}{Tab}{/Shift}");
+
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).not.toBe(dialog);
+  });
+
+  it("keeps focus in the dialog when a step removes the focused link", async () => {
+    const user = userEvent.setup();
+    net.fetchUserPhotos.mockResolvedValue(page([photo(0), photo(1, { scene: { name: "Nowhere", x: "", y: "" } })]));
+    show();
+    await user.click(await tile(0));
+    const jumpIn = screen.getByRole("link", { name: "Jump in to Plaza 0 0,1" });
+    jumpIn.focus();
+
+    await user.keyboard("{ArrowRight}");
+
+    const dialog = screen.getByRole("dialog", { name: `Photo at Nowhere, ${date}, 2 of 2` });
+    expect(dialog.contains(document.activeElement)).toBe(true);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("keeps its keys working after a click on the photo", async () => {

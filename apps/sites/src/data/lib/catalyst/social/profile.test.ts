@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), getJSON: vi.fn() }));
+import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
+
 import { getJSON } from "../client";
 import { fetchProfile, mapProfile } from "./profile";
 import type { ProfileVM } from "./profile";
@@ -178,8 +180,9 @@ describe("when mapping a fetched profile", () => {
       expect(vm.name).toBe("ExampleUser#1111");
     });
 
-    it("should use the default name color", () => {
-      expect(vm.nameColor).toBe("#FF8362");
+    // The profile page derives the name color from the display name, as the profile site does.
+    it("should derive the name color from the display name", () => {
+      expect(vm.nameColor).toBe(getAvatarBackgroundColor(getDisplayName("ExampleUser#1111", false, ADDRESS)));
     });
 
     it("should show no info rows", () => {
@@ -219,8 +222,8 @@ describe("when mapping a fetched profile", () => {
       vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
     });
 
-    it("should convert the name color to hex", () => {
-      expect(vm.nameColor).toBe("#ff0000");
+    it("should derive the name color from the display name, not the avatar's color", () => {
+      expect(vm.nameColor).toBe(getAvatarBackgroundColor(getDisplayName("ExampleUser#1111", false, ADDRESS)));
     });
 
     it("should show the country info row", () => {
@@ -228,7 +231,7 @@ describe("when mapping a fetched profile", () => {
     });
 
     it("should show the links", () => {
-      expect(vm.links).toEqual([{ title: "Site", url: "https://example.com" }]);
+      expect(vm.links).toEqual([{ title: "Site", url: "https://example.com/" }]);
     });
   });
 });

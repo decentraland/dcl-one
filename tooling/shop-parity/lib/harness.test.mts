@@ -234,8 +234,9 @@ describe("services", () => {
   });
   it("relays to the replay the camera reel path the profile gallery requests directly", () => {
     const photos = readFileSync(join(SITES, "src/data/lib/catalyst/social/photos.ts"), "utf8");
-    const direct = photos.match(/`(\/camera-reel\/[^`$]*)/)?.[1];
-    assert.ok(direct, "the profile gallery no longer reads the camera reel from a literal /camera-reel/ path");
+    const prefix = photos.match(/CAMERA_REEL_PREFIX = "([^"]+)"/)?.[1];
+    assert.ok(prefix, "the profile gallery no longer names the camera reel's path in CAMERA_REEL_PREFIX");
+    const direct = `${prefix}/api/users/0x1234567890abcdef1234567890abcdef12345678/images`;
     assert.ok(relaysToNode(direct), `${direct} renders the sites app's 404 instead of reaching the replay`);
   });
   it("relays to the replay every node prefix a recorded service answers", () => {

@@ -120,7 +120,7 @@ export const placesQuery = (address: string) =>
 
 /** Whether `identity` signs for the wallet whose profile this is, so it may read that wallet's private data. */
 export function signsFor(identity: AuthIdentity | null | undefined, address: string): identity is AuthIdentity {
-  return Boolean(identity) && normalizeAddress(identity!.signer) === normalizeAddress(address);
+  return identity != null && normalizeAddress(identity.signer) === normalizeAddress(address);
 }
 
 /**

@@ -2,6 +2,7 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentType,
@@ -104,6 +105,19 @@ function ViewerDialog({
     }
   }, [])
 
+  // Stepping to another photo, or hiding the panel, can unmount the link that held focus; the
+  // dialog takes it back so its keys keep working.
+  // The first render is left to the effect above, which records where focus came from.
+  const rendered = useRef(false)
+  useLayoutEffect(() => {
+    if (!rendered.current) {
+      rendered.current = true
+      return
+    }
+    const dialog = dialogRef.current
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
+  }, [imageUrl, detailsVisible])
+
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     if (event.key === 'Escape') {
       event.stopPropagation()
@@ -120,10 +134,12 @@ function ViewerDialog({
       const last = focusable[focusable.length - 1]
       if (!first || !last) return
       const active = document.activeElement
-      if (event.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
+      // The dialog itself (focused after a click on the photo) counts as outside its controls.
+      const outside = active === dialogRef.current || !dialogRef.current?.contains(active)
+      if (event.shiftKey && (active === first || outside)) {
         event.preventDefault()
         last.focus()
-      } else if (!event.shiftKey && (active === last || !dialogRef.current?.contains(active))) {
+      } else if (!event.shiftKey && (active === last || outside)) {
         event.preventDefault()
         first.focus()
       }
