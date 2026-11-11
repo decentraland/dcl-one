@@ -1154,7 +1154,7 @@
           }
         },
         "library/ui/figma/review/src/generated/components/buttons/Button.module.css": {
-          "sha256": "f17685f13abe74c41b1617006b5faebc5709b137b4164576f3706d38416e7bb6",
+          "sha256": "40820eb3593fd8bac05b413afe27ae29a26144ffe653d28ef93dc913758e6e34",
           "fds": {
             "path": "dcl-ui-review/src/generated/components/buttons/Button.module.css",
             "sha256": "eff85b59a5a02b7d1c8ef4520a2835a922caaf305e78e657deb7f05af3157570"
@@ -2739,7 +2739,7 @@
           "deviation": "capture-removed"
         },
         "library/ui/figma/src/generators/components.test.ts": {
-          "sha256": "e62eef88778e8f299fa0c940d62956ab5a04a7a77e4d9b9e4ef9cff112ef41a6",
+          "sha256": "6ca9d6805ca36fc07b338186b7df438eb8df8ed60bcb74a7cee679371f9880ec",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/components.test.ts",
             "sha256": "3b5ec10c17fc65b8e494621d7f9419c4b659bf1b904dce89a861019defa040a0"
@@ -2750,7 +2750,7 @@
           ]
         },
         "library/ui/figma/src/generators/components.ts": {
-          "sha256": "9efd380ad76e7fe52ef91a1ad2185b4707d1ad880690f19c882bcaac3f9bef7c",
+          "sha256": "98d48df0b92f5b226ec01b41832a618759412e4b6616d559e20c644d4b964eb2",
           "fds": {
             "path": "dcl-mcp-figma/src/generators/components.ts",
             "sha256": "51e48d357757f25844040c8a9d381864d9b37cff96451c098d96b2deb36adc25"

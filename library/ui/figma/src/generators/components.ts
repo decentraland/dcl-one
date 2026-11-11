@@ -327,6 +327,36 @@ function labelColor(node: ViewNode): string | undefined {
   }
 }
 
+function buttonControlView(view: ViewSpec, color: string | undefined): ViewSpec {
+  const labels = new Set<string>()
+  const root = (node: ViewNode): ViewNode => {
+    const label = node.kind === 'text' && node.slot === 'label'
+    if (label) labels.add(pathKey(node.path))
+    const naturalWidth = node.path.length === 0 || label
+    return {
+      ...node,
+      css: {
+        ...node.css,
+        decls: [
+          ...node.css.decls.filter(([property]) => !naturalWidth || property !== 'width'),
+          ...(node.path.length === 0 && color ? [['color', color] as [string, string]] : [])
+        ]
+      },
+      ...(node.children ? { children: node.children.map(root) } : {})
+    }
+  }
+  const controlRoot = root(view.root)
+  const states = (rules: StateRule[] | undefined): StateRule[] | undefined =>
+    rules?.flatMap((rule) => {
+      const label = labels.has(pathKey(rule.path))
+      const naturalWidth = rule.path.length === 0 || label
+      const decls = rule.decls.filter(([property]) => !naturalWidth || property !== 'width')
+      const foreground = label ? decls.filter(([property]) => property === 'color') : []
+      return [{ ...rule, decls }, ...(foreground.length ? [{ path: [], decls: foreground }] : [])]
+    })
+  return { ...view, root: controlRoot, hover: states(view.hover), pressed: states(view.pressed) }
+}
+
 function emitComponent(
   spec: ComponentSpec,
   context: GeneratorContext,
@@ -410,16 +440,7 @@ function emitComponent(
         )
         .map((candidate) => labelColor(candidate.root))
         .find(Boolean)
-    const root = color
-      ? {
-          ...view.root,
-          css: {
-            ...view.root.css,
-            decls: [...view.root.css.decls, ['color', color] as [string, string]]
-          }
-        }
-      : view.root
-    return emitView({ ...view, root }, index, cssRules, semantic)
+    return emitView(buttonControlView(view, color), index, cssRules, semantic)
   })
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
   const handlerProps = [...(semantic?.props.handlers ?? [])].sort()

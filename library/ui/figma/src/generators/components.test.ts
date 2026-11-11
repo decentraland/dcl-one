@@ -347,3 +347,63 @@ describe('when a component opts into the public button control contract', () => 
     expect(source).toContain("'iconOnly'")
   })
 })
+
+describe('when a public button adapts captured label geometry and interaction colors', () => {
+  it('should omit fixed root and label widths and propagate interaction foreground to its root', async () => {
+    const spec = (await componentSpecs()).find((entry) => entry.name === 'Button')!
+    spec.control = 'button'
+    const base = spec.views.find((view) => view.key === spec.defaultKey)!
+    spec.views = [
+      {
+        ...base,
+        root: {
+          ...base.root,
+          css: { decls: [['width', '60px']] },
+          children: [
+            {
+              kind: 'text',
+              path: [0],
+              name: 'label',
+              slot: 'label',
+              text: 'Label',
+              css: {
+                decls: [
+                  ['width', '20px'],
+                  ['color', 'var(--dcl-neutrals-charcoal)']
+                ]
+              }
+            }
+          ]
+        },
+        hover: [
+          { path: [], decls: [['width', '79px']] },
+          {
+            path: [0],
+            decls: [
+              ['width', '21px'],
+              ['color', 'var(--dcl-neutrals-white)']
+            ]
+          }
+        ],
+        pressed: [
+          { path: [], decls: [['width', '80px']] },
+          {
+            path: [0],
+            decls: [
+              ['width', '22px'],
+              ['color', 'var(--dcl-neutrals-snow)']
+            ]
+          }
+        ]
+      }
+    ]
+    const css = generateComponents([spec], context).files.find((file) =>
+      file.path.endsWith('/Button.module.css')
+    )!.content
+    expect(css).not.toMatch(/\bwidth:/)
+    const root = css.split('.v0n0 {')[0]!
+    expect(root).toContain('color: var(--dcl-neutrals-charcoal)')
+    expect(root).toContain('color: var(--dcl-neutrals-white)')
+    expect(root).toContain('color: var(--dcl-neutrals-snow)')
+  })
+})
