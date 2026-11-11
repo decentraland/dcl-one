@@ -24,8 +24,9 @@ const FALLBACK: PageDefaults = {
 };
 
 export async function loader({ request, context }: Route.LoaderArgs) {
-  const { sid, wrap } = await pageLoader(request, context,
-    
+  const { sid, wrap } = await pageLoader(
+    request,
+    context,
     FALLBACK,
   );
 

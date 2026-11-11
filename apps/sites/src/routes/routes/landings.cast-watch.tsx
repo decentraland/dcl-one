@@ -45,8 +45,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const identity = url.searchParams.get("name")?.trim() || DEFAULT_IDENTITY;
   const intent = parseIntent(url.searchParams.get("active"));
 
-  const { sid, assignment, wrap } = await pageLoader(request, context,
-    
+  const { sid, assignment, wrap } = await pageLoader(
+    request,
+    context,
     DEFAULT_ASSIGNMENT,
   );
 

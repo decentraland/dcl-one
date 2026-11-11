@@ -24,7 +24,7 @@ import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge
 import StatusPage from "@ui/components/StatusPage";
 import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
-import { requestSession, sessionMiddleware } from "@/core/lib/telemetry/session";
+import { pageSid, sessionMiddleware } from "@/core/lib/telemetry/session";
 import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { browserCatalystBase } from "@/data/lib/catalyst/bases";
 import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
@@ -61,8 +61,11 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     shopApiMode,
     wallet,
     committee,
-    /** The session id, also on a first visit, for pages whose own loader does not run on a client navigation. */
-    sid: requestSession(request, context).sid,
+    /**
+     * The session id, also on a first visit, for a page whose own loader does not run on a client
+     * navigation. Null on a response a shared cache may store (the docs).
+     */
+    sid: pageSid(request, context),
   };
 }
 

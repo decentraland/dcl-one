@@ -28,8 +28,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const osParam = url.searchParams.get("os");
   const archParam = url.searchParams.get("arch");
 
-  const { sid, wrap } = await pageLoader(request, context,
-    
+  const { sid, wrap } = await pageLoader(
+    request,
+    context,
     FALLBACK,
   );
 

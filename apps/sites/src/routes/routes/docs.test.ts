@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import fs from "node:fs";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
@@ -12,12 +13,12 @@ const request = (p: string, init?: RequestInit) => new Request(`https://dcl.test
 const next = vi.fn(async () => new Response("rendered"));
 async function run(p: string, init?: RequestInit): Promise<Response> {
   next.mockClear();
-  const result = await middleware[0]({ request: request(p, init) } as never, next as never);
+  const result = await middleware[0]({ request: request(p, init), context: new RouterContextProvider() } as never, next as never);
   return result instanceof Response ? result : new Response("fallthrough");
 }
 async function load(p: string) {
   try {
-    return await loader({ request: request(p) } as never);
+    return await loader({ request: request(p), context: new RouterContextProvider() } as never);
   } catch (thrown) {
     return thrown;
   }

@@ -1,3 +1,4 @@
+import type { RouterContextProvider } from "react-router";
 import { requestSession } from "@/core/lib/telemetry/session";
 import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
@@ -84,7 +85,7 @@ export async function action({ request, context }: Route.ActionArgs) {
   return Response.json({ ok: true }, { status: 202 });
 }
 
-function recordClientError(report: ClientErrorReport, request: Request, context: unknown): void {
+function recordClientError(report: ClientErrorReport, request: Request, context: Readonly<RouterContextProvider>): void {
   try {
     // eslint-disable-next-line no-console
     console.error(

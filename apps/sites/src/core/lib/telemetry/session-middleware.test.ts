@@ -1,9 +1,10 @@
-import { createRequestHandler, data, redirect, type ServerBuild } from "react-router";
-import { describe, expect, it } from "vitest";
+import { createRequestHandler, data, redirect, RouterContextProvider, type ServerBuild } from "react-router";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { requestSession, sessionMiddleware, sidLoader } from "./session";
+import { markPublicResponse, pageSid, requestSession, sessionMiddleware, sidLoader } from "./session";
 
-type Seen = { root?: string; page?: string; wallet?: string | null };
+type Seen = { root?: string | null; page?: string; wallet?: string | null };
+type Args = { request: Request; context: Readonly<RouterContextProvider> };
 
 /**
  * The request pipeline `react-router-serve` runs (`createRequestHandler`), over a minimal build: the
@@ -43,14 +44,14 @@ function app(seen: Seen) {
     routes: {
       root: route("root", undefined, "", {
         middleware: [sessionMiddleware],
-        loader: ({ request, context }: { request: Request; context: unknown }) => {
-          seen.root = requestSession(request, context).sid;
+        loader: ({ request, context }: Args) => {
+          seen.root = pageSid(request, context);
           return { sid: seen.root };
         },
         ErrorBoundary: () => null,
       }),
       "routes/page": route("routes/page", "root", "page", {
-        loader: ({ request, context }: { request: Request; context: unknown }) => {
+        loader: ({ request, context }: Args) => {
           const session = sidLoader(request, context);
           seen.page = session.sid;
           seen.wallet = session.wallet;
@@ -58,13 +59,13 @@ function app(seen: Seen) {
         },
       }),
       "routes/fail": route("routes/fail", "root", "fail", {
-        loader: ({ request, context }: { request: Request; context: unknown }) => {
+        loader: ({ request, context }: Args) => {
           seen.page = sidLoader(request, context).sid;
           throw data(null, { status: 503 });
         },
       }),
       "routes/move": route("routes/move", "root", "move", {
-        loader: ({ request, context }: { request: Request; context: unknown }) => {
+        loader: ({ request, context }: Args) => {
           seen.page = requestSession(request, context).sid;
           throw redirect("/page");
         },
@@ -73,6 +74,26 @@ function app(seen: Seen) {
         loader: () => {
           throw new Error("boom");
         },
+      }),
+      // A resource route with a publicly cacheable reply, like internal/dapps-flags.
+      "routes/asset": route("routes/asset", "root", "asset", {
+        default: undefined,
+        loader: () => Response.json({ ok: true }, { headers: { "Cache-Control": "public, max-age=60" } }),
+      }),
+      // A public document route, like the docs: its middleware marks it before the loaders run.
+      "routes/docs": route("routes/docs", "root", "docs", {
+        middleware: [({ context }: Args, next: () => Promise<Response>) => (markPublicResponse(context), next())],
+        loader: () => ({ page: "docs" }),
+        headers: () => ({ "Cache-Control": "public, max-age=300" }),
+      }),
+      // A child middleware that answers before any loader, like the docs files.
+      "routes/early": route("routes/early", "root", "early", {
+        middleware: [() => new Response("early", { status: 200 })],
+        loader: () => null,
+      }),
+      // A loader that returns a response whose headers cannot change (Response.redirect).
+      "routes/frozen": route("routes/frozen", "root", "frozen", {
+        loader: () => Response.redirect("https://sites.test/page", 302),
       }),
     },
     assets: {
@@ -85,6 +106,10 @@ function app(seen: Seen) {
         "routes/fail": manifest("routes/fail", "root"),
         "routes/move": manifest("routes/move", "root"),
         "routes/crash": manifest("routes/crash", "root"),
+        "routes/asset": { ...manifest("routes/asset", "root"), hasErrorBoundary: false },
+        "routes/docs": manifest("routes/docs", "root"),
+        "routes/early": manifest("routes/early", "root"),
+        "routes/frozen": manifest("routes/frozen", "root"),
       },
     },
     publicPath: "/",
@@ -195,6 +220,57 @@ describe("session middleware, through the request handler", () => {
   });
 });
 
+describe("session middleware and shared caches", () => {
+  it("sets no cookie on a publicly cacheable resource reply", async () => {
+    const response = await app({})(get("/asset"));
+
+    expect(response.status).toBe(200);
+    expect(sidCookies(response)).toEqual([]);
+  });
+
+  it("gives a public document route neither a session id in root data nor a cookie", async () => {
+    const seen: Seen = {};
+
+    const response = await app(seen)(get("/docs"));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Cache-Control")).toContain("public");
+    expect(seen.root).toBeNull();
+    expect(sidCookies(response)).toEqual([]);
+  });
+
+  it("still sets the cookie when a child middleware answers before the loaders", async () => {
+    const response = await app({})(get("/early"));
+
+    expect(await response.text()).toBe("early");
+    expect(sidCookies(response)).toHaveLength(1);
+  });
+
+  it("sets the cookie on a reply whose headers cannot change, by copying it", async () => {
+    const response = await app({})(get("/frozen"));
+
+    expect(response.status).toBe(302);
+    expect(sidCookies(response)).toHaveLength(1);
+  });
+});
+
+describe("session middleware and the shared cookie domain", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("moves a split sid cookie to the shared domain once", async () => {
+    vi.stubEnv("SID_COOKIE_DOMAIN", "sites.test");
+    const seen: Seen = {};
+
+    const response = await app(seen)(get("/page", "sid=first; sid=second"));
+
+    const cookies = sidCookies(response);
+    expect(cookies).toHaveLength(2);
+    expect(cookies[0]).toContain(`sid=${seen.root}`);
+    expect(cookies[0]).toContain("Domain=sites.test");
+    expect(cookies[1]).toContain("Max-Age=0");
+  });
+});
+
 describe("sign-in and sign-out", () => {
   it("keep the session id; only the wallet the page reads changes", async () => {
     const wallet = `0x${"a".repeat(40)}`;
@@ -212,7 +288,7 @@ describe("sign-in and sign-out", () => {
 
 describe("sidLoader without the middleware", () => {
   it("mints and sets the cookie itself, as before, when called on its own", () => {
-    const session = sidLoader(get("/page"), {});
+    const session = sidLoader(get("/page"), new RouterContextProvider());
     const wrapped = session.wrap({}) as unknown as { init?: { headers?: Headers } };
 
     expect(session.created).toBe(true);

@@ -40,8 +40,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const address =
     url.searchParams.get("address")?.trim() || readWallet(request) || "";
 
-  const { sid, wrap, data: metrics } = await pageLoaderWith(request, context,
-    
+  const { sid, wrap, data: metrics } = await pageLoaderWith(
+    request,
+    context,
     FALLBACK,
     () => address ? loadCreatorMetrics(address, request.signal).catch(() => null) : Promise.resolve(null),
   );

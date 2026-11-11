@@ -53,8 +53,9 @@ export async function loader({ request, context, params }: Route.LoaderArgs) {
     throw new Response(null, { status: 404, statusText: "Not Found" });
   }
 
-  const { sid, wrap } = await pageLoader(request, context,
-    
+  const { sid, wrap } = await pageLoader(
+    request,
+    context,
     FALLBACK,
   );
 

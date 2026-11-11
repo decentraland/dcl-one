@@ -1,6 +1,6 @@
 import { redirect } from "react-router";
 
-import { requestSession, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/creator-hub.$";
@@ -28,13 +28,13 @@ function moved({ request, params, context }: Route.LoaderArgs | Route.ActionArgs
   const session = requestSession(request, context);
   const { sid } = session;
   // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
-  const created = session.ownsCookie && session.created;
+  const cookies = ownedSessionCookies(request, session);
   const url = new URL(request.url);
   const to = createPathFor(url, params["*"]);
   track("creator_builder_redirect", { from: url.pathname, to }, { sid });
   return redirect(to, {
     status: 308,
-    headers: created ? { "Set-Cookie": serializeSidCookie(sid) } : undefined,
+    headers: cookies,
   });
 }
 

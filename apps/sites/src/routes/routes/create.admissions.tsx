@@ -55,8 +55,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const worldName = url.searchParams.get("world")?.trim() || "";
   const noWorld = worldName === "";
 
-  const { sid, assignment, wrap, data: access } = await pageLoaderWith(request, context,
-    
+  const { sid, assignment, wrap, data: access } = await pageLoaderWith(
+    request,
+    context,
     FALLBACK,
     () => noWorld ? Promise.resolve(null) : Promise.all([
       loadWorldPermissions(worldName, { signal: request.signal }).catch(() => null),

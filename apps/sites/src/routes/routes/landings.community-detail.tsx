@@ -37,8 +37,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const tab = parseTab(url.searchParams.get("tab"));
   const forcePrivate = url.searchParams.get("gate") === "private";
 
-  const { sid, wrap, data } = await pageLoaderWith(request, context,
-    
+  const { sid, wrap, data } = await pageLoaderWith(
+    request,
+    context,
     FALLBACK,
     async () => {
       if (!id) {

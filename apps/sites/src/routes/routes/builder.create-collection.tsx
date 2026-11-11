@@ -1,7 +1,7 @@
 import { redirect } from "react-router";
 
 import { buildRedirect } from "@/data/lib/catalyst/creator-hub/integration-redirect-collections";
-import { requestSession, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/builder.create-collection";
@@ -14,7 +14,7 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = requestSession(request, context);
   const { sid } = session;
   // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
-  const created = session.ownsCookie && session.created;
+  const cookies = ownedSessionCookies(request, session);
 
   const { location, to, query } = buildRedirect(request.url);
 
@@ -26,6 +26,6 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
   return redirect(
     location,
-    created ? { headers: { "Set-Cookie": serializeSidCookie(sid) } } : undefined,
+    cookies ? { headers: cookies } : undefined,
   );
 }

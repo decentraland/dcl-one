@@ -37,8 +37,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const from = coerceFrom(url.searchParams.get("from"));
   const reason = coerceReason(url.searchParams.get("reason"));
 
-  const { sid, assignment, wrap } = await pageLoader(request, context,
-    
+  const { sid, assignment, wrap } = await pageLoader(
+    request,
+    context,
     DEFAULT_ASSIGNMENT,
   );
 

@@ -37,8 +37,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const referrerParam = url.searchParams.get("referrer")?.trim() ?? "";
   const step = parseStep(url.searchParams.get("step"));
 
-  const { sid, wrap } = await pageLoader(request, context,
-    
+  const { sid, wrap } = await pageLoader(
+    request,
+    context,
     FALLBACK,
   );
 

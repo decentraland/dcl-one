@@ -86,8 +86,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const template = url.searchParams.get("template")?.trim() || null;
   const from = url.searchParams.get("from")?.trim() || null;
 
-  const { sid, assignment, wrap } = await pageLoader(request, context,
-    
+  const { sid, assignment, wrap } = await pageLoader(
+    request,
+    context,
     FALLBACK,
   );
 

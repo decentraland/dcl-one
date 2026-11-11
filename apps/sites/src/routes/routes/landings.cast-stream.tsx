@@ -21,8 +21,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const token = tokenParam === null ? DEFAULT_TOKEN : tokenParam;
   const identity = url.searchParams.get("name")?.trim() || undefined;
 
-  const { sid, assignment, wrap } = await pageLoader(request, context,
-    
+  const { sid, assignment, wrap } = await pageLoader(
+    request,
+    context,
     DEFAULT_ASSIGNMENT,
   );
 

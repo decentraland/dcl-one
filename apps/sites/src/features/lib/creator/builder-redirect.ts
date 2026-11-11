@@ -1,6 +1,7 @@
+import type { RouterContextProvider } from "react-router";
 import { redirect } from "react-router";
 
-import { requestSession, sidCookieHeaders } from "@/core/lib/telemetry/session";
+import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 
 export const REDIRECT_EVENT = "creator_builder_redirect";
@@ -78,7 +79,7 @@ export function buildDestination(
 export function builderRedirect(
   key: RedirectKey,
   request: Request,
-  context: unknown,
+  context: Readonly<RouterContextProvider>,
   params: Record<string, string | undefined> = {},
 ): Response {
   const rule = REDIRECTS[key];
@@ -101,7 +102,7 @@ export function builderRedirect(
   const headers = new Headers();
   headers.set("Location", to);
   // Behind the root middleware the cookie is set once on the response; on its own this sets it.
-  if (session.ownsCookie) for (const cookie of sidCookieHeaders(request, session)) headers.append("Set-Cookie", cookie);
+  for (const [name, value] of ownedSessionCookies(request, session) ?? []) headers.append(name, value);
 
   return redirect(to, { status: PERMANENT, headers });
 }

@@ -1,3 +1,4 @@
+import type { RouterContextProvider } from "react-router";
 // The /shop route loaders: the page's SSR data (data/lib/shop/pages.server) with the session cookie
 // every sites document keeps. Caching is set by the routes' `headers` (shopHeaders): never public.
 
@@ -11,7 +12,7 @@ export async function shopLoader(
   page: ShopPageId,
   request: Request,
   params: Record<string, string | undefined>,
-  context: unknown,
+  context: Readonly<RouterContextProvider>,
 ) {
   const session = sidLoader(request, context);
   const load = await loadShopPage(page, { request, params });

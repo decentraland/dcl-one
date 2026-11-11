@@ -44,8 +44,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const step = url.searchParams.get("step")?.trim() || null;
   const type = url.searchParams.get("type")?.trim() || null;
 
-  const { sid, assignment, wrap } = await pageLoader(request, context,
-    
+  const { sid, assignment, wrap } = await pageLoader(
+    request,
+    context,
     FALLBACK,
   );
 

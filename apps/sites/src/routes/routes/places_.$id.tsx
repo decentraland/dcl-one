@@ -26,8 +26,9 @@ export const handle = { agentMarkdown: "placeDetail" } satisfies AgentMarkdownHa
 export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { id } = params;
 
-  const { sid, wrap, data } = await pageLoaderWith(request, context,
-    
+  const { sid, wrap, data } = await pageLoaderWith(
+    request,
+    context,
     { variant: "base" },
     async () => {
       let place: Place | null = null;

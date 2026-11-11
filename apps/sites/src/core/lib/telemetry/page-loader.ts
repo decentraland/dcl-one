@@ -1,3 +1,5 @@
+import type { RouterContextProvider } from "react-router";
+
 import { sidLoader } from "./session";
 
 export type PageDefaults = {
@@ -9,13 +11,13 @@ type PageSession = ReturnType<typeof sidLoader>;
 export { sidLoader };
 
 /** `context` is the loader's router context, where the root middleware left the request's session. */
-export async function pageLoader(request: Request, context: unknown, defaults: PageDefaults) {
+export async function pageLoader(request: Request, context: Readonly<RouterContextProvider>, defaults: PageDefaults) {
   return { ...sidLoader(request, context), assignment: defaults };
 }
 
 export async function pageLoaderWith<T>(
   request: Request,
-  context: unknown,
+  context: Readonly<RouterContextProvider>,
   defaults: PageDefaults,
   load: (session: PageSession) => Promise<T>,
 ) {

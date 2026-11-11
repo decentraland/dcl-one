@@ -9,6 +9,8 @@ import { renderToPipeableStream } from "react-dom/server";
 
 import { markdownResponse, wantsMarkdown } from "@/data/lib/agent/markdown";
 import { renderAgentMarkdown } from "@/data/lib/agent/dispatch.server";
+import type { RouterContextProvider } from "react-router";
+
 import { requestSession } from "@/core/lib/telemetry/session";
 import { track, withoutSensitiveParams } from "@/core/lib/telemetry/track";
 
@@ -21,7 +23,7 @@ export default function handleRequest(
   responseStatusCode: number,
   responseHeaders: Headers,
   routerContext: EntryContext,
-  loadContext: unknown,
+  loadContext: RouterContextProvider,
 ) {
   const pathname = new URL(request.url).pathname;
   // The Explorer's native Shop runtime descriptor: /shop-native, and /marketplace-native for Explorer
@@ -49,7 +51,8 @@ export default function handleRequest(
   // A crawler's misses are not a visitor's: no Segment request per scanned path.
   if (responseStatusCode === 404 && !bot) {
     try {
-      // The same sid the page's loaders used; the root middleware set it for this request.
+      // A matched route's request shares the sid its loaders used (the root middleware set it). A URL
+      // that matches no route skips the middleware, so a cookieless visitor's 404 gets a sid of its own.
       const { sid } = requestSession(request, loadContext);
       const u = new URL(request.url);
       track(

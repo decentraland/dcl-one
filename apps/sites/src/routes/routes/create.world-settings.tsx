@@ -114,8 +114,9 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     ""
   ).toLowerCase();
 
-  const { sid, assignment, wrap, data } = await pageLoaderWith(request, context,
-    
+  const { sid, assignment, wrap, data } = await pageLoaderWith(
+    request,
+    context,
     FALLBACK,
     async () => {
       let scenes: WorldSceneVM[] = [];

@@ -37,8 +37,9 @@ const FALLBACK: PageDefaults = {
 export async function loader({ request, context, params }: Route.LoaderArgs) {
   const { id } = params;
 
-  const { sid, wrap, data: { item, fallback } } = await pageLoaderWith(request, context,
-    
+  const { sid, wrap, data: { item, fallback } } = await pageLoaderWith(
+    request,
+    context,
     FALLBACK,
     () => loadCreatorItem(id, { signal: request.signal }),
   );

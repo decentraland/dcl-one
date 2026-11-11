@@ -18,7 +18,7 @@ import { openSignIn } from "@/features/components/auth/signin-store";
 import { useChromeAuth } from "@ui/web/frames/chrome-auth";
 import { fetchCreatorScenesStats } from "@/data/lib/catalyst/creator-hub/scene-analytics";
 import { getJSON, worldsBase } from "@/data/lib/catalyst/client";
-import { requestSession, serializeSidCookie } from "@/core/lib/telemetry/session";
+import { ownedSessionCookies, requestSession } from "@/core/lib/telemetry/session";
 import { track } from "@/core/lib/telemetry/track";
 import { creatorHubMeta } from "@/core/lib/seo/creator-hub-meta";
 
@@ -33,10 +33,10 @@ export async function loader({ request, context }: Route.LoaderArgs) {
   const session = requestSession(request, context);
   const { sid } = session;
   // Behind the root middleware the cookie is set once on the response; only a direct call sets it here.
-  const created = session.ownsCookie && session.created;
+  const cookies = ownedSessionCookies(request, session);
   const payload = { sid };
-  return created
-    ? data(payload, { headers: { "Set-Cookie": serializeSidCookie(sid) } })
+  return cookies
+    ? data(payload, { headers: cookies })
     : payload;
 }
 
