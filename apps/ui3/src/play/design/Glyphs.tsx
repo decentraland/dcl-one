@@ -389,6 +389,56 @@ export function BlockUserIcon({ size = 20, className }: GlyphProps): React.JSX.E
   )
 }
 
+/** Promote to moderator: a shield with an arrow up (community member menu, 20px). */
+export function PromoteModeratorIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <path d="M12 3l7 2.8v5.4c0 4.5-3 8.2-7 9.8-4-1.6-7-5.3-7-9.8V5.8L12 3z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M12 16V9M9 11.8L12 9l3 2.8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** Demote a moderator: a shield with a cross (community member menu, 20px). */
+export function DemoteModeratorIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <path d="M11 20.4C7.6 18.7 5 15.2 5 11.2V5.8L12 3l7 2.8v4" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+      <path d="M15 15l5 5M20 15l-5 5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Hand something over: two opposite arrows (community member menu, 20px). */
+export function TransferIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <path d="M4 8h15M15 4l4 4-4 4M20 16H5M9 12l-4 4 4 4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
+}
+
+/** Remove a member: a person with a cross (community member menu, 20px). */
+export function RemoveMemberIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <circle cx="10" cy="8" r="3.4" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M4 19c0-3.2 2.7-5 6-5 1 0 2 .2 2.8.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+      <path d="M15.2 14.2l4.6 4.6M19.8 14.2l-4.6 4.6" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
+/** Ban: a circle with a slash (community member menu, 20px). */
+export function BanIcon({ size = 20, className }: GlyphProps): React.JSX.Element {
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true" className={className}>
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M6 6l12 12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </svg>
+  )
+}
+
 /** Report a user: a flag (menu rows, 20px). */
 export function ReportFlag({ size = 20, className }: GlyphProps): React.JSX.Element {
   return (

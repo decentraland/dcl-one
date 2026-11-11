@@ -701,19 +701,19 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream (http-commons 2.0.0) passes it to Postgres, which answers 500; dcl-one saturates and answers an empty page (`core/http.rs:49-60`).
     - Severity: none (closed).
 
-39. **WW-39 · mirror · a multi-scene world keeps only its newest scene.** Status: open.
-    - Upstream `/about` lists the newest scene only (WW-01), and so does this node's.
-    - dcl-one: the mirror builds a world's scene set from the source's `/about` `scenesUrn`
-      (`worlds/src/mirror.rs:1276-1291`, `scene_refs` `:1537`) and deletes the mirrored scenes it does not list
-      (`:1500-1508`). Mirroring a multi-scene world from either source keeps one scene, and the pass's
-      `holds_every_scene` check against the `/index` catalogue never holds, so the world is fetched on every pass.
-      The read-through fill (`mirror_one`) has the same scene set. `tests/worlds_mirror.rs`'s fake upstream serves
-      every URN in `/about`, which hides this.
-    - Proposed fix: read the scene set from `{source}/world/{name}/scenes` (paged, as the Bevy explorer's
-      `ipfs/src/lib.rs` `update_scene_urns` does), keep `/about` for the world configuration and the content
-      `baseUrl`, and make the fakes in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about`
-      with the newest URN only.
-    - Severity: P1 (a mirrored multi-scene world loses its other scenes).
+39. **WW-39 · mirror · a multi-scene world's scene set.** Status: MATCH, no work.
+    - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
+      scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
+    - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
+      (`listed_scene_ids`, `worlds/src/mirror.rs:1565`) and keeps `/about` for the world configuration and the
+      content `baseUrl`. The listing decides what is retired, so any doubt stops that world's sync until the
+      next pass and retires nothing: a refusal (404 and 405 included), a page without `scenes`, a repeated id,
+      a count other than `total`, or a held scene missing from the pages that `?entity_id=` still lists (the
+      listing moved while it was read). A world over 2,000 scenes is refused on every pass. The read-through
+      fill takes the same path and stores the world only when every listed scene verifies. Pinned by
+      `tests/worlds_mirror.rs:1062` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
+      in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 

@@ -12,8 +12,11 @@ import type {
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
+  CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  VoiceChatAction,
+  VoiceChatState,
   VoiceMessage,
   FriendData,
   FriendRequestData,
@@ -75,6 +78,17 @@ export type SocialApi = {
   setCommunityChannels: (ids: string[]) => void
 }
 
+/** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
+export type { VoiceChatState, VoiceChatAction, CommunityVoiceUpdate }
+export type VoiceChatApi = {
+  /** The voice chat state now, then on every change; `close()` ends it. */
+  getStateStream: () => AsyncIterable<VoiceChatState> & { close: () => void }
+  /** Every community stream started / ended broadcast; `close()` ends it. */
+  getCommunityUpdateStream: () => AsyncIterable<CommunityVoiceUpdate> & { close: () => void }
+  /** Fire and forget; the outcome shows on the state stream. */
+  action: (action: VoiceChatAction) => void
+}
+
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
 export type MicState = { enabled: boolean; available: boolean }
@@ -99,7 +113,7 @@ export type SystemActionEvent = { action: string; pressed: boolean }
 
 export type KernelFetchRequest = {
   url: string
-  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string }
+  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string | Uint8Array }
   meta: string
 }
 export type KernelFetchResponse = { ok: boolean; status: number; statusText?: string; body: string }
@@ -220,6 +234,8 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
+  /** Optional: absent on runtimes whose SystemApi predates voice chat. */
+  voiceChat?: VoiceChatApi
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require

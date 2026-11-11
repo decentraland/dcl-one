@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "noEmit": true,
+    "types": ["node", "@figma/code-connect/figma-types"],
+    "paths": { "@dcl/one-ui": ["./index.ts"] }
+  },
+  "include": [
+    "index.ts",
+    "css-modules.d.ts",
+    "components",
+    "foundations",
+    "templates",
+    "test",
+    "vitest.config.ts"
+  ]
+}

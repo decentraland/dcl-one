@@ -3563,6 +3563,7 @@ dependencies = [
  "rusty_enet",
  "serde",
  "serde_json",
+ "social",
  "system_bridge",
  "tokio",
  "ui_core",

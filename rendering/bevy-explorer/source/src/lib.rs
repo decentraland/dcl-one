@@ -1,6 +1,5 @@
-// the loopback console server and the native input commands; the headless binary takes the same
-// launch options
-#[cfg(not(target_arch = "wasm32"))]
+// the input and scene pointer commands on every target, and the native loopback console server;
+// the headless binary takes the same launch options
 pub mod automation;
 mod autopilot;
 mod commands;
@@ -690,9 +689,9 @@ impl DecentralandApp {
             }
         }
 
+        app.add_plugins(automation::AutomationPlugin);
         #[cfg(not(target_arch = "wasm32"))]
         {
-            app.add_plugins(automation::AutomationPlugin);
             // only when a token is given, and then only the token-checked methods that run
             // console commands: Bevy's own remote methods (`bevy/query`, `bevy/insert`, ...)
             // check no token, so they are never served
@@ -857,7 +856,13 @@ fn update_app_config_from_arguments(
 
 #[cfg(not(target_arch = "wasm32"))]
 fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> PluginGroupBuilder {
-    let compute_threads = decentraland_app_config.arguments.client.compute_threads;
+    // Compute runs both worlds' parallel systems and `par_iter` work, so it is sized from the core
+    // count, not from what IO and async leave over (bevy assigns those first).
+    let compute_threads = decentraland_app_config
+        .arguments
+        .client
+        .compute_threads
+        .unwrap_or_else(|| (bevy::tasks::available_parallelism() / 2).clamp(2, 8));
     DefaultPlugins
         .set(TaskPoolPlugin {
             task_pool_options: TaskPoolOptions {
@@ -876,8 +881,8 @@ fn desktop_default_plugins(decentraland_app_config: &DecentralandAppConfig) -> P
                     on_thread_destroy: None,
                 },
                 compute: TaskPoolThreadAssignmentPolicy {
-                    min_threads: compute_threads.unwrap_or(2),
-                    max_threads: compute_threads.unwrap_or(8),
+                    min_threads: compute_threads,
+                    max_threads: compute_threads,
                     percent: 0.25,
                     on_thread_spawn: None,
                     on_thread_destroy: None,

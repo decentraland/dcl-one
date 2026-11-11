@@ -39,8 +39,9 @@ The current contributor guides reflect the standards in production. This documen
 - Applies to every current and future web app under `apps/` and to
   `rendering/bevy-explorer/source/react-web`. The Explorer HUD, in both
   `react-web` and its Sites adaptation `apps/ui3/src/play`, keeps its own
-  design primitives and tokens until the shared library is integrated, and the
-  Sites adaptation is not migrated until Sites is; see
+  design primitives and tokens until they move to the shared library, which
+  `react-web` already imports, and the Sites adaptation is not migrated until
+  Sites is; see
   [Explorer HUD transition](#explorer-hud-transition).
 - Required for all new component styles and for existing styles when they are
   migrated. Existing global stylesheets do not have to be migrated all at once.
@@ -124,7 +125,7 @@ property and let the module consume it; fixed appearance stays in the module.
 ```tsx
 import type { CSSProperties } from 'react'
 
-<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
+;<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
 ```
 
 Shared components expose runtime geometry through typed props mapped to custom
@@ -143,9 +144,7 @@ values to pass arbitrary colours or palette values from props.
 
 ### Responsive, themes and portals
 
-- Use the breakpoint definitions in `library/ui` foundations once implemented
-  and adopted; retain each surface's breakpoints until then. CSS custom
-  properties cannot be used directly in media conditions.
+- Use the breakpoint definitions in `library/ui` foundations once adopted; retain each surface's breakpoints until then. CSS custom properties cannot be used directly in media conditions.
 - Select themes through the shared semantic token mechanism. The supported
   themes and the selection mechanism's details remain to be defined.
 - Carry the required theme scope into portal content rendered outside its
@@ -219,12 +218,7 @@ consumer, and verify a change to it in every app that imports it.
 
 ## Shared UI: `library/ui`
 
-The structure and integration below define the target for the shared UI. Its
-foundations, runtime components and consumer integration still need to be
-implemented; the component template is available now. Keep each surface's
-existing tokens and components until its integration has been reviewed. The
-decision is recorded in the
-[shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
+The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Runtime component and consumer integration are separate work. Keep each surface's existing tokens and components until its integration has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
 
 `library/ui` is the home of the shared UI foundation:
 
@@ -240,6 +234,12 @@ dependency. "Bevy HUD" here means the Explorer's React DOM HUD: its source in
 `apps/ui3/src/play` (see [Explorer HUD transition](#explorer-hud-transition)).
 Sharing components with it does not extend to Rust Bevy widgets or SDK scene
 UI.
+
+Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths.
+
+The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. The owned root inventory contains every tracked file under `rendering/bevy-explorer/source/react-web/src` plus `app.html` and `index.html`. Any edit, addition, deletion or rename of those roots, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Other owned files, including bridge-scene and web-engine sources, become controls only when the actual compiler or Vite graph reaches them; changes to those recorded controls, shared imports or resolver configuration also require regeneration. Unreached owned files remain covered by the separate Explorer source fingerprint. From the repository root, run `npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest or review pin. `npm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. This does not change the separate engine-generated binding inputs or the Sites HUD adaptation review hash.
+
+The manifest also witnesses the immediate names and kinds in the finite ancestor directories of actually reached shared files. Adding, removing or renaming a candidate can change import resolution and requires regeneration even when no recorded body changed; editing an unconsumed existing body does not. Git readers compare exact tracked and physical namespaces. Nix checks the original source before filtering; filtered archives allow only an expected namespace subset while requiring every selected file/control and refusing new names. Installed and named private output directories are separate; similarly prefixed regular files remain witnessed. Unsupported historical contracts rebuild conservatively; current heads require a contract produced by the canonical command.
 
 ### Structure
 
@@ -259,8 +259,8 @@ library/ui/
       Button.figma.ts   Figma mapping, read by the tooling only
   apps/
     <app>/              app-specific UI: components and styles used by one app
-  index.ts              public exports: components and their prop types
-  figma/                Node-only Figma MCP server and CLI, config, snapshots
+  index.ts              public foundation exports; components when installed
+  figma/                Node-only Figma MCP server and CLI, config, verified cache
 ```
 
 - **Foundations:** expose shared tokens as CSS custom properties and typed
@@ -314,11 +314,12 @@ The Explorer HUD ships from two copies:
 - `apps/ui3/src/play` is its adaptation for Sites, served under `/play`, with
   its own compiler profile (`apps/ui3/tsconfig.play.json`).
 
-Both carry the same `design/` primitives and `styles/tokens.css`. In both, the
+Both carry the same `design/` primitives and `styles/tokens.css`. `react-web`
+imports the shared library (see [Integration](#integration)); in both, the
 existing primitives and local tokens remain in use, under
-`rendering/bevy-explorer/source/react-web/AGENTS.md`, until the shared library
-integration is reviewed and implemented. Sites will be migrated as a whole
-later; until then its HUD adaptation in `apps/ui3/src/play` stays as it is. A
+`rendering/bevy-explorer/source/react-web/AGENTS.md`, until they move to it.
+Sites will be migrated as a whole later; until then its HUD adaptation in
+`apps/ui3/src/play` stays as it is and does not load the shared foundations. A
 future migration must preserve HUD behavior in both.
 
 ### Integration
@@ -327,13 +328,22 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { Button } from '<shared-ui>'
+import { theme } from '@dcl/one-ui/foundations'
+import '@dcl/one-ui/foundations.css'
 ```
 
-`<shared-ui>` is a placeholder; the shared library's import name remains to be
-selected. Each consumer resolves it consistently in TypeScript and its build,
-allows access to shared sources and deduplicates React and React DOM. Assets
-must work in every supported target, including native CEF.
+`@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.
+
+`rendering/bevy-explorer/source/react-web` is set up this way:
+
+- `vite.shared.ts` holds the aliases and the React deduplication, and
+  `tsconfig.json` maps the same entries;
+- `src/main.tsx` loads `@dcl/one-ui/foundations.css` once;
+- `shared-inputs.json` records the actual compiler/Vite shared dependency closure. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public foundation entry, so generated components stay outside that closure.
+- Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
+  `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
+  `foundations/typography/font-source.json` pins
+  (`src/test/sharedUi.test.tsx` checks them).

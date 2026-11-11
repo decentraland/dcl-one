@@ -1390,6 +1390,22 @@ mod world_mint {
             let (status, _, _) = post(&app, &random_key(), &path, "{}").await;
             assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: a non-member");
         }
+        // WC-09: the world's access is decided before the scene, so a caller without access
+        // learns nothing about the world's scenes (upstream `assertWorldAccess` first).
+        for missing in ["bafymissing", "not-a-cid"] {
+            let path = format!("/worlds/{}/scenes/{missing}/comms", listed.display());
+            let (status, _, _) = post(&app, &random_key(), &path, "{}").await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: a non-member");
+            let (status, body, _) = post(&app, &visitor, &path, "{}").await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{path}: a member");
+            assert_eq!(
+                body["message"],
+                format!(
+                    "Scene \"{missing}\" not found in world \"{}\".",
+                    listed.display()
+                )
+            );
+        }
 
         let secret = world();
         let hash = bcrypt::hash("open sesame", 4).unwrap();
@@ -1450,6 +1466,16 @@ mod world_mint {
             StatusCode::TOO_MANY_REQUESTS,
             "throttled even with the right secret"
         );
+        // WC-09: the throttle is upstream's first check on a shared-secret world, before the
+        // owner (and, below, the platform ban) is looked at.
+        sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+            .bind(secret.key())
+            .bind(address_of(&visitor).as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, _, _) = post(&app, &visitor, &path, "{}").await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a throttled owner");
         let other = random_key();
         state.presence.complete_empty_fixture();
         let (status, body, _) = post(&app, &other, &path, r#"{"secret":"open sesame"}"#).await;
@@ -1469,6 +1495,12 @@ mod world_mint {
         .await;
         assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
         assert_eq!(body["error"], "Access denied, platform-banned user.");
+        let (status, _, _) = post(&app, &visitor, &path, "{}").await;
+        assert_eq!(
+            status,
+            StatusCode::TOO_MANY_REQUESTS,
+            "a throttled platform-banned wallet"
+        );
 
         let crowd = Arc::new(Presence::new());
         for wallet in ["0x01", "0x02"] {

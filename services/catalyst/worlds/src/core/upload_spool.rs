@@ -25,9 +25,10 @@ pub struct UploadSpool {
     next: usize,
 }
 
-/// A spooled file part: its CIDv1, size and path inside the spool.
+/// A spooled file part: its form name, the CIDv1 of its bytes, size and path inside the spool.
 #[derive(Debug, Clone)]
 pub struct SpooledFile {
+    pub name: String,
     pub hash: String,
     pub len: usize,
     pub path: PathBuf,
@@ -123,9 +124,11 @@ impl SpoolWriter {
         self.file.write_all(chunk).await
     }
 
-    pub async fn finish(mut self) -> std::io::Result<SpooledFile> {
+    /// The written part, filed under its form `name`.
+    pub async fn finish(mut self, name: String) -> std::io::Result<SpooledFile> {
         self.file.flush().await?;
         Ok(SpooledFile {
+            name,
             hash: self.hasher.finish(),
             len: self.len,
             path: self.path,
@@ -182,7 +185,7 @@ mod tests {
         for chunk in bytes.chunks(65_536) {
             part.write(chunk).await.unwrap();
         }
-        let file = part.finish().await.unwrap();
+        let file = part.finish("f".to_string()).await.unwrap();
         assert_eq!(file.hash, crate::auth::hash_bytes_v1(&bytes));
         assert_eq!(file.len(), bytes.len());
         assert_eq!(file.read().await.unwrap(), bytes);

@@ -37,3 +37,9 @@ export const SCENES: readonly VisualScene[] = [
   { id: 'tweens', base: [180, 0], settleMs: 6000, maxDifferentRatio: 0.003 }, // 5 s + 1 s
   { id: 'ui', base: [192, 0], settleMs: 5000, maxDifferentRatio: 0.003 }
 ]
+
+/** The pointer scene (`scenes/pointer-targets`), parcels `0,20` to `9,20`: not in `SCENES`. */
+export const POINTER_SCENE = { id: 'pointer-targets', base: [0, 20] as const }
+
+/** The raycast budget scene (`scenes/raycast-storm`), parcel `0,22`: not in `SCENES`. */
+export const RAYCAST_STORM_SCENE = { id: 'raycast-storm', base: [0, 22] as const }

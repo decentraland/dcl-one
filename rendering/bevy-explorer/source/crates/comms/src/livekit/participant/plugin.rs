@@ -36,6 +36,7 @@ use crate::{
         LivekitRuntimeRes,
     },
     private_chat::PrivateChatRoom,
+    voice_chat::{VoiceRoom, VOICE_CHAT_CHANNEL},
     SceneRoom,
 };
 
@@ -486,6 +487,7 @@ fn is_now_speaking(
     >,
     tracks: Query<Has<ActiveVideoCast>, (With<Video>, With<CameraTrack>)>,
     scene_rooms: Query<&SceneRoom>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     senders: Res<VoiceMessageStreams>,
 ) {
     let entity = trigger.target();
@@ -508,10 +510,7 @@ fn is_now_speaking(
     };
 
     if let Some(sender_address) = participant.identity().as_str().as_h160() {
-        let channel = match scene_rooms.get(room.get()).ok() {
-            Some(room) => room.0.clone(),
-            None => "Nearby".to_string(),
-        };
+        let channel = speaking_channel(room.get(), &scene_rooms, &voice_rooms);
         for sender in senders.iter() {
             sender
                 .send(VoiceMessage {
@@ -546,6 +545,7 @@ fn is_no_longer_speaking(
     >,
     tracks: Query<(), (With<Video>, With<CameraTrack>, With<ActiveVideoCast>)>,
     scene_rooms: Query<&SceneRoom>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     senders: Res<VoiceMessageStreams>,
 ) {
     let entity = trigger.target();
@@ -568,10 +568,7 @@ fn is_no_longer_speaking(
     };
 
     if let Some(sender_address) = participant.identity().as_str().as_h160() {
-        let channel = match scene_rooms.get(room.get()).ok() {
-            Some(room) => room.0.clone(),
-            None => "Nearby".to_string(),
-        };
+        let channel = speaking_channel(room.get(), &scene_rooms, &voice_rooms);
         for sender in senders.iter() {
             sender
                 .send(VoiceMessage {
@@ -592,6 +589,21 @@ fn is_no_longer_speaking(
                     )));
             }
         }
+    }
+}
+
+/// The channel a speaker's room names: the scene's hash, the voice room's name, else nearby.
+fn speaking_channel(
+    room: Entity,
+    scene_rooms: &Query<&SceneRoom>,
+    voice_rooms: &Query<(), With<VoiceRoom>>,
+) -> String {
+    if let Ok(scene) = scene_rooms.get(room) {
+        scene.0.clone()
+    } else if voice_rooms.contains(room) {
+        VOICE_CHAT_CHANNEL.to_owned()
+    } else {
+        "Nearby".to_owned()
     }
 }
 

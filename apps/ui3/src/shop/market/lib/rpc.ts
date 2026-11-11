@@ -8,7 +8,7 @@
 
 import { decodeFunctionResult, encodeFunctionData, type Abi, type ContractFunctionName } from "viem";
 
-import { CHAIN, type ChainId } from "../../model/chain";
+import { CHAIN, type ChainId } from "@shop/model/chain";
 
 const DEFAULT_RPC: Partial<Record<ChainId, string>> = {
   [CHAIN.ETHEREUM]: "https://ethereum-rpc.publicnode.com",

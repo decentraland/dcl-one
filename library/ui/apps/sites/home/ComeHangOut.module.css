@@ -1,0 +1,68 @@
+/* Source's fixed-height band with the owning route's shared animation behind the avatar group. */
+.root {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 480px;
+  overflow: hidden;
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+}
+
+.background {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+
+/* Phones: the group fills the lower 65%, overhanging the bottom edge as source. */
+.avatars {
+  position: absolute;
+  bottom: calc(-1 * var(--dcl-space-48));
+  left: 50%;
+  width: auto;
+  max-width: none;
+  height: 65%;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-48) var(--dcl-space-16);
+}
+
+.title {
+  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  text-align: center;
+}
+
+/* breakpoints.desktop (source switches at 991px): the group starts a third of the way down. */
+@media (min-width: 1024px) {
+  .root {
+    height: 800px;
+  }
+
+  /* Source sizes the 1920x1228 artwork to 840px tall (its declared height, a design measurement). */
+  .avatars {
+    top: calc(35% - var(--dcl-space-16) - var(--dcl-space-4));
+    bottom: auto;
+    height: 840px;
+  }
+
+  .content {
+    gap: var(--dcl-space-24);
+    padding: calc(var(--dcl-space-64) + var(--dcl-space-16)) var(--dcl-space-64);
+  }
+}

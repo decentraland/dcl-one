@@ -5,20 +5,20 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { shopCart } from "../cart/store";
 import { invalidateShopQueries } from "../discovery/query";
 import { COLLECTION, ITEM_ID, RESALE_WEARABLE, RESELLER, ShopHarness, TOKEN_ID, catalogClient, catalogTransport, defaultAnswers, fixtureHost, type CatalogAnswers, type CatalogScenario, type SessionKind } from "../discovery/fixtures";
-import type { TransportRequest } from "../api/signer";
+import type { TransportRequest } from "@shop/api/signer";
 import { encodeTokenId } from "./lib/token-id";
 import { createShopClient, type ShopClient } from "../api";
-import { BOOK } from "../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { fixtureOfferSource, type OfferScenario } from "./fixtures";
 import { ItemDetailRoute } from "./ItemDetail";
 import { bindBuyNowTopUp, stashBuyNowTopUp, takeBuyNowReturn } from "../credits/returns";
 import { Route, Routes } from "react-router";
 import { decodeFunctionData, type Hex } from "viem";
-import { ERC20_ABI, LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, manaToken } from "../market/lib/contracts";
+import { ERC20_ABI, LEGACY_MARKETPLACE, LEGACY_MARKETPLACE_ABI, manaToken } from "@shop/market/lib/contracts";
 import { fakeChain, fakeWallet } from "../market/testing";
 import { marketplaceOn } from "../market/testing-flags";
-import type { EvmAddress } from "../model/address";
-import { CHAIN } from "../model/chain";
+import type { EvmAddress } from "@shop/model/address";
+import { CHAIN } from "@shop/model/chain";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } })));
