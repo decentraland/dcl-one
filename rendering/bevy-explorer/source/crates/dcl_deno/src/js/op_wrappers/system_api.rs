@@ -1,6 +1,6 @@
 use common::{
     inputs::{HudPanel, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     structs::{MicState, PermissionType, PermissionUsed, PermissionValue},
 };
 use dcl_component::proto_components::common::Vector2;
@@ -10,11 +10,11 @@ use std::{cell::RefCell, rc::Rc};
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
-    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, VoiceMessage, WelcomeState,
-    WorldAccessEvent,
+    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
+    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
+    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 
 // list of op declarations
@@ -59,6 +59,7 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_bridge_stream(),
             op_read_bridge_stream(),
             op_get_user_profile(),
+            op_get_compact_profiles(),
             op_quit(),
             op_get_permission_request_stream(),
             op_read_permission_request_stream(),
@@ -121,6 +122,14 @@ pub fn ops(super_user: bool) -> Vec<OpDecl> {
             op_get_community_connectivity_stream(),
             op_read_community_connectivity_stream(),
             op_set_community_channels(),
+            // Voice chat
+            op_get_voice_chat_state_stream(),
+            op_read_voice_chat_state_stream(),
+            op_close_voice_chat_state_stream(),
+            op_get_community_voice_update_stream(),
+            op_read_community_voice_update_stream(),
+            op_close_community_voice_update_stream(),
+            op_voice_chat_action(),
         ]
     } else {
         Vec::default()
@@ -400,6 +409,15 @@ pub async fn op_get_user_profile(
     #[string] address: String,
 ) -> Result<SerializedProfile, deno_core::anyhow::Error> {
     dcl_js::system_api::op_get_user_profile(state, address).await
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<OpState>>,
+    #[serde] addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, deno_core::anyhow::Error> {
+    dcl_js::system_api::op_get_compact_profiles(state, addresses).await
 }
 
 #[op2(fast)]
@@ -788,6 +806,52 @@ pub async fn op_read_dm_user_state_stream(
 #[op2(fast)]
 pub fn op_close_dm_user_state_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
     dcl_js::system_api::op_close_dm_user_state_stream(state, rid)
+}
+
+#[op2(fast)]
+pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_voice_chat_state_stream(state)
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_voice_chat_state_stream(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Option<VoiceChatState>, anyhow::Error> {
+    dcl_js::system_api::op_read_voice_chat_state_stream(state, rid).await
+}
+
+#[op2(fast)]
+pub fn op_close_voice_chat_state_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
+    dcl_js::system_api::op_close_voice_chat_state_stream(state, rid)
+}
+
+#[op2(fast)]
+pub fn op_get_community_voice_update_stream(state: Rc<RefCell<OpState>>) -> u32 {
+    dcl_js::system_api::op_get_community_voice_update_stream(state)
+}
+
+#[op2(async)]
+#[serde]
+pub async fn op_read_community_voice_update_stream(
+    state: Rc<RefCell<OpState>>,
+    #[smi] rid: u32,
+) -> Result<Option<CommunityVoiceUpdate>, anyhow::Error> {
+    dcl_js::system_api::op_read_community_voice_update_stream(state, rid).await
+}
+
+#[op2(fast)]
+pub fn op_close_community_voice_update_stream(state: Rc<RefCell<OpState>>, #[smi] rid: u32) {
+    dcl_js::system_api::op_close_community_voice_update_stream(state, rid)
+}
+
+#[op2]
+pub fn op_voice_chat_action(
+    state: Rc<RefCell<OpState>>,
+    #[serde] action: VoiceChatAction,
+) -> Result<(), AnyError> {
+    dcl_js::system_api::op_voice_chat_action(state, action)
 }
 
 #[op2(async)]

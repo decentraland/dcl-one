@@ -65,6 +65,13 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   fetches the CEF framework once; only macOS falls back to it at runtime, so the `just` loop is
   macOS-first (see [Running](running.md#native) for Linux and Windows). Packaging follows the
   [native build steps](running.md#native).
+- **Task pools.** Compute, which runs both worlds' parallel systems and `par_iter` work, gets
+  half the cores (2 to 8; `--compute-threads` overrides it). IO is fixed at 8 because bevy runs
+  every asset loader's decode there; async takes a quarter of the cores (2 to 8). The pools add
+  up to more than the core count, so a heavy load shares cores with the frame's systems.
+- **GPU uploads.** Throttled asset uploads are capped at 10 MB per frame, as on the web
+  (`--gpu-bytes-per-frame`, 0 = unlimited). Assets with `RenderAssetTransferPriority::Immediate`,
+  which includes every mesh, bypass the cap.
 - **CEF `localStorage` is ephemeral.** Anything the native HUD must remember goes through
   `lib/prefs`, which the engine persists to disk. No native popups from the HUD: CEF's popup
   windows aren't composited into the texture.

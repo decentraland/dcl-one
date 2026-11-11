@@ -12,8 +12,8 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import Spinner from "../../atoms/Spinner";
-import { shortAddress } from "../model/address";
-import { CHAIN, chainLabel, type ChainId } from "../model/chain";
+import { shortAddress } from "@shop/model/address";
+import { CHAIN, chainLabel, type ChainId } from "@shop/model/chain";
 import { useMarketplace } from "../market/access";
 import { MarketSignIn } from "../seller/pages/SellerSignIn";
 import { useShopWallet } from "../wallet/context";

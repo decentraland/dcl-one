@@ -36,6 +36,7 @@ use crate::{
         LivekitRuntimeRes,
     },
     private_chat::PrivateChatRoom,
+    voice_chat::{VoiceRoom, VOICE_CHAT_CHANNEL},
     SceneRoom,
 };
 
@@ -86,7 +87,6 @@ impl Plugin for LivekitParticipantPlugin {
         app.add_observer(participant_entity_removed);
         app.add_observer(participant_connection_quality_changed);
         app.add_observer(participant_payload);
-        app.add_observer(participant_metadata_changed);
         app.add_observer(active_speakers_changed);
         app.add_observer(is_now_speaking);
         app.add_observer(is_no_longer_speaking);
@@ -144,9 +144,8 @@ fn participant_connected(
     }
 
     // Register presence explicitly. Membership is otherwise implied by a `PlayerUpdate` arriving,
-    // and the only one this path used to emit was the metadata message below — which is skipped
-    // when the token carries no metadata, so a peer whose avatar state rides Pulse could sit in the
-    // room without ever being recorded as being in it. `PlayerLeft` on disconnect is the mirror.
+    // and a peer whose avatar state rides Pulse sends none here, so it could sit in the room without
+    // ever being recorded as being in it. `PlayerLeft` on disconnect is the mirror.
     if !is_local {
         if let Some(address) = participant.identity().as_str().as_h160() {
             let transport_id = *room_entity;
@@ -438,46 +437,6 @@ fn retire_unannounced_participants(
     }
 }
 
-fn participant_metadata_changed(
-    trigger: Trigger<ParticipantMetadataChanged>,
-    transport_senders: crate::global_crdt::TransportSenders,
-    mut player_update_tasks: PlayerUpdateTasksMut,
-    livekit_runtime: LivekitRuntimeRes,
-) {
-    let ParticipantMetadataChanged { room, participant } = trigger.event();
-
-    let meta = participant.metadata();
-    if !meta.is_empty() {
-        debug!(
-            "Metadata of {} ({}) changed.",
-            participant.sid(),
-            participant.identity()
-        );
-        if let Some(address) = participant.identity().as_str().as_h160() {
-            let room = *room;
-            let Some(sender) = transport_senders.get(room) else {
-                return;
-            };
-            let task = livekit_runtime.spawn(async move {
-                sender
-                    .send(
-                        PlayerUpdate {
-                            transport_id: room,
-                            message: PlayerMessage::MetaData(meta),
-                            address,
-                        }
-                        .into(),
-                    )
-                    .await
-            });
-            player_update_tasks.push(PlayerUpdateTask {
-                runtime: (*livekit_runtime).clone(),
-                task,
-            });
-        }
-    }
-}
-
 fn active_speakers_changed(
     trigger: Trigger<ActiveSpeakersChanged>,
     mut commands: Commands,
@@ -528,6 +487,7 @@ fn is_now_speaking(
     >,
     tracks: Query<Has<ActiveVideoCast>, (With<Video>, With<CameraTrack>)>,
     scene_rooms: Query<&SceneRoom>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     senders: Res<VoiceMessageStreams>,
 ) {
     let entity = trigger.target();
@@ -550,10 +510,7 @@ fn is_now_speaking(
     };
 
     if let Some(sender_address) = participant.identity().as_str().as_h160() {
-        let channel = match scene_rooms.get(room.get()).ok() {
-            Some(room) => room.0.clone(),
-            None => "Nearby".to_string(),
-        };
+        let channel = speaking_channel(room.get(), &scene_rooms, &voice_rooms);
         for sender in senders.iter() {
             sender
                 .send(VoiceMessage {
@@ -588,6 +545,7 @@ fn is_no_longer_speaking(
     >,
     tracks: Query<(), (With<Video>, With<CameraTrack>, With<ActiveVideoCast>)>,
     scene_rooms: Query<&SceneRoom>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     senders: Res<VoiceMessageStreams>,
 ) {
     let entity = trigger.target();
@@ -610,10 +568,7 @@ fn is_no_longer_speaking(
     };
 
     if let Some(sender_address) = participant.identity().as_str().as_h160() {
-        let channel = match scene_rooms.get(room.get()).ok() {
-            Some(room) => room.0.clone(),
-            None => "Nearby".to_string(),
-        };
+        let channel = speaking_channel(room.get(), &scene_rooms, &voice_rooms);
         for sender in senders.iter() {
             sender
                 .send(VoiceMessage {
@@ -634,6 +589,21 @@ fn is_no_longer_speaking(
                     )));
             }
         }
+    }
+}
+
+/// The channel a speaker's room names: the scene's hash, the voice room's name, else nearby.
+fn speaking_channel(
+    room: Entity,
+    scene_rooms: &Query<&SceneRoom>,
+    voice_rooms: &Query<(), With<VoiceRoom>>,
+) -> String {
+    if let Ok(scene) = scene_rooms.get(room) {
+        scene.0.clone()
+    } else if voice_rooms.contains(room) {
+        VOICE_CHAT_CHANNEL.to_owned()
+    } else {
+        "Nearby".to_owned()
     }
 }
 

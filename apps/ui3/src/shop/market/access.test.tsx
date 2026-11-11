@@ -3,12 +3,12 @@ import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { primeRemoteFlags, remoteFlagState, REMOTE_FLAG } from "../discovery/lib/remoteFlags";
-import { evmAddress } from "../model/address";
-import { SIGNED_OUT, type Session } from "../model/settlement";
+import { evmAddress } from "@shop/model/address";
+import { SIGNED_OUT, type Session } from "@shop/model/settlement";
 import { ShopWalletProvider } from "../wallet/context";
 import { fixtureHost, type SessionKind } from "../discovery/fixtures";
 import { MarketplaceGate, marketplaceAccess } from "./access";
-import { marketplaceSession } from "./access-rule";
+import { marketplaceSession } from "@shop/market/access-rule";
 import { marketplaceOn } from "./testing-flags";
 
 const ME = evmAddress("0x0000000000000000000000000000000000000b0b");

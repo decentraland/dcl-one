@@ -2,8 +2,8 @@
 // inside the super-user (--system-scene) scene sandbox. This is the ENGINE-side surface (raw shapes);
 // the wire shapes React sees live in the shared protocol. Only the methods the domains use
 // are declared — extend as needed.
-import type { ActionWire, Setting } from '../../src/engine/protocol'
-import type { SerializedProfile } from './domains/profile'
+import type { ActionWire, Setting } from '@explorer-core/engine/protocol'
+import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
   AvatarModifierState,
@@ -12,8 +12,11 @@ import type {
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
+  CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  VoiceChatAction,
+  VoiceChatState,
   VoiceMessage,
   FriendData,
   FriendRequestData,
@@ -34,7 +37,7 @@ import type {
   Vector3,
   WelcomeState,
   WorldAccessEvent
-} from '../../src/engine/generated'
+} from '@explorer-core/engine/generated'
 
 // --- raw social-service shapes (BevyApi.social.*), generated from the Rust structs ---
 export type { FriendData, FriendStatusData, FriendRequestData }
@@ -75,6 +78,17 @@ export type SocialApi = {
   setCommunityChannels: (ids: string[]) => void
 }
 
+/** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
+export type { VoiceChatState, VoiceChatAction, CommunityVoiceUpdate }
+export type VoiceChatApi = {
+  /** The voice chat state now, then on every change; `close()` ends it. */
+  getStateStream: () => AsyncIterable<VoiceChatState> & { close: () => void }
+  /** Every community stream started / ended broadcast; `close()` ends it. */
+  getCommunityUpdateStream: () => AsyncIterable<CommunityVoiceUpdate> & { close: () => void }
+  /** Fire and forget; the outcome shows on the state stream. */
+  action: (action: VoiceChatAction) => void
+}
+
 export type ChatStreamMessage = ChatMessage
 export type SceneLoadingState = SceneLoadingUi
 export type MicState = { enabled: boolean; available: boolean }
@@ -99,7 +113,7 @@ export type SystemActionEvent = { action: string; pressed: boolean }
 
 export type KernelFetchRequest = {
   url: string
-  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string }
+  init: { headers?: Record<string, string>; method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'; body?: string | Uint8Array }
   meta: string
 }
 export type KernelFetchResponse = { ok: boolean; status: number; statusText?: string; body: string }
@@ -201,6 +215,10 @@ export type BevyApiInterface = {
    *  guests included), resolved through its profile cache and fetch cascade. Rejects once the
    *  engine has concluded the address can't be resolved. */
   getUserProfile: (address: string) => Promise<SerializedProfile>
+  /** The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses in
+   *  one call, through the engine's profile cache: what a list row shows. In request order; an
+   *  address the engine can't resolve is left out. At most 200 addresses; more rejects. */
+  getCompactProfiles: (addresses: string[]) => Promise<CompactProfile[]>
   kernelFetch: (req: KernelFetchRequest) => Promise<KernelFetchResponse>
   /** Each service's base url by its web param, as the engine resolves it: the service's
    *  override, else its composition from the base domain. */
@@ -216,6 +234,8 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
+  /** Optional: absent on runtimes whose SystemApi predates voice chat. */
+  voiceChat?: VoiceChatApi
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require

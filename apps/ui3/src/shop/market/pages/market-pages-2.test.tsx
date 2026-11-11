@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { BOOK } from "../../payment/fixtures";
+import { BOOK } from "@shop/payment/fixtures";
 import { LISTS, list, MANA } from "../fixtures";
 import { DEFAULT_LIST_ID } from "../lib/favorites";
 import { createFavoritesStore } from "../store/favorites";

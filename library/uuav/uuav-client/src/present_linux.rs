@@ -154,6 +154,7 @@ pub struct PlayerVideo {
     /// Newest (generation, slot) the helper finished writing.
     published: Option<(u32, u8)>,
     presented: Option<(u32, u8)>,
+    pub(crate) presented_frames: u64,
     /// Ack the render event owes the helper after mapping a generation.
     ack_due: Option<u32>,
 }
@@ -272,6 +273,7 @@ impl PlayerVideo {
             .uv
             .copy_from_slice(sources[1].bytes(planes.uv.len())?);
         self.presented = Some((generation, slot));
+        self.presented_frames = self.presented_frames.saturating_add(1);
         Ok(ack)
     }
 
