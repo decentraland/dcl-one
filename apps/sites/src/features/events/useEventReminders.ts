@@ -16,6 +16,8 @@ export type Reminder = { active: boolean; pending: boolean; toggle: () => void }
 const withId = (ids: readonly string[], id: string, attending: boolean): string[] =>
   attending ? (ids.includes(id) ? [...ids] : [...ids, id]) : ids.filter((other) => other !== id);
 
+const TOGGLE_KEY = ["attendance", "toggle"] as const;
+
 /** Pending and failed writes, each by account and event, so concurrent toggles never share state. */
 const slot = (signer: string, eventId: string) => `${signer.toLowerCase()}\u0000${eventId}`;
 
@@ -36,11 +38,13 @@ export function useEventReminders(identity: AuthIdentity | null, onSignIn: () =>
   const [failed, setFailed] = useState<{ slot: string; eventId: string } | null>(null);
 
   const mutation = useMutation({
+    mutationKey: TOGGLE_KEY,
     mutationFn: ({ identity, eventId, attending }: Toggle) => writeAttendance(identity, eventId, attending),
     onMutate: async ({ identity, eventId, attending }: Toggle) => {
       const key = attendanceKeys.list(identity.signer);
       setPending((prev) => new Set(prev).add(slot(identity.signer, eventId)));
-      setFailed((prev) => (prev?.slot === slot(identity.signer, eventId) ? null : prev));
+      // A new attempt replaces the last failure notice, whichever card it was on.
+      setFailed(null);
       await client.cancelQueries({ queryKey: key });
       const ids = client.getQueryData<string[]>(key);
       if (ids) client.setQueryData(key, withId(ids, eventId, attending));
@@ -53,15 +57,18 @@ export function useEventReminders(identity: AuthIdentity | null, onSignIn: () =>
       const ids = client.getQueryData<string[]>(context.key);
       if (ids) client.setQueryData(context.key, withId(ids, eventId, context.was));
     },
-    // Not awaited: a slow re-read must not keep the toggle disabled after the write settled.
+    onSuccess: () => setFailed(null),
     onSettled: (_data, _error, { identity, eventId }) => {
       setPending((prev) => {
         const next = new Set(prev);
         next.delete(slot(identity.signer, eventId));
         return next;
       });
-      void client.invalidateQueries({ queryKey: attendanceKeys.list(identity.signer) });
-      void client.invalidateQueries({ queryKey: attendanceKeys.attending(identity.signer, eventId) });
+      // Re-read once the last write settles: an earlier re-read would overwrite the optimistic flags of
+      // writes still in flight. Not awaited, so a slow re-read never keeps a toggle disabled.
+      if (client.isMutating({ mutationKey: TOGGLE_KEY }) > 1) return;
+      // The list and any single-event flag (/jump) of this account.
+      void client.invalidateQueries({ queryKey: ["private", identity.signer.toLowerCase(), "attendance"] });
     },
   });
 

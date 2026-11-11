@@ -95,7 +95,7 @@ beforeEach(() => {
     return found;
   });
   vi.mocked(loadJumpPlace).mockResolvedValue(null);
-  http.signedGetJSON.mockReset().mockResolvedValue({ ok: true, data: [] });
+  http.signedGetJSON.mockReset().mockResolvedValue({ ok: true, data: [{ id: "up", name: "Watch Party", attending: false }] });
   http.postJSON.mockReset();
   signIn.openSignIn.mockReset();
   // Creator faces: no profiles unless a test says otherwise, and never the real network.

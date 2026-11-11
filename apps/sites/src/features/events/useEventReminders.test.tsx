@@ -25,7 +25,15 @@ import { useEventReminders } from "./useEventReminders";
 
 const ana = { signer: "0xAB" } as unknown as AuthIdentity;
 const bob = { signer: "0xCD" } as unknown as AuthIdentity;
-const attending = (...ids: string[]) => ({ ok: true, data: ids.map((id) => ({ id, name: id })) });
+/** The endpoint answers every unfinished event with the member's flag; only the flagged ones are reminders. */
+const attending = (...ids: string[]) => ({
+  ok: true,
+  data: [
+    ...ids.map((id) => ({ id, name: id, attending: true })),
+    { id: "other", name: "other", attending: false },
+    { id: "b-not", name: "b-not", attending: false },
+  ],
+});
 
 function setup(who: AuthIdentity | null, onSignIn = vi.fn()) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -62,7 +70,13 @@ describe("useEventReminders", () => {
     http.signedGetJSON.mockResolvedValue(attending("a", "c"));
     const { hook } = setup(ana);
     await waitFor(() => expect(hook.result.current.get("a").pending).toBe(false));
-    expect(["a", "b", "c", "d"].map((id) => hook.result.current.get(id).active)).toEqual([true, false, true, false]);
+    expect(["a", "b", "c", "other", "b-not"].map((id) => hook.result.current.get(id).active)).toEqual([
+      true,
+      false,
+      true,
+      false,
+      false,
+    ]);
     expect(http.signedGetJSON).toHaveBeenCalledOnce();
     expect(http.signedGetJSON.mock.calls[0]?.[0]).toBe("/events/api/events/attending");
   });
@@ -123,7 +137,43 @@ describe("useEventReminders", () => {
     expect(hook.result.current.get("b").pending).toBe(true);
     await act(async () => writes.get("b")!.ok());
     await waitFor(() => expect(hook.result.current.get("b").pending).toBe(false));
-    expect(hook.result.current.failed).toBe("a");
+    // B's success replaces A's failure notice.
+    expect(hook.result.current.failed).toBeNull();
+  });
+
+  it("should clear the failure notice when the member tries again", async () => {
+    http.signedGetJSON.mockResolvedValue(attending());
+    const writes = deferredWrites();
+    const { hook } = setup(ana);
+    await waitFor(() => expect(hook.result.current.get("a").pending).toBe(false));
+    http.signedGetJSON.mockReturnValue(new Promise(() => {}));
+    act(() => hook.result.current.get("a").toggle());
+    await waitFor(() => expect(writes.has("a")).toBe(true));
+    await act(async () => writes.get("a")!.fail());
+    await waitFor(() => expect(hook.result.current.failed).toBe("a"));
+    act(() => hook.result.current.get("c").toggle());
+    await waitFor(() => expect(hook.result.current.failed).toBeNull());
+  });
+
+  it("should re-read the list only after the last of several writes settles", async () => {
+    http.signedGetJSON.mockResolvedValue(attending());
+    const writes = deferredWrites();
+    const { hook, client } = setup(ana);
+    await waitFor(() => expect(hook.result.current.get("a").pending).toBe(false));
+    const reads = () => http.signedGetJSON.mock.calls.length;
+    const before = reads();
+    act(() => hook.result.current.get("a").toggle());
+    act(() => hook.result.current.get("b").toggle());
+    await waitFor(() => expect(client.getQueryData(attendanceKeys.list("0xab"))).toEqual(["a", "b"]));
+    await waitFor(() => expect(writes.has("b")).toBe(true));
+    await act(async () => writes.get("a")!.ok());
+    await waitFor(() => expect(hook.result.current.get("a").pending).toBe(false));
+    // B is still in flight: a re-read now would drop its optimistic flag.
+    expect(reads()).toBe(before);
+    expect(client.getQueryData(attendanceKeys.list("0xab"))).toEqual(["a", "b"]);
+    http.signedGetJSON.mockResolvedValue(attending("a", "b"));
+    await act(async () => writes.get("b")!.ok());
+    await waitFor(() => expect(reads()).toBe(before + 1));
   });
 
   it("should not show one account's list or failure to the next", async () => {

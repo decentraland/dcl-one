@@ -26,12 +26,19 @@ async function fetchAttending(identity: AuthIdentity, eventId: string, signal?: 
   return AttendingEnvelope.parse(raw).data.attending;
 }
 
-const AttendingListEnvelope = z.object({ data: z.array(z.object({ id: z.string() }).passthrough()) }).passthrough();
+const AttendingListEnvelope = z
+  .object({ data: z.array(z.object({ id: z.string(), attending: z.boolean() }).passthrough()) })
+  .passthrough();
 
-/** The ids of every unfinished event the member attends (`GET /api/events/attending`). */
+/**
+ * The ids of the unfinished events the member attends. `GET /api/events/attending` answers every
+ * unfinished, approved event with the member's `attending` flag, so only the flagged ones are kept.
+ */
 async function fetchAttendingIds(identity: AuthIdentity, signal?: AbortSignal): Promise<string[]> {
   const raw = await signedGetJSON(eventsApiPath("get", "/api/events/attending"), { identity, signal });
-  return AttendingListEnvelope.parse(raw).data.map((event) => event.id);
+  return AttendingListEnvelope.parse(raw)
+    .data.filter((event) => event.attending)
+    .map((event) => event.id);
 }
 
 /** One signed read for a page of events: the member's attending list, under their account. */
