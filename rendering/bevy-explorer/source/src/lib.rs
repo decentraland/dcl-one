@@ -8,9 +8,9 @@ mod deep_link;
 mod ext;
 mod gpu_memory;
 mod memory;
-pub mod perf;
 #[cfg(test)]
 mod memory_tests;
+pub mod perf;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -716,14 +716,13 @@ impl DecentralandApp {
         app.add_plugins(GpuTimePlugin);
 
         // what the explorer measures about itself (`docs/guidelines/profiling.md`): the sampler,
-        // the frame-time breakdown, the scope profiler; and Bevy's per-pass render timings and
-        // system information, native only
+        // the frame-time breakdown, the scope profiler; Bevy's per-pass render timings on native
+        // and its system information where the `sysinfo_plugin` feature is on (Cargo.toml)
         app.add_plugins(perf::PerformanceMonitoringPlugin);
         #[cfg(not(target_arch = "wasm32"))]
-        app.add_plugins((
-            bevy::render::diagnostic::RenderDiagnosticsPlugin,
-            bevy::diagnostic::SystemInformationDiagnosticsPlugin,
-        ));
+        app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin);
+        #[cfg(any(windows, target_os = "linux"))]
+        app.add_plugins(bevy::diagnostic::SystemInformationDiagnosticsPlugin);
 
         // Systems
         app.configure_sets(Startup, SetupSets::Init.before(SetupSets::Main));

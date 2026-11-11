@@ -42,7 +42,7 @@ numbers.
   (frame minus sleep) and GPU time are within 20 % of each other; `present_wait` when the
   swapchain wait takes a fifth of the frame or more (vsync); otherwise `main_thread_cpu` or
   `gpu`, whichever is the longer by the margin. Null until a GPU time exists.
-- **System.** On native, Bevy's system information: system and process CPU usage, the OS, the CPU,
+- **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
   its cores and the RAM.
 
 ### Render (`/render_state`)

@@ -167,10 +167,8 @@ bevy = { version = "0.16.1", default-features = false, features = [
   "bevy_state",
   "pbr_light_textures",
   "reduce_image_sizes",
-  # the scope profiler's spans (src/perf/profiled_scopes.rs) and the system-information
-  # diagnostics, in every build
+  # the scope profiler's spans (src/perf/profiled_scopes.rs), in every build
   "trace",
-  "sysinfo_plugin",
 ] }
 # leaf bevy crates for dcl_component, which has to build without the engine (system_api_types TS export)
 bevy_math = { version = "0.16.1", default-features = false, features = ["std"] }
@@ -463,6 +461,9 @@ mimalloc = { workspace = true }
 cef_offscreen = { workspace = true, optional = true }
 
 [target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+# Bevy's system-information diagnostics. Not on macOS: there the feature turns on sysinfo's
+# `apple-app-store`, which removes the process memory reading `src/memory.rs` samples.
+bevy = { workspace = true, features = ["sysinfo_plugin"] }
 ash = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

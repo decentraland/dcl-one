@@ -441,6 +441,14 @@ fn summary_lines_add_hiccup_memory_and_scope_rows_only_where_a_run_wrote_them() 
 
     // a section without summaries keeps its table as it was
     let ok = report_of("ok");
-    assert!(!ok.markdown.contains("Hiccups per run |"), "{}", ok.markdown);
-    assert!(!ok.markdown.contains("<details><summary>Top scopes"), "{}", ok.markdown);
+    assert!(
+        !ok.markdown.contains("Hiccups per run |"),
+        "{}",
+        ok.markdown
+    );
+    assert!(
+        !ok.markdown.contains("<details><summary>Top scopes"),
+        "{}",
+        ok.markdown
+    );
 }

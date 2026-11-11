@@ -5,10 +5,7 @@
 use std::collections::BTreeMap;
 
 use bevy::{
-    diagnostic::{
-        Diagnostic, DiagnosticPath, DiagnosticsStore, FrameTimeDiagnosticsPlugin, SystemInfo,
-        SystemInformationDiagnosticsPlugin,
-    },
+    diagnostic::{Diagnostic, DiagnosticPath, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     prelude::*,
     render::renderer::RenderAdapterInfo,
 };
@@ -195,7 +192,9 @@ fn performance_state(
     in_progress: Res<InProgressSample>,
     snapshot: Option<Res<PerformanceSnapshot>>,
     breakdown: Res<FrameTimeBreakdown>,
-    system_info: Option<Res<SystemInfo>>,
+    #[cfg(any(windows, target_os = "linux"))] system_info: Option<
+        Res<bevy::diagnostic::SystemInfo>,
+    >,
 ) {
     if input.take().is_none_or(|parsed| parsed.is_err()) {
         return;
@@ -243,17 +242,24 @@ fn performance_state(
         gpu_ms,
     ]
     .map(|ms| ms.map(tenths));
-    let cpu_usage = [
-        smoothed(&SystemInformationDiagnosticsPlugin::SYSTEM_CPU_USAGE),
-        smoothed(&SystemInformationDiagnosticsPlugin::PROCESS_CPU_USAGE),
-    ]
-    .map(|percent| percent.map(tenths));
-    let system = json!({
-        "cpuUsage": cpu_usage[0].map(|_| cpu_usage),
-        "info": system_info.as_deref().map(|info| {
-            format!("{} / {} / {} / {}", info.os, info.cpu, info.core_count, info.memory)
-        }),
-    });
+    // Bevy's system information is compiled where the `sysinfo_plugin` feature is on (Cargo.toml)
+    #[cfg(any(windows, target_os = "linux"))]
+    let system = {
+        use bevy::diagnostic::SystemInformationDiagnosticsPlugin;
+        let cpu_usage = [
+            smoothed(&SystemInformationDiagnosticsPlugin::SYSTEM_CPU_USAGE),
+            smoothed(&SystemInformationDiagnosticsPlugin::PROCESS_CPU_USAGE),
+        ]
+        .map(|percent| percent.map(tenths));
+        json!({
+            "cpuUsage": cpu_usage[0].map(|_| cpu_usage),
+            "info": system_info.as_deref().map(|info| {
+                format!("{} / {} / {} / {}", info.os, info.cpu, info.core_count, info.memory)
+            }),
+        })
+    };
+    #[cfg(not(any(windows, target_os = "linux")))]
+    let system = Value::Null;
     input.reply_ok(
         json!({
             "version": crate::version(),

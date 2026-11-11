@@ -34,7 +34,8 @@ fn report_performance_snapshot_system(
                 total_time: cpu.mean_ms * cpu.sample_count as f32,
                 hiccups_in_thousand_frames: (u64::from(cpu.frames_over_hiccup_threshold_count)
                     * 1000
-                    / u64::from(cpu.sample_count.max(1))) as u32,
+                    / u64::from(cpu.sample_count.max(1)))
+                    as u32,
                 hiccups_time: cpu.frames_over_hiccup_threshold_time_sum_ms / 1000.0,
                 min_frame_time: cpu.min_ms,
                 max_frame_time: cpu.max_ms,
