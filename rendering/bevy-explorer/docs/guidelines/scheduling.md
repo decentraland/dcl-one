@@ -39,6 +39,13 @@ flowchart LR
 | `PostLoop` | Reacting to scene state the loop wrote: by far the largest set | materials, mesh renderer, gltf container, lights, animation, fonts, scene UI, tween, audio, NFT, texture camera, avatar attach and animate, world UI |
 | `RestrictedActions` | Anything that may move the player, change realm, or alter engine-level state on a scene's behalf | teleport and move player, settings, profile updates, emote reports, imposter render |
 
+`run_raycasts` runs each request in three phases. Prepare is serial: it sets `last_run`, resolves
+the ray's origin and direction and flushes the collider BVHs of the scenes the ray crosses. Cast
+only reads colliders. Write is serial: the result into the CRDT, debug gizmos. The uncapped tier
+([scene raycasts](interaction.md#scene-raycasts)) prepares all its requests, casts them together on
+the `ComputeTaskPool` once at least `MIN_PARALLEL_RAYCASTS` are due, then writes in request order.
+The capped tier runs the phases one request at a time, so its budget can stop between casts.
+
 ## The scene loop
 
 `run_scene_loop` runs a separate `Schedule` (`SceneLoopSchedule`) repeatedly inside the frame
@@ -128,10 +135,13 @@ Other named sets: `RealmLifecycle` for systems that react to a realm change, `Te
 ## Render world
 
 The render app is bevy's. We add a few `RenderSet::Prepare*` systems for custom materials and
-uniforms, and two stars passes in `Core3d` (`crates/visuals/src/stars.rs`), of which a view draws
-one: the early pass between `MainTransmissivePass` and `MainTransparentPass` for views without
-depth of field (every MSAA view), and the pass between `DepthOfField` and `Tonemapping` for views
-with it. Render-world ordering follows bevy's conventions, not ours.
+uniforms, and three render-graph nodes in `Core3d`: the hover glow between `DepthOfField` and
+`Tonemapping` (`crates/scene_material/src/highlight`, whose mask phase also adds queue and sort
+systems in `RenderSet::QueueMeshes` and `RenderSet::PhaseSort`), and two stars passes
+(`crates/visuals/src/stars.rs`), of which a view draws one: the early pass between
+`MainTransmissivePass` and `MainTransparentPass` for views without depth of field (every MSAA
+view), and the pass between `DepthOfField` and `Tonemapping` for views with it. Render-world
+ordering follows bevy's conventions, not ours.
 
 ## Headless
 

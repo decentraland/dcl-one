@@ -19,6 +19,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the extension is not the fix; the long-term answer is still open.
 - **Sky preset curves are linear.** The fog colour, light colour, light intensity and Trilight
   ambient keys are interpolated linearly; Unity's curve tangents are not carried.
+- **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
+  is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
+  cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
+  so a bias that clears a metre of slope also draws it over anything that close, and the
+  blob stays flat rather than lying on the ground. Bevy's own decals do not fit either:
+  clustered decals are true box projectors but need bindless textures, so they do not run
+  on WebGPU or macOS, and `ForwardDecal` is a flat quad with a depth fade, so it has the
+  same slope limits in a softer form. The projection reads the primary camera's
+  depth prepass, which the camera therefore keeps; without one the marker draws nothing.
+  Keeping it costs nothing new: the camera already renders it on native and web, and it
+  saves the main pass shading hidden opaque pixels. It also enables later work: decals,
+  soft edges where transparent surfaces meet geometry, and GPU occlusion culling.
+  The box runs from 0.1 m under the feet, so the blob never darkens the avatar, to 1 m
+  below the ground under the player's centre, so ground falling away by up to 45 degrees
+  across the footprint still catches it. The ramps follow the shadergraph, except that
+  grounded means within 0.2 m of the ground, as for the animation, and the opacity rises
+  over the next 0.2 m instead of the last metre: with the projector's 0.5 fade factor,
+  Unity's ramp left the blob nearly invisible before the player landed.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's

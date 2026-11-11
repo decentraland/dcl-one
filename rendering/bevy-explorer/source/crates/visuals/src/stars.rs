@@ -51,6 +51,7 @@ use bevy::{
 };
 use bevy_atmosphere::{pipeline::AtmosphereImage, prelude::AtmosphereCamera};
 use common::structs::SceneGlobalLight;
+use scene_material::highlight::HighlightLabel;
 
 pub struct StarsPlugin;
 
@@ -86,7 +87,12 @@ impl Plugin for StarsPlugin {
             .add_render_graph_node::<ViewNodeRunner<StarsNode<false>>>(Core3d, StarsLabel)
             .add_render_graph_edges(
                 Core3d,
-                (Node3d::DepthOfField, StarsLabel, Node3d::Tonemapping),
+                (
+                    Node3d::DepthOfField,
+                    HighlightLabel,
+                    StarsLabel,
+                    Node3d::Tonemapping,
+                ),
             );
     }
 
