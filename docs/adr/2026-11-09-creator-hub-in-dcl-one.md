@@ -51,15 +51,13 @@ What else changes:
 - **Installers.** They keep publishing to `decentraland/creator-hub` releases, which becomes a
   release-only repository: every installed app's updater reads them (`electron-builder.cjs`
   `publish`, `shared/urls.ts`), and GitHub has one "Latest" release per repository, which the
-  updater follows. A fine-grained token scoped to that repository (`CREATOR_HUB_RELEASES_TOKEN`,
-  Contents read and write) gives `creator-hub-desktop.yml` and `creator-hub-drop.yml` access; it
-  expires, so renewing it is part of owning the release. The desktop workflow tags
-  `creator-hub@X.Y.Z` here, from which `semantic-version` (`change_path: apps/creator-hub`)
-  computes the next version. That
+  updater follows. A GitHub App installed on that repository gives `creator-hub-desktop.yml` and
+  `creator-hub-drop.yml` their token. The desktop workflow tags `creator-hub@X.Y.Z` here, from
+  which `semantic-version` (`change_path: apps/creator-hub`) computes the next version. That
   repository is not archived: an archived repository takes no new releases.
 - **Secrets.** Jobs that run on pull requests read repository secrets: the SDK bucket, the
   development asset CDN, the end-to-end wallet and the app's build-time keys. Signing,
-  notarization, the production asset CDN, the Sentry upload token and the release-repository token live
+  notarization, the production asset CDN, the Sentry upload token and the release App key live
   in the `creator-hub-release` environment, limited to `main`. Jobs pick it with
   `github.ref == 'refs/heads/main' && 'creator-hub-release' || ''`.
 - **Inspector previews.** These were GitHub Pages; they are now uploaded to the SDK bucket next to

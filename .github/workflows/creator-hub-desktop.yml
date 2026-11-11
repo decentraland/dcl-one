@@ -143,6 +143,18 @@ jobs:
           user_format_type: "json"
           change_path: "apps/creator-hub"
 
+      # Installers are published to decentraland/creator-hub, a release-only repository: every
+      # installed app's updater reads its GitHub releases (electron-builder.cjs `publish`).
+      - name: Token for the release repository
+        id: release-token
+        if: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CREATOR_HUB_RELEASES_APP_ID }}
+          private-key: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+          owner: decentraland
+          repositories: creator-hub
+
       # Download 'SSLcom/esigner-codesign' to a folder called 'esigner-codesign' in the root of the project
       - name: Checkout esigner-codesign repository (Windows)
         if: ${{github.ref == 'refs/heads/main' && matrix.os == 'windows-latest' && !inputs.dry-run}}
@@ -178,11 +190,7 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
           # Publishing artifacts
-          # Installers are published to decentraland/creator-hub, a release-only repository: every
-          # installed app's updater reads its GitHub releases (electron-builder.cjs `publish`). This
-          # run's own token only reaches dcl-one, so a fine-grained token scoped to that repository
-          # (Contents: read and write) does it.
-          GH_TOKEN: ${{ secrets.CREATOR_HUB_RELEASES_TOKEN }}
+          GH_TOKEN: ${{ steps.release-token.outputs.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           EP_PRE_RELEASE: true # Publish as pre-release
           # The following are the parameters required by the esigner-codesign action to work, we must explicitly pass in even the optional ones since we're not using the action directly, but from the checked out repo

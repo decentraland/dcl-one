@@ -28,6 +28,16 @@ jobs:
           sparse-checkout: .github
           filter: blob:none
 
+      - name: Token for the release repository
+        id: release-token
+        if: ${{ github.ref == 'refs/heads/main' && !inputs.dry-run }}
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          app-id: ${{ vars.CREATOR_HUB_RELEASES_APP_ID }}
+          private-key: ${{ secrets.CREATOR_HUB_RELEASES_APP_PRIVATE_KEY }}
+          owner: decentraland
+          repositories: creator-hub
+
       # The installers' pre-releases live in decentraland/creator-hub (release-only), so the
       # bare X.Y.Z pattern can't reach another project's releases here.
       - name: Delete prereleases
@@ -37,4 +47,4 @@ jobs:
           pattern: '^[0-9]+\.[0-9]+\.[0-9]+$'
           dry_run: 'false'
           repository: decentraland/creator-hub
-          github_token: ${{ secrets.CREATOR_HUB_RELEASES_TOKEN }}
+          github_token: ${{ steps.release-token.outputs.token }}
