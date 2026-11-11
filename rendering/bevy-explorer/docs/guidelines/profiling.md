@@ -38,10 +38,10 @@ numbers.
   `perf/scene_runtime_loop_ms`, `perf/frame_limiter_sleep_ms`, `perf/render_world_cpu_ms`,
   `perf/swapchain_present_wait_ms` and `gpu/frame_time`.
 - **Bottleneck.** Which stage bounds the frame rate, from the smoothed values with a 20 %
-  margin: `balanced` when the limiter sleeps a fifth of the frame or more, or when CPU busy time
-  (frame minus sleep) and GPU time are within 20 % of each other; `present_wait` when the
-  swapchain wait takes a fifth of the frame or more (vsync); otherwise `main_thread_cpu` or
-  `gpu`, whichever is the longer by the margin. Null until a GPU time exists.
+  margin: `frame_rate_limiter` when the limiter sleeps a fifth of the frame or more;
+  `swapchain_present_wait` when the swapchain wait takes a fifth of the frame or more (vsync);
+  otherwise `main_thread_cpu` or `gpu`, whichever of CPU busy time (frame minus sleep) and GPU
+  time is the longer by the margin, or `cpu_and_gpu_balanced` when they are within it. Null until a GPU time exists.
 - **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
   its cores and the RAM.
 
@@ -71,7 +71,7 @@ on the task pool keeps their time, since the systems are not its children on tha
 `self-time` (default), `inclusive-time`, `max-single-call` or `call-count`.
 
 The section also shows the allocations per frame, count and bytes, from the counting allocator
-the binaries wrap theirs in (`perf/allocs_count_per_frame`, `perf/alloc_bytes_per_frame`): the
+the binaries wrap theirs in (`perf/allocation_count_per_frame`, `perf/allocated_bytes_per_frame`): the
 first place to look for per-frame churn.
 
 ### Memory and limits (`/debug_memory`)

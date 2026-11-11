@@ -24,7 +24,6 @@ use comms::{global_crdt::ForeignPlayer, Transport};
 use console::DoAddConsoleCommand;
 use scene_material::{SceneMaterial, SCENE_MATERIAL_OUTLINE_MESH_TAGS};
 use scene_runner::{
-    content_bytes::scene_content_bytes,
     initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
     parcel_to_vec3,
     renderer_context::RendererSceneContext,
@@ -32,7 +31,9 @@ use scene_runner::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         ComponentTracker, TrackComponents,
     },
-    vec3_to_parcel, ContainerEntity, ContainingScene, Toaster,
+    vec3_to_parcel,
+    visible_content_bytes::scene_visible_content_bytes,
+    ContainerEntity, ContainingScene, Toaster,
 };
 use ui_core::{
     bound_node::BoundedImageMaterial,
@@ -628,7 +629,7 @@ fn update_tracker(
 
     display_data.push(("Visible Material Count", visible_mats.len().to_string()));
 
-    let content = scene_content_bytes(
+    let content = scene_visible_content_bytes(
         *scene,
         mesh_handles.iter(),
         material_handles.iter(),

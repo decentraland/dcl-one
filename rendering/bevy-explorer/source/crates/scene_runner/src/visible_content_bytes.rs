@@ -13,14 +13,14 @@ use crate::ContainerEntity;
 /// The textures the scene's visible materials reference and the meshes its visible entities
 /// draw, each counted once, with the bytes their CPU copies hold.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-pub struct SceneContentBytes {
+pub struct SceneVisibleContentBytes {
     pub texture_bytes_sum: u64,
     pub mesh_bytes_sum: u64,
     pub texture_count: u32,
     pub mesh_count: u32,
 }
 
-pub fn scene_content_bytes<'a>(
+pub fn scene_visible_content_bytes<'a>(
     scene: Entity,
     mesh_handles: impl Iterator<Item = (&'a Mesh3d, &'a ContainerEntity, &'a Visibility)>,
     material_handles: impl Iterator<
@@ -33,7 +33,7 @@ pub fn scene_content_bytes<'a>(
     meshes: &Assets<Mesh>,
     materials: &Assets<SceneMaterial>,
     images: &Assets<Image>,
-) -> SceneContentBytes {
+) -> SceneVisibleContentBytes {
     let visible = |container: &ContainerEntity, visibility: &Visibility| {
         container.root == scene && !matches!(visibility, Visibility::Hidden)
     };
@@ -72,7 +72,7 @@ pub fn scene_content_bytes<'a>(
         .filter_map(|id| images.get(*id).and_then(|image| image.data.as_ref()))
         .map(|data| data.len() as u64)
         .sum();
-    SceneContentBytes {
+    SceneVisibleContentBytes {
         texture_bytes_sum,
         mesh_bytes_sum,
         texture_count: textures.len() as u32,

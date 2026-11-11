@@ -12,17 +12,18 @@ use super::{file_name, Lines};
 use crate::out;
 
 /// The smallest relative difference of the medians that gets a verdict.
-pub const LAMBDA: f32 = 0.03;
+pub const MIN_RELATIVE_MEDIAN_DELTA: f32 = 0.03;
 /// A smaller median difference never gets a verdict: for small medians (a GPU time of a few ms) a
 /// few tenths of a millisecond is noise, not signal.
-pub const MIN_ABS_DELTA_MS: f32 = 0.5;
+pub const MIN_ABSOLUTE_FRAME_TIME_DELTA_MS: f32 = 0.5;
 /// No real frame-time statistic is below a millisecond: a smaller median means the measurement
 /// broke (GPU timing reporting zeros), so that metric gets no verdict.
 pub const MIN_PLAUSIBLE_MS: f32 = 1.0;
-/// The exceptions-per-run verdict needs a difference of at least this many exceptions per run...
-pub const EXCEPTION_DELTA_MIN: f64 = 2.0;
+/// The incidents-per-run verdict (exceptions, CPU hiccups) needs a difference of at least this
+/// many incidents per run...
+pub const MIN_INCIDENTS_PER_RUN_DELTA: f64 = 2.0;
 /// ...and at least this many times the other build's: transient network errors flip tiny deltas.
-pub const EXCEPTION_RATIO_MIN: f64 = 1.5;
+pub const MIN_INCIDENTS_PER_RUN_RATIO: f64 = 1.5;
 /// A run that logged at least this many exceptions, and [`OUTLIER_FACTOR`] times the median of
 /// its build's runs, is excluded as untrustworthy (a service was down during it).
 pub const OUTLIER_MIN_EXCEPTIONS: u64 = 10;
@@ -32,7 +33,7 @@ const HEADLINE_MAGNITUDE: f32 = 0.10;
 /// Median sample counts further apart than this mean the builds did not run the same session.
 const MAX_SAMPLE_RATIO: f32 = 1.5;
 
-pub const METRICS: [&str; 6] = [
+pub const FRAME_TIME_METRICS: [&str; 6] = [
     "CPU average",
     "CPU 1% worst",
     "CPU 0.1% worst",
@@ -42,22 +43,22 @@ pub const METRICS: [&str; 6] = [
 ];
 /// The 0.1% worst metrics average only the worst two or three frames of a run, so one OS blip
 /// moves them by tens of percent: shown for context, never given a verdict.
-const HAS_VERDICT: [bool; 6] = [true, true, false, true, true, false];
-/// "GPU average" in [`METRICS`].
+const FRAME_TIME_METRIC_HAS_VERDICT: [bool; 6] = [true, true, false, true, true, false];
+/// "GPU average" in [`FRAME_TIME_METRICS`].
 const GPU_AVERAGE: usize = 3;
 
 pub const EXCEPTIONS_METRIC: &str = "Exceptions per run";
 /// Frames over the explorer's hiccup threshold per run, from the run's `perf_summary` lines.
-pub const HICCUPS_METRIC: &str = "Hiccups per run";
+pub const CPU_HICCUPS_METRIC: &str = "Hiccups per run";
 /// Peak engine memory per run, MiB, from the same lines.
 pub const PEAK_MEMORY_METRIC: &str = "Peak memory";
 /// A smaller peak-memory median difference never gets a verdict.
-pub const MIN_ABS_DELTA_MIB: f32 = 32.0;
+pub const MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB: f32 = 32.0;
 
-/// One run's sample count and its metrics in the order of [`METRICS`], from its CSV. The first
+/// One run's sample count and its metrics in the order of [`FRAME_TIME_METRICS`], from its CSV. The first
 /// line is the header; every other line is `frame,cpu,gpu`. A CSV with no rows, a row with fewer
 /// than three fields or a time that is not a number is an error, as it is for the C#.
-pub fn read_run(csv: &Path) -> Result<(u64, [f32; 6]), String> {
+pub fn read_run_frame_times(csv: &Path) -> Result<(u64, [f32; 6]), String> {
     let name = file_name(csv);
     let file = File::open(csv).map_err(|error| format!("{name}: {error}"))?;
     let mut cpu = Vec::new();
@@ -115,13 +116,13 @@ fn average(values: &[f32]) -> f32 {
 /// The mean of the worst `fraction` of the frames, at least one (as GamersNexus measures it).
 fn percent_worst(values: &[f32], fraction: f32) -> f32 {
     let mut sorted = values.to_vec();
-    sorted.sort_by(|a, b| compare(*b, *a));
+    sorted.sort_by(|a, b| float_compare_to(*b, *a));
     let take = ((values.len() as f32 * fraction) as usize).max(1);
     average(&sorted[..take.min(sorted.len())])
 }
 
 /// `float.CompareTo`, the order LINQ sorts by: NaN before every number.
-fn compare(a: f32, b: f32) -> Ordering {
+fn float_compare_to(a: f32, b: f32) -> Ordering {
     a.partial_cmp(&b)
         .unwrap_or_else(|| a.is_nan().cmp(&b.is_nan()).reverse())
 }
@@ -137,7 +138,7 @@ fn min(a: f32, b: f32) -> f32 {
 
 /// A metric across the runs of one build.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub struct Aggregate {
+pub struct MedianAndRange {
     pub median: f32,
     pub min: f32,
     pub max: f32,
@@ -145,19 +146,19 @@ pub struct Aggregate {
 
 /// The median, the lowest and the highest. The median of an even count is the mean of the two
 /// middle values: the upper one alone would be the maximum of a two-run build.
-pub fn aggregate(values: impl IntoIterator<Item = f32>) -> Aggregate {
+pub fn median_and_range(values: impl IntoIterator<Item = f32>) -> MedianAndRange {
     let mut sorted: Vec<f32> = values.into_iter().collect();
-    sorted.sort_by(|a, b| compare(*a, *b));
+    sorted.sort_by(|a, b| float_compare_to(*a, *b));
     let n = sorted.len();
     let (Some(&min), Some(&max)) = (sorted.first(), sorted.last()) else {
-        return Aggregate::default();
+        return MedianAndRange::default();
     };
     let median = if n % 2 == 1 {
         sorted[n / 2]
     } else {
         (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0
     };
-    Aggregate { median, min, max }
+    MedianAndRange { median, min, max }
 }
 
 /// The median of whole numbers; for an even count the mean of the two middle ones, rounded up.
@@ -178,9 +179,9 @@ pub fn is_outlier(exceptions: u64, build: &[u64]) -> bool {
         && exceptions >= OUTLIER_FACTOR * median_int(build.iter().copied()).max(1)
 }
 
-/// What a metric's Result cell says.
+/// What a frame-time metric's Result cell says.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Verdict {
+pub enum FrameTimeVerdict {
     /// Faster by this fraction of the baseline's median.
     Faster(f32),
     /// Slower by this fraction of the baseline's median.
@@ -193,7 +194,7 @@ pub enum Verdict {
 
 /// Why the builds' sessions cannot be compared.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Incomparable {
+pub enum SessionsNotComparable {
     /// A build has fewer than two usable runs: its noise cannot be estimated.
     TooFewRuns,
     /// The median sample counts are more than [`MAX_SAMPLE_RATIO`] apart: one build likely did
@@ -201,26 +202,26 @@ pub enum Incomparable {
     SampleCountsDiffer { base: u64, change: u64, ratio: f32 },
 }
 
-impl Incomparable {
+impl SessionsNotComparable {
     pub fn reason(self) -> &'static str {
         match self {
-            Incomparable::TooFewRuns => "too few runs",
-            Incomparable::SampleCountsDiffer { .. } => "sample counts differ",
+            SessionsNotComparable::TooFewRuns => "too few runs",
+            SessionsNotComparable::SampleCountsDiffer { .. } => "sample counts differ",
         }
     }
 }
 
-pub fn incomparable(
+pub fn sessions_not_comparable(
     change_runs: usize,
     base_runs: usize,
     change_samples: u64,
     base_samples: u64,
-) -> Option<Incomparable> {
+) -> Option<SessionsNotComparable> {
     let ratio = change_samples.max(base_samples) as f32 / change_samples.min(base_samples) as f32;
     if change_runs < 2 || base_runs < 2 {
-        Some(Incomparable::TooFewRuns)
+        Some(SessionsNotComparable::TooFewRuns)
     } else if ratio > MAX_SAMPLE_RATIO {
-        Some(Incomparable::SampleCountsDiffer {
+        Some(SessionsNotComparable::SampleCountsDiffer {
             base: base_samples,
             change: change_samples,
             ratio,
@@ -232,7 +233,7 @@ pub fn incomparable(
 
 /// Whether GPU timing worked in both builds: a sub-millisecond GPU average means it reported
 /// zeros for most frames, which poisons every GPU metric.
-pub fn gpu_timing_broken(change: &[Aggregate; 6], base: &[Aggregate; 6]) -> bool {
+pub fn gpu_timing_broken(change: &[MedianAndRange; 6], base: &[MedianAndRange; 6]) -> bool {
     min(change[GPU_AVERAGE].median, base[GPU_AVERAGE].median) < MIN_PLAUSIBLE_MS
 }
 
@@ -240,70 +241,82 @@ pub fn gpu_timing_broken(change: &[Aggregate; 6], base: &[Aggregate; 6]) -> bool
 /// (every change run faster, or every one slower, than every baseline run: with three runs a
 /// build, the most extreme outcome of a permutation test, one-sided p = 0.05) and the median
 /// difference clears both the relative and the absolute floor.
-pub fn verdict(
+pub fn frame_time_verdict(
     m: usize,
-    change: &Aggregate,
-    base: &Aggregate,
-    incomparable: Option<Incomparable>,
+    change: &MedianAndRange,
+    base: &MedianAndRange,
+    incomparable: Option<SessionsNotComparable>,
     gpu_broken: bool,
-) -> Verdict {
+) -> FrameTimeVerdict {
     if let Some(incomparable) = incomparable {
-        return Verdict::Withheld(incomparable.reason());
+        return FrameTimeVerdict::Withheld(incomparable.reason());
     }
-    if !HAS_VERDICT[m] {
-        return Verdict::Informational;
+    if !FRAME_TIME_METRIC_HAS_VERDICT[m] {
+        return FrameTimeVerdict::Informational;
     }
-    if gpu_broken && METRICS[m].starts_with("GPU") {
-        return Verdict::Withheld("GPU timing not working");
+    if gpu_broken && FRAME_TIME_METRICS[m].starts_with("GPU") {
+        return FrameTimeVerdict::Withheld("GPU timing not working");
     }
     if min(change.median, base.median) < MIN_PLAUSIBLE_MS {
-        return Verdict::Withheld("implausibly small values");
+        return FrameTimeVerdict::Withheld("implausibly small values");
     }
 
     let delta = change.median - base.median;
     let improvement = -delta / base.median;
     let separated = change.min > base.max || change.max < base.min;
-    if !separated || delta.abs() < MIN_ABS_DELTA_MS {
-        Verdict::WithinNoise
-    } else if improvement >= LAMBDA {
-        Verdict::Faster(improvement)
-    } else if improvement <= -LAMBDA {
-        Verdict::Slower(-improvement)
+    if !separated || delta.abs() < MIN_ABSOLUTE_FRAME_TIME_DELTA_MS {
+        FrameTimeVerdict::WithinNoise
+    } else if improvement >= MIN_RELATIVE_MEDIAN_DELTA {
+        FrameTimeVerdict::Faster(improvement)
+    } else if improvement <= -MIN_RELATIVE_MEDIAN_DELTA {
+        FrameTimeVerdict::Slower(-improvement)
     } else {
-        Verdict::WithinNoise
+        FrameTimeVerdict::WithinNoise
     }
 }
 
-/// The peak-memory verdict: the metrics' separation and relative floor, with an absolute floor
-/// of [`MIN_ABS_DELTA_MIB`]; `Faster` is less memory, `Slower` more.
-pub fn memory_verdict(
-    change: &Aggregate,
-    base: &Aggregate,
-    incomparable: Option<Incomparable>,
-) -> Verdict {
+/// What the Peak memory row's Result cell says.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PeakMemoryVerdict {
+    /// Less memory by this fraction of the baseline's median.
+    LessMemory(f32),
+    /// More memory by this fraction of the baseline's median.
+    MoreMemory(f32),
+    WithinNoise,
+    /// No verdict, for this reason.
+    Withheld(&'static str),
+}
+
+/// The peak-memory verdict: the frame-time metrics' separation and relative floor, with an
+/// absolute floor of [`MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB`].
+pub fn peak_memory_verdict(
+    change: &MedianAndRange,
+    base: &MedianAndRange,
+    incomparable: Option<SessionsNotComparable>,
+) -> PeakMemoryVerdict {
     if let Some(incomparable) = incomparable {
-        return Verdict::Withheld(incomparable.reason());
+        return PeakMemoryVerdict::Withheld(incomparable.reason());
     }
     if base.median <= 0.0 {
-        return Verdict::Withheld("no baseline memory");
+        return PeakMemoryVerdict::Withheld("no baseline memory");
     }
     let delta = change.median - base.median;
     let improvement = -delta / base.median;
     let separated = change.min > base.max || change.max < base.min;
-    if !separated || delta.abs() < MIN_ABS_DELTA_MIB {
-        Verdict::WithinNoise
-    } else if improvement >= LAMBDA {
-        Verdict::Faster(improvement)
-    } else if improvement <= -LAMBDA {
-        Verdict::Slower(-improvement)
+    if !separated || delta.abs() < MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB {
+        PeakMemoryVerdict::WithinNoise
+    } else if improvement >= MIN_RELATIVE_MEDIAN_DELTA {
+        PeakMemoryVerdict::LessMemory(improvement)
+    } else if improvement <= -MIN_RELATIVE_MEDIAN_DELTA {
+        PeakMemoryVerdict::MoreMemory(-improvement)
     } else {
-        Verdict::WithinNoise
+        PeakMemoryVerdict::WithinNoise
     }
 }
 
-/// What the Exceptions per run row's Result cell says.
+/// What the Exceptions per run and Hiccups per run rows' Result cell says.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ExceptionVerdict {
+pub enum IncidentsPerRunVerdict {
     More,
     Fewer,
     NoSignificantChange,
@@ -311,40 +324,45 @@ pub enum ExceptionVerdict {
     Withheld(&'static str),
 }
 
-pub fn exception_verdict(
+pub fn incidents_per_run_verdict(
     change: f64,
     base: f64,
-    incomparable: Option<Incomparable>,
-) -> ExceptionVerdict {
+    incomparable: Option<SessionsNotComparable>,
+) -> IncidentsPerRunVerdict {
     if let Some(incomparable) = incomparable {
-        ExceptionVerdict::Withheld(incomparable.reason())
-    } else if change >= base + EXCEPTION_DELTA_MIN && change >= EXCEPTION_RATIO_MIN * base.max(1.0)
+        IncidentsPerRunVerdict::Withheld(incomparable.reason())
+    } else if change >= base + MIN_INCIDENTS_PER_RUN_DELTA
+        && change >= MIN_INCIDENTS_PER_RUN_RATIO * base.max(1.0)
     {
-        ExceptionVerdict::More
-    } else if base >= change + EXCEPTION_DELTA_MIN && base >= EXCEPTION_RATIO_MIN * change.max(1.0)
+        IncidentsPerRunVerdict::More
+    } else if base >= change + MIN_INCIDENTS_PER_RUN_DELTA
+        && base >= MIN_INCIDENTS_PER_RUN_RATIO * change.max(1.0)
     {
-        ExceptionVerdict::Fewer
+        IncidentsPerRunVerdict::Fewer
     } else {
-        ExceptionVerdict::NoSignificantChange
+        IncidentsPerRunVerdict::NoSignificantChange
     }
 }
 
 /// A 🟢 or 🔴 verdict, kept for the headline.
 #[derive(Debug, Clone, PartialEq)]
-pub struct Finding {
+pub struct SignificantMetricChange {
     pub runner: String,
     pub metric: &'static str,
     pub improved: bool,
-    /// The relative difference; 0 for exceptions.
-    pub magnitude: f32,
+    /// The relative difference; 0 for incident counts.
+    pub relative_change: f32,
 }
 
 /// The metrics the headline names for one direction, each with the runners it moved on, in the
 /// order they were found. With about five verdict rows on each of up to five machines, one 🟢
 /// or 🔴 cell turns up by chance now and then, so a metric is named only when it moved on two or
 /// more machines, or by 10% or more on one.
-pub fn headline(findings: &[Finding], improved: bool) -> Vec<(&'static str, Vec<&str>)> {
-    let mut groups: Vec<(&'static str, Vec<&Finding>)> = Vec::new();
+pub fn headline_metrics(
+    findings: &[SignificantMetricChange],
+    improved: bool,
+) -> Vec<(&'static str, Vec<&str>)> {
+    let mut groups: Vec<(&'static str, Vec<&SignificantMetricChange>)> = Vec::new();
     for finding in findings.iter().filter(|f| f.improved == improved) {
         match groups
             .iter_mut()
@@ -363,7 +381,9 @@ pub fn headline(findings: &[Finding], improved: bool) -> Vec<(&'static str, Vec<
                     runners.push(&finding.runner);
                 }
             }
-            let large = group.iter().any(|f| f.magnitude >= HEADLINE_MAGNITUDE);
+            let large = group
+                .iter()
+                .any(|f| f.relative_change >= HEADLINE_MAGNITUDE);
             (runners.len() >= 2 || large).then_some((metric, runners))
         })
         .collect()
@@ -373,14 +393,14 @@ pub fn headline(findings: &[Finding], improved: bool) -> Vec<(&'static str, Vec<
 mod tests {
     use super::*;
 
-    fn agg(median: f32, min: f32, max: f32) -> Aggregate {
-        Aggregate { median, min, max }
+    fn agg(median: f32, min: f32, max: f32) -> MedianAndRange {
+        MedianAndRange { median, min, max }
     }
 
     #[test]
     fn the_median_of_an_even_count_is_the_mean_of_the_middle_two() {
-        assert_eq!(aggregate([3.0, 1.0, 2.0]), agg(2.0, 1.0, 3.0));
-        assert_eq!(aggregate([4.0, 1.0]), agg(2.5, 1.0, 4.0));
+        assert_eq!(median_and_range([3.0, 1.0, 2.0]), agg(2.0, 1.0, 3.0));
+        assert_eq!(median_and_range([4.0, 1.0]), agg(2.5, 1.0, 4.0));
         assert_eq!(median_int([1, 2]), 2, "rounded up");
         assert_eq!(median_int([1, 3]), 2);
         assert_eq!(median_int([5, 1, 9]), 5);
@@ -413,19 +433,23 @@ mod tests {
     #[test]
     fn a_verdict_needs_separated_runs_and_both_floors() {
         let base = agg(20.0, 19.5, 20.5);
-        let v = |change| verdict(0, &change, &base, None, false);
-        assert_eq!(v(agg(18.0, 17.5, 18.5)), Verdict::Faster(0.1));
-        assert_eq!(v(agg(22.0, 21.5, 22.5)), Verdict::Slower(0.1));
-        assert_eq!(v(agg(18.0, 17.5, 19.6)), Verdict::WithinNoise, "overlap");
+        let v = |change| frame_time_verdict(0, &change, &base, None, false);
+        assert_eq!(v(agg(18.0, 17.5, 18.5)), FrameTimeVerdict::Faster(0.1));
+        assert_eq!(v(agg(22.0, 21.5, 22.5)), FrameTimeVerdict::Slower(0.1));
+        assert_eq!(
+            v(agg(18.0, 17.5, 19.6)),
+            FrameTimeVerdict::WithinNoise,
+            "overlap"
+        );
         assert_eq!(
             v(agg(19.45, 19.45, 19.45)),
-            Verdict::WithinNoise,
+            FrameTimeVerdict::WithinNoise,
             "under 3%"
         );
         let small = agg(5.0, 5.0, 5.0);
         assert_eq!(
-            verdict(0, &agg(4.6, 4.6, 4.6), &small, None, false),
-            Verdict::WithinNoise,
+            frame_time_verdict(0, &agg(4.6, 4.6, 4.6), &small, None, false),
+            FrameTimeVerdict::WithinNoise,
             "8% but under 0.5 ms"
         );
     }
@@ -434,29 +458,45 @@ mod tests {
     fn what_stops_a_verdict_in_the_c_sharp_order() {
         let (a, b) = (agg(10.0, 10.0, 10.0), agg(20.0, 20.0, 20.0));
         assert_eq!(
-            verdict(2, &a, &b, Some(Incomparable::TooFewRuns), true),
-            Verdict::Withheld("too few runs")
+            frame_time_verdict(2, &a, &b, Some(SessionsNotComparable::TooFewRuns), true),
+            FrameTimeVerdict::Withheld("too few runs")
         );
-        assert_eq!(verdict(5, &a, &b, None, true), Verdict::Informational);
         assert_eq!(
-            verdict(4, &a, &b, None, true),
-            Verdict::Withheld("GPU timing not working")
+            frame_time_verdict(5, &a, &b, None, true),
+            FrameTimeVerdict::Informational
         );
-        assert_eq!(verdict(1, &a, &b, None, true), Verdict::Faster(0.5));
         assert_eq!(
-            verdict(1, &agg(0.9, 0.9, 0.9), &b, None, false),
-            Verdict::Withheld("implausibly small values")
+            frame_time_verdict(4, &a, &b, None, true),
+            FrameTimeVerdict::Withheld("GPU timing not working")
+        );
+        assert_eq!(
+            frame_time_verdict(1, &a, &b, None, true),
+            FrameTimeVerdict::Faster(0.5)
+        );
+        assert_eq!(
+            frame_time_verdict(1, &agg(0.9, 0.9, 0.9), &b, None, false),
+            FrameTimeVerdict::Withheld("implausibly small values")
         );
     }
 
     #[test]
     fn sessions_are_incomparable_with_one_run_or_far_apart_sample_counts() {
-        assert_eq!(incomparable(1, 3, 100, 100), Some(Incomparable::TooFewRuns));
-        assert_eq!(incomparable(3, 1, 100, 100), Some(Incomparable::TooFewRuns));
-        assert_eq!(incomparable(2, 2, 150, 100), None, "1.5 is the limit");
         assert_eq!(
-            incomparable(2, 2, 100, 151),
-            Some(Incomparable::SampleCountsDiffer {
+            sessions_not_comparable(1, 3, 100, 100),
+            Some(SessionsNotComparable::TooFewRuns)
+        );
+        assert_eq!(
+            sessions_not_comparable(3, 1, 100, 100),
+            Some(SessionsNotComparable::TooFewRuns)
+        );
+        assert_eq!(
+            sessions_not_comparable(2, 2, 150, 100),
+            None,
+            "1.5 is the limit"
+        );
+        assert_eq!(
+            sessions_not_comparable(2, 2, 100, 151),
+            Some(SessionsNotComparable::SampleCountsDiffer {
                 base: 151,
                 change: 100,
                 ratio: 1.51
@@ -466,21 +506,21 @@ mod tests {
 
     #[test]
     fn exceptions_count_on_two_more_a_run_and_half_as_many_again() {
-        let v = |change, base| exception_verdict(change, base, None);
-        assert_eq!(v(3.0, 1.0), ExceptionVerdict::More);
-        assert_eq!(v(2.0, 0.0), ExceptionVerdict::More);
-        assert_eq!(v(1.0, 0.0), ExceptionVerdict::NoSignificantChange);
+        let v = |change, base| incidents_per_run_verdict(change, base, None);
+        assert_eq!(v(3.0, 1.0), IncidentsPerRunVerdict::More);
+        assert_eq!(v(2.0, 0.0), IncidentsPerRunVerdict::More);
+        assert_eq!(v(1.0, 0.0), IncidentsPerRunVerdict::NoSignificantChange);
         assert_eq!(
             v(6.0, 4.0),
-            ExceptionVerdict::More,
+            IncidentsPerRunVerdict::More,
             "both limits are reached"
         );
         assert_eq!(
             v(7.0, 5.0),
-            ExceptionVerdict::NoSignificantChange,
+            IncidentsPerRunVerdict::NoSignificantChange,
             "under 1.5x"
         );
-        assert_eq!(v(0.0, 2.0), ExceptionVerdict::Fewer);
+        assert_eq!(v(0.0, 2.0), IncidentsPerRunVerdict::Fewer);
     }
 
     #[test]
@@ -493,11 +533,11 @@ mod tests {
 
     #[test]
     fn the_headline_takes_two_machines_or_ten_percent() {
-        let found = |runner: &str, metric, improved, magnitude| Finding {
+        let found = |runner: &str, metric, improved, relative_change| SignificantMetricChange {
             runner: runner.into(),
             metric,
             improved,
-            magnitude,
+            relative_change,
         };
         let findings = [
             found("A", "CPU average", true, 0.05),
@@ -509,9 +549,12 @@ mod tests {
             found("A", EXCEPTIONS_METRIC, false, 0.0),
         ];
         assert_eq!(
-            headline(&findings, true),
+            headline_metrics(&findings, true),
             [("CPU average", vec!["A", "B"]), ("CPU 1% worst", vec!["A"])]
         );
-        assert!(headline(&findings, false).is_empty(), "one machine each");
+        assert!(
+            headline_metrics(&findings, false).is_empty(),
+            "one machine each"
+        );
     }
 }

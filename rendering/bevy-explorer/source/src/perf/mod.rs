@@ -23,7 +23,7 @@ use bevy::{
 };
 use common::perf::{
     FrameTimeBreakdown, InProgressSample, PerformanceSnapshot, SamplingPausedReason,
-    SamplingStatus, PERF_ALLOCS_COUNT_PER_FRAME, PERF_ALLOC_BYTES_PER_FRAME,
+    SamplingStatus, PERF_ALLOCATED_BYTES_PER_FRAME, PERF_ALLOCATION_COUNT_PER_FRAME,
     PERF_FRAME_LIMITER_SLEEP_MS, PERF_MAIN_WORLD_SCHEDULES_MS, PERF_RENDER_WORLD_CPU_MS,
     PERF_SCENE_RUNTIME_LOOP_MS, PERF_SWAPCHAIN_PRESENT_WAIT_MS,
 };
@@ -34,7 +34,7 @@ impl Plugin for PerformanceMonitoringPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(SamplingStatus::Paused(SamplingPausedReason::NotInWorld))
             .insert_resource(InProgressSample::new())
-            .insert_resource(in_progress_sample::InProgressSampleFrameTimes::new())
+            .insert_resource(in_progress_sample::InProgressSampleMeasurements::new())
             .insert_resource(profiled_scopes::ProfiledScopesTable::new())
             .insert_resource(frame_time_breakdown::MainWorldFrameTimer::new())
             .insert_resource(FrameTimeBreakdown {
@@ -55,8 +55,8 @@ impl Plugin for PerformanceMonitoringPlugin {
             .register_diagnostic(Diagnostic::new(PERF_FRAME_LIMITER_SLEEP_MS).with_suffix("ms"))
             .register_diagnostic(Diagnostic::new(PERF_RENDER_WORLD_CPU_MS).with_suffix("ms"))
             .register_diagnostic(Diagnostic::new(PERF_SWAPCHAIN_PRESENT_WAIT_MS).with_suffix("ms"))
-            .register_diagnostic(Diagnostic::new(PERF_ALLOCS_COUNT_PER_FRAME))
-            .register_diagnostic(Diagnostic::new(PERF_ALLOC_BYTES_PER_FRAME).with_suffix("B"))
+            .register_diagnostic(Diagnostic::new(PERF_ALLOCATION_COUNT_PER_FRAME))
+            .register_diagnostic(Diagnostic::new(PERF_ALLOCATED_BYTES_PER_FRAME).with_suffix("B"))
             .add_systems(
                 First,
                 (
@@ -73,7 +73,7 @@ impl Plugin for PerformanceMonitoringPlugin {
                 (
                     in_progress_sample::sample_frame_times_system,
                     performance_issue_log::log_performance_issue_system,
-                    benchmark_summary::accumulate_benchmark_run_system,
+                    benchmark_summary::accumulate_benchmark_measured_phase_system,
                 )
                     .chain(),
             )

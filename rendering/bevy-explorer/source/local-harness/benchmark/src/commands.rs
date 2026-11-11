@@ -227,7 +227,7 @@ fn write_report(args: ReportArgs) -> Result<i32, Failure> {
         Some(_) => Some(whole_number("pr", &args.pr, 0)?),
         None => None,
     };
-    let options = crate::report::Options {
+    let options = crate::report::ReportOptions {
         dir: PathBuf::from(given(&args.dir).unwrap_or(".")),
         title: given(&args.title).unwrap_or("Benchmark").to_string(),
         pr,
@@ -245,7 +245,7 @@ fn write_report(args: ReportArgs) -> Result<i32, Failure> {
     };
     let out_file = PathBuf::from(given(&args.out).unwrap_or("summary.md"));
 
-    let report = crate::report::build(&options)?;
+    let report = crate::report::build_report(&options)?;
     for warning in &report.warnings {
         out::warn(out::safe(warning));
     }

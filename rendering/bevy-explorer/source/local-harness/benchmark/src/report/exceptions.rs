@@ -21,9 +21,9 @@ pub const EXCEPTION_MARKER: &str = "DebugLogReportHandler:LogExceptionInternal";
 
 /// Exception counts by kind, in the order each kind was first seen.
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Kinds(Vec<(String, u64)>);
+pub struct ExceptionKindCounts(Vec<(String, u64)>);
 
-impl Kinds {
+impl ExceptionKindCounts {
     pub fn add(&mut self, kind: &str, count: u64) {
         match self.0.iter_mut().find(|(k, _)| k == kind) {
             Some((_, total)) => *total += count,
@@ -52,8 +52,10 @@ impl Kinds {
     }
 
     /// Per-kind totals of several runs.
-    pub fn combine<'a>(all: impl IntoIterator<Item = &'a Kinds>) -> Kinds {
-        let mut total = Kinds::default();
+    pub fn combine<'a>(
+        all: impl IntoIterator<Item = &'a ExceptionKindCounts>,
+    ) -> ExceptionKindCounts {
+        let mut total = ExceptionKindCounts::default();
         for kinds in all {
             for (kind, count) in kinds.iter() {
                 total.add(kind, count);
@@ -64,12 +66,12 @@ impl Kinds {
 }
 
 /// The exceptions a run's log holds before its exit line. A run without a log has none.
-pub fn count(log: &Path) -> io::Result<(u64, Kinds)> {
+pub fn count(log: &Path) -> io::Result<(u64, ExceptionKindCounts)> {
     if !log.is_file() {
-        return Ok((0, Kinds::default()));
+        return Ok((0, ExceptionKindCounts::default()));
     }
     let mut count = 0;
-    let mut kinds = Kinds::default();
+    let mut kinds = ExceptionKindCounts::default();
     // The pair being read: the category of an empty-message entry, then the exception's type.
     let mut category: Option<String> = None;
     let mut kind: Option<String> = None;
@@ -248,7 +250,7 @@ mod tests {
     #[test]
     fn a_run_without_a_log_has_no_exception() {
         let path = crate::scratch("report-exceptions", "none").join("run.log");
-        assert_eq!(count(&path).unwrap(), (0, Kinds::default()));
+        assert_eq!(count(&path).unwrap(), (0, ExceptionKindCounts::default()));
     }
 
     #[test]

@@ -15,7 +15,7 @@ use common::{
     memory::{GpuMemoryBudget, MemoryStatus},
     perf::{
         FrameTimeBreakdown, FrameTimeSampleSummary, InProgressSample, PerformanceSnapshot,
-        SamplingStatus, PERF_ALLOCS_COUNT_PER_FRAME, PERF_ALLOC_BYTES_PER_FRAME,
+        SamplingStatus, PERF_ALLOCATED_BYTES_PER_FRAME, PERF_ALLOCATION_COUNT_PER_FRAME,
         PERF_FRAME_LIMITER_SLEEP_MS, PERF_MAIN_WORLD_SCHEDULES_MS, PERF_RENDER_WORLD_CPU_MS,
         PERF_SCENE_RUNTIME_LOOP_MS, PERF_SWAPCHAIN_PRESENT_WAIT_MS,
     },
@@ -24,18 +24,18 @@ use common::{
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_material::SceneMaterial;
 use scene_runner::{
-    content_bytes::scene_content_bytes, renderer_context::RendererSceneContext, ContainerEntity,
-    ContainingScene,
+    renderer_context::RendererSceneContext, visible_content_bytes::scene_visible_content_bytes,
+    ContainerEntity, ContainingScene,
 };
 use serde_json::{json, Value};
 
 use crate::perf::{
-    in_progress_sample::{entity_count, js_heap_sum, InProgressSampleFrameTimes},
-    profiled_scopes::{ProfiledScopeSort, ProfiledScopesTable},
+    in_progress_sample::{latest_entity_count, sum_scene_js_heaps, InProgressSampleMeasurements},
+    profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable},
 };
 
-const MIB: u64 = 1 << 20;
-const WAITING_FOR_SAMPLE: &str = "Waiting for the first 15 s of sampled time.";
+const BYTES_PER_MIB: u64 = 1 << 20;
+const WAITING_FOR_FIRST_SNAPSHOT: &str = "Waiting for the first 15 s of sampled time.";
 
 pub(super) fn register(app: &mut App) {
     app.add_console_command::<MemoryCommand, _>(debug_memory)
@@ -54,7 +54,7 @@ pub(super) fn register(app: &mut App) {
                 ("Thresholds (MiB)", "thresholds"),
                 ("GPU memory pools", "gpu"),
                 (
-                    "JS heaps (used MiB / limit MiB / external MiB / engines)",
+                    "JS heaps (used MiB / limit MiB / external MiB / scenes)",
                     "jsHeap",
                 ),
                 ("Current scene textures (count / MiB)", "textures"),
@@ -207,7 +207,7 @@ fn performance_state(
     });
     let gpu = diagnostics.get(&GPU_FRAME_TIME);
     let gpu_ms = gpu.and_then(Diagnostic::smoothed);
-    let sample_summary = |summary: &FrameTimeSampleSummary| {
+    let frame_time_summary_json = |summary: &FrameTimeSampleSummary| {
         let values = [
             summary.min_ms,
             summary.mean_ms,
@@ -278,19 +278,19 @@ fn performance_state(
                 "durationSeconds": tenths(snapshot.snapshot_duration_seconds),
                 "takenAtRealSeconds": tenths(snapshot.taken_at_real_seconds),
             })),
-            "cpuFrameTimes": snapshot.map(|snapshot| sample_summary(&snapshot.cpu_frame_times)),
-            "gpuFrameTimes": snapshot.and_then(|snapshot| snapshot.gpu_frame_times.as_ref()).map(sample_summary),
+            "cpuFrameTimes": snapshot.map(|snapshot| frame_time_summary_json(&snapshot.cpu_frame_times)),
+            "gpuFrameTimes": snapshot.and_then(|snapshot| snapshot.gpu_frame_times.as_ref()).map(frame_time_summary_json),
             "frameTimeBreakdown": breakdown_smoothed,
             "bottleneck": breakdown.bottleneck,
-            "entityCount": entity_count(&diagnostics),
+            "entityCount": latest_entity_count(&diagnostics),
             "system": system,
-            "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes / MIB),
+            "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes / BYTES_PER_MIB),
             "unavailable": {
                 "fps": "Waiting for a frame.",
                 "sampling.pausedReason": "Sampling.",
-                "snapshot": WAITING_FOR_SAMPLE,
-                "cpuFrameTimes": WAITING_FOR_SAMPLE,
-                "gpuFrameTimes": if gpu.is_some() { WAITING_FOR_SAMPLE } else { "GPU timestamps are unavailable on this renderer." },
+                "snapshot": WAITING_FOR_FIRST_SNAPSHOT,
+                "cpuFrameTimes": WAITING_FOR_FIRST_SNAPSHOT,
+                "gpuFrameTimes": if gpu.is_some() { WAITING_FOR_FIRST_SNAPSHOT } else { "GPU timestamps are unavailable on this renderer." },
                 "gpuFrameMs": if gpu.is_some() { "Waiting for a GPU timestamp sample." } else { "GPU timestamps are unavailable on this renderer." },
                 "bottleneck": "Waiting for the GPU and present readings the classification needs.",
                 "entityCount": "Waiting for the first entity count.",
@@ -339,10 +339,16 @@ fn render_state(
             _ => {}
         }
     }
-    let show = |ms: Option<f64>| ms.map_or("-".to_owned(), |ms| format!("{ms:.2}"));
+    let format_ms_or_dash = |ms: Option<f64>| ms.map_or("-".to_owned(), |ms| format!("{ms:.2}"));
     let pass_summary: Vec<String> = passes
         .iter()
-        .map(|(name, (cpu, gpu))| format!("{name}: {} / {}", show(*cpu), show(*gpu)))
+        .map(|(name, (cpu, gpu))| {
+            format!(
+                "{name}: {} / {}",
+                format_ms_or_dash(*cpu),
+                format_ms_or_dash(*gpu)
+            )
+        })
         .collect();
     input.reply_ok(
         json!({
@@ -371,7 +377,7 @@ fn render_state(
 struct ProfileTopCommand {
     count: Option<usize>,
     #[arg(value_enum)]
-    sort: Option<ProfiledScopeSort>,
+    sort: Option<ProfiledScopeSortMetric>,
 }
 
 fn profile_top(
@@ -382,8 +388,8 @@ fn profile_top(
     let Some(Ok(command)) = input.take() else {
         return;
     };
-    let sort = command.sort.unwrap_or(ProfiledScopeSort::SelfTime);
-    let rows = table.top(command.count.unwrap_or(20), sort);
+    let sort = command.sort.unwrap_or(ProfiledScopeSortMetric::SelfTime);
+    let rows = table.top_scope_summaries(command.count.unwrap_or(20), sort);
     let hundredths = |ms: f32| (f64::from(ms) * 100.0).round() / 100.0;
     let scope_summary: Vec<String> = rows
         .iter()
@@ -401,20 +407,20 @@ fn profile_top(
         })
         .collect();
     let allocations = diagnostics
-        .get(&PERF_ALLOCS_COUNT_PER_FRAME)
+        .get(&PERF_ALLOCATION_COUNT_PER_FRAME)
         .and_then(Diagnostic::smoothed)
         .map(|count| {
             [
                 Some(count.round()),
                 diagnostics
-                    .get(&PERF_ALLOC_BYTES_PER_FRAME)
+                    .get(&PERF_ALLOCATED_BYTES_PER_FRAME)
                     .and_then(Diagnostic::smoothed)
                     .map(f64::round),
             ]
         });
     input.reply_ok(
         json!({
-            "enabled": table.enabled(),
+            "enabled": table.recording_enabled(),
             "sort": format!("{sort:?}"),
             "scopeSummaries": rows.iter().map(|row| json!({
                 "scopeName": row.scope_name, "scopeKind": row.scope_kind, "callCount": row.call_count,
@@ -425,7 +431,7 @@ fn profile_top(
             "scopeSummary": (!scope_summary.is_empty()).then(|| scope_summary.join("\n")),
             "allocations": allocations,
             "unavailable": {
-                "scopeSummary": if table.enabled() { "No scope has been recorded yet." } else { "Profiler disabled: enable it to record scopes." },
+                "scopeSummary": if table.recording_enabled() { "No scope has been recorded yet." } else { "Profiler disabled: enable it to record scopes." },
                 "allocations": "Waiting for the first frame's allocation counts.",
             },
         })
@@ -438,11 +444,11 @@ fn profile_top(
 #[command(name = "/profile_enable")]
 struct ProfileEnableCommand {
     #[arg(value_enum)]
-    action: ProfileAction,
+    action: ProfilerRecordingAction,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum ProfileAction {
+enum ProfilerRecordingAction {
     On,
     Off,
     Reset,
@@ -456,11 +462,11 @@ fn profile_enable(
         return;
     };
     match command.action {
-        ProfileAction::On => table.set_enabled(true),
-        ProfileAction::Off => table.set_enabled(false),
-        ProfileAction::Reset => table.reset(),
+        ProfilerRecordingAction::On => table.set_recording_enabled(true),
+        ProfilerRecordingAction::Off => table.set_recording_enabled(false),
+        ProfilerRecordingAction::Reset => table.reset(),
     }
-    input.reply_ok(json!({ "enabled": table.enabled() }).to_string());
+    input.reply_ok(json!({ "enabled": table.recording_enabled() }).to_string());
 }
 
 /// Inspect the engine memory budget, set its session limit in MiB (zero restores platform
@@ -470,11 +476,11 @@ fn profile_enable(
 struct MemoryCommand {
     limit_mib: Option<u32>,
     #[arg(long, value_enum)]
-    simulate: Option<SimulatedPressure>,
+    simulate: Option<SimulatedMemoryPressure>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-enum SimulatedPressure {
+enum SimulatedMemoryPressure {
     /// A cap that puts the current use at 72 %: the Warning tier.
     Warning,
     /// A cap that puts the current use at 80 %: the Full tier.
@@ -488,7 +494,7 @@ fn debug_memory(
     mut cmd: ConsoleCommand<MemoryCommand>,
     mut memory: ResMut<MemoryStatus>,
     gpu: Option<Res<GpuMemoryBudget>>,
-    frame_times: Res<InProgressSampleFrameTimes>,
+    frame_times: Res<InProgressSampleMeasurements>,
     scenes: Query<&RendererSceneContext>,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
@@ -504,15 +510,19 @@ fn debug_memory(
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let Some(simulate) = args.simulate {
-        let used_mib = memory.reading().map(|reading| reading.used_bytes / MIB);
+        let used_mib = memory
+            .reading()
+            .map(|reading| reading.used_bytes / BYTES_PER_MIB);
         let limit = match (simulate, used_mib) {
-            (SimulatedPressure::Off, _) => None,
+            (SimulatedMemoryPressure::Off, _) => None,
             (_, None) => {
                 cmd.reply_failed("No platform memory sample to simulate from");
                 return;
             }
-            (SimulatedPressure::Warning, Some(used)) => Some((used as f64 / 0.72).ceil() as u64),
-            (SimulatedPressure::Full, Some(used)) => Some((used as f64 / 0.80).ceil() as u64),
+            (SimulatedMemoryPressure::Warning, Some(used)) => {
+                Some((used as f64 / 0.72).ceil() as u64)
+            }
+            (SimulatedMemoryPressure::Full, Some(used)) => Some((used as f64 / 0.80).ceil() as u64),
         };
         memory.limit_mib = limit.and_then(std::num::NonZeroU64::new);
         cmd.reply_ok(
@@ -536,13 +546,13 @@ fn debug_memory(
         })).collect::<Vec<_>>()),
         _ => None,
     };
-    let js_heap = js_heap_sum(scenes.iter());
-    let content = player
+    let js_heap = sum_scene_js_heaps(scenes.iter());
+    let current_scene_content = player
         .single()
         .ok()
         .and_then(|player| containing_scene.get_parcel(player))
         .map(|scene| {
-            scene_content_bytes(
+            scene_visible_content_bytes(
                 scene,
                 mesh_handles.iter(),
                 material_handles.iter(),
@@ -552,7 +562,10 @@ fn debug_memory(
             )
         });
     let count_and_mib = |count: u32, bytes: u64| -> Value {
-        json!([count, (bytes as f64 / MIB as f64 * 10.0).round() / 10.0])
+        json!([
+            count,
+            (bytes as f64 / BYTES_PER_MIB as f64 * 10.0).round() / 10.0
+        ])
     };
     let ram_reason = "No platform memory sample.";
     cmd.reply_ok(json!({
@@ -564,10 +577,10 @@ fn debug_memory(
             "abundance": t.abundance_mib.round(), "warning": t.warning_mib.round(), "full": t.full_mib.round()
         }) }),
         "jsHeap": js_heap.map(|heap| json!([
-            heap.used_bytes_sum >> 20, heap.limit_bytes_sum >> 20, heap.external_bytes_sum >> 20, heap.engine_count
+            heap.used_bytes_sum >> 20, heap.limit_bytes_sum >> 20, heap.external_bytes_sum >> 20, heap.reporting_scene_count
         ])),
-        "textures": content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
-        "meshes": content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
+        "textures": current_scene_content.map(|c| count_and_mib(c.texture_count, c.texture_bytes_sum)),
+        "meshes": current_scene_content.map(|c| count_and_mib(c.mesh_count, c.mesh_bytes_sum)),
         "unavailable": {
             "used":ram_reason, "capacity":ram_reason, "cap":ram_reason, "usedPeakMiBInSample":ram_reason,
             "pressure":ram_reason, "thresholds":ram_reason,

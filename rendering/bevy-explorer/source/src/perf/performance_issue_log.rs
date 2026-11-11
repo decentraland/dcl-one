@@ -28,7 +28,7 @@ pub fn log_performance_issue_system(
                 "mean frame rate {mean_fps:.1} FPS over {:.0} s of sampled time (p99 {:.0} ms); {}",
                 snapshot.snapshot_duration_seconds,
                 snapshot.cpu_frame_times.p99_ms,
-                describe(&breakdown),
+                describe_frame_time_breakdown(&breakdown),
             );
         }
     }
@@ -45,12 +45,12 @@ pub fn log_performance_issue_system(
         warn!(
             target: PERFORMANCE_ISSUE_LOG_TARGET,
             "a frame took {frame_ms:.0} ms; {}",
-            describe(&breakdown),
+            describe_frame_time_breakdown(&breakdown),
         );
     }
 }
 
-fn describe(breakdown: &FrameTimeBreakdown) -> String {
+fn describe_frame_time_breakdown(breakdown: &FrameTimeBreakdown) -> String {
     let optional = |value: Option<f32>| value.map_or("n/a".to_owned(), |ms| format!("{ms:.1}"));
     format!(
         "breakdown ms: main world {:.1}, scene loop {:.1}, sleep {:.1}, render CPU {:.1}, present wait {}, GPU {}; bottleneck {}",

@@ -552,7 +552,7 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
             Some(
                 Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
                     benchmark_log,
-                    crate::perf::profiled_scopes::layer(),
+                    crate::perf::profiled_scopes::profiled_scopes_layer(),
                 )) as BoxedLayer,
             )
         },

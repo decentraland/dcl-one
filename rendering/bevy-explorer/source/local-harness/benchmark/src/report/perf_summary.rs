@@ -15,26 +15,26 @@ use super::Lines;
 const TARGET_TAG: &str = "[perf_summary]</color>: ";
 
 #[derive(Debug, Clone, Default, PartialEq)]
-pub struct Summary {
+pub struct ExplorerPerfSummary {
     pub cpu_p99_ms: Option<f32>,
-    pub cpu_hiccups: Option<u64>,
+    pub cpu_frames_over_hiccup_threshold_count: Option<u64>,
     pub cpu_hiccup_threshold_ms: Option<f32>,
     pub gpu_p99_ms: Option<f32>,
-    pub gpu_hiccups: Option<u64>,
+    pub gpu_frames_over_hiccup_threshold_count: Option<u64>,
     pub used_peak_mib: Option<u64>,
     pub js_heap_used_mib: Option<u64>,
     pub entity_count: Option<u64>,
     /// Self time in ms over the measured phase, highest first.
-    pub top_scopes: Vec<(String, f32)>,
+    pub top_scope_self_ms: Vec<(String, f32)>,
 }
 
 /// The last summary the log holds before its exit line; a log without one, or without a file,
 /// gives `None`.
-pub fn read(log: &Path) -> io::Result<Option<Summary>> {
+pub fn read_last_perf_summary(log: &Path) -> io::Result<Option<ExplorerPerfSummary>> {
     if !log.is_file() {
         return Ok(None);
     }
-    let mut summary: Option<Summary> = None;
+    let mut summary: Option<ExplorerPerfSummary> = None;
     for line in Lines::new(BufReader::new(File::open(log)?)) {
         let line = line?;
         if line.contains(EXIT_MARKER) {
@@ -46,7 +46,7 @@ pub fn read(log: &Path) -> io::Result<Option<Summary>> {
         let text = &line[index + TARGET_TAG.len()..];
         if let Some(scopes) = text.strip_prefix("top_scopes=") {
             if let Some(summary) = summary.as_mut() {
-                summary.top_scopes = parse_scopes(scopes);
+                summary.top_scope_self_ms = parse_scopes(scopes);
             }
         } else if text.starts_with("cpu_p99_ms=") {
             summary = Some(parse_values(text));
@@ -55,8 +55,8 @@ pub fn read(log: &Path) -> io::Result<Option<Summary>> {
     Ok(summary)
 }
 
-fn parse_values(text: &str) -> Summary {
-    let mut summary = Summary::default();
+fn parse_values(text: &str) -> ExplorerPerfSummary {
+    let mut summary = ExplorerPerfSummary::default();
     for pair in text.split(' ') {
         let Some((key, value)) = pair.split_once('=') else {
             continue;
@@ -65,10 +65,14 @@ fn parse_values(text: &str) -> Summary {
         let int = || value.parse::<u64>().ok();
         match key {
             "cpu_p99_ms" => summary.cpu_p99_ms = float(),
-            "cpu_frames_over_hiccup_threshold_count" => summary.cpu_hiccups = int(),
+            "cpu_frames_over_hiccup_threshold_count" => {
+                summary.cpu_frames_over_hiccup_threshold_count = int()
+            }
             "cpu_hiccup_threshold_ms" => summary.cpu_hiccup_threshold_ms = float(),
             "gpu_p99_ms" => summary.gpu_p99_ms = float(),
-            "gpu_frames_over_hiccup_threshold_count" => summary.gpu_hiccups = int(),
+            "gpu_frames_over_hiccup_threshold_count" => {
+                summary.gpu_frames_over_hiccup_threshold_count = int()
+            }
             "used_peak_mib" => summary.used_peak_mib = int(),
             "js_heap_used_mib" => summary.js_heap_used_mib = int(),
             "entity_count" => summary.entity_count = int(),
@@ -97,10 +101,10 @@ mod tests {
             "cpu_p99_ms=80.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=300 js_heap_used_mib=64 entity_count=1234 sample_count=4 snapshot_duration_seconds=90.0",
         );
         assert_eq!(summary.cpu_p99_ms, Some(80.0));
-        assert_eq!(summary.cpu_hiccups, Some(1));
+        assert_eq!(summary.cpu_frames_over_hiccup_threshold_count, Some(1));
         assert_eq!(summary.cpu_hiccup_threshold_ms, Some(50.0));
         assert_eq!(summary.gpu_p99_ms, None);
-        assert_eq!(summary.gpu_hiccups, None);
+        assert_eq!(summary.gpu_frames_over_hiccup_threshold_count, None);
         assert_eq!(summary.used_peak_mib, Some(300));
         assert_eq!(summary.js_heap_used_mib, Some(64));
         assert_eq!(summary.entity_count, Some(1234));

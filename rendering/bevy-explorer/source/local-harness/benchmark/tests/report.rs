@@ -9,7 +9,7 @@ mod support;
 use std::path::PathBuf;
 use std::process::Command;
 
-use benchmark::report::{self, Options, Report};
+use benchmark::report::{self, BenchmarkReport, ReportOptions};
 use support::scratch;
 
 fn fixture(case: &str) -> PathBuf {
@@ -18,8 +18,8 @@ fn fixture(case: &str) -> PathBuf {
         .join(case)
 }
 
-fn options(case: &str) -> Options {
-    Options {
+fn options(case: &str) -> ReportOptions {
+    ReportOptions {
         dir: fixture(case),
         title: "Benchmark".into(),
         pr: None,
@@ -31,22 +31,22 @@ fn options(case: &str) -> Options {
     }
 }
 
-fn build(options: &Options) -> Report {
-    report::build(options).unwrap_or_else(|failure| panic!("{failure}"))
+fn build(options: &ReportOptions) -> BenchmarkReport {
+    report::build_report(options).unwrap_or_else(|failure| panic!("{failure}"))
 }
 
-fn report_of(case: &str) -> Report {
+fn report_of(case: &str) -> BenchmarkReport {
     build(&options(case))
 }
 
 /// The lines of the report, each checked to be there once.
-fn has_line(report: &Report, line: &str) {
+fn has_line(report: &BenchmarkReport, line: &str) {
     let found = report.markdown.lines().filter(|l| *l == line).count();
     assert_eq!(found, 1, "{line}\n----- in -----\n{}", report.markdown);
 }
 
 /// The report's lines after the first one that starts with `title`, up to the next section.
-fn section<'a>(report: &'a Report, title: &str) -> Vec<&'a str> {
+fn section<'a>(report: &'a BenchmarkReport, title: &str) -> Vec<&'a str> {
     let heading = format!("### {title}");
     let lines: Vec<&str> = report.markdown.lines().collect();
     let start = lines

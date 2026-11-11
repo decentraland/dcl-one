@@ -159,11 +159,11 @@ pub struct JsHeapDataPoint {
     pub used_bytes_sum: u64,
     pub limit_bytes_sum: u64,
     pub external_bytes_sum: u64,
-    pub engine_count: u32,
+    pub reporting_scene_count: u32,
 }
 
 /// Top scopes a snapshot carries.
-pub const SNAPSHOT_TOP_PROFILED_SCOPES: usize = 30;
+pub const SNAPSHOT_TOP_PROFILED_SCOPE_COUNT: usize = 30;
 
 /// One completed sample: its frame times summarised and the state of the client when it ended.
 #[derive(Resource, Event, Clone, Debug, PartialEq, Serialize)]
@@ -181,7 +181,7 @@ pub struct PerformanceSnapshot {
     pub nearby_player_count: u32,
     pub entity_count: u32,
     pub target_fps: Option<f32>,
-    /// Top [`SNAPSHOT_TOP_PROFILED_SCOPES`] scopes by self time over the sample; `None` without a
+    /// Top [`SNAPSHOT_TOP_PROFILED_SCOPE_COUNT`] scopes by self time over the sample; `None` without a
     /// recorded profiler table.
     pub top_profiled_scope_summaries: Option<Vec<ProfiledScopeSummary>>,
     /// `Time<Real>` elapsed seconds when the sample completed.
@@ -219,20 +219,22 @@ pub struct FrameTimeBreakdown {
 pub enum FrameBottleneck {
     MainThreadCpu,
     Gpu,
-    PresentWait,
-    /// The frame limiter, or CPU and GPU within 20 % of each other.
-    Balanced,
+    SwapchainPresentWait,
+    /// The frame limiter's sleep: the frame-rate cap holds the frame.
+    FrameRateLimiter,
+    /// CPU busy time and GPU time within 20 % of each other.
+    CpuAndGpuBalanced,
 }
 
 /// Classification margin: a stage bounds the frame when it is this much longer than the other.
-const BOTTLENECK_MARGIN: f32 = 1.2;
+const BOTTLENECK_MIN_RATIO: f32 = 1.2;
 /// A wait that takes this share of the frame bounds it.
-const BOTTLENECK_WAIT_SHARE: f32 = 0.2;
+const BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME: f32 = 0.2;
 
 /// Compares CPU busy time (whole frame minus sleep), GPU time and present wait with a 20 %
 /// margin. A frame-limiter sleep or a present wait of a fifth of the frame or more bounds the
-/// frame (`Balanced` for the limiter, `PresentWait` for vsync); otherwise the longer of CPU busy
-/// and GPU time does, or neither when they are within the margin. `None` without a GPU time.
+/// frame (`FrameRateLimiter` for the limiter, `SwapchainPresentWait` for vsync); otherwise the longer of CPU busy
+/// and GPU time does, or `CpuAndGpuBalanced` when they are within the margin. `None` without a GPU time.
 pub fn classify_frame_bottleneck(
     whole_frame_wall_ms: f32,
     frame_limiter_sleep_ms: f32,
@@ -242,22 +244,22 @@ pub fn classify_frame_bottleneck(
     if whole_frame_wall_ms <= 0.0 {
         return None;
     }
-    if frame_limiter_sleep_ms >= BOTTLENECK_WAIT_SHARE * whole_frame_wall_ms {
-        return Some(FrameBottleneck::Balanced);
+    if frame_limiter_sleep_ms >= BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME * whole_frame_wall_ms {
+        return Some(FrameBottleneck::FrameRateLimiter);
     }
     if swapchain_present_wait_ms
-        .is_some_and(|wait| wait >= BOTTLENECK_WAIT_SHARE * whole_frame_wall_ms)
+        .is_some_and(|wait| wait >= BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME * whole_frame_wall_ms)
     {
-        return Some(FrameBottleneck::PresentWait);
+        return Some(FrameBottleneck::SwapchainPresentWait);
     }
     let gpu = gpu_frame_time_ms?;
     let cpu_busy = (whole_frame_wall_ms - frame_limiter_sleep_ms).max(0.0);
-    Some(if gpu > cpu_busy * BOTTLENECK_MARGIN {
+    Some(if gpu > cpu_busy * BOTTLENECK_MIN_RATIO {
         FrameBottleneck::Gpu
-    } else if cpu_busy > gpu * BOTTLENECK_MARGIN {
+    } else if cpu_busy > gpu * BOTTLENECK_MIN_RATIO {
         FrameBottleneck::MainThreadCpu
     } else {
-        FrameBottleneck::Balanced
+        FrameBottleneck::CpuAndGpuBalanced
     })
 }
 
@@ -304,10 +306,10 @@ pub const PERF_RENDER_WORLD_CPU_MS: DiagnosticPath =
     DiagnosticPath::const_new("perf/render_world_cpu_ms");
 pub const PERF_SWAPCHAIN_PRESENT_WAIT_MS: DiagnosticPath =
     DiagnosticPath::const_new("perf/swapchain_present_wait_ms");
-pub const PERF_ALLOCS_COUNT_PER_FRAME: DiagnosticPath =
-    DiagnosticPath::const_new("perf/allocs_count_per_frame");
-pub const PERF_ALLOC_BYTES_PER_FRAME: DiagnosticPath =
-    DiagnosticPath::const_new("perf/alloc_bytes_per_frame");
+pub const PERF_ALLOCATION_COUNT_PER_FRAME: DiagnosticPath =
+    DiagnosticPath::const_new("perf/allocation_count_per_frame");
+pub const PERF_ALLOCATED_BYTES_PER_FRAME: DiagnosticPath =
+    DiagnosticPath::const_new("perf/allocated_bytes_per_frame");
 
 #[cfg(test)]
 mod tests {
@@ -370,12 +372,12 @@ mod tests {
         // the limiter slept a fifth of the frame
         assert_eq!(
             classify_frame_bottleneck(33.0, 20.0, Some(5.0), Some(0.0)),
-            Some(Balanced)
+            Some(FrameRateLimiter)
         );
         // vsync held the frame
         assert_eq!(
             classify_frame_bottleneck(16.6, 0.0, Some(4.0), Some(8.0)),
-            Some(PresentWait)
+            Some(SwapchainPresentWait)
         );
         assert_eq!(
             classify_frame_bottleneck(20.0, 0.0, Some(30.0), Some(1.0)),
@@ -387,7 +389,7 @@ mod tests {
         );
         assert_eq!(
             classify_frame_bottleneck(20.0, 1.0, Some(18.0), None),
-            Some(Balanced)
+            Some(CpuAndGpuBalanced)
         );
     }
 

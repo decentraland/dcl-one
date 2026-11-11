@@ -136,7 +136,7 @@ scenario('the performance sampler samples in world and scales the hiccup thresho
   assert.equal(state.sampling.pausedReason, null)
   assert.equal(state.frameTimeBreakdown.length, 6)
   assert.ok(state.frameTimeBreakdown.slice(0, 4).every((ms) => typeof ms === 'number' && ms >= 0), JSON.stringify(state.frameTimeBreakdown))
-  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'gpu', 'present_wait', 'balanced'].includes(state.bottleneck), String(state.bottleneck))
+  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'gpu', 'swapchain_present_wait', 'frame_rate_limiter', 'cpu_and_gpu_balanced'].includes(state.bottleneck), String(state.bottleneck))
   assert.ok((state.entityCount ?? 0) > 0)
   if (state.cpuFrameTimes == null) assert.match(String(state.unavailable.cpuFrameTimes), /sampled time/)
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')

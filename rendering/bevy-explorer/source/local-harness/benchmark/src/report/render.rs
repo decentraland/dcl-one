@@ -5,12 +5,13 @@
 
 use std::fmt::Write;
 
-use super::exceptions::Kinds;
+use super::exceptions::ExceptionKindCounts;
 use super::stats::{
-    self, Aggregate, ExceptionVerdict, Incomparable, Verdict, EXCEPTIONS_METRIC, HICCUPS_METRIC,
-    METRICS, PEAK_MEMORY_METRIC,
+    self, FrameTimeVerdict, IncidentsPerRunVerdict, MedianAndRange, PeakMemoryVerdict,
+    SessionsNotComparable, CPU_HICCUPS_METRIC, EXCEPTIONS_METRIC, FRAME_TIME_METRICS,
+    PEAK_MEMORY_METRIC,
 };
-use super::{Build, Note, Options, Section};
+use super::{BuildBenchmarkRunsStatistics, ReportOptions, RunnerCaveat, RunnerSection};
 
 /// The fleet's runner labels and the machines they name (`ProduceSummary.cs`'s
 /// `labelDisplayNames`).
@@ -41,7 +42,7 @@ pub fn display_name(label: &str) -> String {
 }
 
 /// The title, and what was compared: the PR, the two builds and the run.
-pub fn header(options: &Options) -> String {
+pub fn header(options: &ReportOptions) -> String {
     let mut out = format!("## {}\n\n", options.title);
     let mut parts = Vec::new();
     if let Some(pr) = options.pr {
@@ -101,22 +102,22 @@ pub fn legend(expected_runs: u64) -> String {
          - The **Overall** line at the top only reacts to a metric that moved on **two or more machines**, or by **10% or more** on one — a single modest 🟢/🔴 cell can still be a statistical fluke.\n\
          </details>\n\
          \n",
-        lambda = stats::LAMBDA * 100.0,
-        min_ms = stats::MIN_ABS_DELTA_MS,
-        delta_min = stats::EXCEPTION_DELTA_MIN,
-        ratio_min = stats::EXCEPTION_RATIO_MIN,
+        lambda = stats::MIN_RELATIVE_MEDIAN_DELTA * 100.0,
+        min_ms = stats::MIN_ABSOLUTE_FRAME_TIME_DELTA_MS,
+        delta_min = stats::MIN_INCIDENTS_PER_RUN_DELTA,
+        ratio_min = stats::MIN_INCIDENTS_PER_RUN_RATIO,
         outlier_min = stats::OUTLIER_MIN_EXCEPTIONS,
         outlier_factor = stats::OUTLIER_FACTOR,
-        min_mib = stats::MIN_ABS_DELTA_MIB,
+        min_mib = stats::MIN_ABSOLUTE_PEAK_MEMORY_DELTA_MIB,
     )
 }
 
 /// A runner's table, its notes and its exception breakdown.
-pub fn section(section: &Section) -> String {
+pub fn runner_section(section: &RunnerSection) -> String {
     let change = &section.change;
     let mut out = format!("### {}\n\n", section.title);
 
-    match &section.comparison {
+    match &section.baseline_comparison {
         Some(comparison) => {
             let base = &comparison.base;
             out += "| Metric | Baseline | Change | Δ | Result |\n";
@@ -127,42 +128,44 @@ pub fn section(section: &Section) -> String {
                 samples(base),
                 samples(change)
             );
-            for (m, name) in METRICS.iter().enumerate() {
-                let delta = change.metrics[m].median - base.metrics[m].median;
+            for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
+                let delta = change.frame_time_ms[m].median - base.frame_time_ms[m].median;
                 let _ = writeln!(
                     out,
                     "| {name} | {} | {} | {delta:.1} ms | {} |",
-                    cell(&base.metrics[m]),
-                    cell(&change.metrics[m]),
-                    verdict(comparison.verdicts[m])
+                    frame_time_cell(&base.frame_time_ms[m]),
+                    frame_time_cell(&change.frame_time_ms[m]),
+                    frame_time_verdict_text(comparison.frame_time_verdicts[m])
                 );
             }
             let _ = writeln!(
                 out,
                 "| {EXCEPTIONS_METRIC} | {} | {} | {} | {} |",
-                hundredths(base.exceptions),
-                hundredths(change.exceptions),
-                signed_hundredths(change.exceptions - base.exceptions),
-                exception_verdict(comparison.exceptions)
+                hundredths(base.exceptions_per_run),
+                hundredths(change.exceptions_per_run),
+                signed_hundredths(change.exceptions_per_run - base.exceptions_per_run),
+                exceptions_verdict_text(comparison.exceptions_per_run_verdict)
             );
-            if change.summaries > 0 || base.summaries > 0 {
+            if change.perf_summary_run_count > 0 || base.perf_summary_run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
-                    HICCUPS_METRIC,
-                    hiccups_cell(base),
-                    hiccups_cell(change),
-                    signed_hundredths(f64::from(change.hiccups.median - base.hiccups.median)),
-                    hiccup_verdict(comparison.hiccups)
+                    CPU_HICCUPS_METRIC,
+                    cpu_hiccups_cell(base),
+                    cpu_hiccups_cell(change),
+                    signed_hundredths(f64::from(
+                        change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median
+                    )),
+                    hiccups_verdict_text(comparison.cpu_hiccups_per_run_verdict)
                 );
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     PEAK_MEMORY_METRIC,
-                    memory_cell(base),
-                    memory_cell(change),
-                    signed_mib(change.peak_mib.median - base.peak_mib.median),
-                    memory_verdict(comparison.peak_memory)
+                    peak_memory_cell(base),
+                    peak_memory_cell(change),
+                    signed_mib(change.peak_memory_mib.median - base.peak_memory_mib.median),
+                    peak_memory_verdict_text(comparison.peak_memory_verdict)
                 );
             }
         }
@@ -170,31 +173,43 @@ pub fn section(section: &Section) -> String {
             out += "| Metric | |\n";
             out += "| --- | ---: |\n";
             let _ = writeln!(out, "| Samples | {} |", samples(change));
-            for (m, name) in METRICS.iter().enumerate() {
-                let _ = writeln!(out, "| {name} | {} |", cell(&change.metrics[m]));
+            for (m, name) in FRAME_TIME_METRICS.iter().enumerate() {
+                let _ = writeln!(
+                    out,
+                    "| {name} | {} |",
+                    frame_time_cell(&change.frame_time_ms[m])
+                );
             }
             let _ = writeln!(
                 out,
                 "| {EXCEPTIONS_METRIC} | {} |",
-                hundredths(change.exceptions)
+                hundredths(change.exceptions_per_run)
             );
-            if change.summaries > 0 {
-                let _ = writeln!(out, "| {HICCUPS_METRIC} | {} |", hiccups_cell(change));
-                let _ = writeln!(out, "| {PEAK_MEMORY_METRIC} | {} |", memory_cell(change));
+            if change.perf_summary_run_count > 0 {
+                let _ = writeln!(
+                    out,
+                    "| {CPU_HICCUPS_METRIC} | {} |",
+                    cpu_hiccups_cell(change)
+                );
+                let _ = writeln!(
+                    out,
+                    "| {PEAK_MEMORY_METRIC} | {} |",
+                    peak_memory_cell(change)
+                );
             }
         }
     }
 
     let base_scopes = section
-        .comparison
+        .baseline_comparison
         .as_ref()
-        .map(|comparison| comparison.base.scopes.as_slice())
+        .map(|comparison| comparison.base.scope_self_ms_per_run.as_slice())
         .unwrap_or_default();
-    if !change.scopes.is_empty() || !base_scopes.is_empty() {
+    if !change.scope_self_ms_per_run.is_empty() || !base_scopes.is_empty() {
         out += "\n<details><summary>Top scopes (self time per run, ms)</summary>\n\n";
         // the change's scopes first, by its self time; then the baseline's it lacks
         let mut names: Vec<&str> = change
-            .scopes
+            .scope_self_ms_per_run
             .iter()
             .map(|(name, _)| name.as_str())
             .collect();
@@ -210,56 +225,65 @@ pub fn section(section: &Section) -> String {
                 .find(|(known, _)| known == name)
                 .map_or("-".to_owned(), |(_, ms)| format!("{ms:.1}"))
         };
-        match &section.comparison {
+        match &section.baseline_comparison {
             Some(comparison) => {
                 out += "| Scope | Baseline | Change |\n| --- | ---: | ---: |\n";
                 for name in names {
                     let _ = writeln!(
                         out,
                         "| `{name}` | {} | {} |",
-                        self_ms(&comparison.base.scopes, name),
-                        self_ms(&change.scopes, name)
+                        self_ms(&comparison.base.scope_self_ms_per_run, name),
+                        self_ms(&change.scope_self_ms_per_run, name)
                     );
                 }
             }
             None => {
                 out += "| Scope | Self time |\n| --- | ---: |\n";
                 for name in names {
-                    let _ = writeln!(out, "| `{name}` | {} |", self_ms(&change.scopes, name));
+                    let _ = writeln!(
+                        out,
+                        "| `{name}` | {} |",
+                        self_ms(&change.scope_self_ms_per_run, name)
+                    );
                 }
             }
         }
         out += "</details>\n";
     }
 
-    for note in &section.notes {
-        let _ = write!(out, "\n> {}\n", note_text(note));
+    for note in &section.caveats {
+        let _ = write!(out, "\n> {}\n", caveat_text(note));
     }
 
-    let no_kinds = Kinds::default();
+    let no_kinds = ExceptionKindCounts::default();
     let base_kinds = section
-        .comparison
+        .baseline_comparison
         .as_ref()
-        .map_or(&no_kinds, |comparison| &comparison.base.kinds);
-    if !change.kinds.is_empty() || !base_kinds.is_empty() {
+        .map_or(&no_kinds, |comparison| &comparison.base.exception_kinds);
+    if !change.exception_kinds.is_empty() || !base_kinds.is_empty() {
         out += "\n<details><summary>Exception breakdown</summary>\n\n";
         // the change's kinds first, then the baseline's; the most frequent in the change first
-        let mut kinds: Vec<&str> = change.kinds.iter().map(|(kind, _)| kind).collect();
+        let mut kinds: Vec<&str> = change
+            .exception_kinds
+            .iter()
+            .map(|(kind, _)| kind)
+            .collect();
         for (kind, _) in base_kinds.iter() {
             if !kinds.contains(&kind) {
                 kinds.push(kind);
             }
         }
         kinds.sort_by(|a, b| {
-            (change.kinds.get(b), base_kinds.get(b)).cmp(&(change.kinds.get(a), base_kinds.get(a)))
+            (change.exception_kinds.get(b), base_kinds.get(b))
+                .cmp(&(change.exception_kinds.get(a), base_kinds.get(a)))
         });
 
-        match &section.comparison {
+        match &section.baseline_comparison {
             Some(comparison) => {
                 let _ = writeln!(
                     out,
                     "| Exception | Baseline ({} runs) | Change ({} runs) |",
-                    comparison.base.runs, change.runs
+                    comparison.base.run_count, change.run_count
                 );
                 out += "| --- | ---: | ---: |\n";
                 for kind in kinds {
@@ -267,7 +291,7 @@ pub fn section(section: &Section) -> String {
                         out,
                         "| `{kind}` | {} | {} |",
                         base_kinds.get(kind),
-                        change.kinds.get(kind)
+                        change.exception_kinds.get(kind)
                     );
                 }
             }
@@ -275,7 +299,7 @@ pub fn section(section: &Section) -> String {
                 out += "| Exception | Count |\n";
                 out += "| --- | ---: |\n";
                 for kind in kinds {
-                    let _ = writeln!(out, "| `{kind}` | {} |", change.kinds.get(kind));
+                    let _ = writeln!(out, "| `{kind}` | {} |", change.exception_kinds.get(kind));
                 }
             }
         }
@@ -299,16 +323,16 @@ pub fn missing(label: &str) -> String {
     )
 }
 
-fn note_text(note: &Note) -> String {
+fn caveat_text(note: &RunnerCaveat) -> String {
     match note {
-        Note::MissingRuns {
+        RunnerCaveat::MissingRuns {
             build,
             runs,
             expected,
         } => format!(
             "⚠️ Only {runs} of {expected} {build} runs produced data — the app may have crashed in the missing runs."
         ),
-        Note::Outlier {
+        RunnerCaveat::OutlierRunExcluded {
             build,
             exceptions,
             others,
@@ -320,11 +344,11 @@ fn note_text(note: &Note) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         ),
-        Note::Incomparable(Incomparable::TooFewRuns) => {
+        RunnerCaveat::SessionsNotComparable(SessionsNotComparable::TooFewRuns) => {
             "⚠️ No verdicts: fewer than 2 usable runs of a build — the run-to-run noise cannot be estimated from a single run."
                 .to_string()
         }
-        Note::Incomparable(Incomparable::SampleCountsDiffer {
+        RunnerCaveat::SessionsNotComparable(SessionsNotComparable::SampleCountsDiffer {
             base,
             change,
             ratio,
@@ -332,11 +356,11 @@ fn note_text(note: &Note) -> String {
             "⚠️ No verdicts: the builds produced wildly different sample counts per run ({base} baseline vs {change} change, {:.0}% apart) — far beyond any plausible performance difference, so one of them likely did not run the full session and their frame times cannot be compared.",
             (ratio - 1.0) * 100.0
         ),
-        Note::NoBaseline => {
+        RunnerCaveat::NoBaselineData => {
             "⚠️ No Baseline run produced data — the change is shown alone, with no verdicts."
                 .to_string()
         }
-        Note::NewKinds(kinds) => format!(
+        RunnerCaveat::NewExceptionKinds(kinds) => format!(
             "⚠️ Exception kinds not seen in the baseline: {}.",
             kinds
                 .iter()
@@ -348,8 +372,8 @@ fn note_text(note: &Note) -> String {
 }
 
 /// The median, and the (min–max) range when the runs differ, so the noise shows at a glance.
-fn cell(aggregate: &Aggregate) -> String {
-    let Aggregate { median, min, max } = *aggregate;
+fn frame_time_cell(aggregate: &MedianAndRange) -> String {
+    let MedianAndRange { median, min, max } = *aggregate;
     if max - min < 0.05 {
         format!("{median:.1} ms")
     } else {
@@ -361,13 +385,13 @@ fn cell(aggregate: &Aggregate) -> String {
 const TOP_SCOPES_SHOWN: usize = 15;
 
 /// The hiccup count's median and range, with the threshold in effect.
-fn hiccups_cell(build: &Build) -> String {
-    if build.summaries == 0 {
+fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
+    if build.perf_summary_run_count == 0 {
         return "-".to_owned();
     }
-    let Aggregate { median, min, max } = build.hiccups;
+    let MedianAndRange { median, min, max } = build.cpu_hiccups_per_run;
     let threshold = build
-        .hiccup_threshold_ms
+        .cpu_hiccup_threshold_ms
         .map_or(String::new(), |ms| format!(" over {ms:.0} ms"));
     if max - min < 0.5 {
         format!("{median:.0}{threshold}")
@@ -376,11 +400,11 @@ fn hiccups_cell(build: &Build) -> String {
     }
 }
 
-fn memory_cell(build: &Build) -> String {
-    if build.summaries == 0 {
+fn peak_memory_cell(build: &BuildBenchmarkRunsStatistics) -> String {
+    if build.perf_summary_run_count == 0 {
         return "-".to_owned();
     }
-    let Aggregate { median, min, max } = build.peak_mib;
+    let MedianAndRange { median, min, max } = build.peak_memory_mib;
     if max - min < 0.5 {
         format!("{median:.0} MiB")
     } else {
@@ -396,49 +420,48 @@ fn signed_mib(delta: f32) -> String {
     }
 }
 
-fn hiccup_verdict(verdict: ExceptionVerdict) -> String {
+fn hiccups_verdict_text(verdict: IncidentsPerRunVerdict) -> String {
     match verdict {
-        ExceptionVerdict::More => "🔴 more hiccups".to_string(),
-        ExceptionVerdict::Fewer => "🟢 fewer hiccups".to_string(),
-        ExceptionVerdict::NoSignificantChange => "⚪ no significant change".to_string(),
-        ExceptionVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
+        IncidentsPerRunVerdict::More => "🔴 more hiccups".to_string(),
+        IncidentsPerRunVerdict::Fewer => "🟢 fewer hiccups".to_string(),
+        IncidentsPerRunVerdict::NoSignificantChange => "⚪ no significant change".to_string(),
+        IncidentsPerRunVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
     }
 }
 
-fn memory_verdict(verdict: Verdict) -> String {
+fn peak_memory_verdict_text(verdict: PeakMemoryVerdict) -> String {
     match verdict {
-        Verdict::Faster(by) => format!("🟢 {:.0}% less memory", by * 100.0),
-        Verdict::Slower(by) => format!("🔴 {:.0}% more memory", by * 100.0),
-        Verdict::WithinNoise => "⚪ within noise".to_string(),
-        Verdict::Informational => "— informational".to_string(),
-        Verdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
+        PeakMemoryVerdict::LessMemory(by) => format!("🟢 {:.0}% less memory", by * 100.0),
+        PeakMemoryVerdict::MoreMemory(by) => format!("🔴 {:.0}% more memory", by * 100.0),
+        PeakMemoryVerdict::WithinNoise => "⚪ within noise".to_string(),
+        PeakMemoryVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
     }
 }
 
-fn samples(build: &Build) -> String {
-    if build.runs > 1 {
-        format!("{} (×{})", build.samples, build.runs)
+fn samples(build: &BuildBenchmarkRunsStatistics) -> String {
+    if build.run_count > 1 {
+        format!("{} (×{})", build.median_sample_count, build.run_count)
     } else {
-        build.samples.to_string()
+        build.median_sample_count.to_string()
     }
 }
 
-fn verdict(verdict: Verdict) -> String {
+fn frame_time_verdict_text(verdict: FrameTimeVerdict) -> String {
     match verdict {
-        Verdict::Faster(by) => format!("🟢 {:.0}% faster", by * 100.0),
-        Verdict::Slower(by) => format!("🔴 {:.0}% slower", by * 100.0),
-        Verdict::WithinNoise => "⚪ within noise".to_string(),
-        Verdict::Informational => "— informational".to_string(),
-        Verdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
+        FrameTimeVerdict::Faster(by) => format!("🟢 {:.0}% faster", by * 100.0),
+        FrameTimeVerdict::Slower(by) => format!("🔴 {:.0}% slower", by * 100.0),
+        FrameTimeVerdict::WithinNoise => "⚪ within noise".to_string(),
+        FrameTimeVerdict::Informational => "— informational".to_string(),
+        FrameTimeVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
     }
 }
 
-fn exception_verdict(verdict: ExceptionVerdict) -> String {
+fn exceptions_verdict_text(verdict: IncidentsPerRunVerdict) -> String {
     match verdict {
-        ExceptionVerdict::More => "🔴 more errors".to_string(),
-        ExceptionVerdict::Fewer => "🟢 fewer errors".to_string(),
-        ExceptionVerdict::NoSignificantChange => "⚪ no significant change".to_string(),
-        ExceptionVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
+        IncidentsPerRunVerdict::More => "🔴 more errors".to_string(),
+        IncidentsPerRunVerdict::Fewer => "🟢 fewer errors".to_string(),
+        IncidentsPerRunVerdict::NoSignificantChange => "⚪ no significant change".to_string(),
+        IncidentsPerRunVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
     }
 }
 
@@ -541,12 +564,21 @@ mod tests {
     /// `{:.1}` and `{:.0}` of an f32 are .NET's `F1` and `F0`: the exact value, ties to even.
     #[test]
     fn a_cell_shows_the_range_only_when_the_runs_differ() {
-        let a = |median, min, max| Aggregate { median, min, max };
-        assert_eq!(cell(&a(16.25, 16.25, 16.25)), "16.2 ms");
-        assert_eq!(cell(&a(16.75, 16.7, 16.74)), "16.8 ms");
-        assert_eq!(cell(&a(33.0, 32.8, 33.35)), "33.0 ms (32.8–33.3)");
-        assert_eq!(verdict(Verdict::Faster(0.125)), "🟢 12% faster");
-        assert_eq!(verdict(Verdict::Slower(0.135)), "🔴 14% slower");
+        let a = |median, min, max| MedianAndRange { median, min, max };
+        assert_eq!(frame_time_cell(&a(16.25, 16.25, 16.25)), "16.2 ms");
+        assert_eq!(frame_time_cell(&a(16.75, 16.7, 16.74)), "16.8 ms");
+        assert_eq!(
+            frame_time_cell(&a(33.0, 32.8, 33.35)),
+            "33.0 ms (32.8–33.3)"
+        );
+        assert_eq!(
+            frame_time_verdict_text(FrameTimeVerdict::Faster(0.125)),
+            "🟢 12% faster"
+        );
+        assert_eq!(
+            frame_time_verdict_text(FrameTimeVerdict::Slower(0.135)),
+            "🔴 14% slower"
+        );
     }
 
     #[test]
@@ -569,11 +601,11 @@ mod tests {
 
     #[test]
     fn the_sample_count_note_rounds_the_gap() {
-        let note = Note::Incomparable(Incomparable::SampleCountsDiffer {
+        let note = RunnerCaveat::SessionsNotComparable(SessionsNotComparable::SampleCountsDiffer {
             base: 2000,
             change: 1000,
             ratio: 2.0,
         });
-        assert!(note_text(&note).contains("(2000 baseline vs 1000 change, 100% apart)"));
+        assert!(caveat_text(&note).contains("(2000 baseline vs 1000 change, 100% apart)"));
     }
 }

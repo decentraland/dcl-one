@@ -29,7 +29,7 @@ use webgpu_build::{
     CONFIG_READ_RETRY_PAUSE,
 };
 
-// mimalloc, counted for `perf/allocs_count_per_frame` (src/perf/allocation_counter.rs)
+// mimalloc, counted for `perf/allocation_count_per_frame` (src/perf/allocation_counter.rs)
 #[global_allocator]
 static GLOBAL: CountingAllocator<MiMalloc> = CountingAllocator(MiMalloc);
 static SESSION_LOG: OnceLock<String> = OnceLock::new();
@@ -71,7 +71,7 @@ fn main() {
                     .with_writer(non_blocking)
                     .with_ansi(false)
                     .and_then(PerfLogLayer::new(&BENCHMARK_LOG))
-                    .and_then(profiled_scopes::layer()),
+                    .and_then(profiled_scopes::profiled_scopes_layer()),
             ))
         },
         ..default()

@@ -17,7 +17,7 @@ use common::{
     perf::{
         hiccup_threshold_ms, ClientMemoryDataPoint, FrameTimeSampleSummary, InProgressSample,
         JsHeapDataPoint, PerformanceSnapshot, SamplingPausedReason, SamplingStatus,
-        SAMPLE_DURATION_SECONDS, SNAPSHOT_TOP_PROFILED_SCOPES,
+        SAMPLE_DURATION_SECONDS, SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
     },
     structs::{AppConfig, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics, WorldHold},
 };
@@ -25,18 +25,18 @@ use comms::global_crdt::ForeignPlayer;
 use scene_runner::renderer_context::RendererSceneContext;
 use wallet::Wallet;
 
-use super::profiled_scopes::{ProfiledScopeSort, ProfiledScopesTable};
+use super::profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable};
 
 /// The frame times of the sample being accumulated, and the memory peak seen during it.
 #[derive(Resource)]
-pub struct InProgressSampleFrameTimes {
+pub struct InProgressSampleMeasurements {
     cpu_frame_times_ms: Vec<f32>,
     gpu_frame_times_ms: Vec<f32>,
     pub used_peak_bytes_in_sample: u64,
-    last_gpu_measurement: Option<Instant>,
+    last_gpu_frame_time_measured_at: Option<Instant>,
 }
 
-impl InProgressSampleFrameTimes {
+impl InProgressSampleMeasurements {
     // empty is the start of a sample, not a default value of the type
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
@@ -44,7 +44,7 @@ impl InProgressSampleFrameTimes {
             cpu_frame_times_ms: Vec::new(),
             gpu_frame_times_ms: Vec::new(),
             used_peak_bytes_in_sample: 0,
-            last_gpu_measurement: None,
+            last_gpu_frame_time_measured_at: None,
         }
     }
 
@@ -71,7 +71,7 @@ pub fn new_gpu_frame_time_ms(
 }
 
 /// The latest entity count; `None` before the first.
-pub fn entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
+pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
     diagnostics
         .get(&EntityCountDiagnosticsPlugin::ENTITY_COUNT)
         .and_then(Diagnostic::value)
@@ -126,7 +126,7 @@ pub fn update_sampling_status_system(
 pub fn sample_frame_times_system(
     status: Res<SamplingStatus>,
     mut sample: ResMut<InProgressSample>,
-    mut frame_times: ResMut<InProgressSampleFrameTimes>,
+    mut frame_times: ResMut<InProgressSampleMeasurements>,
     time: Res<Time<Real>>,
     diagnostics: Res<DiagnosticsStore>,
     memory: Res<MemoryStatus>,
@@ -146,8 +146,10 @@ pub fn sample_frame_times_system(
         .cpu_frame_times_ms
         .push(time.delta_secs_f64() as f32 * 1000.0);
     let frame_times = &mut *frame_times;
-    if let Some(gpu_ms) = new_gpu_frame_time_ms(&diagnostics, &mut frame_times.last_gpu_measurement)
-    {
+    if let Some(gpu_ms) = new_gpu_frame_time_ms(
+        &diagnostics,
+        &mut frame_times.last_gpu_frame_time_measured_at,
+    ) {
         frame_times.gpu_frame_times_ms.push(gpu_ms);
     }
     let memory_reading = memory.reading();
@@ -178,13 +180,15 @@ pub fn sample_frame_times_system(
             used_peak_bytes_in_sample: frame_times.used_peak_bytes_in_sample,
             effective_cap_mib: reading.cap_mib,
         }),
-        js_heap: js_heap_sum(scenes.iter()),
+        js_heap: sum_scene_js_heaps(scenes.iter()),
         nearby_player_count: nearby_players.iter().count() as u32,
-        entity_count: entity_count(&diagnostics).unwrap_or(0),
+        entity_count: latest_entity_count(&diagnostics).unwrap_or(0),
         target_fps,
-        top_profiled_scope_summaries: profiled_scopes.enabled().then(|| {
-            let top =
-                profiled_scopes.top(SNAPSHOT_TOP_PROFILED_SCOPES, ProfiledScopeSort::SelfTime);
+        top_profiled_scope_summaries: profiled_scopes.recording_enabled().then(|| {
+            let top = profiled_scopes.top_scope_summaries(
+                SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
+                ProfiledScopeSortMetric::SelfTime,
+            );
             profiled_scopes.reset();
             top
         }),
@@ -209,14 +213,14 @@ pub fn effective_target_fps(config: &AppConfig, session: Option<&SessionGraphics
 }
 
 /// Every running scene's reported heap, summed; `None` when no scene reports one.
-pub fn js_heap_sum<'a>(
+pub fn sum_scene_js_heaps<'a>(
     scenes: impl Iterator<Item = &'a RendererSceneContext>,
 ) -> Option<JsHeapDataPoint> {
     let mut sum = JsHeapDataPoint {
         used_bytes_sum: 0,
         limit_bytes_sum: 0,
         external_bytes_sum: 0,
-        engine_count: 0,
+        reporting_scene_count: 0,
     };
     for counters in scenes.filter_map(|scene| scene.resource_counters.as_ref()) {
         if counters.heap_limit == 0 {
@@ -225,7 +229,7 @@ pub fn js_heap_sum<'a>(
         sum.used_bytes_sum += counters.heap_used;
         sum.limit_bytes_sum += counters.heap_limit;
         sum.external_bytes_sum += counters.external_memory;
-        sum.engine_count += 1;
+        sum.reporting_scene_count += 1;
     }
-    (sum.engine_count > 0).then_some(sum)
+    (sum.reporting_scene_count > 0).then_some(sum)
 }
