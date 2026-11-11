@@ -259,16 +259,6 @@ export type LiveNowCard = {
   jumpUrl?: string;
 };
 
-type UpcomingCard = {
-  id: string;
-  name: string;
-  creator: string;
-  time: string;
-  hue: number;
-  image?: string;
-  jumpUrl?: string;
-};
-
 export function effectiveStartAt(e: Event): string | null {
   return eventOccurrence(e).start ?? null;
 }
@@ -326,18 +316,6 @@ export function toLiveNowCard(e: Event): LiveNowCard {
     users: e.connected_addresses ? new Set(e.connected_addresses.map((address) => address.toLowerCase())).size : null,
     isEvent: true,
     creator: e.user_name ?? e.scene_name ?? "Decentraland",
-    hue: hueFor(e.id),
-    image: e.image ?? undefined,
-    jumpUrl: eventJumpUrl(e) ?? undefined,
-  };
-}
-
-export function toUpcomingCard(e: Event): UpcomingCard {
-  return {
-    id: e.id,
-    name: e.name ?? "Untitled event",
-    creator: e.user_name ?? e.scene_name ?? "Decentraland",
-    time: formatEventTime(effectiveStartAt(e)),
     hue: hueFor(e.id),
     image: e.image ?? undefined,
     jumpUrl: eventJumpUrl(e) ?? undefined,

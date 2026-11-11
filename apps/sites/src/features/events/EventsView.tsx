@@ -44,11 +44,13 @@ import {
   calendarHref,
   closedHref,
   DAY_PARAM,
+  EVENTS_PATH,
+  MAX_DAY_OFFSET,
   dayFullLabel,
   dayLabel,
   eventCreator,
   eventHref,
-  eventShareUrl,
+  eventPageShareUrl,
   eventTarget,
   eventUsers,
   formatTime,
@@ -220,7 +222,8 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
     [liveItems, upcomingEvents, buckets, detail.data, place.data],
   );
   const profiles = useCreatorProfiles(creatorGroups);
-  useViewedOnce(sid, liveItems.length, upcomingEvents.length, offset);
+  // Counted once both reads settled, so a client navigation never reports the empty first render.
+  useViewedOnce(sid, !live.isPending && !upcoming.isPending, liveItems.length, upcomingEvents.length, offset);
   const liveCards: LiveEventCardProps[] = liveItems.map((item, index): LiveEventCardProps => {
     if (item.kind === "event") {
       const href = eventHref(item.event.id, search);
@@ -267,7 +270,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
       creator: eventCreator(event, profiles),
       time: start ? { label: relativeStart(start, now, zone), dateTime: start } : { label: "Soon" },
       remind: remindControl(reminders.get(event.id)),
-      calendarHref: calendarHref(event, eventShareUrl(origin, event)),
+      calendarHref: calendarHref(event, eventPageShareUrl(origin, event)),
     };
   });
 
@@ -295,7 +298,7 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
           dateTime: occurrence.start,
         },
         remind: occurrence.live ? undefined : remindControl(reminders.get(event.id)),
-        calendarHref: calendarHref(event, eventShareUrl(origin, event), occurrence),
+        calendarHref: calendarHref(event, eventPageShareUrl(origin, event), occurrence),
       };
     }),
   }));
@@ -350,14 +353,18 @@ export function EventsView({ sid, platform, origin, initial }: EventsViewProps) 
         days={allDays}
         layout={columns === 1 ? "list" : "columns"}
         canGoBack={offset > 0}
+        canGoForward={offset < MAX_DAY_OFFSET}
         onPrevious={() => setDayOffset(Math.max(0, offset - columns))}
-        onNext={() => setDayOffset(offset + columns)}
-        tabs={
+        onNext={() => setDayOffset(Math.min(MAX_DAY_OFFSET, offset + columns))}
+        views={
           identity
             ? {
                 active: "all",
-                onSelect: (tab) => {
-                  if (tab === "my") void navigate(`/events?${TAB_PARAM}=my`);
+                hrefs: { all: EVENTS_PATH, my: `${EVENTS_PATH}?${TAB_PARAM}=my` },
+                onFollow: (_view, event) => {
+                  if (!isPlainClick(event)) return;
+                  event.preventDefault();
+                  void navigate(event.currentTarget.getAttribute("href") ?? EVENTS_PATH);
                 },
               }
             : undefined
@@ -390,7 +397,7 @@ function EventDetail({
   onClose: () => void;
 }) {
   const target = eventTarget(event);
-  const share = eventShareUrl(origin, event);
+  const share = eventPageShareUrl(origin, event);
   const viewed = useRef<string | null>(null);
   useEffect(() => {
     if (!sid || viewed.current === event.id) return;
@@ -468,15 +475,15 @@ function PlaceDetail({
 }
 
 /** One view event per day window the visitor looks at, as the What's On feed reported per filter. */
-function useViewedOnce(sid: string, liveCount: number, upcomingCount: number, offset: number) {
+function useViewedOnce(sid: string, settled: boolean, liveCount: number, upcomingCount: number, offset: number) {
   const last = useRef<number | null>(null);
   useEffect(() => {
-    if (!sid || last.current === offset) return;
+    if (!sid || !settled || last.current === offset) return;
     last.current = offset;
     track(
       "lp_whatson_viewed",
       { live_count: liveCount, upcoming_count: upcomingCount, filter: offset ? `day+${offset}` : null, search: null },
       { sid, story: STORY },
     );
-  }, [sid, liveCount, upcomingCount, offset]);
+  }, [sid, settled, liveCount, upcomingCount, offset]);
 }

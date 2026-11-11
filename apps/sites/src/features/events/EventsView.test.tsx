@@ -39,6 +39,7 @@ vi.mock("@/data/lib/catalyst/jump/place-lookup", () => ({ loadJumpPlace: vi.fn()
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { CatalystError } from "@/data/lib/catalyst/client";
+import { track } from "@/core/lib/telemetry/track";
 import { loadJumpPlace } from "@/data/lib/catalyst/jump/place-lookup";
 import { fetchEvent, fetchEvents, type Event } from "@/data/lib/catalyst/places/events";
 import { fetchMostActivePlaces } from "@/data/lib/catalyst/places/index";
@@ -95,7 +96,9 @@ beforeEach(() => {
     return found;
   });
   vi.mocked(loadJumpPlace).mockResolvedValue(null);
-  http.signedGetJSON.mockReset().mockResolvedValue({ ok: true, data: [{ id: "up", name: "Watch Party", attending: false }] });
+  http.signedGetJSON
+    .mockReset()
+    .mockResolvedValue({ ok: true, data: [{ id: "up", name: "Watch Party", attending: false }] });
   http.postJSON.mockReset();
   signIn.openSignIn.mockReset();
   // Creator faces: no profiles unless a test says otherwise, and never the real network.
@@ -159,6 +162,59 @@ describe("EventsView", () => {
     );
     await user.click(screen.getByRole("button", { name: "Navigate to previous dates" }));
     expect(router.state.location.search).toBe("");
+  });
+
+  it("should stop paging forward a year ahead and clamp a longer offset in the URL", async () => {
+    const { router, user } = setup("/events?day=999");
+    const next = await screen.findByRole("button", { name: "Navigate to next dates" });
+    expect((next as HTMLButtonElement).disabled).toBe(true);
+    await user.click(screen.getByRole("button", { name: "Navigate to previous dates" }));
+    expect(router.state.location.search).toBe("?day=361");
+    expect((screen.getByRole("button", { name: "Navigate to next dates" }) as HTMLButtonElement).disabled).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Navigate to next dates" }));
+    expect(router.state.location.search).toBe("?day=365");
+  });
+
+  it("should offer All Events and My Events as links to a signed-in member, the current one marked", async () => {
+    auth.identity = { signer: "0xAB" } as unknown as AuthIdentity;
+    const { router, user } = setup("/events");
+    const views = await screen.findByRole("navigation", { name: "Events views" });
+    expect(within(views).queryByRole("tab")).toBeNull();
+    expect(within(views).getByRole("link", { name: "All Events" }).getAttribute("aria-current")).toBe("page");
+    const mine = within(views).getByRole("link", { name: "My Events" });
+    expect(mine.getAttribute("href")).toBe("/events?tab=my");
+    await user.click(mine);
+    expect(router.state.location.search).toBe("?tab=my");
+  });
+
+  it("should show the section title instead of the views when signed out", async () => {
+    setup("/events");
+    expect(await screen.findByRole("heading", { name: "All Events" })).toBeTruthy();
+    expect(screen.queryByRole("navigation", { name: "Events views" })).toBeNull();
+  });
+
+  it("should report the page view once its reads settle, with their counts", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    vi.mocked(fetchEvents).mockImplementation(async (params) => {
+      if (params?.list === "upcoming") {
+        await gate;
+        return { data: upcoming, total: upcoming.length };
+      }
+      return { data: params?.list === "live" ? [] : calendar, total: 0 };
+    });
+    setup("/events");
+    await screen.findByRole("heading", { name: "All Events" });
+    expect(vi.mocked(track).mock.calls.filter(([name]) => name === "lp_whatson_viewed")).toHaveLength(0);
+    release();
+    await waitFor(() =>
+      expect(vi.mocked(track)).toHaveBeenCalledWith(
+        "lp_whatson_viewed",
+        { live_count: 0, upcoming_count: 1, filter: null, search: null },
+        expect.anything(),
+      ),
+    );
+    expect(vi.mocked(track).mock.calls.filter(([name]) => name === "lp_whatson_viewed")).toHaveLength(1);
   });
 
   it("should show an unavailable calendar with a Retry that reads it again", async () => {

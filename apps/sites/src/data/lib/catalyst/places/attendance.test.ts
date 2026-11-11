@@ -2,7 +2,10 @@ import { QueryClient } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const http = vi.hoisted(() => ({ signedGetJSON: vi.fn() }));
-vi.mock("../client", async (actual) => ({ ...(await actual<typeof import("../client")>()), signedGetJSON: http.signedGetJSON }));
+vi.mock("../client", async (actual) => ({
+  ...(await actual<typeof import("../client")>()),
+  signedGetJSON: http.signedGetJSON,
+}));
 
 import type { AuthIdentity } from "../../auth/types";
 import { attendanceKeys, attendingListQuery } from "./attendance";

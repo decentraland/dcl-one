@@ -11,6 +11,7 @@ import {
 } from "@/data/lib/catalyst/jump/jump";
 import type { JumpPlaceRecord } from "@/data/lib/catalyst/jump/jump";
 import { DEFAULT_MIN_USERS, type LiveNowData } from "@/data/lib/catalyst/places/events-page";
+import { ETH_ADDRESS_RE, shortAddress } from "@/data/lib/catalyst/format/address";
 import type { Place } from "@/data/lib/catalyst/schema";
 import type { CreatorProfiles } from "@/data/lib/catalyst/social/creator-profiles";
 
@@ -27,7 +28,6 @@ export const PLACE_WORLD_PARAM = "world";
 export const TAB_PARAM = "tab";
 export const DAY_PARAM = "day";
 
-const ETH_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
 const MINUTE = 60_000;
 const DAY_MS = 86_400_000;
 
@@ -89,7 +89,7 @@ export function closedHref(current: string): string {
 }
 
 /** What links share: a live event opens its jump page, a later one this page's detail, as source. */
-export function eventShareUrl(origin: string, event: Pick<Event, "id" | "live">): string {
+export function eventPageShareUrl(origin: string, event: Pick<Event, "id" | "live">): string {
   const url = new URL(event.live ? "/jump/events" : EVENTS_PATH, origin);
   url.searchParams.set(EVENT_ID_PARAM, event.id);
   return url.toString();
@@ -109,9 +109,9 @@ export function eventCreator(
   event: Pick<Event, "user" | "user_name">,
   profiles: CreatorProfiles = {},
 ): EventCardCreator {
-  const address = event.user && ETH_ADDRESS.test(event.user) ? event.user : undefined;
+  const address = event.user && ETH_ADDRESS_RE.test(event.user) ? event.user : undefined;
   return {
-    name: event.user_name || (address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Unknown"),
+    name: event.user_name || (address ? shortAddress(address) : "Unknown"),
     href: address ? profileHref(address) : undefined,
     ...faceOf(address, profiles),
   };
@@ -121,8 +121,8 @@ export function placeCreator(
   place: Pick<JumpPlaceRecord, "owner" | "contact_name">,
   profiles: CreatorProfiles = {},
 ): EventCardCreator {
-  const owner = place.owner && ETH_ADDRESS.test(place.owner) ? place.owner : undefined;
-  const name = place.contact_name || (owner ? `${owner.slice(0, 6)}…${owner.slice(-4)}` : place.owner) || "Unknown";
+  const owner = place.owner && ETH_ADDRESS_RE.test(place.owner) ? place.owner : undefined;
+  const name = place.contact_name || (owner ? shortAddress(owner) : place.owner) || "Unknown";
   // The Foundation keeps its logo, as source does for Genesis Plaza.
   if (name === FOUNDATION_CONTACT_NAME) return { name, href: owner ? profileHref(owner) : undefined, foundation: true };
   return { name, href: owner ? profileHref(owner) : undefined, ...faceOf(owner, profiles) };
@@ -132,7 +132,7 @@ export function placeCreator(
 export function creatorWallets(items: readonly ({ user?: string | null } | { owner: string | null })[]): string[] {
   return items
     .map((item) => ("owner" in item ? item.owner : item.user) ?? "")
-    .filter((value) => ETH_ADDRESS.test(value));
+    .filter((value) => ETH_ADDRESS_RE.test(value));
 }
 
 /** Distinct wallets in the event's scene now; undefined when the record does not say. */
@@ -364,8 +364,27 @@ export function legacyEventsHref(url: URL, eventId?: string): string {
   return query ? `${EVENTS_PATH}?${query}` : EVENTS_PATH;
 }
 
-/** The All Events day offset in the URL: a whole number of days from today, never negative. */
+/**
+ * A deeper What's On path. The moderation and edit links the events service still sends (Slack
+ * notices) keep their target: `/whats-on/admin/*` is `/events/admin/*` and `/whats-on/edit-hangout/:id`
+ * is `/events/edit-event/:id`; anything else lands on this page. The query is kept either way.
+ */
+export function legacyWhatsOnHref(url: URL, splat: string): string {
+  const segments = splat.split("/").filter(Boolean);
+  if (segments[0] === "admin" && segments.length > 1) {
+    return `${EVENTS_PATH}/admin/${segments.slice(1).map(encodeURIComponent).join("/")}${url.search}`;
+  }
+  if (segments[0] === "edit-hangout" && segments.length === 2) {
+    return `${EVENTS_PATH}/edit-event/${encodeURIComponent(segments[1]!)}${url.search}`;
+  }
+  return legacyEventsHref(url);
+}
+
+/** All Events pages up to a year ahead. */
+export const MAX_DAY_OFFSET = 365;
+
+/** The All Events day offset in the URL: whole days from today, never negative, at most a year. */
 export function readDayOffset(params: URLSearchParams): number {
   const value = Number(params.get(DAY_PARAM) ?? 0);
-  return Number.isSafeInteger(value) && value > 0 && value <= 365 ? value : 0;
+  return Number.isSafeInteger(value) && value > 0 ? Math.min(value, MAX_DAY_OFFSET) : 0;
 }

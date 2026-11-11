@@ -7,7 +7,7 @@ import {
   creatorWallets,
   eventCreator,
   eventHref,
-  eventShareUrl,
+  eventPageShareUrl,
   legacyEventsHref,
   liveNowItems,
   placeCreator,
@@ -134,10 +134,12 @@ describe("page URLs", () => {
   });
 
   it("should share a live event through its jump page and a later one through this page", () => {
-    expect(eventShareUrl("https://example.org", { id: "e1", live: true })).toBe(
+    expect(eventPageShareUrl("https://example.org", { id: "e1", live: true })).toBe(
       "https://example.org/jump/events?id=e1",
     );
-    expect(eventShareUrl("https://example.org", { id: "e1", live: false })).toBe("https://example.org/events?id=e1");
+    expect(eventPageShareUrl("https://example.org", { id: "e1", live: false })).toBe(
+      "https://example.org/events?id=e1",
+    );
   });
 
   it("should keep a legacy link's query and turn a detail path into the event to open", () => {
@@ -145,13 +147,14 @@ describe("page URLs", () => {
     expect(legacyEventsHref(new URL("https://example.org/whats-on/x?env=zone"), "x")).toBe("/events?env=zone&id=x");
   });
 
-  it("should read the day offset only as a whole number of days from 1 to 365", () => {
+  it("should read the day offset as whole days, capped at 365", () => {
     for (const [value, expected] of [
       ["4", 4],
       ["-1", 0],
       ["1.5", 0],
       ["abc", 0],
-      ["400", 0],
+      ["365", 365],
+      ["400", 365],
       ["", 0],
     ] as const) {
       expect(readDayOffset(new URLSearchParams({ day: value }))).toBe(expected);

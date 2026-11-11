@@ -67,12 +67,6 @@ export function EventNavigation({ profile = null, canManageUsers = false }: { pr
   );
 }
 
-// Public discovery needs no private profile lookup. Management loads access
-// after the user follows My Hangouts.
-export function EventDiscoveryNavigation() {
-  return <div className={styles.discoveryNavigation}><EventNavigation /></div>;
-}
-
 export default function EventManagement({ mode }: { mode: Mode }) {
   const auth = useAuth();
   const identity = auth.isConnected ? auth.identity : null;
