@@ -5,25 +5,49 @@ edition = "2021"
 
 [lib]
 
+[features]
+default = ["explorer"]
+# the materials without the scene-bounds cell table, for a WebGL2 build (see scene_material)
+webgl2 = ["scene_material/webgl2"]
+# The Explorer's glue around the avatar renderer: players and their profiles, scene-placed
+# avatars and their crdt reports, comms emote broadcast, colliders, nametags, IK, the photo
+# booth and the debug commands. Without it the crate is the renderer alone
+# (`AvatarRenderPlugin`): from an `AvatarSelection` to a dressed, animated avatar, which is
+# what the avatar preview (rendering/avatar-preview) links.
+explorer = [
+  "dep:comms",
+  "dep:dcl_types",
+  "dep:scene_runner",
+  "dep:texture_camera",
+  "dep:ui_core",
+  "dep:input_manager",
+  "dep:world_ui",
+  "dep:system_bridge",
+  "dep:social",
+  "dep:rapier3d-f64",
+  "dep:bevy_dui",
+  "dep:alloy-core",
+]
+
 [dependencies]
 serde = { workspace = true, features = ["derive"] }
 rand = { workspace = true }
 common = { workspace = true }
-comms = { workspace = true }
+comms = { workspace = true, optional = true }
 console = { workspace = true }
-dcl_types = { workspace = true }
+dcl_types = { workspace = true, optional = true }
 dcl_component = { workspace = true }
 ipfs = { workspace = true }
-scene_runner = { workspace = true }
-texture_camera = { workspace = true }
-ui_core = { workspace = true }
-input_manager = { workspace = true }
-world_ui = { workspace = true }
+scene_runner = { workspace = true, optional = true }
+texture_camera = { workspace = true, optional = true }
+ui_core = { workspace = true, optional = true }
+input_manager = { workspace = true, optional = true }
+world_ui = { workspace = true, optional = true }
 collectibles = { workspace = true }
 scene_material = { workspace = true }
 platform = { workspace = true }
-system_bridge = { workspace = true }
-social = { workspace = true }
+system_bridge = { workspace = true, optional = true }
+social = { workspace = true, optional = true }
 
 bevy = { workspace = true }
 bevy_kira_audio = { workspace = true }
@@ -31,9 +55,9 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true }
 bevy_console = { workspace = true }
-rapier3d-f64 = { workspace = true }
-bevy_dui = { workspace = true }
-alloy-core = { workspace = true }
+rapier3d-f64 = { workspace = true, optional = true }
+bevy_dui = { workspace = true, optional = true }
+alloy-core = { workspace = true, optional = true }
 
 [dev-dependencies]
 # the embedded shaders, for the GPU shader test

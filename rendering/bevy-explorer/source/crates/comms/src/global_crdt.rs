@@ -922,6 +922,7 @@ pub fn process_transport_updates(
                                         profile_version: 0,
                                         audio_sender: audio_sender.clone(),
                                     },
+                                    common::structs::ForeignAvatar,
                                     ForeignAudioSource {
                                         audio_available_receiver: audio_receiver,
                                         audio_receiver: None,

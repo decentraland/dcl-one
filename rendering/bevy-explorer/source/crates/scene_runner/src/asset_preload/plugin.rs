@@ -67,15 +67,7 @@ pub(crate) struct PreloadedAsset {
 #[derive(Component)]
 pub(crate) struct LoadingPreloadedAsset;
 
-/// A glb an `AssetLoad` holds, by scene and content hash. Avatar animation loads a scene's clips
-/// by content hash, a different asset path from the scene's file path, so it plays a preloaded
-/// clip through this.
-#[derive(Component)]
-pub struct PreloadedGltf {
-    pub scene_hash: String,
-    pub content_hash: String,
-    pub handle: Handle<Gltf>,
-}
+pub use common::structs::PreloadedGltf;
 
 fn asset_load_on_insert(
     trigger: Trigger<OnInsert, AssetLoad>,

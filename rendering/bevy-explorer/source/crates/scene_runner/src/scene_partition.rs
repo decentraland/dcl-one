@@ -4,28 +4,16 @@ use bevy::{
 };
 
 use common::{
-    partition::{point_partition, scene_partition, LoadPriority, PartitionData, Tier},
+    partition::{point_partition, scene_partition, LoadPriority, Tier},
     structs::{PrimaryCamera, PrimaryUser},
 };
 use ipfs::IpfsResource;
 
 use crate::{initialize_scene::SceneHash, renderer_context::RendererSceneContext, ContainingScene};
 
-/// Where a scene, or an entity with `PartitionedDownloads`, is relative to the player and the
-/// camera; refreshed every frame by `update_scene_partitions`.
-#[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Partition(pub PartitionData);
-
-/// The content hashes whose downloads take this entity's partition: an avatar's body and
-/// wearables. Scenes need none; their downloads carry the scene's own hash. Inserting it
-/// registers the hashes with the ipfs request slots and replacing or removing it (an outfit
-/// change, a despawn) releases them, so the slots know exactly which hashes have an owner.
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-#[component(
-    on_insert = register_partitioned_downloads,
-    on_replace = release_partitioned_downloads
-)]
-pub struct PartitionedDownloads(pub Vec<String>);
+// the partition components live beside the request slots they rank; the avatar systems file
+// their outfits there without the scene runner
+pub use ipfs::partition::{Partition, PartitionedDownloads};
 
 /// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
 /// bottom of the scene tier until it has one; the publisher raises the player's scene to the
@@ -56,35 +44,6 @@ pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
         return;
     };
     ipfs.release_download_priority(&hash.0);
-}
-
-fn register_partitioned_downloads(world: DeferredWorld, context: HookContext) {
-    let (Some(ipfs), Some(downloads)) = (
-        world.get_resource::<IpfsResource>(),
-        world.get::<PartitionedDownloads>(context.entity),
-    ) else {
-        return;
-    };
-    let key = world
-        .get::<Partition>(context.entity)
-        .map_or(LoadPriority::AVATAR_PENDING, |partition| {
-            partition.0.load_priority(Tier::Avatar)
-        });
-    for hash in &downloads.0 {
-        ipfs.register_download_priority(hash, key);
-    }
-}
-
-fn release_partitioned_downloads(world: DeferredWorld, context: HookContext) {
-    let (Some(ipfs), Some(downloads)) = (
-        world.get_resource::<IpfsResource>(),
-        world.get::<PartitionedDownloads>(context.entity),
-    ) else {
-        return;
-    };
-    for hash in &downloads.0 {
-        ipfs.release_download_priority(hash);
-    }
 }
 
 /// A scene behind the camera counts as this many times farther in the tick queue: it keeps

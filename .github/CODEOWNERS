@@ -127,6 +127,10 @@
 /.github/workflows/uuav-native.yml @decentraland/client
 /.github/workflows/uuav-verify.yml @decentraland/client
 
+# avatar-preview
+/rendering/avatar-preview/ @decentraland/client
+/.github/workflows/avatar-preview*.yml @decentraland/client
+
 # quality
 /services/catalyst/tests/ @decentraland/qa
 

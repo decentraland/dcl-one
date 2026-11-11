@@ -1,10 +1,10 @@
-use std::{collections::VecDeque, f32::consts::PI, path::PathBuf, time::Duration};
+#[cfg(feature = "explorer")]
+use std::path::PathBuf;
+use std::{collections::VecDeque, f32::consts::PI, time::Duration};
 
-use attach::AttachPlugin;
-use avatar_texture::AvatarTexturePlugin;
 use bevy::{
     animation::{AnimationTarget, AnimationTargetId},
-    asset::{AsyncReadExt, RenderAssetUsages},
+    asset::RenderAssetUsages,
     gltf::Gltf,
     platform::collections::{HashMap, HashSet},
     prelude::*,
@@ -14,17 +14,21 @@ use bevy::{
         view::RenderLayers,
     },
     scene::InstanceId,
+};
+#[cfg(feature = "explorer")]
+use bevy::{
+    asset::AsyncReadExt,
     tasks::{IoTaskPool, Task},
 };
+#[cfg(feature = "explorer")]
 use bevy_console::ConsoleCommand;
 use collectibles::{
     base_wearables,
     wearables::{UsedWearables, Wearable, WearableCategory, WearableModel, WearableUrn},
     CollectibleError, CollectibleManager, Emote, EmoteUrn,
 };
-use colliders::AvatarColliderPlugin;
+#[cfg(feature = "explorer")]
 use console::DoAddConsoleCommand;
-use npc_dynamics::NpcMovementPlugin;
 use scene_material::{
     SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
     SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
@@ -32,22 +36,35 @@ use scene_material::{
 };
 
 pub mod animate;
+#[cfg(feature = "explorer")]
 pub mod attach;
+#[cfg(feature = "explorer")]
 mod avatar_state;
+#[cfg(feature = "explorer")]
 pub mod avatar_texture;
+#[cfg(feature = "explorer")]
 pub mod colliders;
+#[cfg(feature = "explorer")]
 mod debug_avatars;
+#[cfg(feature = "explorer")]
 pub mod dynamic_nametag;
+#[cfg(feature = "explorer")]
 pub mod emote_report;
+#[cfg(feature = "explorer")]
 pub mod foot_ik;
+#[cfg(feature = "explorer")]
 pub mod foreign_dynamics;
+#[cfg(feature = "explorer")]
 pub mod ghost;
 pub mod head_ik;
+#[cfg(feature = "explorer")]
 mod ik_debug;
 pub mod mask_material;
 pub mod material_cache;
+#[cfg(feature = "explorer")]
 pub mod npc_dynamics;
 pub mod point_at_ik;
+#[cfg(feature = "explorer")]
 pub mod point_at_marker;
 mod two_bone_ik;
 
@@ -56,62 +73,74 @@ mod tests;
 
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
-    sets::SetupSets,
-    structs::{AppConfig, AttachPoints, EmoteCommand, EmoteMask, MonotonicTimestamp, PrimaryUser},
-    util::{JoinRelativeExt, SceneSpawnerPlus, TaskExt, TryPushChildrenEx},
+    structs::{AppConfig, AttachPoints, Clips, EmoteCommand, EmoteMask, PrimaryUser},
+    util::{SceneSpawnerPlus, TryPushChildrenEx},
 };
+#[cfg(feature = "explorer")]
+use common::{
+    sets::SetupSets,
+    structs::MonotonicTimestamp,
+    util::{JoinRelativeExt, TaskExt},
+};
+#[cfg(feature = "explorer")]
 use comms::{
     global_crdt::{ForeignPlayer, GlobalCrdtState},
     profile::UserProfile,
 };
+use dcl_component::proto_components::{
+    common::Color3,
+    sdk::components::{common::LoadingState, PbAvatarShape},
+    Color3DclToBevy,
+};
+#[cfg(feature = "explorer")]
 use dcl_component::{
-    proto_components::{
-        common::Color3,
-        sdk::components::{
-            common::LoadingState, PbAssetLoadLoadingState, PbAvatarBase, PbAvatarEquippedData,
-            PbAvatarShape, PbGltfContainerLoadingState,
-        },
-        Color3DclToBevy,
+    proto_components::sdk::components::{
+        PbAssetLoadLoadingState, PbAvatarBase, PbAvatarEquippedData, PbGltfContainerLoadingState,
     },
     SceneComponentId, SceneEntityId,
 };
+#[cfg(feature = "explorer")]
 use dcl_types::interface::{ComponentPosition, CrdtType};
+#[cfg(feature = "explorer")]
+use ipfs::EntityDefinition;
 use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
-    EntityDefinition, IpfsAssetServer,
+    partition::PartitionedDownloads,
+    IpfsAssetServer,
 };
-use scene_runner::scene_partition::PartitionedDownloads;
+#[cfg(feature = "explorer")]
 use scene_runner::{
-    renderer_context::RendererSceneContext,
-    update_world::{animation::Clips, AddCrdtInterfaceExt},
-    util::ConsoleRelay,
+    renderer_context::RendererSceneContext, update_world::AddCrdtInterfaceExt, util::ConsoleRelay,
     ContainingScene, SceneEntity,
 };
+#[cfg(feature = "explorer")]
 use world_ui::spawn_world_ui_view;
 
 use crate::{
     animate::{AvatarAnimPlayer, LOWER_BODY_BONES, LOWER_BODY_MASK_GROUP},
-    dynamic_nametag::DynamicNametagPlugin,
-    foot_ik::FootIkPlugin,
-    ghost::GhostAvatarPlugin,
-    head_ik::HeadIkPlugin,
     material_cache::{bounds_bits, AvatarMaskKey, AvatarMatKey, BoundsBits},
-    point_at_ik::PointAtIkPlugin,
+};
+#[cfg(feature = "explorer")]
+use crate::{
+    attach::AttachPlugin, avatar_texture::AvatarTexturePlugin, colliders::AvatarColliderPlugin,
+    dynamic_nametag::DynamicNametagPlugin, emote_report::EmoteReportPlugin, foot_ik::FootIkPlugin,
+    foreign_dynamics::PlayerMovementPlugin, ghost::GhostAvatarPlugin, head_ik::HeadIkPlugin,
+    npc_dynamics::NpcMovementPlugin, point_at_ik::PointAtIkPlugin,
     point_at_marker::PointAtMarkerPlugin,
 };
 
 use self::{
     animate::AvatarAnimationPlugin,
-    emote_report::EmoteReportPlugin,
-    foreign_dynamics::PlayerMovementPlugin,
     mask_material::{MaskMaterial, MaskMaterialPlugin},
 };
 
 /// The render-free part of the avatar stack: what a headless server needs from foreign players
 /// (their bevy transforms, their profile in scene crdt, their emotes reported to scenes) without
 /// spawning an avatar. `AvatarPlugin` builds on it; the headless binary adds it alone.
+#[cfg(feature = "explorer")]
 pub struct AvatarCorePlugin;
 
+#[cfg(feature = "explorer")]
 impl Plugin for AvatarCorePlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(PlayerMovementPlugin);
@@ -120,25 +149,21 @@ impl Plugin for AvatarCorePlugin {
     }
 }
 
-pub struct AvatarPlugin;
+/// The avatar renderer: from an `AvatarSelection` to a dressed, animated, emoting avatar. It
+/// knows no player, scene or comms: the Explorer adds those through `AvatarPlugin`, the
+/// avatar preview adds this alone. Scene-placed avatars report their loading through
+/// `AvatarLoadReport` events and take their scene's bounds and hash from `AvatarSceneContext`.
+pub struct AvatarRenderPlugin;
 
-impl Plugin for AvatarPlugin {
+impl Plugin for AvatarRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(AvatarCorePlugin);
+        app.add_event::<AvatarLoadReport>();
+        // the emote lifecycle feed; comms and the emote report add it too, idempotently
+        app.add_event::<common::structs::EmoteLifecycleEvent>();
+        // read by emote playback; the Explorer's input crate initialises it too
+        app.init_resource::<common::structs::SceneDrivenAnimationFeedback>();
         app.add_plugins(MaskMaterialPlugin);
-        app.add_plugins(NpcMovementPlugin);
         app.add_plugins(AvatarAnimationPlugin);
-        app.add_plugins(AttachPlugin);
-        app.add_plugins(AvatarColliderPlugin);
-        app.add_plugins(AvatarTexturePlugin);
-        app.add_plugins(DynamicNametagPlugin);
-        app.add_plugins(GhostAvatarPlugin);
-        app.add_plugins(FootIkPlugin);
-        app.add_plugins(HeadIkPlugin);
-        ik_debug::register(app);
-        debug_avatars::register(app);
-        app.add_plugins(PointAtIkPlugin);
-        app.add_plugins(PointAtMarkerPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
         app.add_systems(
@@ -151,13 +176,48 @@ impl Plugin for AvatarPlugin {
         app.add_systems(
             Update,
             (
-                update_base_avatar_shape,
-                select_avatar,
                 update_render_avatar,
                 spawn_scenes,
                 process_avatar.after(update_render_avatar),
                 set_avatar_visibility,
                 retag_avatars_on_style_change,
+            ),
+        );
+
+        app.add_observer(add_attach_points_to_avatar_shape);
+        app.add_observer(remove_attach_points_from_avatar_shape);
+    }
+}
+
+#[cfg(feature = "explorer")]
+pub struct AvatarPlugin;
+
+#[cfg(feature = "explorer")]
+impl Plugin for AvatarPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(AvatarCorePlugin);
+        app.add_plugins(AvatarRenderPlugin);
+        app.add_plugins(NpcMovementPlugin);
+        app.add_plugins(AttachPlugin);
+        app.add_plugins(AvatarColliderPlugin);
+        app.add_plugins(AvatarTexturePlugin);
+        app.add_plugins(DynamicNametagPlugin);
+        app.add_plugins(GhostAvatarPlugin);
+        app.add_plugins(FootIkPlugin);
+        app.add_plugins(HeadIkPlugin);
+        ik_debug::register(app);
+        debug_avatars::register(app);
+        app.add_plugins(PointAtIkPlugin);
+        app.add_plugins(PointAtMarkerPlugin);
+        app.add_systems(
+            Update,
+            (
+                update_base_avatar_shape,
+                // the selection and its scene context land together, before the renderer reads them
+                (select_avatar, sync_avatar_scene_context)
+                    .chain()
+                    .before(update_render_avatar),
+                apply_avatar_load_reports.after(process_avatar),
             ),
         );
 
@@ -174,18 +234,94 @@ impl Plugin for AvatarPlugin {
 
         app.add_preview_console_command::<DebugDumpAvatar, _>(debug_dump_avatar);
         avatar_state::register(app);
-
-        app.add_observer(add_attach_points_to_avatar_shape);
-        app.add_observer(remove_attach_points_from_avatar_shape);
     }
 }
 
+/// What the renderer needs from the scene an avatar belongs to: the bounds that clip and
+/// dither it, and the scene hash that resolves file-path emotes. The Explorer keeps it in step
+/// with the scene (`sync_avatar_scene_context`); a selection without it is unbounded.
+#[derive(Component, Clone, Debug, Default)]
+pub struct AvatarSceneContext {
+    pub bounds: SceneBounds,
+    pub hash: String,
+}
+
+/// An avatar's loading progress, for the scene that placed it. `owner` is the entity holding
+/// the `AvatarSelection`; the Explorer's `apply_avatar_load_reports` writes the report into
+/// that entity's scene crdt.
+#[derive(Event, Clone, Debug)]
+pub struct AvatarLoadReport {
+    pub owner: Entity,
+    pub body_shape: String,
+    pub state: LoadingState,
+}
+
+/// Copies the scene's bounds and hash onto a scene-placed avatar whenever its selection changes.
+#[cfg(feature = "explorer")]
+fn sync_avatar_scene_context(
+    mut commands: Commands,
+    changed: Query<(Entity, &AvatarSelection), Changed<AvatarSelection>>,
+    contexts: Query<&RendererSceneContext>,
+) {
+    for (entity, selection) in changed.iter() {
+        let Some(ctx) = selection.scene.and_then(|scene| contexts.get(scene).ok()) else {
+            continue;
+        };
+        commands.entity(entity).try_insert(AvatarSceneContext {
+            bounds: ctx.scene_bounds.clone(),
+            hash: ctx.hash.to_string(),
+        });
+    }
+}
+
+/// Writes each `AvatarLoadReport` into the owning scene's crdt: the asset load state always, the
+/// gltf container state while loading and once finished.
+#[cfg(feature = "explorer")]
+fn apply_avatar_load_reports(
+    mut reports: EventReader<AvatarLoadReport>,
+    scene_ents: Query<&SceneEntity>,
+    mut contexts: Query<&mut RendererSceneContext>,
+    timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+) {
+    for report in reports.read() {
+        let Ok(scene_ent) = scene_ents.get(report.owner) else {
+            continue;
+        };
+        let Ok(mut context) = contexts.get_mut(scene_ent.root) else {
+            continue;
+        };
+        context.update_crdt(
+            SceneComponentId::ASSET_LOAD_LOADING_STATE,
+            CrdtType::GO_ANY,
+            scene_ent.id,
+            &PbAssetLoadLoadingState {
+                current_state: report.state as i32,
+                asset: report.body_shape.clone(),
+                timestamp: timestamp.next_timestamp(),
+            },
+        );
+        if matches!(report.state, LoadingState::Loading | LoadingState::Finished) {
+            context.update_crdt(
+                SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
+                CrdtType::LWW_ENT,
+                scene_ent.id,
+                &PbGltfContainerLoadingState {
+                    current_state: report.state as i32,
+                    ..Default::default()
+                },
+            );
+        }
+    }
+}
+
+#[cfg(feature = "explorer")]
 #[derive(Resource)]
 struct AvatarWorldUi {
     view: Entity,
     ui_root: Entity,
 }
 
+#[cfg(feature = "explorer")]
 fn setup(mut commands: Commands, images: ResMut<Assets<Image>>, mut view: ResMut<AvatarWorldUi>) {
     view.view = spawn_world_ui_view(&mut commands, images.into_inner(), None).0;
     view.ui_root = commands
@@ -208,6 +344,7 @@ fn setup(mut commands: Commands, images: ResMut<Assets<Image>>, mut view: ResMut
 /// the local player's (`PLAYER`) into the client's single context (a multi-context
 /// server has no real local player: skip). Also registered directly by the headless
 /// server, where the rest of AvatarPlugin (render-bound) is omitted.
+#[cfg(feature = "explorer")]
 pub fn update_avatar_info(
     updated_players: Query<(Option<&ForeignPlayer>, &UserProfile), Changed<UserProfile>>,
     mut contexts: Query<&mut GlobalCrdtState>,
@@ -271,6 +408,7 @@ impl From<PbAvatarShape> for AvatarShape {
     }
 }
 
+#[cfg(feature = "explorer")]
 impl From<&UserProfile> for AvatarShape {
     fn from(profile: &UserProfile) -> Self {
         AvatarShape(PbAvatarShape {
@@ -352,6 +490,7 @@ impl From<&UserProfile> for AvatarShape {
 }
 
 // set (foreign) user's default avatar shape based on profile data
+#[cfg(feature = "explorer")]
 fn update_base_avatar_shape(
     mut commands: Commands,
     root_avatar_defs: Query<(Entity, Option<&ForeignPlayer>, &UserProfile), Changed<UserProfile>>,
@@ -375,16 +514,25 @@ fn update_base_avatar_shape(
     }
 }
 
+/// A mesh of the avatar's base body (head, torso, hands, legs, feet), as opposed to a wearable's.
+/// The avatar preview hides these to show a wearable on its own.
+#[derive(Component, Debug, Clone, Copy)]
+pub struct AvatarBodyMesh;
+
 #[derive(Component)]
 pub struct AvatarSelection {
-    scene: Option<Entity>,
-    shape: AvatarShape,
-    automatic_delete: bool,
-    disable_dither: bool,
+    /// the scene root that placed this avatar, if any (bounds and hash come from
+    /// `AvatarSceneContext`)
+    pub scene: Option<Entity>,
+    pub shape: AvatarShape,
+    /// despawn the avatar when its selection goes
+    pub automatic_delete: bool,
+    pub disable_dither: bool,
 }
 
 // choose the avatar shape based on current scene of the player
 #[allow(clippy::type_complexity)]
+#[cfg(feature = "explorer")]
 fn select_avatar(
     mut commands: Commands,
     mut root_avatar_defs: Query<
@@ -577,7 +725,7 @@ fn update_render_avatar(
             &AvatarSelection,
             Option<&Children>,
             Option<&AttachPoints>,
-            Option<&SceneEntity>,
+            Option<&AvatarSceneContext>,
             Option<&PreviousAvatar>,
             Option<&PartitionedDownloads>,
         ),
@@ -587,9 +735,8 @@ fn update_render_avatar(
     children: Query<(&Children, &AttachPoints)>,
     mut avatar_render_entities: Query<(&mut AvatarDefinition, Has<AvatarProcessed>)>,
     mut wearable_loader: CollectibleManager<Wearable>,
-    mut scenes: Query<&mut RendererSceneContext>,
+    mut reports: EventWriter<AvatarLoadReport>,
     ipfas: IpfsAssetServer,
-    timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
     config: Res<AppConfig>,
 ) {
     // remove renderable entities when avatar selection is removed
@@ -615,7 +762,7 @@ fn update_render_avatar(
         selection,
         maybe_children,
         maybe_attach_points,
-        maybe_scene_ent,
+        maybe_scene_ctx,
         maybe_prev,
         maybe_downloads,
     ) in &query
@@ -671,15 +818,11 @@ fn update_render_avatar(
             }
             Err(other) => {
                 warn!("failed to resolve body {body_urn}: {other:?}");
-                if let Some(scene_ent) = maybe_scene_ent {
-                    report_avatar_load(
-                        &mut scenes,
-                        &timestamp,
-                        scene_ent,
-                        LoadingState::FinishedWithError,
-                        body_urn.as_str(),
-                    );
-                }
+                reports.write(AvatarLoadReport {
+                    owner: entity,
+                    body_shape: body_urn.as_str().to_owned(),
+                    state: LoadingState::FinishedWithError,
+                });
                 // don't retry
                 let data = wearable_loader.get_data(&body_urn);
                 debug!("data: {data:?}");
@@ -844,9 +987,8 @@ fn update_render_avatar(
                         b: 0.356,
                     })
                     .convert_srgb(),
-                bounds: maybe_scene_ent
-                    .and_then(|se| scenes.get(se.root).ok())
-                    .map(|ctx| ctx.scene_bounds.clone())
+                bounds: maybe_scene_ctx
+                    .map(|ctx| ctx.bounds.clone())
                     .unwrap_or_default(),
                 disable_dither: selection.disable_dither,
                 cel_shading: config.graphics.cel_shading,
@@ -869,8 +1011,7 @@ fn update_render_avatar(
                         // File path emote (e.g. "models/emotes/foo.glb") — resolve
                         // through the scene's content map to build a scene-emote URN,
                         // mirroring the logic in op_scene_emote.
-                        let scene_emote = maybe_scene_ent
-                            .and_then(|se| scenes.get(se.root).ok())
+                        let scene_emote = maybe_scene_ctx
                             .and_then(|ctx| {
                                 let scene_hash = &ctx.hash;
                                 let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
@@ -947,27 +1088,11 @@ fn update_render_avatar(
                 .try_push_children(&attach_points.entities());
         }
 
-        if let Some(scene_ent) = maybe_scene_ent {
-            report_avatar_load(
-                &mut scenes,
-                &timestamp,
-                scene_ent,
-                LoadingState::Loading,
-                body_urn.as_str(),
-            );
-            // update gltf state
-            if let Ok(mut ctx) = scenes.get_mut(scene_ent.root) {
-                ctx.update_crdt(
-                    SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
-                    CrdtType::LWW_ENT,
-                    scene_ent.id,
-                    &PbGltfContainerLoadingState {
-                        current_state: LoadingState::Loading as i32,
-                        ..Default::default()
-                    },
-                );
-            }
-        }
+        reports.write(AvatarLoadReport {
+            owner: entity,
+            body_shape: body_urn.as_str().to_owned(),
+            state: LoadingState::Loading,
+        });
         commands.entity(entity).try_with_children(|commands| {
             commands.spawn((
                 Transform::from_rotation(Quat::from_rotation_y(PI)),
@@ -1015,28 +1140,6 @@ pub struct AvatarProcessed;
 /// Tells a scene how the avatar on one of its entities is loading, as the AssetLoad loading
 /// state of that entity (a grow-only set the scene reads in order): Loading once the look's
 /// files are being fetched, Finished once it renders, FinishedWithError when it never will.
-fn report_avatar_load(
-    contexts: &mut Query<&mut RendererSceneContext>,
-    timestamp: &MonotonicTimestamp<PbAssetLoadLoadingState>,
-    scene_ent: &SceneEntity,
-    state: LoadingState,
-    body_shape: &str,
-) {
-    let Ok(mut context) = contexts.get_mut(scene_ent.root) else {
-        return;
-    };
-    context.update_crdt(
-        SceneComponentId::ASSET_LOAD_LOADING_STATE,
-        CrdtType::GO_ANY,
-        scene_ent.id,
-        &PbAssetLoadLoadingState {
-            current_state: state as i32,
-            asset: body_shape.to_owned(),
-            timestamp: timestamp.next_timestamp(),
-        },
-    );
-}
-
 // instantiate avatar gltfs
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn spawn_scenes(
@@ -1048,22 +1151,16 @@ fn spawn_scenes(
     asset_server: Res<AssetServer>,
     gltfs: Res<Assets<Gltf>>,
     mut scene_spawner: ResMut<SceneSpawner>,
-    scene_ents: Query<&SceneEntity>,
-    mut contexts: Query<&mut RendererSceneContext>,
-    timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+    mut reports: EventWriter<AvatarLoadReport>,
 ) {
     for (ent, def, parent) in query.iter() {
         let def = &def.render;
-        let report_failure = |contexts: &mut Query<&mut RendererSceneContext>| {
-            if let Ok(scene_ent) = scene_ents.get(parent.parent()) {
-                report_avatar_load(
-                    contexts,
-                    &timestamp,
-                    scene_ent,
-                    LoadingState::FinishedWithError,
-                    &def.body_shape,
-                );
-            }
+        let report_failure = |reports: &mut EventWriter<AvatarLoadReport>| {
+            reports.write(AvatarLoadReport {
+                owner: parent.parent(),
+                body_shape: def.body_shape.clone(),
+                state: LoadingState::FinishedWithError,
+            });
         };
         let any_loading = def
             .body
@@ -1104,7 +1201,7 @@ fn spawn_scenes(
                 otherwise => {
                     warn!("failed to load body gltf: {otherwise:?}");
                     commands.entity(ent).try_insert(AvatarProcessed);
-                    report_failure(&mut contexts);
+                    report_failure(&mut reports);
                 }
             }
             continue;
@@ -1113,7 +1210,7 @@ fn spawn_scenes(
         let Some(h_scene) = gltf.default_scene.as_ref() else {
             warn!("body gltf has no default scene");
             commands.entity(ent).try_insert(AvatarProcessed);
-            report_failure(&mut contexts);
+            report_failure(&mut reports);
             continue;
         };
 
@@ -1238,10 +1335,9 @@ fn process_avatar(
     ),
     mut emote_loader: CollectibleManager<Emote>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
-    (name_and_parent, previous_avatar, scene_ent, previous_animator, mut contexts, timestamp): (
+    (name_and_parent, previous_avatar, previous_animator, mut reports): (
         Query<(&Name, &ChildOf)>,
         Query<&PreviousAvatar>,
-        Query<&SceneEntity>,
         Query<
             (),
             (
@@ -1251,8 +1347,7 @@ fn process_avatar(
                 With<AnimationTransitions>,
             ),
         >,
-        Query<&mut RendererSceneContext>,
-        Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+        EventWriter<AvatarLoadReport>,
     ),
 ) {
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
@@ -1368,6 +1463,7 @@ fn process_avatar(
             }
 
             if let Some(h_mesh) = maybe_h_mesh {
+                commands.entity(scene_ent).try_insert(AvatarBodyMesh);
                 if def.hides.contains(&WearableCategory::BODY_SHAPE) {
                     commands.entity(scene_ent).try_insert(Visibility::Hidden);
                 }
@@ -1810,26 +1906,11 @@ fn process_avatar(
         }
 
         // announce state
-        if let Ok(scene_ent) = scene_ent.get(root_player_entity.parent()) {
-            report_avatar_load(
-                &mut contexts,
-                &timestamp,
-                scene_ent,
-                LoadingState::Finished,
-                &def.body_shape,
-            );
-            if let Ok(mut ctx) = contexts.get_mut(scene_ent.root) {
-                ctx.update_crdt(
-                    SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
-                    CrdtType::LWW_ENT,
-                    scene_ent.id,
-                    &PbGltfContainerLoadingState {
-                        current_state: LoadingState::Finished as i32,
-                        ..Default::default()
-                    },
-                );
-            }
-        }
+        reports.write(AvatarLoadReport {
+            owner: root_player_entity.parent(),
+            body_shape: def.body_shape.clone(),
+            state: LoadingState::Finished,
+        });
     }
 }
 
@@ -1988,11 +2069,13 @@ fn set_avatar_visibility(
     }
 }
 
+#[cfg(feature = "explorer")]
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/debug_dump_avatar")]
 struct DebugDumpAvatar;
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "explorer")]
 fn debug_dump_avatar(
     mut input: ConsoleCommand<DebugDumpAvatar>,
     player: Query<&AvatarShape, With<PrimaryUser>>,

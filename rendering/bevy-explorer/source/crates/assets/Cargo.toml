@@ -3,6 +3,11 @@ name = "assets"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+# Embed only what an avatar-only build renders: shaders, the ghost body and the idle clip.
+# Default (off) embeds the whole assets folder, as the Explorer needs.
+preview = []
+
 [lib]
 
 [dependencies]

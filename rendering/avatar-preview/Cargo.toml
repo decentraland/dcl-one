@@ -1,0 +1,135 @@
+# Avatar preview renderer: a standalone wasm build of the Explorer's avatar look, for the
+# web preview the shop and the creator hub embed. Its own workspace, lockfile, target and
+# release; the avatar, collectible, material and asset code comes from the Explorer crates by
+# path, with the same engine fork pins, so the look stays the Explorer's
+# (docs/adr/2026-11-05-avatar-preview-renderer.md).
+[workspace]
+members = ["."]
+resolver = "2"
+
+[package]
+name = "dcl_avatar_preview"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+# The browser backend. Bevy cannot hold both in one module (WebGPU overrides WebGL2), so a page
+# that falls back builds twice and loads the module the browser supports.
+[features]
+default = ["webgpu"]
+webgpu = ["bevy/webgpu"]
+webgl2 = ["bevy/webgl2", "avatar/webgl2", "scene_material/webgl2"]
+
+[dependencies]
+# Explorer crates, by path. They inherit their own dependency pins from the Explorer workspace.
+assets = { path = "../bevy-explorer/source/crates/assets", features = ["preview"] }
+common = { path = "../bevy-explorer/source/crates/common" }
+platform = { path = "../bevy-explorer/source/crates/platform" }
+console = { path = "../bevy-explorer/source/crates/console" }
+ipfs = { path = "../bevy-explorer/source/crates/ipfs" }
+collectibles = { path = "../bevy-explorer/source/crates/collectibles" }
+scene_material = { path = "../bevy-explorer/source/crates/scene_material" }
+# the avatar renderer without the Explorer glue (players, scenes, comms)
+avatar = { path = "../bevy-explorer/source/crates/avatar", default-features = false }
+dcl_component = { path = "../bevy-explorer/source/crates/dcl_component" }
+
+bevy = { version = "0.16.1", default-features = false, features = [
+  "animation",
+  "bevy_asset",
+  "bevy_scene",
+  "bevy_winit",
+  "bevy_core_pipeline",
+  "bevy_pbr",
+  "bevy_gltf",
+  "bevy_render",
+  "png",
+  "jpeg",
+  "tonemapping_luts",
+  "bevy_log",
+  "std",
+] }
+bevy_kira_audio = { git = "https://github.com/robtfm/bevy_kira_audio", branch = "0.16-2", features = [
+  "mp3",
+  "ogg",
+] }
+# enables naga_oil function overrides (the Explorer's shadow override in bound_material.wgsl);
+# must match the Explorer root crate so the feature unifies into bevy's shader composer
+naga_oil = { version = "0.17", default-features = false, features = [
+  "override_any",
+] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+bevy = { version = "0.16.1", default-features = false }
+wasm-bindgen = "0.2.92"
+wasm-bindgen-futures = "0.4.50"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = ["Window", "Document", "HtmlCanvasElement"] }
+console_error_panic_hook = "0.1.7"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[profile.release]
+# size first: the module is downloaded by every shop and creator page that shows an avatar
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+# `./build.sh --fast`, the iteration build (wasm-pack --dev): dependencies optimised once and cached,
+# the crate itself compiled quickly and incrementally, no debug info in the module, no wasm-opt.
+[profile.dev]
+opt-level = 1
+debug = false
+incremental = true
+
+[profile.dev.package."*"]
+opt-level = 2
+debug = false
+
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ["-Oz"]
+
+# The Explorer's engine forks and its vendored Bevy (rendering/bevy-explorer/bevy). A patch table
+# only applies from the workspace root, so the Explorer's is repeated here; keep it in step with
+# rendering/bevy-explorer/source/Cargo.toml.
+[patch.crates-io]
+naga_oil = { git = "https://github.com/robtfm/naga_oil", branch = "fix/deterministic-override-emit-order" }
+draco-oxide-decoder = { git = "https://github.com/robtfm/draco-oxide", branch = "fix/wasm32-rans-refill" }
+draco-oxide-core = { git = "https://github.com/robtfm/draco-oxide", branch = "fix/wasm32-rans-refill" }
+draco-nd-vector = { git = "https://github.com/robtfm/draco-oxide", branch = "fix/wasm32-rans-refill" }
+bevy = { path = "../bevy-explorer/bevy" }
+bevy_a11y = { path = "../bevy-explorer/bevy/crates/bevy_a11y" }
+bevy_asset = { path = "../bevy-explorer/bevy/crates/bevy_asset" }
+bevy_app = { path = "../bevy-explorer/bevy/crates/bevy_app" }
+bevy_derive = { path = "../bevy-explorer/bevy/crates/bevy_derive" }
+bevy_ecs = { path = "../bevy-explorer/bevy/crates/bevy_ecs" }
+bevy_image = { path = "../bevy-explorer/bevy/crates/bevy_image" }
+bevy_input = { path = "../bevy-explorer/bevy/crates/bevy_input" }
+bevy_log = { path = "../bevy-explorer/bevy/crates/bevy_log" }
+bevy_math = { path = "../bevy-explorer/bevy/crates/bevy_math" }
+bevy_color = { path = "../bevy-explorer/bevy/crates/bevy_color" }
+bevy_transform = { path = "../bevy-explorer/bevy/crates/bevy_transform" }
+bevy_reflect = { path = "../bevy-explorer/bevy/crates/bevy_reflect" }
+bevy_render = { path = "../bevy-explorer/bevy/crates/bevy_render" }
+bevy_time = { path = "../bevy-explorer/bevy/crates/bevy_time" }
+bevy_winit = { path = "../bevy-explorer/bevy/crates/bevy_winit" }
+bevy_window = { path = "../bevy-explorer/bevy/crates/bevy_window" }
+bevy_platform = { path = "../bevy-explorer/bevy/crates/bevy_platform" }
+gltf = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
+gltf-json = { git = "https://github.com/gltf-rs/gltf", rev = "12fc1b7c" }
+winit = { git = "https://github.com/robtfm/winit", branch = "v0.30.x" }
+wgpu = { git = "https://github.com/robtfm/wgpu", branch = "24.0.5-dcl" }
+wgpu-types = { git = "https://github.com/robtfm/wgpu", branch = "24.0.5-dcl" }
+naga = { git = "https://github.com/robtfm/wgpu", branch = "24.0.5-dcl" }
+
+# Crates that name the former Bevy fork by git reach the vendored tree too, as in the Explorer.
+[patch."https://github.com/robtfm/bevy"]
+bevy = { path = "../bevy-explorer/bevy" }
