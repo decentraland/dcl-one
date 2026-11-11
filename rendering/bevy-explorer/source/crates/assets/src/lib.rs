@@ -47,7 +47,9 @@ mod test {
             // shadows block 0.65 of the sun (decisions.md)
             "const SHADOW_OPACITY: f32 = 0.65;",
             "let softened = mix(1.0, base, SHADOW_OPACITY);",
-            "return mix(softened, 1.0, fade);",
+            // past the distance the shadow holds a floor (decisions.md)
+            "const CASCADE_FAR_SHADOW: f32 = 0.35;",
+            "return mix(softened, 1.0 - CASCADE_FAR_SHADOW, fade);",
         ] {
             assert!(
                 SHADOW_SOFTENING.contains(expression),

@@ -41,7 +41,7 @@ impl AppSetting for ShadowSetting {
         format!("How shadows are rendered in the world.\n\n{}", 
         match self {
             ShadowSetting::Off => "Off: No shadows are rendered. Fastest",
-            ShadowSetting::Low => "Low: A single soft shadow map covering the shadow distance. Fast, but outlines get blockier at high shadow distances.",
+            ShadowSetting::Low => "Low: A single shadow map covering the shadow distance, with hardware 2x2 filtering. Fast, but outlines are blocky, particularly at high shadow distances.",
             ShadowSetting::High => "High: Four cascaded soft shadow maps for sharper shadows near the player and better quality at higher shadow distances, but more GPU intensive.",
         })
     }
@@ -83,7 +83,10 @@ impl AppSetting for ShadowSetting {
         };
         match self {
             ShadowSetting::Off => (),
-            ShadowSetting::Low | ShadowSetting::High => {
+            ShadowSetting::Low => {
+                cmds.try_insert(ShadowFilteringMethod::Hardware2x2);
+            }
+            ShadowSetting::High => {
                 cmds.try_insert(ShadowFilteringMethod::Gaussian);
             }
         }

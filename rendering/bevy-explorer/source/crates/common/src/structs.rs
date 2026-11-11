@@ -1000,7 +1000,7 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
-    /// one soft cascade
+    /// one cascade, hardware 2x2 filtering
     Low,
     /// four soft cascades
     High,
