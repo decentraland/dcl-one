@@ -1,15 +1,15 @@
 import { HydrationBoundary, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
-import { isRouteErrorResponse, useLocation, useNavigate, useParams, useRouteError, useRouteLoaderData } from "react-router";
+import { useLocation, useNavigate, useParams, useRouteError, useRouteLoaderData } from "react-router";
 
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
 
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import { profileKeys } from "@/data/lib/profile/queries";
-import { profileErrorReason, type ProfileErrorReason } from "@/features/profile/errors";
+import { isProfileError, profileErrorAddress, profileErrorReason, type ProfileErrorReason } from "@/features/profile/errors";
 import { ProfilePage } from "@/features/profile/ProfilePage";
 
-import type { ProfileLoaderData, ProfileRouteError } from "./profile-loader.server";
+import type { ProfileLoaderData } from "./profile-loader.server";
 
 /** Client navigations fetch through the browser client; only the first document carries server data. */
 export async function profileClientLoader() {
@@ -54,9 +54,10 @@ export function ProfileErrorBoundary() {
   const navigate = useNavigate();
   const location = useLocation();
   const address = normalizeAddress(params.address);
-  const routeData = isRouteErrorResponse(error) ? (error.data as ProfileRouteError | null) : null;
-  const reason = routeData?.reason ?? (isRouteErrorResponse(error) ? (error.status === 404 ? "not-found" : "unavailable") : profileErrorReason(error));
-  const copy = COPY[reason](routeData?.address ?? params.address ?? "");
+  // A bug is the root boundary's to show, not a profile failure.
+  if (!isProfileError(error)) throw error;
+  const reason = profileErrorReason(error);
+  const copy = COPY[reason](profileErrorAddress(error) ?? params.address ?? "");
 
   useEffect(
     () => () => {
