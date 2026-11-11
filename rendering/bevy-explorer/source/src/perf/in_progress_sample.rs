@@ -9,7 +9,6 @@ use bevy::{
     diagnostic::{Diagnostic, DiagnosticsStore, EntityCountDiagnosticsPlugin},
     platform::time::Instant,
     prelude::*,
-    window::PrimaryWindow,
 };
 use common::{
     gpu_time::GPU_FRAME_TIME,
@@ -78,9 +77,10 @@ pub fn latest_entity_count(diagnostics: &DiagnosticsStore) -> Option<u32> {
         .map(|count| count as u32)
 }
 
-/// Sets [`SamplingStatus`] from the world state, the loading screen and the primary
-/// window's focus; advances the in-progress sample by the `Time<Real>` delta while `Sampling`,
-/// except on the frame sampling resumed, whose delta spans the pause.
+/// Sets [`SamplingStatus`] from the world state, the loading screen and the focus: the primary
+/// window's on native, the page's and the viewport's on the web (`BrowserPageFocus`); advances
+/// the in-progress sample by the `Time<Real>` delta while `Sampling`, except on the frame
+/// sampling resumed, whose delta spans the pause.
 #[allow(clippy::too_many_arguments)]
 pub fn update_sampling_status_system(
     mut status: ResMut<SamplingStatus>,
@@ -90,7 +90,8 @@ pub fn update_sampling_status_system(
     world_hold: Option<Res<WorldHold>>,
     realm: Option<Res<CurrentRealm>>,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
-    window: Query<&Window, With<PrimaryWindow>>,
+    #[cfg(not(target_arch = "wasm32"))] window: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    #[cfg(target_arch = "wasm32")] browser_page_focus: Res<crate::web::BrowserPageFocus>,
 ) {
     let signed_in = wallet
         .as_ref()
@@ -101,13 +102,18 @@ pub fn update_sampling_status_system(
     // the loading screen: signed in, out of world, not held
     let loading_screen = signed_in && !world_held && out_of_world == Some(true);
     let in_world = signed_in && !world_held && realm_connected && out_of_world == Some(false);
-    let focused = window.single().map_or(true, |window| window.focused);
+    #[cfg(not(target_arch = "wasm32"))]
+    let focus_paused = (!window.single().map_or(true, |window| window.focused))
+        .then_some(SamplingPausedReason::WindowUnfocused);
+    // the page's focus, not the canvas's DOM focus (`Window::focused`)
+    #[cfg(target_arch = "wasm32")]
+    let focus_paused = browser_page_focus.sampling_paused_reason();
     let next = if loading_screen {
         SamplingStatus::Paused(SamplingPausedReason::LoadingScreen)
     } else if !in_world {
         SamplingStatus::Paused(SamplingPausedReason::NotInWorld)
-    } else if !focused {
-        SamplingStatus::Paused(SamplingPausedReason::WindowUnfocused)
+    } else if let Some(reason) = focus_paused {
+        SamplingStatus::Paused(reason)
     } else {
         SamplingStatus::Sampling
     };

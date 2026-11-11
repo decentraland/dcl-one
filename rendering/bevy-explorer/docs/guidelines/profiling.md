@@ -15,8 +15,10 @@ numbers.
 ### Performance (`/performance_state`)
 
 - **Sampling.** Frames are sampled only while the player is in world, the loading screen is
-  hidden and the window is focused. `sampling.status` is `sampling` or `paused`, and
-  `sampling.pausedReason` says why: `not_in_world`, `loading_screen` or `window_unfocused`.
+  hidden and the window is focused; on the web, the page has focus (`document.hasFocus()`, so a
+  click on the HUD keeps sampling) and the viewport is active (not a background tab).
+  `sampling.status` is `sampling` or `paused`, and `sampling.pausedReason` says why:
+  `not_in_world`, `loading_screen`, `window_unfocused` or, on the web, `viewport_inactive`.
   Paused time never counts, and the frame on which sampling resumes is dropped, since its delta
   spans the pause.
 - **Snapshots.** Every 15 s of sampled time one `PerformanceSnapshot` is taken: the CPU frame
@@ -79,8 +81,8 @@ first place to look for per-frame churn.
 ### Memory and limits (`/debug_memory`)
 
 The engine's memory reading and its pressure tiers (`common::memory`), the peak during the
-current sample, the scenes' JavaScript heaps summed (used, limit, external bytes and the engine
-count; on the web only where the browser has `performance.measureUserAgentSpecificMemory()`),
+current sample, the scenes' JavaScript heaps summed (used, limit, external bytes and the
+number of reporting scenes; on the web only where the browser has `performance.measureUserAgentSpecificMemory()`),
 and the current parcel scene's visible textures and meshes with their CPU-side bytes.
 **Simulate Warning pressure** and **Simulate Full pressure** set the session limit from the
 current use so the pressure tiers and the cache trimming they drive can be exercised;

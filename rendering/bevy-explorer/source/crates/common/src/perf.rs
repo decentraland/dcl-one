@@ -11,6 +11,9 @@ pub enum SamplingPausedReason {
     NotInWorld,
     LoadingScreen,
     WindowUnfocused,
+    /// The page is hidden (a background tab) or the host deactivated the viewport.
+    #[cfg(target_arch = "wasm32")]
+    ViewportInactive,
 }
 
 /// Whether frames are being sampled right now.
