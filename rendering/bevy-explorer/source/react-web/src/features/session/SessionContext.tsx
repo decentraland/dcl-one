@@ -13,3 +13,9 @@ export function useSession(): EngineSession {
   if (session == null) throw new Error('useSession must be used within a <SessionProvider>')
   return session
 }
+
+/** The session when a provider is above, else null: for a surface that also renders on its own
+ *  (the chat in its own tests) and merely adds something when the session is there. */
+export function useOptionalSession(): EngineSession | null {
+  return useContext(SessionContext)
+}

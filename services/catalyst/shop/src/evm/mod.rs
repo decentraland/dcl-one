@@ -122,6 +122,10 @@ pub struct Settings {
     /// `CREDITS_TRIAL_MODE` (false): the relay broadcasts through its own direct signer
     /// only, capped, on the collections chain alone (see [`Economy::new`]).
     pub trial_mode: bool,
+    /// `CREDITS_TRIAL_BUYERS` under `CREDITS_TRIAL_MODE`: the only wallets whose signed
+    /// meta-transactions the relay accepts (`TransactionComponent::check_data`), so the trial's
+    /// funded relayer pays gas for its buyers alone. `None` outside a trial.
+    pub trial_buyers: Option<crate::credits::trial::TrialBuyers>,
     /// `OZ_RELAYER_URL`, `OZ_RELAYER_ID`, `OZ_RELAYER_API_KEY` (`_FILE`): the OZ Defender relayer, active with all three.
     pub oz_relayer_url: Option<String>,
     pub oz_relayer_id: Option<String>,
@@ -172,6 +176,7 @@ impl Settings {
             max_gas_limit: 1_500_000,
             relayer_max_fee_per_gas_wei: None,
             trial_mode: false,
+            trial_buyers: None,
             oz_relayer_url: None,
             oz_relayer_id: None,
             oz_relayer_api_key: None,
@@ -257,6 +262,11 @@ impl Settings {
         }
         if !self.relayer_max_fee_per_gas_wei.is_some_and(|cap| cap > 0) {
             anyhow::bail!("CREDITS_TRIAL_MODE needs a positive RELAYER_MAX_FEE_PER_GAS_WEI");
+        }
+        if self.trial_buyers.is_none() {
+            anyhow::bail!(
+                "CREDITS_TRIAL_MODE needs the relay to know the trial's buyers (CREDITS_TRIAL_BUYERS)"
+            );
         }
         Ok(())
     }

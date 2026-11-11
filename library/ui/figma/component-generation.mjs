@@ -101,7 +101,52 @@ function identities(values, expected, label) {
   return ordered(found).map(([, value]) => value)
 }
 
-function visibility(registry) {
+const LIMIT_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+const LIMIT_TEXT_MAX = 300
+
+// A public entry is a name, or { name, limits } where limits are the owner-accepted gaps the resolver repeats to
+// consumers: unique kebab-case ids and short plain sentences, never a link. Internal entries are names only.
+function accepted(entry) {
+  if (typeof entry === 'string') return { name: entry }
+  if (!record(entry) || Object.keys(entry).some((key) => key !== 'name' && key !== 'limits'))
+    throw new Error('Invalid component registry entry')
+  const { name, limits } = entry
+  if (!Array.isArray(limits) || !limits.length)
+    throw new Error('A component registry entry object needs a non-empty limits list')
+  const ids = new Set()
+  for (const limit of limits) {
+    if (
+      !record(limit) ||
+      Object.keys(limit).length !== 2 ||
+      typeof limit.id !== 'string' ||
+      !LIMIT_ID.test(limit.id) ||
+      limit.id.length > 48 ||
+      ids.has(limit.id) ||
+      typeof limit.text !== 'string' ||
+      !limit.text.trim() ||
+      limit.text !== limit.text.trim() ||
+      limit.text.length > LIMIT_TEXT_MAX ||
+      limit.text.includes('://') ||
+      [...limit.text].some(
+        (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
+      )
+    )
+      throw new Error('Invalid or duplicate accepted limit of component ' + String(name))
+    ids.add(limit.id)
+  }
+  return { name, limits: limits.map(({ id, text }) => ({ id, text })) }
+}
+
+/** The name of one validated registry entry, whether it is a bare name or { name, limits }. */
+export function componentRegistryEntryName(entry) {
+  return accepted(entry).name
+}
+
+/**
+ * Names and accepted limits of a component registry (components/promotion.json), validated once for the
+ * installer, the guard and the generation record.
+ */
+export function componentRegistryEntries(registry) {
   if (
     !record(registry) ||
     Object.keys(registry).some((key) => key !== 'components' && key !== 'internal') ||
@@ -109,7 +154,21 @@ function visibility(registry) {
     (registry.internal !== undefined && !Array.isArray(registry.internal))
   )
     throw new Error('Invalid component visibility registry')
-  const all = [...registry.components, ...(registry.internal ?? [])]
+  if ((registry.internal ?? []).some((entry) => typeof entry !== 'string'))
+    throw new Error('Internal component registry entries are names only, without limits')
+  const publicEntries = registry.components.map(accepted)
+  return {
+    components: publicEntries.map((entry) => entry.name),
+    internal: [...(registry.internal ?? [])],
+    limits: Object.fromEntries(
+      publicEntries.filter((entry) => entry.limits).map((entry) => [entry.name, entry.limits])
+    )
+  }
+}
+
+function visibility(registry) {
+  const entries = componentRegistryEntries(registry)
+  const all = [...entries.components, ...entries.internal]
   if (
     all.some(
       (name) => typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(name) || !safe(name)
@@ -118,9 +177,29 @@ function visibility(registry) {
   )
     throw new Error('Invalid or duplicate component visibility name')
   return {
-    components: [...registry.components].sort(),
-    internal: [...(registry.internal ?? [])].sort()
+    components: [...entries.components].sort(),
+    internal: [...entries.internal].sort(),
+    limits: Object.fromEntries(
+      Object.entries(entries.limits).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    )
   }
+}
+
+// The visibility a generation record states, rebuilt into registry form so the same validation applies.
+function recordedVisibility(recorded) {
+  if (!record(recorded.limits)) throw new Error('Invalid component generation registry limits')
+  const limited = new Map(Object.entries(recorded.limits))
+  if (
+    !Array.isArray(recorded.components) ||
+    [...limited.keys()].some((name) => !recorded.components.includes(name))
+  )
+    throw new Error('Component generation limits name a component that is not public')
+  return visibility({
+    components: recorded.components.map((name) =>
+      limited.has(name) ? { name, limits: limited.get(name) } : name
+    ),
+    internal: recorded.internal
+  })
 }
 
 export function componentRegistryIdentity(bytes) {
@@ -295,13 +374,13 @@ export function validateComponentGeneration(bytes, source, expected = {}) {
   }
   if (JSON.stringify(parsed.transform) !== JSON.stringify(transform))
     throw new Error('Invalid component generation transform')
-  exactKeys(parsed.registry, ['path', 'sha256', 'components', 'internal'], 'registry')
+  exactKeys(parsed.registry, ['path', 'sha256', 'components', 'internal', 'limits'], 'registry')
   if (parsed.registry.path !== 'promotion.json' || !digest(parsed.registry.sha256))
     throw new Error('Invalid component generation registry identity')
   const registry = {
     path: 'promotion.json',
     sha256: parsed.registry.sha256,
-    ...visibility({ components: parsed.registry.components, internal: parsed.registry.internal })
+    ...recordedVisibility(parsed.registry)
   }
   const output = outputIdentities(parsed.output, registry)
   const canonical = generationRecord(source, registry, config, dependencies, modules, output)

@@ -18,7 +18,16 @@ The HUD graph refuses CSS Modules composition (`composes` and `compose-with`) be
 
 The HUD schema 2 contract also records names and regular-file/directory kinds in actual shared-input ancestor directories, without hashing unused bodies. Candidate-name additions, deletions or renames require regeneration; new untracked candidates and unsafe entries are refused. Git checks exact namespaces; Nix checks the original source before filtering, and filtered archives allow only the expected subset with all selected identities required. Historical schema 1 bases rebuild conservatively; current heads migrate through the canonical generator.
 
-NavBar and `NavBarProps` are exported from `@dcl/one-ui` as an **unstable**, public bridge for the Sites home, legal and blog pages. Signed-in views retain captured mock balances, notification counts and a placeholder avatar; signed-in mobile variants 7 and 8 remain empty. Semantic data and avatar props, navigation href and list behavior, notifications, icons and forced-state contracts remain follow-ups. The logo is currently 60px on desktop and 48px on mobile; alignment to the 40px design is pending. The semantic props can change as these contracts settle; consumers must not treat this bridge as a stable API. Component deep imports remain unavailable.
+NavBar and `NavBarProps` are exported from `@dcl/one-ui` as an **unstable**, public bridge for the Sites home, legal and blog pages. Its accepted limits, which `components/promotion.json` records and the resolver repeats to consumers (`resolved.limits`), are:
+
+<!-- navbar-accepted-limits -->
+
+- `signed-in-placeholders`: Signed-in views retain captured mock balances, notification counts and a placeholder avatar.
+- `empty-mobile-variants`: Signed-in mobile variants 7 and 8 remain empty.
+- `pending-contracts`: Semantic data and avatar props, navigation href and list behavior, notifications, icons and forced-state contracts remain follow-ups.
+- `logo-size`: The logo is currently 60px on desktop and 48px on mobile; alignment to the 40px design is pending.
+
+The semantic props can change as these contracts settle; consumers must not treat this bridge as a stable API. Component deep imports remain unavailable.
 
 The design values are generated from the verified capture pinned by `upstream.lock.json`, preserving its Dark semantic mode and four responsive layout modes. These outputs do not certify parity with later live design changes. The five families use four source pages: Colors (`1:5238`), Icons (`1:5239`), Typography (`1:5237`) and Layout & Spacing (`15521:20146`, shared by layouts and spacings). No live source is written into the library.
 
@@ -60,7 +69,7 @@ pnpm figma diff              # generated output matches the capture (exit 1 if n
 pnpm figma check-mappings    # every *.figma.ts matches the library and the capture
 ```
 
-`fetch-source` fetches exactly the pinned commit over SSH into a temporary repository, rewrites each file into the keyless form this tree reads, and accepts it only when every file matches the digest table in the lock and every ported file's recorded counterpart matches the pinned commit; the raw objects are deleted before it returns. Every command that reads the capture fails, naming `pnpm figma fetch-source`, when the cache is missing, stale or edited. A port bumps the pinned revision, runs `pnpm figma fetch-source --seal` and `node figma/lock-digests.mjs --write`, runs the checks above and commits their record. Promotion and the fidelity evidence belong to FDS.
+`fetch-source` fetches exactly the pinned commit over SSH into a temporary repository, rewrites each file into the keyless form this tree reads, and accepts it only when every file matches the digest table in the lock and every ported file's recorded counterpart matches the pinned commit; the raw objects are deleted before it returns. Every command that reads the capture fails, naming `pnpm figma fetch-source`, when the cache is missing, stale or edited. A port bumps the pinned revision, runs `pnpm figma fetch-source --seal`, stages `library/ui` and runs `node figma/lock-digests.mjs --write` (it reads the index), runs the checks above and commits their record. Promotion and the fidelity evidence belong to FDS.
 
 ## The Figma file key is private
 

@@ -65,6 +65,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 | `export-unverifiable`         | warning  | The export cannot be confirmed statically                                            | Let the app typecheck confirm the import                                        |
 | `capture-revision-unknown`    | warning  | The library lock pins no readable capture revision                                   | Report without a revision; tell a maintainer                                    |
 | `identity-name-match`         | warning  | Identified by set name and variant properties, not a stable id                       | Repeat it when you report the result                                            |
+| `accepted-limits`             | warning  | The owners accepted gaps for this component (`resolved.limits`)                      | Repeat each limit verbatim; do not claim parity on them                         |
 | `figma-identity-unverified`   | warning  | Checked against the mapping only, without a capture                                  | Repeat it when you report the result                                            |
 
 4. **Stop on any error.** Do not duplicate the component in the app and do not add a stopgap. Report it to the contributor (the user), in this form and nothing more; the `Code:` line tells the cases apart:

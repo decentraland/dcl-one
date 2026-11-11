@@ -224,7 +224,19 @@ describe('when planning public components from verified installer inputs', () =>
     },
     { components: ['../DemoNav'], error: 'Invalid generated TypeScript identifier' },
     { components: ['3D Card'], error: 'Invalid generated TypeScript identifier' },
-    { components: ['Missing'], error: 'Unknown component or missing dependency: Missing' }
+    { components: ['Missing'], error: 'Unknown component or missing dependency: Missing' },
+    {
+      components: [
+        {
+          name: 'DemoNav',
+          limits: [
+            { id: 'a', text: 'x.' },
+            { id: 'a', text: 'y.' }
+          ]
+        }
+      ],
+      error: 'Invalid or duplicate accepted limit'
+    }
   ])(
     'should reject invalid or unavailable registry names $components',
     async ({ components, error }) => {
@@ -232,6 +244,25 @@ describe('when planning public components from verified installer inputs', () =>
       await expect(planComponents(context)).rejects.toThrow(error)
     }
   )
+
+  it('should write the accepted limits back with the public name', async () => {
+    const limits = [{ id: 'logo-size', text: 'The logo is pending.' }]
+    context.registry = { components: [{ name: 'DemoNav', limits }] }
+
+    const plan = await planComponents(context)
+
+    expect(JSON.parse(plan.files.get('promotion.json')!.toString())).toEqual({
+      components: [{ name: 'DemoNav', limits }]
+    })
+  })
+
+  it('should refuse limits on an internal name', async () => {
+    context.registry = {
+      components: [],
+      internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }] as unknown as string[]
+    }
+    await expect(planComponents(context)).rejects.toThrow('names only, without limits')
+  })
 
   it('should reject a legacy seal in place of the names-only registry', async () => {
     context.registry = {

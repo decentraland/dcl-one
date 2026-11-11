@@ -1,0 +1,155 @@
+.carousel {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  padding-top: var(--dcl-space-24);
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+/* The current slide in the middle; its neighbours overflow at the sides, clipped by the section. */
+.track {
+  display: flex;
+  user-select: none;
+  align-items: center;
+  --carousel-slide-width: calc(100% - var(--dcl-space-32));
+  --carousel-gap: var(--dcl-space-32);
+  gap: var(--carousel-gap);
+  transform: translateX(
+    calc(
+      (100% - var(--carousel-slide-width)) / 2 - var(--carousel-position) *
+        (var(--carousel-slide-width) + var(--carousel-gap)) + var(--carousel-drag)
+    )
+  );
+  will-change: transform;
+}
+.track[data-animated='true'] {
+  transition: transform 0.4s ease;
+}
+.carousel[data-dragging='true'] {
+  cursor: grabbing;
+}
+
+.track[data-animated='false'] .slide {
+  transition: none;
+}
+
+/* Phones: the slide spans the width less 16px a side. Source's tablet slide is 70% and its desktop
+   slide 750px, with 24px between slides. */
+.slide {
+  flex: none;
+  width: var(--carousel-slide-width);
+  overflow: hidden;
+  border-radius: var(--dcl-radius-lg);
+  transition:
+    opacity 0.4s ease,
+    box-shadow 0.4s ease,
+    transform 0.4s ease;
+}
+
+.peekStart,
+.peekEnd {
+  opacity: 0.7;
+}
+
+.arrow {
+  position: absolute;
+  top: 45%;
+  display: none;
+  transform: translateY(-50%);
+}
+
+.arrowStart {
+  left: var(--dcl-space-24);
+}
+
+.arrowEnd {
+  right: var(--dcl-space-24);
+}
+
+.dots {
+  display: flex;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  padding-top: var(--dcl-space-24);
+}
+
+/* An 8px dot inside a 24px hit target. */
+.dot {
+  display: grid;
+  place-items: center;
+  width: var(--dcl-space-24);
+  height: var(--dcl-space-24);
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: none;
+  cursor: pointer;
+}
+
+.dot::before {
+  content: '';
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-40);
+}
+
+.dotActive::before {
+  background: var(--dcl-neutrals-white);
+}
+
+.dot:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+/* breakpoints.tablet: neighbours peek more, faded into the page at their outer edge. */
+@media (min-width: 768px) {
+  .track {
+    --carousel-slide-width: 70%;
+    --carousel-gap: var(--dcl-space-16);
+  }
+  .peekStart,
+  .peekEnd {
+    transform: scale(0.8);
+  }
+
+  .peekStart {
+    mask-image: linear-gradient(to right, transparent 0%, black 50%);
+  }
+
+  .peekEnd {
+    mask-image: linear-gradient(to right, black 50%, transparent 100%);
+  }
+}
+
+/* breakpoints.desktop: source's 750px slide, the lifted current card and the arrows. */
+@media (min-width: 1024px) {
+  .track {
+    --carousel-slide-width: 750px;
+    --carousel-gap: var(--dcl-space-24);
+  }
+
+  .peekStart,
+  .peekEnd {
+    transform: scale(0.8);
+  }
+
+  .active {
+    box-shadow: 0 2px 8px 8px color-mix(in srgb, var(--dcl-neutrals-white) 15%, transparent);
+  }
+
+  .arrow {
+    display: block;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .track,
+  .track[data-animated='true'],
+  .slide,
+  .active {
+    transition: none;
+  }
+}
