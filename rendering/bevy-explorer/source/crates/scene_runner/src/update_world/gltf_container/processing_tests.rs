@@ -27,6 +27,8 @@ fn app() -> App {
         .init_asset::<Mesh>()
         .init_resource::<AppConfig>()
         .init_resource::<GltfNameCache>()
+        .init_resource::<ProcessingDeadline>()
+        .init_resource::<SlowestProcessing>()
         .register_type::<Transform>()
         .register_type::<GlobalTransform>()
         .register_type::<TransformTreeChanged>()
@@ -129,7 +131,7 @@ fn spawn_container(app: &mut App, root: Entity, nodes: &[&str]) -> (Entity, Inst
         .spawn_as_child_hidden(h_scene, container);
     world
         .entity_mut(container)
-        .insert(GltfLoaded(Some(instance)));
+        .insert(GltfLoaded::start(Some(instance)));
     (container, instance)
 }
 
@@ -182,7 +184,7 @@ fn spawn_empty_container(app: &mut App, root: Entity) -> Entity {
             },
             GltfDefinition(PbGltfContainer::default()),
             GltfHandle(Handle::default()),
-            GltfLoaded(None),
+            GltfLoaded::start(None),
         ))
         .id()
 }

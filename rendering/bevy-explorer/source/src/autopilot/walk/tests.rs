@@ -65,12 +65,6 @@ fn the_camera_faces_where_it_walks() {
     }
 }
 
-#[test]
-fn a_parcels_centre_is_where_a_teleport_lands() {
-    assert_eq!(parcel_centre(IVec2::new(0, 0)), Vec2::new(8.0, -8.0));
-    assert_eq!(parcel_centre(IVec2::new(0, -14)), Vec2::new(8.0, 216.0));
-}
-
 /// A run measuring from its first update, on a clock that advances a second per update, with the
 /// player standing at the centre of parcel 0,-2 and the camera facing east.
 fn app(phase: AutopilotPhase) -> (App, Entity, Entity) {
@@ -82,7 +76,7 @@ fn app(phase: AutopilotPhase) -> (App, Entity, Entity) {
             to: IVec2::new(0, 0),
         });
     register(&mut app);
-    let start = parcel_centre(IVec2::new(0, -2));
+    let start = parcel_to_vec3(IVec2::new(0, -2)).xz();
     let player = app
         .world_mut()
         .spawn((

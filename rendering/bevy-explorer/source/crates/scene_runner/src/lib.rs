@@ -441,15 +441,10 @@ impl Plugin for SceneRunnerPlugin {
         if app.world().get_resource::<NoRenderApp>().is_none() {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             debug_panel::register(app);
-            scene_spawn_slice::diagnostics::register(app);
             app.add_plugins(LightsPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
-        app.init_resource::<scene_spawn_slice::ProcessingDeadline>()
-            .add_systems(
-                SpawnScene,
-                scene_spawn_slice::slice_scene_spawning.before(scene_spawner_system),
-            );
+        app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
 
         app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
         app.init_resource::<load_timing::FirstRingTiming>();

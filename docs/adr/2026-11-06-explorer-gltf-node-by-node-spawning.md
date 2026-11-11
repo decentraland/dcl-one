@@ -89,24 +89,28 @@ next frame, and a model stays hidden until both steps are done.
 - **Resumable processing.** `update_ready_gltfs` processes a model's nodes until its deadline
   (`scene_spawn_slice::ProcessingDeadline`). A node is processed once it has a
   `ContainerEntity`, which processing gives it first; the model's running state stays on the
-  container (`GltfProcessing`: where the next frame resumes in the instance's nodes, the collider
-  counter, the animation flag and the named nodes). Models already in progress go first; at least
+  container (`GltfProcessing`, which comes with the loaded model and is updated in place: where the
+  next frame resumes in the instance's nodes, the collider counter, the animation flag and the
+  named nodes). Models already in progress (resuming past their first node) go first; at least
   one node is processed a frame, and containers with nothing to process finish whatever the
   deadline. Resetting or removing the container drops the progress and despawns a model not
   processed yet. A container put again with the value last acted on keeps its model, or, if
   that value could not load, is not tried again; only a different value starts over.
-- **The Explorer's slice.** `scene_runner::scene_spawn_slice` gives instantiation 4 ms a frame
-  from when it runs (`SpawnScene`, before `scene_spawner_system`). The spawner stops 1 ms before
-  the end and processing at the end, so processing always has time, even while spawns are queued.
+- **The Explorer's slice.** `scene_runner::scene_spawn_slice` gives instantiation a quarter of
+  the target frame (`SceneUpdates::frame_target`; 60 fps when uncapped), 4.2 ms at 60 fps, from
+  when it runs (`SpawnScene`, before `scene_spawner_system`), as the raycast budget takes a share
+  of the same target. The spawner stops a quarter of the slice before the end and processing at
+  the end, so processing always has time, even while spawns are queued.
   There is no slice while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
   unity-explorer's loading screen does) or on headless (`NoRenderApp`), so arrival and servers
   instantiate whole.
-- **Diagnostics.** The runtime debug panel's *Instantiation* section (`/instantiation_state`)
-  shows the slice in effect, the spawner's queue and the instance it is writing, and how many glTF
-  models are being processed. `spawn_timing` logs, under target `spawn_timing` at debug level,
-  each frame that spends a millisecond or more in the scene spawner or in glTF processing, and the
-  frame's slowest glTF slice: its time, how many nodes and which model; its systems run only when
-  that target is logged.
+- **Diagnostics.** `spawn_timing` measures each frame's scene spawner and glTF processing into
+  the Bevy diagnostics `instantiation/scene_spawner` and `instantiation/gltf_processing` (ms).
+  The runtime debug panel's *Instantiation* section (`/instantiation_state`) shows the slice in
+  effect, both measurements smoothed, the spawner's queue and the instance it is writing, and how
+  many glTF models are spawning or being processed. Under target `spawn_timing` at debug level it
+  also logs the frame's slowest model when it took a millisecond or more: its time, how many
+  nodes and which model. One plugin, `SceneSpawnSlicePlugin`, owns all of it.
 
 ## Rejected
 
@@ -187,18 +191,19 @@ next frame, and a model stays hidden until both steps are done.
 
 **What else follows:**
 
-- A model appears after about (its spawning and processing time) / 4 ms frames once it is
+- A model appears after about (its spawning and processing time) / (the slice) frames once it is
   requested, instead of in the frame it is requested; scenes that block their first ticks on their
   glTFs (`check_gltfs_ready`) start that much later.
 - Avatars, emote props, the ghost and NFT frames are spawned in slices too, and appear
   correspondingly later.
 - One node is the smallest unit: a single mesh whose collision shape takes longer than the slice
-  still costs that time in one frame. The `spawn_timing` slowest-slice line shows when it happens.
+  still costs that time in one frame. The `spawn_timing` slowest-model line shows when it happens.
 - The cost per entity and per node is unchanged: the same work, spread out.
 
 ## Follow-ups
 
-- The frame-time budget (E2): replace the fixed 4 ms with a deadline after the scene loop, order
+- The frame-time budget (E2): replace the share of the target frame with a deadline after the
+  scene loop, order
   requests nearest first, and gate avatar builds.
 - Collision shapes and mesh hashing off the main thread, as the earlier engine did: the walk-in
   shows single nodes of about 40 ms.
