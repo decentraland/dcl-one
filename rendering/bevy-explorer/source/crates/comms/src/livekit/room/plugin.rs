@@ -226,6 +226,7 @@ pub struct ConnectFailed;
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
+#[expect(clippy::type_complexity)]
 fn process_room_events(
     mut commands: Commands,
     livekit_rooms: Query<(
