@@ -740,6 +740,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         usd_pegged_oracle_max_age_secs: config.economy.usd_pegged_oracle_max_age_secs,
         usd_pegged_slippage_bps: config.economy.usd_pegged_slippage_bps,
         data_writes_enabled: config.writes.data_writes_enabled,
+        ops_writes_enabled: config.ops.ops_writes_enabled,
     };
     // Names the variable, never echoes a value.
     economy_settings

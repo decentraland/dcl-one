@@ -45,8 +45,8 @@
   "modules": [
     {
       "path": "library/ui/figma/component-generation.mjs",
-      "sha256": "38d308ab445b98b80cfda2175f3a7dcd26ea723413dfa43b62fefb882d85c1ad",
-      "indexBlobSha": "181b5b16dc44461cfc4ca545ca1a41c7fd434c98"
+      "sha256": "d0c58eb095df77821434ee9305f71768cd9fd45142e20644bdd421b51d715492",
+      "indexBlobSha": "2e5acca2768c4bb20f7b2063c0139f0da7558448"
     },
     {
       "path": "library/ui/figma/ledger/retirements.json",
@@ -200,8 +200,8 @@
     },
     {
       "path": "library/ui/figma/src/install.ts",
-      "sha256": "8946fd13bc558edb1e93dc089150928cb498ff807dd72fb9bb494142f0b77e47",
-      "indexBlobSha": "53209f334eeb5d5348ac55725832e11877ea4c0a"
+      "sha256": "31109be35556d9e4f659cdd7f90be132a3e86780549466c76d8c67fbaf2cf9c7",
+      "indexBlobSha": "a3c716dcea6ae95bc28e82cccac51b62412ce5c1"
     },
     {
       "path": "library/ui/figma/src/ir/components.ts",
