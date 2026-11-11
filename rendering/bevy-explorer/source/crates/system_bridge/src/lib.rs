@@ -145,7 +145,6 @@ pub enum SystemApi {
     GetSystemActionStream(RpcStreamSender<SystemActionEvent>),
     GetChatStream(RpcStreamSender<ChatMessage>),
     GetVoiceStream(RpcStreamSender<VoiceMessage>),
-    /// Mute or unmute a wallet's nearby voice for the local user.
     SetNearbyMuted(String, bool, RpcResultSender<Result<(), String>>),
     /// The wallets whose nearby voice is muted: the list now, then again on every change.
     GetNearbyMuteStream(RpcStreamSender<Vec<String>>),

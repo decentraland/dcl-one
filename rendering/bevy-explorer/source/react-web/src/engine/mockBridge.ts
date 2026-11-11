@@ -123,7 +123,6 @@ const MOCK_NEARBY = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat' },
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
-// Saved mutes for nearby voice (lowercased addresses), as the engine would report them.
 const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
 
 // The places the mock user can link to a community, and what each community links.

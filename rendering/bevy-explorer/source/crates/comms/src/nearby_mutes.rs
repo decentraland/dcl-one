@@ -87,7 +87,6 @@ impl Load {
     }
 }
 
-/// The muted wallets of the current account.
 #[derive(Resource, Default)]
 pub struct NearbyMutes {
     muted: HashSet<Address>,
@@ -105,7 +104,6 @@ impl NearbyMutes {
         self.muted.contains(&address)
     }
 
-    /// Whether the set changed.
     fn set_muted(&mut self, address: Address, muted: bool) -> bool {
         let changed = if muted {
             self.session_unmuted.remove(&address);
@@ -249,7 +247,6 @@ fn save(address: Address, muted: bool, client: reqwest::Client, wallet: Wallet) 
 
 type LoadTask = Task<(Address, Result<Vec<Address>, anyhow::Error>)>;
 
-/// Reads the account's saved list when the account changes, and drops the previous account's.
 fn follow_account(
     wallet: Res<Wallet>,
     ipfs: IpfsAssetServer,
@@ -288,8 +285,6 @@ fn follow_account(
     }
 }
 
-/// Mutes or unmutes `address` here and, when it changed something and an account is signed in,
-/// on the social service.
 fn apply(
     mutes: &mut NearbyMutes,
     address: &str,

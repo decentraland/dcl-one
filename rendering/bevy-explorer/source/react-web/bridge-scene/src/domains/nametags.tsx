@@ -84,8 +84,7 @@ function VoiceBadge(): ReactEcs.JSX.Element {
     </UiEntity>
   )
 }
-// The hushed badge takes the speaking badge's place while a player whose nearby voice the user
-// muted is talking: they are heard by others, not here.
+// Takes the speaking badge's place for a player whose nearby voice the user muted.
 const HUSHED_RED = Color4.fromHexString('#FF2D55FF')
 
 function HushedBadge(): ReactEcs.JSX.Element {

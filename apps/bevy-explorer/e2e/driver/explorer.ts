@@ -224,7 +224,6 @@ export interface VoiceState {
 export interface NearbyMutes {
   /** Null while signed out. */
   account: string | null
-  /** Where the account's saved list stands. */
   load: 'idle' | 'loading' | 'loaded' | 'failed'
   count: number
   /** Lowercased addresses, sorted; the first 32. */

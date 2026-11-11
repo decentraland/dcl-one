@@ -316,7 +316,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "e6d10c013ea91b0a711a1f12ad395ce2ca40a7ed67635bea08750b41a06b15c0"
+      "sha256": "1413aa368f20a504f59b3389cb25e9d1b089aa2b642b9810dea17df45316153a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -1692,7 +1692,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/mockBridge.ts",
-      "sha256": "dd471a588728cdd1ba2a8d32f29d4ffbf3c1eafcb599d6ab255334b126ee0192"
+      "sha256": "3e27184800bfe0e19e6f36accaa3b1f57e1609f25d3c27488e837a4626864120"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/nameColor.ts",
