@@ -7,23 +7,28 @@ type TtlMemo<A extends unknown[], T> = ((...args: A) => Promise<T>) & {
 // failing `keep` are never retained.
 export function ttlMemo<A extends unknown[], T>(opts: {
   ttlMs: number;
+  ttlMsForValue?: (value: T) => number;
   load: (...args: A) => Promise<T>;
   keyOf?: (...args: A) => string | null;
   keep?: (value: T) => boolean;
 }): TtlMemo<A, T> {
-  const entries = new Map<string, { at: number; value: T }>();
+  const entries = new Map<string, { expiresAt: number; value: T }>();
   const inflight = new Map<string, Promise<T>>();
   const memo = ((...args: A): Promise<T> => {
     const key = opts.keyOf ? opts.keyOf(...args) : "";
     if (key === null) return opts.load(...args);
     const hit = entries.get(key);
-    if (hit && Date.now() - hit.at < opts.ttlMs) return Promise.resolve(hit.value);
+    if (hit && Date.now() < hit.expiresAt) return Promise.resolve(hit.value);
     const pending = inflight.get(key);
     if (pending) return pending;
     const p = opts
       .load(...args)
       .then((value) => {
-        if (!opts.keep || opts.keep(value)) entries.set(key, { at: Date.now(), value });
+        if (!opts.keep || opts.keep(value)) {
+          const ttlMs = opts.ttlMsForValue?.(value) ?? opts.ttlMs;
+          if (ttlMs > 0)
+            entries.set(key, { expiresAt: Date.now() + ttlMs, value });
+        }
         return value;
       })
       .finally(() => {

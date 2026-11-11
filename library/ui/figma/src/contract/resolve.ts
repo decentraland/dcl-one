@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { libraryComponentEntries } from '../guard/library.js'
+import { componentRegistryEntries, type AcceptedLimit } from '../../component-generation.mjs'
 import { diagnostic, type Diagnostic } from './diagnostics.js'
 import { normalizeNodeId, type FigmaSet } from './figma-index.js'
 import { findMappingFiles, loadLibrary, readCaptureRevision, type LibraryInfo } from './library.js'
@@ -24,6 +24,9 @@ type ResolveInput = {
   nodeId?: string
   name?: string
   variantProperties?: Record<string, string>
+  // Figma BOOLEAN component properties, "true" or "false": kept apart from VARIANT properties because a
+  // boolean the mapping does not read is only a warning, while an unread variant is a misfit.
+  booleanProperties?: Record<string, string>
   texts?: Record<string, string>
 }
 
@@ -39,9 +42,11 @@ type PropTranslation = {
 type Resolved = {
   component: { exportName: string; importSpecifier: string; importStatements: string[] }
   usage: string
-  // `unspecified`: no capture and no variant properties, so the usage shows the mapping's empty selection.
+  // `unspecified`: no capture and no variant or boolean properties, so the usage shows the mapping's empty
+  // selection.
   usageFor: {
     variantProperties: Record<string, string>
+    booleanProperties: Record<string, string>
     basis: 'requested' | 'figma-defaults' | 'unspecified'
   }
   propTranslation: PropTranslation[]
@@ -62,7 +67,7 @@ type Resolved = {
     capture?: { revision: string }
   }
   // Gaps the library owners accepted for this component (components/promotion.json), repeated verbatim.
-  limits: { id: string; text: string }[]
+  limits: AcceptedLimit[]
 }
 
 // What a contributor report needs from a failure: the library and the capture it was checked against.
@@ -154,6 +159,19 @@ function identify(
       ]
     }
   }
+  const notBoolean = Object.entries(input.booleanProperties ?? {}).find(
+    ([, value]) => value !== 'true' && value !== 'false'
+  )
+  if (notBoolean)
+    return {
+      errors: [
+        diagnostic(
+          'invalid-input',
+          `The boolean property "${notBoolean[0]}" must be "true" or "false", as Figma reports it.`,
+          { property: notBoolean[0], value: notBoolean[1] }
+        )
+      ]
+    }
   if (input.nodeId) {
     const id = normalizeNodeId(input.nodeId)
     const set = ctx.figmaSets.find(
@@ -222,7 +240,7 @@ function renderUsage(
       const picked = own(selection, local.figmaProperty)
       values.set(local.local, picked !== undefined ? (own(local.values, picked) ?? '') : '')
     } else if (local.kind === 'boolean') {
-      const picked = own(selection, local.figmaProperty)?.toLowerCase()
+      const picked = booleanPick(local, selection, input.booleanProperties)?.toLowerCase()
       values.set(local.local, TRUE_WORDS.includes(picked ?? '') ? local.whenTrue : local.whenFalse)
     } else if (local.kind === 'string') {
       values.set(
@@ -266,7 +284,21 @@ function renderUsage(
   return { usage: errors.length ? undefined : usage, errors }
 }
 
-function translate(mapping: ParsedMapping, selection: Record<string, string>): PropTranslation[] {
+// The value a boolean local renders: the variant selection first, then the instance's BOOLEAN properties, as
+// renderUsage reads it.
+function booleanPick(
+  local: { figmaProperty: string },
+  selection: Record<string, string>,
+  booleans: Readonly<Record<string, string>> | undefined
+): string | undefined {
+  return own(selection, local.figmaProperty) ?? (booleans && own(booleans, local.figmaProperty))
+}
+
+function translate(
+  mapping: ParsedMapping,
+  selection: Record<string, string>,
+  booleans?: Readonly<Record<string, string>>
+): PropTranslation[] {
   return mapping.locals.map((local): PropTranslation => {
     const codeProp = codePropOf(local, mapping.example ?? '')
     if (local.kind === 'enum') {
@@ -284,7 +316,23 @@ function translate(mapping: ParsedMapping, selection: Record<string, string>): P
       }
     }
     if (local.kind === 'boolean') {
-      return { figmaProperty: local.figmaProperty, figmaType: 'BOOLEAN', codeProp }
+      const picked = booleanPick(local, selection, booleans)
+      return {
+        figmaProperty: local.figmaProperty,
+        figmaType: 'BOOLEAN',
+        codeProp,
+        ...(picked === undefined
+          ? {}
+          : {
+              selected: {
+                figma: picked,
+                code: (TRUE_WORDS.includes(picked.toLowerCase())
+                  ? local.whenTrue
+                  : local.whenFalse
+                ).trim()
+              }
+            })
+      }
     }
     if (local.kind === 'string') {
       return {
@@ -297,53 +345,144 @@ function translate(mapping: ParsedMapping, selection: Record<string, string>): P
   })
 }
 
-async function loadMappings(library: LibraryInfo, mappingRoot: string) {
-  const files = await findMappingFiles(mappingRoot)
-  return Promise.all(files.map((file) => readMappingFile(file)))
+// Everything a resolve reads from the library, loaded once per command: a batch shares it across its entries.
+type LibrarySource = {
+  library: LibraryInfo
+  mappingRoot: string
+  mappings: ParsedMapping[]
+  // Accepted limits by public component name, or the coded failure of an unreadable registry.
+  limits: Readonly<Record<string, AcceptedLimit[]>> | { error: Diagnostic }
+  captureRevision?: string
+  captureWarning?: Diagnostic
 }
 
-// The mapping root as a coded answer: unset, not an existing directory, or outside an npm package are each
-// mapping-root-not-configured, never a raw file-system error.
+const notConfigured = (message: string, details?: Record<string, unknown>) => ({
+  error: diagnostic('mapping-root-not-configured', message, details)
+})
+
+const errorCode = (error: unknown) => (error as NodeJS.ErrnoException).code
+
+// The mapping root as a coded answer: unset, not an existing directory, unreadable, outside an npm package or in a
+// package without a readable name and version are each mapping-root-not-configured, never a raw error.
 async function mappingSource(
   mappingRoot: string | undefined
 ): Promise<{ library: LibraryInfo; mappingRoot: string } | { error: Diagnostic }> {
-  const refuse = (message: string) => ({
-    error: diagnostic('mapping-root-not-configured', message)
-  })
   if (!mappingRoot)
-    return refuse(
+    return notConfigured(
       'No mapping source configured. Set --mapping-root, DCL_FIGMA_MAPPING_ROOT or contract.mappingRoot in figma.config.json.'
     )
-  const directory = await stat(mappingRoot).catch(() => undefined)
-  if (!directory?.isDirectory()) return refuse(`${mappingRoot} is not an existing directory.`)
+  const shown = path.resolve(mappingRoot)
+  let directory
+  try {
+    directory = await stat(mappingRoot)
+  } catch (error) {
+    const code = errorCode(error)
+    return code === 'ENOENT' || code === 'ENOTDIR'
+      ? notConfigured(`${shown} is not an existing directory.`)
+      : notConfigured(`${shown} cannot be read (${code ?? 'error'}).`, { code })
+  }
+  if (!directory.isDirectory()) return notConfigured(`${shown} is not an existing directory.`)
   const library = await loadLibrary(mappingRoot)
   if (!library)
-    return refuse(
-      `${mappingRoot} is not inside an npm package, so the library version and name cannot be established.`
+    return notConfigured(
+      `${shown} is not inside an npm package, so the library version and name cannot be established.`
+    )
+  if ('invalid' in library)
+    return notConfigured(
+      `${library.invalid}, so the library version and name cannot be established.`
     )
   return { library, mappingRoot }
 }
 
-// The accepted limits the registry next to the mappings records for a public component. A library without a
-// registry has none; a registry that is not valid fails, as the installer would.
-async function acceptedLimits(mappingRoot: string, component: string) {
-  let text: string
-  try {
-    text = await readFile(path.join(mappingRoot, 'promotion.json'), 'utf8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
-    throw error
+// The registry (components/promotion.json) of the library that owns the mappings: the nearest one from the
+// mapping root up to the package root, so a root pointed at a subdirectory still finds it. A library without a
+// registry has no accepted limits; a registry that cannot be read or is not valid is a coded failure.
+async function registryLimits(
+  library: LibraryInfo,
+  mappingRoot: string
+): Promise<LibrarySource['limits']> {
+  const top = path.resolve(library.rootDir)
+  for (let dir = path.resolve(mappingRoot); ; dir = path.dirname(dir)) {
+    for (const file of [
+      path.join(dir, 'promotion.json'),
+      path.join(dir, 'components/promotion.json')
+    ]) {
+      let text: string
+      try {
+        text = await readFile(file, 'utf8')
+      } catch (error) {
+        if (errorCode(error) === 'ENOENT' || errorCode(error) === 'ENOTDIR') continue
+        return registryError(file, `cannot be read (${errorCode(error) ?? 'error'})`)
+      }
+      // A JSON.parse message quotes the input, so it is never passed on; the schema errors name no input text.
+      let parsed: unknown
+      try {
+        parsed = JSON.parse(text)
+      } catch {
+        return registryError(file, 'is not JSON')
+      }
+      try {
+        return componentRegistryEntries(parsed).limits
+      } catch (error) {
+        return registryError(file, `is not valid: ${(error as Error).message}`)
+      }
+    }
+    if (dir === top || path.dirname(dir) === dir) return {}
   }
-  const entry = libraryComponentEntries(JSON.parse(text)).find(
-    (candidate) => candidate.name === component && candidate.visibility === 'public'
-  )
-  return entry?.limits ?? []
 }
 
-async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promise<ResolveResult> {
+const registryError = (file: string, problem: string) => ({
+  error: diagnostic('contract-incompatible', `The library component registry ${file} ${problem}.`, {
+    reason: 'component-registry'
+  })
+})
+
+async function loadSource(ctx: ResolveContext): Promise<LibrarySource | { error: Diagnostic }> {
   const root = await mappingSource(ctx.mappingRoot)
-  if ('error' in root) return fail([root.error])
-  const { library } = root
+  if ('error' in root) return root
+  const { library, mappingRoot } = root
+  let mappings: ParsedMapping[]
+  try {
+    const files = await findMappingFiles(mappingRoot)
+    mappings = await Promise.all(files.map((file) => readMappingFile(file)))
+  } catch (error) {
+    const code = errorCode(error)
+    if (!code) throw error
+    // A subdirectory or mapping file below the root that cannot be read (EACCES, a dangling symlink).
+    const where = (error as NodeJS.ErrnoException).path ?? path.resolve(mappingRoot)
+    return notConfigured(`${where} under the mapping root cannot be read (${code}).`, { code })
+  }
+  // The revision is provenance only: an unreadable lock is reported, never a reason to refuse the resolve.
+  let captureRevision: string | undefined
+  let captureWarning: Diagnostic | undefined
+  try {
+    captureRevision = await readCaptureRevision(library.rootDir)
+  } catch (error) {
+    captureWarning = diagnostic(
+      'capture-revision-unknown',
+      `The library lock pins no readable capture revision: ${(error as Error).message}`,
+      { lock: `${library.name}/upstream.lock.json` }
+    )
+  }
+  return {
+    library,
+    mappingRoot,
+    mappings,
+    limits: await registryLimits(library, mappingRoot),
+    captureRevision,
+    captureWarning
+  }
+}
+
+// `source` lets a batch load the library once for all its entries; a single resolve loads it here.
+async function resolveComponent(
+  ctx: ResolveContext,
+  input: ResolveInput,
+  source?: LibrarySource | { error: Diagnostic }
+): Promise<ResolveResult> {
+  const loaded = source ?? (await loadSource(ctx))
+  if ('error' in loaded) return fail([loaded.error])
+  const { library, mappings, captureRevision } = loaded
 
   const warnings: Diagnostic[] = []
   if (ctx.figmaSets.length === 0) {
@@ -355,19 +494,7 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
     )
   }
 
-  // The revision is provenance only: an unreadable lock is reported, never a reason to refuse the resolve.
-  let captureRevision: string | undefined
-  try {
-    captureRevision = await readCaptureRevision(library.rootDir)
-  } catch (error) {
-    warnings.push(
-      diagnostic(
-        'capture-revision-unknown',
-        `The library lock pins no readable capture revision: ${(error as Error).message}`,
-        { lock: `${library.name}/upstream.lock.json` }
-      )
-    )
-  }
+  if (loaded.captureWarning) warnings.push(loaded.captureWarning)
   const context: FailureContext = {
     library: { name: library.name, version: library.version },
     ...(captureRevision ? { capture: { revision: captureRevision } } : {})
@@ -378,7 +505,6 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   if (identity.errors.length) return failure(identity.errors)
 
   // With a capture, a node outside it is not a library component, even if a stale mapping still targets it.
-  const mappings = await loadMappings(library, root.mappingRoot)
   if (ctx.figmaSets.length > 0 && !identity.set) {
     // A mapping that still targets the node is a stale mapping: a library defect to report, not a retry.
     const stale = mappings.filter((mapping) => mapping.figma?.nodeId === identity.setId)
@@ -565,6 +691,25 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
         )
       )
   }
+  for (const [property, value] of Object.entries(input.booleanProperties ?? {})) {
+    const kind = reads.get(property)
+    if (kind === 'enum')
+      return failure([
+        diagnostic(
+          'variant-unsupported',
+          `"${property}" is a boolean in the design, but the mapping reads it as a variant.`,
+          { property, value, supported: [...reads.keys()] }
+        )
+      ])
+    if (kind === undefined && !mapping.header.states.includes(property))
+      warnings.push(
+        diagnostic(
+          'unmapped-figma-property',
+          `The mapping does not read the boolean property "${property}".`,
+          { property, supported: [...reads.keys(), ...mapping.header.states] }
+        )
+      )
+  }
   const textKeys = new Set(
     mapping.locals.flatMap((local) =>
       local.kind === 'string' ? [local.figmaProperty] : local.kind === 'text' ? [local.layer] : []
@@ -596,7 +741,28 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
   const rendered = renderUsage(mapping, selection, input)
   if (rendered.errors.length) return failure(rendered.errors)
 
-  const limits = await acceptedLimits(ctx.mappingRoot!, mapping.header.component!)
+  // Without a capture nothing checks that the variant values form a combination the design defines, and a mapped
+  // variant property the instance did not give is left out of the usage: the warning names both.
+  if (!set) {
+    const notGiven = mapping.locals.flatMap((local) =>
+      local.kind === 'enum' && own(selection, local.figmaProperty) === undefined
+        ? [local.figmaProperty]
+        : []
+    )
+    const index = warnings.findIndex((warning) => warning.code === 'figma-identity-unverified')
+    if (index >= 0)
+      warnings[index] = {
+        ...warnings[index]!,
+        message: `${warnings[index]!.message} The combination of variant values is not checked against the design${notGiven.length ? `, and ${notGiven.join(', ')} ${notGiven.length === 1 ? 'was' : 'were'} not given, so the usage leaves ${notGiven.length === 1 ? 'it' : 'them'} out` : ''}.`,
+        details: { combinationChecked: false, notGiven }
+      }
+  }
+
+  // An unreadable registry fails only a resolve that reaches a component, so identity failures keep their codes.
+  if ('error' in loaded.limits) return failure([loaded.limits.error as Diagnostic])
+  const limits = Object.hasOwn(loaded.limits, mapping.header.component!)
+    ? (loaded.limits as Record<string, AcceptedLimit[]>)[mapping.header.component!]!
+    : []
   if (limits.length)
     warnings.push(
       diagnostic(
@@ -617,8 +783,15 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
         importStatements: mapping.imports
       },
       usage: rendered.usage!,
-      usageFor: { variantProperties: selection, basis },
-      propTranslation: translate(mapping, selection),
+      usageFor: {
+        variantProperties: selection,
+        booleanProperties: { ...input.booleanProperties },
+        basis:
+          basis === 'unspecified' && Object.keys(input.booleanProperties ?? {}).length > 0
+            ? 'requested'
+            : basis
+      },
+      propTranslation: translate(mapping, selection, input.booleanProperties),
       interactionStates: mapping.header.states,
       limits,
       provenance: {
@@ -648,10 +821,14 @@ async function checkMappings(
   ctx: ResolveContext
 ): Promise<{ file: string; diagnostics: Diagnostic[] }[]> {
   // checkMappingsReport turns an unusable root into mapping-root-not-configured; callers of this list get none.
-  const root = await mappingSource(ctx.mappingRoot)
-  if ('error' in root) return []
-  const { library } = root
-  const mappings = await loadMappings(library, root.mappingRoot)
+  const source = await loadSource(ctx)
+  return 'error' in source ? [] : checkLoadedMappings(ctx, source)
+}
+
+async function checkLoadedMappings(
+  ctx: ResolveContext,
+  { library, mappings }: LibrarySource
+): Promise<{ file: string; diagnostics: Diagnostic[] }[]> {
   const results: { file: string; diagnostics: Diagnostic[] }[] = []
   const seenNodes = new Map<string, string>()
   const seenIds = new Map<string, string>()
@@ -726,18 +903,19 @@ async function checkMappings(
 // The check-mappings answer for the CLI and the MCP tool. Without a capture the node, drift and
 // supersession checks cannot run, and the report says so instead of passing silently.
 async function checkMappingsReport(ctx: ResolveContext) {
-  // A missing, absent or unpackaged mapping root is a failure here too, never an empty pass.
-  const root = await mappingSource(ctx.mappingRoot)
-  if ('error' in root)
+  // A missing, absent or unpackaged mapping root is a failure here too, never an empty pass. The library is
+  // loaded once, so a root that breaks mid-check cannot turn into an empty pass either.
+  const source = await loadSource(ctx)
+  if ('error' in source)
     return {
       ok: false,
       checked: 0,
       captureChecked: false,
-      errors: [root.error],
+      errors: [source.error],
       warnings: [],
       results: []
     }
-  const results = await checkMappings(ctx)
+  const results = await checkLoadedMappings(ctx, source)
   const failing = results.filter((r) => r.diagnostics.some((d) => d.severity === 'error'))
   const captureChecked = ctx.figmaSets.length > 0
   return {
@@ -756,5 +934,5 @@ async function checkMappingsReport(ctx: ResolveContext) {
   }
 }
 
-export { checkMappings, checkMappingsReport, resolveComponent }
-export type { FailureContext, ResolveContext, ResolveInput, ResolveResult, Resolved }
+export { checkMappings, checkMappingsReport, loadSource, resolveComponent }
+export type { FailureContext, LibrarySource, ResolveContext, ResolveInput, ResolveResult, Resolved }

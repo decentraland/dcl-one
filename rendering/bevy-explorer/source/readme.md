@@ -107,7 +107,7 @@ just native-release --places http://localhost:5000 --realm-provider http://local
 Doing it by hand instead of via `just`:
 
 ```bash
-./scripts/gen-ts-bindings.sh                     # TS types for the system API (generated, gitignored)
+./scripts/gen-ts-bindings.sh                     # TS types for the system API (library/ui/apps/hud, tracked)
 cd react-web && npm ci && (cd bridge-scene && npm ci) && npm run bundle:native && cd ..
 cargo build --release --package dcl_deno_ipc     # scene runtime sidecar
 cargo build --release                            # decentra-bevy + decentra-bevy-cef
@@ -205,7 +205,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   frame-rate target and session override, the sampling status, the latest 15 s performance
   snapshot and the frame-time breakdown independently of the panel; `/render_state`,
   `/profile_top` and `/debug_memory` the rest ([profiling](../docs/guidelines/profiling.md)).
-- The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
+- The HUD, by role and accessible name (`library/explorer-core/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
   `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
   `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving

@@ -5,7 +5,7 @@ import {
   recordHudReactCommit,
   takeHudMainThreadCostWindow,
   type LongAnimationFrameEntryLike
-} from '../features/engine/hudMainThreadCost'
+} from '../lib/hudMainThreadCost'
 
 let nativeHud = false
 vi.mock('../lib/bootMode', () => ({ isNativeHud: () => nativeHud }))
@@ -23,7 +23,7 @@ class FakePerformanceObserver {
   observe(): void {}
 }
 
-describe('the HUD main-thread cost meter (features/engine/hudMainThreadCost.ts)', () => {
+describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
   beforeEach(() => {
     nativeHud = false
     delete window.__bevyTakeHudMainThreadCost

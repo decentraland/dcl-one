@@ -1,4 +1,5 @@
 import { availableParallelism } from 'node:os'
+import { fileURLToPath } from 'node:url'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vitest/config'
 
@@ -48,6 +49,28 @@ export default defineConfig({
           exclude: ['test/**/*.build.test.ts', 'test/consumer/**'],
           setupFiles: ['test/setup.ts'],
           css: { modules: { classNameStrategy: 'non-scoped' } }
+        }
+      },
+      {
+        // The Explorer HUD UI (apps/hud), under the harness its hosts run it with: no CSS processing, and
+        // the host behaviours (`@hud-host`) of a web host.
+        extends: true,
+        resolve: {
+          alias: {
+            '@hud-host': fileURLToPath(new URL('apps/hud/test/host.ts', import.meta.url)),
+            '@explorer-core': fileURLToPath(new URL('../explorer-core', import.meta.url))
+          }
+        },
+        test: {
+          name: 'hud',
+          environment: 'jsdom',
+          include: ['apps/hud/**/*.test.{ts,tsx}'],
+          // Tests that need packages only the HUD hosts install; react-web's Vitest runs them.
+          exclude: ['apps/hud/test/hosted/**'],
+          setupFiles: ['apps/hud/test/setup.ts'],
+          // jsdom's localStorage, not Node's own (on by default from Node 25).
+          execArgv: ['--no-experimental-webstorage'],
+          css: false
         }
       }
     ]
