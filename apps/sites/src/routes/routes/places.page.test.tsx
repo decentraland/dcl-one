@@ -11,6 +11,7 @@ import { fetchDestinations, type Destination, type DestinationParams } from "@/d
 import { openSignIn } from "@/features/components/auth/signin-store";
 
 import Places from "./places";
+import { track } from "@/core/lib/telemetry/track";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -49,17 +50,24 @@ function Location() {
   return <output data-testid="location">{location.pathname + location.search}</output>;
 }
 
-function renderPage(url = "/places", platform: object = DESKTOP, unavailable = false) {
+function renderPage(url = "/places", platform: object = DESKTOP, unavailable = false, loaderSid: string | null = "sid") {
   const Stub = createRoutesStub([
     {
-      path: "/places",
-      Component: (props: ComponentProps<typeof Places>) => (
-        <>
-          <Places {...props} />
-          <Location />
-        </>
-      ),
-      loader: () => ({ sid: "sid", platform, dehydratedState: undefined, unavailable }),
+      id: "root",
+      path: "/",
+      loader: () => ({ sid: "root-session" }),
+      children: [
+        {
+          path: "places",
+          Component: (props: ComponentProps<typeof Places>) => (
+            <>
+              <Places {...props} />
+              <Location />
+            </>
+          ),
+          loader: () => ({ sid: loaderSid ?? undefined, platform, dehydratedState: undefined, unavailable }),
+        },
+      ],
     },
     { path: "/places/:id", Component: () => <p>Place page</p> },
   ]);
@@ -76,7 +84,10 @@ const location = () => screen.getByTestId("location").textContent ?? "";
 
 beforeEach(() => {
   auth.current = { isConnected: false, identity: null };
-  vi.stubGlobal("fetch", vi.fn(async () => Response.json([])));
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => Response.json([])),
+  );
   Element.prototype.scrollIntoView = vi.fn();
 });
 
@@ -96,6 +107,14 @@ describe("when the Explore grid loads", () => {
     expect(within(grid).getByRole("link", { name: "Quiet" })).toBeTruthy();
     expect(within(grid).queryByRole("link", { name: "Busy" })).toBeNull();
     expect(screen.getByRole("heading", { name: "Live Now" })).toBeTruthy();
+  });
+
+  it("should retain the existing root session for client-navigation list and click analytics", async () => {
+    serve({ browse: [destination({ title: "Quiet" })] });
+    const { user } = renderPage("/places", DESKTOP, false, null);
+    await user.click(await screen.findByRole("link", { name: "Quiet" }));
+    expect(track).toHaveBeenCalledWith("place_list_viewed", expect.anything(), { sid: "root-session", story: "misc/browse-places" });
+    expect(track).toHaveBeenCalledWith("place_card_clicked", expect.anything(), { sid: "root-session", story: "misc/browse-places" });
   });
 
   it("should say so when nothing matches", async () => {
@@ -118,6 +137,7 @@ describe("when the Explore grid loads", () => {
     const { user } = renderPage("/places", DESKTOP, true);
     expect((await screen.findByRole("alert")).textContent).toBe("Something went wrong loading places.");
     expect(fetchDestinations).not.toHaveBeenCalledWith(expect.objectContaining({ limit: 48 }), expect.anything());
+    expect(screen.queryByText("Loading places…")).toBeNull();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("link", { name: "Back" })).toBeTruthy();
   });
@@ -128,6 +148,10 @@ describe("when the Explore grid loads", () => {
     await screen.findByRole("alert");
     const [select] = screen.getAllByRole("combobox", { name: "Category" });
     await user.selectOptions(select!, "music");
+    expect(await screen.findByRole("link", { name: "Music place" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    await user.selectOptions(select!, "all");
+    await waitFor(() => expect(location()).toBe("/places"));
     expect(await screen.findByRole("link", { name: "Music place" })).toBeTruthy();
     expect(screen.queryByRole("alert")).toBeNull();
   });
@@ -151,7 +175,10 @@ describe("when the Explore grid loads", () => {
 
   it("should read the faces of a new page's creators only", async () => {
     const owner = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
-    serve({ browse: Array.from({ length: 48 }, (_, i) => destination({ id: `p${i}`, title: `Place ${i}`, owner: owner(i + 1) })), total: 100 });
+    serve({
+      browse: Array.from({ length: 48 }, (_, i) => destination({ id: `p${i}`, title: `Place ${i}`, owner: owner(i + 1) })),
+      total: 100,
+    });
     const { user } = renderPage();
     const more = await screen.findByRole("button", { name: "Load more places" });
     await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
@@ -201,7 +228,9 @@ describe("when the view changes", () => {
     const [select] = await screen.findAllByRole("combobox", { name: "Category" });
     await user.selectOptions(select!, "music");
     expect(location()).toBe("/places?category=music");
-    await waitFor(() => expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ categories: "music" }), expect.anything()));
+    await waitFor(() =>
+      expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ categories: "music" }), expect.anything()),
+    );
     await user.click(screen.getByRole("button", { name: "Remove filter: Music" }));
     expect(location()).toBe("/places");
   });
@@ -240,7 +269,22 @@ describe("when a member section is open", () => {
     serve({ member: [destination({ title: "Saved" })] });
     renderPage("/places?tab=favourites");
     expect(await screen.findByRole("link", { name: "Saved" })).toBeTruthy();
-    expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ only_favorites: true }), expect.objectContaining({ identity: auth.current.identity }));
+    expect(fetchDestinations).toHaveBeenCalledWith(
+      expect.objectContaining({ only_favorites: true }),
+      expect.objectContaining({ identity: auth.current.identity }),
+    );
+  });
+
+  it.each([
+    ["favourites", null],
+    ["my", null],
+    ["my", "https://example.com/v2/map.png"],
+    ["favourites", "https://example.com/bafkreidj26s7aenyxfthfdibnqonzqm5ptc4iamml744gmcyuokewkr76y"],
+  ])("should preserve member %s rows with cover %s", async (tab, image) => {
+    auth.current = { isConnected: true, identity: { signer: MEMBER } };
+    serve({ member: [destination({ title: "Empty", image })] });
+    renderPage(`/places?tab=${tab}`);
+    expect(await screen.findByRole("link", { name: "Empty" })).toBeTruthy();
   });
 
   it("should list the member's own places by their address", async () => {
@@ -270,7 +314,12 @@ describe("when a member section is open", () => {
     // Re-render through a view change so the mocked auth hook is read again.
     await user.click(screen.getByRole("button", { name: "My places" }));
     await user.click(screen.getByRole("button", { name: "Favourites" }));
-    await waitFor(() => expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ only_favorites: true }), expect.objectContaining({ identity: other })));
+    await waitFor(() =>
+      expect(fetchDestinations).toHaveBeenCalledWith(
+        expect.objectContaining({ only_favorites: true }),
+        expect.objectContaining({ identity: other }),
+      ),
+    );
   });
 
   it("should show the error with Retry when the member read fails", async () => {
@@ -290,7 +339,11 @@ describe("when a card is opened", () => {
     await user.click(link);
     const dialog = screen.getByRole("dialog", { name: "Quiet" });
     expect(location()).toBe("/places");
-    expect(within(dialog).getByRole("link", { name: /Jump in/ }).getAttribute("href")).toMatch(/^\/play/);
+    expect(
+      within(dialog)
+        .getByRole("link", { name: /Jump in/ })
+        .getAttribute("href"),
+    ).toMatch(/^\/play/);
     expect(within(dialog).getByText("Come by")).toBeTruthy();
     expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "Close" }));
     await user.tab({ shift: true });
@@ -316,8 +369,8 @@ describe("when a card is opened", () => {
     expect(writeText).toHaveBeenLastCalledWith(`${window.location.origin}/places/plaza`);
   });
 
-  it("should open the place page from Live Now even when the scene has emptied", async () => {
-    serve({ browse: [destination({ id: "other", title: "Other" })], live: [destination({ title: "Was busy", user_count: 0 })] });
+  it("should open the place page from Live Now", async () => {
+    serve({ browse: [destination({ id: "other", title: "Other" })], live: [destination({ title: "Was busy", user_count: 1 })] });
     const { user } = renderPage();
     const group = await screen.findByRole("group", { name: "Live Now" });
     await user.click(within(group).getByRole("link", { name: "Was busy" }));

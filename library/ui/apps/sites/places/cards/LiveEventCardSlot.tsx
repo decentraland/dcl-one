@@ -8,17 +8,7 @@ import styles from './LiveEventCardSlot.module.css'
  * cover with badges over a dark content bar whose by-line trades places with Jump In on hover
  * (phones show both).
  */
-function LiveEventCardSlot(props: PlaceCardSlotProps) {
-  if (props.skeleton) {
-    return (
-      <div className={styles.cell} aria-hidden="true">
-        <div className={`${styles.card} ${styles.skeleton}`}>
-          <div className={styles.media} />
-          <div className={styles.bar} />
-        </div>
-      </div>
-    )
-  }
+function LiveEventCardSlot(props: Extract<PlaceCardSlotProps, { skeleton?: false }>) {
   const { card, labels, onOpen, onJumpIn } = props
   return (
     <div className={styles.cell}>

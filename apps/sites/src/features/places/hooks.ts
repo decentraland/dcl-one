@@ -16,14 +16,13 @@ import {
   type BrowseFilters,
   type ExploreSection,
 } from "@/data/lib/catalyst/places/discover";
-import { hiddenFromBrowse } from "@/data/lib/catalyst/places/destinations";
 
 import { creatorBatches, type CreatorProfiles } from "./cards";
 
 /** The Explore all grid, page by page. */
 export function useBrowsePlaces(filters: BrowseFilters, enabled: boolean) {
   const query = useInfiniteQuery({ ...browsePlacesQuery(filters), enabled });
-  const pageRows = useMemo(() => browsePageRows(query.data?.pages ?? [], filters.category), [query.data, filters.category]);
+  const pageRows = useMemo(() => browsePageRows(query.data?.pages ?? [], filters), [query.data, filters.category, filters.search]);
   const rows = useMemo(() => pageRows.flat(), [pageRows]);
   return { ...query, rows, pageRows };
 }
@@ -44,13 +43,13 @@ export function useMemberPlaces(section: ExploreSection, identity: AuthIdentity 
     queryFn: options?.queryFn ?? skipToken,
     staleTime: PLACES_STALE_MS,
   });
-  const rows = useMemo(() => (query.data?.data ?? []).filter((place) => !hiddenFromBrowse(place)), [query.data]);
+  const rows = useMemo(() => query.data?.data ?? [], [query.data]);
   return { ...query, rows };
 }
 
 /**
  * The faces of the creators on screen, one read per group (Live Now, each browse page, a member list) for the
- * addresses no earlier group asked for, so loading another page reads only that page's new creators. Cards
+ * addresses in that group, so Live Now changes never alter an existing page's cache key. Cards
  * render without faces while a read runs or if it fails.
  */
 export function usePlaceCreators(groups: readonly (readonly Destination[])[]): CreatorProfiles {

@@ -54,16 +54,9 @@ export function creatorAddresses(places: readonly Destination[]): string[] {
   return [...out];
 }
 
-/** One address batch per group, each without the addresses an earlier group already asked for; empty batches dropped. */
+/** Each group's own addresses keep browse-page cache keys independent of changes in Live Now. */
 export function creatorBatches(groups: readonly (readonly Destination[])[]): string[][] {
-  const asked = new Set<string>();
-  const batches: string[][] = [];
-  for (const group of groups) {
-    const fresh = creatorAddresses(group).filter((address) => !asked.has(address));
-    fresh.forEach((address) => asked.add(address));
-    if (fresh.length) batches.push(fresh);
-  }
-  return batches;
+  return groups.map(creatorAddresses).filter((addresses) => addresses.length > 0);
 }
 
 function coordinates(place: Destination): [number, number] {
@@ -73,7 +66,7 @@ function coordinates(place: Destination): [number, number] {
 
 /** Jump In for this visitor, reusing /jump's helpers: the web explorer on desktop, the app on a phone. */
 export function placeJumpIn(place: Destination, platform: DetectedPlatform) {
-  const realm = place.world ? place.world_name ?? undefined : undefined;
+  const realm = place.world ? (place.world_name ?? undefined) : undefined;
   return jumpInFor(
     sceneTravelHref(realm ?? null, place.base_position),
     mobileLaunch(platform, { coordinates: coordinates(place), ...(realm ? { realm } : {}) }),
@@ -87,7 +80,7 @@ export function usersLabel(count: number): string {
 export function placeCard(place: Destination, platform: DetectedPlatform, profiles?: CreatorProfiles): PlaceCardData {
   const users = place.user_count ?? 0;
   const creator = placeCreator(place, profiles);
-  const coords = place.world ? place.world_name ?? undefined : place.base_position || undefined;
+  const coords = place.world ? (place.world_name ?? undefined) : place.base_position || undefined;
   const { jumpInHref } = placeJumpIn(place, platform);
   return {
     id: place.id,

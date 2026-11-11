@@ -136,12 +136,3 @@
     transition: opacity 0.1s linear;
   }
 }
-
-.skeleton .media,
-.skeleton .bar {
-  background: var(--dcl-transparencies-white-10);
-}
-
-.skeleton .bar {
-  min-height: 96px;
-}

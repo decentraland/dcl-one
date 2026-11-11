@@ -1,7 +1,7 @@
 import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
 import { dehydrate, HydrationBoundary, QueryClient } from "@tanstack/react-query";
-import { useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams, useRouteLoaderData } from "react-router";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { ExploreBand, type ExploreBandLabels } from "@dcl/one-ui/apps/sites/places/ExploreBand";
@@ -159,9 +159,6 @@ export async function clientLoader(): Promise<null> {
   return null;
 }
 
-/** The session id of the first document, kept for client navigations (browser only, set from an effect). */
-let browserSid = "";
-
 const subscribeHydration = () => () => {};
 
 export default function Places({ loaderData }: Route.ComponentProps) {
@@ -179,14 +176,16 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   const navigate = useNavigate();
   const view = readView(params);
   const rawSearch = params.get("search") ?? "";
-  const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
+  const hydrated = useSyncExternalStore(
+    subscribeHydration,
+    () => true,
+    () => false,
+  );
   const [platform] = useState<DetectedPlatform>(
     () => loaderPlatform ?? (typeof navigator === "undefined" ? { kind: "unknown" } : detectPlatform(navigator.userAgent)),
   );
-  useEffect(() => {
-    if (loaderSid) browserSid = loaderSid;
-  }, [loaderSid]);
-  const sid = loaderSid ?? browserSid;
+  const root = useRouteLoaderData<{ sid: string | null }>("root");
+  const sid = loaderSid ?? root?.sid ?? "";
 
   const auth = useAuth();
   const identity = auth.isConnected ? auth.identity : null;
@@ -196,6 +195,9 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   const viewKey = `${view.section}|${view.category}|${view.search}`;
   const [heldKey, setHeldKey] = useState(unavailable ? viewKey : null);
   const held = heldKey === viewKey;
+  useEffect(() => {
+    if (heldKey !== null && heldKey !== viewKey) setHeldKey(null);
+  }, [heldKey, viewKey]);
   const browse = useBrowsePlaces({ category: view.category, search: view.search }, view.section === "all" && !held);
   const live = useLiveRail(showsLive(view));
   const member = useMemberPlaces(view.section, hydrated ? identity : null);
@@ -312,7 +314,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   const status = view.section === "all" ? browseStatus() : memberStatus();
   function browseStatus(): string {
     // The next page announces itself from the grid's sentinel.
-    return browse.isPending ? COPY.loading : "";
+    return !held && browse.isPending ? COPY.loading : "";
   }
   function memberStatus(): string {
     return identity && member.isPending ? COPY.loading : "";

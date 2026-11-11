@@ -117,34 +117,24 @@ export const myPlacesQuery = (identity: AuthIdentity) =>
       fetchDestinations({ owner: identity.signer.toLowerCase(), limit: MEMBER_LIMIT, order_by: undefined }, { identity, signal }),
   });
 
-/** Curation overrides the junk heuristic under Featured, as places-api does server-side. */
-export function hiddenFromCategory(place: Destination, category: DiscoverCategory): boolean {
-  return hiddenFromBrowse(place) && !(category === FEATURED_CATEGORY && place.highlighted);
-}
-
 /** The four busiest scenes with at least `minUsers` people, from the live feed. */
-export function selectLiveRail(rows: readonly Destination[], minUsers = 0): Destination[] {
+export function selectLiveRail(rows: readonly Destination[], minUsers = 1): Destination[] {
   return rows
     .filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) >= minUsers)
     .sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0))
     .slice(0, LIVE_NOW_LIMIT);
 }
 
-/** The grid rows page by page: duplicates across overlapping pages dropped, junk hidden. */
-export function browsePageRows(pages: readonly DestinationPage[], category: DiscoverCategory): Destination[][] {
+/** The grid rows page by page: duplicates across overlapping pages dropped; only the default public view hides unfinished entries. */
+export function browsePageRows(pages: readonly DestinationPage[], filters: BrowseFilters): Destination[][] {
   const seen = new Set<string>();
   return pages.map((page) =>
     page.data.filter((place) => {
-      if (seen.has(place.id) || hiddenFromCategory(place, category)) return false;
+      if (seen.has(place.id) || (filters.category === "all" && !filters.search && hiddenFromBrowse(place))) return false;
       seen.add(place.id);
       return true;
     }),
   );
-}
-
-/** The grid rows: every page's rows in order. */
-export function browseRows(pages: readonly DestinationPage[], category: DiscoverCategory): Destination[] {
-  return browsePageRows(pages, category).flat();
 }
 
 const ADDRESS = /^0x[0-9a-f]{40}$/;
@@ -168,7 +158,10 @@ const ProfilesEnvelope = z.array(
           .object({
             ethAddress: z.string(),
             name: z.string().optional(),
-            avatar: z.object({ snapshots: z.object({ face256: z.string().optional() }).passthrough().optional() }).passthrough().optional(),
+            avatar: z
+              .object({ snapshots: z.object({ face256: z.string().optional() }).passthrough().optional() })
+              .passthrough()
+              .optional(),
           })
           .passthrough(),
       ),

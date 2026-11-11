@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { destination } from "./destination.fixture";
 import type { Destination, DestinationPage } from "./destinations";
 import {
-  browseRows,
+  browsePageRows,
   effectiveSearch,
   fetchPlaceCreators,
   nextBrowseOffset,
@@ -85,18 +85,38 @@ describe("when a page lost rows to schema drift", () => {
 
 describe("when building the grid rows", () => {
   it("should drop rows repeated across pages and unfinished catalogue entries", () => {
-    const rows = browseRows(
-      [page([destination({ id: "a" }), destination({ id: "road", title: "Road at 1,2", categories: [] })]), page([destination({ id: "a" }), destination({ id: "b" })])],
-      "all",
+    const rows = browsePageRows(
+      [
+        page([destination({ id: "a" }), destination({ id: "road", title: "Road at 1,2", categories: [] })]),
+        page([destination({ id: "a" }), destination({ id: "b" })]),
+      ],
+      { category: "all", search: "" },
     );
-    expect(rows.map((row) => row.id)).toEqual(["a", "b"]);
+    expect(rows.flat().map((row) => row.id)).toEqual(["a", "b"]);
   });
 
-  it("should keep a curated row with a placeholder cover under Featured only", () => {
+  it("should retain a curated placeholder under Featured and hide it on the default view", () => {
     const curated = destination({ id: "curated", image: null, highlighted: true });
-    expect(browseRows([page([curated])], "featured").map((row) => row.id)).toEqual(["curated"]);
-    expect(browseRows([page([curated])], "all")).toEqual([]);
+    expect(
+      browsePageRows([page([curated])], { category: "featured", search: "" })
+        .flat()
+        .map((row) => row.id),
+    ).toEqual(["curated"]);
+    expect(browsePageRows([page([curated])], { category: "all", search: "" })).toEqual([[]]);
   });
+  it.each([null, "https://example.com/v2/map.png", "https://example.com/bafkreidj26s7aenyxfthfdibnqonzqm5ptc4iamml744gmcyuokewkr76y"])(
+    "should preserve explicit search and category matches with cover %s",
+    (image) => {
+      const row = destination({ image });
+      for (const filters of [
+        { category: "all", search: "plaza" },
+        { category: "music", search: "" },
+      ] as const) {
+        expect(browsePageRows([page([row])], filters)).toEqual([[row]]);
+      }
+      expect(browsePageRows([page([row])], { category: "all", search: "" })).toEqual([[]]);
+    },
+  );
 });
 
 describe("when choosing Live Now", () => {
@@ -106,6 +126,12 @@ describe("when choosing Live Now", () => {
     expect(selectLiveRail(rows).map((row) => row.id)).toEqual(["p9", "p7", "p4", "p3"]);
   });
 
+  it("should exclude empty, missing and negative head counts by default", () => {
+    expect(selectLiveRail([destination({ user_count: 0 }), destination({ user_count: null }), destination({ user_count: -1 })])).toEqual(
+      [],
+    );
+  });
+
   it("should leave out scenes under the minimum head count", () => {
     expect(selectLiveRail([destination({ user_count: 1 })], 2)).toEqual([]);
   });
@@ -113,9 +139,12 @@ describe("when choosing Live Now", () => {
 
 describe("when crediting a place", () => {
   it("should prefer the deployer over the owner and ignore values that are not wallets", () => {
-    expect(placeCreatorAddress({ creator_address: "0x00000000000000000000000000000000000000BB", owner: "0x00000000000000000000000000000000000000aa" })).toBe(
-      "0x00000000000000000000000000000000000000bb",
-    );
+    expect(
+      placeCreatorAddress({
+        creator_address: "0x00000000000000000000000000000000000000BB",
+        owner: "0x00000000000000000000000000000000000000aa",
+      }),
+    ).toBe("0x00000000000000000000000000000000000000bb");
     expect(placeCreatorAddress({ creator_address: "Decentraland", owner: null })).toBeUndefined();
   });
 });
@@ -123,7 +152,9 @@ describe("when crediting a place", () => {
 describe("when reading creator profiles", () => {
   it("should post every address once and key the faces by lowercased address", async () => {
     const fetchMock = vi.fn(async () =>
-      Response.json([{ avatars: [{ ethAddress: "0xAA", name: "Ann", avatar: { snapshots: { face256: "https://cdn.example/face.png" } } }] }]),
+      Response.json([
+        { avatars: [{ ethAddress: "0xAA", name: "Ann", avatar: { snapshots: { face256: "https://cdn.example/face.png" } } }] },
+      ]),
     );
     vi.stubGlobal("fetch", fetchMock);
     const result = await fetchPlaceCreators(["0xaa"]);
@@ -141,7 +172,10 @@ describe("when reading creator profiles", () => {
   it("should release the body of a failed read and reject so the cards keep their initials", async () => {
     const failed = new Response("upstream error", { status: 502 });
     const cancel = vi.spyOn(failed.body!, "cancel");
-    vi.stubGlobal("fetch", vi.fn(async () => failed));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => failed),
+    );
     await expect(fetchPlaceCreators(["0xaa"])).rejects.toThrow("502");
     expect(cancel).toHaveBeenCalledOnce();
   });

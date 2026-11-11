@@ -11,7 +11,10 @@ const WALLET = "0x00000000000000000000000000000000000000aa";
 
 describe("when crediting a card", () => {
   it("should show the Foundation's logo and link no profile", () => {
-    expect(placeCreator(destination({ contact_name: "Decentraland Foundation" }))).toEqual({ name: "Decentraland Foundation", foundation: true });
+    expect(placeCreator(destination({ contact_name: "Decentraland Foundation" }))).toEqual({
+      name: "Decentraland Foundation",
+      foundation: true,
+    });
   });
 
   it("should credit the title when the scene declares only the SDK default", () => {
@@ -24,7 +27,11 @@ describe("when crediting a card", () => {
   });
 
   it("should not ask for the faces of the Foundation or of authorless scenes", () => {
-    const places = [destination({ id: "a", owner: WALLET }), destination({ id: "b", contact_name: "SDK" }), destination({ id: "c", contact_name: "Decentraland Foundation" })];
+    const places = [
+      destination({ id: "a", owner: WALLET }),
+      destination({ id: "b", contact_name: "SDK" }),
+      destination({ id: "c", contact_name: "Decentraland Foundation" }),
+    ];
     expect(creatorAddresses(places)).toEqual([WALLET]);
   });
 });
@@ -57,7 +64,10 @@ describe("when mapping a destination to a card", () => {
 
   it("should give the modal an absolute share link", () => {
     const place = destination({ description: "Come by" });
-    expect(modalPlace(place, placeCard(place, DESKTOP), "https://example.org")).toMatchObject({ shareUrl: "https://example.org/places/plaza", description: "Come by" });
+    expect(modalPlace(place, placeCard(place, DESKTOP), "https://example.org")).toMatchObject({
+      shareUrl: "https://example.org/places/plaza",
+      description: "Come by",
+    });
   });
 });
 
@@ -66,15 +76,17 @@ describe("when batching creator reads", () => {
   const B = "0x00000000000000000000000000000000000000b2";
   const C = "0x00000000000000000000000000000000000000c3";
 
-  it("should ask each group only for creators no earlier group asked for", () => {
-    const first = [destination({ id: "1", owner: A }), destination({ id: "2", owner: B })];
-    const second = [destination({ id: "3", owner: B }), destination({ id: "4", owner: C })];
-    expect(creatorBatches([first])).toEqual([[A, B]]);
-    // Loading the next page keeps the first batch as it was and adds one for the new creator only.
-    expect(creatorBatches([first, second])).toEqual([[A, B], [C]]);
+  it("should keep each page's batch stable when the live creators change", () => {
+    const page = [destination({ owner: A }), destination({ id: "2", owner: B })];
+    expect(creatorBatches([[destination({ owner: A })], page])[1]).toEqual([A, B]);
+    expect(creatorBatches([[destination({ owner: C })], page])[1]).toEqual([A, B]);
+    expect(creatorBatches([page, page])).toEqual([
+      [A, B],
+      [A, B],
+    ]);
   });
 
-  it("should drop a group with no new creators", () => {
-    expect(creatorBatches([[destination({ owner: A })], [destination({ id: "2", owner: A })], []])).toEqual([[A]]);
+  it("should drop groups without creators", () => {
+    expect(creatorBatches([[], [destination({ contact_name: "SDK" })]])).toEqual([]);
   });
 });
