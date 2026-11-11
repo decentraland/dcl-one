@@ -1,5 +1,15 @@
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -546,6 +556,36 @@ describe('when component installation owns its verified input read-set and trans
     expect(vi.mocked(createComponentGeneration).mock.calls[0]![0].modules).toHaveLength(
       modulePaths.length
     )
+  })
+
+  it('should refuse a registry with limits on an internal name and leave the installed output byte-identical', async () => {
+    await runInstall(app, options)
+    await fixtureCommit(repository)
+    const snapshot = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          (await readdir(path.join(root, 'components'), { recursive: true }))
+            .filter((file) => file !== 'promotion.json')
+            .sort()
+            .map(async (file) => {
+              const full = path.join(root, 'components', file)
+              return [file, (await lstat(full)).isFile() ? hash(await readFile(full)) : 'dir']
+            })
+        )
+      )
+    const before = await snapshot()
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        components: [],
+        internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }]
+      })
+    )
+    await fixtureCommit(repository)
+
+    await expect(runInstall(app, options)).rejects.toThrow('names only, without limits')
+
+    expect(await snapshot()).toEqual(before)
   })
 
   it('should retire the last component through the same canonical transaction and then no-op', async () => {

@@ -274,7 +274,7 @@ export function main(argv, root = process.cwd()) {
       mismatched.length + missing.length + unpinned.length + problems.length + publicProblems.length
     process.stdout.write(
       failed
-        ? `lock-digests: ${failed} files differ from upstream.lock.json. A port updates the lock (node library/ui/figma/lock-digests.mjs --write) and, when a port input changed, its port verification record (port-verification.mjs).\n`
+        ? `lock-digests: ${failed} files differ from upstream.lock.json. A port updates the lock (stage the files, then node library/ui/figma/lock-digests.mjs --write; it reads the index) and, when a port input changed, its port verification record (port-verification.mjs).\n`
         : `lock-digests: ${Object.keys(tracked).length} files match upstream.lock.json\n`
     )
     return failed ? 1 : 0

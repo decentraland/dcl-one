@@ -675,6 +675,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::history_prune::PruneOptions::from_config(&config),
     );
 
+    if config.shop.credits_trial_mode {
+        shop::credits::trial::refuse_a_shared_key(
+            config.shop.credits_revoker_key.as_deref(),
+            config.economy.relayer_private_key.as_deref(),
+        )?;
+    }
     let economy_settings = shop::evm::Settings {
         min_sale_value_in_wei: config.economy.min_sale_value_in_wei.clone(),
         max_transactions_per_day: config.economy.max_transactions_per_day,
@@ -687,6 +693,18 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         polygon_rpc_url: Config::non_empty(&config.economy.rpc_endpoint_polygon),
         max_gas_price_allowed_in_wei: config.economy.max_gas_price_allowed_in_wei,
         max_gas_limit: config.economy.max_gas_limit,
+        relayer_max_fee_per_gas_wei: config.economy.relayer_max_fee_per_gas_wei,
+        trial_mode: config.shop.credits_trial_mode,
+        // The same list, parsed the same way, as the credits lane's (credits::Settings::parse).
+        trial_buyers: config
+            .shop
+            .credits_trial_mode
+            .then(|| {
+                shop::credits::trial::TrialBuyers::parse(
+                    config.shop.credits_trial_buyers.as_deref(),
+                )
+            })
+            .transpose()?,
         oz_relayer_url: Config::non_empty(&config.economy.oz_relayer_url),
         oz_relayer_id: Config::non_empty(&config.economy.oz_relayer_id),
         oz_relayer_api_key: Config::non_empty(&config.economy.oz_relayer_api_key),
@@ -1569,7 +1587,7 @@ async fn ops_states(
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
         http_client.clone(),
-        crate::index::credits_settings(config)?,
+        crate::index::credits_settings(config, true)?,
         shop::credits::Sources {
             market: Some(sources.market.clone()),
             price: Some(sources.price.clone()),

@@ -92,8 +92,8 @@ jobs:
           fi
           df -h /
           free -m
-      - name: Fetch only the docs media from Git LFS
-        run: git config --global lfs.fetchinclude 'apps/sites/content/**'
+      - name: Fetch Sites media and shared fonts from Git LFS
+        run: git config --global lfs.fetchinclude 'apps/sites/content/**,library/ui/apps/sites/assets/**,library/ui/foundations/typography/fonts/**'
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
@@ -202,15 +202,20 @@ jobs:
         run: |
           apis=$(nix build --impure 'git+file:.?lfs=1#image-apis' --no-link --print-out-paths -L)
           sites=$(nix build --impure 'git+file:.?lfs=1#image-sites' --no-link --print-out-paths -L)
-          images="$apis $sites"
+          # The Sites build for dcl-one's Polygon CreditsManager (infra/containers/images.nix).
+          sites_credits=$(nix build --impure 'git+file:.?lfs=1#image-sites-polygon-credits' --no-link --print-out-paths -L)
+          images="$apis $sites $sites_credits"
           for image in $images; do
             cp -L "$image" ".cache/images/${image##*-foundation-}"
           done
           docker load --input .cache/images/apis.tar.gz
           docker load --input .cache/images/sites.tar.gz
+          docker load --input .cache/images/sites-polygon-credits.tar.gz
           df -h /
       - name: Test the exact images before publication
-        run: python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
+        run: |
+          python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
+          python3 tooling/image-smoke.py --revision "$GITHUB_SHA" --sites foundation-sites-polygon-credits:nix
       - name: Allow cache uploads only from current first attempts
         id: cache-writer
         if: steps.cache-keys.outputs.save == 'true'

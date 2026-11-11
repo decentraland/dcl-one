@@ -227,6 +227,8 @@ pub enum AuthorizeError {
     },
     /// 409: the request's `operationId` already authorized other lines.
     OperationReused,
+    /// 403: a trial (`CREDITS_TRIAL_MODE`) whose buyers don't include the signer.
+    NotATrialBuyer,
     Api(ApiError),
 }
 
@@ -310,6 +312,15 @@ impl AuthorizeError {
                     409,
                     "This purchase was already authorized for other items. Start a new purchase."
                         .to_string(),
+                    extra,
+                )
+            }
+            Self::NotATrialBuyer => {
+                let mut extra = serde_json::Map::new();
+                extra.insert("code".into(), json!("not_a_trial_buyer"));
+                envelope(
+                    403,
+                    "Credits can't be used by this account in this test.".to_string(),
                     extra,
                 )
             }
@@ -754,6 +765,16 @@ pub async fn authorize_group(
                 replayed(state, &prior.id, buyer, manager, chain_id, None, "").await?;
             return credit_out(&wallet, issued, lines, single, signer, true);
         }
+    }
+
+    // A trial issues new credits only to the buyers it names. This is the one place a new
+    // credit starts, after a named purchase is recovered above (its own credit and terms, no
+    // new TTL) and before the index, the gate or a reservation: a buyer taken off the list
+    // keeps what it was already given and gets nothing new.
+    if let Some(trial) = &settings.trial
+        && !trial.admits(signer)
+    {
+        return Err(AuthorizeError::NotATrialBuyer);
     }
 
     if state.usage.ready_at(chrono::Utc::now()).await.is_none() {
