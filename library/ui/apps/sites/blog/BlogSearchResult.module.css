@@ -1,0 +1,53 @@
+/* Figma "ResultsBlogEntry", web product: 80px picture, one-line title, two-line description. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+}
+
+.thumb {
+  flex: none;
+  width: 80px;
+  height: 80px;
+  border-radius: var(--dcl-radius-sm);
+  background: radial-gradient(
+    circle at 50% 50%,
+    hsl(var(--blog-hue, 268) 63% 48%),
+    var(--dcl-bg-page)
+  );
+}
+
+.text {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  min-width: 0;
+}
+
+.title {
+  overflow: hidden;
+  color: var(--dcl-neutrals-snow);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.excerpt {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--dcl-neutrals-silver);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 21px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.match {
+  background: none;
+  color: var(--dcl-primary-primary);
+}
