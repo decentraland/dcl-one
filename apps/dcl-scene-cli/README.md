@@ -156,13 +156,14 @@ files, never part of a run. Rewritten models are staged under names taken from t
 never rewrites a file the preview is serving. `start` sends no reload when an import finishes. Each
 import sends its status on the live-reload socket instead: `WsSceneMessage.texture_optimization`
 (`decentraland.sdk.development`) as a binary frame, and a JSON text frame
-`{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled}}`.
+`{"type":"TEXTURE_OPTIMIZATION","payload":{sceneId,state,done,total,failed,bytesBefore,bytesAfter,enabled,replay}}`.
 `state` is `RUNNING` while textures are encoded (at most every 500 ms), then `READY` or `FAILED` once.
 `READY` is sent only when the optimized files or the setting changed. A client connecting later gets
-the last status first. The next reload, from a save or from the client, serves the new files.
-The Bevy Explorer's HUD shows the status as one toast: the progress while textures are encoded, then
+each project's last status first, marked `replay`. The next reload, from a save or from the client, serves the new files.
+The Bevy Explorer's HUD shows the status as one toast per scene: the progress while textures are encoded, then
 the size saved with a **Reload** button, or how many textures stay PNG. It shows nothing when the
-setting is off, and ignores a `READY` that is the last status replayed as it connects.
+setting is off. A replayed `READY` offers Reload only when the HUD showed that scene's progress
+before the socket dropped.
 
 `deploy` with the setting on finishes in the foreground whatever the cache lacks, with a progress
 line, before it reads the payload; a warm cache costs nothing. It never uploads a half-optimized

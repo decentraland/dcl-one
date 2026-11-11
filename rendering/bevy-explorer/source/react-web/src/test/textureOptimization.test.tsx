@@ -27,8 +27,10 @@ const show = (msg: TextureOptimizationMessage, reload: (scene: string) => void =
   act(() => showTextureOptimization(msg, reload))
 
 afterEach(() => {
-  // enabled:false takes the toast down and forgets a progress toast
-  act(() => showTextureOptimization(status({ enabled: false }), () => undefined))
+  // enabled:false takes a scene's toast down and forgets its progress
+  for (const sceneId of ['scene-1', 'scene-2', 'bafkpreview']) {
+    act(() => showTextureOptimization(status({ sceneId, enabled: false }), () => undefined))
+  }
   act(() => dismissToast('k'))
   vi.useRealTimers()
 })
@@ -103,8 +105,9 @@ describe('texture optimization notice', () => {
     }
   })
 
-  it('ignores a READY replayed at connect, not a RUNNING or FAILED one', () => {
+  it('ignores a READY replayed at connect unless its progress was shown, never a RUNNING or FAILED one', () => {
     expect(textureNotice(status({ state: 'ready', replay: true }))).toBeUndefined()
+    expect(textureNotice(status({ state: 'ready', replay: true }), true)?.kind).toBe('ready')
     expect(textureNotice(status({ replay: true }))?.kind).toBe('progress')
     expect(textureNotice(status({ state: 'failed', failed: 2, replay: true }))?.kind).toBe('failed')
   })
@@ -121,6 +124,8 @@ describe('texture optimization toast', () => {
     expect(progress).toHaveTextContent('Optimizing textures… 4 / 5')
     expect(progress).toHaveAttribute('aria-busy', 'true')
     expect(screen.queryByRole('button', { name: /reload/i })).toBeNull()
+    // no Dismiss: the next update would bring it back
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
 
     show(status({ state: 'ready', done: 5 }), reload)
     const ready = screen.getByRole('status')
@@ -154,13 +159,36 @@ describe('texture optimization toast', () => {
     expect(screen.getByRole('button', { name: 'Reload scene to see optimized textures' })).toBeInTheDocument()
   })
 
-  it('shows nothing for a READY replayed at connect, and clears progress left from before', () => {
+  it('shows nothing for a READY replayed at connect', () => {
     render(<ToastHost />)
     show(status({ state: 'ready', replay: true }))
     expect(screen.queryByRole('status')).toBeNull()
-    show(status())
-    show(status({ state: 'ready', replay: true }))
-    expect(screen.queryByRole('status')).toBeNull()
+  })
+
+  it('offers Reload for a READY replayed after a reconnect mid-run', () => {
+    render(<ToastHost />)
+    const reload = vi.fn()
+    show(status(), reload)
+    show(status({ state: 'ready', replay: true }), reload)
+    fireEvent.click(screen.getByRole('button', { name: 'Reload scene to see optimized textures' }))
+    expect(reload).toHaveBeenCalledWith('scene-1')
+  })
+
+  it('keeps each scene in its own toast', () => {
+    render(<ToastHost />)
+    const reload = vi.fn()
+    show(status({ state: 'ready' }), reload)
+    show(status({ sceneId: 'scene-2' }), reload)
+    expect(screen.getAllByRole('status')).toHaveLength(2)
+    // scene 1's progress was never shown here: its replay leaves scene 2 alone
+    show(status({ sceneId: 'scene-1', state: 'ready', replay: true }), reload)
+    expect(screen.getByText('Optimizing textures… 2 / 5')).toBeInTheDocument()
+    // scene 2's replayed READY is news: its progress was shown
+    show(status({ sceneId: 'scene-2', state: 'ready', replay: true }), reload)
+    const buttons = screen.getAllByRole('button', { name: 'Reload scene to see optimized textures' })
+    expect(buttons).toHaveLength(2)
+    for (const button of buttons) fireEvent.click(button)
+    expect(reload.mock.calls.map(([scene]) => scene).sort()).toEqual(['scene-1', 'scene-2'])
   })
 })
 

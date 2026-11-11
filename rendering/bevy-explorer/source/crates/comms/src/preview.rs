@@ -1,4 +1,4 @@
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
 use anyhow::{anyhow, bail};
 use bevy::{
@@ -19,7 +19,6 @@ use platform::IntoClientRequest;
 use prost::Message;
 use serde_json::json;
 use system_bridge::{SystemApi, TextureOptimizationState, TextureOptimizationStatus};
-use web_time::Instant;
 
 pub struct PreviewPlugin;
 
@@ -119,7 +118,7 @@ fn connect_preview_server(
 
 /// Hands each texture import status to every `GetTextureOptimizationStream` subscriber (the HUD's
 /// bridge scene) and keeps the last one for the debug panel. A new subscriber gets only what
-/// arrives after it subscribed: a status is news once, and the replay rule is the socket's.
+/// arrives after it subscribed: a status is news once, and the preview server marks its replays.
 fn pipe_texture_optimization_stream(
     mut requests: EventReader<SystemApi>,
     mut statuses: EventReader<PreviewTextureOptimization>,
@@ -180,10 +179,7 @@ fn texture_status_json(last: &LastTextureOptimization, is_preview: bool) -> serd
 }
 
 /// The status the HUD sees for a `TextureOptimization` message.
-pub fn texture_optimization_status(
-    message: &TextureOptimization,
-    replay: bool,
-) -> TextureOptimizationStatus {
+pub fn texture_optimization_status(message: &TextureOptimization) -> TextureOptimizationStatus {
     TextureOptimizationStatus {
         scene_id: message.scene_id.clone(),
         state: match message.state() {
@@ -197,34 +193,8 @@ pub fn texture_optimization_status(
         bytes_before: message.bytes_before as f64,
         bytes_after: message.bytes_after as f64,
         enabled: message.enabled,
-        replay,
-    }
-}
-
-/// How long after the socket opens a scene's first texture status still counts as the replay.
-/// The server writes the replay before anything else, so it arrives at once.
-const REPLAY_WINDOW: Duration = Duration::from_secs(2);
-
-/// Tells the server's replay of its last texture status from news, per connection. A connecting
-/// client is sent each project's last status first: the first status for a scene that arrives
-/// within [`REPLAY_WINDOW`] of the socket opening is that replay. Every later one, and a first one
-/// that arrives later, is news.
-pub struct ReplayGate {
-    opened: Instant,
-    seen: HashSet<String>,
-}
-
-impl ReplayGate {
-    pub fn new(opened: Instant) -> Self {
-        Self {
-            opened,
-            seen: HashSet::new(),
-        }
-    }
-
-    pub fn is_replay(&mut self, scene_id: &str, now: Instant) -> bool {
-        let first = self.seen.insert(scene_id.to_owned());
-        first && now.saturating_duration_since(self.opened) <= REPLAY_WINDOW
+        // set by the preview server on the last status it sends a client as it connects
+        replay: message.replay,
     }
 }
 
@@ -262,7 +232,6 @@ async fn preview_socket(
     let request = remote_address.into_client_request()?;
     let stream = platform::websocket(request).await?;
     debug!("preview socket connected");
-    let mut replays = ReplayGate::new(Instant::now());
 
     let (_, mut read) = stream.split();
 
@@ -280,9 +249,8 @@ async fn preview_socket(
         };
 
         if let ws_scene_message::Message::TextureOptimization(t) = &message {
-            let replay = replays.is_replay(&t.scene_id, Instant::now());
             if let Some(textures) = &textures {
-                textures.send(texture_optimization_status(t, replay))?;
+                textures.send(texture_optimization_status(t))?;
             }
             continue;
         }
@@ -310,6 +278,7 @@ mod tests {
             bytes_before: 300,
             bytes_after: 200,
             enabled: true,
+            replay: false,
         }
     }
 
@@ -329,7 +298,7 @@ mod tests {
             panic!("not a texture status");
         };
         assert_eq!(
-            texture_optimization_status(&t, false),
+            texture_optimization_status(&t),
             TextureOptimizationStatus {
                 scene_id: "scene-1".into(),
                 state: TextureOptimizationState::Ready,
@@ -360,17 +329,16 @@ mod tests {
                 TextureOptimizationState::Failed,
             ),
         ] {
-            assert_eq!(
-                texture_optimization_status(&message(wire), true).state,
-                state
-            );
+            assert_eq!(texture_optimization_status(&message(wire)).state, state);
         }
     }
 
     #[test]
     fn the_status_reaches_the_hud_as_camel_case_json() {
-        let status =
-            texture_optimization_status(&message(texture_optimization::State::TosRunning), true);
+        let status = texture_optimization_status(&TextureOptimization {
+            replay: true,
+            ..message(texture_optimization::State::TosRunning)
+        });
         assert_eq!(
             serde_json::to_value(&status).unwrap(),
             json!({
@@ -388,43 +356,15 @@ mod tests {
     }
 
     #[test]
-    fn only_the_first_status_per_scene_at_connect_is_a_replay() {
-        let opened = Instant::now();
-        let mut gate = ReplayGate::new(opened);
-        assert!(gate.is_replay("a", opened));
-        assert!(gate.is_replay("b", opened + Duration::from_millis(5)));
-        assert!(!gate.is_replay("a", opened + Duration::from_millis(10)));
-        assert!(!gate.is_replay("b", opened + Duration::from_millis(600)));
-    }
-
-    #[test]
-    fn a_first_status_long_after_connect_is_news() {
-        let opened = Instant::now();
-        let mut gate = ReplayGate::new(opened);
-        assert!(!gate.is_replay("a", opened + REPLAY_WINDOW + Duration::from_millis(1)));
-        assert!(!gate.is_replay("a", opened + REPLAY_WINDOW * 2));
-    }
-
-    #[test]
-    fn a_new_connection_replays_again() {
-        let opened = Instant::now();
-        let mut gate = ReplayGate::new(opened);
-        assert!(gate.is_replay("a", opened));
-        let mut reconnected = ReplayGate::new(opened + Duration::from_secs(30));
-        assert!(reconnected.is_replay("a", opened + Duration::from_secs(30)));
-    }
-
-    #[test]
     fn the_debug_panel_explains_a_missing_status() {
         let empty = LastTextureOptimization::default();
         let v = texture_status_json(&empty, false);
         assert_eq!(v["received"], 0);
         assert_eq!(v["unavailable"][""], "Not connected to a preview server.");
         let filled = LastTextureOptimization {
-            last: Some(texture_optimization_status(
-                &message(texture_optimization::State::TosFailed),
-                false,
-            )),
+            last: Some(texture_optimization_status(&message(
+                texture_optimization::State::TosFailed,
+            ))),
             received: 4,
         };
         let v = texture_status_json(&filled, true);

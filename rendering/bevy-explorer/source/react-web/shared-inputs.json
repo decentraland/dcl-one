@@ -2208,7 +2208,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/preview/textureOptimizationToast.ts",
-      "sha256": "05d7344d846f6605bdec0cfdef787e7c68104412b904ac5077de1497e2ada9a5"
+      "sha256": "87a4518789b0a9ba13881a5d8721304a4da0e3247ec4515eb92aabfd5d401a0c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/profile/NameEditModal.module.css",
@@ -3176,7 +3176,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/textureOptimization.test.tsx",
-      "sha256": "7ee15516f0980067bcf63c14b2f18bef33ad022582322526c3cb393952d9d22d"
+      "sha256": "06a5ad2a459c355435458bfa53b846e934bd67257319e9b3ebd5ac3a1a65f51e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/utm.test.ts",

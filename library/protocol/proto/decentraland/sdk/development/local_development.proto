@@ -39,6 +39,9 @@ message TextureOptimization {
   uint64 bytes_before = 6; // source bytes of the converted images
   uint64 bytes_after = 7;  // KTX2 bytes (distinct)
   bool enabled = 8;        // whether the project serves/deploys the optimized files
+  // the last status, sent again to a client as it connects: a READY replayed
+  // announces files the client may already have loaded
+  bool replay = 9;
 }
 
 message WsSceneMessage {

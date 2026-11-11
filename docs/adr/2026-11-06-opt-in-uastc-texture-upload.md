@@ -55,16 +55,17 @@ is byte-for-byte what it was.
   `decentraland.sdk.development.TextureOptimization`, case `texture_optimization = 3` of
   `WsSceneMessage`. The message carries the scene id, the state (`TOS_RUNNING`, `TOS_READY`,
   `TOS_FAILED`), the textures done, total and failed, the source and KTX2 bytes of the converted
-  images, and whether the setting is on. A JSON text frame `TEXTURE_OPTIMIZATION` carries the same
+  images, whether the setting is on, and `replay`, set on the last status sent again to a client as
+  it connects. A JSON text frame `TEXTURE_OPTIMIZATION` carries the same
   fields in camelCase, as `SCENE_UPDATE` does for `UpdateScene`. `RUNNING` goes out while textures
   are encoded, at most every 500 ms. `READY` or `FAILED` goes out once per run, and `READY` only
   when the overlay or the setting changed or `RUNNING` went out. A run that changes nothing sends
-  nothing. A client that connects later receives the last status first. The client decides when to
-  reload. The Bevy Explorer routes the message from its preview socket to the HUD (the
-  `getTextureOptimizationStream` system API), marking the first status per scene within two
-  seconds of the socket opening as the replay; the HUD shows one toast and offers **Reload**, which
-  drops the live scene as a save's `UpdateScene` does, except for a replayed `READY`, which the
-  freshly loaded scene already reflects.
+  nothing. A client that connects later receives each project's last status first, marked `replay`. The
+  client decides when to reload. The Bevy Explorer routes the message from its preview socket to
+  the HUD (the `getTextureOptimizationStream` system API); the HUD shows one toast per scene and
+  offers **Reload**, which drops the live scene as a save's `UpdateScene` does. A replayed `READY`
+  offers it only when the HUD showed that scene's progress, so the run ended while the socket was
+  down; otherwise the freshly loaded scene already reflects it.
 - **Deploy.** With the setting on, `deploy` runs over the release payload after the build, encoding
   in the foreground, with a progress line, whatever the cache lacks. A warm cache costs nothing. It
   holds the process's import lock until the payload is read, so no background swap lands in
