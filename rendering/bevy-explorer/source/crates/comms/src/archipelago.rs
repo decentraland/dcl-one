@@ -327,21 +327,31 @@ fn settle_island(
     mut owners: Query<(Entity, &ArchipelagoTransport, &mut IslandAssignment)>,
     health: Query<&ConnectionHealth>,
     #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
-    islands: Query<(&IslandName, &IslandOwner, &IslandGeneration)>,
+    islands: Query<(
+        &IslandName,
+        &IslandOwner,
+        &IslandGeneration,
+        Option<&RoomRecovery>,
+    )>,
     current_realm: Res<CurrentRealm>,
     mut senders: ResMut<RealmSubscribers>,
 ) {
     for (owner, transport, mut assignment) in &mut owners {
-        if assignment
-            .active
-            .is_some_and(|active| !islands.contains(active))
-        {
-            assignment.active = None;
+        if let Some(active) = assignment.active {
+            match islands.get(active) {
+                Err(_) => assignment.active = None,
+                Ok((name, _, _, Some(recovery)))
+                    if recovery.failure.is_none() && recovery.retry.attempts == 0 =>
+                {
+                    assignment.retries.remove(&name.0);
+                }
+                _ => {}
+            }
         }
         let Some(pending) = assignment.pending else {
             continue;
         };
-        let Ok((name, pending_owner, generation)) = islands.get(pending) else {
+        let Ok((name, pending_owner, generation, _)) = islands.get(pending) else {
             assignment.pending = None;
             continue;
         };
@@ -370,7 +380,7 @@ fn settle_island(
             }
         }
         assignment.pending = None;
-        assignment.retries.clear();
+        assignment.retries.retain(|island, _| island == &name.0);
         let server = current_realm
             .config
             .realm_name
@@ -495,7 +505,7 @@ fn reconnect_websocket(
         if health.is_connected() && !connection.authenticated {
             connection.authenticated = true;
             transport.retries = 0;
-            recovery.reset();
+            recovery.failure = None;
         }
         if let Some((receiver, error)) = connection.task.complete() {
             health.disconnected();
@@ -773,6 +783,10 @@ mod tests {
     fn island_app() -> App {
         let mut app = App::new();
         app.add_plugins(ArchipelagoPlugin)
+            .add_systems(
+                PostUpdate,
+                crate::room_connection::observe_stable_connections,
+            )
             .init_resource::<CurrentRealm>()
             .init_resource::<Wallet>()
             .init_resource::<Time>()
@@ -864,6 +878,49 @@ mod tests {
             );
             assert!(app.world().resource::<Events<StartWsRoom>>().is_empty());
         }
+    }
+
+    #[test]
+    fn brief_island_promotion_preserves_its_retry_history() {
+        let mut app = island_app();
+        let owner = owner(app.world_mut(), 7);
+        let room = island(app.world_mut(), owner, 7, "same", true);
+        let mut retry = crate::recovery::RetryState::default();
+        retry.failed(0.0, None);
+        retry.failed(1.0, None);
+        app.world_mut().entity_mut(room).insert(RoomRecovery {
+            retry: retry.clone(),
+            failure: None,
+        });
+        let mut assignment = app.world_mut().get_mut::<IslandAssignment>(owner).unwrap();
+        assignment.pending = Some(room);
+        assignment.retries.insert("same".into(), retry.clone());
+        assignment.retries.insert("previous".into(), retry);
+        app.update();
+        let assignment = app.world().get::<IslandAssignment>(owner).unwrap();
+        assert_eq!(assignment.active, Some(room));
+        assert!(!assignment.retries.contains_key("previous"));
+        let mut retry = assignment
+            .retries
+            .get("same")
+            .expect("brief success retains backoff")
+            .clone();
+        retry.failed(3.0, None);
+        assert_eq!(retry.due, 7.0);
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(30));
+        app.update();
+        app.update();
+        assert!(app
+            .world()
+            .get::<IslandAssignment>(owner)
+            .unwrap()
+            .retries
+            .is_empty());
+        let mut recovery = app.world_mut().get_mut::<RoomRecovery>(room).unwrap();
+        recovery.fail(30.0, AdmissionError::new(FailureKind::Transient));
+        assert_eq!(recovery.retry.due, 31.0);
     }
 
     #[test]

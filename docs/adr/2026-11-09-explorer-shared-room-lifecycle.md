@@ -22,6 +22,11 @@ login. Transient failures retry indefinitely with delays capped at five seconds;
 server retry deadlines are respected. Refreshable sources obtain credentials before
 an application reconnect. Fixed external credentials require replacement after
 rejection. The LiveKit SDK retains responsibility for its internal reconnects.
+Successful admission preserves retry history. One shared observer resets it after
+30 continuous seconds of healthy transport state; interruptions restart that window.
+This keeps brief successful reconnects from repeatedly restarting the one-second
+delay. Island promotion retains the matching retry history until the active room
+resets it. Explicit user and access resets remain immediate.
 Credential responses cannot start another signed-login request; such responses
 are invalid and stop recovery for that room.
 

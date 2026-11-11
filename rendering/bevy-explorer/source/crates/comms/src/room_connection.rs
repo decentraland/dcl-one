@@ -180,6 +180,30 @@ impl Plugin for RoomConnectionPlugin {
             )
                 .chain(),
         );
+        app.add_systems(PostUpdate, observe_stable_connections);
+    }
+}
+
+pub(crate) fn observe_stable_connections(
+    mut rooms: Query<(
+        Entity,
+        &mut RoomRecovery,
+        Option<&ConnectionHealth>,
+        Has<RoomSuspended>,
+    )>,
+    #[cfg(feature = "livekit")] connected_rooms: Query<(), With<crate::livekit::room::Connected>>,
+    time: Res<Time>,
+) {
+    for (entity, mut recovery, health, suspended) in &mut rooms {
+        let connected = health.is_some_and(ConnectionHealth::is_connected);
+        #[cfg(feature = "livekit")]
+        let connected = connected || connected_rooms.contains(entity);
+        #[cfg(not(feature = "livekit"))]
+        let _ = entity;
+        let healthy = connected && !suspended && recovery.failure.is_none();
+        recovery
+            .retry
+            .observe_connection(healthy, time.elapsed_secs_f64());
     }
 }
 
@@ -338,7 +362,7 @@ fn finish_credentials(
             Ok(adapter)
         }) {
             Ok(adapter) => {
-                // Keep failure count until the transport connects, so repeated expired tokens back off.
+                // Admission alone does not establish a stable transport connection.
                 recovery.failure = None;
                 commands.entity(entity).try_remove::<NeedsAdapter>();
                 manager.connect_existing(&adapter, context.map(|context| context.0), entity);
@@ -354,6 +378,96 @@ fn finish_credentials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_continuous_healthy_rooms_reset_their_retry_budget() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_systems(PostUpdate, observe_stable_connections);
+        let health = ConnectionHealth::default();
+        health.connected();
+        let mut recovery = RoomRecovery::default();
+        recovery.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        recovery.failure = None;
+        let room = app.world_mut().spawn((recovery, health.clone())).id();
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(29));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(room)
+                .unwrap()
+                .retry
+                .attempts,
+            1
+        );
+        health.disconnected();
+        app.update();
+        health.connected();
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(29));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(room)
+                .unwrap()
+                .retry
+                .attempts,
+            1
+        );
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(1));
+        app.update();
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(room)
+                .unwrap()
+                .retry
+                .attempts,
+            0
+        );
+    }
+
+    #[test]
+    fn connection_health_never_resets_denied_or_suspended_rooms() {
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .add_systems(PostUpdate, observe_stable_connections);
+        let health = ConnectionHealth::default();
+        health.connected();
+        let mut denied = RoomRecovery::default();
+        denied.fail(0.0, AdmissionError::new(FailureKind::Denied));
+        let room = app.world_mut().spawn((denied, health.clone())).id();
+        let mut suspended = RoomRecovery::default();
+        suspended.fail(0.0, AdmissionError::new(FailureKind::Transient));
+        suspended.failure = None;
+        let paused = app
+            .world_mut()
+            .spawn((suspended, health, RoomSuspended))
+            .id();
+        app.update();
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(std::time::Duration::from_secs(31));
+        app.update();
+        let denied = app.world().get::<RoomRecovery>(room).unwrap();
+        assert_eq!(denied.failure, Some(FailureKind::Denied));
+        assert!(!denied.can_retry(100.0));
+        assert_eq!(denied.retry.attempts, 1);
+        assert_eq!(
+            app.world()
+                .get::<RoomRecovery>(paused)
+                .unwrap()
+                .retry
+                .attempts,
+            1
+        );
+    }
 
     #[test]
     fn cancelled_socket_lifetime_cannot_leave_healthy_state_behind() {

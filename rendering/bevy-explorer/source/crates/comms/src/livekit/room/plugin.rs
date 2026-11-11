@@ -141,7 +141,7 @@ fn poll_connecting_rooms(
 
             match poll {
                 Ok(room) => {
-                    recovery.reset();
+                    recovery.failure = None;
                     commands
                         .entity(entity)
                         .try_insert(room)
@@ -262,10 +262,13 @@ fn process_room_events(
                 }
                 RoomEvent::ConnectionStateChanged(state) => match state {
                     ConnectionState::Connected => {
-                        recovery.reset();
+                        recovery.failure = None;
                         commands.entity(entity).try_insert(Connected);
                     }
                     ConnectionState::Reconnecting => {
+                        recovery
+                            .retry
+                            .observe_connection(false, time.elapsed_secs_f64());
                         commands.entity(entity).try_insert(Reconnecting);
                     }
                     ConnectionState::Disconnected => {
@@ -633,6 +636,7 @@ fn record_disconnect(
     island: bool,
     now: f64,
 ) {
+    recovery.retry.observe_connection(false, now);
     if matches!(
         reason,
         DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
