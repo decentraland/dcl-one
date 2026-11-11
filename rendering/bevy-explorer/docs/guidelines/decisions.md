@@ -23,6 +23,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   that lifts it out of a metre of slope also draws it through nearby objects, and the blob
   stays flat rather than lying on the ground. The projection reads the primary camera's
   depth prepass, which the camera therefore keeps; without one the marker draws nothing.
+  Keeping it costs nothing new: the camera already renders it on native and web, and it
+  saves the main pass shading hidden opaque pixels. It also enables later work: decals,
+  soft edges where transparent surfaces meet geometry, and GPU occlusion culling.
   The box runs from 0.1 m under the feet, so the blob never darkens the avatar, to 1 m
   below the ground under the player's centre, so ground falling away by up to 45 degrees
   across the footprint still catches it. The ramps follow the shadergraph, except that
