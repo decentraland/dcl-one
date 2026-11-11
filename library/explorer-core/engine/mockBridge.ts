@@ -13,6 +13,8 @@ import {
   type Community,
   type CommunityChannel,
   type CommunityMember,
+  type CommunityMemberSection,
+  type CommunityRequestMember,
   type DmHistoryEntry,
   type Emote,
   type Envelope,
@@ -134,16 +136,24 @@ const mockLinkedPlaces = new Map<string, string[]>()
 const mockRemovedPlaces = new Map<string, Set<string>>()
 // The card's member actions by community: a member's new role, or null once kicked or banned.
 const mockMemberChanges = new Map<string, Map<string, string | null>>()
+// The Members tab's other sections, by community: join requests received, invites sent and bans.
+const mockPerson = (n: number, name: string): CommunityRequestMember => ({ address: `0x${(0xa0 + n).toString(16).padStart(40, '0')}`, name, role: 'none', requestId: `rq-${n}` })
+const mockSections: Record<CommunityMemberSection, Map<string, CommunityRequestMember[]>> = {
+  requests: new Map([['c8', [mockPerson(1, 'Fenix#a1b2'), mockPerson(2, 'Moonwalker'), mockPerson(3, 'Gaia#77fe')]]]),
+  invites: new Map([['c8', [mockPerson(4, 'Orbit'), mockPerson(5, 'Lumen#0c3d')]]]),
+  banned: new Map([['c8', [{ ...mockPerson(6, 'Troll#dead'), requestId: '' }]]])
+}
+const mockSection = (section: CommunityMemberSection, id: string): CommunityRequestMember[] => mockSections[section].get(id) ?? []
 
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
   { id: 'c2', name: 'Chiri Storytelling', description: "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!", thumbnail: '', membersCount: 374, role: 'none', ownerName: 'Chiri', privacy: 'private' },
-  { id: 'c3', name: 'VTATV', description: 'Virtual television and live shows broadcast from inside Decentraland.', thumbnail: '', membersCount: 186, role: 'none', ownerName: 'VTATV' },
+  { id: 'c3', name: 'VTATV', description: 'Virtual television and live shows broadcast from inside Decentraland.', thumbnail: '', membersCount: 186, role: 'none', ownerName: 'VTATV', pendingInviteId: 'inv-c3' },
   { id: 'c4', name: 'ABC Decentraland', description: 'Adventures and education for newcomers to the metaverse.', thumbnail: '', membersCount: 436, role: 'none', ownerName: 'BillyTeacoin' },
   { id: 'c5', name: 'Toxic Events', description: 'The wildest parties and events in DCL.', thumbnail: '', membersCount: 601, role: 'member', ownerName: 'ToxicWaifu' },
-  { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum' },
+  { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum', privacy: 'private', pendingInviteId: 'inv-c6' },
   { id: 'c7', name: 'SheFi', description: 'Empowering women in web3 and DeFi.', thumbnail: '', membersCount: 310, role: 'none', ownerName: 'msjoedor' },
-  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' },
+  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper', privacy: 'private' },
   // more than two browse pages (20 a page), every third private, some with friends in them
   ...Array.from({ length: 40 }, (_, i): Community => ({
     id: `b${i + 1}`,
@@ -1158,6 +1168,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'communityMemberAction') {
       // the member's new role (null: removed); a transfer also makes the user a moderator
       const changes = mockMemberChanges.get(msg.id) ?? new Map<string, string | null>()
+      if (msg.action === 'unban') {
+        mockSections.banned.set(msg.id, mockSection('banned', msg.id).filter((m) => m.address !== msg.address))
+        reply({ kind: 'communityMemberSection', id: msg.id, section: 'banned', members: mockSection('banned', msg.id), total: mockSection('banned', msg.id).length })
+        return
+      }
       const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
       changes.set(msg.address, role)
       mockMemberChanges.set(msg.id, changes)
@@ -1169,6 +1184,60 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
       const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
       setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    // The Invites & Requests section: the invites, the requests the user's owned or moderated
+    // communities received, and the user's own requests.
+    const sendInvites = (): void => {
+      const managed = mockCommunities.filter((c) => (c.role === 'owner' || c.role === 'moderator') && mockSection('requests', c.id).length > 0)
+      reply({
+        kind: 'communityInvites',
+        invites: mockCommunities.filter((c) => c.pendingInviteId != null).map((c) => ({ ...c })),
+        requestsReceived: managed.map((c) => ({ community: { ...c }, requests: mockSection('requests', c.id), total: mockSection('requests', c.id).length })),
+        requestsSent: mockCommunities.filter((c) => c.pendingRequestId != null).map((c) => ({ ...c })),
+        failed: []
+      })
+    }
+    if (msg.kind === 'getCommunityInvites') {
+      setTimeout(sendInvites, 400)
+      return
+    }
+    if (msg.kind === 'getCommunityMemberSection') {
+      const members = mockSection(msg.section, msg.id)
+      setTimeout(() => reply({ kind: 'communityMemberSection', id: msg.id, section: msg.section, members, total: members.length }), 300)
+      return
+    }
+    if (msg.kind === 'manageCommunityRequest') {
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (msg.address == null) {
+        // the user's own invite: accepting it joins
+        if (c != null) {
+          delete c.pendingInviteId
+          if (msg.intention === 'accepted') {
+            c.role = 'member'
+            c.membersCount += 1
+            reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
+          }
+          reply({ kind: 'community', community: { ...c } })
+          reply({ kind: 'communities', communities: mockMine() })
+        }
+      } else {
+        for (const section of ['requests', 'invites'] as const) {
+          mockSections[section].set(msg.id, mockSection(section, msg.id).filter((m) => m.requestId !== msg.requestId))
+          reply({ kind: 'communityMemberSection', id: msg.id, section, members: mockSection(section, msg.id), total: mockSection(section, msg.id).length })
+        }
+      }
+      sendInvites()
+      return
+    }
+    if (msg.kind === 'getInvitableCommunities') {
+      const communities = mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator').map((c) => ({ id: c.id, name: c.name }))
+      setTimeout(() => reply({ kind: 'invitableCommunities', address: msg.address, communities }), 300)
+      return
+    }
+    if (msg.kind === 'inviteToCommunity') {
+      mockSections.invites.set(msg.id, [...mockSection('invites', msg.id), { address: msg.address, name: msg.address.slice(0, 8), role: 'none', requestId: `rq-${Date.now()}` }])
+      setTimeout(() => reply({ kind: 'communityInviteSent', id: msg.id, address: msg.address, ok: true }), 300)
       return
     }
     if (msg.kind === 'getCommunityPlaceOptions') {

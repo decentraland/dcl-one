@@ -3,15 +3,19 @@
 // of community cards. The grid reads 20 communities a page from the service,
 // the next page read when the grid's end scrolls into view, and the search run on the server
 // (a second after typing stops, or at once on Enter). Each card shows Public or Private and
-// offers Join, Request to Join or Cancel, the user's friends in it, and its description on hover.
+// offers Join, Request to Join or Cancel (or Accept and Reject for an invite), the user's friends in
+// it, and its description on hover. The sidebar's Invites & Requests opens the user's invites, the
+// join requests their communities received and their own requests.
 
 import { useEffect, useRef, useState } from 'react'
 import { Avatar, Button, Chip, SearchField, Spinner, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import { openCommunityModal } from './CommunityModal'
+import { confirmRejectInvite, MemberRow, openCommunityModal } from './CommunityModal'
+import { openProfileCard } from '../profileCard/ProfileCard'
+import { openPassport } from '../profile/Passport'
 import { openCommunityCreateModal } from './CommunityCreateModal'
-import type { Community } from '@explorer-core/engine/protocol'
+import type { Community, CommunityInvitesMessage, CommunityRequestMember, CommunityRequestsGroup } from '@explorer-core/engine/protocol'
 import type { CommunitiesState, ProfileState, VoiceChatSession } from '../session/useEngineSession'
 import { streamLive } from '../voiceChat/callGate'
 import styles from './CommunitiesPage.module.css'
@@ -45,14 +49,33 @@ interface CardActions {
   onJoin: (id: string) => void
   onRequestToJoin: (id: string) => void
   onCancelRequest: (id: string, requestId: string) => void
+  onAcceptInvite: (id: string, inviteId: string) => void
+  onRejectInvite: (id: string, inviteId: string) => void
 }
 
-// A member views; anyone may join a public community; a
-// private one takes a request, which can be cancelled while it waits.
-function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest }: CardActions & { c: Community; onOpen: () => void }): React.JSX.Element {
+// A member views; anyone invited accepts or rejects (asked first); anyone may join a public
+// community; a private one takes a request, which can be cancelled while it waits.
+function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest, onAcceptInvite, onRejectInvite }: CardActions & { c: Community; onOpen: () => void }): React.JSX.Element {
   const act = (run: () => void) => (e: React.MouseEvent): void => {
     e.stopPropagation()
     run()
+  }
+  const inviteId = !isMember(c.role) ? c.pendingInviteId : undefined
+  if (inviteId != null) {
+    return (
+      <span className={styles.cardBtns}>
+        <Button size="sm" className={styles.cardBtn} aria-label="Accept invite" onClick={act(() => onAcceptInvite(c.id, inviteId))}>Accept</Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          className={styles.cardBtn}
+          aria-label="Reject invite"
+          onClick={act(() => void confirmRejectInvite(c).then((yes) => yes && onRejectInvite(c.id, inviteId)))}
+        >
+          Reject
+        </Button>
+      </span>
+    )
   }
   if (isMember(c.role)) {
     return <Button size="sm" variant="ghost" className={styles.cardBtn} onClick={act(onOpen)}>View</Button>
@@ -130,6 +153,125 @@ function LoadMore({ count, onVisible }: { count: number; onVisible: () => void }
   return <div ref={ref} className={styles.loadMore} aria-hidden="true" />
 }
 
+/** How many invites and requests wait on the user, for the sidebar's counter: their invites and
+ *  the requests their communities received. */
+export function invitesCount(invites: CommunityInvitesMessage | null): number {
+  if (invites == null) return 0
+  return invites.invites.length + invites.requestsReceived.reduce((n, g) => n + g.total, 0)
+}
+
+/** The ⋮ menu on a request's row: the member menu without owner actions (View Profile, Chat,
+ *  Call, Block, Report, Invite to Community). */
+function openRequestMenu(member: CommunityRequestMember, anchor: HTMLElement, onClose: () => void): void {
+  const r = anchor.getBoundingClientRect()
+  openProfileCard(member.address, r.left + r.width / 2 + 5, r.top + r.height / 2 - 10, { above: true, context: 'community', onClose })
+}
+
+function RequestsGroup({
+  group,
+  me,
+  onOpen,
+  onManage
+}: {
+  group: CommunityRequestsGroup
+  me: string | undefined
+  onOpen: () => void
+  onManage: (member: CommunityRequestMember, intention: 'accepted' | 'rejected') => void
+}): React.JSX.Element {
+  const [acting, setActing] = useState<ReadonlySet<string>>(new Set())
+  const [menuFor, setMenuFor] = useState<string | null>(null)
+  // released when the group is read again (after any answer)
+  useEffect(() => setActing(new Set()), [group])
+  const manage = (m: CommunityRequestMember, intention: 'accepted' | 'rejected'): void => {
+    setActing((prev) => new Set(prev).add(m.address))
+    onManage(m, intention)
+  }
+  const n = group.requests.length
+  return (
+    <div className={styles.requestsGroup}>
+      <button type="button" className={styles.requestsGroupHead} onClick={onOpen}>
+        <Avatar src={group.community.thumbnail} name={group.community.name} color={nameColor(group.community.id)} size={36} />
+        <span className={styles.requestsGroupName}>{group.community.name}</span>
+        <span className={styles.requestsGroupCount}>{`${n} Request${n > 1 ? 's' : ''} Received`}</span>
+      </button>
+      <div className={styles.requestsGrid}>
+        {group.requests.map((m) => (
+          <MemberRow
+            key={m.address}
+            member={m}
+            self={me == null || me.toLowerCase() === m.address.toLowerCase()}
+            busy={acting.has(m.address)}
+            menuOpen={menuFor === m.address}
+            actions={
+              <>
+                <Button size="sm" disabled={acting.has(m.address)} onClick={() => manage(m, 'accepted')}>ACCEPT</Button>
+                <Button size="sm" variant="secondary" disabled={acting.has(m.address)} onClick={() => manage(m, 'rejected')}>REJECT</Button>
+              </>
+            }
+            onView={() => openPassport(m.address)}
+            onMenu={(anchor) => {
+              setMenuFor(m.address)
+              openRequestMenu(m, anchor, () => setMenuFor(null))
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+/** The browser's Invites & Requests section: Invites, Requests Received (for owners and moderators) and Requests Sent, each titled with its
+ *  count, or one line when all three are empty. */
+function InvitesAndRequests({
+  invites,
+  canManage,
+  me,
+  live,
+  actions,
+  onOpen,
+  onManage
+}: {
+  invites: CommunityInvitesMessage | null
+  /** The user owns or moderates a community: Requests Received is shown. */
+  canManage: boolean
+  me: string | undefined
+  live: (c: Community) => boolean
+  actions: CardActions
+  onOpen: (id: string) => void
+  onManage: (communityId: string, member: CommunityRequestMember, intention: 'accepted' | 'rejected') => void
+}): React.JSX.Element {
+  if (invites == null) return <div className={styles.loading}><Spinner /></div>
+  const received = invites.requestsReceived.reduce((n, g) => n + g.requests.length, 0)
+  if (invites.invites.length === 0 && received === 0 && invites.requestsSent.length === 0) {
+    return <div className={styles.empty}>No pending invites or requests.</div>
+  }
+  const cards = (list: Community[]): React.JSX.Element => (
+    <div className={styles.grid}>
+      {list.map((c) => <CommunityCard key={c.id} c={c} live={live(c)} onOpen={() => onOpen(c.id)} {...actions} />)}
+    </div>
+  )
+  return (
+    <div className={styles.invitesSection}>
+      <h2 className={styles.invitesHead}>{`Invites (${invites.invites.length})`}</h2>
+      {invites.invites.length > 0 ? cards(invites.invites) : <div className={styles.invitesEmpty}>No Invites</div>}
+      {canManage && (
+        <>
+          <h2 className={styles.invitesHead}>{`Requests Received (${received})`}</h2>
+          {received > 0 ? (
+            invites.requestsReceived.map((g) => (
+              <RequestsGroup key={g.community.id} group={g} me={me} onOpen={() => onOpen(g.community.id)} onManage={(m, intention) => onManage(g.community.id, m, intention)} />
+            ))
+          ) : (
+            <div className={styles.invitesEmpty}>No Requests</div>
+          )}
+        </>
+      )}
+      <h2 className={styles.invitesHead}>{`Requests Sent (${invites.requestsSent.length})`}</h2>
+      {invites.requestsSent.length > 0 ? cards(invites.requestsSent) : <div className={styles.invitesEmpty}>No Requests</div>}
+    </div>
+  )
+}
+
 export function CommunitiesPage({
   communities,
   profile,
@@ -145,12 +287,12 @@ export function CommunitiesPage({
   // The search field's text; the grid shows the search last run (communities.browse.search).
   const [query, setQuery] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
-  // Main area shows the browse grid, or all of "My Communities" (via VIEW ALL).
-  const [tab, setTab] = useState<'browse' | 'mine'>('browse')
+  // Main area shows the browse grid, all of "My Communities" (via VIEW ALL), or Invites & Requests.
+  const [tab, setTab] = useState<'browse' | 'mine' | 'invites'>('browse')
   // The "Streaming" filter: only the communities with a live voice stream.
   const [streaming, setStreaming] = useState(false)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { loadBrowse, loadMoreBrowse, browse } = communities
+  const { loadBrowse, loadMoreBrowse, browse, loadInvites } = communities
   // what a delayed search compares with: the grid as it is when the delay ends
   const shown = useRef({ search: browse.search, tab })
   shown.current = { search: browse.search, tab }
@@ -177,8 +319,10 @@ export function CommunitiesPage({
     setQuery('')
     setTab('browse')
     loadBrowse('')
+    // the sidebar's counter
+    loadInvites()
     return cancelSearch
-  }, [communities.open, loadBrowse])
+  }, [communities.open, loadBrowse, loadInvites])
 
   // The same text again does nothing; empty text lists
   // every community; a search always shows the grid, even from My Communities.
@@ -203,12 +347,25 @@ export function CommunitiesPage({
   if (!communities.open) return null
 
   const mine = communities.list.filter((c) => isMember(c.role))
+  const showingInvites = tab === 'invites'
   const showingMine = tab === 'mine'
   const searching = !showingMine && browse.search !== ''
   const live = (c: Community): boolean => streamLive(voiceChat, c.id, c.voiceChatStatus?.isActive)
   // The Streaming filter narrows the communities already read to the live ones
   const gridList = (showingMine ? mine : browse.items).filter((c) => !streaming || live(c))
-  const actions: CardActions = { onJoin: communities.join, onRequestToJoin: communities.requestToJoin, onCancelRequest: communities.cancelRequest }
+  const actions: CardActions = {
+    onJoin: communities.join,
+    onRequestToJoin: communities.requestToJoin,
+    onCancelRequest: communities.cancelRequest,
+    onAcceptInvite: (id, inviteId) => communities.manageRequest(id, inviteId, 'accepted'),
+    onRejectInvite: (id, inviteId) => communities.manageRequest(id, inviteId, 'rejected')
+  }
+  const pendingCount = invitesCount(communities.invites)
+  const openInvites = (): void => {
+    cancelSearch()
+    setTab('invites')
+    loadInvites()
+  }
   // The count is the service's total, blank while the first page loads; filtered, the cards shown
   const title = showingMine ? 'My Communities' : searching ? `Results for '${browse.search}'` : 'Browse Communities'
   const count = showingMine || streaming ? `(${gridList.length})` : browse.loading || browse.failed === true ? '' : `(${browse.total})`
@@ -241,9 +398,16 @@ export function CommunitiesPage({
           >
             + CREATE A COMMUNITY
           </button>
-          <div className={styles.sideSection}>
+          <button
+            type="button"
+            className={`${styles.sideSection} ${styles.invitesBtn}`}
+            aria-pressed={showingInvites}
+            aria-label={pendingCount > 0 ? `Invites & Requests, ${pendingCount} pending` : 'Invites & Requests'}
+            onClick={openInvites}
+          >
             <span className={styles.sideHead}>Invites &amp; Requests</span>
-          </div>
+            {pendingCount > 0 && <span className={styles.invitesCount} aria-hidden="true">{pendingCount}</span>}
+          </button>
           <div className={styles.myHead}>
             <span className={styles.sideHead}>My Communities</span>
             {mine.length > 0 && (
@@ -265,6 +429,24 @@ export function CommunitiesPage({
         </aside>
 
         <section className={styles.main}>
+          {showingInvites ? (
+            <>
+              <div className={styles.browseHead}>
+                <button type="button" className={styles.back} aria-label="Back to Browse Communities" onClick={() => setTab('browse')}>‹</button>
+                <span>Invites &amp; Requests</span>
+              </div>
+              <InvitesAndRequests
+                invites={communities.invites}
+                canManage={mine.some((c) => c.role === 'owner' || c.role === 'moderator')}
+                me={p?.address}
+                live={live}
+                actions={actions}
+                onOpen={setOpenId}
+                onManage={(id, m, intention) => communities.manageRequest(id, m.requestId, intention, m.address)}
+              />
+            </>
+          ) : (
+          <>
           <div className={styles.browseHead}>
             {searching && (
               <button type="button" className={styles.back} aria-label="Back to Browse Communities" onClick={clearSearch}>‹</button>
@@ -286,6 +468,8 @@ export function CommunitiesPage({
               {!showingMine && browse.items.length < browse.total && <LoadMore count={browse.items.length} onVisible={loadMoreBrowse} />}
               {!showingMine && browse.loadingMore && <div className={styles.loadingMore}><Spinner size={22} /></div>}
             </>
+          )}
+          </>
           )}
         </section>
       </div>

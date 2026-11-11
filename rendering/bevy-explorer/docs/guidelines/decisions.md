@@ -154,11 +154,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
   PLACES tab button for owners and moderators is not ported.
   On the card's Members tab, a row opens the member's passport and carries unity-explorer's
-  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, the owner's
-  and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove Member, Ban)
-  with unity-explorer's rules and confirmations, then Block and Report. Call, Gift and Invite to
-  Community are left out until private calls, gifting and invites exist (unity-explorer shows
-  Gift only behind its gifting flag). Chat is always offered in-world: unity-explorer greys it
+  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, Call, the
+  owner's and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove
+  Member, Ban) with unity-explorer's rules and confirmations, then Block and Report, then Invite
+  to Community. Gift is left out until gifting exists (unity-explorer shows it only behind its
+  gifting flag). Chat is always offered in-world: unity-explorer greys it
   only while its chat area is down. unity-explorer's row shows no presence, so neither does
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
@@ -170,13 +170,33 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   pending comes from the user's own join requests, read when the grid's first page loads and when a
   closed community's card opens, and kept from the request's answer, as unity-explorer's. The
   card always shows its member count; unity-explorer shows it only behind its members-counter
-  flag. The Voice
-  Streaming section is left out until community voice exists, and a card offers no accept or
-  reject for an invite until the invites task. A failed read shows unity-explorer's error toast
+  flag. Live streams show as a card's LIVE chip and the grid's Streaming filter, not as
+  unity-explorer's separate Voice Streaming section. A card the user is invited to offers Accept
+  and Reject (asked first) instead of Join. A failed read shows unity-explorer's error toast
   and leaves the grid empty, with no count, where unity-explorer leaves its spinner running. A
   card shows no spinner while its join or request runs. My Communities is every membership, read
   apart from the grid; when that read fails the list stays as it was and the page asks again the
   next time it opens, without unity-explorer's "error loading My Communities" toast.
+- **Community invites and join requests.** As unity-explorer: the browser's Invites & Requests
+  opens Invites, Requests Received (only for a user who owns or moderates a community; one group
+  per community, each request with ACCEPT, REJECT and the member menu without owner actions) and
+  Requests Sent, each titled with its count, and "No pending invites or requests." when all are
+  empty. Its counter is the invites plus the requests received. It is read when the page opens,
+  when the section opens, after any answer, and when an invite or request notification arrives
+  while the page is open. The card shows ACCEPT INVITE and REJECT INVITE (asked first) for a
+  pending invite, and its Members tab gives owners and moderators MEMBERS, BANNED (with UNBAN),
+  JOIN REQUESTS (private communities, with its counter) and INVITED (with CANCEL). Invite to
+  Community, in the user menus, the member menus and the passport but not the voice panel's,
+  lists the communities the user may invite the person to and is hidden when there are none.
+  Clicking an invite, a request received or a request accepted notification opens the
+  community's card, and every opening of a card reads its community again, so an invite or an
+  accepted request that arrived since shows. An accepted request also reads My Communities, the
+  grid and that open card again. Call in the member menu closes the card first, as Chat does.
+  Answers and an unban are toasted when they fail, and a request takes one answer at a time.
+  Invite to Community opens beside its row, on the left when the right has no room. Differences: each of the
+  card's sections reads its first 100 rows without paging, as its Members list does; the
+  section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's
+  buttons are disabled, with no spinner, while its answer runs.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

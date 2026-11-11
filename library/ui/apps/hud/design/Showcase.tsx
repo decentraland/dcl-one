@@ -486,6 +486,7 @@ export function Showcase(): React.JSX.Element {
           items={[
             { label: 'View Community' },
             { kind: 'submenu', label: 'Notification Ping' },
+            { kind: 'submenu', label: 'Invite to Community', items: [{ label: 'Pixel Builders' }, { label: 'Neon Club' }] },
             { kind: 'separator' },
             { kind: 'title', label: 'Notification Ping' },
             { kind: 'option', label: 'All Messages', checked: true },

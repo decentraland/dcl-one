@@ -3,6 +3,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { Toggle } from './Toggle'
+import { Submenu } from './Submenu'
 import styles from './ContextMenu.module.css'
 
 export type ContextMenuItem =
@@ -13,7 +14,8 @@ export type ContextMenuItem =
   | { kind: 'toggle'; label: ReactNode; icon?: ReactNode; checked?: boolean; onChange?: (checked: boolean) => void }
   /** One of a set of exclusive choices (a radio): the checked one carries the mark. */
   | { kind: 'option'; label: ReactNode; icon?: ReactNode; checked: boolean; onClick?: () => void }
-  | { kind?: 'item' | 'submenu'; label: ReactNode; icon?: ReactNode; danger?: boolean; onClick?: () => void }
+  /** A 'submenu' with `items` opens them beside it (Submenu); without, it only shows its chevron. */
+  | { kind?: 'item' | 'submenu'; label: ReactNode; icon?: ReactNode; danger?: boolean; onClick?: () => void; items?: ContextMenuItem[] }
 
 interface ContextMenuProps {
   items: ContextMenuItem[]
@@ -79,6 +81,10 @@ export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
               <span className={styles.check} aria-hidden="true">{it.checked ? '✓' : ''}</span>
             </button>
           )
+        }
+
+        if (it.kind === 'submenu' && it.items != null) {
+          return <Submenu key={i} label={it.label} icon={it.icon} items={it.items} className={styles.item} />
         }
 
         return (

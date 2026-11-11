@@ -371,3 +371,149 @@ describe('bridge community browse', () => {
     expect(h.sent.map((s) => s.kind)).toEqual(['community'])
   })
 })
+
+describe('bridge community invites and requests', () => {
+  const s = 'https://socialApi.example'
+  const v2 = `${s}/v2/communities`
+  const memberOf = `GET ${v2}?onlyMemberOf=true&limit=100&offset=0`
+  const invitesRead = `GET ${s}/v2/members/0xme/requests?type=invite`
+  const requestsRead = `GET ${s}/v2/members/0xme/requests?type=request_to_join`
+  const raw = (id: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({ id, name: id, description: '', membersCount: 1, role: 'none', ...over })
+  const last = <K extends SceneToPage['kind']>(sent: SceneToPage[], kind: K): Extract<SceneToPage, { kind: K }> | undefined =>
+    sent.filter((m): m is Extract<SceneToPage, { kind: K }> => m.kind === kind).at(-1)
+
+  it("reads the section: the user's invites, the requests their communities received and their own requests", async () => {
+    serve({
+      [invitesRead]: { results: [{ id: 'inv1', communityId: 'c3', name: 'VTATV', description: '', membersCount: 4, role: 'none', privacy: 'public' }] },
+      [requestsRead]: { results: [{ id: 'rq1', communityId: 'c2', name: 'Chiri', description: '', membersCount: 9, role: 'none', privacy: 'private' }] },
+      [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' }), raw('c9', { role: 'moderator' }), raw('c1', { role: 'member' })], total: 3 },
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=1000&offset=0`]: { results: [{ id: 'r-a', memberAddress: '0xa' }, { id: 'r-b', memberAddress: '0xb' }], total: 2 },
+      [`GET ${v2}/c9/requests?type=request_to_join&limit=1000&offset=0`]: { results: [], total: 0 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityInvites' })
+    const m = last(h.sent, 'communityInvites')
+    expect(m?.failed).toEqual([])
+    expect(m?.invites).toMatchObject([{ id: 'c3', name: 'VTATV', pendingInviteId: 'inv1' }])
+    expect(m?.requestsSent).toMatchObject([{ id: 'c2', pendingRequestId: 'rq1' }])
+    // only the communities with requests, and a plain member's community is never read
+    expect(m?.requestsReceived).toHaveLength(1)
+    expect(m?.requestsReceived[0]).toMatchObject({ community: { id: 'c8' }, total: 2, requests: [{ address: '0xa', requestId: 'r-a' }, { address: '0xb', requestId: 'r-b' }] })
+    expect(signed.mock.calls.some((c) => String(c[0]).includes('/c1/requests'))).toBe(false)
+  })
+
+  it('names the lists it could not read', async () => {
+    serve({ [invitesRead]: new Error('HTTP 500'), [requestsRead]: { results: [] }, [memberOf]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityInvites' })
+    expect(last(h.sent, 'communityInvites')).toMatchObject({ invites: [], requestsReceived: [], requestsSent: [], failed: expect.arrayContaining(['invites', 'requestsReceived']) })
+  })
+
+  it("marks a card the user is invited to, read when it opens", async () => {
+    serve({ [`GET ${v2}/c3`]: raw('c3'), [invitesRead]: { results: [{ id: 'inv1', communityId: 'c3' }] } })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunity', id: 'c3' })
+    expect(last(h.sent, 'community')?.community.pendingInviteId).toBe('inv1')
+  })
+
+  it("accepts the user's own invite, then sends the community, the lists and the section again", async () => {
+    serve({
+      [`PATCH ${s}/v1/communities/c3/requests/inv1`]: {},
+      [`GET ${v2}/c3`]: raw('c3', { role: 'member' }),
+      [memberOf]: { results: [raw('c3', { role: 'member' })], total: 1 },
+      [invitesRead]: { results: [] },
+      [requestsRead]: { results: [] }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'manageCommunityRequest', id: 'c3', requestId: 'inv1', intention: 'accepted' })
+    expect(signed).toHaveBeenCalledWith(`${s}/v1/communities/c3/requests/inv1`, 'PATCH', { intention: 'accepted' })
+    expect(h.sent.map((m) => m.kind)).toEqual(['community', 'communities', 'communityChannels', 'communityInvites'])
+  })
+
+  it("answers a member's request, then reads the card's requests and invites again", async () => {
+    serve({
+      [`PATCH ${s}/v1/communities/c8/requests/r-a`]: {},
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=100&offset=0`]: { results: [{ id: 'r-b', memberAddress: '0xb' }], total: 1 },
+      [`GET ${v2}/c8/requests?type=invite&limit=100&offset=0`]: { results: [], total: 0 },
+      [invitesRead]: { results: [] },
+      [requestsRead]: { results: [] },
+      [memberOf]: { results: [], total: 0 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'manageCommunityRequest', id: 'c8', requestId: 'r-a', intention: 'rejected', address: '0xa' })
+    const sections = h.sent.filter((m) => m.kind === 'communityMemberSection')
+    expect(sections).toMatchObject([
+      { section: 'requests', total: 1, members: [{ address: '0xb', requestId: 'r-b' }] },
+      { section: 'invites', total: 0, members: [] }
+    ])
+    // a reject changes no member: the card's members are not read
+    expect(h.sent.some((m) => m.kind === 'communityDetail')).toBe(false)
+  })
+
+  it('says which answer failed, and reads nothing after it', async () => {
+    serve({ [`PATCH ${s}/v1/communities/c3/requests/inv1`]: new Error('HTTP 500'), [`PATCH ${s}/v1/communities/c8/requests/r`]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'manageCommunityRequest', id: 'c3', requestId: 'inv1', intention: 'rejected' })
+    expect(h.sent).toEqual([expect.objectContaining({ kind: 'communityActionFailed', id: 'c3', action: 'rejectInvite' })])
+    await h.req({ kind: 'manageCommunityRequest', id: 'c8', requestId: 'r', intention: 'cancelled', address: '0xa' })
+    // a member's row is read again, which releases it
+    expect(h.sent.slice(1).map((m) => m.kind)).toEqual(['communityActionFailed', 'communityMemberSection', 'communityMemberSection', 'communityInvites'])
+    expect(h.sent[1]).toMatchObject({ kind: 'communityActionFailed', action: 'manageRequest' })
+  })
+
+  it("reads the card's banned members, and unbans one", async () => {
+    serve({
+      [`GET ${v2}/c8/bans?limit=100&offset=0`]: { results: [{ communityId: 'c8', memberAddress: '0xbad' }], total: 1 },
+      [`DELETE ${s}/v1/communities/c8/members/0xbad/bans`]: {}
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityMemberSection', id: 'c8', section: 'banned' })
+    expect(last(h.sent, 'communityMemberSection')).toMatchObject({ section: 'banned', total: 1, members: [{ address: '0xbad', requestId: '' }] })
+    await h.req({ kind: 'communityMemberAction', id: 'c8', address: '0xbad', action: 'unban' })
+    expect(signed).toHaveBeenCalledWith(`${s}/v1/communities/c8/members/0xbad/bans`, 'DELETE')
+    expect(h.sent.at(-1)).toMatchObject({ kind: 'communityMemberSection', section: 'banned' })
+  })
+
+  it('a section that cannot be read says so', async () => {
+    serve({ [`GET ${v2}/c8/requests?type=invite&limit=100&offset=0`]: new Error('HTTP 403') })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityMemberSection', id: 'c8', section: 'invites' })
+    expect(last(h.sent, 'communityMemberSection')).toEqual({ kind: 'communityMemberSection', id: 'c8', section: 'invites', members: [], total: 0, failed: true })
+  })
+
+  it('lists the communities the user may invite someone to, and invites them', async () => {
+    serve({
+      [`GET ${s}/v1/members/0xfriend/invites`]: [{ id: 'c8', name: 'Builders' }],
+      [`POST ${s}/v1/communities/c8/requests`]: { id: 'new' }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getInvitableCommunities', address: '0xfriend' })
+    expect(last(h.sent, 'invitableCommunities')).toEqual({ kind: 'invitableCommunities', address: '0xfriend', communities: [{ id: 'c8', name: 'Builders' }] })
+    await h.req({ kind: 'inviteToCommunity', id: 'c8', address: '0xfriend' })
+    expect(signed).toHaveBeenCalledWith(`${s}/v1/communities/c8/requests`, 'POST', { targetedAddress: '0xfriend', type: 'invite' })
+    expect(last(h.sent, 'communityInviteSent')).toEqual({ kind: 'communityInviteSent', id: 'c8', address: '0xfriend', ok: true })
+  })
+
+  it('a cancelled join request leaves the Invites & Requests section', async () => {
+    serve({
+      [`PATCH ${s}/v1/communities/c2/requests/rq1`]: {},
+      [`GET ${v2}/c2`]: raw('c2', { privacy: 'private' }),
+      [memberOf]: { results: [], total: 0 },
+      [invitesRead]: { results: [] },
+      [requestsRead]: { results: [] }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'cancelJoinRequest', id: 'c2', requestId: 'rq1' })
+    expect(h.sent.map((m) => m.kind)).toEqual(['community', 'communities', 'communityChannels', 'communityInvites'])
+    expect(last(h.sent, 'communityInvites')?.requestsSent).toEqual([])
+  })
+
+  it('reports a failed invitable read and a failed invite', async () => {
+    serve({ [`GET ${s}/v1/members/0xfriend/invites`]: new Error('HTTP 500'), [`POST ${s}/v1/communities/c8/requests`]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'getInvitableCommunities', address: '0xfriend' })
+    expect(last(h.sent, 'invitableCommunities')).toMatchObject({ communities: [], failed: true })
+    await h.req({ kind: 'inviteToCommunity', id: 'c8', address: '0xfriend' })
+    expect(last(h.sent, 'communityInviteSent')?.ok).toBe(false)
+  })
+})
