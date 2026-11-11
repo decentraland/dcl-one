@@ -298,7 +298,7 @@ validator, `reprocessABHandler` (`src/controllers/handlers/reprocess-ab-handler.
 
 dcl-one: no route at the root or under the prefix; the request falls to the 404 `Not found`. This
 tree publishes no SNS events (`docs/worlds-compatibility.md` "Delivery"); its asset-bundle tooling is
-reached through the operator console (`ABGEN_ADMIN_URL`, `src/serve.rs:1214-1223`) (WR-22).
+reached through the operator console (`ABGEN_ADMIN_URL`, `src/serve.rs:1286-1295`) (WR-22).
 
 ---
 
@@ -540,11 +540,38 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       converter (the `ABGEN_ADMIN_URL` client in `src/ops/admin/console.rs`), answering upstream's
       200 body with `successful`/`failed` from that hand-off and a 500 when no converter is
       configured. Size M. Depends on the asset-bundle pipeline (ops/abgen).
-    - Left: no in-tree call can re-convert a world scene. abgen is a prebuilt runtime with no source
-      here; the console reaches only its registry controls (`src/ops/admin/create.rs`: `/registry`,
-      queues, cache, denylist), and none takes a world scene's entity id and auth chain. A route with
-      only the bearer and the schema bodies would answer 200 without converting anything, so it
-      waits for an abgen world-reprocess contract.
+    - Left: no converter this tree configures can re-convert a world scene. abgen
+      (`decentraland/abgen` v0.21.0, the release repo-root `apps/dcl-scene-cli/abgen-release.lock`
+      pins; same routes on its `main`; abgen paths below are at that tag) has two entry points
+      keyed by entity id, and neither fits:
+      - The server the console reaches (`ABGEN_ADMIN_URL`, loopback only,
+        `src/ops/admin/create.rs:306-339`) has `POST /queues/retry {entityIds}` behind its admin
+        bearer (`src/ops/admin/create.rs:467-484`; abgen `crate/src/registry/mod.rs:85`). It takes an
+        id only when `resolve_one` finds it in the Catalyst `deployments` table
+        (`crate/src/registry/handlers/queues.rs:107-127`, `crate/dcl-contents/src/registry.rs:21-30`,
+        `crate/dcl-contents/src/content.rs:25-60`). This tree keeps world scenes in
+        `worlds.world_scenes` (repo-root `schemas/20_worlds.sql:118`, written by
+        `worlds/src/core/store.rs:822`), so every world scene answers `Entity not found in
+        catalyst`. An accepted id gets a `pending`
+        `build_jobs` row and a manifest-cache invalidation
+        (`crate/src/registry/ports/registry.rs:142-172`), and no code in abgen reads `build_jobs`
+        back to convert. `POST /registry` re-reads manifests and converts nothing
+        (`crate/src/registry/handlers/admin.rs:14-72`).
+      - The Lambda takes upstream's `WorldDeploymentEvent` shape (`entity.entityId` and
+        `contentServerUrls`, `lambda/src/event.rs:60-91`) from SQS, or from a Function URL POST
+        with `x-abgen-secret` (`lambda/src/http.rs:3,53-77`). It skips platforms already converted
+        unless the event carries `force: true` (`lambda/src/main.rs:290-291`), and upstream's event
+        has no `force`. It runs only under the AWS Lambda runtime (`lambda/src/runtime.rs:10`) and
+        only fetches from `https://` content servers (`lambda/src/event.rs:108-109`). This tree runs
+        no Lambda, SNS or SQS, and its `/ab-cdn` is a read-through cache of the public CDN
+        (`explore/src/api/ab_cdn.rs:1-23`).
+      A route with only the bearer and the schema bodies would answer 200 without converting
+      anything. The smallest abgen-side contract that unblocks it: `POST /queues/retry` resolves
+      an id missing from `deployments` as a world scene (an `{entityId, contentServerUrl}` item in
+      the body, or `GET {ABGEN_WORLDS_CONTENT_URL}/contents/{entityId}`), and a worker converts
+      each queued job without the already-converted check. The handler then posts the filtered ids
+      through the console's `Abgen` client and maps `retried` to `successful` and `failures` to
+      `failed`.
     - Severity: P1 (operator tooling that re-converts a world gets a 404).
 
 23. **WR-23 · mounts · the root collisions.** Status: intended (worlds-compatibility.md).
