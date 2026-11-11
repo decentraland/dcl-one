@@ -269,6 +269,7 @@ const RESERVED_PROPS: ReadonlySet<string> = new Set([
   'component',
   'counts',
   'defaultKey',
+  'responsive',
   'select',
   'semanticProps',
   'slots',
@@ -318,9 +319,41 @@ type FigmaViewProps = {
   // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass them
   // inside `attributes`, so they are dropped before the DOM.
   suppressed?: readonly string[]
+  // A responsive variant axis: the prop and, in ascending breakpoint order, the class that shows each option's view
+  // only within its breakpoint.
+  responsive?: { prop: string; classes: Record<string, string> }
 }
 
-function FigmaView({
+// With the responsive prop left unset, every option's view is rendered and CSS media queries show the one for the
+// current width: server rendering and hydration produce the same markup, and nothing reads the window. A set prop,
+// or a component without a responsive axis, renders exactly one view as before. The views share the caller's
+// attributes, so an id or a ref, which must name one element, needs the prop set.
+function FigmaView({ responsive, ...props }: FigmaViewProps) {
+  if (!responsive || props.select.values[responsive.prop] !== undefined)
+    return <FigmaViewRoot {...props} />
+  const attributes: Attributes & { ref?: unknown } = props.attributes ?? {}
+  if (attributes.id !== undefined || attributes.ref !== undefined)
+    throw new Error(
+      `${props.component ?? 'A generated component'}: an id or a ref names one element, so pass ${responsive.prop} to render a single view`
+    )
+  return (
+    <>
+      {Object.entries(responsive.classes).map(([value, responsiveClass]) => (
+        <FigmaViewRoot
+          key={value}
+          {...props}
+          select={{ ...props.select, values: { ...props.select.values, [responsive.prop]: value } }}
+          attributes={{
+            ...attributes,
+            className: [attributes.className, responsiveClass].filter(Boolean).join(' ')
+          }}
+        />
+      ))}
+    </>
+  )
+}
+
+function FigmaViewRoot({
   as: Tag = 'div',
   views,
   select,
@@ -332,7 +365,7 @@ function FigmaView({
   counts = {},
   attributes = {},
   suppressed = []
-}: FigmaViewProps) {
+}: Omit<FigmaViewProps, 'responsive'>) {
   const interaction = useContext(FigmaInteractions)
   const trigger = useRef<HTMLButtonElement>(null)
   const surface = useRef<HTMLDivElement>(null)

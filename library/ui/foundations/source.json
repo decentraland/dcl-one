@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "toolingCommit": "cd9587a148786d047b443d381913dd7efd9f73f2",
+  "toolingCommit": "c29c98e24168a90889d223ac8bfd41914e906e2a",
   "capture": {
     "repository": "https://github.com/decentraland/figma-design-system",
     "revision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
@@ -24,8 +24,8 @@
     },
     {
       "path": "library/ui/figma/src/generators/tokens.ts",
-      "sha256": "6bd11a3f8708933ed98dc8f83e5806c1b73b07d0a8dd30885f57b43bbeb352de",
-      "blob": "48dc0f32bf1303f5ac0602fc3b8e305239f1f8df"
+      "sha256": "c0a00f7348129cf4aa3d3e52b342de72712f8aadd987a527a6892412283a8122",
+      "blob": "e1f7d70b6cebcdc5c2221a071549857c1d7aa510"
     }
   ],
   "families": {
