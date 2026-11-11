@@ -8,6 +8,8 @@ import wednesdayMobile from "@dcl/one-ui/apps/sites/assets/weekly-rituals/mobile
 import monday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/monday.webp";
 import tuesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/tuesday.webp";
 import wednesday from "@dcl/one-ui/apps/sites/assets/weekly-rituals/wednesday.webp";
+import type { HomeContent } from "@/data/lib/catalyst/landings/home";
+import { homeEventHref } from "./links";
 
 // Home media and recurring events from decentraland/sites at cfdfa1a51216f9dc90c5b148686a95e7ee9c2862 (src/data/static-content.ts).
 
@@ -59,3 +61,29 @@ export const WEEKLY_RITUALS = [
     mobileImage: wednesdayMobile,
   },
 ] as const;
+
+export function homeAgentContent(content: HomeContent): HomeContent {
+  return {
+    ...content,
+    hero: {
+      ...content.hero,
+      title: "Close the Feed. Come Hang Out.",
+      mobileTitle: "Hang Out From Anywhere",
+      subtitle: "Decentraland now on mobile.",
+    },
+    rails: content.rails.map((rail) =>
+      rail.kind === "rituals"
+        ? {
+            ...rail,
+            items: WEEKLY_RITUALS.map((ritual) => ({
+              id: ritual.id,
+              title: ritual.title,
+              day: null,
+              image: null,
+              href: homeEventHref(ritual.eventId),
+            })),
+          }
+        : rail,
+    ),
+  };
+}

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, beforeEach, describe, it } from 'node:test'
-import { generateSharedInputs, readSharedPaths, WEB, MANIFEST } from './shared-inputs.mjs'
+import { BINDINGS, generateSharedInputs, readSharedPaths, WEB, MANIFEST } from './shared-inputs.mjs'
 const here = path.dirname(fileURLToPath(import.meta.url)),
   repository = path.resolve(here, '../../../../..')
 let root, web
@@ -266,7 +266,7 @@ describe('the actual compiler and Vite shared-source contract', () => {
   it('validates a filtered source without Git and refuses stale bytes, new roots and symlinks', async () => {
     const expected = await save()
     rmSync(path.join(root, '.git'), { recursive: true, force: true })
-    put(WEB + '/src/engine/generated/Player.ts', 'export interface Player {}')
+    put(BINDINGS + '/Player.ts', 'export interface Player {}')
     assert.deepEqual(
       hashes(),
       Object.fromEntries(
