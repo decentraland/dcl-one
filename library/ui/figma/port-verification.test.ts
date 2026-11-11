@@ -611,9 +611,52 @@ describe('when deciding which files are port inputs', () => {
     expect(Date.now() - started).toBeLessThan(2000)
   })
 
-  it('should not treat require named in a validator comment as a load', () => {
+  it('should look for require in the raw validator text, so comment-like strings cannot hide it', () => {
     const self = 'library/ui/figma/port-verification.mjs'
-    expect(scanProblems({ [self]: Buffer.from('// never require (x) here\n') })).toEqual([])
+    const hidden =
+      "const open = '/*'\nconst m = createRequire(import.meta.url)(name)\nconst close = '*/'\n"
+    expect(scanProblems({ [self]: Buffer.from(hidden) })).toContain(
+      `${self} loads modules with require`
+    )
+    // A require named only in a comment fails closed too.
+    expect(scanProblems({ [self]: Buffer.from('// never require (x) here\n') })).toContain(
+      `${self} loads modules with require`
+    )
+  })
+
+  it('should leave out only the exact rule declarations of the validator', () => {
+    const self = 'library/ui/figma/port-verification.mjs'
+    const spread =
+      "const TEST_ROOTS = ['test/', ...String(readFileSync('library/ui/figma/test/roots.txt')).split(',')]\n"
+    expect(scanProblems({ [self]: Buffer.from(spread) })).toContain(
+      `${self} names the exempt path "library/ui/figma/test/roots.txt"`
+    )
+  })
+
+  it('should flag a tracked exempt Markdown name with punctuation around it, not inside a longer name', () => {
+    const names = new Set(['MAINTENANCE.md'])
+    const flagged = (code: string) => exemptReferences('library/ui/figma/a.ts', code, names)
+    for (const code of [
+      "x('--doc=MAINTENANCE.md')",
+      "x('(MAINTENANCE.md)')",
+      "x('MAINTENANCE.md:12')"
+    ])
+      expect(flagged(code)).not.toEqual([])
+    for (const code of [
+      "x('XMAINTENANCE.md')",
+      "x('MAINTENANCE.mdx')",
+      "x('see MAINTENANCE.md here')"
+    ])
+      expect(flagged(code)).toEqual([])
+  })
+
+  it('should stay linear with many line comments and with many literals on one line', () => {
+    let started = Date.now()
+    exemptReferences('library/ui/figma/a.ts', '// c\nx\n'.repeat(20000))
+    expect(Date.now() - started).toBeLessThan(1000)
+    started = Date.now()
+    exemptReferences('library/ui/figma/c.json', '[' + Array(40000).fill('"abc"').join(',') + ']')
+    expect(Date.now() - started).toBeLessThan(1000)
   })
 
   it('should scan SVG, both ledgers and the Review catalog', () => {

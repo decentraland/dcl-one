@@ -791,7 +791,7 @@
           ]
         },
         "library/ui/figma/port-verification.mjs": {
-          "sha256": "6a423f09b594c48a0afc7ad37b607eaac10965703f151805fcccb2ed0172dbd4",
+          "sha256": "3d251879359cc71f3a3568d41c315e4edeb91e791d209bde9c8ce7066c4b1052",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -802,7 +802,7 @@
           ]
         },
         "library/ui/figma/port-verification.test.ts": {
-          "sha256": "863e91625bcf98b179672ec6a986e29de9a5afb8b46a256fe963fe6073820a61",
+          "sha256": "161b2690a57a809feeec08708e64b40da9b632dde494b487ed4237f12825a118",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4679,7 +4679,7 @@
         }
       },
       "generation.json": {
-        "sha256": "b5ca110abb3769569737fb4bac2e03e1a833b6f38f07cca28591b4418c570a10",
+        "sha256": "c83c09b4d915a91dac5086d1593937cb2ec6d5ffe0dd88d09a33ece369a0fec4",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",

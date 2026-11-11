@@ -54,8 +54,25 @@ const SELF_IMPORTS = [
   './lock-digests.mjs'
 ]
 /** Literals of the validator itself that name exempt paths on purpose: the exemption rule's own declarations. */
-// The two declarations of the exemption rule, removed from the validator before its own literals are scanned.
-const RULE_DECLARATIONS = /^const (?:TEST_ROOTS|BOUND_TESTS) = \[[^\n]*\]$/gm
+// The two declarations of the exemption rule, exactly as written above, left out of the validator's own literal scan.
+// They are rebuilt from the values, so no exempt path appears as a literal outside the declarations; any other content
+// on those lines (a spread, a read, another path) is scanned like the rest of the file.
+const declaration = (name, items) => 'const ' + name + ' = [' + items.join(', ') + ']'
+const RULE_DECLARATIONS = [
+  declaration(
+    'TEST_ROOTS',
+    TEST_ROOTS.map((root) => "'" + root + "'")
+  ),
+  declaration(
+    'BOUND_TESTS',
+    BOUND_TESTS.map((test) => '\x60${SCOPE}' + test.slice(SCOPE.length) + '\x60')
+  )
+]
+const withoutRuleDeclarations = (text) =>
+  text
+    .split('\n')
+    .filter((line) => !RULE_DECLARATIONS.includes(line))
+    .join('\n')
 /** Port inputs whose text is scanned by extension: code, styles, markup and SVG (SCANNED_FILES adds named data files). */
 const SCANNED = /\.(?:[cm]?[jt]sx?|mts|cts|css|html|svg)$/
 /** Data the tooling reads, scanned although JSON: its config, the retirement and orphan ledgers, and the Review catalog. */
@@ -72,28 +89,29 @@ const STATIC_LITERAL = /(['"`])((?:(?!\1)[^\\\n$])*)\1/g
 const LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g
 // Comments, removed in the second pass so an apostrophe in one cannot pair with a later quote.
 function stripComments(text) {
-  let out = ''
+  const parts = []
+  let kept = 0
   let at = 0
-  while (at < text.length) {
-    const block = text.indexOf('/*', at)
-    let line = text.indexOf('//', at)
-    while (line > 0 && (text[line - 1] === ':' || text[line - 1] === '\\'))
-      line = text.indexOf('//', line + 2)
-    const next = [block, line].filter((index) => index >= 0)
-    if (next.length === 0) return out + text.slice(at)
-    const start = Math.min(...next)
-    out += text.slice(at, start)
-    if (start === block) {
-      const close = text.indexOf('*/', block + 2)
+  while (at < text.length - 1) {
+    if (text[at] === '/' && text[at + 1] === '*') {
+      const close = text.indexOf('*/', at + 2)
       // An unclosed `/*` (a glob such as src/* in a string) is kept as text, so the rest is still scanned.
-      if (close < 0) return out + text.slice(block)
-      at = close + 2
-    } else {
-      const end = text.indexOf('\n', line)
-      at = end < 0 ? text.length : end
-    }
+      if (close < 0) break
+      parts.push(text.slice(kept, at))
+      at = kept = close + 2
+    } else if (
+      text[at] === '/' &&
+      text[at + 1] === '/' &&
+      text[at - 1] !== ':' &&
+      text[at - 1] !== '\\'
+    ) {
+      const end = text.indexOf('\n', at)
+      parts.push(text.slice(kept, at))
+      at = kept = end < 0 ? text.length : end
+    } else at += 1
   }
-  return out
+  parts.push(text.slice(kept))
+  return parts.join('')
 }
 // A regular expression literal after an operator or keyword. The second pass removes it so a quote inside it cannot pair
 // with a later literal; the raw passes still run, so a false match here can only add candidates, never hide one.
@@ -123,6 +141,14 @@ function braceHasMarkdown(token) {
   return false
 }
 
+/** Whether `token` contains `name` with no word character, dot or hyphen directly before or after it. */
+function containsName(token, name) {
+  const edge = (character) => character === undefined || !/[\w.-]/.test(character)
+  for (let at = token.indexOf(name); at >= 0; at = token.indexOf(name, at + 1))
+    if (edge(token[at - 1]) && edge(token[at + name.length])) return true
+  return false
+}
+
 /** Whether one token (a piece with no whitespace) names an exempt file, seen from `file`. */
 function tokenNamesExempt(file, token, exemptNames, single, pathCall) {
   const bare = token.replace(/\\(.)/g, '$1').replace(/[?#].*$/, '')
@@ -135,7 +161,7 @@ function tokenNamesExempt(file, token, exemptNames, single, pathCall) {
   return (
     (target !== undefined && (isRecordExempt(target) || isRecordExempt(`${target}/x.ts`))) ||
     /\.(?:test|spec)\.[^/]+$/i.test(base) ||
-    (single && exemptNames.has(base)) ||
+    (single && [...exemptNames].some((name) => containsName(bare, name))) ||
     (single && pathLike && /\.md$/i.test(bare)) ||
     (pathLike && /[\w-]\/(?:[^/]*\/)*[^/]*\*/.test(bare) && /^[\w./*-]+$/.test(bare)) ||
     (/\*\*|\*\.[\w{]/.test(bare) &&
@@ -165,19 +191,33 @@ const PATH_CALL =
   /\b(?:join|resolve|URL|readFile\w*|readdir\w*|stat\w*|open\w*|glob\w*|existsSync|createReadStream)\s*\(/
 // Unquoted references in CSS (url(...)) and HTML attributes (src=..., href=...).
 const UNQUOTED = /\burl\(\s*([^'")\s]+)\s*\)|\b(?:src|href|srcset|data)=([^\s"'>]+)/g
-const lineOf = (text, index) =>
-  text.slice(
-    text.lastIndexOf('\n', index) + 1,
-    (text.indexOf('\n', index) + 1 || text.length + 1) - 1
+/** For each line of `text`, whether it calls a path function; looked up by offset in O(log n). */
+function pathCallLines(text) {
+  const starts = [0]
+  for (let at = text.indexOf('\n'); at >= 0; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
+  const calls = starts.map((start, line) =>
+    PATH_CALL.test(text.slice(start, line + 1 < starts.length ? starts[line + 1] : text.length))
   )
+  return (index) => {
+    let low = 0
+    let high = starts.length - 1
+    while (low < high) {
+      const middle = (low + high + 1) >> 1
+      if (starts[middle] <= index) low = middle
+      else high = middle - 1
+    }
+    return calls[low]
+  }
+}
 
 /**
  * The string literals in `text` (the source of `file`) that name an exempt file: a relative path into one, a test or
  * spec basename, the basename of a tracked exempt Markdown file, a path-like Markdown name, a path-like glob, or a test
  * directory segment. Query strings and fragments are ignored; each static piece of a template literal is checked on its
  * own. Literals are extracted four ways (with and without interpolations, each on the raw text and with comments and
- * regex literals removed) and every way only adds candidates. This is a tripwire, not a proof: a path built by concatenation or at run
- * time is not seen, and an apostrophe in JSX text can still pair with a later quote on the same line.
+ * regex literals removed) and every way only adds candidates. This is a tripwire, not a proof: a path built by
+ * concatenation or at run time is not seen, and an apostrophe in JSX text can still pair with a later quote on the
+ * same line.
  */
 export function exemptReferences(file, text, exemptNames = new Set()) {
   const found = new Set()
@@ -185,7 +225,8 @@ export function exemptReferences(file, text, exemptNames = new Set()) {
     const reference = match[1] ?? match[2]
     if (namesExempt(file, reference, exemptNames, true)) found.add(reference)
   }
-  for (const source of [text, stripComments(text).replace(REGEX_LITERAL, '$1$2null')])
+  for (const source of [text, stripComments(text).replace(REGEX_LITERAL, '$1$2null')]) {
+    const pathCallAt = pathCallLines(source)
     for (const [pattern, interpolated] of [
       [STATIC_LITERAL, false],
       [LITERAL, true]
@@ -193,18 +234,19 @@ export function exemptReferences(file, text, exemptNames = new Set()) {
       for (const match of source.matchAll(pattern)) {
         const literal = match[2]
         const pieces = interpolated && match[1] === '`' ? literal.split(/\$\{[^}]*\}/) : [literal]
-        const pathCall = PATH_CALL.test(lineOf(source, match.index))
+        const pathCall = pathCallAt(match.index)
         if (pieces.some((piece) => namesExempt(file, piece, exemptNames, pathCall)))
           found.add(literal)
       }
+  }
   return [...found]
 }
 
 /**
  * Problems with the exemption at a commit, from the bytes of every tracked file under the scope: a port input's code
  * that names an exempt file, or this validator importing anything beyond SELF_IMPORTS, loading modules with require or
- * naming an exempt path outside its two rule declarations (RULE_DECLARATIONS). Its own test spells out exempt paths on purpose and is bound, so it is not
- * scanned for literals.
+ * naming an exempt path outside its two rule declarations (RULE_DECLARATIONS). Its own test spells out exempt paths on
+ * purpose and is bound, so it is not scanned for literals.
  */
 export function scanProblems(blobs) {
   const problems = []
@@ -222,11 +264,11 @@ export function scanProblems(blobs) {
         /(?:\bfrom\s*['"]|(?:^|[;{}])\s*import\s*['"]|\bimport\s*\(\s*['"`])([^'"`]+)['"`]/gm
       ))
         if (!SELF_IMPORTS.includes(match[1])) problems.push(`${file} imports ${match[1]}`)
-      if (/\b(?:createRequire|require)\s*\(/.test(stripComments(text)))
+      if (/\b(?:createRequire|require)\s*\(/.test(text))
         problems.push(`${file} loads modules with require`)
     }
     // The validator spells out its own exempt roots only in the rule declarations, which are left out of its scan.
-    const scanned = file === SELF ? text.replace(RULE_DECLARATIONS, '') : text
+    const scanned = file === SELF ? withoutRuleDeclarations(text) : text
     for (const literal of exemptReferences(file, scanned, exemptNames))
       problems.push(`${file} names the exempt path ${JSON.stringify(literal)}`)
   }
