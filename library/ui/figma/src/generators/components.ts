@@ -269,7 +269,10 @@ function caseProps(view: ViewSpec): Record<string, string | boolean> {
 // A caller that omits every axis prop gets the defaults, so that selection must be a drawn view: the runtime throws
 // for any undrawn one, and a default the generator itself produces must never be one.
 function assertDrawnDefaults(spec: ComponentSpec): void {
-  const axes = spec.props.filter((prop) => !FLAG_PROPS.includes(prop.name))
+  // A responsive axis has no default; resolveResponsive already requires every option to draw the same rows.
+  const axes = spec.props.filter(
+    (prop) => !FLAG_PROPS.includes(prop.name) && prop.name !== spec.responsive?.prop
+  )
   const drawn = spec.views.some((view) =>
     axes.every((prop) =>
       prop.kind === 'boolean'
@@ -310,7 +313,8 @@ function variantContract(spec: ComponentSpec): string | undefined {
         `  | { ${axes
           .map((prop, index) => {
             const value = row[index]!
-            return `${prop.name}${value === prop.default ? '?' : ''}: ${typeof value === 'boolean' ? value : literal(value)}`
+            const optional = value === prop.default || prop.name === spec.responsive?.prop
+            return `${prop.name}${optional ? '?' : ''}: ${typeof value === 'boolean' ? value : literal(value)}`
           })
           .join('; ')} }`
     ),
@@ -318,89 +322,25 @@ function variantContract(spec: ComponentSpec): string | undefined {
   ].join('\n')
 }
 
-function labelNode(node: ViewNode): ViewNode | undefined {
-  if (node.kind === 'text' && node.slot === 'label') return node
-  for (const child of node.children ?? []) {
-    const label = labelNode(child)
-    if (label) return label
-  }
-}
-
-function labelColor(node: ViewNode): string | undefined {
-  return labelNode(node)?.css.decls.find(([property]) => property === 'color')?.[1]
-}
-
-function buttonControlView(
-  view: ViewSpec,
-  color: string | undefined,
-  restingLabel?: ViewNode
-): ViewSpec {
-  const labels = new Set<string>()
-  const root = (input: ViewNode): ViewNode => {
-    let node = input
-    if (view.flags.loading && node.name === 'label' && restingLabel)
-      node = {
-        ...restingLabel,
-        path: node.path,
-        css: {
-          ...restingLabel.css,
-          decls: [
-            ...restingLabel.css.decls.filter(([property]) => property !== 'opacity'),
-            ['opacity', '0']
-          ]
-        }
-      }
-    if (view.flags.loading && node.name === 'Spinner') {
-      const background = node.css.decls.find(([property]) => property === 'background')?.[1]
-      node = {
-        ...node,
-        css: {
-          ...node.css,
-          decls: [
-            ...node.css.decls.filter(
-              ([property]) =>
-                !['left', 'top', 'transform', ...(background ? ['background'] : [])].includes(
-                  property
-                )
-            ),
-            ...(background
-              ? ([
-                  ['mask', background],
-                  ['background-color', 'currentColor']
-                ] as [string, string][])
-              : []),
-            ['left', '50%'],
-            ['top', '50%'],
-            ['transform', 'translate(-50%, -50%)']
-          ]
-        }
-      }
-    }
-    const label = node.kind === 'text' && node.slot === 'label'
-    if (label) labels.add(pathKey(node.path))
-    const naturalWidth = node.path.length === 0 || label
-    return {
-      ...node,
-      css: {
-        ...node.css,
-        decls: [
-          ...node.css.decls.filter(([property]) => !naturalWidth || property !== 'width'),
-          ...(node.path.length === 0 && color ? [['color', color] as [string, string]] : [])
-        ]
-      },
-      ...(node.children ? { children: node.children.map(root) } : {})
-    }
-  }
-  const controlRoot = root(view.root)
-  const states = (rules: StateRule[] | undefined): StateRule[] | undefined =>
-    rules?.flatMap((rule) => {
-      const label = labels.has(pathKey(rule.path))
-      const naturalWidth = rule.path.length === 0 || label
-      const decls = rule.decls.filter(([property]) => !naturalWidth || property !== 'width')
-      const foreground = label ? decls.filter(([property]) => property === 'color') : []
-      return [{ ...rule, decls }, ...(foreground.length ? [{ path: [], decls: foreground }] : [])]
-    })
-  return { ...view, root: controlRoot, hover: states(view.hover), pressed: states(view.pressed) }
+// Each option of a responsive axis gets a class that hides its view outside [its minimum width, the next one). The
+// rule is !important so neither the view's own display nor a consumer's unlayered display can show two views at once.
+function responsiveCss(spec: ComponentSpec, cssRules: string[]): [string, string][] | undefined {
+  if (!spec.responsive) return undefined
+  const { breakpoints } = spec.responsive
+  return breakpoints.map(({ value, min }, index) => {
+    const name = assertIdentifier(`responsive${value.charAt(0).toUpperCase()}${value.slice(1)}`)
+    const next = breakpoints[index + 1]?.min
+    // min-width, as the foundations emit; `not all and` is its exact complement, with no max-width fraction.
+    const hidden = [
+      ...(min > 0 ? [`not all and (min-width: ${min}px)`] : []),
+      ...(next !== undefined ? [`(min-width: ${next}px)`] : [])
+    ]
+    if (hidden.length)
+      cssRules.push(
+        `@media ${hidden.join(', ')} {\n  .${name} {\n    display: none !important;\n  }\n}`
+      )
+    return [value, name]
+  })
 }
 
 function emitComponent(
@@ -409,27 +349,6 @@ function emitComponent(
   folders: Map<string, string>,
   cssRules: string[]
 ): string {
-  const control = spec.control === 'button'
-  const variantValues = spec.props.find((prop) => prop.name === 'variant')?.values ?? []
-  const actionAliases = control
-    ? Object.fromEntries(
-        Object.entries({
-          tertiary: 'outline',
-          quaternary: 'dark',
-          inverse: 'primary',
-          iconOnly: 'primary'
-        }).filter(
-          ([alias, target]) => !variantValues.includes(alias) && variantValues.includes(target)
-        )
-      )
-    : {}
-  const extraVariants = Object.keys(actionAliases)
-  const actionVariant = [
-    ...Object.entries(actionAliases).map(
-      ([alias, target]) => `variant === ${quote(alias)} ? ${quote(target)} : `
-    ),
-    'variant'
-  ].join('')
   const varName = lowerFirst(spec.name)
   const enums = spec.props.filter((prop) => prop.kind === 'enum')
   const flagProps = spec.props.filter((prop) => FLAG_PROPS.includes(prop.name))
@@ -476,29 +395,8 @@ function emitComponent(
         roles: new Map((spec.textRoles ?? []).map((role) => [role.name, role]))
       }
     : undefined
-  const views = spec.views.map((view, index) => {
-    if (!control) return emitView(view, index, cssRules, semantic)
-    const color =
-      labelColor(view.root) ??
-      spec.views
-        .filter((candidate) =>
-          Object.entries(view.values).every(([axis, value]) => candidate.values[axis] === value)
-        )
-        .map((candidate) => labelColor(candidate.root))
-        .find(Boolean)
-    const restingLabel = view.flags.loading
-      ? spec.views
-          .filter(
-            (candidate) =>
-              !candidate.flags.loading &&
-              !candidate.flags.disabled &&
-              Object.entries(view.values).every(([axis, value]) => candidate.values[axis] === value)
-          )
-          .map((candidate) => labelNode(candidate.root))
-          .find(Boolean)
-      : undefined
-    return emitView(buttonControlView(view, color, restingLabel), index, cssRules, semantic)
-  })
+  const views = spec.views.map((view, index) => emitView(view, index, cssRules, semantic))
+  const responsiveClasses = responsiveCss(spec, cssRules)
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
   const handlerProps = [...(semantic?.props.handlers ?? [])].sort()
   const semanticNames = [...hrefProps, ...handlerProps]
@@ -506,10 +404,7 @@ function emitComponent(
   const typeLines = [
     ...spec.props
       .filter((prop) => !contract || FLAG_PROPS.includes(prop.name))
-      .map(
-        (prop) =>
-          `  ${prop.name}?: ${propType(prop)}${control && prop.name === 'variant' ? extraVariants.map((name) => ` | ${quote(name)}`).join('') : ''}`
-      ),
+      .map((prop) => `  ${prop.name}?: ${propType(prop)}`),
     ...slots
       .map((slot) => {
         const role = roles.get(slot.name)
@@ -522,14 +417,15 @@ function emitComponent(
     '  forceState?: ForcedState'
   ]
   const destructure = [
-    ...spec.props.map(
-      (prop) =>
-        `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
+    // An omitted responsive prop selects every option's view, so it has no default.
+    ...spec.props.map((prop) =>
+      prop.name === spec.responsive?.prop
+        ? prop.name
+        : `${prop.name} = ${prop.kind === 'boolean' ? String(prop.default) : quote(String(prop.default))}`
     ),
     ...slots.map((slot) => slot.name),
     ...labelRoles,
     ...semanticNames,
-    ...(control ? ['children', 'leadingIcon', 'trailingIcon', 'iconOnly'] : []),
     'forceState',
     '...rest'
   ]
@@ -539,9 +435,9 @@ function emitComponent(
   const repeated = bindingNames.find((name, index) => bindingNames.indexOf(name) !== index)
   if (repeated) throw new Error(`${spec.name}: generated prop ${repeated} is declared twice`)
   const selection = [
-    `values: { ${enums.map((prop) => (control && prop.name === 'variant' ? `variant: ${actionVariant}` : prop.name)).join(', ')} }`,
+    `values: { ${enums.map((prop) => prop.name).join(', ')} }`,
     `booleans: { ${booleans.map((prop) => prop.name).join(', ')} }`,
-    `flags: { ${flagProps.map((prop) => (control && prop.name === 'disabled' ? `disabled: ${flagProps.some((flag) => flag.name === 'loading') ? '!loading && ' : ''}(disabled || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true')` : prop.name)).join(', ')} }`
+    `flags: { ${flagProps.map((prop) => prop.name).join(', ')} }`
   ].join(',\n      ')
   const disabled = flagProps.some((prop) => prop.name === 'disabled')
   const slotObject = slots.length > 0 ? `{ ${slots.map((slot) => slot.name).join(', ')} }` : '{}'
@@ -556,13 +452,9 @@ function emitComponent(
   })
 
   const importLines = [
-    ...(!control || reactNodeSlots.length > 0
-      ? [
-          `import type { ${control ? 'ReactNode' : `HTMLAttributes${reactNodeSlots.length > 0 ? ', ReactNode' : ''}`} } from 'react'`
-        ]
-      : []),
+    `import type { HTMLAttributes${reactNodeSlots.length > 0 ? ', ReactNode' : ''} } from 'react'`,
     `import styles from './${spec.name}.module.css'`,
-    `import { FigmaView, registerComponent, type ForcedState, type ViewNode${control ? ', type ActionProps, type ControlContent, type ControlName, type IconOnlyContract' : ''} } from '../../../components/figma-module-runtime'`,
+    "import { FigmaView, registerComponent, type ForcedState, type ViewNode } from '../../../components/figma-module-runtime'",
     "import type { MatrixCase } from '../../../components/StateMatrix'",
     ...refImports.map((name) => `import '../${folders.get(name) ?? pageFolder(spec.page)}/${name}'`)
   ]
@@ -577,7 +469,7 @@ function emitComponent(
     '',
     `export type ${spec.name}Props = {`,
     ...typeLines,
-    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & ${control ? `ActionProps & ControlContent & IconOnlyContract${variantValues.length ? ` & ({ variant?: Exclude<${[...new Set([...variantValues, ...extraVariants])].map(quote).join(' | ')}, 'iconOnly'> } | ({ variant: 'iconOnly' } & ControlName))` : ''}` : "Omit<HTMLAttributes<HTMLElement>, 'children'>"}`,
+    `}${contract ? ` & ${contract}` : ''}${countContract ? ` & ${countContract}` : ''} & Omit<HTMLAttributes<HTMLElement>, 'children'>`,
     '',
     `export const ${varName}Views: Record<string, ViewNode> = {`,
     views.join(',\n'),
@@ -609,15 +501,15 @@ function emitComponent(
       ? [`    counts={{ ${countRoles.map((role) => `${role.name}: ${role.label}`).join(', ')} }}`]
       : []),
     ...(semanticNames.length ? [`    semanticProps={{ ${semanticNames.join(', ')} }}`] : []),
+    ...(responsiveClasses
+      ? [
+          `    responsive={{ prop: ${quote(spec.responsive!.prop)}, classes: { ${responsiveClasses.map(([value, name]) => `${quote(value)}: styles.${name}`).join(', ')} } }}`
+        ]
+      : []),
     '    forceState={forceState}',
     ...(disabled ? ['    disabled={disabled}'] : []),
-    ...(control && flagProps.some((prop) => prop.name === 'loading') ? ['    busy={loading}'] : []),
     // The caller's props go in as data, never spread over the generated configuration above.
-    ...(control
-      ? [
-          `    action={{ ...rest, children, leadingIcon, trailingIcon, iconOnly, appearance: ${variantValues.length ? "variant === 'inverse' || variant === 'iconOnly' ? variant : undefined" : 'undefined'} }}`
-        ]
-      : ['    attributes={rest}']),
+    '    attributes={rest}',
     ...(omittedTextSlots.length ? [`    suppressed={${varName}SuppressedProps}`] : []),
     '  />',
     ')',

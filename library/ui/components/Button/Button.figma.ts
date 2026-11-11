@@ -2,15 +2,38 @@
 // source=components/Button/Button.tsx
 // component=Button
 // contract=1
-// states=label#15721:0,icon-start#15721:321,icon-end#15721:642,icon-start-swap#15721:963,icon-end-swap#15721:1284,state
+// states=icon-start#15721:321,icon-end#15721:642,icon-start-swap#15721:963,icon-end-swap#15721:1284
 import figma from 'figma'
 const instance = figma.selectedInstance
-const property0 = instance.getEnum('variant', { 'primary': ' variant={"primary"}', 'secondary': ' variant={"secondary"}', 'outline': ' variant={"outline"}', 'dark': ' variant={"dark"}', 'text': ' variant={"text"}', 'outline-on-light': ' variant={"outlineOnLight"}' })
-const property1 = instance.getEnum('size', { 'xl': ' size={"xl"}', 'lg': ' size={"lg"}', 'md': ' size={"md"}', 'sm': ' size={"sm"}' })
-const property2 = instance.getEnum('viewport', { 'desktop': ' viewport={"desktop"}', 'mobile': ' viewport={"mobile"}' })
+const property0 = instance.getEnum('variant', {
+  primary: ' variant={"primary"}',
+  secondary: ' variant={"secondary"}',
+  outline: ' variant={"outline"}',
+  dark: ' variant={"dark"}',
+  text: ' variant={"text"}',
+  'outline-on-light': ' variant={"outlineOnLight"}'
+})
+const property1 = instance.getEnum('size', {
+  xl: ' size={"xl"}',
+  lg: ' size={"lg"}',
+  md: ' size={"md"}',
+  sm: ' size={"sm"}'
+})
+const property2 = instance.getEnum('viewport', {
+  desktop: ' viewport={"desktop"}',
+  mobile: ' viewport={"mobile"}'
+})
+const state = instance.getEnum('state', {
+  default: '',
+  hover: ' forceState="hover"',
+  pressed: ' forceState="pressed"',
+  disabled: ' disabled',
+  loading: ' loading'
+})
+const label = instance.getString('label#15721:0')
 export default {
-  example: figma.tsx`<Button${property0}${property1}${property2} />`,
+  example: figma.tsx`<Button${property0}${property1}${property2}${state} label="${label}" />`,
   imports: ["import { Button } from '@dcl/one-ui'"],
-  id: "Button",
+  id: 'Button',
   metadata: { nestable: true }
 }

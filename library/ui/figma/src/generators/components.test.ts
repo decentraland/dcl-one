@@ -242,6 +242,95 @@ describe('generateComponents with opt-in semantics', () => {
   })
 })
 
+describe('generateComponents with a responsive axis', () => {
+  const responsive = {
+    prop: 'viewport',
+    breakpoints: [
+      { value: 'mobile', min: 0 },
+      { value: 'desktop', min: 1024 },
+      { value: 'largeDesktop', min: 1536 }
+    ]
+  }
+  // A copy: the shared specs must not keep this case's edits.
+  const withResponsive = async () => {
+    const specs = structuredClone(await componentSpecs())
+    specs.find((spec) => spec.name === 'DemoNav')!.responsive = responsive
+    return generateComponents(specs, context)
+  }
+  const file = (output: ReturnType<typeof generateComponents>, path: string) =>
+    output.files.find((item) => item.path === path)!.content
+
+  describe('when a component declares it', () => {
+    it('should give the prop no default and pass each option with its class to FigmaView', async () => {
+      const source = file(await withResponsive(), 'components/demo-nav/DemoNav.tsx')
+
+      expect(source).toMatch(/\n {2}viewport,\n/)
+      expect(source).not.toContain("viewport = '")
+      expect(source).toContain(
+        "responsive={{ prop: 'viewport', classes: { 'mobile': styles.responsiveMobile, 'desktop': styles.responsiveDesktop, 'largeDesktop': styles.responsiveLargeDesktop } }}"
+      )
+    })
+
+    it('should make the prop optional on every drawn combination of the variant contract', async () => {
+      const source = file(await withResponsive(), 'components/demo-nav/DemoNav.tsx')
+
+      expect(source).not.toMatch(/\{ viewport: /)
+      expect(source).toContain('{ viewport?: "mobile"; ')
+    })
+
+    it('should hide each view outside its breakpoint, the widest from its minimum up and the narrowest below the next', async () => {
+      const css = file(await withResponsive(), 'components/demo-nav/DemoNav.module.css')
+
+      expect(css).toContain(
+        '@media (min-width: 1024px) {\n  .responsiveMobile {\n    display: none !important;\n  }\n}'
+      )
+      expect(css).toContain(
+        '@media not all and (min-width: 1024px), (min-width: 1536px) {\n  .responsiveDesktop {\n    display: none !important;\n  }\n}'
+      )
+      expect(css).toContain(
+        '@media not all and (min-width: 1536px) {\n  .responsiveLargeDesktop {\n    display: none !important;\n  }\n}'
+      )
+    })
+
+    it('should leave every other generated file byte-identical', async () => {
+      const plain = await generated()
+      const changed = (await withResponsive()).files
+        .filter(
+          (item) => plain.files.find((other) => other.path === item.path)?.content !== item.content
+        )
+        .map((item) => item.path)
+
+      expect(changed.sort()).toEqual([
+        'components/demo-nav/DemoNav.module.css',
+        'components/demo-nav/DemoNav.tsx'
+      ])
+    })
+  })
+
+  describe('when a component declares none', () => {
+    it('should keep the default of its viewport axis and pass no responsive config', async () => {
+      const source = await fileContent('components/demo-nav/DemoNav.tsx')
+
+      expect(source).toContain("viewport = 'largeDesktop'")
+      expect(source).not.toContain('responsive=')
+    })
+  })
+
+  describe('when an option is not a usable class name', () => {
+    it('should fail generation instead of emitting an invalid identifier', async () => {
+      const specs = structuredClone(await componentSpecs())
+      specs.find((spec) => spec.name === 'DemoNav')!.responsive = {
+        prop: 'viewport',
+        breakpoints: [{ value: 'mobile-wide', min: 0 }]
+      }
+
+      expect(() => generateComponents(specs, context)).toThrow(
+        'Invalid generated TypeScript identifier: "responsiveMobile-wide"'
+      )
+    })
+  })
+})
+
 describe('generateComponents with Figma motion', () => {
   it('should transition what the hover changes and fade a layer the hover reveals', async () => {
     const spec = structuredClone(
@@ -330,99 +419,5 @@ describe('generateComponents with Figma motion', () => {
         `Button: its default selection (variant="${String(variant.default)}"`
       )
     })
-  })
-})
-
-describe('when a component opts into the public button control contract', () => {
-  it('should keep capture variants while adding link, icon and native control props', async () => {
-    const spec = (await componentSpecs()).find((entry) => entry.name === 'Button')!
-    spec.control = 'button'
-    const output = generateComponents([spec], context)
-    const source = output.files.find((file) => file.path.endsWith('/Button.tsx'))!.content
-    expect(source).toContain('ActionProps')
-    expect(source).toContain('action={')
-    expect(source).toContain('leadingIcon')
-    expect(source).toContain('trailingIcon')
-    expect(source).toContain("'inverse'")
-    expect(source).toContain("'iconOnly'")
-  })
-})
-
-describe('when a public button adapts captured label geometry and interaction colors', () => {
-  it('should omit fixed root and label widths and propagate interaction foreground to its root', async () => {
-    const spec = (await componentSpecs()).find((entry) => entry.name === 'Button')!
-    spec.control = 'button'
-    const base = spec.views.find((view) => view.key === spec.defaultKey)!
-    spec.views = [
-      {
-        ...base,
-        root: {
-          ...base.root,
-          css: { decls: [['width', '60px']] },
-          children: [
-            {
-              kind: 'text',
-              path: [0],
-              name: 'label',
-              slot: 'label',
-              text: 'Label',
-              css: {
-                decls: [
-                  ['width', '20px'],
-                  ['color', 'var(--dcl-neutrals-charcoal)']
-                ]
-              }
-            }
-          ]
-        },
-        hover: [
-          { path: [], decls: [['width', '79px']] },
-          {
-            path: [0],
-            decls: [
-              ['width', '21px'],
-              ['color', 'var(--dcl-neutrals-white)']
-            ]
-          }
-        ],
-        pressed: [
-          { path: [], decls: [['width', '80px']] },
-          {
-            path: [0],
-            decls: [
-              ['width', '22px'],
-              ['color', 'var(--dcl-neutrals-snow)']
-            ]
-          }
-        ]
-      }
-    ]
-    const css = generateComponents([spec], context).files.find((file) =>
-      file.path.endsWith('/Button.module.css')
-    )!.content
-    expect(css).not.toMatch(/\bwidth:/)
-    const root = css.split('.v0n0 {')[0]!
-    expect(root).toContain('color: var(--dcl-neutrals-charcoal)')
-    expect(root).toContain('color: var(--dcl-neutrals-white)')
-    expect(root).toContain('color: var(--dcl-neutrals-snow)')
-  })
-})
-
-describe('when a native control has no variant axis', () => {
-  it('should emit no reference to an undeclared variant', async () => {
-    const spec = (await componentSpecs()).find((entry) => entry.name === 'Button')!
-    spec.control = 'button'
-    const base = spec.views.find((view) => view.key === spec.defaultKey)!
-    spec.props = spec.props.filter((prop) =>
-      ['disabled', 'loading', 'selected'].includes(prop.name)
-    )
-    spec.views = [{ ...base, key: 'default', values: {}, booleans: {} }]
-    spec.defaultKey = 'default'
-    const source = generateComponents([spec], context).files.find((file) =>
-      file.path.endsWith('/Button.tsx')
-    )!.content
-    expect(source).not.toContain('appearance: variant')
-    expect(source).not.toContain('variant ===')
-    expect(source).toContain('appearance: undefined')
   })
 })

@@ -37,6 +37,7 @@ describe('when a consumer bundles public foundations and shared components', () 
   }, 60_000)
   it('should bundle the public component with its composed foundation CSS', async () => {
     const modules: string[] = []
+    let buttonImports: string[] = []
     const result = await build({
       configFile: false,
       plugins: [
@@ -44,6 +45,8 @@ describe('when a consumer bundles public foundations and shared components', () 
           name: 'public-runtime-boundary',
           generateBundle() {
             modules.push(...this.getModuleIds())
+            const button = modules.find((id) => id.endsWith('/components/Button/Button.tsx'))
+            if (button) buttonImports = this.getModuleInfo(button)?.importedIds ?? []
           }
         }
       ],
@@ -58,6 +61,8 @@ describe('when a consumer bundles public foundations and shared components', () 
         rolldownOptions: { external: ['react', 'react/jsx-runtime'] }
       }
     })
+    expect(buttonImports.length).toBeGreaterThan(0)
+    expect(buttonImports.filter((id) => /\/(?:runtime|figma)\//.test(id))).toEqual([])
     expect(
       modules.some((module) =>
         module.replaceAll('\\', '/').endsWith('/components/runtime/figma-module-runtime.tsx')

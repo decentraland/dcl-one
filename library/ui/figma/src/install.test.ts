@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   lstat,
@@ -12,6 +13,7 @@ import {
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App } from './app.js'
 import { verifyFdsCache } from './sources/fds-source.js'
@@ -137,6 +139,31 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     vi.restoreAllMocks()
     await rm(root, { recursive: true, force: true })
   })
+
+  it('should install through the CLI in its own process with the same result and exit code', async () => {
+    const cli = async () =>
+      JSON.parse(
+        (
+          await promisify(execFile)(
+            process.execPath,
+            [
+              '--import',
+              import.meta.resolve('tsx'),
+              path.join(import.meta.dirname, 'cli.ts'),
+              'install',
+              'foundations'
+            ],
+            { cwd: figma }
+          )
+        ).stdout
+      ) as Awaited<ReturnType<typeof runInstall>>
+    const first = await cli()
+    const second = await cli()
+    expect(first.changed).toBe(true)
+    expect(second.changed).toBe(false)
+    expect(second.files).toEqual(first.files)
+    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+  }, 60_000)
 
   it('should preserve maintained files and give identical bytes on a second install', async () => {
     const first = await runInstall(app, { target: 'foundations' })
@@ -606,6 +633,100 @@ describe('when component installation owns its verified input read-set and trans
     )
   })
 
+  describe('and the target holds a hand-written component', () => {
+    const template = [
+      'Component.tsx',
+      'Component.module.css',
+      'Component.test.tsx',
+      'Component.figma.ts'
+    ]
+    let handWritten: Record<string, Buffer>
+    const handWrittenOnDisk = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          Object.keys(handWritten).map(async (file) => [
+            file,
+            await readFile(path.join(root, 'components', file))
+          ])
+        )
+      )
+    beforeEach(async () => {
+      await runInstall(app, options)
+      handWritten = {}
+      for (const file of template) {
+        const bytes = (await readFile(path.resolve('templates/component', file)))
+          .toString('utf8')
+          .replaceAll('Component', 'Badge')
+        handWritten['Badge/' + file.replace('Component', 'Badge')] = Buffer.from(bytes)
+      }
+      for (const [file, bytes] of Object.entries(handWritten)) {
+        await mkdir(path.dirname(path.join(root, 'components', file)), { recursive: true })
+        await writeFile(path.join(root, 'components', file), bytes)
+      }
+      await fixtureCommit(repository)
+    })
+
+    it('should keep it byte for byte, leave it out of the install output and no-op on repeat', async () => {
+      const result = await runInstall(app, options)
+      expect(result.changed).toBe(false)
+      expect(result.files.map((file) => file.path).some((file) => file.startsWith('Badge/'))).toBe(
+        false
+      )
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+      const record = JSON.parse(
+        await readFile(path.join(root, 'components/generation.json'), 'utf8')
+      )
+      expect(
+        (record.output as { path: string }[]).some((entry) => entry.path.startsWith('Badge/'))
+      ).toBe(false)
+    })
+
+    it('should keep it when the registry empties and the generated output is retired', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const retired = await runInstall(app, options)
+      expect(retired.changed).toBe(true)
+      expect(retired.files.map((file) => file.path)).toEqual(['generation.json', 'promotion.json'])
+      expect(await readdir(path.join(root, 'components'))).toEqual([
+        'Badge',
+        'generation.json',
+        'promotion.json'
+      ])
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+      expect((await runInstall(app, options)).changed).toBe(false)
+    })
+
+    it('should not copy it into a private stage', async () => {
+      options.outDir = stage
+      const staged = await runInstall(app, options)
+      expect(await readdir(staged.outDir)).not.toContain('Badge')
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+    })
+
+    it('should refuse a registry that would generate over it and leave the target unchanged', async () => {
+      const before = await readdir(path.join(root, 'components'), { recursive: true })
+      vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+        const plan = await actualPlan(context)
+        plan.files.set('badge/badge.tsx', Buffer.from('export const badge = 1\n'))
+        return plan
+      })
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would overwrite a hand-written component: Badge'
+      )
+      expect(await readdir(path.join(root, 'components'), { recursive: true })).toEqual(before)
+      expect(await handWrittenOnDisk()).toEqual(handWritten)
+    })
+
+    it('should refuse an uncommitted edit to it instead of publishing over it', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const edited = Buffer.from('export const Badge = () => null\n')
+      await writeFile(path.join(root, 'components/Badge/Badge.tsx'), edited)
+      await expect(runInstall(app, options)).rejects.toThrow('Install target is dirty')
+      expect(await readFile(path.join(root, 'components/Badge/Badge.tsx'))).toEqual(edited)
+    })
+  })
+
   it('should reproduce empty retirement in a fresh immutable private stage and no-op', async () => {
     await writeFile(registryPath, '{"components":[],"internal":[]}')
     options.outDir = stage
@@ -767,7 +888,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'src/specs.ts'), 'export const transitive = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -781,7 +902,7 @@ describe('when component installation owns its verified input read-set and trans
       return plan
     })
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
@@ -842,7 +963,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'extra-helper.mts'), 'export const tracked = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -965,11 +1086,29 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
+  it('should install with a locked tooling module that is outside the read-set', async () => {
+    const tool = 'library/ui/figma/src/unrelated-tool.ts'
+    await writeFile(path.join(repository, tool), 'export const tool = true\n')
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    lock.sources[0].files[tool] = { sha256: hash('export const tool = true\n') }
+    await writeFile(lockPath, JSON.stringify(lock))
+    await fixtureCommit(repository)
+    const result = await runInstall(app, options)
+    expect(result.changed).toBe(true)
+    expect(
+      vi
+        .mocked(createComponentGeneration)
+        .mock.calls[0]![0].modules.map((module: { path: string }) => module.path)
+    ).not.toContain(tool)
+  })
+
   it('should reject a missing module pin before planning', async () => {
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
     delete lock.sources[0].files[modulePath]
     await writeFile(lockPath, JSON.stringify(lock))
-    await expect(runInstall(app, options)).rejects.toThrow('Missing locked component input')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Component implementation is absent from the source lock'
+    )
     expect(planComponents).not.toHaveBeenCalled()
   })
 

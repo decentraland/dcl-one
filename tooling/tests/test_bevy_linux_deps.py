@@ -1,6 +1,7 @@
 """APT mirror replacement preserves signed sources and fails on install errors."""
 import importlib.util
 from pathlib import Path
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -19,6 +20,9 @@ class LinuxDependenciesTest(unittest.TestCase):
         self.root = Path(temporary.name)
         (self.root / 'sources.list.d').mkdir()
         (self.root / 'apt.conf.d').mkdir()
+        getaddrinfo = patch.object(deps.socket, 'getaddrinfo', return_value=[])
+        self.getaddrinfo = getaddrinfo.start()
+        self.addCleanup(getaddrinfo.stop)
 
     def test_legacy_and_deb822_sources_keep_suites_components_and_signing_keys(self):
         fixtures = {
@@ -72,6 +76,20 @@ class LinuxDependenciesTest(unittest.TestCase):
                              'https://security.ubuntu.com/ubuntu/\tpriority:3\n')
             for name, content in fixtures.items():
                 self.assertEqual((self.root / name).read_text(), content)
+
+    def test_unresolvable_archive_tries_the_outside_mirror_first_once(self):
+        self.getaddrinfo.side_effect = socket.gaierror(socket.EAI_AGAIN, 'Temporary failure in name resolution')
+        path = self.root / 'apt-mirrors.txt'
+        path.write_text('http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\n'
+                        'https://archive.ubuntu.com/ubuntu/\tpriority:2\n'
+                        'https://security.ubuntu.com/ubuntu/\tpriority:3\n')
+        for _ in range(2):
+            deps.configure(self.root)
+            self.assertEqual(path.read_text(),
+                             'https://mirrors.edge.kernel.org/ubuntu/\tpriority:0\n'
+                             'https://archive.ubuntu.com/ubuntu/\tpriority:1\n'
+                             'https://archive.ubuntu.com/ubuntu/\tpriority:2\n'
+                             'https://security.ubuntu.com/ubuntu/\tpriority:3\n')
 
     def test_successful_update_precedes_noninteractive_install(self):
         with patch.object(deps.subprocess, 'run') as run:

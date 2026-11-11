@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "portInputHash": "69c823011899af71e9b61bd582caefba925c67e88c5bef4805a5e8bda61569e9",
+  "portInputHash": "977904caa98e210418f2dd9a0b25b7589ff79cde0bd657c91b106d7cff593a2b",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "checks": {
@@ -10,7 +10,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "460 tooling pins, 39 foundation origins and 15 component outputs pass the common guard"
+      "detail": "466 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
@@ -18,7 +18,7 @@
     },
     "check-mappings": {
       "result": "pass",
-      "detail": "Fresh check passes with 2 public mappings and no errors"
+      "detail": "Fresh check passes with 1 public mapping and no errors"
     },
     "review-manifest": {
       "result": "pass",
@@ -30,7 +30,7 @@
     },
     "install": {
       "result": "pass",
-      "detail": "Private and canonical installs reproduce 39 foundation and 15 component files with no-op repeats"
+      "detail": "Private and canonical installs reproduce 39 foundation and 11 component files with no-op repeats"
     }
   }
 }

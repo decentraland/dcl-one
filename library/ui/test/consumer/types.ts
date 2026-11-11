@@ -369,3 +369,16 @@ const invalidRef: import('@dcl/one-ui').ButtonProps = {
   ref: createRef<HTMLAnchorElement>()
 }
 void [nativeButtonRef, nativeLinkRef, unnamedIcon, unnamedFlag, unnamedControl, invalidRef]
+
+// @ts-expect-error An absent content value needs an explicit accessible name.
+const unnamedUndefinedButton: import('@dcl/one-ui').ButtonProps = { children: undefined }
+// @ts-expect-error Decorative null content needs an explicit accessible name.
+const unnamedNullButton: import('@dcl/one-ui').ButtonProps = { children: null }
+void [unnamedUndefinedButton, unnamedNullButton]
+
+const rendererAppearanceButton: import('@dcl/one-ui').ButtonProps = {
+  children: 'Join',
+  // @ts-expect-error Appearance is controlled through the public variant, not renderer internals.
+  appearance: 'inverse'
+}
+void rendererAppearanceButton

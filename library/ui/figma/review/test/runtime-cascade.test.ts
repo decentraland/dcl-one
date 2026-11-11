@@ -1,6 +1,5 @@
 import { after, before, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import postcss from 'postcss'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -113,12 +112,9 @@ describe('when a consumer bundle loads the generated stylesheets in either order
   })
 
   it('should fall back to the page font if the runtime reset were unlayered and loaded last (control)', async () => {
-    const stylesheet = postcss.parse(await readFile(runtimeCss, 'utf8'))
-    stylesheet.walkAtRules('layer', (rule) => {
-      if (rule.params === 'dcl.reset') rule.replaceWith(...(rule.nodes ?? []))
-      else rule.remove()
-    })
-    const unlayered = stylesheet.toString()
+    const unlayered = (await readFile(runtimeCss, 'utf8'))
+      .replace(/@layer dcl\.reset, dcl\.foundations, dcl\.components;/, '')
+      .replace(/@layer dcl\.reset \{([\s\S]*)\}\s*$/, '$1')
     assert.ok(!unlayered.includes('@layer'))
     const label = await renderLabel(
       [...fontCss, navBarCss, textStylesCss, { css: unlayered }],

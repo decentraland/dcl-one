@@ -1,6 +1,5 @@
 {
   "components": [
-    "Button",
     {
       "name": "NavBar",
       "limits": [

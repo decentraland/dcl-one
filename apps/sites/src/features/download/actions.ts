@@ -10,7 +10,7 @@ const INSTALLERS = {
   macos:
     "https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer.dmg",
 } as const;
-const STORES = {
+export const STORES = {
   app_store:
     "https://apps.apple.com/app/apple-store/id6478403840?pt=126284288&ct=Decentraland%20Home%20iOS&mt=8",
   google_play:

@@ -19,6 +19,7 @@ import {
 } from 'node:fs'
 import path from 'node:path'
 import { toPosix } from './guard/fs-safe.js'
+import { handWrittenComponentDirectories } from '../component-generation.mjs'
 import {
   RECORD_DETAIL,
   REQUIRED_CHECKS,
@@ -291,7 +292,17 @@ function verifyStages(run: Run, p: Paths): Record<string, () => Stage> {
           `private install ${target}`
         )
         const privateFiles = treeFiles(path.join(proof, target))
-        if (!privateFiles.size || !sameTree(privateFiles, treeFiles(path.join(p.ui, target))))
+        // Hand-written components are Git's, not the installer's, so a private install never reproduces them. The
+        // lock-digests check above refuses one that is untracked or carries generated output.
+        const canonical = treeFiles(path.join(p.ui, target))
+        if (target === 'components')
+          for (const directory of handWrittenComponentDirectories(
+            canonical.keys(),
+            Object.keys(lock().publicComponents?.files ?? {})
+          ))
+            for (const file of [...canonical.keys()])
+              if (file.startsWith(directory + '/')) canonical.delete(file)
+        if (!privateFiles.size || !sameTree(privateFiles, canonical))
           fail(`the private ${target} install differs from the canonical one`)
         counts.push(privateFiles.size)
       }

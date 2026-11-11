@@ -1,13 +1,14 @@
 import { assertIdentifier } from '../generators/naming.js'
 import { expandVariants } from '../capture/expand-variants.js'
 import type { FigmaConfig } from '../config.js'
-import { excludePrimitives, TokenIndex } from '../generators/tokens.js'
+import { excludePrimitives, layoutBreakpoints, TokenIndex } from '../generators/tokens.js'
 import { splitWords } from './variants.js'
 import type { ComponentSpec, SlotSpec, TextRole, ViewNode, ViewSpec } from '../ir/components.js'
 import type { RawComponent, RawComponentPage } from '../ir/raw-components.js'
 import type { TextStyle, TokenCollection } from '../ir/schemas.js'
 import { ColorResolver } from './colors.js'
 import { stateMotion, variantLoops } from './motion.js'
+import { resolveResponsive } from './responsive.js'
 import { applyTextRoles } from './text-roles.js'
 import { mapVariants, viewKey, type MappedVariant, type VariantMapping } from './variants.js'
 import {
@@ -328,17 +329,15 @@ function buildComponentSpecsWithCollisions(input: SpecInput): {
     iconAliases: input.config.iconAliases,
     refsById
   }
+  const breakpoints = layoutBreakpoints(input.collections)
   const specs = pending.map((entry) => {
     const spec = buildSpec(entry, env)
-    const control = input.config.components[entry.raw.name]?.control
-    if (control) {
-      if (spec.tag !== 'button') throw new Error(`${spec.name}: button control needs a button root`)
-      spec.control = control
-    }
     const exposeTextSlots = input.config.components[entry.raw.name]?.exposeTextSlots
     if (exposeTextSlots !== undefined) spec.exposeTextSlots = exposeTextSlots
     const textRoles = input.config.components[entry.raw.name]?.textRoles
     if (textRoles) withTextRoles(spec, textRoles)
+    const responsive = input.config.components[entry.raw.name]?.responsive
+    if (responsive) spec.responsive = resolveResponsive(spec, responsive, breakpoints)
     // Node ids only bind roles: they never reach the spec, its hash, generated code or comparisons.
     spec.views.forEach((view) => dropFigmaIds(view.root))
     const semantics = input.config.components[entry.raw.name]?.semantics

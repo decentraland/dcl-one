@@ -5,10 +5,7 @@ import {
   useEffect,
   useRef,
   type ComponentType,
-  type AnchorHTMLAttributes,
-  type ButtonHTMLAttributes,
   type HTMLAttributes,
-  type Ref,
   type ReactNode
 } from 'react'
 import { FigmaInteractions } from './figma-interactions'
@@ -268,12 +265,11 @@ type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
 // The list is the runtime's: the installed library carries this file without the generator.
 const RESERVED_PROPS: ReadonlySet<string> = new Set([
   'as',
-  'action',
-  'busy',
   'attributes',
   'component',
   'counts',
   'defaultKey',
+  'responsive',
   'select',
   'semanticProps',
   'slots',
@@ -305,40 +301,8 @@ function resolveCounts(
   return labels
 }
 
-type ActionProps = {
-  children?: ReactNode
-  leadingIcon?: ReactNode
-  trailingIcon?: ReactNode
-  iconOnly?: boolean
-  appearance?: 'inverse' | 'iconOnly'
-} & (
-  | (ButtonHTMLAttributes<HTMLButtonElement> & { href?: never; ref?: Ref<HTMLButtonElement> })
-  | (Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'type'> & {
-      href: string
-      ref?: Ref<HTMLAnchorElement>
-      disabled?: boolean
-      type?: never
-    })
-)
-
-type ControlName = { 'aria-label': string } | { 'aria-labelledby': string }
-type ControlContent = { children: ReactNode } | { label: ReactNode } | ControlName
-type IconOnlyContract = { iconOnly?: false } | ({ iconOnly: true } & ControlName)
-
-function opensContext(target: string | undefined): boolean {
-  return !!target && !['_self', '_parent', '_top'].includes(target.toLowerCase())
-}
-
-function safeRel(rel: string | undefined): string {
-  return [...new Set([...(rel ?? '').split(/\s+/).filter(Boolean), 'noopener', 'noreferrer'])].join(
-    ' '
-  )
-}
-
 type FigmaViewProps = {
   as?: 'button' | 'div'
-  action?: ActionProps
-  busy?: boolean
   views: Record<string, ViewNode>
   select: Selection
   slots: Record<string, ReactNode>
@@ -355,12 +319,49 @@ type FigmaViewProps = {
   // Props the component's type forbids (text overrides it does not expose). An untyped caller may still pass them
   // inside `attributes`, so they are dropped before the DOM.
   suppressed?: readonly string[]
+  // A responsive variant axis: the prop and, in ascending breakpoint order, the class that shows each option's view
+  // only within its breakpoint.
+  responsive?: { prop: string; classes: Record<string, string> }
 }
 
-function FigmaView({
+// With the responsive prop left unset, every option's view is rendered and CSS media queries show the one for the
+// current width: server rendering and hydration produce the same markup, and nothing reads the window. A set prop,
+// or a component without a responsive axis, renders exactly one view as before. The views share the caller's
+// attributes, so an id or a ref, which must name one element, needs the prop set.
+function FigmaView({ responsive, ...props }: FigmaViewProps) {
+  const disclosure = useContext(FigmaInteractions)?.disclosure
+  if (!responsive || props.select.values[responsive.prop] !== undefined)
+    return <FigmaViewRoot {...props} />
+  const component = props.component ?? 'A generated component'
+  const attributes: Attributes & { ref?: unknown } = props.attributes ?? {}
+  if (attributes.id != null || attributes.ref != null)
+    throw new Error(
+      `${component}: an id or a ref names one element, so pass ${responsive.prop} to render a single view`
+    )
+  // Each disclosure root closes on a pointer outside itself, so a hidden view would close the visible one at once.
+  if (disclosure)
+    throw new Error(
+      `${component}: a disclosure controls one element, so pass ${responsive.prop} to render a single view`
+    )
+  return (
+    <>
+      {Object.entries(responsive.classes).map(([value, responsiveClass]) => (
+        <FigmaViewRoot
+          key={value}
+          {...props}
+          select={{ ...props.select, values: { ...props.select.values, [responsive.prop]: value } }}
+          attributes={{
+            ...attributes,
+            className: [attributes.className, responsiveClass].filter(Boolean).join(' ')
+          }}
+        />
+      ))}
+    </>
+  )
+}
+
+function FigmaViewRoot({
   as: Tag = 'div',
-  action,
-  busy = false,
   views,
   select,
   slots,
@@ -371,7 +372,7 @@ function FigmaView({
   counts = {},
   attributes = {},
   suppressed = []
-}: FigmaViewProps) {
+}: Omit<FigmaViewProps, 'responsive'>) {
   const interaction = useContext(FigmaInteractions)
   const trigger = useRef<HTMLButtonElement>(null)
   const surface = useRef<HTMLDivElement>(null)
@@ -436,137 +437,6 @@ function FigmaView({
           .map((child) => renderNode(child, slots, interaction, semanticProps, countLabels))}
       </div>
     )
-  if (action && Tag === 'button') {
-    const {
-      children,
-      leadingIcon,
-      trailingIcon,
-      iconOnly,
-      appearance,
-      className: actionClass,
-      ...native
-    } = Object.fromEntries(
-      Object.entries(action).filter(
-        ([name]) => !RESERVED_PROPS.has(name) && !suppressed.includes(name)
-      )
-    ) as ActionProps
-    const compact = iconOnly || appearance === 'iconOnly'
-    if (compact && !native['aria-label']?.trim() && !native['aria-labelledby']?.trim())
-      throw new Error(`${component ?? 'Button'}: iconOnly requires an accessible name`)
-    const label = children === undefined ? (slots.label ?? '') : children
-    const spinner = busy ? view.children?.find((child) => child.name === 'Spinner') : undefined
-    const content = (
-      <>
-        <span
-          className={[styles.controlContent, busy && styles.busyContent].filter(Boolean).join(' ')}
-        >
-          {leadingIcon != null && (
-            <span className={styles.controlIcon} aria-hidden="true">
-              {leadingIcon}
-            </span>
-          )}
-          {!compact &&
-            view.children
-              ?.filter((child) => child !== spinner)
-              .map((child) =>
-                renderNode(child, { ...slots, label }, interaction, semanticProps, countLabels)
-              )}
-          {compact && children}
-          {trailingIcon != null && (
-            <span className={styles.controlIcon} aria-hidden="true">
-              {trailingIcon}
-            </span>
-          )}
-        </span>
-        {spinner && (
-          <span className={styles.controlSpinner} data-loading-indicator aria-hidden="true">
-            {renderNode(spinner, slots, null, semanticProps, countLabels)}
-          </span>
-        )}
-      </>
-    )
-    const common = {
-      ...rest,
-      className: [
-        styles.node,
-        styles.control,
-        view.className,
-        compact && styles.iconOnly,
-        appearance === 'inverse' && styles.inverse,
-        className,
-        actionClass
-      ]
-        .filter(Boolean)
-        .join(' '),
-      'data-n': '',
-      'data-force-state': forceState
-    }
-    const unavailable = native['aria-disabled'] === true || native['aria-disabled'] === 'true'
-    if (typeof native.href === 'string') {
-      const { href, target, rel, onClick, onAuxClick, disabled: actionDisabled, ...anchor } = native
-      const inactive = disabled || busy || actionDisabled
-      return (
-        <a
-          {...common}
-          {...anchor}
-          href={inactive ? undefined : href}
-          role={inactive ? (native.role ?? 'link') : native.role}
-          target={target}
-          rel={opensContext(target) ? safeRel(rel) : rel}
-          aria-disabled={inactive || native['aria-disabled']}
-          aria-busy={busy || native['aria-busy']}
-          tabIndex={inactive ? -1 : native.tabIndex}
-          onClick={(event) => {
-            if (inactive || unavailable) {
-              event.preventDefault()
-              return
-            }
-            onClick?.(event)
-          }}
-          onAuxClick={(event) => {
-            if (inactive || unavailable) {
-              event.preventDefault()
-              return
-            }
-            onAuxClick?.(event)
-          }}
-        >
-          {content}
-        </a>
-      )
-    }
-    const {
-      type = 'button',
-      onClick,
-      onAuxClick,
-      ...button
-    } = native as ButtonHTMLAttributes<HTMLButtonElement>
-    return (
-      <button
-        {...common}
-        {...button}
-        type={type}
-        disabled={disabled || busy || button.disabled}
-        aria-busy={busy || button['aria-busy']}
-        onClick={(event) => {
-          if (unavailable || busy) {
-            event.preventDefault()
-            return
-          }
-          onClick?.(event)
-        }}
-        onAuxClick={(event) => {
-          if (unavailable || busy) {
-            event.preventDefault()
-            return
-          }
-          onAuxClick?.(event)
-        }}
-      >
-        {content}
-      </button>
-    )
-  }
   // A root navigation landmark replaces the default div; button roots keep their element.
   const Root = view.semantic?.role === 'navigation' && Tag === 'div' ? 'nav' : Tag
   return (
@@ -588,4 +458,4 @@ function FigmaView({
 }
 
 export { FigmaView, registerComponent }
-export type { ActionProps, ControlContent, ControlName, IconOnlyContract, ForcedState, ViewNode }
+export type { ForcedState, ViewNode }

@@ -237,9 +237,6 @@
     "H6 Regular": "body/md"
   },
   "components": {
-    "Button": {
-      "control": "button"
-    },
     "FriendCTA": {
       "stateWords": ["hover", "pressed", "loading"],
       "optionAliases": {
@@ -272,6 +269,14 @@
     },
     "NavBar": {
       "exposeTextSlots": false,
+      "responsive": {
+        "prop": "viewport",
+        "breakpoints": {
+          "mobile": "mobile",
+          "desktop": "desktop",
+          "largeDesktop": "largeDesktop"
+        }
+      },
       "semantics": {
         "@root": {
           "role": "navigation",
@@ -347,6 +352,6 @@
     ]
   },
   "promotion": {
-    "include": ["NavBar", "Button"]
+    "include": ["NavBar"]
   }
 }

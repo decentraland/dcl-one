@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
-import { semanticSchema, textRoleSchema } from './ir/components.js'
+import { responsiveConfigSchema, semanticSchema, textRoleSchema } from './ir/components.js'
 
 const pageSchema = z.object({
   id: z.string().min(1).nullable().optional(),
@@ -15,10 +15,10 @@ const componentOverrideSchema = z.object({
   optionAliases: z.record(z.string(), z.string()).optional(),
   propNames: z.record(z.string(), z.string()).optional(),
   skipOptions: z.array(z.string()).optional(),
-  control: z.literal('button').optional(),
   exposeTextSlots: z.boolean().optional(),
   semantics: z.record(z.string(), semanticSchema).optional(),
-  textRoles: z.record(z.string(), textRoleSchema).optional()
+  textRoles: z.record(z.string(), textRoleSchema).optional(),
+  responsive: responsiveConfigSchema.optional()
 })
 
 // Exclusion removes a public token export, so each supported name is reviewed here, not only in config.

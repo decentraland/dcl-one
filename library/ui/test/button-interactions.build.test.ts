@@ -74,10 +74,10 @@ afterAll(async () => {
 
 const measure = (control: string): Promise<Measurement> =>
   evaluate<Measurement>(
-    `(()=>{const root=document.querySelector('[data-control="${control}"]'),label=root.querySelector('[data-n]'),icon=root.querySelector('svg');return {width:root.getBoundingClientRect().width,color:getComputedStyle(root).color,labelColor:label&&getComputedStyle(label).color,iconColor:icon&&getComputedStyle(icon).color,background:getComputedStyle(root).backgroundColor}})()`
+    `(()=>{const root=document.querySelector('[data-control="${control}"]'),label=root.querySelector('[data-button-label]'),icon=root.querySelector('svg');return {width:root.getBoundingClientRect().width,color:getComputedStyle(root).color,labelColor:label&&getComputedStyle(label).color,iconColor:icon&&getComputedStyle(icon).color,background:getComputedStyle(root).backgroundColor}})()`
   )
 
-describe('when a public Button enters a captured interaction state', () => {
+describe('when a public Button enters a native interaction state', () => {
   it.each([390, 1440])(
     'should keep label geometry and foreground through all interaction states at %ipx',
     async (width) => {
@@ -131,7 +131,7 @@ describe('when a public Button enters a captured interaction state', () => {
   })
 })
 
-describe('when busy and focusable disabled controls use the public runtime', () => {
+describe('when busy and focusable disabled controls use the native component', () => {
   it('should retain label geometry and center every busy indicator within its control', async () => {
     for (const [idle, busy] of [
       ['base', 'loading'],
@@ -148,12 +148,12 @@ describe('when busy and focusable disabled controls use the public runtime', () 
         color: string
         fill: string
       }>(
-        `(()=>{const root=document.querySelector('[data-control="${busy}"]'),spinner=root.querySelector('[data-loading-indicator] > [data-n]');if(!spinner)throw new Error(root.outerHTML);const box=root.getBoundingClientRect(),r=spinner.getBoundingClientRect(),s=getComputedStyle(spinner);return {dx:r.x+r.width/2-(box.x+box.width/2),dy:r.y+r.height/2-(box.y+box.height/2),inside:r.left>=box.left&&r.right<=box.right&&r.top>=box.top&&r.bottom<=box.bottom,mask:s.maskImage,color:getComputedStyle(root).color,fill:s.backgroundColor}})()`
+        `(()=>{const root=document.querySelector('[data-control="${busy}"]'),spinner=root.querySelector('[data-loading-indicator]');if(!spinner)throw new Error(root.outerHTML);const box=root.getBoundingClientRect(),r=spinner.getBoundingClientRect(),s=getComputedStyle(spinner);return {dx:r.x+r.width/2-(box.x+box.width/2),dy:r.y+r.height/2-(box.y+box.height/2),inside:r.left>=box.left&&r.right<=box.right&&r.top>=box.top&&r.bottom<=box.bottom,mask:s.borderTopStyle,color:getComputedStyle(root).color,fill:s.borderTopColor}})()`
       )
       expect(placement.dx).toBeCloseTo(0, 1)
       expect(placement.dy).toBeCloseTo(0, 1)
       expect(placement.inside).toBe(true)
-      expect(placement.mask).not.toBe('none')
+      expect(placement.mask).toBe('solid')
       expect(placement.fill).toBe(placement.color)
     }
     const doc = (await session.send('DOM.getDocument')) as { root: { nodeId: number } }
@@ -217,14 +217,29 @@ it('should preserve control identity and native focus behavior across loading tr
     linkStable: boolean
     linkHrefRestored: boolean
   }>(`(async()=>{
-    const probe=document.createElement('button');document.body.append(probe);probe.focus();probe.disabled=true;await new Promise(requestAnimationFrame);const nativeRetainsFocus=document.activeElement===probe;probe.remove();
+
     const button=document.querySelector('[data-control="transition"]'),link=document.querySelector('[data-control="transition-link"]');
-    const setBusy=async value=>{window.dispatchEvent(new CustomEvent('button-busy',{detail:value}));for(let i=0;i<100 && button.disabled!==value;i++)await new Promise(r=>setTimeout(r,10))};
+    const setBusy=async value=>{window.dispatchEvent(new CustomEvent('button-busy',{detail:value}));for(let i=0;i<100 && (button.getAttribute('aria-busy')==='true')!==value;i++)await new Promise(r=>setTimeout(r,10))};
     button.focus();const buttonFocusedBefore=document.activeElement===button;
-    await setBusy(true);await new Promise(requestAnimationFrame);const buttonMatchesNativeBusyFocus=(document.activeElement===button)===nativeRetainsFocus,buttonStable=button===document.querySelector('[data-control="transition"]');
+    await setBusy(true);await new Promise(requestAnimationFrame);const buttonMatchesNativeBusyFocus=document.activeElement===button,buttonStable=button===document.querySelector('[data-control="transition"]');
     const focusOwner=document.createElement('button');focusOwner.textContent='Other action';document.body.append(focusOwner);focusOwner.focus();await setBusy(false);const noFocusSteal=document.activeElement===focusOwner;focusOwner.remove();
     link.focus();const linkFocusedBefore=document.activeElement===link;await setBusy(true);const linkRetainsFocus=document.activeElement===link;await setBusy(false);
     return {buttonFocusedBefore,buttonMatchesNativeBusyFocus,buttonStable,noFocusSteal,linkFocusedBefore,linkRetainsFocus,linkStable:link===document.querySelector('[data-control="transition-link"]'),linkHrefRestored:link.getAttribute('href')==='/save'};
   })()`)
   expect(Object.values(result)).toEqual(Array(8).fill(true))
+})
+
+it('should stop the native loading animation when reduced motion is requested', async () => {
+  await session.send('Emulation.setEmulatedMedia', {
+    features: [{ name: 'prefers-reduced-motion', value: 'reduce' }]
+  })
+  try {
+    expect(
+      await evaluate<string>(
+        `getComputedStyle(document.querySelector('[data-control="loading"] [data-loading-indicator]')).animationName`
+      )
+    ).toBe('none')
+  } finally {
+    await session.send('Emulation.setEmulatedMedia', { features: [] })
+  }
 })
