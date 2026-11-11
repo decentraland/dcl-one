@@ -14,6 +14,8 @@ vi.hoisted(() =>
     $RefreshSig$: () => (type: unknown) => type,
   }),
 );
+const telemetry = vi.hoisted(() => ({ track: vi.fn() }));
+vi.mock("@/core/lib/telemetry/track", () => telemetry);
 vi.mock("@ui/web/frames/SitesChrome", () => ({ default: ({ children }: { children: ReactNode }) => <>{children}</> }));
 
 beforeEach(() => {
@@ -30,7 +32,7 @@ afterEach(() => {
 });
 
 describe("/help route", () => {
-  it("renders the help center with its tabs, the FAQ and the chat banner", async () => {
+  it("renders the help center with its tabs, the FAQ and the status, and reports one page view", async () => {
     const router = createMemoryRouter([{ id: "help", path: "/help", Component: HelpRoute as never }], {
       initialEntries: ["/help"],
       hydrationData: {
@@ -40,7 +42,7 @@ describe("/help route", () => {
             statusPageUrl: "https://status.example/",
             intercomAppId: "app-test",
             sid: "sid-example",
-            wallet: null,
+            variant: "config_driven",
           },
         },
       },
@@ -56,5 +58,8 @@ describe("/help route", () => {
     expect(screen.getByRole("heading", { name: "Frequently Asked Questions" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "CHAT NOW" })).toBeTruthy();
     expect(await screen.findByRole("button", { name: "System Status" })).toBeTruthy();
+    expect(telemetry.track.mock.calls).toEqual([
+      ["lp_help_viewed", {}, { sid: "sid-example", story: "landings/help", variant: "config_driven" }],
+    ]);
   });
 });

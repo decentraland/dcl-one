@@ -14,7 +14,7 @@ describe("/help loader", () => {
       services: DEFAULT_STATUS_SERVICES,
       statusPageUrl: DEFAULT_STATUS_PAGE_URL,
       intercomAppId: DEFAULT_INTERCOM_APP_ID,
-      wallet: null,
+      variant: "config_driven",
     });
     expect(typeof result.data.sid).toBe("string");
   });

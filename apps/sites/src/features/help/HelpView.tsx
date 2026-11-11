@@ -6,6 +6,7 @@ import { HelpStatus } from "@dcl/one-ui/apps/sites/help/HelpStatus";
 import type { HelpTab } from "@dcl/one-ui/apps/sites/help/HelpTabs";
 import { useState } from "react";
 
+import { useAuth } from "@/data/lib/auth/context";
 import type { Service } from "@/data/lib/help/status";
 
 import {
@@ -20,7 +21,7 @@ import { useServiceStatus } from "./useServiceStatus";
 
 export type HelpTabId = "faq" | "creator-fund" | "support-updates";
 
-const TABS: readonly HelpTab[] = [
+const TABS: readonly HelpTab<HelpTabId>[] = [
   { id: "faq", label: HELP_COPY.tabs.faq, icon: "faq" },
   { id: "creator-fund", label: HELP_COPY.tabs.creatorFund, icon: "creatorFund" },
   { id: "support-updates", label: HELP_COPY.tabs.supportUpdates, icon: "supportUpdates" },
@@ -38,7 +39,6 @@ export type HelpViewProps = {
   readonly statusPageUrl: string;
   /** Empty: no chat widget. */
   readonly intercomAppId: string;
-  readonly wallet?: string | null;
   /** A Creator Fund control was used: a question opened, or the contact address clicked. */
   readonly onCreatorFundClick?: (button: string) => void;
   readonly initialTab?: HelpTabId;
@@ -76,13 +76,14 @@ export function HelpView({
   services,
   statusPageUrl,
   intercomAppId,
-  wallet,
   onCreatorFundClick,
   initialTab = "faq",
 }: HelpViewProps) {
   const [tab, setTab] = useState<HelpTabId>(initialTab);
   const report = useServiceStatus(services);
-  const chatAvailable = useIntercom(intercomAppId, INTERCOM_SETTINGS, wallet);
+  // The signed-in account as the page knows it now, so signing in or out here reaches the chat.
+  const { address } = useAuth();
+  const chatAvailable = useIntercom(intercomAppId, INTERCOM_SETTINGS, address);
 
   return (
     <HelpPage
@@ -90,7 +91,7 @@ export function HelpView({
       description={HELP_COPY.description}
       tabs={TABS}
       activeTab={tab}
-      onTabChange={(id) => setTab(id as HelpTabId)}
+      onTabChange={setTab}
       status={
         <HelpStatus
           label={HELP_COPY.status.title}
@@ -108,12 +109,12 @@ export function HelpView({
       banner={
         // No chat widget (switched off, or its script failed): no button that would do nothing.
         chatAvailable && (
-        <HelpChatBanner
-          title={HELP_COPY.chat.title}
-          subtitle={HELP_COPY.chat.subtitle}
-          actionLabel={HELP_COPY.chat.button}
-          onAction={showIntercom}
-        />
+          <HelpChatBanner
+            title={HELP_COPY.chat.title}
+            subtitle={HELP_COPY.chat.subtitle}
+            actionLabel={HELP_COPY.chat.button}
+            onAction={showIntercom}
+          />
         )
       }
     >

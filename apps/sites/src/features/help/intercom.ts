@@ -7,8 +7,6 @@ import { useEffect, useState } from "react";
 
 export type IntercomSettings = {
   readonly alignment?: "left" | "right";
-  readonly horizontalPadding?: number;
-  readonly verticalPadding?: number;
 };
 
 type IntercomFn = (...args: unknown[]) => void;
@@ -88,22 +86,34 @@ export function showIntercom(): boolean {
 }
 
 /**
- * Boots the widget for this page and shuts it down when the page unmounts. `wallet` rides along as the `Wallet`
- * attribute, as on decentraland.org, so support sees which account is asking. An empty `appId` loads nothing.
- * Returns whether the chat can open: false when it is switched off or its script failed to load.
+ * Whether this page has booted the messenger since the last shutdown. A shutdown ends the session, and only `boot`
+ * starts a new one: `update` after a shutdown changes nothing, so returning to the page must boot again.
+ */
+let booted = false;
+
+/**
+ * Boots the widget for this page and shuts it down when the page unmounts or the wallet changes, so the next account
+ * starts its own conversation. `wallet` rides along as the `Wallet` attribute, as on decentraland.org, so support
+ * sees which account is asking. An empty `appId` loads nothing. Returns whether the chat can open: false when it is
+ * switched off or its script failed to load.
  */
 export function useIntercom(appId: string, settings: IntercomSettings, wallet?: string | null): boolean {
-  const { alignment, horizontalPadding, verticalPadding } = settings;
+  const { alignment } = settings;
   const [failed, setFailed] = useState<string | null>(null);
   useEffect(() => {
     if (!appId) return;
     let active = true;
-    loadIntercom(appId, { alignment, horizontalPadding, verticalPadding })
+    loadIntercom(appId, { alignment })
       .then(() => {
         const fn = client();
         if (!active || !fn) return;
-        fn("reattach_activator");
-        fn("update", { ...(wallet ? { Wallet: wallet } : {}), app_id: appId });
+        const attributes = { app_id: appId, alignment, ...(wallet ? { Wallet: wallet } : {}) };
+        if (booted) {
+          fn("update", attributes);
+        } else {
+          fn("boot", attributes);
+          booted = true;
+        }
       })
       .catch((error: unknown) => {
         console.error("Could not render Intercom", error instanceof Error ? error.message : error);
@@ -112,7 +122,8 @@ export function useIntercom(appId: string, settings: IntercomSettings, wallet?: 
     return () => {
       active = false;
       client()?.("shutdown");
+      booted = false;
     };
-  }, [appId, alignment, horizontalPadding, verticalPadding, wallet]);
+  }, [appId, alignment, wallet]);
   return Boolean(appId) && failed !== appId;
 }

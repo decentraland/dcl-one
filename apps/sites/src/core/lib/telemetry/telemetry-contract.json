@@ -2849,6 +2849,10 @@
         }
       }
     },
+    "lp_help_viewed": {
+      "loose": false,
+      "props": {}
+    },
     "lp_home_download_clicked": {
       "loose": false,
       "props": {

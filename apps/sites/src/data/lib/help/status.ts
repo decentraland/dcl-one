@@ -46,7 +46,8 @@ function isHttpsUrl(value: unknown): value is string {
 
 /**
  * The service list a deployment configures as JSON (`[{"name": "...", "url": "https://..."}]`). Anything else,
- * including an empty list or one entry that is not an https URL, falls back to the defaults.
+ * including an empty list, an entry that is not an https URL or two entries with the same name (the name identifies
+ * a service in the list), falls back to the defaults.
  */
 export function parseStatusServices(raw: string | undefined): readonly Service[] {
   if (!raw || raw.trim() === "") return DEFAULT_STATUS_SERVICES;
@@ -62,6 +63,7 @@ export function parseStatusServices(raw: string | undefined): readonly Service[]
     if (!entry || typeof entry !== "object") return DEFAULT_STATUS_SERVICES;
     const { name, url } = entry as { name?: unknown; url?: unknown };
     if (typeof name !== "string" || name.trim() === "" || !isHttpsUrl(url)) return DEFAULT_STATUS_SERVICES;
+    if (services.some((service) => service.name === name.trim())) return DEFAULT_STATUS_SERVICES;
     services.push({ name: name.trim(), url });
   }
   return services;
@@ -113,6 +115,8 @@ export const serviceStatusQuery = (services: readonly Service[], fetchImpl?: typ
   queryOptions({
     queryKey: serviceStatusKeys.all(services),
     staleTime: SERVICE_STATUS_STALE_MS,
+    // One round of pings per visit, as on decentraland.org: returning to the tab does not ping every service again.
+    refetchOnWindowFocus: false,
     queryFn: ({ signal }): Promise<ServiceResult[]> =>
       Promise.all(
         services.map(async (service) => ({

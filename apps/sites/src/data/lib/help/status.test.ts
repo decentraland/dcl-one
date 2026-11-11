@@ -1,4 +1,4 @@
-import { QueryClient } from "@tanstack/react-query";
+import { focusManager, QueryClient, QueryObserver } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -100,6 +100,7 @@ describe("parseStatusServices", () => {
     ["an http URL", JSON.stringify([{ name: "A", url: "http://service-a.example/about" }])],
     ["a non-URL", JSON.stringify([{ name: "A", url: "service-a" }])],
     ["a null entry", JSON.stringify([null])],
+    ["two entries with the same name", JSON.stringify([{ name: "A", url: URL_A }, { name: " A", url: URL_B }])],
   ])("falls back to the production services when the value is %s", (_label, raw) => {
     expect(parseStatusServices(raw)).toBe(DEFAULT_STATUS_SERVICES);
   });
@@ -140,5 +141,27 @@ describe("serviceStatusQuery", () => {
       { name: "A", state: "ok" },
       { name: "B", state: "down" },
     ]);
+  });
+
+  it("does not ping the services again when the window regains focus", async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 200 }));
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 0 } } });
+    const options = serviceStatusQuery([{ name: "A", url: URL_A }], fetchImpl);
+    // Stale at once, so only refetchOnWindowFocus decides whether a focus pings again.
+    const observer = new QueryObserver(client, { ...options, staleTime: 0 });
+    client.mount();
+    const unsubscribe = observer.subscribe(() => {});
+    try {
+      await vi.waitFor(() => expect(observer.getCurrentResult().isSuccess).toBe(true));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      focusManager.setFocused(false);
+      focusManager.setFocused(true);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      unsubscribe();
+      client.unmount();
+      focusManager.setFocused(undefined);
+    }
   });
 });

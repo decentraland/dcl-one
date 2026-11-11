@@ -4,15 +4,15 @@ import styles from './HelpTabs.module.css'
 
 type HelpTabIcon = 'faq' | 'creatorFund' | 'supportUpdates'
 
-type HelpTab = { id: string; label: string; icon: HelpTabIcon }
+type HelpTab<Id extends string = string> = { id: Id; label: string; icon: HelpTabIcon }
 
-type HelpTabsProps = {
-  tabs: readonly HelpTab[]
-  active: string
-  onChange: (id: string) => void
+type HelpTabsProps<Id extends string = string> = {
+  tabs: readonly HelpTab<Id>[]
+  active: Id
+  onChange: (id: Id) => void
   /** Names the tab list for assistive technology. */
   label: string
-  tabId: (id: string) => string
+  tabId: (id: Id) => string
   panelId: string
 }
 
@@ -27,8 +27,15 @@ const ICONS = {
  * list is a column on wide screens and wrapping rows on phones), Home and End move focus and select.
  * TODO(figma-ds): replace with the design system's Tabs once it exists.
  */
-function HelpTabs({ tabs, active, onChange, label, tabId, panelId }: HelpTabsProps) {
-  const refs = useRef(new Map<string, HTMLButtonElement>())
+function HelpTabs<Id extends string>({
+  tabs,
+  active,
+  onChange,
+  label,
+  tabId,
+  panelId
+}: HelpTabsProps<Id>) {
+  const refs = useRef(new Map<Id, HTMLButtonElement>())
 
   const select = (index: number) => {
     const tab = tabs[(index + tabs.length) % tabs.length]

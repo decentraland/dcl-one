@@ -16,6 +16,9 @@ vi.hoisted(() =>
   }),
 );
 
+const auth = vi.hoisted(() => ({ address: null as string | null }));
+vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ address: auth.address }) }));
+
 const UP = "https://up.example/about";
 const DOWN = "https://down.example/about";
 const SERVICES = [
@@ -32,17 +35,20 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  auth.address = null;
   vi.unstubAllGlobals();
   delete (window as Window & { Intercom?: unknown }).Intercom;
 });
 
 function renderView(props: Partial<HelpViewProps> = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const tree = () => (
     <QueryClientProvider client={client}>
       <HelpView services={SERVICES} statusPageUrl="https://status.example/" intercomAppId="" {...props} />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree());
+  return { ...view, rerenderView: () => view.rerender(tree()) };
 }
 
 const panel = () => screen.getByRole("tabpanel");
@@ -248,5 +254,22 @@ describe("HelpView chat banner", () => {
     const script = document.querySelector('script[data-intercom="app-test"]');
     script?.dispatchEvent(new Event("error"));
     await waitFor(() => expect(screen.queryByRole("button", { name: "CHAT NOW" })).toBeNull());
+  });
+
+  it("tells the chat the signed-in wallet, and restarts it without one after signing out", async () => {
+    const WALLET = "0x" + "ab".repeat(20);
+    auth.address = WALLET;
+    const view = renderView({ intercomAppId: "app-test" });
+    const queue = (window as Window & { Intercom?: { q: unknown[][] } }).Intercom!;
+    document.querySelector('script[data-intercom="app-test"]')!.dispatchEvent(new Event("load"));
+    await waitFor(() =>
+      expect(queue.q).toEqual([["boot", { app_id: "app-test", alignment: "right", Wallet: WALLET }]]),
+    );
+
+    auth.address = null;
+    view.rerenderView();
+    await waitFor(() =>
+      expect(queue.q.slice(1)).toEqual([["shutdown"], ["boot", { app_id: "app-test", alignment: "right" }]]),
+    );
   });
 });

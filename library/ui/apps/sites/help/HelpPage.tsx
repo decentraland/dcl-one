@@ -2,12 +2,12 @@ import { useId, type ReactNode } from 'react'
 import { HelpTabs, type HelpTab } from './HelpTabs'
 import styles from './HelpPage.module.css'
 
-type HelpPageProps = {
+type HelpPageProps<Id extends string = string> = {
   title: string
   description: string
-  tabs: readonly HelpTab[]
-  activeTab: string
-  onTabChange: (id: string) => void
+  tabs: readonly HelpTab<Id>[]
+  activeTab: Id
+  onTabChange: (id: Id) => void
   /** The system status control: beside the title on phones, at the right of the content on wider screens. */
   status: ReactNode
   /** The active tab's section. */
@@ -20,7 +20,7 @@ type HelpPageProps = {
  * The help center frame: the title, intro and section tabs in a left column, the active section beside them and
  * the system status at the right. Phones stack it, with the status beside the title and the tabs wrapping onto rows.
  */
-function HelpPage({
+function HelpPage<Id extends string>({
   title,
   description,
   tabs,
@@ -29,9 +29,9 @@ function HelpPage({
   status,
   children,
   banner
-}: HelpPageProps) {
+}: HelpPageProps<Id>) {
   const prefix = useId()
-  const tabId = (id: string) => `${prefix}-tab-${id}`
+  const tabId = (id: Id) => `${prefix}-tab-${id}`
   const panelId = `${prefix}-panel`
 
   return (
