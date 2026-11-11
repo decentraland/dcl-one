@@ -352,12 +352,40 @@ describe('figma from a consuming project', () => {
     }, 30_000)
   })
 
+  describe('when the CLI resolves an instance with a boolean property', () => {
+    it('should pass --boolean as booleanProperties and warn about one the mapping does not read', async () => {
+      const root = path.join(libraryRoot, 'components')
+      const { stdout } = await cli([
+        'resolve',
+        '--mapping-only',
+        '--mapping-root',
+        root,
+        '--name',
+        'Button',
+        '--variant',
+        'Property 1=Terciary',
+        '--boolean',
+        'Icon=false'
+      ])
+      const result = JSON.parse(stdout)
+
+      expect(result.ok).toBe(true)
+      expect(result.warnings).toContainEqual(
+        expect.objectContaining({
+          code: 'unmapped-figma-property',
+          details: expect.objectContaining({ property: 'Icon' })
+        })
+      )
+    }, 30_000)
+  })
+
   describe('when the CLI receives malformed resolve flags', () => {
     it.each([
       [['--text', 'Label'], '--text takes "Name=Value"'],
       [['--text', '=Go'], '--text takes "Name=Value"'],
       [['--text', 'Label=a', '--text', 'Label=b'], '--text names "Label" twice'],
       [['--variant', 'Blocked'], '--variant takes "Name=Value"'],
+      [['--boolean', 'Icon'], '--boolean takes "Name=Value"'],
       [['--text', '__proto__=a', '--text', '__proto__=b'], '--text names "__proto__" twice'],
       [['--config', 'missing.json'], 'Figma config not found'],
       [['--batch', '-'], '--batch takes its instances from the file']
@@ -382,7 +410,14 @@ describe('figma from a consuming project', () => {
         ['review-manifest', '--mapping-only'],
         '--mapping-only applies only to resolve and check-mappings'
       ],
-      [['check-mappings', '--mapping-only', '--batch', 'x.json'], '--batch applies only to resolve']
+      [
+        ['check-mappings', '--mapping-only', '--batch', 'x.json'],
+        '--batch applies only to resolve'
+      ],
+      [
+        ['check-mappings', '--mapping-only', '--boolean', 'Icon=true'],
+        '--boolean applies only to resolve'
+      ]
     ])(
       'should refuse %j',
       async (args, message) => {

@@ -72,7 +72,8 @@ async function readManifest(dir) {
   } catch (error) {
     // No manifest, or a skill path that is a file: either way the kit did not install it.
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') return undefined
-    throw error
+    // Present but unreadable (EACCES, a directory named .kit.json): install --force replaces it, check reports it.
+    return { invalid: `${file} cannot be read (${error.code ?? 'error'})` }
   }
   try {
     const manifest = JSON.parse(text)
@@ -221,6 +222,10 @@ async function installKit({ target, force = false, linkAgents = false, kitRoot =
           `${destination} exists and was not installed by this kit. Use --force to replace it.`
         )
       if (current.invalid) throw new Error(`${current.invalid}. Use --force to replace it.`)
+      if (current.library !== library.name)
+        throw new Error(
+          `${destination} was installed by the kit of ${current.library}, not ${library.name}. Use --force to replace it.`
+        )
       const order = compareVersions(current.version, library.version)
       if (order === undefined)
         throw new Error(
@@ -300,16 +305,24 @@ async function checkKit({ target, kitRoot = defaultKitRoot }) {
       continue
     }
     manifests.push(recorded)
-    if (recorded.version !== library.version) {
+    if (recorded.library !== library.name) {
+      problems.push({
+        skill: name,
+        reason: 'stale',
+        message: `${name} was installed by the kit of ${recorded.library}, not ${library.name}. Run install --force.`
+      })
+    } else if (recorded.version !== library.version) {
       // install refuses a newer or unordered version without --force, so check names the command that works.
       const order = compareVersions(recorded.version, library.version)
       problems.push({
         skill: name,
         reason: 'stale',
         message:
-          order !== undefined && order < 0
-            ? `${name} is ${recorded.version}, ${library.name}@${library.version} ships a newer version. Run install.`
-            : `${name} is ${recorded.version}, newer than or not comparable with ${library.name}@${library.version}. Upgrade the library, or run install --force to downgrade.`
+          order === undefined || order > 0
+            ? `${name} is ${recorded.version}, newer than or not comparable with ${library.name}@${library.version}. Upgrade the library, or run install --force to downgrade.`
+            : order < 0
+              ? `${name} is ${recorded.version}, ${library.name}@${library.version} ships a newer version. Run install.`
+              : `${name} is ${recorded.version}, the same version as ${library.name}@${library.version} with other build metadata. Run install.`
       })
     } else if ((await hashDirectory(destination)) !== recorded.hash) {
       problems.push(

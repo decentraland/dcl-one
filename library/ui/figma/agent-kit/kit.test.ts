@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  chmod,
   cp,
   lstat,
   mkdir,
@@ -31,10 +32,10 @@ async function temp(prefix: string) {
 }
 
 // A copy of the kit under a package.json of another version, to simulate an upgraded library.
-async function kitAtVersion(version: string) {
+async function kitAtVersion(version: string, name = '@dcl/one-ui') {
   const root = await temp('figma-kit-')
   await cp(import.meta.dirname, path.join(root, 'figma/agent-kit'), { recursive: true })
-  await writeFile(path.join(root, 'package.json'), JSON.stringify({ name: '@dcl/one-ui', version }))
+  await writeFile(path.join(root, 'package.json'), JSON.stringify({ name, version }))
   return path.join(root, 'figma/agent-kit')
 }
 
@@ -119,6 +120,46 @@ describe('installKit', () => {
         'implement-figma-design'
       ])
       expect(await checkKit({ target })).toMatchObject({ ok: true })
+    })
+  })
+
+  describe.each([
+    ['unreadable', (file: string) => chmod(file, 0o000)],
+    [
+      'a directory',
+      async (file: string) => {
+        await rm(file)
+        await mkdir(file)
+      }
+    ]
+  ])('when an installed manifest is %s', (_label, make) => {
+    it('should refuse without --force, repair with --force, and be reported by check', async () => {
+      const target = await temp('consumer-')
+      await installKit({ target })
+      await make(path.join(target, '.claude/skills/implement-figma-design/.kit.json'))
+
+      expect((await checkKit({ target })).problems).toEqual([
+        expect.objectContaining({ skill: 'implement-figma-design', reason: 'modified' })
+      ])
+      await expect(installKit({ target })).rejects.toThrow(/cannot be read/)
+      expect((await installKit({ target, force: true })).installed).toEqual([
+        'implement-figma-design'
+      ])
+      expect(await checkKit({ target })).toMatchObject({ ok: true })
+    })
+  })
+
+  describe('when a skill was installed by another library kit at the same version', () => {
+    it('should refuse without --force and report it in check', async () => {
+      const target = await temp('consumer-')
+      await installKit({ target, kitRoot: await kitAtVersion(packageVersion, '@other/ui') })
+
+      expect((await checkKit({ target })).problems.map((p) => p.message)).toEqual([
+        expect.stringMatching(/installed by the kit of @other\/ui/),
+        expect.stringMatching(/installed by the kit of @other\/ui/)
+      ])
+      await expect(installKit({ target })).rejects.toThrow(/installed by the kit of @other\/ui/)
+      expect((await installKit({ target, force: true })).installed).toHaveLength(2)
     })
   })
 
@@ -294,6 +335,22 @@ describe('checkKit', () => {
       const result = await checkKit({ target })
 
       expect(result.problems.map((p) => p.reason)).toEqual(['not-installed', 'not-installed'])
+    })
+  })
+
+  describe('when the installed skill differs only in build metadata', () => {
+    it('should report it as stale and name plain install, which accepts it', async () => {
+      const target = await temp('consumer-')
+      await installKit({ target, kitRoot: await kitAtVersion(`${packageVersion}+build.1`) })
+
+      const messages = (await checkKit({ target })).problems.map((p) => p.message)
+
+      expect(messages).toHaveLength(2)
+      for (const message of messages) {
+        expect(message).toMatch(/build metadata\. Run install\.$/)
+        expect(message).not.toMatch(/--force/)
+      }
+      expect((await installKit({ target })).installed).toHaveLength(2)
     })
   })
 

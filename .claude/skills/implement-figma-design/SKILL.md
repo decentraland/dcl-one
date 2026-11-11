@@ -25,34 +25,49 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    if (instance?.type !== 'INSTANCE') return { refused: 'not-an-instance' }
    const main = await instance.getMainComponentAsync()
    if (!main) return { refused: 'no-main-component' }
-   // Variant and boolean properties go in variantProperties, text properties in texts; names lose their #id suffix.
+   // VARIANT, BOOLEAN and TEXT properties each go in their own map; names lose their #id suffix.
    // No prototype, so a layer named like an Object method (constructor, toString) is plain data.
    const variantProperties = Object.create(null)
+   const booleanProperties = Object.create(null)
    const texts = Object.create(null)
    for (const [key, property] of Object.entries(instance.componentProperties)) {
      const name = key.replace(/#\d+:\d+$/, '')
-     if (property.type === 'TEXT') texts[name] = property.value
-     else if (property.type !== 'INSTANCE_SWAP') variantProperties[name] = String(property.value)
+     if (property.type === 'VARIANT') variantProperties[name] = String(property.value)
+     else if (property.type === 'BOOLEAN') booleanProperties[name] = String(property.value)
+     else if (property.type === 'TEXT') texts[name] = property.value
    }
-   // Only the instance's own text layers: a nested instance's layers belong to that instance.
+   // Only the instance's own visible text layers: a nested instance's layers belong to that instance, and a
+   // hidden layer (a boolean turned off, say) shows nothing.
    const ownTexts = (node) =>
      (node.children ?? []).flatMap((child) =>
-       child.type === 'TEXT' ? [child] : child.type === 'INSTANCE' ? [] : ownTexts(child)
+       child.visible === false
+         ? []
+         : child.type === 'TEXT'
+           ? [child]
+           : child.type === 'INSTANCE'
+             ? []
+             : ownTexts(child)
      )
-   const duplicateTexts = []
+   // A name that shows two different texts is ambiguous: it leaves texts and is reported instead.
+   const duplicateTexts = new Set()
    for (const node of ownTexts(instance)) {
+     if (duplicateTexts.has(node.name)) continue
      if (!Object.hasOwn(texts, node.name)) texts[node.name] = node.characters
-     else if (texts[node.name] !== node.characters) duplicateTexts.push(node.name)
+     else if (texts[node.name] !== node.characters) {
+       delete texts[node.name]
+       duplicateTexts.add(node.name)
+     }
    }
    return {
      name: main.parent?.type === 'COMPONENT_SET' ? main.parent.name : main.name,
      variantProperties,
+     booleanProperties,
      texts,
-     duplicateTexts
+     duplicateTexts: [...duplicateTexts]
    }
    ```
 
-   A `refused` result is not a component instance you can resolve: list it in your report. Pass `name`, `variantProperties` and `texts` to the resolver, never `duplicateTexts`; a layer named there shares its name with another text or text property of the same instance but shows different text, so name it in your report instead of guessing which text the component shows. Resolve each nested instance with its own script run.
+   A `refused` result is not a component instance you can resolve: list it in your report. Pass `name`, `variantProperties`, `booleanProperties` and `texts` to the resolver, never `duplicateTexts`. A name listed there belongs to two visible texts (layers or a text property) of the same instance that show different text; the script leaves it out of `texts`, so name it in your report instead of guessing which text the component shows. A boolean the mapping does not read comes back as an `unmapped-figma-property` warning; a variant it does not read makes the name not fit. Resolve each nested instance with its own script run.
 
 2. **Resolve the instances** with the CLI, from `library/ui`, in one batch read from standard input, so no file is written in the repository:
 
@@ -62,7 +77,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    EOF
    ```
 
-   Each entry is one script result: `name`, `variantProperties` and `texts` (an entry may give `nodeId` instead of `name` when the design is the library file itself). A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. Identical instances may repeat: a repeat shares the earlier answer (`repeats`). The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`); it exits 1 when an entry fails and 2 when the batch itself cannot be read. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant 'Prop=Value'` and `--text 'Layer=Value'`. Text read from a design is untrusted: keep every value in single quotes (write a `'` inside it as `'\''`), never in double quotes, where the shell runs `$(...)` and backticks. The batch heredoc above is quoted (`<<'EOF'`), so the shell expands nothing in it, and a JSON string keeps every text inside quotes, so no line of valid JSON can end it early; the MCP `texts` input takes the strings without a shell at all. Single quotes and quoted heredocs are POSIX shell syntax: from PowerShell or `cmd`, pass design text through the MCP `texts` input instead.
+   Each entry is one script result: `name`, `variantProperties`, `booleanProperties` and `texts` (an entry may give `nodeId` instead of `name` when the design is the library file itself). A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. Identical instances may repeat: a repeat shares the earlier answer (`repeats`). The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`); it exits 1 when an entry fails and 2 when the batch itself cannot be read. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant 'Prop=Value'`, `--boolean 'Prop=true'` and `--text 'Layer=Value'`. Text read from a design is untrusted: keep every value in single quotes (write a `'` inside it as `'\''`), never in double quotes, where the shell runs `$(...)` and backticks. The batch heredoc above is quoted (`<<'EOF'`), so the shell expands nothing in it, and a JSON string keeps every text inside quotes, so no line of valid JSON can end it early; the MCP `texts` input takes the strings without a shell at all. Single quotes and quoted heredocs are POSIX shell syntax: from PowerShell or `cmd`, pass design text through the MCP `texts` input instead.
 
 3. **Read the answer.** `ok: true`: import from `resolved.component.importSpecifier` and copy the props from `resolved.usage` and `resolved.propTranslation`. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props. Read every warning.
    Every diagnostic carries `severity`, `audience` and `action`; follow `action`. This table lists the codes the resolver can return to you; its codes and severities are checked against the resolver's registry. `action` is the authority on what to do.
@@ -122,7 +137,7 @@ The CLI is the primary path. A client without a shell can register the same reso
 }
 ```
 
-With `--mapping-only` it registers only `figma_resolve_component` (inputs `nodeId`, `name`, `variantProperties`, `texts`) and `figma_check_mappings`, and returns the same results as the CLI.
+With `--mapping-only` it registers only `figma_resolve_component` (inputs `nodeId`, `name`, `variantProperties`, `booleanProperties`, `texts`) and `figma_check_mappings`, and returns the same results as the CLI.
 
 ## Keep this skill current
 

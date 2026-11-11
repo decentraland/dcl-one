@@ -24,6 +24,9 @@ type ResolveInput = {
   nodeId?: string
   name?: string
   variantProperties?: Record<string, string>
+  // Figma BOOLEAN component properties, "true" or "false": kept apart from VARIANT properties because a
+  // boolean the mapping does not read is only a warning, while an unread variant is a misfit.
+  booleanProperties?: Record<string, string>
   texts?: Record<string, string>
 }
 
@@ -154,6 +157,19 @@ function identify(
       ]
     }
   }
+  const notBoolean = Object.entries(input.booleanProperties ?? {}).find(
+    ([, value]) => value !== 'true' && value !== 'false'
+  )
+  if (notBoolean)
+    return {
+      errors: [
+        diagnostic(
+          'invalid-input',
+          `The boolean property "${notBoolean[0]}" must be "true" or "false", as Figma reports it.`,
+          { property: notBoolean[0], value: notBoolean[1] }
+        )
+      ]
+    }
   if (input.nodeId) {
     const id = normalizeNodeId(input.nodeId)
     const set = ctx.figmaSets.find(
@@ -222,7 +238,10 @@ function renderUsage(
       const picked = own(selection, local.figmaProperty)
       values.set(local.local, picked !== undefined ? (own(local.values, picked) ?? '') : '')
     } else if (local.kind === 'boolean') {
-      const picked = own(selection, local.figmaProperty)?.toLowerCase()
+      const picked = (
+        own(selection, local.figmaProperty) ??
+        (input.booleanProperties && own(input.booleanProperties, local.figmaProperty))
+      )?.toLowerCase()
       values.set(local.local, TRUE_WORDS.includes(picked ?? '') ? local.whenTrue : local.whenFalse)
     } else if (local.kind === 'string') {
       values.set(
@@ -562,6 +581,25 @@ async function resolveComponent(ctx: ResolveContext, input: ResolveInput): Promi
             property,
             supported: [...reads.keys(), ...mapping.header.states]
           }
+        )
+      )
+  }
+  for (const [property, value] of Object.entries(input.booleanProperties ?? {})) {
+    const kind = reads.get(property)
+    if (kind === 'enum')
+      return failure([
+        diagnostic(
+          'variant-unsupported',
+          `"${property}" is a boolean in the design, but the mapping reads it as a variant.`,
+          { property, value, supported: [...reads.keys()] }
+        )
+      ])
+    if (kind === undefined && !mapping.header.states.includes(property))
+      warnings.push(
+        diagnostic(
+          'unmapped-figma-property',
+          `The mapping does not read the boolean property "${property}".`,
+          { property, supported: [...reads.keys(), ...mapping.header.states] }
         )
       )
   }

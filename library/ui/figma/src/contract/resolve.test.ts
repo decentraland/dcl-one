@@ -442,8 +442,20 @@ describe('resolveComponent', () => {
       })
     })
 
+    const withBooleans = (
+      variantProperties: Record<string, string>,
+      booleanProperties: Record<string, string>
+    ) =>
+      library().then(({ mappingRoot }) =>
+        resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+          name: 'Button',
+          variantProperties,
+          booleanProperties
+        })
+      )
+
     it('should resolve with an unread boolean property and warn that the mapping does not read it', async () => {
-      const result = await named('Button', { Kind: 'Secondary', 'Show icon': 'false' })
+      const result = await withBooleans({ Kind: 'Secondary' }, { 'Show icon': 'false' })
 
       expect(result.ok && result.resolved.usage).toBe('<Button kind="secondary">Label</Button>')
       expect(result.warnings).toContainEqual(
@@ -454,19 +466,43 @@ describe('resolveComponent', () => {
       )
     })
 
-    it.each([
-      ['a boolean alone', { 'Show icon': 'true' }, 'name-unconfirmed'],
-      [
-        'an unread property with a value other than true or false',
-        { Kind: 'Primary', Size: 'True' },
-        'name-incompatible'
-      ]
-    ])('should still refuse %s', async (_label, properties, reason) => {
-      const result = await named('Button', properties)
+    // The nearest false positive of the boolean rule: a two-state VARIANT the mapping does not read.
+    it.each([['true'], ['false'], ['True']])(
+      'should still refuse an unread variant valued %s',
+      async (value) => {
+        const result = await named('Button', { Kind: 'Primary', Destructive: value })
 
-      expect(codes(result)).toEqual(['identity-uncertain'])
-      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason })
+        expect(codes(result)).toEqual(['identity-uncertain'])
+        expect(!result.ok && result.errors[0]!.details).toMatchObject({
+          reason: 'name-incompatible',
+          unknown: ['Destructive']
+        })
+      }
+    )
+
+    it('should refuse a boolean alone, which does not confirm the name', async () => {
+      const result = await withBooleans({}, { 'Show icon': 'true' })
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({ reason: 'name-unconfirmed' })
     })
+
+    it('should refuse a boolean the mapping reads as a variant', async () => {
+      const result = await withBooleans({ Kind: 'Primary' }, { Blocked: 'true' })
+
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-incompatible',
+        unknown: ['Blocked']
+      })
+    })
+
+    it.each([['True'], ['yes'], ['']])(
+      'should refuse the boolean value %j as invalid input',
+      async (value) => {
+        const result = await withBooleans({ Kind: 'Primary' }, { 'Show icon': value })
+
+        expect(codes(result)).toEqual(['invalid-input'])
+      }
+    )
 
     it('should refuse a value the mapping does not support as incompatible, not as a missing variant', async () => {
       const result = await named('Button', { Kind: 'Tertiary' })
@@ -727,6 +763,33 @@ describe('resolveComponent', () => {
             .replace('${disabled}', '${blocked}')
         }
       })
+
+    it('should render a boolean the mapping reads from booleanProperties', async () => {
+      const { mappingRoot } = await booleanMapping()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary' },
+        booleanProperties: { Blocked: 'true' }
+      })
+
+      expect(result.ok && result.resolved.usage).toBe(
+        '<Button kind="primary" disabled>Label</Button>'
+      )
+      expect(result.warnings.map((w) => w.code)).not.toContain('unmapped-figma-property')
+    })
+
+    it('should refuse, with a node id, a boolean the mapping reads as a variant', async () => {
+      const { mappingRoot } = await library()
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '1:1',
+        variantProperties: { Kind: 'Primary' },
+        booleanProperties: { Blocked: 'true' }
+      })
+
+      expect(codes(result)).toEqual(['variant-unsupported'])
+    })
 
     it('should warn, as the capture path does, about a property the mapping does not read', async () => {
       const { mappingRoot } = await booleanMapping()
