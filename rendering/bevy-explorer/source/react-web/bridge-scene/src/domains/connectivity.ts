@@ -1,7 +1,7 @@
 import { BevyApi } from '../bevy-api'
 import type { Ctx } from '../bridge'
 import { relay } from '../system-helpers'
-import type { ConnectivitySnapshot } from '../../../src/engine/generated'
+import type { ConnectivitySnapshot } from '@explorer-core/engine/generated'
 
 export function registerConnectivity(ctx: Ctx): void {
   let latest: ConnectivitySnapshot | null = null

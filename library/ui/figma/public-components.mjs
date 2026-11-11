@@ -5,6 +5,7 @@ import {
   componentConfigPath,
   componentDependencyPaths,
   componentGenerationFile,
+  componentModuleCandidates,
   componentModulePaths,
   componentOutputKind,
   componentRegistryIdentity,
@@ -17,6 +18,12 @@ import { publicComponentProblems } from './public-components-policy.mjs'
 const SCOPE = 'library/ui/components'
 const RUNTIME = 'library/ui/figma/review/src/components/'
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+class InputProblem extends Error {
+  constructor(problem, file) {
+    super(problem + ': ' + file)
+    this.file = file
+  }
+}
 
 /**
  * Fixed classifications and the emitted manifest determine origins, never a lock entry's claimed kind.
@@ -66,15 +73,28 @@ export function publicComponentsProblems(root, lock) {
   const metadata = initial.outputs.get(componentGenerationFile)
   const registry = initial.outputs.get('promotion.json')
   if (!metadata || !registry) return ['missing component generation metadata or registry']
+  const source = lock.sources?.find(
+    (entry) => entry.repository === 'https://github.com/decentraland/figma-design-system'
+  )
   try {
     const bytes = readFileSync(path.join(directory, componentGenerationFile))
     const registryBytes = readFileSync(path.join(directory, 'promotion.json'))
     if (sha256(bytes) !== metadata.sha256 || sha256(registryBytes) !== registry.sha256)
       return ['component metadata changed during inspection']
-    const source = lock.sources?.find(
-      (entry) => entry.repository === 'https://github.com/decentraland/figma-design-system'
-    )
-    const manifest = validateComponentGeneration(bytes, source)
+    // Module bytes select the read-set, so a missing, unsafe or changed module is reported in the inspector's own
+    // words before any of them is trusted.
+    const read = (file) => {
+      const full = path.join(root, file)
+      const stat = lstatSync(full, { throwIfNoEntry: false })
+      if (!stat) throw new InputProblem('missing public input', file)
+      if (!stat.isFile()) throw new InputProblem('unsafe public input', file)
+      const content = readFileSync(full)
+      if (sha256(content) !== source.files[file]?.sha256)
+        throw new InputProblem('changed public input', file)
+      return content
+    }
+    const manifest = validateComponentGeneration(bytes, source, read)
+    const modulePaths = componentModulePaths(source, read)
     if (manifest.registry.sha256 !== registry.sha256)
       return ['component registry differs from emitted plan']
     if (
@@ -82,10 +102,7 @@ export function publicComponentsProblems(root, lock) {
     )
       return ['component visibility differs from emitted plan']
     const inputFiles = new Map(
-      [...componentModulePaths(source), componentConfigPath].map((file) => [
-        file,
-        source.files[file]
-      ])
+      [...modulePaths, componentConfigPath].map((file) => [file, source.files[file]])
     )
     for (const file of componentDependencyPaths) {
       const dependency = manifest.inputs.dependencies.find((entry) => entry.path === file)
@@ -95,12 +112,12 @@ export function publicComponentsProblems(root, lock) {
     if (inspection.problems.length) return inspection.problems
     if (
       JSON.stringify(inspection.indexPaths.filter(isComponentModulePath)) !==
-      JSON.stringify(componentModulePaths(source))
+      JSON.stringify(componentModuleCandidates(source))
     )
       return ['component implementation inventory differs from source lock']
-    validateComponentGeneration(bytes, source, {
+    validateComponentGeneration(bytes, source, read, {
       config: { path: componentConfigPath, ...inspection.inputs.get(componentConfigPath) },
-      modules: componentModulePaths(source).map((file) => ({
+      modules: modulePaths.map((file) => ({
         path: file,
         ...inspection.inputs.get(file)
       })),
@@ -118,6 +135,14 @@ export function publicComponentsProblems(root, lock) {
       transformModules: new Map(manifest.modules.map(({ path, sha256 }) => [path, sha256]))
     })
   } catch (error) {
+    if (error instanceof InputProblem) {
+      // The inspector's full report on that one input (materialized and index identity), never a shorter one.
+      const inputFiles = new Map([[error.file, { sha256: source.files[error.file]?.sha256 }]])
+      const detail = inspectPublicOutput(root, { scope: SCOPE, table, inputFiles }).problems.filter(
+        (problem) => problem.endsWith(': ' + error.file)
+      )
+      return detail.length ? detail : [error.message]
+    }
     return ['invalid component generation metadata: ' + error.message]
   }
 }

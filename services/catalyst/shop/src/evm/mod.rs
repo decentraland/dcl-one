@@ -159,6 +159,9 @@ pub struct Settings {
     pub usd_pegged_slippage_bps: u64,
     /// `DATA_WRITES_ENABLED` (false): the write gate.
     pub data_writes_enabled: bool,
+    /// `OPS_WRITES_ENABLED` (false): the relay's write gate under `CREDITS_TRIAL_MODE`
+    /// ([`router`]), in place of `DATA_WRITES_ENABLED`.
+    pub ops_writes_enabled: bool,
 }
 
 impl Settings {
@@ -199,6 +202,7 @@ impl Settings {
             usd_pegged_oracle_max_age_secs: 60,
             usd_pegged_slippage_bps: 100,
             data_writes_enabled: false,
+            ops_writes_enabled: false,
         }
     }
 
@@ -210,6 +214,7 @@ impl Settings {
             oz_sleep_between_checks: Duration::from_millis(10),
             mana_usd_aggregator: Address::ZERO,
             data_writes_enabled: true,
+            ops_writes_enabled: true,
             ..Self::defaults()
         }
     }
@@ -502,8 +507,22 @@ impl State {
 /// checkout and treasury routers over the same state
 /// (`shop::checkout::router`, `shop::treasury::router`), which hold the
 /// broker, escrow, NAME custody and payments routes.
+///
+/// The gate is `DATA_WRITES_ENABLED`, except under `CREDITS_TRIAL_MODE`. A
+/// trial's relay broadcasts only the trial buyers' meta-transactions, through
+/// its own capped signer ([`Settings::refuse_an_open_trial_relay`],
+/// `TransactionComponent::check_data`): it is how those buyers spend their
+/// credits, so it opens with the credits switch, `OPS_WRITES_ENABLED`, and
+/// answers the credits 503. That plane stores no blobs, so restore stamps
+/// that leave them out release it. The relayer controls stay open on both
+/// gates.
 pub fn router(state: SharedState) -> Router {
-    let enabled = state.settings.data_writes_enabled;
+    let settings = &state.settings;
+    let (trial, data_writes, ops_writes) = (
+        settings.trial_mode,
+        settings.data_writes_enabled,
+        settings.ops_writes_enabled,
+    );
     let api = Router::new()
         .route(
             "/v1/transactions",
@@ -527,8 +546,24 @@ pub fn router(state: SharedState) -> Router {
             post(handlers::admin::relayer_signer),
         )
         .with_state(state);
-    DataWrites::guard(api, enabled)
+    if trial {
+        crate::shared::writes::guard_with(
+            api,
+            crate::shared::writes::Gate {
+                enabled: ops_writes,
+                open_while_disabled: RELAYER_CONTROLS,
+                refuse: crate::credits::writes::refused_response,
+                blobs: false,
+            },
+        )
+    } else {
+        DataWrites::guard(api, data_writes)
+    }
 }
+
+/// The relayer controls: process-local atomics behind the admin bearer, open
+/// while the trial's gate is off, as `DataWrites` keeps them open.
+const RELAYER_CONTROLS: &[&str] = &["/v1/admin/relayer/toggle", "/v1/admin/relayer/signer"];
 
 /// `GET /contracts/addresses.json`, the contract map the old main vhost
 /// served from the node's own tree (root only).

@@ -2,12 +2,12 @@ import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-li
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { ConnectivitySnapshot } from '../engine/generated'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
-import { useConnectivity } from '../features/session/useConnectivity'
-import { FakeDriver } from './harness'
-import { PopupHost, resetPopups } from '../design'
-import { ConnectivityFeedback } from '../features/error/ConnectivityFeedback'
+import type { ConnectivitySnapshot } from '@explorer-core/engine/generated'
+import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
+import { useConnectivity } from '@hud/features/session/useConnectivity'
+import { FakeDriver } from '@hud/test/harness'
+import { PopupHost, resetPopups } from '@hud/design'
+import { ConnectivityFeedback } from '@hud/features/error/ConnectivityFeedback'
 
 const { open, retry } = vi.hoisted(() => ({ open: vi.fn(), retry: vi.fn() }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { getConnectivityStream: open, retryConnectivity: retry } }))

@@ -42,6 +42,14 @@
   padding: var(--dcl-space-48) var(--dcl-space-16);
 }
 
+.wideOffers {
+  display: none;
+}
+
+.narrowOffer {
+  display: block;
+}
+
 .title {
   composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
@@ -64,5 +72,13 @@
   .content {
     gap: var(--dcl-space-24);
     padding: calc(var(--dcl-space-64) + var(--dcl-space-16)) var(--dcl-space-64);
+  }
+
+  .wideOffers {
+    display: block;
+  }
+
+  .narrowOffer {
+    display: none;
   }
 }

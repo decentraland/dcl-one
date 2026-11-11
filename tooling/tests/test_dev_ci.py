@@ -32,7 +32,6 @@ class DevCiTest(unittest.TestCase):
     def test_linux_covered_inputs_skip_macos(self):
         for changed in (['apps/ui3/src/play/Hud.tsx'], ['apps/sites/src/app.ts', 'apps/ui3/package.json'],
                         ['tooling/tests/test_dev.py'], ['tooling/bevy-ci.py'],
-                        ['rendering/bevy-explorer/upstream.lock.json'],
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
                         ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],

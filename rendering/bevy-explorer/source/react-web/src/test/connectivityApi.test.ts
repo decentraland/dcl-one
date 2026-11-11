@@ -2,7 +2,7 @@ import { runInNewContext } from 'node:vm'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import type { ConnectivitySnapshot } from '../engine/generated'
+import type { ConnectivitySnapshot } from '@explorer-core/engine/generated'
 
 it('releases the engine stream when its JS consumer stops and sends Retry through its op', async () => {
   const snapshot: ConnectivitySnapshot = { connectionLost: true, probing: false, everConnected: true, suppressed: false, rooms: [] }

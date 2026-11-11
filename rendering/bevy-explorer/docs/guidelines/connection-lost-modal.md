@@ -14,7 +14,7 @@ separated by 15 pixels. The card uses the prefab's purple surface, rounded
 background, black scrim, glow positions and original image textures. Retry requests
 engine recovery and is disabled while the command is pending. The engine clears the
 offline warning when the retry begins and restores it if the probe fails. The dialog
-follows that state; a failure that finishes between HUD polls leaves the controls
+follows the engine's streamed state; a failed probe leaves the controls
 visible. A failed command also leaves them available. Recovery dismisses the dialog.
 Escape and backdrop clicks cannot dismiss it.
 
@@ -24,7 +24,7 @@ The buttons read **Exit Application** and **Retry**. The message is:
 
 ## Assets and license
 
-These files in `react-web/src/features/error` are unchanged copies from
+These files in `library/ui/apps/hud/features/error` are unchanged copies from
 `decentraland/unity-explorer` at `333aa8826979186f1380058cc75f74b9630e4879`,
 under its [Apache-2.0 license](https://github.com/decentraland/unity-explorer/blob/333aa8826979186f1380058cc75f74b9630e4879/LICENSE).
 The Explorer source tree includes the Apache-2.0 license in `source/LICENSE`.
@@ -35,7 +35,7 @@ The Explorer source tree includes the Apache-2.0 license in `source/LICENSE`.
 | `modal-light.png` | `ModalImgBottomLight.png` |
 | `radial-glow.png` | `RadialGlow.png` |
 
-Both HUD builds bundle their own assets; neither reads a sibling Unity checkout.
+Both HUD hosts bundle these shared assets; neither reads a sibling Unity checkout.
 
 ## Platform differences
 

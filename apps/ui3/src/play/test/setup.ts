@@ -4,7 +4,7 @@ process.env.TZ = 'UTC'
 import '@testing-library/jest-dom/vitest'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import { resetProfileStore } from '../features/session/profileStore'
+import { resetProfileStore } from '@hud/features/session/profileStore'
 
 afterEach(() => {
   cleanup()

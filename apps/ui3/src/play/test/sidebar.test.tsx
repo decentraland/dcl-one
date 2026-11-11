@@ -1,19 +1,13 @@
-import { describe, it, expect, vi, afterEach } from 'vitest'
+// /play's own Sidebar behaviour: its Shop is the in-world Shop. The shared Sidebar tests are
+// library/ui/apps/hud/test/hosted/sidebar.test.tsx.
+import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Sidebar } from '../features/sidebar/Sidebar'
-import { fakeSession } from './harness'
+import { Sidebar } from '@hud/features/sidebar/Sidebar'
+import { fakeSession } from '@hud/test/harness'
 
 // Unity parity for the nav rail (unity-explorer DCL/UI/Sidebar/SidebarView.cs).
-describe('sidebar parity', () => {
-  it.each(['Gallery', 'Places'])('%s uses the Unity art (mask), not a Material glyph', (name) => {
-    render(<Sidebar session={fakeSession()} />)
-    const button = screen.getByRole('button', { name })
-    expect(button.querySelector('svg')).toBeNull()
-    expect(button.querySelector('span[aria-hidden="true"]')).not.toBeNull()
-  })
-
-  // Where it leads (the in-world Shop page, or the web Shop with ?shop=old) is inWorldShopWiring's.
+describe('Sidebar on /play', () => {
   it('Shop sits between Backpack and Camera and opens the in-world Shop', async () => {
     const session = fakeSession()
     render(<Sidebar session={session} />)
@@ -23,30 +17,4 @@ describe('sidebar parity', () => {
     expect(session.shop.toggle).toHaveBeenCalled()
   })
 
-  it('Bug report follows Help and opens public support', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null)
-    render(<Sidebar session={fakeSession()} />)
-    const labels = screen.getAllByRole('button').map((b) => b.getAttribute('aria-label'))
-    expect(labels[labels.indexOf('Help & Support') + 1]).toBe('Report a bug')
-    await userEvent.click(screen.getByRole('button', { name: 'Report a bug' }))
-    const url = new URL(String(open.mock.calls[0][0]))
-    expect(url.href).toBe('https://decentraland.org/help/')
-  })
-
-  it.each([
-    [true, false, 'hearing', true],
-    [true, true, 'speaking', true],
-    [false, false, 'off', false]
-  ])('voice button shows the nearby-voice state (hearing %s, mic %s)', (hearing, enabled, state, dot) => {
-    if (!hearing) localStorage.setItem('nearbyVoiceDisabled', 'true')
-    const s = fakeSession()
-    s.mic = { ...s.mic, available: true, enabled }
-    render(<Sidebar session={s} />)
-    const button = screen.getByRole('button', { name: 'Nearby Voice' })
-    expect(button).toHaveAttribute('data-voice', state)
-    expect(button.querySelector('[data-indicator]') != null).toBe(dot)
-    localStorage.clear()
-  })
 })
-
-afterEach(() => vi.restoreAllMocks())

@@ -77,6 +77,8 @@ The capture is refreshed in figma-design-system, which owns it and documents how
 5. Checks (format, lint, typecheck, tests, build, lock digests, key guard) run in GitHub Actions (`.github/workflows/ui-library.yml`); push and read the CI result instead of running the full suite locally. Run locally only what is needed to debug a failure.
 6. `pnpm review:build` and `pnpm review:check-build` prove the gallery builds, navigates and renders. They do not prove visual parity: comparing a variant with Figma happens in figma-design-system. Never say a component "matches" Figma from this tree.
 
+A tooling edit outside a capture refresh needs less. Every edit under `library/ui/figma` reseals the lock digests (`node figma/lock-digests.mjs --write` after staging, with a deviation code per changed file). A new `pnpm figma install components` is needed only when the edit changes the installer's read-set, which is what `components/generation.json` lists under `modules`: the fixed inputs, the modules the install process loads and any non-code file under `figma/src`. `node figma/lock-digests.mjs` fails with `Incomplete component module identities` or a changed module digest when it is needed. A port input change (any file here that is not a test, a fixture or Markdown) still needs a new `port-verification.json`.
+
 ## Mapper rules (variants to props)
 
 Figma variant names are inconsistent (`Property 1=Primary,Hover=No,Blocked=Yes`, `Terciary`, `Hidding`, `Variant2`). Rules the mapper applies:
