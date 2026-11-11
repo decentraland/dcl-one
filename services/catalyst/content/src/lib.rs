@@ -86,6 +86,7 @@ pub mod available_content;
 pub mod content_get_limit;
 mod deployments;
 pub mod entity_thumbnail;
+mod file_type;
 mod failed_deployments;
 mod fixed_windows;
 pub mod get_content;

@@ -12,13 +12,15 @@ Pinned revisions:
 - Upstream: `decentraland/worlds-content-server` @ `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21).
 - Upstream packages read from their published tarballs (`npm pack`, versions from `yarn.lock`):
   `@dcl/http-commons@2.0.0`, `@dcl/http-server@2.3.0`, `@dcl/schema-validator-component@1.0.1`,
-  `@dcl/schemas@27.1.0`. `file-type@16` and `@dcl/catalyst-storage` were not read; rows that depend
-  on them say so.
+  `@dcl/schemas@27.1.0`. `@dcl/catalyst-storage` was not read; rows that depend on it say so.
+  `file-type@16.5.4` (`core.js`) was read from the checkout's `node_modules` at `d51751d0`, whose
+  `content-file-handler.ts` is the pinned one.
 - dcl-one: origin main `2da8b8aea`, Rust workspace `services/catalyst`.
 
 Everything below is from reading the code; a closed row names the dcl-one test that pins it.
-Nothing was captured from a live server. `file-type@16.5.4` (`core.js`) was read
-from its published tarball for WR-04.
+Nothing was captured from a live server. For WR-04, `capture-sniff.cjs` ran `file-type`'s
+`fromStream` over sample files as `content-file-handler.ts` does; `worlds-sniff.tsv` holds the
+answers.
 
 Files read:
 
@@ -137,8 +139,8 @@ Files read:
 | 10 | POST | `/gc` | `/worlds-content-server/gc` and `/worlds-content-server/admin/gc` → `worlds/src/core/admin.rs:90`; no root route | DIVERGENT |
 
 Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 9, MISSING 1. Every remaining difference on the
-DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's rarer formats and WR-15's
-key order. The cross-cutting rules (404/405,
+DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's unported formats and
+WR-15's key order. The cross-cutting rules (404/405,
 error envelope, CORS, mounts) are in "Common notes" and the backlog.
 
 ---
@@ -166,9 +168,9 @@ mount (`content/src/get_content.rs:95-132,147-281`) at both paths under the pref
 
 | case | upstream | dcl-one |
 |---|---|---|
-| 200 GET | `Content-Type` sniffed by `file-type` `fromStream` on the raw stream (4100-byte sample) else `application/octet-stream`; `ETag: "<hashId>"`; `Access-Control-Expose-Headers: ETag, Accept-Ranges, Content-Range`; `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`; `Accept-Ranges: bytes` (or `Content-Encoding` when compressed); `Content-Length` when known (`content-file-handler.ts:27-69`). | `content_file_headers` (`formatters.rs`): `Content-Type` sniffed from the first 64 bytes by `file_type_extra` then `detect_content_type`, plus a JSON check (`get_content.rs`); `ETag: "<hashId>"` (the client's spelling, also for a SHA-256 key); `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`; the same `Cache-Control`; `Accept-Ranges: bytes`; `Content-Length`. Sniffing differs for rarer formats (WR-04). |
+| 200 GET | `Content-Type` sniffed by `file-type` `fromStream` on the raw stream (4100-byte sample) else `application/octet-stream`; `ETag: "<hashId>"`; `Access-Control-Expose-Headers: ETag, Accept-Ranges, Content-Range`; `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`; `Accept-Ranges: bytes` (or `Content-Encoding` when compressed); `Content-Length` when known (`content-file-handler.ts:27-69`). | `content_file_headers` (`formatters.rs`): `Content-Type` from `file-type`'s checks ported in `content/src/file_type.rs` over the whole file, plus a JSON check (`get_content.rs`); `ETag: "<hashId>"` (the client's spelling, also for a SHA-256 key); `Access-Control-Expose-Headers: ETag, Content-Range, Accept-Ranges, Content-Length`; the same `Cache-Control`; `Accept-Ranges: bytes`; `Content-Length`. Sniffing differs for unported formats (WR-04). |
 | 200 HEAD | Same headers, no body (`get-endpoints.spec.ts:27-40`). | Same headers, sniffed, no body (`get_content.rs:248-261`). MATCH. |
-| 206 | The sniff reads the file's first 4100 bytes (a failed read falls back to octet-stream); `Content-Length` of the window; `Content-Range: bytes S-E/size` (`content-file-handler.ts:176-197`). | The sniff reads bytes 0–63 of the file; same `Content-Length` and `Content-Range`. MATCH except the sniffer (WR-04). |
+| 206 | The sniff reads the file's first 4100 bytes (a failed read falls back to octet-stream); `Content-Length` of the window; `Content-Range: bytes S-E/size` (`content-file-handler.ts:176-197`). | The same sniff over the file's first 4100 bytes; same `Content-Length` and `Content-Range`. MATCH except unported formats (WR-04). |
 | 416 | `Content-Range: bytes */size` only. | `Content-Range: bytes */size` and `Access-Control-Expose-Headers: Content-Range` (`get_content.rs:198-208`). MATCH (one extra header). |
 | 400 | Invalid key: empty body. | Not answered: an invalid key is a 404 (WR-02). |
 | 404 | Missing: empty body. | Empty body (`get_world_content`) (WR-03). |
@@ -366,22 +368,26 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
      `the_worlds_mount_answers_a_legacy_sha256_key_and_the_root_does_not`.
    - Severity: none (closed).
 
-4. **WR-04 · `/contents`, `/ipfs` · the Content-Type sniffer.** Status: open for formats past byte 64.
-   - Upstream: `file-type@16` `fromStream` over a 4100-byte sample; JSON and other text are
-     `application/octet-stream` (`content-file-handler.ts:14-41`).
-   - dcl-one: the worlds mount reads a 64-byte head through `file_type_extra`
-     (`content/src/get_content.rs:140`, read from `file-type@16.5.4` `core.js`): BMP first, the
-     `ftyp` major brands (`avif`, `heic`/`mif1`/`msf1`/`hevc`, `qt`, `M4A`/`M4B`/`M4V`/`F4*`,
-     `3gp`/`3g2`, `crx`), woff/woff2/otf/ttf, FLAC, WebAssembly, RIFF `audio/vnd.wave`/AVI and the
-     Ogg codecs, then `detect_content_type`. A body opening with `{` or `[` is `application/json`
-     (worlds-compatibility.md "Content types"). The root's `?includeMimeType` table is separate.
-     Pinned by `content/src/get_content.rs:803` `the_worlds_mount_reads_file_types_other_signatures`
-     and `worlds_contents_answer_wcs_misses_heads_and_types`.
-   - Proposed fix: none planned; a format a scene needs is added to `file_type_extra` from
-     `core.js`.
-   - Left: formats `file-type` finds past byte 64 or by parsing (an MP3 after an ID3 tag, Matroska
-     versus WebM by doctype, PDF/AI, the rest of its table) answer as `detect_content_type` does.
-   - Severity: P2.
+4. **WR-04 · `/contents`, `/ipfs` · the Content-Type sniffer.** Status: closed for the formats
+   in `worlds-sniff.tsv`.
+   - Upstream: `file-type@16.5.4` `fromStream` over the raw stream, whose size it does not know:
+     the whole file for a GET or HEAD, bytes 0-4099 for a ranged GET. No answer or a throw
+     (a read past the end) is `application/octet-stream`; so are JSON and other text
+     (`content-file-handler.ts:14-41`, `:176-197`).
+   - dcl-one: `content/src/file_type.rs` ports `core.js`'s checks in its order for images (BMP,
+     JPEG, GIF, WebP, PNG/APNG by chunk walk, TIFF and its camera raws, ICO, KTX), glTF binary,
+     audio (ID3 tags skipped and the file read again, MPEG/AAC frames, Ogg codecs, WAV, AIFF, FLAC,
+     MIDI), video (ISO-BMFF brands, QuickTime atoms, WebM/Matroska by EBML doctype, AVI), fonts,
+     PDF/Illustrator (10 MiB scan from byte 1350), WebAssembly, XML, gzip and ZIP. It reads past
+     the first 4100 bytes only where `core.js` does. A file opening with `{` or `[` is
+     `application/json` (worlds-compatibility.md "Content types"). The root's `?includeMimeType`
+     table is separate. Pinned by `content/src/file_type.rs`
+     `the_worlds_sniff_answers_as_file_type` (every `worlds-sniff.tsv` row, whole and ranged) and
+     `content/src/get_content.rs` `the_worlds_sniff_reads_past_the_window_on_a_whole_get_only`.
+   - Left: the rest of `core.js`'s table (archives, office documents, camera, executable and
+     database formats) answers `application/octet-stream`, and a ZIP is `application/zip` without
+     reading its entries (DOCX, EPUB, ODF, 3MF, XPI).
+   - Severity: P3.
 
 5. **WR-05 · `/contents`, `/ipfs` · HEAD with a `Range` header.** Status: MATCH, no work.
    - Upstream: `headContentFile` ignores `Range` and answers 200 with the full length.

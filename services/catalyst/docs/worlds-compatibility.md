@@ -54,12 +54,12 @@ difference not listed here is a gap, not a decision.
   does (upstream: 400). A key on the content denylist answers 404, and with
   `READ_THROUGH_ENABLED` a missing key is fetched from the sync sources
   before the 404.
-- **Content types.** The worlds `/contents` and `/ipfs` routes sniff the
-  file's first 64 bytes with `file-type@16`'s signatures for images (PNG,
-  JPEG, GIF, WebP, BMP, AVIF, HEIC), glTF binary, fonts, the ISO-BMFF brands,
-  MP3, WAV, FLAC, Ogg, WebM, ZIP and WebAssembly; a format that needs more of
-  the file is `application/octet-stream`. A file that opens with `{` or `[`
-  is `application/json` (upstream: `application/octet-stream`).
+- **Content types.** The worlds `/contents` and `/ipfs` routes answer
+  `file-type@16`'s Content-Type for scene formats: images, glTF binary,
+  audio, video, fonts, PDF, WebAssembly, XML, gzip and ZIP. Other formats,
+  and a ZIP's office or EPUB subtypes, are `application/octet-stream` or
+  `application/zip`. A file that opens with `{` or `[` is `application/json`
+  (upstream: `application/octet-stream`).
 - **Conditional reads.** A request whose `If-None-Match` names the ETag gets
   304 on `/contents`, `/ipfs` and `/index`; upstream always answers 200.
 - **Error envelope on 403 and 500.** Worlds routes answer

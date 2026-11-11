@@ -7,9 +7,11 @@ use serde::Deserialize;
 
 use super::SharedState;
 use super::errors::{AppError, AppResult};
+use super::file_type::{SAMPLE, Window, file_type};
 use super::formatters::{
     ParsedRange, check_not_modified, content_file_headers, parse_range_header,
 };
+use super::storage::OpenedContent;
 
 #[derive(Debug, Deserialize)]
 pub struct ContentQuery {
@@ -101,106 +103,27 @@ struct Mount {
     bare_not_found: bool,
 }
 
-/// The bytes the worlds mount sniffs: enough for every signature
-/// [`file_type_extra`] reads (the Ogg codec id ends at byte 36).
-const WORLDS_SNIFF_BYTES: u64 = 64;
 /// The root's sniff window.
 const ROOT_SNIFF_BYTES: u64 = 32;
 
-impl Mount {
-    /// The root answers [`detect_content_type`]'s `file-type` signatures, as
-    /// upstream's catalyst. The worlds mount reads `file-type@16`'s answers for
-    /// the formats in [`file_type_extra`] first, and answers a head that opens
-    /// a JSON object or array as `application/json`, which `file-type` (and so
-    /// worlds-content-server) answers as `application/octet-stream`
-    /// (services/catalyst/docs/worlds-compatibility.md).
-    fn sniff(self, head: &[u8]) -> &'static str {
-        if !self.always_sniff {
-            return detect_content_type(head);
-        }
-        match file_type_extra(head).unwrap_or_else(|| detect_content_type(head)) {
-            "application/octet-stream" if looks_like_json(head) => "application/json",
-            detected => detected,
-        }
-    }
-
-    fn sniff_bytes(self) -> u64 {
-        if self.always_sniff {
-            WORLDS_SNIFF_BYTES
-        } else {
-            ROOT_SNIFF_BYTES
-        }
-    }
-}
-
-/// `file-type@16.5.4` (`core.js`, the version worlds-content-server's `yarn.lock`
-/// pins) for scene-file formats [`detect_content_type`] answers otherwise:
-/// BMP (checked first, as there), the ISO-BMFF major brands, fonts, FLAC,
-/// WebAssembly, RIFF WAV/AVI and the Ogg codecs.
-fn file_type_extra(b: &[u8]) -> Option<&'static str> {
-    let at = |offset: usize, sig: &[u8]| b.get(offset..offset + sig.len()) == Some(sig);
-    if at(0, b"BM") {
-        return Some("image/bmp");
-    }
-    if at(0, b"OggS") {
-        let codec = |sig: &[u8]| at(28, sig);
-        return Some(if codec(b"OpusHead") {
-            "audio/opus"
-        } else if codec(b"\x80theora") || codec(b"\x01video\0") {
-            "video/ogg"
-        } else if codec(b"\x7fFLAC") || codec(b"Speex  ") || codec(b"\x01vorbis") {
-            "audio/ogg"
-        } else {
-            "application/ogg"
-        });
-    }
-    if at(4, b"ftyp") && b.len() >= 12 && b[8] & 0x60 != 0 {
-        let brand = String::from_utf8_lossy(&b[8..12]).replacen('\0', " ", 1);
-        let brand = brand.trim();
-        return Some(match brand {
-            "avif" => "image/avif",
-            "mif1" => "image/heif",
-            "msf1" => "image/heif-sequence",
-            "heic" | "heix" => "image/heic",
-            "hevc" | "hevx" => "image/heic-sequence",
-            "qt" => "video/quicktime",
-            "M4V" | "M4VH" | "M4VP" => "video/x-m4v",
-            "M4B" | "F4A" | "F4B" => "audio/mp4",
-            "M4A" => "audio/x-m4a",
-            "crx" => "image/x-canon-cr3",
-            b if b.starts_with("3g2") => "video/3gpp2",
-            b if b.starts_with("3g") => "video/3gpp",
-            _ => "video/mp4",
-        });
-    }
-    let sfnt = |offset| at(offset, &[0x00, 0x01, 0x00, 0x00]) || at(offset, b"OTTO");
-    if at(0, b"wOFF") && sfnt(4) {
-        return Some("font/woff");
-    }
-    if at(0, b"wOF2") && sfnt(4) {
-        return Some("font/woff2");
-    }
-    if at(0, b"fLaC") {
-        return Some("audio/x-flac");
-    }
-    if at(0, &[0x00, 0x61, 0x73, 0x6D]) {
-        return Some("application/wasm");
-    }
-    if at(0, b"RIFF") {
-        if at(8, b"AVI") {
-            return Some("video/vnd.avi");
-        }
-        if at(8, b"WAVE") {
-            return Some("audio/vnd.wave");
-        }
-    }
-    if at(0, b"OTTO\0") {
-        return Some("font/otf");
-    }
-    if at(0, &[0x00, 0x01, 0x00, 0x00, 0x00]) {
-        return Some("font/ttf");
-    }
-    None
+/// The worlds mount's Content-Type for the file cut at `end`: `file-type`'s answer, else
+/// `application/json` for a head that opens a JSON object or array, which `file-type` (and so
+/// worlds-content-server) answers as `application/octet-stream`
+/// (services/catalyst/docs/worlds-compatibility.md). Also the file's head, with the reader
+/// positioned after it.
+async fn worlds_content_type(
+    opened: &mut OpenedContent,
+    end: u64,
+) -> AppResult<(&'static str, Bytes)> {
+    let mut window = Window::new(opened, end);
+    let detected = file_type(&mut window).await?;
+    let head = window.into_head().await?;
+    let mime = detected.unwrap_or(if looks_like_json(&head) {
+        "application/json"
+    } else {
+        "application/octet-stream"
+    });
+    Ok((mime, head))
 }
 
 /// A head that opens a JSON object or array, after an optional UTF-8 BOM.
@@ -319,12 +242,17 @@ async fn serve(
         }
         Some(ParsedRange::Range { start, end }) => {
             if sniff {
-                // The worlds mount sniffs the file's head, as WCS does; the root the range's.
-                let from = if mount.always_sniff { 0 } else { start };
-                let head = opened
-                    .read_range(from, from + mount.sniff_bytes() - 1)
-                    .await?;
-                set_content_type(&mut base_headers, mount.sniff(&head));
+                // The worlds mount sniffs the file's first `SAMPLE` bytes, as WCS does; the root
+                // the range's head.
+                let mime = if mount.always_sniff {
+                    worlds_content_type(&mut opened, SAMPLE).await?.0
+                } else {
+                    let head = opened
+                        .read_range(start, start + ROOT_SNIFF_BYTES - 1)
+                        .await?;
+                    detect_content_type(&head)
+                };
+                set_content_type(&mut base_headers, mime);
             }
 
             let body = if method == Method::HEAD {
@@ -351,8 +279,13 @@ async fn serve(
     // Upstream sniffs for HEAD as for GET: the headers are the same. The
     // worlds mount sniffs every HEAD, as WCS does.
     let head = if sniff || (method == Method::HEAD && mount.always_sniff) {
-        let head = opened.read_range(0, mount.sniff_bytes() - 1).await?;
-        set_content_type(&mut base_headers, mount.sniff(&head));
+        let (mime, head) = if mount.always_sniff {
+            worlds_content_type(&mut opened, total).await?
+        } else {
+            let head = opened.read_range(0, ROOT_SNIFF_BYTES - 1).await?;
+            (detect_content_type(&head), head)
+        };
+        set_content_type(&mut base_headers, mime);
         head
     } else {
         Bytes::new()
@@ -725,7 +658,16 @@ mod tests {
     #[tokio::test]
     async fn the_worlds_mount_always_sniffs_and_the_root_does_not() {
         let gif = Bytes::from_static(b"GIF89a\x01\x00\x01\x00rest-of-the-image");
-        let png = Bytes::from_static(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3]);
+        // A signature, an IHDR chunk and a one-byte IDAT chunk: `file-type` reads to the IDAT.
+        let png = Bytes::from(
+            [
+                &b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR"[..],
+                &[0; 17],
+                b"\0\0\0\x01IDAT",
+                &[0; 5],
+            ]
+            .concat(),
+        );
         let node = TestNode::without_db("content-world-sniff").await;
         let gif_cid = crate::auth::hash_bytes_v1(&gif);
         node.store(&gif_cid, gif.clone()).await;
@@ -776,11 +718,11 @@ mod tests {
             );
         }
         assert_eq!(
-            Mount::sniff(ROOT, &json),
+            detect_content_type(&json),
             "application/octet-stream",
             "the root with includeMimeType"
         );
-        assert_eq!(Mount::sniff(ROOT, b"GIF87a\x01\x00"), "image/gif");
+        assert_eq!(detect_content_type(b"GIF87a\x01\x00"), "image/gif");
 
         let resp = get(&node, Method::GET, None, None).await.unwrap();
         assert_eq!(
@@ -798,42 +740,52 @@ mod tests {
         assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
     }
 
-    /// `file-type@16.5.4` `core.js` on the worlds mount; the root keeps its table.
-    #[test]
-    fn the_worlds_mount_reads_file_types_other_signatures() {
-        let mut ogg_opus = b"OggS".to_vec();
-        ogg_opus.resize(28, 0);
-        ogg_opus.extend_from_slice(b"OpusHead");
-        let cases: [(&[u8], &str); 12] = [
-            (b"BM\x36\x00\x00\x00", "image/bmp"),
-            (b"\x00\x00\x00\x1cftypavif\x00\x00\x00\x00", "image/avif"),
-            (
-                b"\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00",
-                "video/quicktime",
-            ),
-            (b"\x00\x00\x00\x20ftypM4A \x00\x00\x00\x00", "audio/x-m4a"),
-            (b"\x00\x00\x00\x20ftypisom\x00\x00\x02\x00", "video/mp4"),
-            (b"wOFF\x00\x01\x00\x00", "font/woff"),
-            (b"wOF2OTTO", "font/woff2"),
-            (b"OTTO\x00\x0a", "font/otf"),
-            (b"\x00\x01\x00\x00\x00\x0f", "font/ttf"),
-            (b"fLaC\x00\x00\x00\x22", "audio/x-flac"),
-            (b"\x00asm\x01\x00\x00\x00", "application/wasm"),
-            (&ogg_opus, "audio/opus"),
-        ];
-        for (head, mime) in cases {
-            assert_eq!(WORLDS.sniff(head), mime, "{head:?}");
+    /// The worlds mount reads past the sniff window where `file-type` does: a whole GET walks
+    /// the PNG chunks and the PDF, a ranged GET only its first `SAMPLE` bytes. The body is the
+    /// stored file whatever the sniff read.
+    #[tokio::test]
+    async fn the_worlds_sniff_reads_past_the_window_on_a_whole_get_only() {
+        let chunk = |kind: &[u8], len: u32| {
+            [&len.to_be_bytes()[..], kind, &vec![0; len as usize + 4]].concat()
+        };
+        let mut apng = b"\x89PNG\r\n\x1a\n".to_vec();
+        apng.extend(chunk(b"IHDR", 13));
+        apng.extend(chunk(b"tEXt", 5000));
+        apng.extend(chunk(b"acTL", 8));
+        let mut illustrator = b"%PDF-1.5\n".to_vec();
+        illustrator.resize(70_000, b' ');
+        illustrator.extend_from_slice(b"AIPrivateData1");
+        let mut id3 = b"ID3\x04\x00\x00\x00\x00\x27\x08".to_vec(); // a 5000-byte tag
+        id3.resize(10 + 5000, 0);
+        id3.extend_from_slice(&[0xFF, 0xFB, 0x90, 0x64]);
+        id3.resize(9000, 0);
+
+        let node = TestNode::without_db("content-world-sniff-past-window").await;
+        for (bytes, whole) in [
+            (apng, "image/apng"),
+            (illustrator, "application/postscript"),
+            (id3, "audio/mpeg"),
+        ] {
+            let bytes = Bytes::from(bytes);
+            let cid = crate::auth::hash_bytes_v1(&bytes);
+            node.store(&cid, bytes.clone()).await;
+            let resp = world_get(&node, &cid, Method::GET, None).await.unwrap();
+            assert_eq!(header(&resp, "content-type").unwrap(), whole);
+            let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+                .await
+                .unwrap();
+            assert_eq!(body, bytes, "{whole}: the body after the sniff");
+            let resp = world_get(&node, &cid, Method::GET, Some("bytes=0-1"))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+            let ranged = if whole == "application/postscript" {
+                "application/pdf"
+            } else {
+                "application/octet-stream"
+            };
+            assert_eq!(header(&resp, "content-type").unwrap(), ranged, "{whole}");
         }
-        assert_eq!(
-            WORLDS.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt "),
-            "audio/vnd.wave"
-        );
-        assert_eq!(WORLDS.sniff(b"OggS\x00\x02"), "application/ogg");
-        assert_eq!(
-            ROOT.sniff(b"BM\x36\x00\x00\x00"),
-            "application/octet-stream"
-        );
-        assert_eq!(ROOT.sniff(b"RIFF\x24\x08\x00\x00WAVEfmt "), "audio/wav");
     }
 
     #[tokio::test]
