@@ -334,7 +334,10 @@ describe('when checking a built gallery', () => {
 
       await expect(checkBuild({ dist, open })).resolves.toMatchObject({ entry: '/index.html' })
       expect(seen.rewritten).toBe(true)
-      expect(seen.rejected).toContain('Inspected target navigated or closed')
+      // Chrome names the lost document or the lost context, depending on how it replaced the page.
+      expect(seen.rejected).toMatch(
+        /Inspected target navigated or closed|Execution context was destroyed|Cannot find context/
+      )
     }, 120_000)
 
     it('should not keep a value read while a navigation started, and read the new document instead', async () => {
@@ -409,12 +412,12 @@ describe('when checking a built gallery', () => {
         consoleErrors: [],
         navigations: 0,
         loading: false,
-        navigate: async () => ({}),
-        whenLoaded: async () => {},
-        send: async (method: string, params?: Record<string, unknown>) => {
-          if (method === 'Page.navigate') origin ||= new URL(String(params?.url)).origin
+        navigate: async (url: string) => {
+          origin ||= new URL(url).origin
           return {}
         },
+        whenLoaded: async () => {},
+        send: async () => ({}),
         evaluate: async (expression: string) => evaluate(expression),
         close: async () => {
           if (!closes) throw new Error('browser would not close')

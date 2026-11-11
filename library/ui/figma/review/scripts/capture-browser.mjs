@@ -129,15 +129,16 @@ async function openSession(executable, { signal } = {}) {
     }
     signal?.addEventListener('abort', abort, { once: true })
     const requestsById = new Map()
-    // The top frame's navigation state, from its Page events: `navigations` counts every navigation it requested or
-    // started that replaces its document, `loading` holds from frameStartedLoading to frameStoppedLoading, which a
-    // same-document navigation also fires. Child frames are left out.
+    // The top frame's navigation state, from its Page events. `navigations` counts every navigation it requested or
+    // started that replaces its document. `loading` holds from the first of those events (or frameStartedLoading, which
+    // a same-document navigation also fires) to frameStoppedLoading, so a navigation requested but not yet loading
+    // counts as loading. `committed` holds the loader of every document the frame committed. Child frames are left out.
     let mainFrame
     let navigations = 0
     let loading = false
+    const committed = new Set()
     const settle = () => {
-      for (const waiter of loadWaiters) waiter.resolve()
-      loadWaiters.clear()
+      for (const waiter of loadWaiters) if (waiter.ready()) waiter.resolve()
     }
     const session = {
       requests: [],
@@ -170,6 +171,10 @@ async function openSession(executable, { signal } = {}) {
         void observeTarget(message.params.sessionId).catch((error) => {
           session.requestFailures.push({ error: error.message })
         })
+      } else if (message.method === 'Page.frameNavigated') {
+        if (message.sessionId || message.params.frame.id !== mainFrame) return
+        committed.add(message.params.frame.loaderId)
+        settle()
       } else if (
         message.method === 'Page.frameRequestedNavigation' ||
         message.method === 'Page.frameStartedNavigating' ||
@@ -177,13 +182,18 @@ async function openSession(executable, { signal } = {}) {
         message.method === 'Page.frameStoppedLoading'
       ) {
         if (message.sessionId || message.params.frameId !== mainFrame) return
+        // A request to open the link elsewhere (a new tab or window) leaves this document in place.
+        if ((message.params.disposition ?? 'currentTab') !== 'currentTab') return
         if (message.method === 'Page.frameStartedLoading') loading = true
         else if (message.method === 'Page.frameStoppedLoading') {
           loading = false
           settle()
         }
         // A same-document navigation (history API, fragment) keeps the document and its execution context.
-        else if (!/sameDocument/i.test(message.params.navigationType ?? '')) navigations++
+        else if (!/sameDocument/i.test(message.params.navigationType ?? '')) {
+          navigations++
+          loading = true
+        }
       } else if (message.method === 'Runtime.exceptionThrown')
         session.runtimeErrors.push(
           message.params.exceptionDetails.exception?.description ??
@@ -232,31 +242,39 @@ async function openSession(executable, { signal } = {}) {
       navigations: { get: () => navigations },
       loading: { get: () => loading }
     })
-    // Resolves once the top frame is not loading: at once when it is idle, else at its next frameStoppedLoading.
-    session.whenLoaded = (timeout = 30_000) =>
+    // Resolves once the top frame is not loading and, given a loader id, has committed that loader's document.
+    const whenLoaded = (timeout = 30_000, loaderId) =>
       new Promise((resolve, reject) => {
-        if (!loading) return resolve()
+        if (signal?.aborted) return reject(signal.reason)
+        if (closing) return reject(new Error('Capture browser session closed'))
+        const ready = () => !loading && (!loaderId || committed.has(loaderId))
+        if (ready()) return resolve()
         const timer = setTimeout(() => {
           loadWaiters.delete(waiter)
           reject(new CaptureTimeout('Timed out waiting for the page to finish loading'))
         }, timeout)
         const waiter = {
+          ready,
           resolve: () => {
+            loadWaiters.delete(waiter)
             clearTimeout(timer)
             resolve()
           },
           reject: (error) => {
+            loadWaiters.delete(waiter)
             clearTimeout(timer)
             reject(error)
           }
         }
         loadWaiters.add(waiter)
       })
-    // Page.navigate answers before the new document commits; this resolves once the top frame finished loading,
-    // after any redirect the document makes while it loads.
+    session.whenLoaded = (timeout) => whenLoaded(timeout)
+    // Page.navigate answers before the new document commits; this resolves once that document committed and the top
+    // frame finished loading, after any redirect the document makes while it loads. A navigation that failed or
+    // stayed within the document commits no new loader of its own, so only the loading state is awaited then.
     session.navigate = async (url, timeout = 30_000) => {
       const result = await session.send('Page.navigate', { url })
-      await session.whenLoaded(timeout)
+      await whenLoaded(timeout, result?.errorText ? undefined : result?.loaderId)
       return result
     }
     session.evaluate = async (expression) => {

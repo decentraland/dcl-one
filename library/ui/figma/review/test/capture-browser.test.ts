@@ -180,7 +180,8 @@ describe('when a command is sent on a capture session that can no longer answer'
   })
 })
 
-// A DevTools stand-in that answers Page.getFrameTree with a top frame and Runtime.evaluate with what `reply` returns:
+// A DevTools stand-in that answers Page.getFrameTree with a top frame, and Runtime.evaluate and Page.navigate with what
+// `reply` returns:
 // the Page events to deliver first, then the answer.
 class ScriptedSocket extends FakeSocket {
   static reply: (method: string) => { events: object[]; answer: object } = () => ({
@@ -193,7 +194,7 @@ class ScriptedSocket extends FakeSocket {
     const { events, answer } =
       method === 'Page.getFrameTree'
         ? { events: [], answer: { result: { frameTree: { frame: { id: 'top' } } } } }
-        : method === 'Runtime.evaluate'
+        : method === 'Runtime.evaluate' || method === 'Page.navigate'
           ? ScriptedSocket.reply(method)
           : { events: [], answer: { result: {} } }
     queueMicrotask(() => {
@@ -234,9 +235,7 @@ describe('when an evaluation loses its document', () => {
     const session = await open(file)
     ScriptedSocket.reply = () => ({ events, answer })
     try {
-      await (session as unknown as { evaluate: (expression: string) => Promise<unknown> }).evaluate(
-        '1'
-      )
+      await session.evaluate('1')
       throw new Error('the evaluation resolved')
     } catch (error) {
       return { error: error as Error, NavigationInterrupted }
@@ -268,7 +267,91 @@ describe('when an evaluation loses its document', () => {
   })
 })
 
-// A real Chromium against a local server: /hang sends its headers and never finishes the body, /redirect replaces itself with /landed while it
+describe('when a navigation is answered before its document commits', () => {
+  afterEach(() => {
+    ScriptedSocket.reply = () => ({ events: [], answer: { result: {} } })
+  })
+  const deliver = (...events: object[]) => {
+    for (const event of events)
+      FakeSocket.last!.dispatchEvent(
+        Object.assign(new Event('message'), { data: JSON.stringify(event) })
+      )
+  }
+  const navigateWith = async (answer: object) => {
+    const { openSession: open } = await scriptedCaptureBrowser()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    ScriptedSocket.reply = () => ({ events: [], answer })
+    let settled = false
+    const navigation = session.navigate('http://127.0.0.1:1/next', 1000).then(() => {
+      settled = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    return { session, navigation, settled: () => settled }
+  }
+  it('should wait for the document of the loader it started, not the idle frame it answered from', async () => {
+    const { session, navigation, settled } = await navigateWith({
+      result: { frameId: 'top', loaderId: 'next' }
+    })
+    try {
+      assert.equal(settled(), false)
+      deliver(
+        { method: 'Page.frameStartedLoading', params: { frameId: 'top' } },
+        { method: 'Page.frameNavigated', params: { frame: { id: 'top', loaderId: 'next' } } },
+        { method: 'Page.frameStoppedLoading', params: { frameId: 'top' } }
+      )
+      await navigation
+    } finally {
+      await session.close()
+    }
+  })
+  it('should not wait for a document a child frame commits', async () => {
+    const { session, navigation, settled } = await navigateWith({
+      result: { frameId: 'top', loaderId: 'next' }
+    })
+    try {
+      deliver({
+        method: 'Page.frameNavigated',
+        params: { frame: { id: 'child', parentId: 'top', loaderId: 'next' } }
+      })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      assert.equal(settled(), false)
+      await assert.rejects(navigation, /Timed out waiting for the page/)
+    } finally {
+      await session.close()
+    }
+  })
+  it('should count a request for this tab as a navigation, but not one that opens a new tab', async () => {
+    const { openSession: open } = await scriptedCaptureBrowser()
+    const { file } = await script(PORT_BROWSER)
+    const session = await open(file)
+    try {
+      const request = (disposition: string) => ({
+        method: 'Page.frameRequestedNavigation',
+        params: { frameId: 'top', reason: 'anchorClick', url: 'http://127.0.0.1:1/', disposition }
+      })
+      deliver(request('newTab'))
+      assert.deepEqual([session.navigations, session.loading], [0, false])
+      deliver(request('currentTab'))
+      assert.deepEqual([session.navigations, session.loading], [1, true])
+    } finally {
+      await session.close()
+    }
+  })
+  it('should resolve a failed navigation once the frame is idle, since it commits no document of its own', async () => {
+    const { session, navigation, settled } = await navigateWith({
+      result: { frameId: 'top', loaderId: 'failed', errorText: 'net::ERR_ABORTED' }
+    })
+    try {
+      await navigation
+      assert.equal(settled(), true)
+    } finally {
+      await session.close()
+    }
+  })
+})
+
+// A real Chromium against a local server: /slow answers after 1.5 s, /hang sends its headers and never finishes the body, /redirect replaces itself with /landed while it
 // loads, and every other path is a small page.
 describe('when a real page navigates', () => {
   let session: Awaited<ReturnType<typeof openSession>>
@@ -276,6 +359,11 @@ describe('when a real page navigates', () => {
   let origin: string
   before(async () => {
     server = createServer((request, response) => {
+      if (request.url === '/slow')
+        return void setTimeout(
+          () => response.writeHead(200, { 'content-type': 'text/html' }).end('<title>slow</title>'),
+          1500
+        )
       if (request.url === '/hang')
         return void response
           .writeHead(200, { 'content-type': 'text/html' })
@@ -304,10 +392,7 @@ describe('when a real page navigates', () => {
     server.closeAllConnections()
     await new Promise((resolve) => server.close(resolve))
   })
-  const evaluate = (expression: string) =>
-    (session as unknown as { evaluate: (expression: string) => Promise<unknown> }).evaluate(
-      expression
-    )
+  const evaluate = (expression: string) => session.evaluate(expression)
 
   it('should resolve navigate only after the document a script redirect lands on has loaded', async () => {
     await session.navigate(`${origin}/redirect`)
@@ -334,6 +419,16 @@ describe('when a real page navigates', () => {
     assert.equal(session.navigations, before)
     await session.navigate(`${origin}/second`)
     assert.ok(session.navigations > before)
+  })
+  it('should count a navigation the page requested as loading before the evaluation that requested it answers', async () => {
+    await session.navigate(`${origin}/first`)
+    const before = session.navigations
+    await evaluate(`location.href = '/slow', true`)
+    // The request event comes before that answer; the start and loading events of the navigation come after it.
+    assert.equal(session.loading, true)
+    assert.ok(session.navigations > before)
+    await session.whenLoaded()
+    assert.equal(await evaluate('location.pathname'), '/slow')
   })
   it('should still report an exception the page throws as an ordinary error', async () => {
     const { NavigationInterrupted } = await import('../scripts/capture-browser.mjs')

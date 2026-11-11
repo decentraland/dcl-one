@@ -125,7 +125,7 @@ async function waitFor(session, expression, what) {
 }
 
 async function navigate(session, url, check) {
-  await session.send('Page.navigate', { url })
+  await session.navigate(url, TIMEOUT)
   const loaded = await waitFor(
     session,
     `document.readyState === 'complete' && location.href`,

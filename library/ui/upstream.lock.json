@@ -887,7 +887,7 @@
           "deviation": "evidence-removed"
         },
         "library/ui/figma/review/scripts/capture-browser.d.mts": {
-          "sha256": "dd4bf052dbf6d0824e776727847b4e87ac23fe29504a141260c43088c8aeeb80",
+          "sha256": "7c4987cd1e15d89a19498e40fbcc6818ff74def3fd5531c3f62022695ff79024",
           "fds": null,
           "deviation": [
             "capture-removed",
@@ -895,7 +895,7 @@
           ]
         },
         "library/ui/figma/review/scripts/capture-browser.mjs": {
-          "sha256": "d5a69bea0191fa140d9496259c90b886255d0613710c251a84454b3452f342f2",
+          "sha256": "53697bdb05da83b8a88997eb014ec7015aef5bb5cb265accbdea4a1c9ef36632",
           "fds": null,
           "deviation": [
             "bot-review-279-b",
@@ -918,7 +918,7 @@
           ]
         },
         "library/ui/figma/review/scripts/check-build.mjs": {
-          "sha256": "30d7e83b8c91ab55f4f18288bb28996c9e0b70a627357ccca140d3c1a0e4b7ce",
+          "sha256": "f903ff082456fcb9893d59b93fd10b4411d8264c070b58273eba7aa7ff89ee8b",
           "fds": null,
           "deviation": [
             "bot-review-279-c",
@@ -2213,7 +2213,7 @@
           }
         },
         "library/ui/figma/review/test/capture-browser.test.ts": {
-          "sha256": "3f29a8b2f486f285ddbb6bdac11ae63df46e49a7e4abaddb74fd25f4257f66d0",
+          "sha256": "6c92fd52fbcf22c27f36b04b7f5b8891e2a9eb1159d45c5dbcefe3c2a379e9c2",
           "fds": null,
           "deviation": [
             "dcl-one-only",
@@ -4342,7 +4342,7 @@
         "live-read-restored": "Owner decision: stored captures leave this tree, live Figma read access stays for local inspection. Restored from before the removal: the Figma REST client and token provider, the REST source and its mappers (their two helpers, download and svgProblem, now live in sources/rest-assets.ts because the live pull and chunk ingest stay removed), probe, `--source rest` for diff and the MCP read tools, figma_screenshot (the PNG is returned to the caller in memory, never written), and the env-only file-key readers (readFileKey, requireFileKey, redactFileKey), with error text redacting the key again. Shipped output comes from the pinned capture only: sync refuses the live source, figma_export_icons refuses to write live icons to disk, and no CI job runs live code or sets FIGMA_TOKEN. pull-live and the chunk ingest stay removed: they write captures. The verified-cache boundary: createApp requires snapshotLock unless a test opts out explicitly, sync and retire verify the cache before reading anything derived from it, and an unreadable marker or capture is an FdsCacheError; test fixtures carry their own lock and marker.",
         "local-components-plan": "Add a source-neutral component installation plan and retire public mock asset exceptions. The shared installation dispatch and product controls remain pending.",
         "name-identity": "Component identity across files (owner decision: component keys are never committed). In a design file a library instance carries neither the library node ids nor anything the capture records except its set name and variant properties, so without a capture a set name resolves to exactly one mapping (component header, template id, or the code name componentNames gives it, read with the contract block) and only after the instance's variant properties fit that mapping; an unconfirmed or incompatible name is identity-uncertain, two matches are identity-ambiguous, and every name match carries the identity-name-match warning. With a capture, sets captured on two pages count once and a name shared by distinct sets resolves only when the variant properties fit exactly one. The fallback is marked TODO(figma-identity) in src/contract/name-identity.ts. resolve --batch resolves a JSON list in input order with a summary and exits 1 on any failure. Review follow-up: two mappings answering to one name are identity-ambiguous name-mappings with a report action; a name is confirmed only when at least one enum property the mapping reads is given; the fallback lives in src/contract/name-identity.ts; a batch repeat shares the earlier answer and node ids are normalized for that comparison; a refused entry echoes only accepted fields and the names of others; an unreadable batch exits 2; the skill script returns name, variantProperties and texts and the example reads standard input.",
-        "navigation-settle": "The Review build checks read a page only after its navigation settles: capture-browser tracks the top frame's document-replacing navigations and loading state from Page events, session.navigate resolves once the frame stops loading, and an evaluation a navigation interrupted rejects with NavigationInterrupted (any other lost context stays an ordinary error). check-build polls only an idle frame, keeps a value only when no navigation started while it was read, and reads a poll again after an interruption; navbar-bounds and runtime-cascade navigate through session.navigate.",
+        "navigation-settle": "The Review build checks read a page only after its navigation settles: capture-browser tracks the top frame's document-replacing navigations, its loading state (from the navigation request to frameStoppedLoading) and its committed loaders from Page events; session.navigate resolves once the document of the loader Page.navigate started has committed and the frame stopped loading; an evaluation that an observed navigation interrupted rejects with NavigationInterrupted, and any other lost context stays an ordinary error. check-build navigates through session.navigate, polls only an idle frame, keeps a value only when no navigation started while it was read, and reads a poll again after an interruption; navbar-bounds and runtime-cascade navigate through session.navigate.",
         "note": null,
         "port-command": "dcl-one owns the maintainer path. dcl-figma port prepare runs fetch-source, diff, sync, a second sync that must change nothing, install foundations and components, and lock-digests --write, stopping at the first failed stage; port verify refuses uncommitted changes, runs the seven real-capture checks and only when all pass writes port-verification.json from their own output (a failed check writes nothing and git errors fail closed), while port-verification.mjs stays validate-only. The record states what a local run reported, not proof of execution, an attestation or live parity. A maintainer skill (maintain-figma-library) covers intake, needs-manual first, the template fallback, both commands and the two pull request order for a public Figma URL, which the key guard now prints as a hint when a URL fails. The kit sorts skill names.",
         "port-command-followups": "Port command follow-ups: port verify runs every check as a named stage (any error, not only a StageError, fails that stage), fails a count a command did not report instead of recording NaN, summarizes a JSON report or stderr as the reason, runs vitest with this Node and compares the private and canonical installs in Node, resets only the install proof, puts back what a failed check regenerated, refuses a record when HEAD moved or the exemption scan fails, and writes the record through a temporary file and a rename. port prepare starts only from a tree whose sole change is upstream.lock.json and reports a diff that crashed with its stderr. port-verification --print-hash sends scan problems to stderr, the record detail rule is shared, and the key guard hint says a private file URL is removed.",
