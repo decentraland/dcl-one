@@ -143,9 +143,7 @@
       "owners": [],
       "paths": [
         "/library/js-sdk-toolchain/",
-        "/.github/workflows/sdk.yml",
-        "/.github/workflows/sdk-release.yml",
-        "/.github/workflows/sdk-preview.yml"
+        "/.github/workflows/sdk.yml"
       ]
     },
     {

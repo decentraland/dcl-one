@@ -21,9 +21,10 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 - Tags are `<scope>-v<version>`. Scope releases pass `--latest=false`; the "Latest" badge is kept
   for a future release of every scope at once. Release notes range over the scope's paths since
   the previous tag with the same prefix, not over the repository.
-- Scope workflows also expose `workflow_call`, so one dispatcher can later release several scopes
-  from a single run.
-- The SDK (`.github/workflows/sdk-release.yml`) takes the version as an input, as upstream takes
+- One dispatcher can later release several scopes from a single run by starting each scope's
+  release run.
+- The SDK keeps one workflow, `.github/workflows/sdk.yml`, for CI and every publish, so there is a
+  single file to read and one trusted publisher per package. Its manual run takes the version as an input, as upstream takes
   it from the release tag, and stamps it into the manifests before packing (the tree keeps a
   placeholder). It publishes `ecs`, `js-runtime`, `react-ecs`, `sdk-commands` and `sdk` in
   dependency order through npm trusted publishing (dist-tag `latest`, `rc` for a prerelease
@@ -37,13 +38,12 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
 - npm trusts a publish by repository, workflow filename and environment, not by branch, and a
   branch can edit a workflow. So every publish job uses the `npm-release` environment, which only
   `main` may deploy to (a repository setting), and each SDK package's trusted publishers require
-  it: `sdk.yml` (`next`), `sdk-release.yml` and `sdk-preview.yml`. A dispatcher that calls
-  `sdk-release.yml` needs its own entry, since npm checks the calling workflow's filename.
-- PR previews are published by `sdk-preview.yml` on `pull_request_target`: the run uses `main`'s
+  it, for `sdk.yml`.
+- PR previews are published by the same workflow on `pull_request_target`: the run uses `main`'s
   copy of the file and counts as a `main` run, so it passes the environment, while a pull request's
-  edited copy does not. It only downloads the tarballs the PR's unprivileged build produced, checks
+  edited copy does not. That job only downloads the tarballs the PR's unprivileged run produced, checks
   they are snapshot versions of the SDK's packages and publishes them under `pr`; it never checks
-  out the PR. A fork's pull request is skipped.
+  out the PR, and the jobs that do never run on that event. A fork's pull request is skipped.
 - SDK and Explorer compatibility is by commit, not by a shared protocol version: a scene built
   with `@dcl/sdk` from a commit assumes the components `library/protocol` had there.
 - The Explorer workflows keep their tag prefixes; moving them to `--latest=false` and the image
@@ -55,5 +55,5 @@ from here ([SDK ADR](2026-10-26-sdk-in-dcl-one.md), follow-up 1).
    `protocol-v<version>`, for the consumers outside this repository (Godot and Unity take the
    proto files, TypeScript services take `out-ts`); it needs a version scheme and the package made
    public.
-2. A release-everything dispatcher that calls each scope's `workflow_call` and creates the one
+2. A release-everything dispatcher that starts each scope's release run and creates the one
    release that claims "Latest", listing the scope versions it shipped.

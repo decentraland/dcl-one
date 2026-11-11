@@ -51,7 +51,7 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
   the version from the registry's `latest`; the manifests keep `7.0.0` as upstream does, and
   `npm publish` ships the tarballs through trusted publishing). A pull request from this
   repository gets the tarballs its run built published under the shared `pr` dist-tag, one tag for
-  every PR, by `.github/workflows/sdk-preview.yml`, and a sticky comment names the exact version to
+  every PR, by `main`'s copy of the same workflow, and a sticky comment names the exact version to
   install; fork pull requests publish nothing.
   Versioned releases are cut by hand ([releases ADR](2026-11-09-releases-per-scope.md)). The
   manifests name this repository, which trusted publishing requires.
@@ -78,8 +78,8 @@ build test prepare`). Its `.github`, agent files and editor configuration were l
 
 ## Follow-ups
 
-1. Releases and `next` are published from here, through trusted publishers on `sdk.yml` and
-   `sdk-release.yml` (a new package needs one manual publish before it accepts one); still to do:
+1. Releases and `next` are published from here, through a trusted publisher on `sdk.yml`
+   (a new package needs one manual publish before it accepts one); still to do:
    the `@dcl` names, stop publishing from `decentraland/js-sdk-toolchain`, the
    rest of the PR tooling (the e2e realm, the playground). The first release notes carry the
    narrowed types above.

@@ -14,7 +14,7 @@ on:
       - 'tooling/tests/**'
       - 'services/catalyst/**'
       - 'library/**'
-      # the SDK is TypeScript nothing here builds; SDK / CI tests it
+      # the SDK is TypeScript nothing here builds; sdk.yml tests it
       - '!library/js-sdk-toolchain/**'
       - '.cargo/**'
       - 'apps/sites/**'

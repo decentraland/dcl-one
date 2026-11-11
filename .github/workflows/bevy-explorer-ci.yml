@@ -27,7 +27,7 @@
       - services/catalyst/**
       - schemas/**
       - library/**
-      # the SDK is TypeScript nothing here builds; SDK / CI tests it
+      # the SDK is TypeScript nothing here builds; sdk.yml tests it
       - '!library/js-sdk-toolchain/**'
       - apps/sites/**
       - apps/ui3/**
@@ -62,7 +62,7 @@
       - services/catalyst/**
       - schemas/**
       - library/**
-      # the SDK is TypeScript nothing here builds; SDK / CI tests it
+      # the SDK is TypeScript nothing here builds; sdk.yml tests it
       - '!library/js-sdk-toolchain/**'
       - apps/sites/**
       - apps/ui3/**
