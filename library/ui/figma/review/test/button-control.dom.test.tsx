@@ -203,3 +203,53 @@ describe('when using the generated Button contract', () => {
     expect(screen.getByRole('button', { name: 'Close panel' })).toBeInTheDocument()
   })
 })
+
+describe('when a paging control is unavailable but must keep keyboard focus', () => {
+  it('should retain focus after becoming aria-disabled and suppress activation', async () => {
+    const onClick = vi.fn()
+    const { rerender } = render(<Button onClick={onClick}>Next</Button>)
+    await userEvent.tab()
+    const button = screen.getByRole('button', { name: 'Next' })
+    expect(button).toHaveFocus()
+    rerender(
+      <Button aria-disabled onClick={onClick}>
+        Next
+      </Button>
+    )
+    expect(button).toHaveFocus()
+    expect(button).not.toBeDisabled()
+    await userEvent.keyboard('{Enter} ')
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
+    expect(button).toHaveFocus()
+  })
+
+  it('should keep an aria-disabled link focusable while suppressing navigation and auxiliary activation', async () => {
+    const onClick = vi.fn()
+    const onAuxClick = vi.fn()
+    render(
+      <Button href="/next" aria-disabled="true" onClick={onClick} onAuxClick={onAuxClick}>
+        Next
+      </Button>
+    )
+    const link = screen.getByRole('link', { name: 'Next' })
+    expect(link).toHaveAttribute('href', '/next')
+    await userEvent.tab()
+    expect(link).toHaveFocus()
+    await userEvent.click(link)
+    await userEvent.pointer({ keys: '[MouseMiddle]', target: link })
+    expect(onClick).not.toHaveBeenCalled()
+    expect(onAuxClick).not.toHaveBeenCalled()
+  })
+
+  it('should activate when aria-disabled is false', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button aria-disabled="false" onClick={onClick}>
+        Next
+      </Button>
+    )
+    await userEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(onClick).toHaveBeenCalledOnce()
+  })
+})

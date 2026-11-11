@@ -481,34 +481,66 @@ function FigmaView({
       'data-n': '',
       'data-force-state': forceState
     }
+    const unavailable = native['aria-disabled'] === true || native['aria-disabled'] === 'true'
     if (typeof native.href === 'string') {
-      const { href, target, rel, onClick, disabled: actionDisabled, ...anchor } = native
+      const { href, target, rel, onClick, onAuxClick, disabled: actionDisabled, ...anchor } = native
       const inactive = disabled || actionDisabled
       return (
         <a
           {...common}
           {...anchor}
           href={inactive ? undefined : href}
-          role={inactive ? 'link' : undefined}
+          role={inactive ? (native.role ?? 'link') : native.role}
           target={target}
           rel={target === '_blank' ? safeRel(rel) : rel}
-          aria-disabled={inactive || undefined}
+          aria-disabled={inactive || native['aria-disabled']}
           tabIndex={inactive ? -1 : native.tabIndex}
           onClick={(event) => {
-            if (inactive) {
+            if (inactive || unavailable) {
               event.preventDefault()
               return
             }
             onClick?.(event)
+          }}
+          onAuxClick={(event) => {
+            if (inactive || unavailable) {
+              event.preventDefault()
+              return
+            }
+            onAuxClick?.(event)
           }}
         >
           {content}
         </a>
       )
     }
-    const { type = 'button', ...button } = native as ButtonHTMLAttributes<HTMLButtonElement>
+    const {
+      type = 'button',
+      onClick,
+      onAuxClick,
+      ...button
+    } = native as ButtonHTMLAttributes<HTMLButtonElement>
     return (
-      <button {...common} {...button} type={type} disabled={disabled || button.disabled}>
+      <button
+        {...common}
+        {...button}
+        type={type}
+        disabled={disabled || button.disabled}
+        onClick={(event) => {
+          if (unavailable) {
+            event.preventDefault()
+            return
+          }
+          onClick?.(event)
+        }}
+        onAuxClick={(event) => {
+          if (unavailable) {
+            event.preventDefault()
+            return
+          }
+          onAuxClick?.(event)
+        }}
+      >
         {content}
       </button>
     )

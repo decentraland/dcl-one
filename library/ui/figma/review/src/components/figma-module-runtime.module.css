@@ -82,7 +82,6 @@
   .node.control {
     display: inline-flex;
     width: auto;
-    color: var(--dcl-text-primary);
     text-decoration: none;
   }
 
@@ -112,6 +111,11 @@
     min-width: var(--dcl-space-48);
     min-height: var(--dcl-space-48);
     padding: var(--dcl-space-8);
+  }
+
+  .node.iconOnly:active:not(:disabled):not([aria-disabled='true']),
+  .node.iconOnly[data-force-state='pressed'] {
+    background: var(--dcl-bg-hover);
   }
 
   .node.iconOnly:hover:not(:disabled):not([aria-disabled='true']),

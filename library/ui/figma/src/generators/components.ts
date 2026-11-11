@@ -318,6 +318,15 @@ function variantContract(spec: ComponentSpec): string | undefined {
   ].join('\n')
 }
 
+function labelColor(node: ViewNode): string | undefined {
+  if (node.kind === 'text' && node.slot === 'label')
+    return node.css.decls.find(([property]) => property === 'color')?.[1]
+  for (const child of node.children ?? []) {
+    const color = labelColor(child)
+    if (color) return color
+  }
+}
+
 function emitComponent(
   spec: ComponentSpec,
   context: GeneratorContext,
@@ -391,7 +400,27 @@ function emitComponent(
         roles: new Map((spec.textRoles ?? []).map((role) => [role.name, role]))
       }
     : undefined
-  const views = spec.views.map((view, index) => emitView(view, index, cssRules, semantic))
+  const views = spec.views.map((view, index) => {
+    if (!control) return emitView(view, index, cssRules, semantic)
+    const color =
+      labelColor(view.root) ??
+      spec.views
+        .filter((candidate) =>
+          Object.entries(view.values).every(([axis, value]) => candidate.values[axis] === value)
+        )
+        .map((candidate) => labelColor(candidate.root))
+        .find(Boolean)
+    const root = color
+      ? {
+          ...view.root,
+          css: {
+            ...view.root.css,
+            decls: [...view.root.css.decls, ['color', color] as [string, string]]
+          }
+        }
+      : view.root
+    return emitView({ ...view, root }, index, cssRules, semantic)
+  })
   const hrefProps = [...(semantic?.props.hrefs ?? [])].sort()
   const handlerProps = [...(semantic?.props.handlers ?? [])].sort()
   const semanticNames = [...hrefProps, ...handlerProps]
