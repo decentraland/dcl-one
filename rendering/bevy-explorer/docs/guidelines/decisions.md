@@ -19,13 +19,16 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the extension is not the fix; the long-term answer is still open.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
-  cut into rising ground. The projection reads the primary camera's depth prepass, so without
-  one the marker draws nothing. The box runs from 0.1 m under the feet, so the blob never
-  darkens the avatar, to 1 m below the ground under the player's centre, so ground falling
-  away by up to 45 degrees across the footprint still catches it. The ramps follow the
-  shadergraph, except that grounded means within 0.2 m of the ground, as for the animation,
-  and the opacity rises over the next 0.2 m instead of the last metre: with the projector's
-  0.5 fade factor, Unity's ramp left the blob nearly invisible before the player landed.
+  cut into rising ground. A depth bias does not fix that: it shifts the whole quad, so a bias
+  that lifts it out of a metre of slope also draws it through nearby objects, and the blob
+  stays flat rather than lying on the ground. The projection reads the primary camera's
+  depth prepass, which the camera therefore keeps; without one the marker draws nothing.
+  The box runs from 0.1 m under the feet, so the blob never darkens the avatar, to 1 m
+  below the ground under the player's centre, so ground falling away by up to 45 degrees
+  across the footprint still catches it. The ramps follow the shadergraph, except that
+  grounded means within 0.2 m of the ground, as for the animation, and the opacity rises
+  over the next 0.2 m instead of the last metre: with the projector's 0.5 fade factor,
+  Unity's ramp left the blob nearly invisible before the player landed.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
