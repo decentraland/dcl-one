@@ -1,0 +1,56 @@
+/* TODO(figma-ds): replace with the Figma-generated tab bar's styles. The source's 50px gap between
+ * tabs has no spacing token; the nearest one (48px) is used. */
+.root {
+  overflow-x: auto;
+  width: 100%;
+  border-bottom: 1px solid var(--dcl-transparencies-white-20);
+  scrollbar-width: none;
+}
+
+.list {
+  display: flex;
+  gap: var(--dcl-space-24);
+  margin: 0;
+  padding: 0 var(--dcl-space-16);
+  list-style: none;
+}
+
+.item {
+  flex-shrink: 0;
+}
+
+.tab {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  min-height: 46px;
+  border-bottom: 4px solid transparent;
+  color: var(--dcl-text-secondary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.tab:hover {
+  color: var(--dcl-text-primary);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.active {
+  border-bottom-color: var(--dcl-primary-primary);
+  color: var(--dcl-text-primary);
+}
+
+@media (min-width: 1024px) {
+  .list {
+    gap: var(--dcl-space-48);
+    padding: 0;
+  }
+}
