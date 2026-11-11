@@ -242,12 +242,8 @@ describe('NavBar', () => {
 })
 
 function selectionError(selection: Record<string, unknown>): Error {
-  const {
-    viewport = 'largeDesktop',
-    balances = 'none',
-    theme = 'dark',
-    signedIn = false
-  } = selection
+  // An omitted viewport renders every viewport's view, narrowest first, so mobile is the one that throws.
+  const { viewport = 'mobile', balances = 'none', theme = 'dark', signedIn = false } = selection
   return new Error(
     `NavBar has no captured view for viewport=${JSON.stringify(viewport)}, balances=${JSON.stringify(balances)}, theme=${JSON.stringify(theme)}, signedIn=${JSON.stringify(signedIn)}`
   )
@@ -315,6 +311,7 @@ describe('when JavaScript spreads suppressed text and public action props', () =
     onNotifications = vi.fn()
     user = userEvent.setup()
     props = {
+      viewport: 'largeDesktop',
       signedIn: true,
       label: 'Injected1',
       label2: 'Injected2',
