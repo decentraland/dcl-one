@@ -7,7 +7,9 @@ import { validateAliasObject } from "../ui3/vite.validate.js";
 
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
-const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
+const catalystApi = fileURLToPath(
+  new URL("../../library/catalyst-api", import.meta.url),
+);
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
 
 function watchUi3(ui3Src: string): Plugin {
@@ -25,24 +27,35 @@ function watchUi3(ui3Src: string): Plugin {
     },
   };
 }
-const monaco = fileURLToPath(new URL("./node_modules/monaco-editor", import.meta.url));
+const monaco = fileURLToPath(
+  new URL("./node_modules/monaco-editor", import.meta.url),
+);
 const three = fileURLToPath(new URL("./node_modules/three", import.meta.url));
-const qrcode = fileURLToPath(new URL("./node_modules/qrcode-generator", import.meta.url));
-const reactQuery = fileURLToPath(new URL("./node_modules/@tanstack/react-query", import.meta.url));
+const qrcode = fileURLToPath(
+  new URL("./node_modules/qrcode-generator", import.meta.url),
+);
+const reactQuery = fileURLToPath(
+  new URL("./node_modules/@tanstack/react-query", import.meta.url),
+);
 
 // The ONE base: the v2 node the SSR process reads. The dev proxy forwards the
 // prefixes browsers call directly to the same node (nginx does this on a host).
 const CATALYST_PROXY_TARGET =
-  process.env.DCL_CATALYST_PROXY_TARGET || process.env.CATALYST_URL || "http://127.0.0.1:5210";
+  process.env.DCL_CATALYST_PROXY_TARGET ||
+  process.env.CATALYST_URL ||
+  "http://127.0.0.1:5210";
 
 // Sites resource routes that share the /api prefix with the node's explore API,
 // read from the route files (`api.<segment>.*` -> /api/<segment>) the way
 // deploy/nix/sites.nix derives the nginx table, so dev and the host agree.
-export function sitesApiRoutes(routesDir = fileURLToPath(new URL("./src/routes/routes", import.meta.url))): string[] {
+export function sitesApiRoutes(
+  routesDir = fileURLToPath(new URL("./src/routes/routes", import.meta.url)),
+): string[] {
   const segments = new Set<string>();
   for (const name of readdirSync(routesDir)) {
     const m = /^api\.([^.$_]+)/.exec(name);
-    if (m && /\.(tsx?|ts)$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name)) segments.add(m[1]);
+    if (m && /\.(tsx?|ts)$/.test(name) && !/\.(test|spec)\.tsx?$/.test(name))
+      segments.add(m[1]);
   }
   return [...segments].sort().map((s) => `/api/${s}`);
 }
@@ -63,7 +76,9 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/lambdas": to(),
     "/api/": to({
       bypass: (req) =>
-        SITES_API_ROUTES.some((p) => req.url?.startsWith(p)) ? req.url : undefined,
+        SITES_API_ROUTES.some((p) => req.url?.startsWith(p))
+          ? req.url
+          : undefined,
     }),
     "/places/api/": to(),
     "/events/api/": to(),
@@ -127,12 +142,20 @@ const PLAY_MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
   ".css": "text/css; charset=utf-8",
 };
-export function playWebDir(root = fileURLToPath(new URL("../..", import.meta.url))): string {
+export function playWebDir(
+  root = fileURLToPath(new URL("../..", import.meta.url)),
+): string {
   if (process.env.PLAY_WEB_DIR) return process.env.PLAY_WEB_DIR;
   return join(root, ".cache/play/current");
 }
 function servePlayWeb(): Plugin {
-  const served = new Set(["engine", "bridge-scene", "service_worker.js", "preview_realm.js", "sites-play.json"]);
+  const served = new Set([
+    "engine",
+    "bridge-scene",
+    "service_worker.js",
+    "preview_realm.js",
+    "sites-play.json",
+  ]);
   return {
     name: "serve-play-web",
     apply: "serve",
@@ -145,16 +168,25 @@ function servePlayWeb(): Plugin {
         const [head] = rel.split("/");
         if (!head || !served.has(head)) return next();
         const file = normalize(join(dir, rel));
-        if (!file.startsWith(normalize(dir) + "/") || !existsSync(file) || !statSync(file).isFile()) {
+        if (
+          !file.startsWith(normalize(dir) + "/") ||
+          !existsSync(file) ||
+          !statSync(file).isFile()
+        ) {
           if (!existsSync(dir)) {
             res.statusCode = 503;
             res.setHeader("content-type", "text/plain; charset=utf-8");
-            res.end(`web Explorer artifact not imported: run python3 tooling/fetch-play.py (expected ${dir})`);
+            res.end(
+              `web Explorer artifact not imported: run python3 tooling/fetch-play.py (expected ${dir})`,
+            );
             return;
           }
           return next();
         }
-        res.setHeader("content-type", PLAY_MIME[extname(file)] ?? "application/octet-stream");
+        res.setHeader(
+          "content-type",
+          PLAY_MIME[extname(file)] ?? "application/octet-stream",
+        );
         // Documents under /play/ carry their isolation from their routes; the files only need to be
         // loadable from that isolated context. The service worker scopes itself to /play/.
         res.setHeader("cross-origin-resource-policy", "same-origin");
@@ -162,7 +194,10 @@ function servePlayWeb(): Plugin {
           // The scene server's frame takes the app's policy (app.html), which only lets documents
           // with the same policy script it; the service worker sets the same once it controls /play/.
           res.setHeader("cross-origin-opener-policy", "same-origin");
-          res.setHeader("document-isolation-policy", "isolate-and-credentialless");
+          res.setHeader(
+            "document-isolation-policy",
+            "isolate-and-credentialless",
+          );
         }
         res.setHeader("cache-control", "no-cache");
         createReadStream(file).pipe(res);
@@ -177,7 +212,10 @@ function separateDevCaches(): Plugin {
     config(config, { command }) {
       // The live dev stack and the journey kit's server run from the same checkout.
       // Sharing optimizer output lets either one remove the other's modules.
-      if (command === "serve") return { cacheDir: `node_modules/.vite-sites/${config.server?.port ?? "default"}` };
+      if (command === "serve")
+        return {
+          cacheDir: `node_modules/.vite-sites/${config.server?.port ?? "default"}`,
+        };
     },
   };
 }
@@ -213,7 +251,12 @@ function icoTypeLikeServe(): Plugin {
         if (req.url?.split("?")[0].endsWith(".ico")) {
           const setHeader = res.setHeader.bind(res);
           res.setHeader = (name, value) =>
-            setHeader(name, name.toLowerCase() === "content-type" ? "image/vnd.microsoft.icon" : value);
+            setHeader(
+              name,
+              name.toLowerCase() === "content-type"
+                ? "image/vnd.microsoft.icon"
+                : value,
+            );
         }
         next();
       });
@@ -222,7 +265,14 @@ function icoTypeLikeServe(): Plugin {
 }
 
 export default defineConfig({
-  plugins: [icoTypeLikeServe(), separateDevCaches(), servePlayWeb(), reactRouter(), watchUi3(ui), warmServerBuild()],
+  plugins: [
+    icoTypeLikeServe(),
+    separateDevCaches(),
+    servePlayWeb(),
+    reactRouter(),
+    watchUi3(ui),
+    warmServerBuild(),
+  ],
   server: {
     // A save is often truncate-then-write, and over the NFS home the two reach the
     // server's inotify as two events. Transforming on the first one served an EMPTY
@@ -231,7 +281,10 @@ export default defineConfig({
     // DEV_ALLOWED_HOSTS: comma-separated extra hosts the TLS front serves the dev
     // server under (".example.org" allows the domain and every subdomain).
     allowedHosts: [
-      ...(process.env.DEV_ALLOWED_HOSTS ?? "").split(",").map((h) => h.trim()).filter(Boolean),
+      ...(process.env.DEV_ALLOWED_HOSTS ?? "")
+        .split(",")
+        .map((h) => h.trim())
+        .filter(Boolean),
       "localhost",
       "127.0.0.1",
     ],
@@ -242,14 +295,30 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui"] },
+    fs: {
+      allow: [
+        ".",
+        "../ui3",
+        "../../library/catalyst-api",
+        "../../library/shop",
+        "../../library/ui",
+      ],
+    },
     proxy: nodeProxy(),
   },
   resolve: {
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
-      "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
+      "@dcl/one-ui/foundations.css": fileURLToPath(
+        new URL(
+          "../../library/ui/foundations/foundations.css",
+          import.meta.url,
+        ),
+      ),
+      "@dcl/one-ui": fileURLToPath(
+        new URL("../../library/ui", import.meta.url),
+      ),
       "@catalyst-api": catalystApi,
       "@shop": shopCore,
       "@": src,
@@ -261,7 +330,13 @@ export default defineConfig({
     dedupe: ["viem", "react", "react-dom", "zod"],
   },
   optimizeDeps: {
-    include: ["monaco-editor", "@xstate/react", "xstate", "zod", "viem/accounts"],
+    include: [
+      "monaco-editor",
+      "@xstate/react",
+      "xstate",
+      "zod",
+      "viem/accounts",
+    ],
     // The shared dev sandbox is also a public browsing surface. Compact vendor
     // code while keeping development React, named stacks and application HMR.
     rolldownOptions: { output: { minify: true, keepNames: true } },

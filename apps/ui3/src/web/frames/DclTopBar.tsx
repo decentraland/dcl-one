@@ -1,5 +1,12 @@
-import type { ReactNode } from "react";
-import { useEffect, useId, useRef, useState } from "react";
+import type { MouseEventHandler, ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import logo from "../../atoms/assets/decentraland-logo.svg?url";
 import { catalystBase, getJSON } from "../../data/catalyst/client";
 import { sameOriginContentUrl } from "../../data/catalyst/profile";
@@ -12,6 +19,7 @@ import {
   type Notification,
 } from "../../data/catalyst/notificationsView";
 import { useChromeAuth } from "./chrome-auth";
+import { useChromeNav } from "./chrome-nav";
 import type { ChromeNavigate } from "./chrome-nav";
 import ChromeLink from "./ChromeLink";
 import AccountMenu from "./AccountMenu";
@@ -23,7 +31,13 @@ import { useSiteLayout } from "./SiteLayout";
 type DclTopBarVariant = "default" | "sites";
 
 type NavMenuItem = { label: string; href: string };
-type NavLink = { id: string; label: string; href: string; caret?: boolean; menu?: NavMenuItem[] };
+type NavLink = {
+  id: string;
+  label: string;
+  href: string;
+  caret?: boolean;
+  menu?: NavMenuItem[];
+};
 
 const LEARN_MENU: NavMenuItem[] = [
   { label: "Docs", href: docsUrl() },
@@ -37,11 +51,23 @@ const PLAY_MENU: NavMenuItem[] = [
 
 const LINK_DEFS = {
   explore: { id: "explore", label: "Explore", href: "/" },
-  whatson: { id: "whatson", label: "Play", href: "/play/", caret: true, menu: PLAY_MENU },
+  whatson: {
+    id: "whatson",
+    label: "Play",
+    href: "/play/",
+    caret: true,
+    menu: PLAY_MENU,
+  },
   social: { id: "social", label: "Social", href: "/social/" },
   shop: { id: "shop", label: "Shop", href: "/shop" },
   create: { id: "create", label: "Create", href: "/create" },
-  learn: { id: "learn", label: "Learn", href: "/blog", caret: true, menu: LEARN_MENU },
+  learn: {
+    id: "learn",
+    label: "Learn",
+    href: "/blog",
+    caret: true,
+    menu: LEARN_MENU,
+  },
   events: { id: "events", label: "Events", href: "/whats-on" },
 } satisfies Record<string, NavLink>;
 
@@ -49,7 +75,13 @@ export type DclTopBarNavId = keyof typeof LINK_DEFS;
 
 // from: decentraland-ui2@3.23.8:dist/components/Navbar/icons.js (BellIcon): the filled bell of DCL's navbar.
 const BellMark = ({ size = 24 }: { size?: number }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true">
+  <svg
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="none"
+    aria-hidden="true"
+  >
     <path
       d="M12 21.75C13.1 21.75 14 20.85 14 19.75H10C10 20.85 10.89 21.75 12 21.75ZM18 15.75V10.75C18 7.68 16.36 5.11 13.5 4.43V3.75C13.5 2.92 12.83 2.25 12 2.25C11.17 2.25 10.5 2.92 10.5 3.75V4.43C7.63 5.11 6 7.67 6 10.75V15.75L4 17.75V18.75H20V17.75L18 15.75Z"
       fill="currentColor"
@@ -57,8 +89,9 @@ const BellMark = ({ size = 24 }: { size?: number }) => (
   </svg>
 );
 
-const DCL_LINKS: NavLink[] = (["whatson", "shop", "create", "social", "learn"] as const)
-  .map((id) => LINK_DEFS[id]);
+const DCL_LINKS: NavLink[] = (
+  ["whatson", "shop", "create", "social", "learn"] as const
+).map((id) => LINK_DEFS[id]);
 
 type NotifState =
   | { phase: "idle" | "loading" }
@@ -82,12 +115,33 @@ type DclTopBarProps = {
   balances?: ReactNode;
 };
 
+type SitesNavViewport = "mobile" | "desktop" | "largeDesktop";
+
+function subscribeViewport(onChange: () => void) {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+function getSitesNavViewport(): SitesNavViewport {
+  if (window.innerWidth <= 991) return "mobile";
+  if (window.innerWidth >= 1536) return "largeDesktop";
+  return "desktop";
+}
+
+function getServerSitesNavViewport(): SitesNavViewport {
+  return "desktop";
+}
+
 const accountLinks = (account: string) => [
-  { label: "My profile", href: `/profile/${encodeURIComponent(account.toLowerCase())}` },
+  {
+    label: "My profile",
+    href: `/profile/${encodeURIComponent(account.toLowerCase())}`,
+  },
   { label: "My assets", href: "/shop/my-items" },
 ];
 
 export default function DclTopBar({
+  variant = "default",
   active = "shop",
   signedIn = undefined,
   account = undefined,
@@ -102,6 +156,7 @@ export default function DclTopBar({
   balances,
 }: DclTopBarProps) {
   const layout = useSiteLayout();
+  const { navigate, renderSitesNavBar } = useChromeNav();
   const renderMobileNavigation = mobileNavigation ?? layout?.sections;
   const auth = useChromeAuth();
   const isIn = signedIn ?? auth.signedIn;
@@ -118,16 +173,24 @@ export default function DclTopBar({
       : undefined);
   const fetchNotifs = fetchNotifications ?? auth.fetchNotifications;
   const links = DCL_LINKS;
-  const activeId = active === "explore" || active === "events" ? "whatson" : active;
+  const activeId =
+    active === "explore" || active === "events" ? "whatson" : active;
   const [menuOpen, setMenuOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const navViewport = useSyncExternalStore(
+    subscribeViewport,
+    getSitesNavViewport,
+    getServerSitesNavViewport,
+  );
   const mobileMenuId = useId();
   const burgerRef = useRef<HTMLButtonElement>(null);
+  const sharedMenuTriggerRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!menuOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         setMenuOpen(false);
-        burgerRef.current?.focus();
+        (sharedMenuTriggerRef.current ?? burgerRef.current)?.focus();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -137,10 +200,12 @@ export default function DclTopBar({
   const ddEscRef = useRef(false);
 
   const [faceUrl, setFaceUrl] = useState("");
-  const sharedProfile = isIn && auth.signedIn && acct.toLowerCase() === auth.account.toLowerCase();
+  const sharedProfile =
+    isIn && auth.signedIn && acct.toLowerCase() === auth.account.toLowerCase();
   const sharedFaceUrl = sharedProfile ? auth.avatarUrl : undefined;
   useEffect(() => {
     setFaceUrl("");
+    if (variant === "sites" && renderSitesNavBar) return;
     if (!isIn || !acct) return;
     if (sharedProfile) {
       setFaceUrl(sharedFaceUrl ?? "");
@@ -150,24 +215,27 @@ export default function DclTopBar({
     void (async () => {
       try {
         const addr = acct.trim().toLowerCase();
-        const raw = await getJSON(`/lambdas/profile/${encodeURIComponent(addr)}`);
-        const face = (raw as { avatars?: Array<{ avatar?: { snapshots?: { face256?: unknown } } }> })
-          ?.avatars?.[0]?.avatar?.snapshots?.face256;
+        const raw = await getJSON(
+          `/lambdas/profile/${encodeURIComponent(addr)}`,
+        );
+        const face = (
+          raw as {
+            avatars?: Array<{ avatar?: { snapshots?: { face256?: unknown } } }>;
+          }
+        )?.avatars?.[0]?.avatar?.snapshots?.face256;
         if (cancelled || typeof face !== "string" || !face) return;
-        const url =
-          /^https?:\/\//i.test(face)
-            ? sameOriginContentUrl(face)
-            : face.startsWith("data:")
-              ? face
-              : `${catalystBase()}/content/contents/${face}`;
+        const url = /^https?:\/\//i.test(face)
+          ? sameOriginContentUrl(face)
+          : face.startsWith("data:")
+            ? face
+            : `${catalystBase()}/content/contents/${face}`;
         setFaceUrl(url);
-      } catch {
-      }
+      } catch {}
     })();
     return () => {
       cancelled = true;
     };
-  }, [isIn, acct, sharedProfile, sharedFaceUrl]);
+  }, [isIn, acct, sharedProfile, sharedFaceUrl, renderSitesNavBar, variant]);
 
   const [bellOpen, setBellOpen] = useState(false);
   const [notif, setNotif] = useState<NotifState>({ phase: "idle" });
@@ -188,18 +256,22 @@ export default function DclTopBar({
     setNotif({ phase: "loading" });
     void fetchNotifs()
       .then((raw) => {
-        if (!cancelled) setNotif({ phase: "ready", rows: parseNotificationsLoose(raw) });
+        if (!cancelled)
+          setNotif({ phase: "ready", rows: parseNotificationsLoose(raw) });
       })
       .catch(() => {
         if (!cancelled) setNotif({ phase: "error" });
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [isIn, acct, bellOpen, fetchNotifs]);
 
   useEffect(() => {
     if (!bellOpen) return;
     const onDown = (e: MouseEvent) => {
-      if (bellRef.current && !bellRef.current.contains(e.target as Node)) setBellOpen(false);
+      if (bellRef.current && !bellRef.current.contains(e.target as Node))
+        setBellOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setBellOpen(false);
@@ -213,7 +285,10 @@ export default function DclTopBar({
   }, [bellOpen]);
 
   const openBell = () => {
-    if (isIn) setBellOpen((open) => !open);
+    if (isIn) {
+      setProfileOpen(false);
+      setBellOpen((open) => !open);
+    }
   };
 
   const now = Date.now();
@@ -223,7 +298,8 @@ export default function DclTopBar({
       return (
         <ChromeLink
           key={link.id}
-          href={link.href} onNavigate={onNavigate}
+          href={link.href}
+          onNavigate={onNavigate}
           className={"dtb__link" + (link.id === activeId ? " is-active" : "")}
           aria-current={link.id === activeId ? "page" : undefined}
         >
@@ -237,7 +313,9 @@ export default function DclTopBar({
         key={link.id}
         className="dtb__dd"
         onMouseEnter={() => setOpenDropdown(link.id)}
-        onMouseLeave={() => setOpenDropdown((cur) => (cur === link.id ? "" : cur))}
+        onMouseLeave={() =>
+          setOpenDropdown((cur) => (cur === link.id ? "" : cur))
+        }
         onFocus={() => {
           if (!ddEscRef.current) setOpenDropdown(link.id);
         }}
@@ -250,12 +328,15 @@ export default function DclTopBar({
           if (e.key !== "Escape") return;
           setOpenDropdown((cur) => (cur === link.id ? "" : cur));
           ddEscRef.current = true;
-          e.currentTarget.querySelector<HTMLAnchorElement>("a.dtb__link")?.focus();
+          e.currentTarget
+            .querySelector<HTMLAnchorElement>("a.dtb__link")
+            ?.focus();
           ddEscRef.current = false;
         }}
       >
         <ChromeLink
-          href={link.href} onNavigate={onNavigate}
+          href={link.href}
+          onNavigate={onNavigate}
           className={"dtb__link" + (link.id === activeId ? " is-active" : "")}
           aria-current={link.id === activeId ? "page" : undefined}
           aria-haspopup="menu"
@@ -264,9 +345,19 @@ export default function DclTopBar({
           {link.label}
         </ChromeLink>
         {open ? (
-          <div className="dtb__ddmenu is-open" role="menu" aria-label={`${link.label} menu`}>
+          <div
+            className="dtb__ddmenu is-open"
+            role="menu"
+            aria-label={`${link.label} menu`}
+          >
             {link.menu.map((item) => (
-              <ChromeLink key={item.label} href={item.href} onNavigate={onNavigate} className="dtb__dditem" role="menuitem">
+              <ChromeLink
+                key={item.label}
+                href={item.href}
+                onNavigate={onNavigate}
+                className="dtb__dditem"
+                role="menuitem"
+              >
                 {item.label}
               </ChromeLink>
             ))}
@@ -276,9 +367,308 @@ export default function DclTopBar({
     );
   };
 
+  const notificationsPanel = bellOpen ? (
+    <div className="dtb__notif" role="dialog" aria-label="Notifications">
+      <div className="dtb__notifhead">Notifications</div>
+      {notif.phase === "loading" && (
+        <div className="dtb__notifmsg">Loading&#x2026;</div>
+      )}
+      {notif.phase === "error" && (
+        <div className="dtb__notifmsg">Couldn&rsquo;t load notifications.</div>
+      )}
+      {notif.phase === "ready" && notif.rows.length === 0 && (
+        <div className="dtb__notifmsg">No notifications yet</div>
+      )}
+      {notif.phase === "ready" && notif.rows.length > 0 && (
+        <ul className="dtb__notiflist">
+          {notif.rows.slice(0, 10).map((n) => {
+            const link = notificationLink(n);
+            const body = (
+              <>
+                <span className="dtb__notifdot" aria-hidden="true" />
+                <span className="dtb__notifbody">
+                  <span className="dtb__notiftitle">
+                    {notificationTitle(n)}
+                  </span>
+                  {notificationBody(n) && (
+                    <span className="dtb__notifdesc">
+                      {notificationBody(n)}
+                    </span>
+                  )}
+                </span>
+                <span className="dtb__notiftime">
+                  {relativeTime(n.timestamp, now)}
+                </span>
+              </>
+            );
+            return (
+              <li
+                key={n.id}
+                className={"dtb__notifitem" + (n.read ? "" : " is-unread")}
+              >
+                {link ? (
+                  <ChromeLink
+                    className="dtb__notiflink"
+                    href={link}
+                    onNavigate={onNavigate}
+                  >
+                    {body}
+                  </ChromeLink>
+                ) : (
+                  body
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  ) : null;
+
+  const mobileMenu = (
+    <div
+      id={mobileMenuId}
+      className={
+        "dtb__menu" +
+        (menuOpen ? " is-open" : "") +
+        (renderMobileNavigation ? " dtb__menu--context" : "")
+      }
+    >
+      {menuOpen ? (
+        <>
+          <nav className="dtb__globalmenu" aria-label="Decentraland sections">
+            {links.map((link) => {
+              const top = (
+                <ChromeLink
+                  key={link.id}
+                  href={link.href}
+                  onNavigate={onNavigate}
+                  className={
+                    "dtb__menulink" +
+                    (link.id === activeId ? " is-active" : "") +
+                    (link.caret ? " dtb__menulink--caret" : "")
+                  }
+                  aria-current={link.id === activeId ? "page" : undefined}
+                  onClick={() => setMenuOpen(false)}
+                >
+                  {link.label}
+                </ChromeLink>
+              );
+              return link.menu?.length ? (
+                <span key={link.id} className="dtb__menugroup">
+                  {top}
+                  {link.menu.map((item) => (
+                    <ChromeLink
+                      key={item.label}
+                      href={item.href}
+                      onNavigate={onNavigate}
+                      className="dtb__menulink dtb__menulink--sub"
+                      onClick={() => setMenuOpen(false)}
+                    >
+                      {item.label}
+                    </ChromeLink>
+                  ))}
+                </span>
+              ) : (
+                top
+              );
+            })}
+          </nav>
+          {renderMobileNavigation ? (
+            <div className="site-layout__mobile-sections">
+              {renderMobileNavigation(() => setMenuOpen(false))}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+    </div>
+  );
+
+  const signedOutDesktopLinks = !isIn && navViewport !== "mobile";
+  const signedInDesktopMore = isIn && navViewport !== "mobile";
+  const signedInMoreOpen = openDropdown === "shared-more";
+
+  const handleSharedNavClick = useCallback<MouseEventHandler<HTMLElement>>(
+    (event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const anchor = target.closest<HTMLAnchorElement>("a[href]");
+      if (!anchor) return;
+      setBellOpen(false);
+      setProfileOpen(false);
+      setMenuOpen(false);
+      setOpenDropdown("");
+      if (!navigate || anchor.hasAttribute("download")) return;
+      if (
+        event.button !== 0 ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey
+      )
+        return;
+      const linkTarget = anchor.getAttribute("target");
+      if (linkTarget && linkTarget !== "_self") return;
+      if (navigate(anchor.href) !== false) event.preventDefault();
+    },
+    [navigate],
+  );
+
+  if (variant === "sites" && renderSitesNavBar) {
+    return (
+      <header
+        className="dtb dtb--shared"
+        role="banner"
+        aria-label="Decentraland"
+      >
+        <div ref={bellRef} className="dtb__shared-interactions">
+          <div className="dtb__shared-bar">
+            {renderSitesNavBar({
+              viewport: navViewport,
+              signedIn: isIn,
+              logoHref: "/",
+              labelHref: "/",
+              label2Href: "/shop",
+              label3Href: "/create",
+              label4Href: "/blog",
+              onMenu: () => {
+                sharedMenuTriggerRef.current =
+                  document.activeElement instanceof HTMLElement
+                    ? document.activeElement
+                    : null;
+                setBellOpen(false);
+                setProfileOpen(false);
+                setMenuOpen((open) => !open);
+              },
+              onNotifications: openBell,
+              onProfile: () => {
+                setBellOpen(false);
+                setProfileOpen((open) => !open);
+              },
+              onSignIn: () => doSignIn?.(),
+              onClick: handleSharedNavClick,
+            })}
+          </div>
+          {signedOutDesktopLinks ? (
+            <nav
+              className="dtb__shared-links"
+              aria-label="Decentraland sections"
+            >
+              {links.map(renderNavLink)}
+            </nav>
+          ) : null}
+          {signedInDesktopMore ? (
+            <div
+              className="dtb__dd dtb__shared-more"
+              onMouseEnter={() => setOpenDropdown("shared-more")}
+              onMouseLeave={() =>
+                setOpenDropdown((current) =>
+                  current === "shared-more" ? "" : current,
+                )
+              }
+              onBlur={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node))
+                  setOpenDropdown("");
+              }}
+            >
+              <button
+                type="button"
+                className="dtb__link"
+                aria-haspopup="menu"
+                aria-expanded={signedInMoreOpen}
+                onClick={() =>
+                  setOpenDropdown((current) =>
+                    current === "shared-more" ? "" : "shared-more",
+                  )
+                }
+              >
+                More
+              </button>
+              {signedInMoreOpen ? (
+                <div
+                  className="dtb__ddmenu is-open"
+                  role="menu"
+                  aria-label="More Decentraland links"
+                >
+                  {[
+                    { label: "Jump in", href: "/play/" },
+                    { label: "What's on", href: "/whats-on" },
+                    { label: "Social", href: "/social/" },
+                    { label: "Docs", href: docsUrl() },
+                  ].map((item) => (
+                    <ChromeLink
+                      key={item.label}
+                      href={item.href}
+                      onNavigate={onNavigate}
+                      className="dtb__dditem"
+                      role="menuitem"
+                    >
+                      {item.label}
+                    </ChromeLink>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+          {!isIn && navViewport === "mobile" ? (
+            <button
+              ref={burgerRef}
+              type="button"
+              className="dtb__shared-menu-trigger"
+              aria-label="Open navigation menu"
+              aria-controls={mobileMenuId}
+              aria-expanded={menuOpen}
+              onClick={() => {
+                sharedMenuTriggerRef.current =
+                  document.activeElement instanceof HTMLElement
+                    ? document.activeElement
+                    : null;
+                setMenuOpen((open) => !open);
+              }}
+            />
+          ) : null}
+          {notificationsPanel ? (
+            <div className="dtb__shared-notifications">
+              {notificationsPanel}
+            </div>
+          ) : null}
+          {isIn ? (
+            <div className="dtb__shared-account">
+              <AccountMenu
+                name={auth.name}
+                account={acct}
+                links={accountLinks(acct)}
+                onSwitchAccount={switchAccount}
+                onSignOut={doSignOut}
+                onNavigate={onNavigate}
+                align="right"
+                open={profileOpen}
+                onOpenChange={setProfileOpen}
+                hideTrigger
+                outsideClickRef={bellRef}
+              >
+                {null}
+              </AccountMenu>
+            </div>
+          ) : null}
+          {mobileMenu}
+        </div>
+      </header>
+    );
+  }
+
   return (
-    <header className={"dtb" + (transparent && !layout ? " dtb--transparent" : "")} role="banner" aria-label="Decentraland">
-      <ChromeLink className="dtb__brand" href="/" onNavigate={onNavigate} aria-label="Decentraland home">
+    <header
+      className={"dtb" + (transparent && !layout ? " dtb--transparent" : "")}
+      role="banner"
+      aria-label="Decentraland"
+    >
+      <ChromeLink
+        className="dtb__brand"
+        href="/"
+        onNavigate={onNavigate}
+        aria-label="Decentraland home"
+      >
         <img src={logo} width={40} height={40} alt="" />
       </ChromeLink>
 
@@ -310,123 +700,67 @@ export default function DclTopBar({
             >
               <BellMark />
             </button>
-            {bellOpen && (
-              <div className="dtb__notif" role="dialog" aria-label="Notifications">
-                <div className="dtb__notifhead">Notifications</div>
-                {notif.phase === "loading" && <div className="dtb__notifmsg">Loading&#x2026;</div>}
-                {notif.phase === "error" && (
-                  <div className="dtb__notifmsg">Couldn&rsquo;t load notifications.</div>
-                )}
-                {notif.phase === "ready" && notif.rows.length === 0 && (
-                  <div className="dtb__notifmsg">No notifications yet</div>
-                )}
-                {notif.phase === "ready" && notif.rows.length > 0 && (
-                  <ul className="dtb__notiflist">
-                    {notif.rows.slice(0, 10).map((n) => {
-                      const link = notificationLink(n);
-                      const body = (
-                        <>
-                          <span className="dtb__notifdot" aria-hidden="true" />
-                          <span className="dtb__notifbody">
-                            <span className="dtb__notiftitle">{notificationTitle(n)}</span>
-                            {notificationBody(n) && (
-                              <span className="dtb__notifdesc">{notificationBody(n)}</span>
-                            )}
-                          </span>
-                          <span className="dtb__notiftime">{relativeTime(n.timestamp, now)}</span>
-                        </>
-                      );
-                      return (
-                        <li key={n.id} className={"dtb__notifitem" + (n.read ? "" : " is-unread")}>
-                          {link ? (
-                            <ChromeLink className="dtb__notiflink" href={link} onNavigate={onNavigate}>
-                              {body}
-                            </ChromeLink>
-                          ) : (
-                            body
-                          )}
-                        </li>
-                      );
-                    })}
-                  </ul>
-                )}
-              </div>
-            )}
+            {notificationsPanel}
           </div>
         ) : null}
-        {accountControl ?? (isIn ? (
-          <AccountMenu
-            triggerClassName="dtb__usermenu"
-            triggerLabel="My account"
-            name={auth.name}
-            account={acct}
-            links={accountLinks(acct)}
-            onSwitchAccount={switchAccount}
-            onSignOut={doSignOut}
-            onNavigate={onNavigate}
-            align="right"
-          >
-            <span className="dtb__avatar u-avatar">
-              {faceUrl ? (
-                <img
-                  className="u-avatar__img"
-                  src={faceUrl}
-                  alt=""
-                  width="40"
-                  height="40"
-                  loading="lazy"
-                  onError={() => setFaceUrl("")}
-                />
-              ) : (
-                // As ui2's navbar: an account without a face picture shows the Decentraland mark on its disc.
-                <img className="dtb__avatar-logo" src={logo} alt="" width="40" height="40" data-testid="topbar-avatar-logo" />
-              )}
-            </span>
-          </AccountMenu>
-        ) : doSignIn ? (
-          <button type="button" className="dtb__signin" onClick={() => doSignIn()}>Sign in</button>
-        ) : (
-          <ChromeLink className="dtb__signin" href={signInHref} onNavigate={onNavigate} style={{ textDecoration: "none" }}>Sign in</ChromeLink>
-        ))}
+        {accountControl ??
+          (isIn ? (
+            <AccountMenu
+              triggerClassName="dtb__usermenu"
+              triggerLabel="My account"
+              name={auth.name}
+              account={acct}
+              links={accountLinks(acct)}
+              onSwitchAccount={switchAccount}
+              onSignOut={doSignOut}
+              onNavigate={onNavigate}
+              align="right"
+            >
+              <span className="dtb__avatar u-avatar">
+                {faceUrl ? (
+                  <img
+                    className="u-avatar__img"
+                    src={faceUrl}
+                    alt=""
+                    width="40"
+                    height="40"
+                    loading="lazy"
+                    onError={() => setFaceUrl("")}
+                  />
+                ) : (
+                  // As ui2's navbar: an account without a face picture shows the Decentraland mark on its disc.
+                  <img
+                    className="dtb__avatar-logo"
+                    src={logo}
+                    alt=""
+                    width="40"
+                    height="40"
+                    data-testid="topbar-avatar-logo"
+                  />
+                )}
+              </span>
+            </AccountMenu>
+          ) : doSignIn ? (
+            <button
+              type="button"
+              className="dtb__signin"
+              onClick={() => doSignIn()}
+            >
+              Sign in
+            </button>
+          ) : (
+            <ChromeLink
+              className="dtb__signin"
+              href={signInHref}
+              onNavigate={onNavigate}
+              style={{ textDecoration: "none" }}
+            >
+              Sign in
+            </ChromeLink>
+          ))}
       </div>
 
-      <div id={mobileMenuId} className={"dtb__menu" + (menuOpen ? " is-open" : "") + (renderMobileNavigation ? " dtb__menu--context" : "")}>
-        {menuOpen ? (
-          <>
-            <nav className="dtb__globalmenu" aria-label="Decentraland sections">
-              {links.map((link) => {
-                const top = (
-                  <ChromeLink
-                    key={link.id}
-                    href={link.href} onNavigate={onNavigate}
-                    className={"dtb__menulink" + (link.id === activeId ? " is-active" : "") + (link.caret ? " dtb__menulink--caret" : "")}
-                    aria-current={link.id === activeId ? "page" : undefined}
-                    onClick={() => setMenuOpen(false)}
-                  >
-                    {link.label}
-                  </ChromeLink>
-                );
-                return link.menu?.length ? (
-                  <span key={link.id} className="dtb__menugroup">
-                    {top}
-                    {link.menu.map((item) => (
-                      <ChromeLink
-                        key={item.label}
-                        href={item.href} onNavigate={onNavigate}
-                        className="dtb__menulink dtb__menulink--sub"
-                        onClick={() => setMenuOpen(false)}
-                      >
-                        {item.label}
-                      </ChromeLink>
-                    ))}
-                  </span>
-                ) : top;
-              })}
-            </nav>
-            {renderMobileNavigation ? <div className="site-layout__mobile-sections">{renderMobileNavigation(() => setMenuOpen(false))}</div> : null}
-          </>
-        ) : null}
-      </div>
+      {mobileMenu}
     </header>
   );
 }
