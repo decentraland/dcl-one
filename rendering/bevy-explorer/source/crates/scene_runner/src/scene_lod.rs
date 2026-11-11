@@ -1284,8 +1284,8 @@ fn scene_placement(definition: &EntityDefinition) -> Option<(IVec2, Vec<IVec2>)>
 }
 
 /// Shows a stand-in's visuals in one frame once each of its visuals containers is processed:
-/// some model loaded, or nothing to show if none did (the parcels then stay the loading walls'
-/// and the imposters'; the colliders part stays).
+/// some model loaded, or nothing to show if none did (the parcels then stay the imposters'; the
+/// colliders part stays).
 fn show_scene_lods(
     mut commands: Commands,
     mut lods: Query<(

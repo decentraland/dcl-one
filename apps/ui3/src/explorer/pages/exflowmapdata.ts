@@ -582,7 +582,7 @@ export const SECTIONS: FlowSection[] = [
     title: "Scene Lifecycle",
     machines: ["lifecycle.rs", "load.rs", "scene_loop.rs", "loading_quads.rs", "imposters"],
     blurb:
-      "What the engine does under every teleport: parcels resolve to scene entities, each scene walks a five-state boot, runs a tick loop with a 10s watchdog, and beyond the load radius the world is baked imposters. What you actually see: glowing loading walls, the pop-in at tick 5, a scene that silently freezes when it breaks, and the imposter skyline.",
+      "What the engine does under every teleport: parcels resolve to scene entities, each scene walks a five-state boot, runs a tick loop with a 10s watchdog, and beyond the load radius the world is baked imposters. What you actually see: a loading scene's stand-in (its near LOD, far LOD or imposter tile), the pop-in at tick 5, a scene that silently freezes when it breaks, and the imposter skyline.",
     tracks: [
       {
         chain: "pointers",
@@ -621,7 +621,7 @@ export const SECTIONS: FlowSection[] = [
           }),
           auto("tick 5"),
           outcome("scene appears", {
-            sub: "parked at y \u{2212}1000 behind glowing boundary walls until now",
+            sub: "parked at y \u{2212}1000 under its stand-in until now",
           }),
         ],
         branches: [
@@ -951,8 +951,8 @@ engine crates.
 \u{2502}    batch halves \u{B7} 10 consecutive fails \u{25B6} AppError \u{2192} engine toast
 \u{2502}    per scene: SPAWNED "spawning scene" \u{25B6} SCENE ENTITY (scene.json + content
 \u{2502}    map) \u{25B6} MAIN CRDT \u{25B6} JAVASCRIPT "started scene" (per-scene worker; SDK6 \u{25B6}
-\u{2502}    adaption layer) \u{2500}tick 5\u{2500}\u{25B6} visible (parked at y \u{2212}1000 behind glowing
-\u{2502}    loading walls until then) \u{B7} any step fails \u{25B6} FAILED (terminal) \u{B7}
+\u{2502}    adaption layer) \u{2500}tick 5\u{2500}\u{25B6} visible (parked at y \u{2212}1000 under its
+\u{2502}    stand-in until then) \u{B7} any step fails \u{25B6} FAILED (terminal) \u{B7}
 \u{2502}    current-scene boot defers neighbors \u{2264}15s ("green-ground" guard)
 \u{2502}    ticking: RUNNING \u{21C4} CRDT \u{B7} no reply 10s \u{25B6} BROKEN "marking broken" \u{2014}
 \u{2502}    freezes as-is; js exception \u{25B6} BROKEN + scene-console error \u{B7} web shows

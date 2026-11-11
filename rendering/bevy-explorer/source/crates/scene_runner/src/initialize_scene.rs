@@ -7,15 +7,10 @@ use bevy::{
     asset::{io::Reader, AssetLoader, LoadContext},
     diagnostic::FrameCount,
     math::{FloatOrd, Vec3Swizzles},
-    pbr::NotShadowCaster,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     reflect::TypePath,
-    render::{
-        primitives::Aabb,
-        render_resource::{AsBindGroup, ShaderRef},
-        storage::ShaderStorageBuffer,
-    },
+    render::{primitives::Aabb, storage::ShaderStorageBuffer},
 };
 
 use common::{
@@ -54,7 +49,6 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
-    scene_lod::SceneLod,
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -102,7 +96,6 @@ impl Plugin for SceneLifecyclePlugin {
         app.init_resource::<PortableScenes>();
         app.init_asset::<SerializedCrdtStore>();
         app.init_asset_loader::<CrdtLoader>();
-        app.add_plugins(MaterialPlugin::<LoadingMaterial>::default());
 
         app.add_systems(
             Update,
@@ -112,7 +105,6 @@ impl Plugin for SceneLifecyclePlugin {
                 load_scene_javascript,
                 initialize_scene,
                 animate_ready_scene,
-                update_loading_quads,
                 handle_live_scene_info,
             )
                 .in_set(SceneSets::Init),
@@ -2055,42 +2047,23 @@ pub fn process_scene_lifecycle(
 )]
 pub struct SceneHash(pub String);
 
-#[derive(Component)]
-pub struct LoadingQuad(bool);
-
+/// Raises a scene from its parking spot below the world once it is ready (its fifth tick, broken
+/// or frozen), and in preview mode lays the grid plane under each of its parcels. Until then a
+/// loading scene shows nothing of its own and its stand-in (the near LOD, else the far LOD, else
+/// the imposter tile of its parcels) covers its parcels. The stand-in stays until the scene's
+/// content is shown (`RendererSceneContext::content_shown`), so the raised scene and its stand-in
+/// overlap in between rather than swapping in one frame.
 fn animate_ready_scene(
-    mut q: Query<(
-        Entity,
-        &mut Transform,
-        Ref<RendererSceneContext>,
-        Option<&Children>,
-    )>,
+    mut q: Query<(Entity, &mut Transform, Ref<RendererSceneContext>)>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut loading_materials: ResMut<Assets<LoadingMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    loading_quads: Query<(), With<LoadingQuad>>,
     preview: Res<PreviewMode>,
     mut handles: Local<Option<(Handle<Mesh>, Handle<StandardMaterial>)>>,
     asset_server: Res<AssetServer>,
     current_imposter_scene: Res<CurrentImposterScene>,
 ) {
-    if handles.is_none() {
-        *handles = Some((
-            meshes.add(
-                Rectangle::default()
-                    .mesh()
-                    .build()
-                    .scaled_by(Vec3::splat(PARCEL_SIZE)),
-            ),
-            materials.add(StandardMaterial {
-                base_color_texture: Some(asset_server.load("embedded://images/grid.png")),
-                ..Default::default()
-            }),
-        ));
-    }
-
-    for (root, mut transform, ctx, children) in q.iter_mut() {
+    for (root, mut transform, ctx) in q.iter_mut() {
         // skip animating imposters
         if current_imposter_scene
             .0
@@ -2106,21 +2079,28 @@ fn animate_ready_scene(
         // (already-spawned) main.crdt content stuck underground and looks empty until unfrozen.
         let frozen = ctx.blocked.contains(FROZEN_BLOCK);
         if transform.translation.y < 0.0 && (ctx.tick_number >= 5 || ctx.broken() || frozen) {
-            if transform.translation.y == -1000.0 {
-                for child in children.map(|c| c.iter()).unwrap_or_default() {
-                    if loading_quads.get(child).is_ok() {
-                        commands.entity(child).despawn();
-                    }
-                }
-            }
-
-            // transform.translation.y *= 0.75;
-            // if transform.translation.y > -0.01 {
             transform.translation.y = 0.0;
-            // }
         }
 
-        if ctx.is_added() {
+        if ctx.is_added() && preview.is_preview {
+            let (mesh, material) = handles
+                .get_or_insert_with(|| {
+                    (
+                        meshes.add(
+                            Rectangle::default()
+                                .mesh()
+                                .build()
+                                .scaled_by(Vec3::splat(PARCEL_SIZE)),
+                        ),
+                        materials.add(StandardMaterial {
+                            base_color_texture: Some(
+                                asset_server.load("embedded://images/grid.png"),
+                            ),
+                            ..Default::default()
+                        }),
+                    )
+                })
+                .clone();
             let mut children = Vec::new();
             for parcel in ctx.parcels.iter() {
                 let position = ((*parcel - ctx.base) * IVec2::new(1, -1))
@@ -2128,153 +2108,31 @@ fn animate_ready_scene(
                     .extend(0.0)
                     .xzy()
                     * PARCEL_SIZE;
-                let middle = Vec3::new(PARCEL_SIZE * 0.5, 0.0, PARCEL_SIZE * -0.5);
 
-                for (parcel_offset, position_offset, is_x) in [
-                    (-IVec2::X, -Vec3::Z * 0.5, true),
-                    (IVec2::X, -Vec3::Z * 0.5 + Vec3::X, true),
-                    (-IVec2::Y, Vec3::X * 0.5, false),
-                    (IVec2::Y, Vec3::X * 0.5 - Vec3::Z, false),
-                ] {
-                    if !ctx.parcels.contains(&(*parcel + parcel_offset)) {
-                        children.push(
-                            commands
-                                .spawn((
-                                    Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                    MeshMaterial3d(
-                                        loading_materials.add(LoadingMaterial::default()),
-                                    ),
-                                    Transform::from_translation(
-                                        position + position_offset * PARCEL_SIZE + Vec3::Y * 1000.0,
-                                    )
-                                    .looking_at(position + middle + Vec3::Y * 1000.0, Vec3::Y),
-                                    LoadingQuad(is_x),
-                                    NotShadowCaster,
-                                ))
-                                .id(),
-                        );
-                    }
-                }
-
-                if preview.is_preview {
-                    children.push(
-                        commands
-                            .spawn((
-                                PreviewGridPlane,
-                                Aabb::from_min_max(
-                                    Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
-                                    Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
-                                ),
-                                Mesh3d(handles.as_ref().unwrap().0.clone()),
-                                MeshMaterial3d(handles.as_ref().unwrap().1.clone()),
-                                Transform::from_translation(
-                                    position
-                                        + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),
-                                )
-                                .looking_at(
-                                    position
-                                        + Vec3::new(PARCEL_SIZE * 0.5, -2.0, -PARCEL_SIZE * 0.5),
-                                    Vec3::Z,
-                                ),
-                            ))
-                            .id(),
-                    );
-                }
+                children.push(
+                    commands
+                        .spawn((
+                            PreviewGridPlane,
+                            Aabb::from_min_max(
+                                Vec3::new(-PARCEL_SIZE / 2., -PARCEL_SIZE / 2., 0.),
+                                Vec3::new(PARCEL_SIZE / 2., PARCEL_SIZE / 2., 0.),
+                            ),
+                            Mesh3d(mesh.clone()),
+                            MeshMaterial3d(material.clone()),
+                            Transform::from_translation(
+                                position + Vec3::new(PARCEL_SIZE * 0.5, -0.01, PARCEL_SIZE * -0.5),
+                            )
+                            .looking_at(
+                                position + Vec3::new(PARCEL_SIZE * 0.5, -2.0, -PARCEL_SIZE * 0.5),
+                                Vec3::Z,
+                            ),
+                        ))
+                        .id(),
+                );
             }
 
             commands.entity(root).try_push_children(&children);
         }
-    }
-}
-
-#[derive(Component)]
-pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
-
-/// Keeps each loading wall at the player's height and lights it near the player. A scene whose
-/// near LOD is shown raises no walls: the stand-in already stands on its parcels.
-fn update_loading_quads(
-    mut q: Query<
-        (
-            &GlobalTransform,
-            &mut Transform,
-            &MeshMaterial3d<LoadingMaterial>,
-            &LoadingQuad,
-            &ChildOf,
-            &mut Visibility,
-        ),
-        Without<PrimaryUser>,
-    >,
-    player: Query<&Transform, With<PrimaryUser>>,
-    scenes: Query<&RendererSceneContext>,
-    lods: Query<&SceneLod>,
-    mut mats: ResMut<Assets<LoadingMaterial>>,
-    mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
-) {
-    let Ok(player_translation) = player.single().map(|p| p.translation) else {
-        return;
-    };
-
-    let prev_active = std::mem::take(&mut *local_prev_active);
-    let stood_in = lods
-        .iter()
-        .filter(|lod| lod.shown())
-        .map(|lod| lod.hash.as_str())
-        .collect::<HashSet<_>>();
-
-    for (gt, mut trans, h_mat, loading, child_of, mut visibility) in q.iter_mut() {
-        let hidden = scenes
-            .get(child_of.parent())
-            .is_ok_and(|ctx| stood_in.contains(&*ctx.hash));
-        visibility.set_if_neq(if hidden {
-            Visibility::Hidden
-        } else {
-            Visibility::Inherited
-        });
-        if hidden {
-            continue;
-        }
-
-        let nearest_point = player_translation.xz().clamp(
-            gt.translation().xz()
-                - if loading.0 {
-                    Vec2::Y * PARCEL_SIZE * 0.5
-                } else {
-                    Vec2::X * PARCEL_SIZE * 0.5
-                },
-            gt.translation().xz()
-                + if loading.0 {
-                    Vec2::Y * PARCEL_SIZE * 0.5
-                } else {
-                    Vec2::X * PARCEL_SIZE * 0.5
-                },
-        );
-        let active = (nearest_point - player_translation.xz()).length() < 10.0;
-        if prev_active.contains(&h_mat.0.id()) || active {
-            let mat = mats.get_mut(h_mat.0.id()).unwrap();
-            mat.player_pos = player_translation.extend(if active { 1.0 } else { 0.0 })
-        }
-
-        trans.translation.y = player_translation.y + 1000.0;
-
-        if active {
-            local_prev_active.insert(h_mat.0.id());
-        }
-    }
-}
-
-#[derive(Asset, TypePath, Clone, AsBindGroup, Default)]
-pub struct LoadingMaterial {
-    #[uniform(0)]
-    player_pos: Vec4, // xyz = player pos, w = active
-}
-
-impl Material for LoadingMaterial {
-    fn fragment_shader() -> bevy::render::render_resource::ShaderRef {
-        ShaderRef::Path("embedded://shaders/loading.wgsl".into())
-    }
-
-    fn alpha_mode(&self) -> AlphaMode {
-        AlphaMode::Blend
     }
 }
 

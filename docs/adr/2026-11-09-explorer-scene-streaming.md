@@ -96,7 +96,7 @@ the GPU.
   not among the scene's deployed files, such as a model the scene loads from a url, is skipped
   and logged at debug level: the stand-in never fetches a url the scene chose before the scene
   runs. Primitive meshes, text and materials the scene's code sets are not in the descriptor at
-  all. A scene whose models are all skipped keeps its walls.
+  all. A scene whose models are all skipped gets no near LOD.
 - **The live container path.** Each model becomes a glTF container per part, named by its file
   in the scene's content map, which the live glTF systems (`gltf_container`) load and process a
   slice a frame under the instantiation deadline. A visuals container (`GltfPart::Visuals`) hangs
@@ -132,8 +132,8 @@ the GPU.
   `Tier::Lod`: after every live scene's and before requests that are no scene's. Once the
   scene spawns, its own registration takes the hash to the scene tier.
 - **Hand-off.** The root stays hidden until each of its visuals containers is processed; then
-  the visuals show in one frame. If no model loaded, nothing shows and the scene keeps its
-  loading walls; the colliders stay. The stand-in goes, both parts with it, in the frame the live
+  the visuals show in one frame. If no model loaded, nothing shows and its parcels stay the
+  imposters'; the colliders stay. The stand-in goes, both parts with it, in the frame the live
   scene's content is first on screen (`RendererSceneContext::content_shown`), and a scene whose
   content has been on screen never gets a stand-in again, even while its content is briefly
   blocked (an imposter bake), so a stand-in does not come back over live content. The live scene
@@ -146,8 +146,6 @@ the GPU.
   against every `SceneColliderData`, so a player who reaches a loading scene walks on its
   colliders. Pointer events and triggers query live scenes only. The colliders go with the
   stand-in.
-- **Walls.** While a stand-in's visuals show, its scene's loading walls are hidden; a scene
-  without shown visuals keeps them.
 - **Debug view.** The Scene stand-ins debug section counts near LODs' colliders parts and the
   near and far LODs' visuals by state, and can tint the near LOD's models green and the far
   LOD's mesh blue (`/lod_tint`). The tint changes only the stand-in's own materials, never the
@@ -267,10 +265,21 @@ the same kind.
   normals, 16-bit texture coordinates). The vendored glTF loader reads them through a backport of
   upstream bevy's support (`rendering/bevy-explorer/docs/guidelines/bevy-fork.md`).
 - **Hand-off.** Like the near LOD it shows in one frame once processed, and goes in the frame the
-  live scene's content is on screen. Imposters skip its parcels and its scene's loading walls
-  are hidden while it is shown.
+  live scene's content is on screen. Imposters skip its parcels while it is shown.
 
-The removal of the loading walls is a later decision.
+### What a loading scene shows
+
+A loading scene raises no walls. It is parked below the world until it is ready and shows
+nothing of its own; its stand-in covers its parcels instead: the near LOD where one is
+shown, else the far LOD, else the imposter tile of its parcels, else nothing. The scene is
+raised at its fifth tick, and its stand-in stays over it until the live scene's content is on
+screen (`RendererSceneContext::content_shown`): the two overlap for those frames rather than
+swapping in one. The walls' material, shader and systems are
+gone; preview mode's grid plane under each parcel stays.
+
+The walls never stopped a player from walking onto a loading scene. Within ring 3 the near
+LOD's colliders part does, drawn or not: a player who arrives first walks on the scene's collider
+nodes, or on the floor where it has none.
 
 ## Rejected
 
@@ -320,10 +329,11 @@ The removal of the loading walls is a later decision.
   been measured.
 - A scene stalled in loading holds a wave slot for at least 20 s, then the wave moves on with it still
   loading.
-- Loading scenes keep their animated walls; what shows while a scene loads is a later decision.
-- Within three rings, a loading scene shows its own models as soon as they arrive instead of
-  its walls, and the live scene reuses those models when it comes up.
-- A scene the asset pipeline has not processed has no descriptor and keeps its walls.
+- A loading scene shows its stand-in instead of animated walls.
+- Within three rings, a loading scene shows its own models as soon as they arrive, and the live
+  scene reuses those models when it comes up.
+- A scene the asset pipeline has not processed has no descriptor and no LOD: its imposter tile
+  stands in where one is baked, and nothing shows on its parcels where none is.
 - A stand-in's collisions are the defaults only: a container's collision masks, `MeshCollider`
   components set by scene code, primitives a script creates and things a script moves are
   absent until the scene is live.
