@@ -703,7 +703,7 @@ describe('when component installation owns its verified input read-set and trans
       expect(await handWrittenOnDisk()).toEqual(handWritten)
     })
 
-    it('should refuse a registry that would generate over it and leave the target unchanged', async () => {
+    it('should refuse a plan that writes into it and leave the target unchanged', async () => {
       const before = await readdir(path.join(root, 'components'), { recursive: true })
       vi.mocked(planComponents).mockImplementationOnce(async (context) => {
         const plan = await actualPlan(context)
@@ -763,10 +763,11 @@ describe('when component installation owns its verified input read-set and trans
       expect((await runInstall(app, options)).changed).toBe(false)
     })
 
-    it('should remove a stale output the lock table pins even when the record no longer lists it', async () => {
-      await writeFile(path.join(root, 'components/DemoNav/Stale.tsx'), 'export const Stale = 1\n')
+    it('should remove an output the lock table pins at its bytes when the record does not list it', async () => {
+      const stale = 'export const Stale = 1\n'
+      await writeFile(path.join(root, 'components/DemoNav/Stale.tsx'), stale)
       const lock = JSON.parse(await readFile(lockPath, 'utf8'))
-      lock.publicComponents = { files: { 'DemoNav/Stale.tsx': { sha256: '0'.repeat(64) } } }
+      lock.publicComponents = { files: { 'DemoNav/Stale.tsx': { sha256: hash(stale) } } }
       await writeFile(lockPath, JSON.stringify(lock))
       await writeFile(registryPath, '{"components":[]}')
       await fixtureCommit(repository)
@@ -810,14 +811,47 @@ describe('when component installation owns its verified input read-set and trans
       expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
     })
 
-    it('should keep an unowned top-level file when the registry empties', async () => {
+    it('should refuse an unowned top-level file and leave it unchanged', async () => {
       await writeFile(path.join(root, 'components/README.md'), 'maintained\n')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const before = await componentFiles()
+
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install target holds a top-level file it does not own: README.md'
+      )
+      expect(await componentFiles()).toEqual(before)
+      expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
+    })
+
+    it('should keep a committed edit over a listed file when the registry empties', async () => {
+      const edited = Buffer.from('export const DemoNav = () => null\n')
+      await writeFile(path.join(root, 'components/DemoNav/DemoNav.tsx'), edited)
       await writeFile(registryPath, '{"components":[]}')
       await fixtureCommit(repository)
 
       await runInstall(app, options)
 
-      expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
+      expect(await componentFiles()).toEqual([
+        'DemoNav',
+        testFile,
+        'DemoNav/DemoNav.tsx',
+        'generation.json',
+        'promotion.json'
+      ])
+      expect(await readFile(path.join(root, 'components/DemoNav/DemoNav.tsx'))).toEqual(edited)
+    })
+
+    it('should keep the files an unreadable record listed when the lock table pins none', async () => {
+      await writeFile(path.join(root, 'components/generation.json'), 'not json')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+
+      await runInstall(app, options)
+
+      expect(await componentFiles()).toEqual(
+        expect.arrayContaining(['DemoNav/DemoNav.tsx', testFile, 'runtime'])
+      )
     })
 
     it('should refuse an uncommitted edit to the file instead of publishing it', async () => {
@@ -830,6 +864,18 @@ describe('when component installation owns its verified input read-set and trans
       expect(await readFile(path.join(root, 'components', testFile))).toEqual(edited)
       expect(await componentFiles()).toContain('DemoNav/DemoNav.tsx')
     })
+  })
+
+  it('should refuse to regenerate over a committed edit to a listed file and leave it unchanged', async () => {
+    await runInstall(app, options)
+    const edited = Buffer.from('export const DemoNav = () => null\n')
+    await writeFile(path.join(root, 'components/DemoNav/DemoNav.tsx'), edited)
+    await fixtureCommit(repository)
+
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Component install would overwrite a file it does not own: DemoNav/DemoNav.tsx'
+    )
+    expect(await readFile(path.join(root, 'components/DemoNav/DemoNav.tsx'))).toEqual(edited)
   })
 
   it('should reproduce empty retirement in a fresh immutable private stage and no-op', async () => {
