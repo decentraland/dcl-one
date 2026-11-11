@@ -167,7 +167,8 @@ async function main(argv: string[]): Promise<number> {
       booleanProperties: pairs('boolean', values.boolean),
       texts: pairs('text', values.text)
     }
-    // A batch that cannot be read is a broken invocation (exit 2), told apart from an entry that fails (exit 1).
+    // In batch mode exit 1 means only that an entry failed: a batch that cannot be read, a broken invocation and a
+    // configuration or library that cannot be used all exit 2 (see batchMode below).
     let batchEntries: unknown
     if (values.batch !== undefined) {
       let text: string
@@ -209,6 +210,7 @@ async function main(argv: string[]): Promise<number> {
     if (batchEntries !== undefined) {
       const batch = await resolveBatch(context, batchEntries)
       print(batch)
+      if ('errors' in batch) return 2
       return batch.ok ? 0 : 1
     }
     const result = await resolveComponent(context, input)
@@ -318,10 +320,16 @@ async function main(argv: string[]): Promise<number> {
   return 2
 }
 
+// A thrown error in batch mode (a misused flag, an unusable configuration) is a broken invocation, never the
+// exit 1 a caller reads as "an entry failed".
+const batchMode = process.argv
+  .slice(2)
+  .some((arg) => arg === '--batch' || arg.startsWith('--batch='))
+
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error: unknown) => {
     process.stderr.write(`${errorText(error)}\n`)
-    process.exit(1)
+    process.exit(batchMode ? 2 : 1)
   }
 )

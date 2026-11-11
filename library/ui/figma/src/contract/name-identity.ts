@@ -146,6 +146,25 @@ function resolveByName(
       ]
     }
   const [{ mapping, matchedBy }] = matches as [(typeof matches)[number]]
+  // A figma.config.json alias is a Figma set name (often a default such as "Component 1"), so it is no evidence on
+  // its own: through an alias, a mapping that reads no variant property has nothing to confirm the name with.
+  const readsVariants = mapping.locals.some((local) => local.kind === 'enum')
+  if (matchedBy === 'alias' && !readsVariants)
+    return {
+      errors: [
+        diagnostic(
+          'identity-uncertain',
+          `"${name}" is only an alias of ${mapping.header.component}, which reads no variant property to confirm it; resolve with the component name instead.`,
+          {
+            reason: 'name-unconfirmed',
+            reads: [],
+            name,
+            component: mapping.header.component,
+            ...context
+          }
+        )
+      ]
+    }
   const compatibility = nameCompatibility(mapping, input.variantProperties, input.booleanProperties)
   if (!compatibility.ok) {
     const details = Object.fromEntries(

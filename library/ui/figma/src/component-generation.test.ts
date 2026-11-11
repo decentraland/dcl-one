@@ -397,6 +397,38 @@ describe('when validating component generation as an offline consistency record'
     }
   )
 
+  // The record names the registry's components and pins its bytes; the accepted limits stay in promotion.json.
+  it('should pin a registry with accepted limits by digest without copying the limits', () => {
+    const limited = encode({
+      components: [{ name: 'Button', limits: [{ id: 'logo-size', text: 'Pending.' }] }],
+      internal: ['NavBar']
+    })
+    files.set('promotion.json', limited)
+
+    const record = validateComponentGeneration(generate(), source)
+
+    expect(record.registry).toEqual({
+      path: 'promotion.json',
+      sha256: hash(limited.toString()),
+      components: ['Button'],
+      internal: ['NavBar']
+    })
+  })
+
+  it('should reject a record that still copies the limits into its registry', () => {
+    ;(parsed.registry as Record<string, unknown>).limits = {}
+    expect(() => validateComponentGeneration(encode(parsed), source)).toThrow(
+      'Invalid component generation registry'
+    )
+  })
+
+  it('should reject registry names that are not plain names', () => {
+    ;(parsed.registry as { components: unknown[] }).components = [{ name: 'Button', limits: [] }]
+    expect(() => validateComponentGeneration(encode(parsed), source)).toThrow(
+      'Invalid component generation registry names'
+    )
+  })
+
   it('should reject registry/output digest disagreement', () => {
     parsed.registry.sha256 = '0'.repeat(64)
     expect(() => validateComponentGeneration(encode(parsed), source)).toThrow(

@@ -379,6 +379,72 @@ describe('figma from a consuming project', () => {
     }, 30_000)
   })
 
+  // Exit 1 in batch mode means only that an entry failed.
+  describe('when a batch invocation is broken or its configuration cannot be used', () => {
+    it.each([
+      [
+        ['resolve', '--mapping-only', '--node-id', '20:1', '--batch', '-'],
+        '--batch takes its instances from the file'
+      ],
+      [
+        ['check-mappings', '--mapping-only', '--batch', 'x.json'],
+        '--batch applies only to resolve'
+      ],
+      [
+        ['resolve', '--mapping-only', '--batch=-', '--name', 'Button'],
+        '--batch takes its instances from the file'
+      ]
+    ])(
+      'should exit 2 for %j',
+      async (args, message) => {
+        await expect(cli(args)).rejects.toMatchObject({
+          code: 2,
+          stderr: expect.stringContaining(message)
+        })
+      },
+      30_000
+    )
+
+    it('should exit 2 when the configuration of a batch cannot be read', async () => {
+      const file = path.join(consumer, 'one.json')
+      await writeFile(file, JSON.stringify([{ name: 'Button' }]))
+
+      await expect(
+        cli(['resolve', '--batch', file, '--config', 'missing.json'])
+      ).rejects.toMatchObject({
+        code: 2,
+        stderr: expect.stringContaining('Figma config not found')
+      })
+    }, 30_000)
+
+    it('should exit 2 with mapping-root-not-configured when the mapping root does not exist', async () => {
+      const child = execFile(
+        process.execPath,
+        [
+          '--import',
+          import.meta.resolve('tsx'),
+          'src/cli.ts',
+          'resolve',
+          '--mapping-only',
+          '--mapping-root',
+          path.join(consumer, 'no-such-root'),
+          '--batch',
+          '-'
+        ],
+        { cwd: projectRoot, env: { PATH: process.env.PATH ?? '' } }
+      )
+      child.stdin!.end(JSON.stringify([{ name: 'Button' }]))
+      const [code, stdout] = await new Promise<[number | null, string]>((resolve) => {
+        let out = ''
+        child.stdout!.on('data', (chunk) => (out += chunk))
+        child.on('close', (exit) => resolve([exit, out]))
+      })
+
+      expect(code).toBe(2)
+      expect(JSON.parse(stdout).errors[0].code).toBe('mapping-root-not-configured')
+    }, 30_000)
+  })
+
   describe('when the CLI receives malformed resolve flags', () => {
     it.each([
       [['--text', 'Label'], '--text takes "Name=Value"'],
@@ -387,8 +453,7 @@ describe('figma from a consuming project', () => {
       [['--variant', 'Blocked'], '--variant takes "Name=Value"'],
       [['--boolean', 'Icon'], '--boolean takes "Name=Value"'],
       [['--text', '__proto__=a', '--text', '__proto__=b'], '--text names "__proto__" twice'],
-      [['--config', 'missing.json'], 'Figma config not found'],
-      [['--batch', '-'], '--batch takes its instances from the file']
+      [['--config', 'missing.json'], 'Figma config not found']
     ])(
       'should refuse %j without resolving',
       async (flags, message) => {
@@ -409,10 +474,6 @@ describe('figma from a consuming project', () => {
       [
         ['review-manifest', '--mapping-only'],
         '--mapping-only applies only to resolve and check-mappings'
-      ],
-      [
-        ['check-mappings', '--mapping-only', '--batch', 'x.json'],
-        '--batch applies only to resolve'
       ],
       [
         ['check-mappings', '--mapping-only', '--boolean', 'Icon=true'],

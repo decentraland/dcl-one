@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "1ec947fdf4920505728104fe1ed3b699e004ba5f1052b1af7e5f41fd61a21b23",
+          "sha256": "f9adb4cee4ac282963a1b9b3ec0a9d194eec18188d87be95847ceedb1e680aa3",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -618,7 +618,8 @@
             "name-identity",
             "port-command",
             "accepted-limits",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -675,7 +676,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "b7ca6271d50d99a0197076d54f84293c382275cd294c10cce10d0e06329262be",
+          "sha256": "6a73bad4dffdd030260367d84a44466dc674607d2383a4ae83aff50bbff453a8",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -686,7 +687,8 @@
             "consumer-skill",
             "name-identity",
             "accepted-limits",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
@@ -701,9 +703,10 @@
           "fds": null,
           "deviation": [
             "component-install-integrity",
-            "accepted-limits"
+            "accepted-limits",
+            "resolver-followups"
           ],
-          "sha256": "da983de8b92d6c176b40c2893533a3a8c1ad428a2ffa3de4a0864c5f070c3071"
+          "sha256": "3410e9530daf2c43331cef8f6148a4c7c7001474f752b2f900b58ffb4c69353c"
         },
         "library/ui/figma/figma.config.json": {
           "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
@@ -826,17 +829,19 @@
           "fds": null,
           "deviation": [
             "component-install-integrity",
-            "single-component-module-pin"
+            "single-component-module-pin",
+            "resolver-followups"
           ],
-          "sha256": "41643c28472b172749094a9f0d9cc55e0cd1062ac15d491d87dce8e0ac0f9d4c"
+          "sha256": "768d61e5e911efba6ee616df1b9ce5a36d23df9cbd0a3376eb8670fdca5a1d29"
         },
         "library/ui/figma/public-components.mjs": {
           "fds": null,
           "deviation": [
             "component-install-integrity",
-            "single-component-module-pin"
+            "single-component-module-pin",
+            "resolver-followups"
           ],
-          "sha256": "211de9d8c19353f727cdb9c3d9d24cdb46cd742039562d38bffced65789d7a18"
+          "sha256": "f3feb05d196a094b7e294e7bb3d41ffaee91d6047ca4780edc91da3777e62d4c"
         },
         "library/ui/figma/public-foundations.mjs": {
           "fds": null,
@@ -2434,7 +2439,7 @@
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "ddeb09f14172f5cc1ef73b7eec80b85b2e9356abeb88a4d0c87c2975149d7744",
+          "sha256": "b69f715a218ed5637015eb3ae535b46a43e99d8f26eabb0938a7cb67d2064823",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2450,15 +2455,17 @@
             "resolver-contract",
             "name-identity",
             "port-command",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/component-generation.test.ts": {
           "fds": null,
           "deviation": [
-            "component-install-integrity"
+            "component-install-integrity",
+            "resolver-followups"
           ],
-          "sha256": "4692dd398fe65e2ab1afde0556ef0d1674287dd85d1f256bc7875899bafba963"
+          "sha256": "ccd8a1a49226b3515e73bfd328b734a40b64882521bce3cab2ad7e0f55127f22"
         },
         "library/ui/figma/src/config.ts": {
           "sha256": "fc2364bfeeb8bbf2e8f30c1f1841f37db30d69b7c139bde54bbb5b348ac43e83",
@@ -2475,7 +2482,7 @@
           ]
         },
         "library/ui/figma/src/consumer.test.ts": {
-          "sha256": "3241ccde85154c9801685922496254e36378c407607d48a287ed8e19547f8f47",
+          "sha256": "419ee5ebebafb892a394b02127403f9503b954b32f46985da21617d7f370c075",
           "fds": {
             "path": "dcl-mcp-figma/src/consumer.test.ts",
             "sha256": "d945c42ad4ae13ba2088087fd8a7e9d7b92c4dc97ba2ed28dbfb2088b957cda5"
@@ -2486,23 +2493,26 @@
             "live-read-restored",
             "resolver-contract",
             "name-identity",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/batch.test.ts": {
-          "sha256": "0f0e1c1d3358cea14b2032cdffbb381147eca2e1241edd6d41002312b1f8c017",
+          "sha256": "42f813ed79fbc3c4f599a446c0b292af2fc929b80e8c938a1f4c564085906470",
           "fds": null,
           "deviation": [
             "name-identity",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/batch.ts": {
-          "sha256": "06693651a7fe64d8eadc9e32bfbe7a7ca62555012cb4c328d2fd17092a8e7d2d",
+          "sha256": "7b9e368350993c630734b6a00c51fd5b66607eb8af1eab540f1e30139a135caa",
           "fds": null,
           "deviation": [
             "name-identity",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/config.ts": {
@@ -2520,7 +2530,7 @@
           ]
         },
         "library/ui/figma/src/contract/diagnostics.ts": {
-          "sha256": "1ba6e433c1468fbbbc5bddb5b794a3343c409272256c23f6714478dba8714efd",
+          "sha256": "abf2493013468d4ea7867ff5535a59c1d7ff8a55c1915bfc18d6ead9d35688db",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/diagnostics.ts",
             "sha256": "ad74f960ce5ba957ba964bb2e7710261088331cc7a0c16eabfab0ec075cda12a"
@@ -2528,7 +2538,8 @@
           "deviation": [
             "resolver-contract",
             "name-identity",
-            "accepted-limits"
+            "accepted-limits",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/figma-index.test.ts": {
@@ -2557,25 +2568,29 @@
           ]
         },
         "library/ui/figma/src/contract/library.ts": {
-          "sha256": "b413acc351a598bf038ae8e3bf311e20f03b6978fff1865654e30c21b47fc7cc",
+          "sha256": "854bbc13986a32583d0fda8451392f17f4d42ee55de648e6a54f3a4f045e19ef",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/library.ts",
             "sha256": "1f2980c104eb9fe6605e9af63931f52a7629cf73376ea088bfe6be88947ea7ae"
           },
           "deviation": [
-            "resolver-contract"
+            "resolver-contract",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/mapping-file.test.ts": {
-          "sha256": "922cb3b1ff7078da8ff205325c852190c61f2d173c51021025089d059436dde8",
+          "sha256": "ec450643f0d40c75b419f7792c02ca2283445ef5bf8682e909397db2641f74b8",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/mapping-file.test.ts",
             "sha256": "3fc7f835ac082aa0117c60440364287f96ee802971494dad338141f514b62413"
           },
-          "deviation": "capture-removed"
+          "deviation": [
+            "capture-removed",
+            "resolver-followups"
+          ]
         },
         "library/ui/figma/src/contract/mapping-file.ts": {
-          "sha256": "41d609cf349ac9a6693e733d67c1776a972bfc23c4ce277eeec7d4f169620f84",
+          "sha256": "5a48dde71632a3fd4bcac7f6fd034fbfb0275cc39130f55585ec45f19172d497",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/mapping-file.ts",
             "sha256": "bac389ac52dfd780a0964aab671ffcccb69f59921d3aeaacef4ec3058d5e8b34"
@@ -2583,20 +2598,22 @@
           "deviation": [
             "note",
             "live-access-removed",
-            "resolver-contract"
+            "resolver-contract",
+            "resolver-followups"
           ],
           "note": "differed from figma-design-system before this pull request; this pull request removes its live Figma access"
         },
         "library/ui/figma/src/contract/name-identity.ts": {
-          "sha256": "217f0033f835203ef0ff53979bab654e33d873da4f9debb584ffeff14816f8e4",
+          "sha256": "9a13c4bd35f1696db42e30b1de189dc72d7f89fdf3cd31d3f0dcf4f91e3612de",
           "fds": null,
           "deviation": [
             "name-identity",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/resolve.test.ts": {
-          "sha256": "3bfda153e78515b0f11b1743ba9c0623d3a30ada7bec07de8513203894aa13e8",
+          "sha256": "9a03cc1f8441a28c87eda7e32c7f9fe49eceafa4e5c5d32d7dfcda6c57676490",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.test.ts",
             "sha256": "d1b50c99ff3cf99f3e7dd425facf4ba9ad171fd8cbe214df0bc3a34bc1ee3bc5"
@@ -2606,11 +2623,12 @@
             "resolver-contract",
             "name-identity",
             "accepted-limits",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/resolve.ts": {
-          "sha256": "71bccb8ce316dd0baf9c3bba3b7a4eccab2abf45a3f3435620ec3437d8ed9e92",
+          "sha256": "bc2127ff71d76d06f9f55a4906fa54ff238eb679b8401e4fad2af383efd7f2ad",
           "fds": {
             "path": "dcl-mcp-figma/src/contract/resolve.ts",
             "sha256": "cac48b26148bef9db5d087d2857a7e9eaf89ae33745125d47957678de71dc596"
@@ -2620,7 +2638,8 @@
             "resolver-contract",
             "name-identity",
             "accepted-limits",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/contract/test-fixtures.ts": {
@@ -3071,12 +3090,13 @@
         "library/ui/figma/src/guard/library.test.ts": {
           "fds": null,
           "deviation": [
-            "component-install-integrity"
+            "component-install-integrity",
+            "resolver-followups"
           ],
-          "sha256": "9a77171b509e9710f43e79eab0df86e8e13ebb0b1f1602569fe305a9b121599b"
+          "sha256": "a140f56b662a736e8a320e91ac54b0e890c27ea6f33c8ed98df5d28708048e2a"
         },
         "library/ui/figma/src/guard/library.ts": {
-          "sha256": "9ab30c0f9497e1c8e90d297772fcb51f785b92f534ac652e8f4cf5b3176c875c",
+          "sha256": "1a8e732ffa9ba18e5f635c970381312f8d373749758b59f469b9a960156342ef",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/library.ts",
             "sha256": "9e8b27fb597200c12d4a473185c5fadfbdfdc1eafc9e95f9c5f1460251e5e6d7"
@@ -3084,7 +3104,8 @@
           "deviation": [
             "predates",
             "component-install-integrity",
-            "accepted-limits"
+            "accepted-limits",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/guard/lifecycle-fixture.ts": {
@@ -3212,26 +3233,28 @@
           ]
         },
         "library/ui/figma/src/guard/retirements.test.ts": {
-          "sha256": "200bbfa3d81e7f9767f4065c55eaa3c791d5bf11bf9b79eb3c9156c199bba353",
+          "sha256": "cd206bffbf133d86a0267364635807b275f262598208cee3ad52ece36d64f13e",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retirements.test.ts",
             "sha256": "729864fe8ade04ef4c1edd2de819e3b387cbd3eb4e81641276efb9363a2a821f"
           },
           "deviation": [
             "bot-review-279",
-            "note"
+            "note",
+            "resolver-followups"
           ],
           "note": "differed from figma-design-system before this pull request; this pull request fixes a review finding in it"
         },
         "library/ui/figma/src/guard/retirements.ts": {
-          "sha256": "58d90853682c7c4f48dbe8075ebd360ec73eb40d724b562413df01c30d50fefe",
+          "sha256": "86398cdf15b66bb456c2cb4b83e1b4876828a180e9006baff4a5c6aba0bf5d94",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/retirements.ts",
             "sha256": "257f175956390a53753838dc40cf0ed18e66a75e16b5eb24757a611bd791db2f"
           },
           "deviation": [
             "live-access-removed",
-            "bot-review-279"
+            "bot-review-279",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/guard/shared-inputs.test.ts": {
@@ -3296,22 +3319,24 @@
         },
         "library/ui/figma/src/install-components.test.ts": {
           "fds": null,
-          "sha256": "8abf50550bb3157360cc0238895677f5d3f5f9b80b91fdc3dec36b5a73118a88",
+          "sha256": "db1cb63c9449bb5b500b35dbc4a0d55370ff379cbcfe6f41a4ccbce429d7abce",
           "deviation": [
             "local-components-plan",
             "internal-components",
             "component-install-integrity",
-            "accepted-limits"
+            "accepted-limits",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/install-components.ts": {
           "fds": null,
-          "sha256": "6e13af089d6b5368bb05914e4789701787da926aeb4142533766f1563e10ec9d",
+          "sha256": "7509ab64547f0d27907cfee851ca0cbe63188206a6057dee19375fb9cc292453",
           "deviation": [
             "local-components-plan",
             "internal-components",
             "component-install-integrity",
-            "accepted-limits"
+            "accepted-limits",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/install.test.ts": {
@@ -3608,9 +3633,10 @@
           "deviation": [
             "component-install-integrity",
             "port-input-binding",
-            "single-component-module-pin"
+            "single-component-module-pin",
+            "resolver-followups"
           ],
-          "sha256": "3188e755a9b30dd7cb844b54ce84a9e91e2f4432d181d1f152c78b838b51473d"
+          "sha256": "17427e7ec5099ae976dd3bb70e79c13db53374e973c4c06032e2d340829981eb"
         },
         "library/ui/figma/src/public-foundations.test.ts": {
           "fds": null,
@@ -3868,7 +3894,7 @@
           }
         },
         "library/ui/figma/src/tools/contract.ts": {
-          "sha256": "068db59f061dd1e4c729b664490d0c29faa88de4f902a75aca42f1d9ea5a4f8e",
+          "sha256": "3d900a6200f54136061349ef6331315e379e10ddc04b64e9226cab8a11cd4922",
           "fds": {
             "path": "dcl-mcp-figma/src/tools/contract.ts",
             "sha256": "0fd585ba8c1895767b3563571695edd4148c30db3196e0e7d3e0f3b954a2259b"
@@ -3876,7 +3902,8 @@
           "deviation": [
             "resolver-contract",
             "name-identity",
-            "skill-kit-followups"
+            "skill-kit-followups",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/src/tools/icon-export.test.ts": {
@@ -3901,10 +3928,11 @@
           "deviation": "live-read-restored"
         },
         "library/ui/figma/test/accepted-limits.test.ts": {
-          "sha256": "d16146b7e8739fbe38a824fdf0a314dce60517285c957617197f7ce1881fcc8f",
+          "sha256": "e3cdf2f75a93530e6104253a6b35aa6e35561a416d5ef19e156c3e81dae66c4b",
           "fds": null,
           "deviation": [
-            "accepted-limits"
+            "accepted-limits",
+            "resolver-followups"
           ]
         },
         "library/ui/figma/test/fixtures/demo-nav-text-roles.json": {
@@ -4304,10 +4332,11 @@
         "public-foundations-integrity": "The ui-provenance checker pins every public foundation and its origin, rejects changed, missing or extra files, and verifies materialized Inter font bytes against their Git LFS identities and npm source digests.",
         "request-scope-hardening": "Build verification observes browser network requests, including worker and frame targets, and rejects origin or prefix escapes and loading failures. Deviation codes must be own properties of the declared code table, so inherited Object prototype names cannot validate a port.",
         "resolver-contract": "One diagnostic registry (src/contract/diagnostics.ts) gives every code its severity, audience and action, with per-reason actions for contract-incompatible; diagnostics-docs.test.ts fails when the SKILL.md or MAINTENANCE.md table differs from it. The unused mapping-unreadable code is removed. mapping-missing is returned only for a captured library component and carries the contributor report context; an unmapped node without a capture is the new identity-uncertain, and a node outside the capture is identity-not-found. --mapping-only (CLI and MCP server) loads no Figma config beyond its contract block, never reads the capture cache and registers only figma_resolve_component and figma_check_mappings; its mapping root defaults to library/ui/components. The CLI gains --text for parity with the MCP texts input and refuses malformed or repeated Name=Value flags. Resolve provenance names the capture revision the tracked lock pins. The cache error names both routes: fetch-source for maintainers, --mapping-only for consumers. Review follow-up: identity codes carry a details.reason with their own action (a name lookup without a capture sends the caller back for a set node id; several mappings on one node and the check-mappings collisions are library defects with file details); an unreadable lock is the capture-revision-unknown warning instead of a thrown error; --mapping-only reads the contract block of the Figma config (argument, DCL_FIGMA_CONFIG or working directory) so its mapping root and library range still apply; record lookups use own keys only, so names such as __proto__ or toString never match inherited members. Second review follow-up: reasons only check-mappings emits carry the maintainer audience and reason names are checked at compile time; every failed resolve carries its library and capture context; with a capture a node outside it is identity-not-found even when a stale mapping targets it; without a capture an unread variant property or a non-boolean value is variant-unsupported and an unrendered text is a warning; check-mappings reports captureChecked and a warning when no capture was read; the capture revision comes from the same pin reader as fetch-source; flags are parsed before the runtime and a missing explicit config fails at startup; the documentation tables are read after a marker and per-reason rows must point at action. Third review follow-up: without a capture an unread property is the same unmapped-figma-property warning the capture path gives, booleans are checked in both modes, a mapping that targets a node outside the capture is identity-not-found stale-mapping with its files, check-mappings fails without a mapping source and reports a missing capture with the maintainer code capture-unchecked, usage without a capture or properties says basis unspecified, and the lock is named by package. A mapping root that is unset, not an existing directory or outside a package is mapping-root-not-configured in resolve and check-mappings, never a raw file-system error.",
+        "resolver-followups": "Resolver, CLI and registry follow-ups: the library (mappings, registry, lock) is loaded once per command, so a batch shares it and check-mappings cannot turn a root that breaks mid-check into an empty pass; an unreadable root, package.json or subdirectory is mapping-root-not-configured and an unreadable or invalid component registry is contract-incompatible (component-registry) with a fixed message that never quotes the registry, never a raw error; the registry is found from the mapping root up to the package root. Without a capture an alias of a mapping that reads no variant property does not resolve, the figma-identity-unverified warning names mapped variant properties the instance did not give, and a double-quoted template id is read. In batch mode a broken invocation or an unusable configuration exits 2. Registry entries need an identifier name, at most ten limits and a name no other entry uses, limit and retirement text share one plain-text rule (no control, format or separator characters, markup or link), the installer reports registry errors under a neutral prefix, and generation.json pins the registry by digest without copying its limits.",
         "review-followup-2": "Second review follow-up on the capture-free head: retirement cleanup never writes the fetch-source cache (publication skips figma/figma-snapshot, apply-retirements changes only tracked outputs, and the guard treats cache artifacts as identity only, since generation already drops retired items through the committed ledger); runtime propagates every load failure of a configured capture instead of an empty map; the trusted key scan concludes failure when it cannot run on a fork head; check-build rejects a failed server close, closes open connections, and declares its open and createServer test options.",
         "review-followup-3": "Review follow-up after the capture-free port: the fetch-source cache swap moves the old cache into a fresh mkdtemp backup instead of a pid-named one, so a backup left by a killed run never blocks or is reused, and when the move back also fails it throws an FdsCacheError that keeps the original failure as cause and names the backup path; tests: base64 -d instead of base64 --decode, explicit timeouts for the census and the review server path tests, a real 302 redirect chain and an escape after the final audit render in check-build, and an own deviation code named constructor accepted by lock-digests.",
         "seal-removed": "port:9c6dfbe6 installs foundations through the installation subset of promotion/promote.ts. The seal is removed together with promotion manifests, promotion verification and release publication. The shared command generates only from the verified cache, preserves maintained files, stages a complete target, detects concurrent changes and rolls back failed publication. Dev2 extends this same command with components.",
-        "single-component-module-pin": "The public component table pins components/generation.json once: output origins name the source and transform and no longer repeat the generator module list, and the policy checks every module in that record against the source lock and the index. A table that still carries a per-output module map is refused.",
+        "single-component-module-pin": "The public component table pins components/generation.json once: output origins name the source and transform and do not repeat the generator module list, and the policy checks every module in that record against the source lock and the index. A table that still carries a per-output module map is refused.",
         "skill-kit-followups": "Consumer skill and kit follow-ups: the skill's plugin script reads boolean and text component properties, skips text layers of nested instances, collects only visible text (a TEXT property only when a visible layer shows it), drops a name two visible texts disagree on and reports it and refuses a node without a main component; design text goes in single quotes, never double quotes; the mapping-only scope and the preflight's expected exit 1 are stated. The kit refuses every conflict (foreign or unreadable skill, newer or unordered version, symlinked .claude or .claude/skills) before it writes, orders versions by semver, hashes paths with / and CRLF as LF with framed entries, and check names install --force for a newer install. resolve --batch reads a relative path from the directory the package's figma script was run in. Figma BOOLEAN properties travel apart from variants as booleanProperties (batch, MCP, --boolean): one the mapping does not read is an unmapped-figma-property warning, one it reads as a variant does not fit, an unread variant still refuses a name match, and usageFor and propTranslation report the booleans given. check reports an install hashed by an earlier kit as stale, not as edited; an unreadable manifest or one from another library's kit is refused without --force.",
         "verified-install": "Verified installation binds lock bytes before cache verification and compares them after every verification and source initialization. Tests reject invalid cache reads through a bypass App, preserve ignored target files and retain both errors and the previous tree when rollback fails."
       }
@@ -4704,7 +4733,7 @@
         }
       },
       "generation.json": {
-        "sha256": "8e9c6282aad53502751680ed27aba4ffdc8bef5625754b4141b2f9fec0d428ff",
+        "sha256": "8fcc3486e7a7d549d93fa2c68c91c03faae0b668f36d157028ace67f250db77f",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
