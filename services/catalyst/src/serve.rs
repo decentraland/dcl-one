@@ -1375,6 +1375,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     let socket_cap = comms_stage.archipelago.settings.server.max_sockets;
     let archipelago = crate::comms::archipelago::mounts(comms_stage.archipelago, primary);
     let blobs = content.clone();
+    let report_storage = blobs.storage.clone();
     let app = content::build_router(content)
         .merge(shop::market::router(market.clone()))
         .nest(
@@ -1453,14 +1454,32 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .merge(social::router(&social, config.writes.social_writes_enabled))
         .merge(builder::root_router(builder.clone()))
         .nest("/builder-api", builder::router(builder))
-        .nest("/camera-reel-service", camera_reel::router(camera_reel));
+        .nest("/camera-reel-service", camera_reel::router(camera_reel))
+        // The player report intake (upstream's report-user service), owned by
+        // the gatekeeper: wallet-signed presign, uploads and filing; the
+        // moderator token reads the queue. Reports and their evidence are
+        // social rows and blobs, so the social writes switch gates them.
+        .nest(
+            "/report-user",
+            social::writes::guard(
+                comms::gatekeeper::reports::router(comms_stage.gatekeeper.clone(), report_storage),
+                config.writes.social_writes_enabled,
+            ),
+        );
     // The operator plane under the old gateway's prefixes: credits under
     // /credits only (its /users, /cart and /checkout would collide at the root; the
     // handlers verify a signed fetch over the public path and the route-local
     // one), the relay under /rpc (rpc.<domain>/x -> /rpc/x),
     // the imposter zips under /bvimposters (the prefix baked into the explorer
     // wasm), the console API at the root (/admin/auth, /admin/api/*).
+    // The scene workers' routing map and third-party proxy (scene_proxy.rs),
+    // at the prefix the explorer's scene fetch reads.
+    let scene_proxy = Arc::new(crate::scene_proxy::SceneProxy::new(
+        config.node.scene_proxy_hosts.clone(),
+        http_client.clone(),
+    ));
     let app = app
+        .nest("/_scene", crate::scene_proxy::router(scene_proxy))
         .nest("/credits", shop::credits::router(stage5_ops.credits))
         .nest("/rpc", ops::rpc::router(stage5_ops.rpc))
         .nest(

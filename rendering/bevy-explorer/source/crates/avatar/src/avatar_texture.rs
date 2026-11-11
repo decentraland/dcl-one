@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::anyhow;
 use bevy::{
     app::Propagate,
+    core_pipeline::tonemapping::Tonemapping,
     diagnostic::FrameCount,
     ecs::system::SystemParam,
     prelude::*,
@@ -11,7 +12,7 @@ use bevy::{
         render_resource::{
             Extent3d, TextureDescriptor, TextureDimension, TextureFormat, TextureUsages,
         },
-        view::RenderLayers,
+        view::{ColorGrading, RenderLayers},
     },
 };
 use bevy_dui::{DuiRegistry, DuiTemplate};
@@ -184,6 +185,20 @@ impl BoothInstance {
 
 fn setup(mut dui: ResMut<DuiRegistry>) {
     dui.register_template("photobooth", DuiBooth);
+}
+
+/// A camera that shows profile colours as picked: no tonemapping, grading or ambient
+/// light, so a render is lit by the booth's own light alone. The headless avatar
+/// renderer (`src/bin/avatar_render.rs`) puts these on its capture cameras.
+pub fn booth_camera_components() -> impl Bundle {
+    (
+        Tonemapping::None,
+        ColorGrading::default(),
+        AmbientLight {
+            brightness: 0.0,
+            ..default()
+        },
+    )
 }
 
 fn add_booth_camera(

@@ -1,4 +1,4 @@
-.PHONY: web web-dev headless
+.PHONY: web web-dev headless avatar-render
 
 web:
 	python3 build-web.py
@@ -8,3 +8,6 @@ web-dev:
 
 headless:
 	python3 build-headless.py
+
+avatar-render:
+	python3 build-avatar-render.py

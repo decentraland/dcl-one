@@ -44,6 +44,13 @@ pub struct NodeConfig {
     #[arg(long, env = "HTTP_TRUSTED_PROXY_CIDRS", value_delimiter = ',')]
     pub http_trusted_proxy_cidrs: Vec<ipnet::IpNet>,
 
+    /// Third-party hosts a scene may reach through the node's `/_scene/<host>/...`
+    /// proxy (`scene_proxy`): the browser explorer's scene workers cannot call
+    /// them directly, as they answer no CORS preflight. Empty serves the
+    /// routing map alone, with the node's own places and marketplace routes.
+    #[arg(long, env = "SCENE_PROXY_HOSTS", value_delimiter = ',')]
+    pub scene_proxy_hosts: Vec<String>,
+
     /// Operator-local Prometheus scrape listener, separate from the application API.
     #[arg(long, env = "SERVE_METRICS_BIND", default_value = "127.0.0.1:5006")]
     pub serve_metrics_bind: String,

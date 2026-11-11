@@ -45,6 +45,10 @@ def compile_wasm(no_opt, env):
 
 def prepare_engine(no_opt, engine_cache, shared_build, env):
     flags = ['--no-opt'] if no_opt else []
+    # WASM_PACK_MODE=no-install uses the wasm-bindgen on PATH instead of a download
+    # (a sandboxed or offline build, with the Cargo.lock's wasm-bindgen-cli installed).
+    if mode := os.environ.get('WASM_PACK_MODE'):
+        flags += ['--mode', mode]
     revision = os.environ.get('GITHUB_SHA', 'local')
     if engine_cache and engine_cache.exists():
         engine = artifact.restore_engine(engine_cache, ROOT, allow_unoptimized=no_opt)
@@ -95,7 +99,10 @@ def web(no_opt=False, engine_cache=None, shared_build=False):
     # Relative URLs allow the same build at / or a gateway subpath. No upstream CDN stamping.
     web_env = {**env, 'PUBLIC_URL': '', 'SCENE_BASE_URL': '../'}
     run('npm', 'run', 'build', '--prefix', 'react-web', env=web_env)
-    run('npm', 'run', 'test', '--prefix', 'react-web', env=web_env)
+    # Node 25+ ships a localStorage global (empty without --localstorage-file) that
+    # vitest keeps over jsdom's; CI runs Node 24, so the tests see it switched off.
+    node_options = ' '.join(filter(None, [env.get('NODE_OPTIONS'), '--no-experimental-webstorage']))
+    run('npm', 'run', 'test', '--prefix', 'react-web', env={**web_env, 'NODE_OPTIONS': node_options})
     run('npm', 'run', 'bundle', '--prefix', 'react-web/bridge-scene', env=web_env)
     output = APP / 'dist/web'
     if output.exists():

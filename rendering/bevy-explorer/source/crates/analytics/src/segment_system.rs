@@ -192,6 +192,15 @@ fn page_host() -> Option<String> {
         .as_string()
 }
 
+/// The origin of the page running the engine, from the engine worker's own location.
+#[cfg(target_arch = "wasm32")]
+fn page_origin() -> Option<String> {
+    let location = js_sys::Reflect::get(&js_sys::global(), &"location".into()).ok()?;
+    js_sys::Reflect::get(&location, &"origin".into())
+        .ok()?
+        .as_string()
+}
+
 const SHARED_WRITE_KEY: &str = "EAdAcIyGP6lIQAfpFF2BXpNzpj7XNWMm";
 // One source for every environment; the data stack filters on `environment`
 // (apps/bevy-explorer/README.md).
@@ -216,6 +225,27 @@ fn configured_key(key: Option<&'static str>) -> &'static str {
 pub(crate) const SEGMENT_BATCH_URL: &str = "https://api.e.decentraland.org/v1/batch";
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) const SEGMENT_BATCH_URL: &str = "https://api.segment.io/v1/batch";
+// A build whose events go to a sink of its own, such as its realm's `/telemetry/v1/batch`: a path is
+// joined to the page's origin on the web and to the realm the engine booted on elsewhere, an
+// absolute URL stands as it is, and empty counts as unset (CI exports an undefined variable as "").
+const BATCH_URL: Option<&str> = option_env!("BEVY_SEGMENT_BATCH_URL");
+
+pub(crate) fn batch_url(configured: Option<&str>, realm: &str) -> String {
+    match configured.filter(|url| !url.is_empty()) {
+        None => SEGMENT_BATCH_URL.to_owned(),
+        Some(path) if path.starts_with('/') => {
+            #[cfg(target_arch = "wasm32")]
+            if let Some(origin) = page_origin() {
+                return format!("{origin}{path}");
+            }
+            match realm.trim_end_matches('/') {
+                "" => SEGMENT_BATCH_URL.to_owned(),
+                realm => format!("{realm}{path}"),
+            }
+        }
+        Some(url) => url.to_owned(),
+    }
+}
 const SEGMENT_EVENT_SIZE_LIMIT_BYTES: usize = 32000;
 const SEGMENT_BATCH_SIZE_LIMIT_BYTES: usize = 500000;
 
@@ -479,8 +509,10 @@ fn send_segment_metric_event(
         return;
     }
     let write_key = config.write_key.clone();
+    let url = batch_url(BATCH_URL, &config.common.realm);
     *send_task = Some(
-        IoTaskPool::get().spawn_compat(async move { send_segment_batch(&write_key, &batch).await }),
+        IoTaskPool::get()
+            .spawn_compat(async move { send_segment_batch(&url, &write_key, &batch).await }),
     );
 }
 
@@ -505,11 +537,15 @@ fn is_transient(status: u16) -> bool {
     !(400..500).contains(&status) || matches!(status, 408 | 429)
 }
 
-async fn send_segment_batch(write_key: &str, events: &[String]) -> Result<(), SendError> {
+async fn send_segment_batch(
+    url: &str,
+    write_key: &str,
+    events: &[String],
+) -> Result<(), SendError> {
     let json_body = batch_body(write_key, events);
 
     let response = reqwest_client()
-        .post(SEGMENT_BATCH_URL)
+        .post(url)
         .header("Content-Type", "application/json")
         .body(json_body.clone())
         .timeout(SEND_TIMEOUT)
@@ -538,6 +574,27 @@ async fn send_segment_batch(write_key: &str, events: &[String]) -> Result<(), Se
 mod tests {
     use super::*;
     use crate::data_definition::{SegmentEventFirstMoveInWorld, SegmentEventTimeSpentInWorld};
+
+    #[test]
+    fn a_batch_path_joins_the_realm_an_absolute_url_stands_and_nothing_means_segment() {
+        assert_eq!(batch_url(None, "https://realm.example/"), SEGMENT_BATCH_URL);
+        assert_eq!(batch_url(Some(""), "https://realm.example/"), SEGMENT_BATCH_URL);
+        assert_eq!(
+            batch_url(Some("https://sink.example/v1/batch"), "https://realm.example/"),
+            "https://sink.example/v1/batch"
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            assert_eq!(
+                batch_url(Some("/telemetry/v1/batch"), "https://realm.example/"),
+                "https://realm.example/telemetry/v1/batch"
+            );
+            assert_eq!(
+                batch_url(Some("/telemetry/v1/batch"), ""),
+                SEGMENT_BATCH_URL
+            );
+        }
+    }
 
     // A listening system scene sees the engine's events as they are queued, by their Segment
     // name, but not the page's own events coming back through `/track`.

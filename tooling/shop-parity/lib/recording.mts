@@ -4,8 +4,9 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import type { ReferenceId } from "./paths.mts";
 import { imageSize, placeholderPng } from "./png.mts";
-import { canonicalQuery, ORIGINS, type Service } from "./services.mts";
+import { canonicalQuery, cmsQuery, ORIGINS, type Service } from "./services.mts";
 
 export type Entry = {
   key: string;
@@ -25,7 +26,10 @@ export type Manifest = {
   set: string;
   recordedAt: string;
   source: string;
+  /** The shop reference's revision (the first pin; `references` names every pin). */
   reference: string;
+  /** The pinned revision of each reference when the set was recorded. */
+  references?: Partial<Record<ReferenceId, string>>;
   dclOne: string;
   /** Page targets discovered while recording (item URLs and the like). */
   targets: Record<string, string>;
@@ -81,6 +85,12 @@ type Batched = {
   rows: (body: unknown) => unknown[];
   key: (row: unknown) => string | undefined;
   wrap: (rows: unknown[]) => unknown;
+  /**
+   * A row changes between the recorded batches (a profile redeployed while recording): the answer is composed from
+   * the first recorded row per id even when the batch asked was recorded, so the batch a page composes (the
+   * reference coalesces one tick's profile fetches) does not pick the snapshot.
+   */
+  oneRow?: true;
 };
 
 const field = (k: string) => (row: unknown) => {
@@ -118,8 +128,12 @@ const BATCHED: Batched[] = [
       return (a?.ethAddress ?? a?.userId)?.toLowerCase();
     },
     wrap: (rows) => rows,
+    oneRow: true,
   },
 ];
+
+const oneRowBatch = (method: string, service: Service, path: string) =>
+  BATCHED.some((b) => b.oneRow && b.service === service && b.method === method && b.path === path);
 
 /** `signed`: the page sent it signed, with this `x-identity-metadata`, so a fill signs it again the same way. */
 export type Miss = { key: string; service: Service; method: string; path: string; query: string; side: string; request?: unknown; signed?: string };
@@ -128,6 +142,8 @@ export class Recording {
   readonly dir: string;
   readonly entries = new Map<string, Entry>();
   manifest: Manifest | null = null;
+  /** The manifest target keys this recorder loaded: a save keeps the other keys another recorder saved meanwhile. */
+  private loadedTargets = new Set<string>();
   readonly misses: Miss[] = [];
   /** The bytes a missed POST carried, by entry key, so record.mts --fill can send them as they were. */
   readonly missBodies = new Map<string, { body: Buffer; contentType?: string }>();
@@ -164,6 +180,7 @@ export class Recording {
     }
     const manifest = join(dir, "manifest.json");
     if (existsSync(manifest)) this.manifest = JSON.parse(readFileSync(manifest, "utf8")) as Manifest;
+    this.loadedTargets = new Set(Object.keys(this.manifest?.targets ?? {}));
     const images = join(dir, "images.json");
     if (existsSync(images)) for (const [k, v] of Object.entries(JSON.parse(readFileSync(images, "utf8")))) this.images.set(k, v as { width: number; height: number });
   }
@@ -236,7 +253,7 @@ export class Recording {
   }
 
   private store(e: Omit<Entry, "body">, body: Buffer): Entry {
-    const ext = /json/.test(e.contentType) ? "json" : /css/.test(e.contentType) ? "css" : /font|woff/.test(e.contentType) ? "woff2" : /html/.test(e.contentType) ? "html" : /javascript/.test(e.contentType) ? "js" : "bin";
+    const ext = /json/.test(e.contentType) ? "json" : /svg/.test(e.contentType) ? "svg" : /css/.test(e.contentType) ? "css" : /font|woff/.test(e.contentType) ? "woff2" : /html/.test(e.contentType) ? "html" : /javascript/.test(e.contentType) ? "js" : "bin";
     const name = `${sha(body).slice(0, 24)}.${ext}`;
     mkdirSync(join(this.dir, "bodies"), { recursive: true });
     writeFileSync(join(this.dir, "bodies", name), body);
@@ -245,14 +262,35 @@ export class Recording {
     return entry;
   }
 
+  /**
+   * A set is shared: another recorder may have saved since this one loaded it. Keep the answers and image sizes it
+   * saved that this one lacks, so a save does not drop them.
+   */
+  private mergeSaved() {
+    const index = join(this.dir, "index.json");
+    if (existsSync(index)) for (const e of JSON.parse(readFileSync(index, "utf8")) as Entry[]) if (!this.entries.has(e.key)) this.entries.set(e.key, e);
+    const images = join(this.dir, "images.json");
+    if (existsSync(images)) for (const [k, v] of Object.entries(JSON.parse(readFileSync(images, "utf8")))) if (!this.images.has(k)) this.images.set(k, v as { width: number; height: number });
+  }
+
+  /** The targets another recorder saved since this one loaded the set (keys this one did not start with). */
+  private othersTargets(): Record<string, string> {
+    const file = join(this.dir, "manifest.json");
+    if (!existsSync(file)) return {};
+    const saved = (JSON.parse(readFileSync(file, "utf8")) as Manifest).targets ?? {};
+    return Object.fromEntries(Object.entries(saved).filter(([k]) => !this.loadedTargets.has(k)));
+  }
+
   save(manifest?: Partial<Manifest>) {
     mkdirSync(this.dir, { recursive: true });
+    this.mergeSaved();
     const list = [...this.entries.values()].sort((a, b) => (a.key < b.key ? -1 : 1));
     writeFileSync(join(this.dir, "index.json"), `${JSON.stringify(list, null, 1)}\n`);
     const images = Object.fromEntries([...this.images.entries()].sort(([a], [b]) => (a < b ? -1 : 1)));
     writeFileSync(join(this.dir, "images.json"), `${JSON.stringify(images, null, 1)}\n`);
     if (manifest) {
-      this.manifest = { ...(this.manifest ?? ({} as Manifest)), ...manifest, entries: list.length } as Manifest;
+      const targets = manifest.targets && { ...this.othersTargets(), ...manifest.targets };
+      this.manifest = { ...(this.manifest ?? ({} as Manifest)), ...manifest, ...(targets && { targets }), entries: list.length } as Manifest;
       writeFileSync(join(this.dir, "manifest.json"), `${JSON.stringify(this.manifest, null, 2)}\n`);
     }
   }
@@ -327,7 +365,7 @@ export class Recording {
   async answer(req: { method: string; service: Service; path: string; search: string; body?: Buffer; headers?: Record<string, string>; side: string }): Promise<Answer> {
     const method = req.method.toUpperCase();
     if (req.service === "rpc" && method === "POST") return this.rpc(req.path, req.body, req.side);
-    const query = canonicalQuery(req.search);
+    const query = req.service === "cms" ? cmsQuery(req.search) : canonicalQuery(req.search);
     const request = method === "GET" || method === "HEAD" ? undefined : parseBody(req.body);
     const key = entryKey(method, req.service, req.path, query, request);
     let entry = this.entries.get(key);
@@ -345,7 +383,8 @@ export class Recording {
     }
     if (!entry && this.live && req.service !== "offers" && req.service !== "node") {
       const res = await this.fetchLive(method, req.service, req.path, query, req.body, req.headers);
-      if (/^image\//.test(res.contentType)) {
+      // A twemoji flag is a fixed interface asset (an SVG of a few hundred bytes), not a content picture: kept as it is.
+      if (/^image\//.test(res.contentType) && req.service !== "twemoji") {
         // A picture answered by an API route: keep its size only, never its bytes.
         const size = imageSize(res.body);
         if (size) this.images.set(req.path, size);
@@ -358,7 +397,7 @@ export class Recording {
       }
       entry = this.store({ key, method, service: req.service, path: req.path, query, ...(request === undefined ? {} : { request }), status: res.status, contentType: res.contentType }, res.body);
     }
-    if (!entry) {
+    if (!entry || oneRowBatch(method, req.service, req.path)) {
       const batched = this.fromBatches(method, req.service, req.path, query, request);
       if (batched) {
         this.note(`${method} ${req.service} ${req.path} (by id)`, req.side);
