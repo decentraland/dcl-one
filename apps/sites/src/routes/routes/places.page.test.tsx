@@ -1,13 +1,15 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentProps, ReactNode } from "react";
-import { createRoutesStub, useLocation } from "react-router";
+import { createRoutesStub, useLocation, Outlet, RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
 import { fetchDestinations, type Destination, type DestinationParams } from "@/data/lib/catalyst/places/destinations";
+import { pageSid } from "@/core/lib/telemetry/session";
+import { usePrivateQueryLifecycle } from "@/features/components/chrome/usePrivateQueryLifecycle";
 import { openSignIn } from "@/features/components/auth/signin-store";
 
 import Places from "./places";
@@ -20,7 +22,6 @@ vi.hoisted(() =>
     $RefreshSig$: () => (type: unknown) => type,
   }),
 );
-
 const auth = vi.hoisted(() => ({ current: { isConnected: false, identity: null as null | { signer: string } } }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth.current }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
@@ -50,12 +51,21 @@ function Location() {
   return <output data-testid="location">{location.pathname + location.search}</output>;
 }
 
+function SessionFrame() {
+  useLocation();
+  usePrivateQueryLifecycle(auth.current.isConnected ? (auth.current.identity?.signer ?? null) : null);
+  return <Outlet />;
+}
+
 function renderPage(url = "/places", platform: object = DESKTOP, unavailable = false, loaderSid: string | null = "sid") {
   const Stub = createRoutesStub([
     {
       id: "root",
       path: "/",
-      loader: () => ({ sid: "root-session" }),
+      Component: SessionFrame,
+      loader: () => ({
+        sid: pageSid(new Request("https://example.org/places", { headers: { cookie: "sid=root-session" } }), new RouterContextProvider()),
+      }),
       children: [
         {
           path: "places",
@@ -77,7 +87,7 @@ function renderPage(url = "/places", platform: object = DESKTOP, unavailable = f
       <Stub initialEntries={[url]} />
     </QueryClientProvider>,
   );
-  return { user: userEvent.setup() };
+  return { user: userEvent.setup(), client };
 }
 
 const location = () => screen.getByTestId("location").textContent ?? "";
@@ -304,22 +314,49 @@ describe("when a member section is open", () => {
     expect(screen.getByText("7 people in-world")).toBeTruthy();
   });
 
-  it("should read the new account's favourites after an account switch", async () => {
+  it("should remove old account caches and rows on account switch and sign-out", async () => {
     auth.current = { isConnected: true, identity: { signer: MEMBER } };
-    serve({ member: [destination({ title: "Saved" })] });
-    const { user } = renderPage("/places?tab=favourites");
-    await screen.findByRole("link", { name: "Saved" });
+    serve({ member: [destination({ title: "Old account scene" })] });
+    const { user, client } = renderPage("/places?tab=favourites");
+    await screen.findByRole("link", { name: "Old account scene" });
+    client.setQueryData(["private", MEMBER, "places", "mine"], { data: [destination({ title: "Private mine" })] });
     const other = { signer: "0x00000000000000000000000000000000000000dd" };
     auth.current = { isConnected: true, identity: other };
-    // Re-render through a view change so the mocked auth hook is read again.
+    serve({ member: [destination({ title: "New account scene" })] });
     await user.click(screen.getByRole("button", { name: "My places" }));
+    await screen.findByRole("link", { name: "New account scene" });
+    expect(screen.queryByRole("link", { name: "Old account scene" })).toBeNull();
+    expect(client.getQueriesData({ queryKey: ["private", MEMBER] })).toEqual([]);
     await user.click(screen.getByRole("button", { name: "Favourites" }));
-    await waitFor(() =>
-      expect(fetchDestinations).toHaveBeenCalledWith(
-        expect.objectContaining({ only_favorites: true }),
-        expect.objectContaining({ identity: other }),
-      ),
-    );
+    await screen.findByRole("link", { name: "New account scene" });
+    auth.current = { isConnected: false, identity: null };
+    await user.click(screen.getByRole("button", { name: "My places" }));
+    await screen.findByRole("button", { name: "Sign In" });
+    expect(screen.queryByRole("link", { name: "New account scene" })).toBeNull();
+    expect(client.getQueriesData({ queryKey: ["private"] })).toEqual([]);
+  });
+
+  it("should abort an old account's pending read and reject its late result after switching", async () => {
+    auth.current = { isConnected: true, identity: { signer: MEMBER } };
+    let signal: AbortSignal | undefined;
+    let finish!: (page: { data: Destination[]; total: number; received: number; copy: null }) => void;
+    vi.mocked(fetchDestinations).mockImplementation((_params, options) => {
+      if (!options?.identity) return Promise.resolve({ data: [], total: 0, received: 0, copy: null });
+      signal = options.signal;
+      return new Promise((resolve) => {
+        finish = resolve;
+      });
+    });
+    const { user, client } = renderPage("/places?tab=favourites");
+    await waitFor(() => expect(signal).toBeDefined());
+    auth.current = { isConnected: true, identity: { signer: "0x00000000000000000000000000000000000000dd" } };
+    serve({ member: [destination({ title: "Current account" })] });
+    await user.click(screen.getByRole("button", { name: "My places" }));
+    await screen.findByRole("link", { name: "Current account" });
+    expect(signal?.aborted).toBe(true);
+    await act(async () => finish({ data: [destination({ title: "Late private scene" })], total: 1, received: 1, copy: null }));
+    expect(screen.queryByRole("link", { name: "Late private scene" })).toBeNull();
+    expect(client.getQueriesData({ queryKey: ["private", MEMBER] })).toEqual([]);
   });
 
   it("should show the error with Retry when the member read fails", async () => {

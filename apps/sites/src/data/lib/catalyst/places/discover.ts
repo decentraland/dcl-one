@@ -66,6 +66,7 @@ export const placesKeys = {
   all: ["places"] as const,
   browse: (filters: BrowseFilters) => ["places", "browse", filters.category, filters.search] as const,
   live: () => ["places", "live"] as const,
+  memberIdle: () => ["places", "member-idle"] as const,
   creators: (addresses: readonly string[]) => ["places", "creators", ...addresses] as const,
   favourites: (account: string) => memberKey(account, "favourites"),
   mine: (account: string) => memberKey(account, "mine"),
@@ -102,7 +103,7 @@ export const liveFeedQuery = () =>
 
 /** The member's saved places, signed as them; the key names only their account. */
 export const favouritePlacesQuery = (identity: AuthIdentity) =>
-  queryOptions({
+  queryOptions<DestinationPage>({
     queryKey: placesKeys.favourites(identity.signer),
     staleTime: PLACES_STALE_MS,
     queryFn: ({ signal }) => fetchDestinations({ only_favorites: true, limit: MEMBER_LIMIT }, { identity, signal }),
@@ -110,7 +111,7 @@ export const favouritePlacesQuery = (identity: AuthIdentity) =>
 
 /** The member's own places and worlds, in the catalogue's curated order (no `most_active`), as source. */
 export const myPlacesQuery = (identity: AuthIdentity) =>
-  queryOptions({
+  queryOptions<DestinationPage>({
     queryKey: placesKeys.mine(identity.signer),
     staleTime: PLACES_STALE_MS,
     queryFn: ({ signal }) =>

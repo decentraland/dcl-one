@@ -39,7 +39,7 @@ export function useMemberPlaces(section: ExploreSection, identity: AuthIdentity 
   const options =
     identity && section === "favourites" ? favouritePlacesQuery(identity) : identity && section === "my" ? myPlacesQuery(identity) : null;
   const query = useQuery({
-    queryKey: options?.queryKey ?? placesKeys.favourites(""),
+    queryKey: options?.queryKey ?? placesKeys.memberIdle(),
     queryFn: options?.queryFn ?? skipToken,
     staleTime: PLACES_STALE_MS,
   });

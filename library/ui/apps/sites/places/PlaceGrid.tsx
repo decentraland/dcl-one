@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import { Button } from '../shared/Button/Button'
 import { PlaceCardSlot } from './cards/PlaceCardSlot'
 import type { PlaceCardData, PlaceCardHandlers, PlaceCardLabels } from './cards/types'
@@ -62,6 +62,8 @@ type LoadMoreProps = {
   loadMoreLabel: string
 }
 
+const subscribeCapability = () => () => {}
+
 /** Infinite scroll, as source: the next page loads when this sentinel nears the viewport. */
 function LoadMore({ hasMore, loading, onLoadMore, loadingLabel, loadMoreLabel }: LoadMoreProps) {
   const sentinel = useRef<HTMLDivElement>(null)
@@ -69,7 +71,11 @@ function LoadMore({ hasMore, loading, onLoadMore, loadingLabel, loadMoreLabel }:
   useEffect(() => {
     latest.current = onLoadMore
   })
-  const observable = typeof IntersectionObserver !== 'undefined'
+  const observable = useSyncExternalStore(
+    subscribeCapability,
+    () => typeof IntersectionObserver !== 'undefined',
+    () => false
+  )
 
   useEffect(() => {
     const node = sentinel.current
