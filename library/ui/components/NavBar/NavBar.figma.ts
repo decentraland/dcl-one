@@ -3,14 +3,21 @@
 // component=NavBar
 // contract=1
 
+// Hand-written component: viewport is CSS media queries and theme is not a prop, so the mapping keeps
+// only the properties that change the API. Balances and the account come from the app's data.
 import figma from 'figma'
 const instance = figma.selectedInstance
-const property0 = instance.getEnum('viewport', { 'large-desktop': ' viewport={"largeDesktop"}', 'mobile': ' viewport={"mobile"}', 'desktop': ' viewport={"desktop"}' })
-const property1 = instance.getEnum('signed-in', { 'false': ' signedIn={false}', 'true': ' signedIn={true}' })
-const property2 = instance.getEnum('balances', { 'none': ' balances={"none"}', 'credits-mana': ' balances={"creditsMana"}', 'credits': ' balances={"credits"}' })
-const property3 = instance.getEnum('theme', { 'dark': ' theme={"dark"}', 'light': ' theme={"light"}' })
+const property0 = instance.getEnum('signed-in', {
+  'false': ' onSignIn={signIn}',
+  'true': ' account={account} onNotificationsClick={openNotifications} accountActions={accountActions}'
+})
+const property1 = instance.getEnum('balances', {
+  'none': '',
+  'credits-mana': ' balances={{ credits, mana, polygonMana }}',
+  'credits': ' balances={{ credits }}'
+})
 export default {
-  example: figma.tsx`<NavBar${property0}${property1}${property2}${property3} />`,
+  example: figma.tsx`<NavBar sections={sections}${property0}${property1} />`,
   imports: ["import { NavBar } from '@dcl/one-ui'"],
   id: "NavBar",
   metadata: { nestable: true }
