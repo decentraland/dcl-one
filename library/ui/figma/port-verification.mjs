@@ -159,11 +159,17 @@ function tokenNamesExempt(file, token, exemptNames, single, pathCall) {
     : undefined
   const base = posix.basename(bare)
   return (
-    (target !== undefined && (isRecordExempt(target) || isRecordExempt(`${target}/x.ts`))) ||
-    /\.(?:test|spec)\.[^/]+$/i.test(base) ||
+    (target !== undefined &&
+      (isRecordExempt(target) ||
+        isRecordExempt(`${target}.ts`) ||
+        isRecordExempt(`${target}/x.ts`))) ||
+    /\.(?:test|spec)(?:\.[^/]+)?$/i.test(base) ||
     (single && [...exemptNames].some((name) => containsName(bare, name))) ||
     (single && pathLike && /\.md$/i.test(bare)) ||
-    (pathLike && /[\w-]\/(?:[^/]*\/)*[^/]*\*/.test(bare) && /^[\w./*-]+$/.test(bare)) ||
+    (pathLike &&
+      bare.includes('*') &&
+      /^[\w./*-]+$/.test(bare) &&
+      /[\w-]\/(?:[^/]*\/)*[^/]*\*/.test(bare)) ||
     (/\*\*|\*\.[\w{]/.test(bare) &&
       (pathLike || /\*\.md$/i.test(bare) || braceHasMarkdown(bare))) ||
     (single &&

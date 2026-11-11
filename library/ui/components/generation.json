@@ -100,8 +100,8 @@
     },
     {
       "path": "library/ui/figma/port-verification.mjs",
-      "sha256": "3d251879359cc71f3a3568d41c315e4edeb91e791d209bde9c8ce7066c4b1052",
-      "indexBlobSha": "05e74bed9bda7fc894184ddd1756ba16878b9995"
+      "sha256": "5885517af1ba58e72bac20cf6c28e58e740c6958d24ee79cafb1c69a1c239fe4",
+      "indexBlobSha": "9f7ff92bb95c1ffe089cec0aad57031351f5d0a9"
     },
     {
       "path": "library/ui/figma/public-components-policy.mjs",
