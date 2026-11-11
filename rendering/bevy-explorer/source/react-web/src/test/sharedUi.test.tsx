@@ -53,8 +53,8 @@ describe('the shared UI foundations in the HUD', () => {
 
   it('redirect no other source: inter.css is the only one naming those files', () => {
     const anywhere = new RegExp(find.source.replace(/^\^|\$$/g, ''))
-    const naming = [resolve(__dirname, '..'), ...SHARED_TREES]
-      .flatMap(sources)
+    // SHARED_TREES holds the shared files and their folders, so a file can be reached twice.
+    const naming = [...new Set([resolve(__dirname, '..'), ...SHARED_TREES].flatMap(sources))]
       .filter((path) => /\.(css|tsx?)$/.test(path) && path !== __filename)
       .filter((path) => anywhere.test(readFileSync(path, 'utf8')))
     expect(naming).toEqual([join(typography, 'inter.css')])

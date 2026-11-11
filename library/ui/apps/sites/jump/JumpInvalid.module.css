@@ -1,0 +1,59 @@
+.root {
+  display: flex;
+  width: min(100%, 32.5rem);
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  margin: auto;
+  padding: var(--dcl-space-48) var(--dcl-space-24);
+  text-align: center;
+}
+
+.title {
+  composes: text68656164696e672f786c from '../../../foundations/typography/text-styles.module.css';
+  margin: 0 0 var(--dcl-space-8);
+}
+
+.message {
+  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
+  margin: 0 0 var(--dcl-space-8);
+}
+
+.actions {
+  display: flex;
+  width: 100%;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+}
+
+.wide {
+  width: 100%;
+}
+
+.mobileOnly {
+  display: none;
+}
+
+@media (max-width: 1023px) {
+  .root {
+    padding-bottom: 7.5rem;
+  }
+
+  .desktopOnly {
+    display: none;
+  }
+
+  .mobileOnly {
+    display: block;
+  }
+
+  .mobileBar {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    padding: var(--dcl-space-16) var(--dcl-space-24) var(--dcl-space-32);
+    border-top: 1px solid var(--dcl-transparencies-white-10);
+    background: var(--dcl-gradient-amethyst);
+  }
+}

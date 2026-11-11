@@ -22,7 +22,7 @@ For a capture refresh, first point the lock at the new capture: set `revision` a
 pnpm figma port prepare
 ```
 
-It runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write` (it stages `library/ui` first, because lock-digests reads the index), in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), stage `library/ui` again (`git add -A -- library/ui`), rerun `node figma/lock-digests.mjs --write` (it reads the index), and commit.
+It refuses a `library/ui` with changes other than `upstream.lock.json` (commit or remove them first), then runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write` (it stages `library/ui` first, because lock-digests reads the index), in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), stage `library/ui` again (`git add -A -- library/ui`), rerun `node figma/lock-digests.mjs --write` (it reads the index), and commit.
 
 ## 3. Verify
 
@@ -30,7 +30,7 @@ It runs fetch-source, diff, sync, a second sync that must change nothing, instal
 pnpm figma port verify
 ```
 
-It refuses a tree with uncommitted changes, runs the seven checks (fetch-source, deviations, diff, check-mappings, review-manifest, navbar-bounds, install) against the verified capture, and only when all pass writes `library/ui/port-verification.json` with each check's own counts. A failed check writes nothing and leaves an existing record as it was. Commit the record. `node figma/port-verification.mjs --print-hash` prints the hash the record must name.
+It refuses a tree with uncommitted changes, runs the seven checks (fetch-source, deviations, diff, check-mappings, review-manifest, navbar-bounds, install) against the verified capture, and only when all pass writes `library/ui/port-verification.json` with each check's own counts. A failed check writes no record, leaves an existing one as it was and puts back only what the checks regenerate (the Review under `figma/review/`, `foundations/`, `components/`), after copying those files to `.agent-work/figma-port/restored-<time>/`, so the tree stays clean for the next run. Any other change under `library/ui`, such as an edit you made while it ran, is left as it is and listed as kept. The record is written only when HEAD did not move during the checks and the head passes the exemption scan CI runs. Commit the record. `node figma/port-verification.mjs --print-hash` prints the hash the record must name.
 
 The record states what your local run reported. CI checks that it names the head's port inputs and that every result is `pass`; it is not proof that the checks ran, an independent review, an attestation or evidence of live Figma parity. Say so in the pull request, and ask for review of the exact commit proposed for merge.
 

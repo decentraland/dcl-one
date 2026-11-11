@@ -53,22 +53,28 @@ export function createDownloadsLabelLoader(
 ): () => Promise<string> {
   let lastGood: string | undefined;
   let refreshAfter = 0;
-  let pending: Promise<string> | undefined;
-  return () => {
-    if (now() < refreshAfter)
-      return Promise.resolve(lastGood ?? DOWNLOADS_FALLBACK_LABEL);
+  let pending: Promise<void> | undefined;
+  const refresh = () => {
     if (pending) return pending;
     pending = readTotal()
       .catch(() => null)
       .then((total) => {
         if (total !== null) lastGood = formatDownloads(total);
         refreshAfter = now() + (total === null ? 30000 : 600000);
-        return lastGood ?? DOWNLOADS_FALLBACK_LABEL;
       })
       .finally(() => {
         pending = undefined;
       });
     return pending;
+  };
+  return () => {
+    if (now() < refreshAfter)
+      return Promise.resolve(lastGood ?? DOWNLOADS_FALLBACK_LABEL);
+    if (lastGood !== undefined) {
+      void refresh();
+      return Promise.resolve(lastGood);
+    }
+    return refresh().then(() => lastGood ?? DOWNLOADS_FALLBACK_LABEL);
   };
 }
 

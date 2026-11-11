@@ -22,6 +22,19 @@ export function useProfile(address: string) {
   return useQuery({ ...profileQuery(address), enabled: canReadProfile(address) });
 }
 
+/**
+ * The profile a profile page cannot render without. Any failure with nothing cached is thrown: the
+ * route's boundary shows a profile read's failure and hands any other error (a bug) to the root's.
+ * A failed background refetch keeps the profile on screen.
+ */
+export function useRequiredProfile(address: string) {
+  return useQuery({
+    ...profileQuery(address),
+    enabled: canReadProfile(address),
+    throwOnError: (_error, query) => query.state.data === undefined,
+  });
+}
+
 /** Creations are relabelled with the profile's display name, as the creator's own page shows them. */
 export function useProfileCreations(address: string, creatorName?: string) {
   const select = useCallback(
@@ -69,5 +82,7 @@ export function useMyCommunities(identity: AuthIdentity | null, enabled = true) 
     queryKey: options?.queryKey ?? profileKeys.myCommunities(""),
     queryFn: identity && enabled ? myCommunitiesQuery(identity).queryFn : skipToken,
     staleTime: PROFILE_STALE_MS,
+    // A failed read is reported once; returning to the tab does not retry it on every focus.
+    refetchOnWindowFocus: false,
   });
 }
