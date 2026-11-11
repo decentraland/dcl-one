@@ -350,8 +350,8 @@
     },
     {
       "path": "library/ui/figma/src/guard/fs-safe.ts",
-      "sha256": "fbe2fabb5449c1cc5910e2bf1b89236623fbce6a141df90aae0fe363d0fc3cc8",
-      "indexBlobSha": "96e0029905408e2a03fd2a2ea2595d8ca5cf87fb"
+      "sha256": "5173518dfdbc1b3cfea9966c8d1464002e37b082c16d69214f2a7a9662af58fd",
+      "indexBlobSha": "6b646fc47e3244bff461e95558c9dbdf221649d9"
     },
     {
       "path": "library/ui/figma/src/guard/git-fixture.ts",
@@ -415,8 +415,8 @@
     },
     {
       "path": "library/ui/figma/src/guard/workspace-stage.ts",
-      "sha256": "a66330680cf960eb1e25dfa670dc638651f763ed9eac647eb9a45c443c574be1",
-      "indexBlobSha": "7d0ecc8eaf58bf2283688a99ddb360649f21c610"
+      "sha256": "a7d464236a8cbc347ea4573e2aff681647ad4f8bbf00e8aaefccf2534a42786b",
+      "indexBlobSha": "01665d5b81ce1e15dde8dd3e4a78d582ff05de69"
     },
     {
       "path": "library/ui/figma/src/install-components.ts",
@@ -500,8 +500,8 @@
     },
     {
       "path": "library/ui/figma/src/port.ts",
-      "sha256": "b7ab5b2f588f6cad940c88ca18cb785ee2031e1cc52e1eb3856e3cb8fa8b7eee",
-      "indexBlobSha": "2fc298ac593bbd934168a17c5275902c15e214a2"
+      "sha256": "fd46fc20872fff75993a76f32b23bc4001818093782e57c2ade58dca8139a993",
+      "indexBlobSha": "7c980adb5c70994c8c6633dafb36720b4bbcd697"
     },
     {
       "path": "library/ui/figma/src/probe.ts",
