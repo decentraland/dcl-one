@@ -130,18 +130,21 @@ export function selectLiveRail(rows: readonly Destination[], minUsers = 0): Dest
     .slice(0, LIVE_NOW_LIMIT);
 }
 
-/** The grid rows: pages flattened, duplicates across overlapping pages dropped, junk hidden. */
-export function browseRows(pages: readonly DestinationPage[], category: DiscoverCategory): Destination[] {
+/** The grid rows page by page: duplicates across overlapping pages dropped, junk hidden. */
+export function browsePageRows(pages: readonly DestinationPage[], category: DiscoverCategory): Destination[][] {
   const seen = new Set<string>();
-  const rows: Destination[] = [];
-  for (const page of pages) {
-    for (const place of page.data) {
-      if (seen.has(place.id) || hiddenFromCategory(place, category)) continue;
+  return pages.map((page) =>
+    page.data.filter((place) => {
+      if (seen.has(place.id) || hiddenFromCategory(place, category)) return false;
       seen.add(place.id);
-      rows.push(place);
-    }
-  }
-  return rows;
+      return true;
+    }),
+  );
+}
+
+/** The grid rows: every page's rows in order. */
+export function browseRows(pages: readonly DestinationPage[], category: DiscoverCategory): Destination[] {
+  return browsePageRows(pages, category).flat();
 }
 
 const ADDRESS = /^0x[0-9a-f]{40}$/;
@@ -173,7 +176,7 @@ const ProfilesEnvelope = z.array(
     .passthrough(),
 );
 
-/** One `POST /lambdas/profiles` for every creator on screen; an address without a profile is left out. */
+/** One `POST /lambdas/profiles` for a batch of creators; an address without a profile is left out. */
 export async function fetchPlaceCreators(addresses: readonly string[], signal?: AbortSignal): Promise<Record<string, PlaceCreatorProfile>> {
   if (!addresses.length) return {};
   const res = await fetch(`${catalystBase()}/lambdas/profiles`, {
@@ -182,7 +185,11 @@ export async function fetchPlaceCreators(addresses: readonly string[], signal?: 
     body: JSON.stringify({ ids: addresses }),
     signal,
   });
-  if (!res.ok) throw new Error(`Profiles returned ${res.status}`);
+  if (!res.ok) {
+    // Release the connection before failing: an unread body keeps it busy.
+    await res.body?.cancel().catch(() => undefined);
+    throw new Error(`Profiles returned ${res.status}`);
+  }
   const out: Record<string, PlaceCreatorProfile> = {};
   for (const entry of ProfilesEnvelope.parse(await res.json())) {
     const avatar = entry.avatars[0];

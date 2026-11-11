@@ -77,6 +77,12 @@ describe("when paging the browse feed", () => {
   });
 });
 
+describe("when a page lost rows to schema drift", () => {
+  it("should continue at the raw page boundary, not at the parsed row count", () => {
+    expect(nextBrowseOffset(page([destination()], 200, 48), 48)).toBe(96);
+  });
+});
+
 describe("when building the grid rows", () => {
   it("should drop rows repeated across pages and unfinished catalogue entries", () => {
     const rows = browseRows(
@@ -132,9 +138,12 @@ describe("when reading creator profiles", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("should reject a failed read so the cards keep their initials", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 502 })));
+  it("should release the body of a failed read and reject so the cards keep their initials", async () => {
+    const failed = new Response("upstream error", { status: 502 });
+    const cancel = vi.spyOn(failed.body!, "cancel");
+    vi.stubGlobal("fetch", vi.fn(async () => failed));
     await expect(fetchPlaceCreators(["0xaa"])).rejects.toThrow("502");
+    expect(cancel).toHaveBeenCalledOnce();
   });
 });
 

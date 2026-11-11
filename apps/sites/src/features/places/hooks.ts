@@ -1,11 +1,11 @@
 import { useMemo } from "react";
-import { skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { skipToken, useInfiniteQuery, useQueries, useQuery } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import type { Destination } from "@/data/lib/catalyst/places/destinations";
 import {
   browsePlacesQuery,
-  browseRows,
+  browsePageRows,
   favouritePlacesQuery,
   liveFeedQuery,
   myPlacesQuery,
@@ -18,13 +18,14 @@ import {
 } from "@/data/lib/catalyst/places/discover";
 import { hiddenFromBrowse } from "@/data/lib/catalyst/places/destinations";
 
-import { creatorAddresses } from "./cards";
+import { creatorBatches, type CreatorProfiles } from "./cards";
 
 /** The Explore all grid, page by page. */
 export function useBrowsePlaces(filters: BrowseFilters, enabled: boolean) {
   const query = useInfiniteQuery({ ...browsePlacesQuery(filters), enabled });
-  const rows = useMemo(() => browseRows(query.data?.pages ?? [], filters.category), [query.data, filters.category]);
-  return { ...query, rows };
+  const pageRows = useMemo(() => browsePageRows(query.data?.pages ?? [], filters.category), [query.data, filters.category]);
+  const rows = useMemo(() => pageRows.flat(), [pageRows]);
+  return { ...query, rows, pageRows };
 }
 
 /** Live Now: the busiest four from the live feed. Not read while a search collapses the section. */
@@ -47,10 +48,15 @@ export function useMemberPlaces(section: ExploreSection, identity: AuthIdentity 
   return { ...query, rows };
 }
 
-/** The faces of every creator on screen, in one read; cards render without them while it runs or if it fails. */
-export function usePlaceCreators(places: readonly Destination[]) {
-  const addresses = useMemo(() => creatorAddresses(places), [places]);
-  // The previous faces stay while a longer list (another page) is read.
-  const query = useQuery({ ...placeCreatorsQuery(addresses), enabled: addresses.length > 0, placeholderData: (previous) => previous });
-  return query.data ?? {};
+/**
+ * The faces of the creators on screen, one read per group (Live Now, each browse page, a member list) for the
+ * addresses no earlier group asked for, so loading another page reads only that page's new creators. Cards
+ * render without faces while a read runs or if it fails.
+ */
+export function usePlaceCreators(groups: readonly (readonly Destination[])[]): CreatorProfiles {
+  const batches = useMemo(() => creatorBatches(groups), [groups]);
+  return useQueries({
+    queries: batches.map((addresses) => placeCreatorsQuery(addresses)),
+    combine: (results) => Object.assign({}, ...results.map((result) => result.data ?? {})) as CreatorProfiles,
+  });
 }

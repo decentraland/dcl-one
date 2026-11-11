@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
 
-import { creatorAddresses, modalPlace, placeCard, placeCreator } from "./cards";
+import { creatorAddresses, creatorBatches, modalPlace, placeCard, placeCreator } from "./cards";
 
 const DESKTOP = { kind: "desktop", os: "macos", arch: "unknown" } as const;
 const ANDROID = { kind: "mobile", os: "android" } as const;
@@ -58,5 +58,23 @@ describe("when mapping a destination to a card", () => {
   it("should give the modal an absolute share link", () => {
     const place = destination({ description: "Come by" });
     expect(modalPlace(place, placeCard(place, DESKTOP), "https://example.org")).toMatchObject({ shareUrl: "https://example.org/places/plaza", description: "Come by" });
+  });
+});
+
+describe("when batching creator reads", () => {
+  const A = "0x00000000000000000000000000000000000000a1";
+  const B = "0x00000000000000000000000000000000000000b2";
+  const C = "0x00000000000000000000000000000000000000c3";
+
+  it("should ask each group only for creators no earlier group asked for", () => {
+    const first = [destination({ id: "1", owner: A }), destination({ id: "2", owner: B })];
+    const second = [destination({ id: "3", owner: B }), destination({ id: "4", owner: C })];
+    expect(creatorBatches([first])).toEqual([[A, B]]);
+    // Loading the next page keeps the first batch as it was and adds one for the new creator only.
+    expect(creatorBatches([first, second])).toEqual([[A, B], [C]]);
+  });
+
+  it("should drop a group with no new creators", () => {
+    expect(creatorBatches([[destination({ owner: A })], [destination({ id: "2", owner: A })], []])).toEqual([[A]]);
   });
 });

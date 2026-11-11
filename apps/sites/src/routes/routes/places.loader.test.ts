@@ -76,6 +76,28 @@ describe("when the /places document loads", () => {
   });
 });
 
+describe("when the visitor disconnects during the document read", () => {
+  it("should abort the upstream reads and not report an outage", async () => {
+    const signals: AbortSignal[] = [];
+    vi.mocked(fetchDestinations).mockImplementation(
+      (_params, options) =>
+        new Promise((_resolve, reject) => {
+          const signal = options?.signal;
+          if (signal) signals.push(signal);
+          signal?.addEventListener("abort", () => reject(new Error("aborted")));
+        }),
+    );
+    const controller = new AbortController();
+    const request = new Request("http://localhost/places", { signal: controller.signal });
+    const pending = loader({ request, params: {}, context: {} } as never);
+    await vi.waitFor(() => expect(signals).toHaveLength(2));
+    controller.abort();
+    const result = (await pending) as unknown as { data: Payload; init: ResponseInit | null };
+    expect(signals.every((signal) => signal.aborted)).toBe(true);
+    expect(result.data.unavailable).toBe(false);
+  });
+});
+
 describe("when navigating to /places in the browser", () => {
   it("should hand no data from the client loader", async () => {
     await expect(clientLoader()).resolves.toBeNull();

@@ -123,14 +123,24 @@ export async function loader({ request }: Route.LoaderArgs) {
   const view = readView(new URL(request.url).searchParams);
   const client = new QueryClient(QUERY_CLIENT_CONFIG);
   let unavailable = false;
-  await Promise.all([
+  const reads = Promise.all([
     view.section === "all"
       ? client.fetchInfiniteQuery(browsePlacesQuery(view)).catch(() => {
-          unavailable = true;
+          // A visitor who left aborted the read: that is not an outage.
+          if (!request.signal.aborted) unavailable = true;
         })
       : undefined,
     showsLive(view) ? client.prefetchQuery(liveFeedQuery()) : undefined,
   ]);
+  // The query functions read their own signal; cancelling the queries aborts it, and so the upstream reads.
+  const cancel = () => void client.cancelQueries();
+  if (request.signal.aborted) cancel();
+  else request.signal.addEventListener("abort", cancel, { once: true });
+  try {
+    await reads;
+  } finally {
+    request.signal.removeEventListener("abort", cancel);
+  }
   const dehydratedState = dehydrate(client);
   client.clear();
   return wrap(
@@ -181,8 +191,11 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   const auth = useAuth();
   const identity = auth.isConnected ? auth.identity : null;
 
-  // A document the server answered 503 shows the error at once; Retry, not hydration, reads the feed again.
-  const [held, setHeld] = useState(unavailable);
+  // A document the server answered 503 shows the error at once for the view it was asked for; Retry, not
+  // hydration, reads that feed again, and any other category or search reads normally.
+  const viewKey = `${view.section}|${view.category}|${view.search}`;
+  const [heldKey, setHeldKey] = useState(unavailable ? viewKey : null);
+  const held = heldKey === viewKey;
   const browse = useBrowsePlaces({ category: view.category, search: view.search }, view.section === "all" && !held);
   const live = useLiveRail(showsLive(view));
   const member = useMemberPlaces(view.section, hydrated ? identity : null);
@@ -196,7 +209,11 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   }, [browse.rows, liveRail, view.category]);
   const sectionRows = view.section === "all" ? exploreRows : member.rows;
   const visible = useMemo(() => [...liveRail, ...sectionRows], [liveRail, sectionRows]);
-  const profiles = usePlaceCreators(visible);
+  const creatorGroups = useMemo(
+    () => [liveRail, ...(view.section === "all" ? browse.pageRows : [member.rows])],
+    [liveRail, view.section, browse.pageRows, member.rows],
+  );
+  const profiles = usePlaceCreators(creatorGroups);
 
   const places = useMemo(() => new Map(visible.map((place) => [place.id, place])), [visible]);
   const toCards = (rows: readonly Destination[], creators: CreatorProfiles) => rows.map((place) => placeCard(place, platform, creators));
@@ -270,17 +287,22 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
   }, [view.section]);
 
   /** Cards are plain links: a plain click stays in the app; modified and middle clicks keep the browser's behavior. */
-  const open = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>, inPlace: boolean) => {
+  type Opens = "busy-navigates" | "modal" | "page";
+  const open = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>, opens: Opens) => {
     if (sid) track("place_card_clicked", { place_id: card.id }, { sid, story: STORY });
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     event.preventDefault();
     const place = places.get(card.id);
-    if (inPlace && place && (place.user_count ?? 0) === 0 && platform.kind !== "mobile") setModal({ place, card });
+    const inPlace = opens === "modal" || (opens === "busy-navigates" && (place?.user_count ?? 0) === 0);
+    if (place && inPlace && platform.kind !== "mobile") setModal({ place, card });
     else void navigate(card.href);
   };
-  // An empty scene opens JUMP IN in place on desktop; a busy one, every card on a phone and every Live Now card open the place page.
-  const onOpen = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, true);
-  const onOpenLive = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, false);
+  // On desktop, as source: an empty Explore card opens JUMP IN in place and a busy one the place page;
+  // Favourites and My places always open JUMP IN (source reads their rows as empty); Live Now cards always
+  // open the place page. On a phone every card opens the place page.
+  const onOpen = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, "busy-navigates");
+  const onOpenMember = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, "modal");
+  const onOpenLive = (card: PlaceCardData, event: MouseEvent<HTMLAnchorElement>) => open(card, event, "page");
   const jumpIn = (place: Destination | undefined, event: MouseEvent<HTMLAnchorElement>) => {
     const handler = place ? placeJumpIn(place, platform).onJumpIn : undefined;
     handler?.(event);
@@ -345,7 +367,7 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
 
   function exploreResults() {
     if (held) {
-      return <PlacesMessage tone="alert" message={COPY.error} action={{ label: COPY.retry, onClick: () => setHeld(false) }} />;
+      return <PlacesMessage tone="alert" message={COPY.error} action={{ label: COPY.retry, onClick: () => setHeldKey(null) }} />;
     }
     if (browse.isError && !browse.data) {
       return <PlacesMessage tone="alert" message={COPY.error} action={{ label: COPY.retry, onClick: () => void browse.refetch() }} />;
@@ -388,6 +410,6 @@ function PlacesExplorer({ loaderSid, loaderPlatform, unavailable }: ExplorerProp
     }
     if (member.isPending) return <PlaceGrid cards={[]} skeletons={SKELETONS} labels={CARD_LABELS} label={label} />;
     if (!sectionCards.length) return <PlacesMessage message={favourites ? COPY.emptyFavourites : COPY.emptyMine} />;
-    return <PlaceGrid cards={sectionCards} labels={CARD_LABELS} label={label} onOpen={onOpen} onJumpIn={onJumpIn} />;
+    return <PlaceGrid cards={sectionCards} labels={CARD_LABELS} label={label} onOpen={onOpenMember} onJumpIn={onJumpIn} />;
   }
 }

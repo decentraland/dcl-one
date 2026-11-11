@@ -54,6 +54,18 @@ export function creatorAddresses(places: readonly Destination[]): string[] {
   return [...out];
 }
 
+/** One address batch per group, each without the addresses an earlier group already asked for; empty batches dropped. */
+export function creatorBatches(groups: readonly (readonly Destination[])[]): string[][] {
+  const asked = new Set<string>();
+  const batches: string[][] = [];
+  for (const group of groups) {
+    const fresh = creatorAddresses(group).filter((address) => !asked.has(address));
+    fresh.forEach((address) => asked.add(address));
+    if (fresh.length) batches.push(fresh);
+  }
+  return batches;
+}
+
 function coordinates(place: Destination): [number, number] {
   const match = /^(-?\d+),(-?\d+)$/.exec(place.base_position ?? "");
   return match ? [Number(match[1]), Number(match[2])] : [0, 0];

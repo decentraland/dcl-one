@@ -122,6 +122,47 @@ describe("when the Explore grid loads", () => {
     expect(await screen.findByRole("link", { name: "Back" })).toBeTruthy();
   });
 
+  it("should read normally once the view changes after a 503 document", async () => {
+    serve({ browse: [destination({ title: "Music place" })] });
+    const { user } = renderPage("/places", DESKTOP, true);
+    await screen.findByRole("alert");
+    const [select] = screen.getAllByRole("combobox", { name: "Category" });
+    await user.selectOptions(select!, "music");
+    expect(await screen.findByRole("link", { name: "Music place" })).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("should offer the next page without claiming the catalogue is empty when a whole page is hidden", async () => {
+    serve({ browse: Array.from({ length: 48 }, (_, i) => destination({ id: `e${i}`, title: "Empty" })), total: 100 });
+    renderPage();
+    expect(await screen.findByRole("button", { name: "Load more places" })).toBeTruthy();
+    expect(screen.queryByText("No places match your filters.")).toBeNull();
+  });
+
+  it("should list a row repeated on the next page once", async () => {
+    serve({ browse: Array.from({ length: 48 }, (_, i) => destination({ id: `p${i}`, title: `Place ${i}` })), total: 100 });
+    const { user } = renderPage();
+    const more = await screen.findByRole("button", { name: "Load more places" });
+    serve({ browse: [destination({ id: "p47", title: "Place 47" }), destination({ id: "new", title: "New" })], total: 100 });
+    await user.click(more);
+    await screen.findByRole("link", { name: "New" });
+    expect(screen.getAllByRole("link", { name: "Place 47" })).toHaveLength(1);
+  });
+
+  it("should read the faces of a new page's creators only", async () => {
+    const owner = (n: number) => `0x${n.toString(16).padStart(40, "0")}`;
+    serve({ browse: Array.from({ length: 48 }, (_, i) => destination({ id: `p${i}`, title: `Place ${i}`, owner: owner(i + 1) })), total: 100 });
+    const { user } = renderPage();
+    const more = await screen.findByRole("button", { name: "Load more places" });
+    await waitFor(() => expect(fetch).toHaveBeenCalledOnce());
+    serve({ browse: [destination({ id: "p0", owner: owner(1) }), destination({ id: "new", title: "New", owner: owner(99) })], total: 100 });
+    await user.click(more);
+    await screen.findByRole("link", { name: "New" });
+    await waitFor(() => expect(fetch).toHaveBeenCalledTimes(2));
+    const body = JSON.parse(String((vi.mocked(fetch).mock.calls[1] as unknown as [string, RequestInit])[1].body)) as { ids: string[] };
+    expect(body.ids).toEqual([owner(99)]);
+  });
+
   it("should load the next page from the offset after the first", async () => {
     serve({ browse: Array.from({ length: 48 }, (_, i) => destination({ id: `p${i}`, title: `Place ${i}` })), total: 100 });
     const { user } = renderPage();
@@ -208,6 +249,28 @@ describe("when a member section is open", () => {
     renderPage("/places?tab=my");
     expect(await screen.findByText("You haven't published any places yet.")).toBeTruthy();
     expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ owner: MEMBER }), expect.anything());
+  });
+
+  it("should open JUMP IN for a favourite on desktop even when people are in it", async () => {
+    auth.current = { isConnected: true, identity: { signer: MEMBER } };
+    serve({ member: [destination({ title: "Busy favourite", user_count: 7 })] });
+    const { user } = renderPage("/places?tab=favourites");
+    await user.click(await screen.findByRole("link", { name: "Busy favourite" }));
+    expect(screen.getByRole("dialog", { name: "Busy favourite" })).toBeTruthy();
+    expect(screen.getByText("7 people in-world")).toBeTruthy();
+  });
+
+  it("should read the new account's favourites after an account switch", async () => {
+    auth.current = { isConnected: true, identity: { signer: MEMBER } };
+    serve({ member: [destination({ title: "Saved" })] });
+    const { user } = renderPage("/places?tab=favourites");
+    await screen.findByRole("link", { name: "Saved" });
+    const other = { signer: "0x00000000000000000000000000000000000000dd" };
+    auth.current = { isConnected: true, identity: other };
+    // Re-render through a view change so the mocked auth hook is read again.
+    await user.click(screen.getByRole("button", { name: "My places" }));
+    await user.click(screen.getByRole("button", { name: "Favourites" }));
+    await waitFor(() => expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ only_favorites: true }), expect.objectContaining({ identity: other })));
   });
 
   it("should show the error with Retry when the member read fails", async () => {
