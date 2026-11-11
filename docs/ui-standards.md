@@ -73,10 +73,14 @@ separate types file for a substantial contract shared across components.
 Export the component and its public prop types from `library/ui/index.ts`.
 The mapping is used by the Figma tooling and is not imported by browser code.
 The template is not a production component. Replace the Figma mapping
-placeholder with the actual component's node and properties when its tooling
-contract is established. The sample test is a smoke test; configure React
-Testing Library, jest-dom matchers and CSS Module handling for the package, and
-add the component-specific interaction and accessibility tests before use.
+placeholder with a mapping in the contract the tooling reads
+(`library/ui/figma/src/contract/mapping-file.ts`, described in
+`library/ui/figma/MAINTENANCE.md`): header comments `url`, `source`,
+`component` and `contract=1`, then the component's Figma properties.
+`components/NavBar/NavBar.figma.ts` is a working example. The sample test is a
+smoke test; React Testing Library, jest-dom matchers and CSS Module handling
+are already configured in `library/ui` (`vitest.config.ts`, `test/setup.ts`),
+so add the component-specific interaction and accessibility tests before use.
 
 ### Design tokens
 
@@ -89,8 +93,8 @@ portals.
 
 ### Global CSS boundary
 
-Shared foundations and components belong in `library/ui` once it is
-implemented; until then each surface keeps its existing ones (see
+Shared foundations and components belong in `library/ui`; a surface keeps
+its existing ones until they are migrated there (see
 [Shared UI](#shared-ui-libraryui)). Global stylesheets
 contain only token definitions, font faces, resets, and application-wide base
 and accessibility rules. Each app keeps its own global entry point and loads

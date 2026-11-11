@@ -23,7 +23,8 @@ native semantics, its CSS Module on foundation tokens, behavior and
 accessibility tests, and a `Component.figma.ts` mapping that only the Figma
 tooling reads. Generated Figma views are not a production rendering model. They
 back the Review previews; NavBar is the only generated public component and
-stays a bridge until it is rewritten from the template.
+stays a bridge until it is rewritten from the template, which also removes it
+from `promotion.include` in `library/ui/figma/figma.config.json`.
 
 ### Layout
 

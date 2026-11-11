@@ -28,4 +28,4 @@ Import shared public contracts from `@dcl/one-ui`. Do not import components from
 
 ## Recording adoption
 
-The author of each verified port or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and the port verification record.
+The author of each new public component or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and its tests, and against the port verification record for the NavBar bridge.
