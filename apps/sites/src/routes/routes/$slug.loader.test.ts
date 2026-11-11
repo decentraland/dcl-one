@@ -23,9 +23,9 @@ describe("when resolving canonical legal routes", () => {
       });
     },
   );
-  it("should resolve the credits document key internally", async () => {
-    await expect(loader(args("credits"))).resolves.toMatchObject({
-      doc: "credits",
+  it("should leave /credits to the Credits API", async () => {
+    await expect(loader(args("credits"))).rejects.toMatchObject({
+      status: 404,
     });
   });
   it.each(["missing", "__proto__", "constructor"])(

@@ -9,6 +9,9 @@ const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+const uiFoundationsCss = fileURLToPath(
+  new URL("../../library/ui/foundations/foundations.css", import.meta.url),
+);
 // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
@@ -94,7 +97,7 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/dcl-lists": to(),
     "/media/": to(),
     // The operator plane (src/main.rs): credits, the relay and the imposter store.
-    "/credits": to(),
+    "^/credits(?:[/?]|$)": to(),
     "/rpc": to({ ws: true }),
     "/bvimposters": to(),
     // The web Explorer (/play) reaches the rest of the gateway's prefix table
@@ -257,6 +260,7 @@ export default defineConfig({
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
+      "@dcl/one-ui/foundations.css": uiFoundationsCss,
       "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@catalyst-api": catalystApi,
       "@shop": shopCore,

@@ -48,7 +48,6 @@ describe("when rendering the nine pinned legal documents", () => {
     },
   );
   it.each([
-    "credits",
     "credits-terms",
     "content-policy",
     "rewards-terms",

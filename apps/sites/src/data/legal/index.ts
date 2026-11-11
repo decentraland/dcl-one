@@ -45,6 +45,7 @@ const LEGAL_ALIASES: Record<string, LegalKey> = {
 };
 
 export function resolveLegalKey(slug: string): LegalKey | null {
+  if (slug === "credits") return null;
   const key = LEGAL_ALIASES[slug] ?? slug;
   return Object.prototype.hasOwnProperty.call(LEGAL_DOCS, key)
     ? (key as LegalKey)
