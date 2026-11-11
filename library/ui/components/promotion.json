@@ -1,5 +1,6 @@
 {
   "components": [
+    "Button",
     {
       "name": "NavBar",
       "limits": [
@@ -20,7 +21,6 @@
           "text": "The logo is currently 60px on desktop and 48px on mobile; alignment to the 40px design is pending."
         }
       ]
-    },
-    "Button"
+    }
   ]
 }

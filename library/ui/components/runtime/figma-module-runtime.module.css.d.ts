@@ -7,5 +7,9 @@ declare const styles: {
   readonly "semanticList": string
   readonly "semanticItem": string
   readonly "semanticAction": string
+  readonly "control": string
+  readonly "controlIcon": string
+  readonly "iconOnly": string
+  readonly "inverse": string
 }
 export default styles

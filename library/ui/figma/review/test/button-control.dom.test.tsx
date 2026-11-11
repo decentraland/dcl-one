@@ -2,7 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { Button } from '../src/generated/components/buttons/Button'
+import { Button } from '../../../index'
 import { FigmaView, type ViewNode } from '../src/components/figma-module-runtime'
 
 const views: Record<string, ViewNode> = {

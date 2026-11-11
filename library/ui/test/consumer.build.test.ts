@@ -7,7 +7,7 @@ import { build } from 'vite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as publicUi from '../index'
 
-describe('when a consumer bundles public foundations and the generated NavBar bridge', () => {
+describe('when a consumer bundles public foundations and shared components', () => {
   let root: string
   let directory: string | undefined
   beforeEach(() => {
@@ -17,9 +17,10 @@ describe('when a consumer bundles public foundations and the generated NavBar br
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true })
   })
-  it('should expose NavBar alongside the preserved foundations', () => {
+  it('should expose Button and NavBar alongside the preserved foundations', () => {
     expect(publicUi).toHaveProperty('theme')
     expect(publicUi.NavBar).toBeTypeOf('function')
+    expect(publicUi.Button).toBeTypeOf('function')
   })
   it('should compile the public tuple contract and reject unsupported tuples, text props and deep imports', () => {
     expect(

@@ -317,3 +317,31 @@ export { NavBar as DeepNavBar } from '@dcl/one-ui/components/NavBar/NavBar'
 export { ShopCart, theme as foundationTheme } from '@dcl/one-ui/foundations'
 // @ts-expect-error Generated components are not exported by the foundations entry.
 export { NavBar as FoundationNavBar } from '@dcl/one-ui/foundations'
+
+const button: import('@dcl/one-ui').ButtonProps = {
+  variant: 'tertiary',
+  size: 'md',
+  children: 'Jump',
+  leadingIcon: null,
+  'aria-pressed': true,
+  'aria-disabled': true,
+  onClick: (event) => {
+    event.preventDefault()
+    event.currentTarget.disabled = true
+  }
+}
+const link: import('@dcl/one-ui').ButtonProps = {
+  variant: 'inverse',
+  href: '/jump',
+  target: '_blank',
+  disabled: true,
+  onClick: (event) => {
+    event.preventDefault()
+    event.currentTarget.href = '/next'
+  }
+}
+// @ts-expect-error A navigation link cannot have a native button submit type.
+const invalidLink: import('@dcl/one-ui').ButtonProps = { href: '/jump', type: 'submit' }
+// @ts-expect-error Only supported button variants are public.
+const invalidVariant: import('@dcl/one-ui').ButtonProps = { variant: 'unknown' }
+void [button, link, invalidLink, invalidVariant]
