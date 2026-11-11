@@ -288,7 +288,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "41bb8c8c43bb0af3c9586dabe328f61116f49635348ab465f5a96ad004360213"
+      "sha256": "c9482d03c6150145cdafda8339fc28e9a30a7849583dea8e13954cce4319f962"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
