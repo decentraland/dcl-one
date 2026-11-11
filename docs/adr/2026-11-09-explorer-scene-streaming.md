@@ -53,6 +53,89 @@ the spawn order was left to this decision.
 How many scenes are live stays set by the live ring and the two distance settings; this decision
 adds no cap on the total and no memory reaction.
 
+### Near LOD
+
+A scene in range that is not on screen yet (not live, or live and still loading) gets a
+stand-in made of its own glTF files (`scene_lod.rs`).
+
+- **Range in parcel rings.** A stand-in starts when the scene's partition `parcel_distance`, the
+  Chebyshev ring of its nearest parcel around the player's, is at most 3 (about 48 m), and is
+  kept until that ring passes 4 (about 64 m). A scene wholly behind the camera starts none.
+  Never in preview.
+- **A count, not a size.** At most "Max Near LODs" stand-ins (a Performance setting, 0 to 40,
+  default 12) that are not wholly behind the camera load or show at once; one behind the camera
+  is kept but takes no place from one ahead. Those waiting to start are admitted nearest first,
+  by the download key (ring, then in front of the camera, then distance); the rest wait until a
+  place frees. The cost of a stand-in is not known before its files arrive, and a guess from the
+  download misleads (a scene of flat PNGs takes ten times its download in memory), so the
+  budget counts scenes. Lowering the setting removes the farthest counted stand-ins at once; they
+  come back as waiting.
+- **A hard total.** Stand-ins started in view and then left behind as the player turns would
+  otherwise let new ones start without bound, so all started stand-ins, counted or behind the
+  camera, stay within twice "Max Near LODs". Past it the farthest behind the camera go first;
+  turning the camera alone never pushes the total past it, so it removes none.
+- **Definition.** A stand-in starts by loading the scene's entity definition as the live scene
+  does, by hash or by the realm's urn, so the live scene gets the same handle and the entity
+  file is fetched once. Nothing about a scene is kept before its stand-in starts: until then
+  the realm's pointers give the scene's parcels within the keep ring, which is all its
+  partition needs. The definition gives the base parcel, the parcels and the content map; the
+  stand-in registers the content collection unless the live scene already has.
+- **Descriptor.** Where the models go comes from the asset pipeline's initial-scene-state
+  descriptor, `{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`, under the
+  Bevy variants base (`IpfsIo::bevy_lod_descriptor`; by default the asset-bundle generator CDN,
+  `abgen-cdn.<base>`). With variants off there is no descriptor and so no near LOD. It is an
+  asset load under the scene's content path, so it goes through the
+  ipfs cache and ranks with the stand-in's other downloads. It names each model by content hash
+  and gives its transform. A descriptor that fails to load, most often because the pipeline has
+  none for the scene, means no stand-in while the scene stays within the keep ring.
+- **What the descriptor holds.** It lists only glTFs the scene deployed. An entry whose hash is
+  not among the scene's deployed files, such as a model the scene loads from a url, is skipped
+  and logged at debug level: the stand-in never fetches a url the scene chose before the scene
+  runs. Primitive meshes, text and materials the scene's code sets are not in the descriptor at
+  all. A scene whose models are all skipped keeps its walls.
+- **The live container path.** Each model becomes a glTF container of the stand-in's root,
+  named by its file in the scene's content map, which the live glTF systems (`gltf_container`)
+  load, process a slice a frame under the instantiation deadline and dress exactly as they do a
+  live scene's: collider and trigger nodes, skins, meshes, materials, lights and animations. The
+  root carries what those systems read from a scene root (the definition handle, a resource
+  lookup, a component tracker, collider data and its parcels' bounds, `StandInBounds`) and no
+  `RendererSceneContext`. A content-file path takes the content map's key form (relative,
+  lowercase), so the live scene's `GltfContainer` asks for the same asset path whatever case its
+  `src` uses and gets the same `Handle<Gltf>`. Each stand-in container keeps its handle until the
+  stand-in goes, and the stand-in goes once the live scene's content is shown. A container the
+  live scene creates by then holds the same handle, so its file is not unloaded and parsed again.
+  A file is parsed twice when the live scene names it later, when the scene is frozen or broken
+  (its content counts as shown at once), or when the scene deploys the same file under two names
+  and uses the one the stand-in did not pick.
+- **Converted files.** Starting a stand-in requests the scene's Bevy variants manifest, as a
+  spawning scene does, so the stand-in loads the asset pipeline's converted files (BC textures,
+  `g` models) and the live scene finds those already loaded.
+- **Download tier.** While no live scene holds its hash, the stand-in's downloads rank in
+  `Tier::Lod`: after every live scene's and before requests that are no scene's. Once the
+  scene spawns, its own registration takes the hash to the scene tier.
+- **Hand-off.** The root stays hidden until each of its containers is processed; then the
+  stand-in shows in one frame. If no model loaded, it shows nothing and the scene keeps its
+  loading walls. It goes in the frame the live scene's content is first on screen
+  (`RendererSceneContext::content_shown`), and a scene whose content has been on screen never
+  gets a stand-in again, even while its content is briefly blocked (an imposter bake), so a
+  stand-in does not come back over live content. The live scene is raised from below the world
+  at its fifth tick, before its content counts as shown, so the two overlap from then until the
+  stand-in goes. Imposters skip the parcels of a shown stand-in.
+- **Collisions.** The stand-in's collider nodes become colliders on its root's
+  `SceneColliderData` through the live collider systems, all of them in the frame the stand-in
+  shows and none before: player movement, collision resolution and foot IK cast against every
+  `SceneColliderData`, so a hidden stand-in must neither block nor carry the player. A player who
+  reaches the scene before it is live walks on what they see; pointer events and triggers query
+  live scenes only. The colliders go with the
+  stand-in.
+- **Walls.** While a scene's stand-in is shown its loading walls are hidden; a scene without a
+  shown stand-in keeps them.
+- **Debug view.** The Scene stand-ins debug section counts stand-ins by state and can tint the
+  near LOD's models green (`/lod_tint`). The tint changes only the stand-in's own materials, never
+  the live scene's.
+
+A far LOD and the removal of the loading walls are later decisions.
+
 ## Rejected
 
 - **Spawning everything in range in one frame, ordered.** Ordering alone fixes nothing: the cost
@@ -66,6 +149,12 @@ adds no cap on the total and no memory reaction.
   every point of it; the ring does, and leaves the setting free to widen the area.
 - **A live ring of 2.** Up to 25 scripts running at once among one-parcel scenes, against 9 at
   ring 1, before the time a scene takes from spawn to shown has been measured.
+- **A separate simplified near model.** It would need colliders of its own, and a scene the
+  player enters would download a second copy of its models. The scene's own files carry their
+  collider nodes already.
+- **A near-LOD range in metres.** Rings are what the partition, the download order and the
+  waves already measure, and a keep ring one wider than the start ring stops a player on the
+  edge from starting and dropping a stand-in every few steps.
 
 ## Consequences
 
@@ -87,3 +176,12 @@ adds no cap on the total and no memory reaction.
 - A scene stalled in loading holds a wave slot for at least 20 s, then the wave moves on with it still
   loading.
 - Loading scenes keep their animated walls; what shows while a scene loads is a later decision.
+- Within three rings, a loading scene shows its own models as soon as they arrive instead of
+  its walls, and the live scene reuses those models when it comes up.
+- A scene the asset pipeline has not processed has no descriptor and keeps its walls.
+- A stand-in's collisions are the defaults only: a container's collision masks, `MeshCollider`
+  components set by scene code, primitives a script creates and things a script moves are
+  absent until the scene is live.
+- A stand-in shows only content-file glTFs. Url models, primitives, text and code-set materials
+  appear when the scene is live; the primitives, text and materials need the descriptor to
+  describe them.

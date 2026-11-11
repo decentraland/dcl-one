@@ -279,6 +279,14 @@ fn extras_collider_mask(extras: &str) -> Option<u32> {
 #[derive(Component)]
 pub struct GltfHandle(Handle<Gltf>);
 
+/// The bounds the materials of a root's glTF containers clip to, on a root with no
+/// `RendererSceneContext`: a scene's stand-in (`scene_lod`), whose containers this path loads and
+/// processes as it does a live scene's. Such a root also carries the scene's
+/// `SceneEntityDefinitionHandle`, a `SceneResourceLookup`, a `ComponentTracker` and a
+/// `SceneColliderData`.
+#[derive(Component)]
+pub struct StandInBounds(pub SceneBounds);
+
 #[derive(Component, Deref)]
 pub struct GltfReady(InstanceId);
 
@@ -1181,7 +1189,8 @@ pub(crate) fn update_ready_gltfs(
     mut graphs: ResMut<Assets<AnimationGraph>>,
     mut scene_spawner: SceneSpawnerPlus,
     mut contexts: Query<(
-        &mut RendererSceneContext,
+        Option<&mut RendererSceneContext>,
+        Option<&StandInBounds>,
         &mut SceneResourceLookup,
         &mut ComponentTracker,
     )>,
@@ -1246,8 +1255,16 @@ pub(crate) fn update_ready_gltfs(
             // println!("{bevy_scene_entity:?}");
             // println!("{graph}");
 
-            let Ok((mut context, mut resource_lookup, mut tracker)) =
+            let Ok((mut context, stand_in, mut resource_lookup, mut tracker)) =
                 contexts.get_mut(dcl_scene_entity.root)
+            else {
+                continue;
+            };
+            // a live scene's root, or a stand-in's (`scene_lod`), which has no scene to tell
+            let Some(scene_bounds) = context
+                .as_deref()
+                .map(|context| &context.scene_bounds)
+                .or(stand_in.map(|stand_in| &stand_in.0))
             else {
                 continue;
             };
@@ -1256,7 +1273,7 @@ pub(crate) fn update_ready_gltfs(
                 scene_entity: dcl_scene_entity,
                 definition,
                 gltf,
-                scene_bounds: &context.scene_bounds,
+                scene_bounds,
             };
 
             // resume where the last frame stopped
@@ -1329,19 +1346,21 @@ pub(crate) fn update_ready_gltfs(
             } = names;
 
             // collect named skins and assign names to unnamed meshes
-            context.update_crdt(
-                SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
-                CrdtType::LWW_ANY,
-                dcl_scene_entity.id,
-                &PbGltfContainerLoadingState {
-                    current_state: LoadingState::Finished as i32,
-                    node_paths: named_nodes.keys().cloned().collect(),
-                    mesh_names,
-                    material_names,
-                    skin_names,
-                    animation_names,
-                },
-            );
+            if let Some(context) = context.as_mut() {
+                context.update_crdt(
+                    SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
+                    CrdtType::LWW_ANY,
+                    dcl_scene_entity.id,
+                    &PbGltfContainerLoadingState {
+                        current_state: LoadingState::Finished as i32,
+                        node_paths: named_nodes.keys().cloned().collect(),
+                        mesh_names,
+                        material_names,
+                        skin_names,
+                        animation_names,
+                    },
+                );
+            }
             commands.entity(bevy_scene_entity).try_insert((
                 GltfProcessed {
                     instance_id: Some(instance),

@@ -35,6 +35,10 @@
 //! Preview mode, local scenes (`b64-` ids) and entities served from a loopback or file content
 //! server never ask for a manifest; in preview mode that includes the wearables and emotes, so a
 //! preview always shows the deployed files.
+//!
+//! The same base serves a scene's near-LOD descriptor, the asset pipeline's initial scene state
+//! (`{base}/LOD/lods-unity/manifests/{sceneId}_InitialSceneState.json`,
+//! [`IpfsIo::bevy_lod_descriptor`]).
 
 mod debug_panel;
 pub mod ktx2;
@@ -662,6 +666,16 @@ impl IpfsIo {
         if let Err(error) = forgotten {
             warn!("failed to drop the cached copy of `{url}`: {error}");
         }
+    }
+
+    /// The asset pipeline's initial-scene-state descriptor for a scene, which places its near
+    /// LOD, under the variants base; `None` when variants are off.
+    pub fn bevy_lod_descriptor(&self, scene: &str) -> Option<String> {
+        let base = self.bevy_variants.base()?;
+        Some(format!(
+            "{base}/LOD/lods-unity/manifests/{}_InitialSceneState.json",
+            scene.to_lowercase()
+        ))
     }
 
     /// Asks abgen for an entity's manifest (a scene, wearable or emote), once per session. A

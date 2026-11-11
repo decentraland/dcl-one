@@ -54,6 +54,7 @@ use crate::{
         SCENE_JS_SPAWN_TICK,
     },
     ring_parcels,
+    scene_lod::{LodState, SceneLod},
     scene_partition::camera_facing,
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
@@ -2152,6 +2153,9 @@ fn animate_ready_scene(
 #[derive(Component)]
 pub struct LoadingMaterialHandle(pub Handle<LoadingMaterial>);
 
+/// Keeps each loading wall at the player's height and lights it near the player. A scene whose
+/// near LOD is shown raises no walls: the stand-in already stands on its parcels.
+#[allow(clippy::type_complexity)]
 fn update_loading_quads(
     mut q: Query<
         (
@@ -2159,10 +2163,14 @@ fn update_loading_quads(
             &mut Transform,
             &MeshMaterial3d<LoadingMaterial>,
             &LoadingQuad,
+            &ChildOf,
+            &mut Visibility,
         ),
         Without<PrimaryUser>,
     >,
     player: Query<&Transform, With<PrimaryUser>>,
+    scenes: Query<&RendererSceneContext>,
+    lods: Query<&SceneLod>,
     mut mats: ResMut<Assets<LoadingMaterial>>,
     mut local_prev_active: Local<HashSet<AssetId<LoadingMaterial>>>,
 ) {
@@ -2171,8 +2179,25 @@ fn update_loading_quads(
     };
 
     let prev_active = std::mem::take(&mut *local_prev_active);
+    let stood_in = lods
+        .iter()
+        .filter(|lod| matches!(lod.state, LodState::Shown))
+        .map(|lod| lod.hash.as_str())
+        .collect::<HashSet<_>>();
 
-    for (gt, mut trans, h_mat, loading) in q.iter_mut() {
+    for (gt, mut trans, h_mat, loading, child_of, mut visibility) in q.iter_mut() {
+        let hidden = scenes
+            .get(child_of.parent())
+            .is_ok_and(|ctx| stood_in.contains(&*ctx.hash));
+        visibility.set_if_neq(if hidden {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        });
+        if hidden {
+            continue;
+        }
+
         let nearest_point = player_translation.xz().clamp(
             gt.translation().xz()
                 - if loading.0 {

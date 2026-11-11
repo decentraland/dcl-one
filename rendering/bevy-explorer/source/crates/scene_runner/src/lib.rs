@@ -83,6 +83,7 @@ pub mod permissions;
 pub mod portables;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_lod;
 pub mod scene_partition;
 pub mod scene_spawn_slice;
 mod scene_traffic;
@@ -458,6 +459,7 @@ impl Plugin for SceneRunnerPlugin {
             app.add_systems(Update, scene_traffic::track_parcel.in_set(SceneSets::Input));
             app.add_plugins(debug_panel::SceneDebugPanelPlugin);
             app.add_plugins(LightsPlugin);
+            app.add_plugins(scene_lod::SceneLodPlugin);
         }
         app.add_plugins(AssetPreloadPlugin);
         app.add_plugins(scene_spawn_slice::SceneSpawnSlicePlugin);
