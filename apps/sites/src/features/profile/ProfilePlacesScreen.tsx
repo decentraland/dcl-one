@@ -34,6 +34,8 @@ export const EXPLORE_PLACES_HREF = "/places";
 
 type PlacesView = "places" | "favorites";
 
+const OWNER_EMPTY_TITLE = "Nothing here yet, but that's easy to change";
+
 export type ProfilePlacesScreenProps = {
   profile: ProfileVM;
   /** Whether the profile read has settled; until then the owner's NAME is unknown. */
@@ -48,8 +50,8 @@ function PlaceLink({ to, ...props }: SceneCardLinkProps) {
   return <Link to={to} prefetch="intent" {...props} />;
 }
 
-function jumpHref(place: ProfilePlace): string {
-  return place.world && place.worldName ? worldJumpUrl(place.worldName) : sceneJumpUrl(place.basePosition);
+function jumpHref(place: ProfilePlace, location: string): string {
+  return place.world ? worldJumpUrl(location) : sceneJumpUrl(location);
 }
 
 /** A ready Jump In link is a completed handoff on the same click, as the place page records it. */
@@ -59,8 +61,10 @@ function trackJumpIn(sid: string, placeId: string, launchUrl: string) {
   track("jump_in_completed", { place_id: placeId, launch_url: launchUrl }, context);
 }
 
-function countLabel(count: number): string {
-  return count === 1 ? "1 place" : `${count} places`;
+/** The count, saying so when the catalogue holds more than the page shows. */
+function countLabel(shown: number, total: number): string {
+  const noun = (n: number) => (n === 1 ? "1 place" : `${n} places`);
+  return total > shown ? `Showing ${shown} of ${noun(total)}` : noun(shown);
 }
 
 /** The owner's empty My Places: someone without a NAME needs one, someone with one needs to publish. */
@@ -68,7 +72,7 @@ function OwnerEmpty({ hasClaimedName }: { hasClaimedName: boolean }) {
   return hasClaimedName ? (
     <EmptyState
       icon={<GeneralMapPin />}
-      title="Nothing here yet, but that's easy to change"
+      title={OWNER_EMPTY_TITLE}
       subtitle="My Places shows the spaces you own or manage in Decentraland. You already have a NAME: publish a World on it and it will appear here."
       action={
         <Button href={MANAGE_WORLD_HREF}>
@@ -80,7 +84,7 @@ function OwnerEmpty({ hasClaimedName }: { hasClaimedName: boolean }) {
   ) : (
     <EmptyState
       icon={<GeneralMapPin />}
-      title="Nothing here yet, but that's easy to change"
+      title={OWNER_EMPTY_TITLE}
       subtitle="My Places shows the spaces you own or manage in Decentraland. The easiest way to start is with a NAME, which unlocks your own World."
       action={
         <Button href={GET_A_NAME_HREF}>
@@ -102,7 +106,7 @@ export function ProfilePlacesScreen({ profile, profileReady, own, tabs, onTab, s
   const owned = useProfilePlaces(profile.address);
   const favorites = useMyFavoritePlaces(own ? identity : null, showFavorites);
   const ownerAddresses = showFavorites
-    ? [...new Set((favorites.data ?? []).flatMap((place) => (place.owner ? [place.owner] : [])))]
+    ? [...new Set((favorites.data?.places ?? []).flatMap((place) => (place.owner ? [place.owner] : [])))]
     : [];
   const owners = usePlaceOwners(ownerAddresses);
 
@@ -164,13 +168,14 @@ export function ProfilePlacesScreen({ profile, profileReady, own, tabs, onTab, s
         </Button>
       ),
     };
-  } else if (!list.data || (own && !showFavorites && list.data.length === 0 && !profileReady)) {
+  } else if (!list.data || (own && !showFavorites && list.data.places.length === 0 && !profileReady)) {
     // The owner's empty state depends on the NAME, so it waits for the profile.
     state = { kind: "loading", label: "Loading places" };
-  } else if (list.data.length === 0) {
+  } else if (list.data.places.length === 0) {
     state = showFavorites
       ? {
           kind: "empty",
+          label: "Nothing saved yet",
           children: (
             <EmptyState
               icon={<GeneralFavorites />}
@@ -186,11 +191,12 @@ export function ProfilePlacesScreen({ profile, profileReady, own, tabs, onTab, s
           ),
         }
       : own
-        ? { kind: "empty", children: <OwnerEmpty hasClaimedName={profile.hasClaimedName ?? false} /> }
+        ? { kind: "empty", label: OWNER_EMPTY_TITLE, children: <OwnerEmpty hasClaimedName={profile.hasClaimedName ?? false} /> }
         : { kind: "empty-note", message: "This member has not registered any places yet." };
   } else {
-    const cards: ReactNode[] = list.data.map((place) => {
-      const href = jumpHref(place);
+    const cards: ReactNode[] = list.data.places.map((place) => {
+      const location = placeLocation(place);
+      const href = location ? jumpHref(place, location) : undefined;
       return (
         <ProfilePlacesItem key={place.id}>
           <SceneCard
@@ -198,14 +204,14 @@ export function ProfilePlacesScreen({ profile, profileReady, own, tabs, onTab, s
             imageUrl={place.image}
             href={`/places/${encodeURIComponent(place.id)}`}
             creator={showFavorites ? ownerOf(place) : self}
-            location={placeLocation(place)}
-            jumpIn={{ href, onJumpIn: () => trackJumpIn(sid, place.id, href) }}
+            location={location}
+            jumpIn={href ? { href, onJumpIn: () => trackJumpIn(sid, place.id, href) } : undefined}
             LinkComponent={PlaceLink}
           />
         </ProfilePlacesItem>
       );
     });
-    state = { kind: "list", count: countLabel(list.data.length), children: cards };
+    state = { kind: "list", count: countLabel(list.data.places.length, list.data.total), children: cards };
   }
 
   return (

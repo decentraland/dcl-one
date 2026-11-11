@@ -56,13 +56,15 @@ describe("fetchProfilePlaces", () => {
   });
 
   it("maps scenes and worlds to what a card shows", async () => {
-    const places = await fetchProfilePlaces(OWNER);
+    const { places, total } = await fetchProfilePlaces(OWNER);
 
+    expect(total).toBe(2);
     expect(places).toEqual([
       { id: "place-1", title: "ABC Clubhouse", image: "https://example.com/a.png", owner: OWNER.toLowerCase(), world: false, basePosition: "-31,-27", worldName: undefined },
       expect.objectContaining({ id: "abcdcl.dcl.eth", world: true, worldName: "abcdcl.dcl.eth" }),
     ]);
     expect(places.map(placeLocation)).toEqual(["-31,-27", "abcdcl.dcl.eth"]);
+    expect(placeLocation({ ...places[1]!, worldName: undefined })).toBeUndefined();
   });
 
   it("keeps only http(s) images and drops a missing owner", async () => {
@@ -72,7 +74,7 @@ describe("fetchProfilePlaces", () => {
       data: [row({ image: "javascript:alert(1)", owner: null }), row({ id: "b", image: null, owner: "  " })],
     });
 
-    const places = await fetchProfilePlaces(OWNER);
+    const { places } = await fetchProfilePlaces(OWNER);
 
     expect(places.map((p) => [p.image, p.owner])).toEqual([[undefined, undefined], [undefined, undefined]]);
   });
@@ -80,7 +82,7 @@ describe("fetchProfilePlaces", () => {
   it("returns an empty list when the wallet owns nothing", async () => {
     vi.mocked(getJSON).mockResolvedValue({ ok: true, total: 0, data: [] });
 
-    await expect(fetchProfilePlaces(OWNER)).resolves.toEqual([]);
+    await expect(fetchProfilePlaces(OWNER)).resolves.toEqual({ places: [], total: 0 });
   });
 
   it("fails instead of answering an empty list when the catalogue errors", async () => {
@@ -100,7 +102,7 @@ describe("fetchFavoritePlaces", () => {
   it("reads the signed caller's saved places only, signed with their identity", async () => {
     vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, total: 1, data: [row({ owner: "0x1111111111111111111111111111111111111111" })] });
 
-    const places = await fetchFavoritePlaces(identity);
+    const { places } = await fetchFavoritePlaces(identity);
 
     expect(signedGetJSON).toHaveBeenCalledWith(
       "/places/api/destinations",

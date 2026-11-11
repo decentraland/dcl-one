@@ -42,12 +42,12 @@ export async function fetchProfilePlaces(
   address: string,
   params: { limit?: number } = {},
   opts: GetOptions = {},
-): Promise<ProfilePlace[]> {
+): Promise<ProfilePlacePage> {
   const page = await fetchDestinations(
     { owner: address.trim().toLowerCase(), limit: params.limit ?? 100 },
     opts,
   );
-  return page.data.map(toProfilePlace);
+  return { places: page.data.map(toProfilePlace), total: page.total };
 }
 
 /** The signed-in member's saved places and worlds; the node answers for the signing account only. */
@@ -55,15 +55,19 @@ export async function fetchFavoritePlaces(
   identity: AuthIdentity,
   params: { limit?: number } = {},
   opts: Pick<GetOptions, "signal" | "base"> = {},
-): Promise<ProfilePlace[]> {
+): Promise<ProfilePlacePage> {
   const page = await fetchDestinations(
     { only_favorites: true, limit: params.limit ?? 100 },
     { ...opts, identity },
   );
-  return page.data.map(toProfilePlace);
+  return { places: page.data.map(toProfilePlace), total: page.total };
 }
 
-/** Where a place's Jump In goes: its world, or its parcel in Genesis City. */
-export function placeLocation(place: ProfilePlace): string {
-  return place.world && place.worldName ? place.worldName : place.basePosition;
+/** One read's places and how many the catalogue holds in all; `total` exceeds the list past the page cap. */
+export type ProfilePlacePage = { places: ProfilePlace[]; total: number };
+
+/** Where a place's Jump In goes: its world, or its parcel in Genesis City; a world without a name has none. */
+export function placeLocation(place: ProfilePlace): string | undefined {
+  if (place.world) return place.worldName || undefined;
+  return place.basePosition || undefined;
 }

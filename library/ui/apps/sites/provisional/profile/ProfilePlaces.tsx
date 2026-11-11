@@ -7,7 +7,7 @@ type ProfilePlacesState =
   /** A read failed: say so, with the way to try again. Never shown as an empty list. */
   | { kind: 'error'; message: string; action?: ReactNode }
   /** Nothing to list: an EmptyState, or a one-line note for a visitor. */
-  | { kind: 'empty'; children: ReactNode }
+  | { kind: 'empty'; label: string; children: ReactNode }
   | { kind: 'empty-note'; message: string }
   | { kind: 'list'; count: string; children: ReactNode }
 
@@ -45,11 +45,7 @@ function ProfilePlaces({ filters, state }: ProfilePlacesProps) {
     <div className={styles.root}>
       {filters}
       {/* One live region, always mounted, so a screen reader hears how loading ended. */}
-      <p
-        className={state.kind === 'list' ? styles.count : styles.status}
-        role="status"
-        hidden={state.kind === 'empty'}
-      >
+      <p className={state.kind === 'list' ? styles.count : styles.status} role="status">
         {state.kind === 'loading' ? (
           <>
             <span className={styles.spinner} aria-hidden="true" />
@@ -61,7 +57,10 @@ function ProfilePlaces({ filters, state }: ProfilePlacesProps) {
           <span className={styles.note}>{state.message}</span>
         ) : state.kind === 'list' ? (
           state.count
-        ) : null}
+        ) : (
+          // The EmptyState below shows this title; the region only announces it.
+          <span className={styles.visuallyHidden}>{state.label}</span>
+        )}
       </p>
       {state.kind === 'error' && state.action ? (
         <div className={styles.errorAction}>{state.action}</div>

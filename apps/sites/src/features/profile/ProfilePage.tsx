@@ -93,7 +93,8 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
     return (
       <ProfilePlacesScreen
         profile={profile}
-        profileReady={query.isSuccess}
+        // A failed background re-read keeps the profile; only a first read still running is unknown.
+        profileReady={query.data !== undefined}
         own={own}
         tabs={navigation.tabs}
         onTab={onTab}

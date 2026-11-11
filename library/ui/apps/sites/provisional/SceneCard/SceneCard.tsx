@@ -86,9 +86,9 @@ function SceneCard({
                 </span>
                 <span className={styles.by}>
                   by{' '}
-                  <a className={styles.creatorLink} href={creator.href}>
+                  <LinkComponent to={creator.href} className={styles.creatorLink}>
                     {creator.name}
-                  </a>
+                  </LinkComponent>
                 </span>
               </span>
             ) : null}
