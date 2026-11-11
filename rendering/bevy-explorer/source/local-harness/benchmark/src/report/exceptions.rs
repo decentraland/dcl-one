@@ -20,6 +20,10 @@ pub const EXIT_MARKER: &str = "[ExitUtils] Exit requested";
 pub const EXCEPTION_MARKER: &str = "DebugLogReportHandler:LogExceptionInternal";
 
 /// Exception counts by kind, in the order each kind was first seen.
+///
+/// A `Vec` rather than a `HashMap`: `add` keeps each kind unique, and the report's stable sorts
+/// leave kinds with equal counts in first-seen order, which a `HashMap`'s iteration order would
+/// shuffle between runs on the same logs. A linear search costs nothing at a few dozen kinds.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExceptionKindCounts(Vec<(String, u64)>);
 
