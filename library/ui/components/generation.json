@@ -200,8 +200,8 @@
     },
     {
       "path": "library/ui/figma/src/install.ts",
-      "sha256": "c2324fd279c5532d3a52cdd4d33f9ca008c648a861f9bfc41960c9624977b3d3",
-      "indexBlobSha": "5279253f93a986d49bcf9f44bc20650c64e2d8f9"
+      "sha256": "31109be35556d9e4f659cdd7f90be132a3e86780549466c76d8c67fbaf2cf9c7",
+      "indexBlobSha": "a3c716dcea6ae95bc28e82cccac51b62412ce5c1"
     },
     {
       "path": "library/ui/figma/src/ir/components.ts",
