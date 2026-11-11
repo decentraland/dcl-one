@@ -17,11 +17,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
-- **Jump marker is a quad.** A ground-aligned quad, not a decal projector, because bevy's forward
-  decal needs the depth prepass, and the marker should not tie the camera to it. It is the blob
-  variant (`BlobShadow.mat`) and its ramps follow the shadergraph, except that the opacity rises
-  over the last 0.2 m above the ground instead of the last metre: with the projector's 0.5 fade
-  factor, Unity's ramp left the blob nearly invisible before the player landed.
+- **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
+  is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
+  cut into rising ground. The projection reads the primary camera's depth prepass, so without
+  one the marker draws nothing. The box runs from 0.1 m under the feet, so the blob never
+  darkens the avatar, to 1 m below the ground under the player's centre, so ground falling
+  away by up to 45 degrees across the footprint still catches it. The ramps follow the
+  shadergraph, except that grounded means within 0.2 m of the ground, as for the animation,
+  and the opacity rises over the next 0.2 m instead of the last metre: with the projector's
+  0.5 fade factor, Unity's ramp left the blob nearly invisible before the player landed.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
