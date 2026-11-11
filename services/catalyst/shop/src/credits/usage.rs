@@ -692,7 +692,7 @@ impl UsageIndex {
     /// [`Self::run_pass`], folding only when `gate` lets this pass write. The
     /// gate is asked as the pass starts, so `OPS_WRITES_ENABLED` and the
     /// restore stamps the process installed decide each pass.
-    pub async fn gated_pass(
+    pub(super) async fn gated_pass(
         &self,
         ctx: Option<&JobContext>,
         gate: &crate::shared::writes::PassGate,
@@ -708,7 +708,7 @@ impl UsageIndex {
     /// restore stamps: the fold debits the ledger) the pass indexes the log
     /// and stops before the fold, so nothing is published and the authorize
     /// lane stays closed.
-    pub async fn run_pass(
+    pub(super) async fn run_pass(
         &self,
         ctx: Option<&JobContext>,
         fold_enabled: bool,
