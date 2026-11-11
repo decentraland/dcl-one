@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { StrictMode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
@@ -147,17 +148,38 @@ describe("JumpInvalid", () => {
 });
 
 describe("JumpPage", () => {
-  it("should render its content over a decorative canvas, falling back to the still image without WebGL", () => {
+  it("should keep the still image and add no canvas without WebGL", () => {
     const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
-    const { container } = render(
-      <JumpPage>
-        <p>Card</p>
-      </JumpPage>,
-    );
-    expect(screen.getByRole("main").textContent).toBe("Card");
-    expect(container.querySelector("[aria-hidden] canvas")).toBeTruthy();
-    expect(getContext).toHaveBeenCalledWith("webgl", { alpha: false, antialias: false });
-    getContext.mockRestore();
+    try {
+      const { container } = render(
+        <JumpPage>
+          <p>Card</p>
+        </JumpPage>,
+      );
+      expect(screen.getByRole("main").textContent).toBe("Card");
+      expect(getContext).toHaveBeenCalledWith("webgl", { alpha: false, antialias: false });
+      expect(container.querySelector("canvas")).toBeNull();
+    } finally {
+      getContext.mockRestore();
+    }
+  });
+
+  it("should ask a fresh canvas for its context on every mount, so a remount never reuses a lost one", () => {
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    try {
+      render(
+        <StrictMode>
+          <JumpPage>
+            <p>Card</p>
+          </JumpPage>
+        </StrictMode>,
+      );
+      const canvases = getContext.mock.contexts;
+      expect(canvases).toHaveLength(2);
+      expect(canvases[0]).not.toBe(canvases[1]);
+    } finally {
+      getContext.mockRestore();
+    }
   });
 
   it("should skip the animation when the visitor prefers reduced motion", () => {

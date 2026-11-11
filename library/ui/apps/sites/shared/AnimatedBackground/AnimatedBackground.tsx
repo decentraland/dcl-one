@@ -12,26 +12,31 @@ import styles from './AnimatedBackground.module.css'
 // DCL logo pattern drifting across it. The static image is the fallback while WebGL boots — or the only
 // thing shown when WebGL is unavailable or the user prefers reduced motion.
 function AnimatedBackground({ patternTiling = 1.66 }: { patternTiling?: number }) {
-  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
   const animFrameRef = useRef<number>(0)
   // Read by the render loop each frame, so tiling changes apply live without rebuilding the GL state.
   const tilingRef = useRef(patternTiling)
   tilingRef.current = patternTiling
 
   useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
+    const root = rootRef.current
+    if (!root) return
 
     // Respect reduced motion — keep the static fallback, skip the animation loop entirely.
     if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return
 
+    // A fresh canvas per mount: cleanup gives the context back, and a canvas keeps returning its lost
+    // context, so a remount (StrictMode, a re-keyed parent) on the same canvas could never draw again.
+    const canvas = document.createElement('canvas')
+    canvas.className = styles.canvas
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false })
     if (!gl) return // fallback image stays visible
+    root.appendChild(canvas)
 
-    // An opaque context that never draws would cover the still image: hide the canvas and give the context back.
+    // An opaque context that never draws would cover the still image: give the context back and drop the canvas.
     const giveUp = () => {
-      canvas.style.opacity = '0'
       gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.remove()
     }
 
     const vs = createShader(gl, gl.VERTEX_SHADER, VERTEX_SHADER)
@@ -128,13 +133,13 @@ function AnimatedBackground({ patternTiling = 1.66 }: { patternTiling?: number }
       // Release the context itself, not only its objects: a tile that scrolls in and out mounts a fresh canvas each
       // time, and browsers drop their OLDEST live context (here the avatar preview's) past about 16 of them.
       gl.getExtension('WEBGL_lose_context')?.loseContext()
+      canvas.remove()
     }
   }, [])
 
   return (
-    <div className={styles.root} aria-hidden>
+    <div className={styles.root} ref={rootRef} aria-hidden>
       <div className={styles.fallback} />
-      <canvas className={styles.canvas} ref={canvasRef} />
     </div>
   )
 }
