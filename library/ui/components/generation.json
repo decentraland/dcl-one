@@ -185,8 +185,8 @@
     },
     {
       "path": "library/ui/figma/src/cli.ts",
-      "sha256": "48638d2629850595f5f4c6637fd9722780043bf742eb991e66a1236af21647c4",
-      "indexBlobSha": "30d71f405319589f724c8730f2fecf01f5cd0903"
+      "sha256": "ddeb09f14172f5cc1ef73b7eec80b85b2e9356abeb88a4d0c87c2975149d7744",
+      "indexBlobSha": "b8a7563fa00da4bbf66e67ce56089664a0f3a08e"
     },
     {
       "path": "library/ui/figma/src/config.ts",
@@ -195,8 +195,8 @@
     },
     {
       "path": "library/ui/figma/src/contract/batch.ts",
-      "sha256": "abb9dbd9950905f12a0dd2ad13f475291958cdfb0b41ae98faadabb8b93e57c5",
-      "indexBlobSha": "4d30e1ea8e3acaaa1cc2e1659454ce3f4be87dd3"
+      "sha256": "06693651a7fe64d8eadc9e32bfbe7a7ca62555012cb4c328d2fd17092a8e7d2d",
+      "indexBlobSha": "e1f5e2a2c7c260ad6bb395e1bad318cb6000ac69"
     },
     {
       "path": "library/ui/figma/src/contract/config.ts",
@@ -225,13 +225,13 @@
     },
     {
       "path": "library/ui/figma/src/contract/name-identity.ts",
-      "sha256": "35a4f8aee5dd2478b0cc308e148c4f57567e910e215d0d2d05d09da2bc83096f",
-      "indexBlobSha": "77e67f1a2aa411b8e1f96a1d4aba35a15e24ee27"
+      "sha256": "217f0033f835203ef0ff53979bab654e33d873da4f9debb584ffeff14816f8e4",
+      "indexBlobSha": "ba4921ba09f8ca545ab3bd10a4e4c3cfdace74ac"
     },
     {
       "path": "library/ui/figma/src/contract/resolve.ts",
-      "sha256": "835d7958e902fc6b2f956e60b5eaef9a2d5afd75c9a0707ec21242e4c1e0b2b5",
-      "indexBlobSha": "401eee1e97f13b28338c92822f3a7ea373b78af1"
+      "sha256": "71bccb8ce316dd0baf9c3bba3b7a4eccab2abf45a3f3435620ec3437d8ed9e92",
+      "indexBlobSha": "80e49c55bce5092ed89dbc75683b59ed440dfe02"
     },
     {
       "path": "library/ui/figma/src/contract/test-fixtures.ts",
@@ -605,8 +605,8 @@
     },
     {
       "path": "library/ui/figma/src/tools/contract.ts",
-      "sha256": "ff9d17ef401c391db5801076db88fc14600dd21bbcb92859f4de575c4f30d540",
-      "indexBlobSha": "36be064a2843b44670b436708dc72467dd8386a6"
+      "sha256": "068db59f061dd1e4c729b664490d0c29faa88de4f902a75aca42f1d9ea5a4f8e",
+      "indexBlobSha": "c45bab9e545cb66faea148adcb176697fcc4e292"
     },
     {
       "path": "library/ui/figma/src/tools/index.ts",

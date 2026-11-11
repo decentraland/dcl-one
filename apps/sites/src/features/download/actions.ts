@@ -18,7 +18,7 @@ const STORES = {
 } as const;
 
 /** Direct installers retain the pinned native artifact contract without a success-page dependency. */
-export function homeActions(
+export function downloadActions(
   platform: DetectedPlatform,
   downloads: string,
 ): { actions: DownloadActionsProps; store: StoreBadgeProps } {

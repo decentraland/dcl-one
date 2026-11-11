@@ -49,6 +49,53 @@ describe('resolveBatch', () => {
     })
   })
 
+  describe('when entries carry booleanProperties', () => {
+    it('should accept them and keep entries that differ only in a boolean apart', async () => {
+      const { mappingRoot } = await library()
+
+      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: 'true' }
+        },
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: 'false' }
+        },
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: 'true' }
+        }
+      ])
+
+      expect('results' in batch && batch.results.map((entry) => entry.repeats)).toEqual([
+        undefined,
+        undefined,
+        0
+      ])
+      expect('summary' in batch && batch.summary).toMatchObject({ requested: 3, resolved: 3 })
+    })
+
+    it('should fail an entry whose booleanProperties hold a non-string value', async () => {
+      const { mappingRoot } = await library()
+
+      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: true }
+        }
+      ])
+
+      expect('summary' in batch && batch.summary.failed).toEqual([
+        { index: 0, code: 'invalid-input' }
+      ])
+    })
+  })
+
   describe('when every entry resolves without a capture', () => {
     it('should pass', async () => {
       const { mappingRoot } = await library()

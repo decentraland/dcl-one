@@ -9,8 +9,8 @@ import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
-import { homeActions } from "@/features/home/actions";
-import { detectPlatform } from "@/features/home/options";
+import { downloadActions } from "@/features/download/actions";
+import { detectPlatform } from "@/features/download/options";
 import { VIBE_CLIPS, WEEKLY_RITUALS } from "@/features/home/content";
 
 import { heroEventCards } from "@/data/lib/catalyst/landings/home";
@@ -57,7 +57,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     track("lp_discover_viewed", {}, { sid, story: STORY });
   }, [sid]);
 
-  const { actions, store } = homeActions(platform, downloads);
+  const { actions, store } = downloadActions(platform, downloads);
   const labels = {
     previous: "Previous slide",
     next: "Next slide",

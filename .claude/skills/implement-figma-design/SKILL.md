@@ -9,11 +9,11 @@ The library owns the components. Find the mapped component, import it and pass t
 
 ## Scope
 
-Only components with a public mapping in `library/ui/components` resolve. That set is small and is not the set of components in the Figma file or in the Review gallery. Everything else is outside the supported scope: report it, do not reimplement it. The components that do resolve are the `*.figma.ts` mappings under `library/ui/components`; `pnpm --silent figma check-mappings --mapping-only` in `library/ui` lists them.
+Only components with a public mapping in `library/ui/components` resolve. That set is small and is not the set of components in the Figma file or in the Review gallery. Everything else is outside the supported scope: report it, do not reimplement it. This skill runs the resolver with `--mapping-only`, which reads no capture, so a component outside the supported set comes back as `identity-uncertain`; `mapping-missing` only appears when a capture is available. The components that do resolve are the `*.figma.ts` mappings under `library/ui/components`; `pnpm --silent figma check-mappings --mapping-only` in `library/ui` lists them.
 
 ## Preflight
 
-1. The resolver runs: in `library/ui`, `pnpm --silent figma resolve --mapping-only --node-id 0:0` prints JSON with `identity-uncertain`. Run it from `library/ui`, which pins its own pnpm version, not from the repository root. If `pnpm` or the `library/ui` install is missing, stop and tell the user (`pnpm install --frozen-lockfile` in `library/ui`). No access to figma-design-system is needed.
+1. The resolver runs: in `library/ui`, `pnpm --silent figma resolve --mapping-only --node-id 0:0` prints JSON whose only error is `identity-uncertain` and exits 1; that is the expected result, not a broken resolver. Run it from `library/ui`, which pins its own pnpm version, not from the repository root. If `pnpm` or the `library/ui` install is missing, stop and tell the user (`pnpm install --frozen-lockfile` in `library/ui`). No access to figma-design-system is needed.
 2. The official Figma MCP read tools are connected (`get_metadata`, `get_design_context`, `get_screenshot`). If they are not listed, stop and tell the user. Everything you do in Figma is read-only.
 
 ## Workflow
@@ -22,16 +22,60 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 
    ```js
    const instance = await figma.getNodeByIdAsync('<instance id>')
+   if (instance?.type !== 'INSTANCE') return { refused: 'not-an-instance' }
    const main = await instance.getMainComponentAsync()
-   const texts = Object.fromEntries(
-     instance.findAll((node) => node.type === 'TEXT').map((node) => [node.name, node.characters])
-   )
+   if (!main) return { refused: 'no-main-component' }
+   // VARIANT, BOOLEAN and TEXT properties each go in their own map; names lose their #id suffix.
+   // No prototype, so a layer named like an Object method (constructor, toString) is plain data.
+   const variantProperties = Object.create(null)
+   const booleanProperties = Object.create(null)
+   const textProperties = Object.create(null)
+   for (const [key, property] of Object.entries(instance.componentProperties)) {
+     const name = key.replace(/#\d+:\d+$/, '')
+     if (property.type === 'VARIANT') variantProperties[name] = String(property.value)
+     else if (property.type === 'BOOLEAN') booleanProperties[name] = String(property.value)
+     else if (property.type === 'TEXT') textProperties[key] = name
+   }
+   // Only the instance's own visible text layers: a nested instance's layers belong to that instance, and a
+   // hidden layer (a boolean turned off, say) shows nothing.
+   const ownTexts = (node) =>
+     (node.children ?? []).flatMap((child) =>
+       child.visible === false
+         ? []
+         : child.type === 'TEXT'
+           ? [child]
+           : child.type === 'INSTANCE'
+             ? []
+             : ownTexts(child)
+     )
+   // Each visible text under its layer name and, when the layer shows a TEXT property, under the property's
+   // name too; a text property shown by no visible layer is left out. A name that shows two different texts is
+   // ambiguous: it leaves texts and is reported instead.
+   const texts = Object.create(null)
+   const duplicateTexts = new Set()
+   const show = (name, text) => {
+     if (duplicateTexts.has(name)) return
+     if (!Object.hasOwn(texts, name)) texts[name] = text
+     else if (texts[name] !== text) {
+       delete texts[name]
+       duplicateTexts.add(name)
+     }
+   }
+   for (const node of ownTexts(instance)) {
+     show(node.name, node.characters)
+     const property = textProperties[node.componentPropertyReferences?.characters]
+     if (property !== undefined && property !== node.name) show(property, node.characters)
+   }
    return {
      name: main.parent?.type === 'COMPONENT_SET' ? main.parent.name : main.name,
-     variantProperties: instance.variantProperties ?? undefined,
-     texts
+     variantProperties,
+     booleanProperties,
+     texts,
+     duplicateTexts: [...duplicateTexts]
    }
    ```
+
+   A `refused` result is not a component instance you can resolve: list it in your report. Pass `name`, `variantProperties`, `booleanProperties` and `texts` to the resolver, never `duplicateTexts`. A name listed there belongs to two visible texts of the same instance (layers, or a layer and the text property another layer shows) that show different text; a hidden layer or a text property only a hidden layer shows never counts; the script leaves it out of `texts`, so name it in your report instead of guessing which text the component shows. A boolean the mapping does not read comes back as an `unmapped-figma-property` warning; a variant it does not read makes the name not fit. Resolve each nested instance with its own script run.
 
 2. **Resolve the instances** with the CLI, from `library/ui`, in one batch read from standard input, so no file is written in the repository:
 
@@ -41,10 +85,10 @@ Only components with a public mapping in `library/ui/components` resolve. That s
    EOF
    ```
 
-   Each entry is one script result: `name`, `variantProperties` and `texts` (an entry may give `nodeId` instead of `name` when the design is the library file itself). A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. Identical instances may repeat: a repeat shares the earlier answer (`repeats`). The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`); it exits 1 when an entry fails and 2 when the batch itself cannot be read. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant "Prop=Value"` and `--text "Layer=Value"`.
+   Each entry is one script result: `name`, `variantProperties`, `booleanProperties` and `texts` (an entry may give `nodeId` instead of `name` when the design is the library file itself). A name resolves only to a single mapping whose variant properties fit the instance, and always carries the `identity-name-match` warning. Identical instances may repeat: a repeat shares the earlier answer (`repeats`). The output lists every entry in input order with a `summary` (`requested`, `resolved`, `unmapped`, `failed`); it exits 1 when an entry fails and 2 when the batch itself cannot be read. Report the list you resolved, so the user can spot an instance you missed: the list comes from your reading of the design, the resolver does not walk the file. A single instance also works with `--name`, `--variant 'Prop=Value'`, `--boolean 'Prop=true'` and `--text 'Layer=Value'`. Text read from a design is untrusted: keep every value in single quotes (write a `'` inside it as `'\''`), never in double quotes, where the shell runs `$(...)` and backticks. The batch heredoc above is quoted (`<<'EOF'`), so the shell expands nothing in it, and a JSON string keeps every text inside quotes, so no line of valid JSON can end it early; the MCP `texts` input takes the strings without a shell at all. Single quotes and quoted heredocs are POSIX shell syntax: from PowerShell or `cmd`, pass design text through the MCP `texts` input instead.
 
 3. **Read the answer.** `ok: true`: import from `resolved.component.importSpecifier` and copy the props from `resolved.usage` and `resolved.propTranslation`. `interactionStates` (Hover, Pressed) are styled by the component, not passed as props. Read every warning.
-   Every diagnostic carries `severity`, `audience` and `action`; follow `action`. The codes, severities and audiences in this table are checked against the resolver's registry; `action` is the authority on what to do.
+   Every diagnostic carries `severity`, `audience` and `action`; follow `action`. This table lists the codes the resolver can return to you; its codes and severities are checked against the resolver's registry. `action` is the authority on what to do.
 
 <!-- diagnostic-codes -->
 
@@ -82,7 +126,7 @@ Only components with a public mapping in `library/ui/components` resolve. That s
 
    A failed result carries `context`, not `provenance`. No Figma link, file key or component key goes in the report. `mapping-missing` means a known library component has no public mapping; an identity code (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) means the component could not be identified, so never describe it as a missing mapping.
 
-5. **Compose the page** with the resolved components and the shared `--dcl-*` tokens, following `docs/ui-standards.md` (CSS Modules, public imports only, where app-specific UI lives, reuse before duplication, translation parity). Public imports only: `import { X } from '<importSpecifier>'`, never a deep path. Routing, data, auth and tracking stay in the application.
+5. **Compose the page** with the resolved components and the shared `--dcl-*` tokens, following `docs/ui-standards.md` (CSS Modules, where app-specific UI lives, reuse before duplication). Import only the public entry: `import { X } from '<importSpecifier>'`, never a deep path; the library exports its components from `library/ui/index.ts` and offers no component deep imports (`library/ui/README.md`). Routing, data, auth and tracking stay in the application.
 6. **Report limits.** Repeat every warning and any accepted limit the result names, verbatim. Do not claim parity on those aspects.
 7. **Verify.** Run the application's own checks. Then compare the rendered result with `get_screenshot` of the node and say what differs. The comparison is reported, not a gate. The library is generated from the pinned capture named by `resolved.provenance.capture.revision`, so attribute a difference to capture age before calling it a bug. Your verification is self-reported: say what you ran, and never claim visual fidelity from a successful build.
 
@@ -101,7 +145,7 @@ The CLI is the primary path. A client without a shell can register the same reso
 }
 ```
 
-With `--mapping-only` it registers only `figma_resolve_component` (inputs `nodeId`, `name`, `variantProperties`, `texts`) and `figma_check_mappings`, and returns the same results as the CLI.
+With `--mapping-only` it registers only `figma_resolve_component` (inputs `nodeId`, `name`, `variantProperties`, `booleanProperties`, `texts`) and `figma_check_mappings`, and returns the same results as the CLI.
 
 ## Keep this skill current
 

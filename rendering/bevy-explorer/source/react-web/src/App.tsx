@@ -27,6 +27,9 @@ import { LobbyHome } from './features/lobby/LobbyHome'
 import { WelcomePage } from './features/welcome/WelcomePage'
 import { GalleryPage } from './features/gallery/GalleryPage'
 import { Sidebar } from './features/sidebar/Sidebar'
+import { VoiceChatPanel } from './features/voiceChat/VoiceChatPanel'
+import { SceneVoiceChatBanner } from './features/voiceChat/SceneVoiceChatBanner'
+import { VoiceChatToasts } from './features/voiceChat/voiceChatToasts'
 import { Minimap } from './features/minimap/Minimap'
 import { Pointer } from './features/pointer/Pointer'
 import { PhotoModeOverlay } from './features/photoMode/PhotoModeOverlay'
@@ -398,7 +401,7 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
         <>
           <LobbyHome onPick={session.pickDestination} setEngineViewport={session.setEngineViewport} />
           <SurfaceBoundary name="Notifications" open={session.notifications.open} onCrash={session.closeAllPanels}>
-            <NotificationsPanel notifications={session.notifications} friends={session.friends} anchor="lobby" />
+            <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} anchor="lobby" />
           </SurfaceBoundary>
           <SurfaceBoundary name="Backpack" open={session.backpack.open} onCrash={session.closeAllPanels}>
             <BackpackPage backpack={session.backpack} emotes={session.emotes} profile={session.profile} onNavigate={goToMenuPage} setEngineViewport={session.setEngineViewport} initialTab={backpackTab} modal />
@@ -419,6 +422,8 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
             <PhotoModeOverlay photoMode={session.photoMode} onOpenGallery={session.gallery.toggle} />
           )}
           {chrome && <Sidebar session={session} onViewProfile={viewMyProfile} />}
+          {chrome && <VoiceChatPanel />}
+          {chrome && <SceneVoiceChatBanner />}
           {chrome && (
             <Minimap
               minimap={session.minimap}
@@ -453,7 +458,7 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
             <ProfilePanel profile={session.profile} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Notifications" open={session.notifications.open} onCrash={session.closeAllPanels}>
-            <NotificationsPanel notifications={session.notifications} friends={session.friends} anchor={session.lobbyPage.open ? 'lobbyInWorld' : 'rail'} />
+            <NotificationsPanel notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} anchor={session.lobbyPage.open ? 'lobbyInWorld' : 'rail'} />
           </SurfaceBoundary>
           <SurfaceBoundary name="Skybox" open={session.skybox.open} onCrash={session.closeAllPanels}>
             <SkyboxMenu skybox={session.skybox} />
@@ -474,6 +479,7 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
             <CommunitiesPage
               communities={session.communities}
               profile={session.profile}
+              voiceChat={session.voiceChat}
               onNavigate={goToMenuPage}
             />
           </SurfaceBoundary>
@@ -532,7 +538,8 @@ function Hud({ integratedGpu }: { integratedGpu: GpuAdapterInfo | null }): React
           — the world <ProfileCard> — can read useSession(). */}
       <PopupHost />
       <ToastHost />
-      <NotificationToastHost notifications={session.notifications} friends={session.friends} />
+      <NotificationToastHost notifications={session.notifications} friends={session.friends} voiceChat={session.voiceChat} chat={session.chat} />
+      <VoiceChatToasts />
       {/* Crash surface (boot panic / runtime crash / react render crash) — last, so it renders above
           the popup layer. A world-not-found is not a crash and opens as a popup instead (see above). */}
       {crash && <CrashModal error={crash} onReload={session.reload} onDismiss={crash.source === 'runtime' ? session.dismissFatal : undefined} />}

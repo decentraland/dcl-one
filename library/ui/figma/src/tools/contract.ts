@@ -30,6 +30,12 @@ function createContractTools(runtime: Runtime): ToolDefinition[] {
           .describe(
             'Figma variant properties of the instance, e.g. {"Property 1":"Terciary","Hover":"No"}.'
           ),
+        booleanProperties: z
+          .record(z.string(), z.string())
+          .optional()
+          .describe(
+            'Figma BOOLEAN component properties of the instance, "true" or "false", keyed by property name without its #id suffix, e.g. {"Show icon":"false"}. Kept apart from variantProperties: a boolean the mapping does not read is a warning, an unread variant does not fit.'
+          ),
         texts: z
           .record(z.string(), z.string())
           .optional()

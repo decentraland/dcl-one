@@ -32,10 +32,6 @@ use {
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::global_crdt::{LocalAudioFrame, LocalAudioSource};
-use crate::livekit::{
-    participant::{LivekitParticipant, Local as LivekitLocalParticipant},
-    LivekitRuntimeRes,
-};
 #[cfg(target_arch = "wasm32")]
 use crate::{
     global_crdt::{ForeignAudioSource, ForeignPlayer, NearbyPanning, VoicePan},
@@ -48,6 +44,15 @@ use crate::{
         },
     },
 };
+use crate::{
+    livekit::{
+        participant::{HostedBy, LivekitParticipant, Local as LivekitLocalParticipant},
+        LivekitRuntimeRes,
+    },
+    private_chat::PrivateChatRoom,
+    voice_chat::{CallMic, VoiceRoom},
+};
+use bevy::ecs::relationship::Relationship;
 
 #[path = "mic_debug.rs"]
 mod debug;
@@ -74,11 +79,11 @@ impl Plugin for MicPlugin {
                 poll_microphone_permission,
                 verify_availability.run_if(in_state(MicrophoneAvailability::Unavailable)),
                 verify_microphone_device_health.run_if(in_state(MicrophoneAvailability::Available)),
-                (microphone_disabled, verify_enabled).run_if(
+                verify_enabled.run_if(
                     in_state(MicrophoneAvailability::Available)
                         .and(in_state(MicrophoneState::Disabled)),
                 ),
-                (microphone_enabled, verify_disabled).run_if(in_state(MicrophoneState::Enabled)),
+                (scope_microphones, verify_disabled).run_if(in_state(MicrophoneState::Enabled)),
                 (
                     poll_local_audio_track_futures,
                     publish_tracks.run_if(in_state(MicrophonePermission::Granted)),
@@ -155,8 +160,11 @@ enum MicrophoneTransmissionState {
 #[derive(Resource, Deref, DerefMut)]
 struct MicrophoneDevice(Device);
 
+/// The local participant of a room the microphone publishes into. Set per room: the nearby mic
+/// (`MicState`) for the realm's and the scene's rooms, the call mic (`CallMic`) for the voice
+/// room, never for the private chat room.
 #[derive(Component)]
-struct ParticipantWithTrack;
+pub(crate) struct ParticipantWithTrack;
 
 #[derive(Component, Deref, DerefMut)]
 struct LocalAudioTrackFuture(JoinHandle<LocalAudioTrack>);
@@ -309,8 +317,13 @@ fn tear_down_microphone(mut commands: Commands) {
     commands.remove_resource::<MicrophoneDevice>();
 }
 
-fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>) {
-    if mic_state.enabled {
+/// A call holds the nearby mic off without changing the user's setting.
+fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
+    mic_state.enabled && !call_mic.suppress_nearby
+}
+
+fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
+    if nearby_mic_on(&mic_state, &call_mic) || call_mic.enabled {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -386,38 +399,63 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
     commands.set_state(MicrophoneState::Disabled);
 }
 
-fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>) {
-    if !mic_state.enabled {
+fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
+    if !nearby_mic_on(&mic_state, &call_mic) && !call_mic.enabled {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
 }
 
-fn microphone_enabled(
-    mut commands: Commands,
-    local_participants: Populated<
-        Entity,
-        (With<LivekitLocalParticipant>, Without<ParticipantWithTrack>),
-    >,
-) {
-    commands.insert_batch(
-        local_participants
-            .iter()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .map(|entity| (entity, ParticipantWithTrack)),
-    );
+/// Which microphone, if any, a local participant's room takes.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MicScope {
+    Nearby,
+    Call,
+    None,
 }
 
-fn microphone_disabled(
+fn mic_scope(
+    hosted_by: Option<&HostedBy>,
+    voice_rooms: &Query<(), With<VoiceRoom>>,
+    chat_rooms: &Query<(), With<PrivateChatRoom>>,
+) -> MicScope {
+    let Some(room) = hosted_by.map(|h| h.get()) else {
+        return MicScope::Nearby;
+    };
+    if voice_rooms.contains(room) {
+        MicScope::Call
+    } else if chat_rooms.contains(room) {
+        MicScope::None
+    } else {
+        MicScope::Nearby
+    }
+}
+
+/// Tags every local participant whose room's microphone is on, and untags the rest: the nearby
+/// mic for the realm's and the scene's rooms, the call mic for the voice room.
+#[expect(clippy::type_complexity, reason = "Queries are complex")]
+fn scope_microphones(
     mut commands: Commands,
-    local_participants: Populated<
-        Entity,
-        (With<LivekitLocalParticipant>, With<ParticipantWithTrack>),
+    local_participants: Query<
+        (Entity, Option<&HostedBy>, Has<ParticipantWithTrack>),
+        With<LivekitLocalParticipant>,
     >,
+    voice_rooms: Query<(), With<VoiceRoom>>,
+    chat_rooms: Query<(), With<PrivateChatRoom>>,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
 ) {
-    for entity in local_participants.into_inner() {
-        commands.entity(entity).remove::<ParticipantWithTrack>();
+    for (entity, hosted_by, has_track) in local_participants.iter() {
+        let wanted = match mic_scope(hosted_by, &voice_rooms, &chat_rooms) {
+            MicScope::Nearby => nearby_mic_on(&mic_state, &call_mic),
+            MicScope::Call => call_mic.enabled,
+            MicScope::None => false,
+        };
+        if wanted && !has_track {
+            commands.entity(entity).try_insert(ParticipantWithTrack);
+        } else if !wanted && has_track {
+            commands.entity(entity).try_remove::<ParticipantWithTrack>();
+        }
     }
 }
 
@@ -592,7 +630,8 @@ fn locate_foreign_streams(
         &ForeignPlayer,
         &mut VoicePan,
     )>,
-    participants: Query<(&LivekitParticipant, &Publishing)>,
+    participants: Query<(&LivekitParticipant, &Publishing, &HostedBy)>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     tracks: Query<&LivekitTrack, (With<Subscribed>, With<Audio>)>,
     pan: VolumePanning,
     settings: Res<AudioSettings>,
@@ -603,7 +642,9 @@ fn locate_foreign_streams(
         if source.current_transport.is_some() {
             let Some(publishing) = participants
                 .iter()
-                .filter_map(|(participant, publishing)| {
+                // the voice room's tracks are placed by the voice module, not here
+                .filter(|(_, _, hosted_by)| !voice_rooms.contains(hosted_by.get()))
+                .filter_map(|(participant, publishing, _)| {
                     if participant
                         .identity()
                         .as_str()
@@ -712,4 +753,42 @@ fn ping_disabled(mut commands: Commands) {
     commands.send_event(SystemAudio(
         "embedded://sounds/ui/voice_chat_mic_off.wav".to_owned(),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_call_holds_the_nearby_mic_off_and_gives_it_back() {
+        let mut app = App::new();
+        app.insert_resource(MicState {
+            available: true,
+            enabled: true,
+        })
+        .init_resource::<CallMic>()
+        .add_systems(Update, scope_microphones);
+        // without `HostedBy`: a realm or scene room's participant
+        let nearby = app.world_mut().spawn(LivekitLocalParticipant).id();
+        app.update();
+        assert!(app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+
+        app.world_mut().resource_mut::<CallMic>().suppress_nearby = true;
+        app.update();
+        assert!(!app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+        assert!(app.world().resource::<MicState>().enabled);
+
+        app.world_mut().resource_mut::<CallMic>().suppress_nearby = false;
+        app.update();
+        assert!(app
+            .world()
+            .entity(nearby)
+            .contains::<ParticipantWithTrack>());
+    }
 }

@@ -61,7 +61,8 @@ type Compatibility =
 // mapping reads variant properties, at least one must be given so there is something to compare.
 function nameCompatibility(
   mapping: ParsedMapping,
-  variantProperties: Readonly<Record<string, string>> = {}
+  variantProperties: Readonly<Record<string, string>> = {},
+  booleanProperties: Readonly<Record<string, string>> = {}
 ): Compatibility {
   const enums = new Map(
     mapping.locals.flatMap((local) =>
@@ -79,9 +80,13 @@ function nameCompatibility(
   if (enums.size > 0 && !requested.some(([property]) => enums.has(property)))
     return { ok: false, reason: 'name-unconfirmed', reads: [...enums.keys()] }
   if (requested.length === 0) return { ok: true }
-  const unknown = requested
-    .filter(([property]) => !known.has(property))
-    .map(([property]) => property)
+  // A Figma BOOLEAN component property (booleanProperties) does not tell two components apart, so one the
+  // mapping does not read is left to the unmapped-figma-property warning. One the mapping reads as a variant
+  // is a different property, so it does not fit.
+  const unknown = [
+    ...requested.filter(([property]) => !known.has(property)).map(([property]) => property),
+    ...Object.keys(booleanProperties).filter((property) => enums.has(property))
+  ]
   const unsupported = requested.flatMap(([property, value]) => {
     const supported = enums.get(property)
     return supported && !supported.includes(value) ? [{ property, value, supported }] : []
@@ -141,7 +146,7 @@ function resolveByName(
       ]
     }
   const [{ mapping, matchedBy }] = matches as [(typeof matches)[number]]
-  const compatibility = nameCompatibility(mapping, input.variantProperties)
+  const compatibility = nameCompatibility(mapping, input.variantProperties, input.booleanProperties)
   if (!compatibility.ok) {
     const details = Object.fromEntries(
       Object.entries(compatibility).filter(([key]) => key !== 'ok')
