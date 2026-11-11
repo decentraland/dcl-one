@@ -1,8 +1,6 @@
 // Voice activity: who is talking right now.
 //   from: BevyApi.getVoiceStream() (LiveKit active-speaker changes, local player included)
 //   to:   the page (Nearby list) + the nametag speaking badge (isSpeaking)
-// While the scene turns nearby voice off (setNearbyVoiceBlocked), only a call's speakers keep
-// their badge.
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'

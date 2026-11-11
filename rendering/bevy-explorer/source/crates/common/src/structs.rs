@@ -1212,7 +1212,6 @@ pub struct FeatureToggles {
 }
 
 impl FeatureToggles {
-    /// On unless the scene sets a value other than `enabled`.
     pub fn nearby_voice_chat_enabled(&self) -> bool {
         self.nearby_voice_chat
             .as_deref()
@@ -1220,7 +1219,6 @@ impl FeatureToggles {
     }
 }
 
-/// On a scene root: the scene turns nearby voice off for players standing in it.
 #[derive(Component)]
 pub struct NearbyVoiceDisabled;
 
@@ -1710,14 +1708,13 @@ pub enum AppError {
 pub struct MicState {
     pub available: bool,
     pub enabled: bool,
-    /// The scene the player stands in turns nearby voice off: the mic stays closed and nearby
-    /// players are not heard.
+    /// The scene the player stands in turns nearby voice off.
     #[serde(default)]
     pub scene_blocked: bool,
 }
 
 impl MicState {
-    /// Entering a scene that turns nearby voice off closes the mic; leaving does not reopen it.
+    /// Leaving the scene does not reopen the mic.
     pub fn set_scene_blocked(&mut self, blocked: bool) {
         self.scene_blocked = blocked;
         if blocked {

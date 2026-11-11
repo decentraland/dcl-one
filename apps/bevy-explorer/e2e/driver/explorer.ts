@@ -211,7 +211,6 @@ export interface CommunityState {
 }
 
 export interface VoiceState {
-  /** `sceneBlocked`: the scene the player stands in turns nearby voice off. */
   mic: { available: boolean; enabled: boolean; sceneBlocked: boolean }
   livekit: boolean
   connected: boolean | null

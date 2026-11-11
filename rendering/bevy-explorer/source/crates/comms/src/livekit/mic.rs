@@ -318,8 +318,7 @@ fn tear_down_microphone(mut commands: Commands) {
     commands.remove_resource::<MicrophoneDevice>();
 }
 
-/// A call holds the nearby mic off without changing the user's setting, and so does a scene that
-/// turns nearby voice off.
+/// A call holds the nearby mic off without changing the user's setting.
 fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
     mic_state.enabled && !mic_state.scene_blocked && !call_mic.suppress_nearby
 }
@@ -671,7 +670,6 @@ fn locate_foreign_streams(
 
             let (volume, panning) =
                 pan.volume_and_panning(emitter_transform.translation(), render_layers);
-            // a scene that turns nearby voice off silences nearby players
             let volume = if mic_state.scene_blocked {
                 0.0
             } else {

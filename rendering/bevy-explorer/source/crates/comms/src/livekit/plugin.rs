@@ -216,8 +216,7 @@ fn respond_to_audio_settings_change(
         .set_volume(audio_settings.voice_chat() as f64, Tween::default());
 }
 
-/// The microphone key toggles the nearby mic, or the call mic while a call is connected. It does
-/// nothing to the nearby mic while the scene turns nearby voice off.
+/// The microphone key toggles the nearby mic, or the call mic while a call is connected.
 fn handle_input(
     input_manager: InputManager,
     mut mic_state: ResMut<MicState>,

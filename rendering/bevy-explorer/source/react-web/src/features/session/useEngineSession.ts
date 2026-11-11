@@ -127,10 +127,10 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
 // Fallbacks only: the menu reads the live clock with `/time` when it opens.
-/** The minimap's line for a scene that turns nearby voice off. */
-const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 const SKYBOX_START_HOURS = 10
 const SKYBOX_DAY_SPEED = 12
+
+const NEARBY_VOICE_RESTRICTION = 'Nearby voice disabled'
 
 // The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
 // "speed <S> (elapsed: <seconds since midnight>)".
@@ -940,7 +940,6 @@ export interface EngineSession {
   /** The password prompt for a password-protected world being travelled to. */
   worldPassword: WorldPasswordState
   editor: EditorHostState
-  /** `sceneBlocked`: the scene the player stands in turns nearby voice off. */
   mic: { enabled: boolean; available: boolean; sceneBlocked: boolean; toggle: () => void }
   /** Private calls and community streams. */
   voiceChat: VoiceChatSession

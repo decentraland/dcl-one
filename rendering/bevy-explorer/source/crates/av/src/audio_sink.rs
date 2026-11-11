@@ -203,7 +203,6 @@ fn update_foreign_audio_player_volume(
     for (emitter_transform, render_layers, mut audio_spawned, mut voice_pan) in streams.iter_mut() {
         let (volume, panning) =
             pan.volume_and_panning(emitter_transform.translation(), render_layers);
-        // a scene that turns nearby voice off silences nearby players
         let volume = if mic_state.scene_blocked {
             0.0
         } else {

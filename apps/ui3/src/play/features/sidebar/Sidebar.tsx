@@ -258,7 +258,6 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
       />
     )
   if (item.kind === 'mic') {
-    // blocked: the scene turns nearby voice off, so the button explains instead of opening
     const state = voice.blocked ? 'blocked' : !voice.hearing ? 'off' : voice.speaking ? 'speaking' : 'hearing'
     return (
       <RailButton

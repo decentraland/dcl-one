@@ -1722,8 +1722,7 @@ fn update_scene_room(
     writer.write(ev);
 }
 
-/// Nearby voice is off while the player stands in a parcel scene that disables it. Entering one
-/// closes the mic, and leaving does not reopen it.
+/// Only the parcel scene under the player counts: a portable experience never blocks.
 fn update_scene_voice_block(
     mic_state: Option<ResMut<MicState>>,
     containing_scene: ContainingScene,
