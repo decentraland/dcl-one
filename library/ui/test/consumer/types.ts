@@ -1,3 +1,4 @@
+import { createRef } from 'react'
 import type { NavBarProps } from '@dcl/one-ui'
 const largeDesktopFalsenonedark: NavBarProps = {
   viewport: 'largeDesktop',
@@ -333,6 +334,7 @@ const button: import('@dcl/one-ui').ButtonProps = {
 const link: import('@dcl/one-ui').ButtonProps = {
   variant: 'inverse',
   href: '/jump',
+  children: 'Jump',
   target: '_blank',
   disabled: true,
   onClick: (event) => {
@@ -345,3 +347,25 @@ const invalidLink: import('@dcl/one-ui').ButtonProps = { href: '/jump', type: 's
 // @ts-expect-error Only supported button variants are public.
 const invalidVariant: import('@dcl/one-ui').ButtonProps = { variant: 'unknown' }
 void [button, link, invalidLink, invalidVariant]
+
+const nativeButtonRef: import('@dcl/one-ui').ButtonProps = {
+  children: 'Save',
+  ref: createRef<HTMLButtonElement>()
+}
+const nativeLinkRef: import('@dcl/one-ui').ButtonProps = {
+  href: '/save',
+  children: 'Save',
+  ref: createRef<HTMLAnchorElement>()
+}
+// @ts-expect-error Icon-only variants require an explicit accessible name.
+const unnamedIcon: import('@dcl/one-ui').ButtonProps = { variant: 'iconOnly', children: null }
+// @ts-expect-error The iconOnly flag also requires an explicit accessible name.
+const unnamedFlag: import('@dcl/one-ui').ButtonProps = { iconOnly: true, children: null }
+// @ts-expect-error A public control needs explicit content or an accessible name.
+const unnamedControl: import('@dcl/one-ui').ButtonProps = { variant: 'primary' }
+// @ts-expect-error A native button cannot receive an anchor ref.
+const invalidRef: import('@dcl/one-ui').ButtonProps = {
+  children: 'Save',
+  ref: createRef<HTMLAnchorElement>()
+}
+void [nativeButtonRef, nativeLinkRef, unnamedIcon, unnamedFlag, unnamedControl, invalidRef]

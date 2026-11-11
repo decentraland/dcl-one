@@ -1,9 +1,10 @@
 import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { createRef } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Button } from '../../../index'
-import { FigmaView, type ViewNode } from '../src/components/figma-module-runtime'
+import { FigmaView, type ViewNode } from '../../../components/runtime/figma-module-runtime'
 
 const views: Record<string, ViewNode> = {
   default: {
@@ -251,5 +252,182 @@ describe('when a paging control is unavailable but must keep keyboard focus', ()
     )
     await userEvent.click(screen.getByRole('button', { name: 'Next' }))
     expect(onClick).toHaveBeenCalledOnce()
+  })
+})
+
+describe('when a public Button is busy or unavailable', () => {
+  it('should retain its name, expose busy state and block repeat submits while loading', async () => {
+    const onClick = vi.fn()
+    const onSubmit = vi.fn((event) => event.preventDefault())
+    render(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" loading onClick={onClick}>
+          Save changes
+        </Button>
+      </form>
+    )
+    const button = screen.getByRole('button', { name: 'Save changes' })
+    expect(button).toHaveAttribute('aria-busy', 'true')
+    expect(button).toBeDisabled()
+    await userEvent.click(button)
+    expect(onClick).not.toHaveBeenCalled()
+    expect(onSubmit).not.toHaveBeenCalled()
+  })
+
+  it('should keep a loading link named and inactive', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button href="/save" loading onClick={onClick}>
+        Save changes
+      </Button>
+    )
+    const link = screen.getByRole('link', { name: 'Save changes' })
+    expect(link).toHaveAttribute('aria-busy', 'true')
+    expect(link).not.toHaveAttribute('href')
+    await userEvent.click(link)
+    expect(onClick).not.toHaveBeenCalled()
+  })
+
+  it('should prevent an aria-disabled submit button from submitting its form', async () => {
+    const onSubmit = vi.fn((event) => event.preventDefault())
+    render(
+      <form onSubmit={onSubmit}>
+        <Button type="submit" aria-disabled>
+          Save
+        </Button>
+      </form>
+    )
+    await userEvent.tab()
+    await userEvent.keyboard('{Enter} ')
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: 'Save' })).toHaveFocus()
+  })
+
+  it('should prevent keyboard activation of an aria-disabled link', async () => {
+    const onClick = vi.fn()
+    render(
+      <Button href="/next" aria-disabled onClick={onClick}>
+        Next
+      </Button>
+    )
+    await userEvent.tab()
+    await userEvent.keyboard('{Enter}')
+    expect(onClick).not.toHaveBeenCalled()
+    expect(screen.getByRole('link', { name: 'Next' })).toHaveFocus()
+  })
+
+  it.each(['_blank', '_BLANK', 'help'])('should harden the %s browsing context', (target) => {
+    render(
+      <Button href="/help" target={target}>
+        Help
+      </Button>
+    )
+    expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('should preserve explicit same-context rel semantics', () => {
+    render(
+      <Button href="/help" target="_SELF" rel="nofollow">
+        Help
+      </Button>
+    )
+    expect(screen.getByRole('link', { name: 'Help' })).toHaveAttribute('rel', 'nofollow')
+  })
+
+  it('should not render a specimen placeholder when content is supplied only as an accessible name', () => {
+    render(<Button aria-label="Continue" />)
+    expect(screen.getByRole('button', { name: 'Continue' })).toHaveTextContent('')
+  })
+
+  it('should preserve compact children alongside supplied icons', () => {
+    render(
+      <Button iconOnly aria-label="Close" leadingIcon={<svg data-testid="first" />}>
+        <svg data-testid="second" />
+      </Button>
+    )
+    expect(screen.getByTestId('first')).toBeInTheDocument()
+    expect(screen.getByTestId('second')).toBeInTheDocument()
+  })
+})
+
+describe('when the public button state changes', () => {
+  it('should retain the same named control across ready, loading and ready renders', async () => {
+    const onClick = vi.fn()
+    const { rerender } = render(<Button onClick={onClick}>Save changes</Button>)
+    const button = screen.getByRole('button', { name: 'Save changes' })
+    await userEvent.tab()
+    expect(button).toHaveFocus()
+    rerender(
+      <Button loading onClick={onClick}>
+        Save changes
+      </Button>
+    )
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBe(button)
+    expect(button).toBeDisabled()
+    await userEvent.keyboard('{Enter} ')
+    await userEvent.pointer({ keys: '[MouseMiddle]', target: button })
+    expect(onClick).not.toHaveBeenCalled()
+    rerender(<Button onClick={onClick}>Save changes</Button>)
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBe(button)
+    expect(button).not.toBeDisabled()
+    expect(button).not.toHaveAttribute('aria-busy', 'true')
+    await userEvent.click(button)
+    expect(onClick).toHaveBeenCalledOnce()
+  })
+
+  it('should block keyboard and auxiliary activation of a loading link', async () => {
+    const onClick = vi.fn()
+    const onAuxClick = vi.fn()
+    const { rerender } = render(
+      <Button href="/save" onClick={onClick} onAuxClick={onAuxClick}>
+        Save changes
+      </Button>
+    )
+    await userEvent.tab()
+    const link = screen.getByRole('link', { name: 'Save changes' })
+    rerender(
+      <Button href="/save" loading onClick={onClick} onAuxClick={onAuxClick}>
+        Save changes
+      </Button>
+    )
+    await userEvent.keyboard('{Enter}')
+    await userEvent.pointer({ keys: '[MouseMiddle]', target: link })
+    expect(onClick).not.toHaveBeenCalled()
+    expect(onAuxClick).not.toHaveBeenCalled()
+    rerender(
+      <Button href="/save" onClick={onClick} onAuxClick={onAuxClick}>
+        Save changes
+      </Button>
+    )
+    expect(screen.getByRole('link', { name: 'Save changes' })).toBe(link)
+    expect(link).toHaveAttribute('href', '/save')
+  })
+
+  it('should keep the loading view when explicit disabled state is also present', () => {
+    render(
+      <Button disabled loading>
+        Save changes
+      </Button>
+    )
+    expect(screen.getByRole('button', { name: 'Save changes' })).toHaveAttribute(
+      'aria-busy',
+      'true'
+    )
+    expect(document.querySelector('[data-loading-indicator]')).toBeInTheDocument()
+  })
+
+  it('should expose the actual native elements through typed refs', () => {
+    const button = createRef<HTMLButtonElement>()
+    const link = createRef<HTMLAnchorElement>()
+    render(
+      <>
+        <Button ref={button}>Save</Button>
+        <Button href="/next" ref={link}>
+          Next
+        </Button>
+      </>
+    )
+    expect(button.current).toBe(screen.getByRole('button', { name: 'Save' }))
+    expect(link.current).toBe(screen.getByRole('link', { name: 'Next' }))
   })
 })

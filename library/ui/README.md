@@ -39,13 +39,19 @@ Inter variable normal faces (weights 100–900) come from `@fontsource-variable/
 
 Monochrome icons inherit `currentColor`, and active-state pairs expose `active`. Icons preserve their captured intrinsic dimensions unless `size` is supplied. Give informative icons an accessible name with SVG attributes such as `role="img"` and `aria-label`; mark decorative icons `aria-hidden="true"`. Skipped source records are listed in `skippedIcons` rather than silently substituted.
 
+## Browser components and generation tooling
+
+`components/` contains the public components and the internal browser runtime they render with. Consumers import `Button` from `@dcl/one-ui`, not the runtime directly. The installed `components/runtime/figma-module-runtime.tsx` provides `FigmaView`, which interprets generated view records, selects captured variants and renders React elements. This is the currently supported rendering mechanism for generated components. Its name describes those Figma-derived views; it is not a preview-only shortcut.
+
+`figma/` contains capture access, the CLI, generation, installation and preview tooling. The installer copies the verified browser runtime from its generation source under `figma/review/src/components/` into `components/runtime/`, relocates browser imports and binds the result in `components/generation.json` and the source lock. That source provenance does not create a browser import of tooling: the production consumer graph test asserts that public components reach the installed runtime without reaching `figma/`, Node built-ins or the tooling SDK. The current emitter produces view records rather than direct JSX; a direct-JSX mode would require a generator change while preserving the same installation and origin checks.
+
 ## Button
 
-Import `Button` and `ButtonProps` from `@dcl/one-ui`. Without `href` it renders a native button (`type="button"` by default); with `href` it renders an anchor and forwards cancellable native events. New-window links retain the supplied `rel` tokens and add `noopener noreferrer`.
+Import `Button` and `ButtonProps` from `@dcl/one-ui`. Without `href` it renders a native button (`type="button"` by default); with `href` it renders an anchor and forwards cancellable native events. Links targeting a new or named browsing context retain the supplied `rel` tokens and add `noopener noreferrer`, including case-insensitive special targets.
 
-Use `children` or the captured `label` slot for content, `leadingIcon` and `trailingIcon` for decorative icons, and `className` for consumer geometry. `variant="iconOnly"` or `iconOnly` requires `aria-label` or `aria-labelledby`. Native `disabled` prevents focus and activation; `aria-disabled` keeps the control focusable while suppressing click and auxiliary activation. Both button and link controls accept the disabled state.
+Use `children` or the captured `label` slot for content, `leadingIcon` and `trailingIcon` for decorative icons, and `className` for consumer geometry. `variant="iconOnly"` or `iconOnly` requires `aria-label` or `aria-labelledby` in the public type; untyped invalid calls fail closed. Supply content or an accessible name explicitly; the public control never supplies specimen text. Native button and anchor refs are typed. Native `disabled` prevents focus and activation; `aria-disabled` keeps the control focusable with captured disabled visuals while suppressing click and auxiliary activation. `loading` retains the content and accessible name while selecting the captured loading view, marks the control busy and prevents repeated activation. Both button and link controls accept these states.
 
-Captured variants remain `primary`, `secondary`, `outline`, `dark`, `text` and `outlineOnLight`. Public aliases `tertiary` and `quaternary` select `outline` and `dark`. The white `inverse` appearance and the neutral `iconOnly` appearance are explicit library additions. Captured sizes are `xl` (56px), `lg` (48px), `md` (40px) and `sm` (32px); the default is `xl`. Icon-only controls have a 48px minimum target.
+Captured variants remain `primary`, `secondary`, `outline`, `dark`, `text` and `outlineOnLight`. Public aliases `tertiary` and `quaternary` select `outline` and `dark`. The white `inverse` appearance and the neutral `iconOnly` appearance are explicit library additions. Desktop heights are `xl` 56px, `lg` 48px, `md` 40px and `sm` 32px; mobile heights are 56px, 52px, 48px and 44px respectively. The defaults are `xl` and `viewport="desktop"`. Icon-only controls have a 48px minimum target.
 
 ## Work on it
 

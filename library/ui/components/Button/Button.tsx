@@ -2,7 +2,7 @@
 // Figma: Buttons / Button (15721:13657)
 import type { ReactNode } from 'react'
 import styles from './Button.module.css'
-import { FigmaView, registerComponent, type ForcedState, type ViewNode, type ActionProps } from '../runtime/figma-module-runtime'
+import { FigmaView, registerComponent, type ForcedState, type ViewNode, type ActionProps, type ControlContent, type ControlName, type IconOnlyContract } from '../runtime/figma-module-runtime'
 type MatrixCase = { key: string; props: Record<string, unknown>; states: ('base' | ForcedState)[] }
 
 export type ButtonProps = {
@@ -13,7 +13,7 @@ export type ButtonProps = {
   loading?: boolean
   label?: ReactNode
   forceState?: ForcedState
-} & ActionProps
+} & ActionProps & ControlContent & IconOnlyContract & ({ variant?: Exclude<'primary' | 'secondary' | 'outline' | 'dark' | 'text' | 'outlineOnLight' | 'tertiary' | 'quaternary' | 'inverse' | 'iconOnly', 'iconOnly'> } | ({ variant: 'iconOnly' } & ControlName))
 
 export const buttonViews: Record<string, ViewNode> = {
   'variant:primary|size:xl|viewport:desktop': {
@@ -1559,10 +1559,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v96nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v96n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1579,10 +1581,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v97nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v97n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1599,10 +1603,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v98nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v98n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1619,10 +1625,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v99nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v99n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1639,10 +1647,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v100nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v100n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1659,10 +1669,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v101nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v101n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1679,10 +1691,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v102nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v102n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1699,10 +1713,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v103nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v103n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1719,10 +1735,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v104nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v104n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1739,10 +1757,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v105nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v105n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1759,10 +1779,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v106nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v106n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1779,10 +1801,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v107nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v107n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1799,10 +1823,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v108nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v108n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1819,10 +1845,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v109nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v109n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1839,10 +1867,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v110nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v110n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1859,10 +1889,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v111nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v111n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1879,10 +1911,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v112nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v112n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1899,10 +1933,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v113nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v113n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1919,10 +1955,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v114nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v114n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1939,10 +1977,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v115nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v115n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1959,10 +1999,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v116nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v116n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1979,10 +2021,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v117nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v117n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -1999,10 +2043,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v118nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v118n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2019,10 +2065,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v119nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v119n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2039,10 +2087,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v120nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v120n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2059,10 +2109,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v121nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v121n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2079,10 +2131,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v122nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v122n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2099,10 +2153,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v123nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v123n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2119,10 +2175,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v124nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v124n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2139,10 +2197,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v125nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v125n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2159,10 +2219,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v126nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v126n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2179,10 +2241,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v127nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v127n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2199,10 +2263,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v128nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v128n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2219,10 +2285,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v129nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v129n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2239,10 +2307,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v130nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v130n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2259,10 +2329,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v131nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v131n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2279,10 +2351,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v132nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v132n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2299,10 +2373,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v133nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v133n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2319,10 +2395,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v134nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v134n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2339,10 +2417,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v135nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v135n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2359,10 +2439,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v136nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v136n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2379,10 +2461,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v137nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v137n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2399,10 +2483,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v138nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v138n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2419,10 +2505,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v139nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v139n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2439,10 +2527,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v140nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v140n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2459,10 +2549,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v141nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v141n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2479,10 +2571,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v142nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v142n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2499,10 +2593,12 @@ export const buttonViews: Record<string, ViewNode> = {
     className: styles.v143nroot,
     children: [
       {
-        kind: 'box',
+        kind: 'text',
         path: '0',
         name: "label",
         className: styles.v143n0,
+        text: "Label",
+        slot: 'label',
       },
       {
         kind: 'box',
@@ -2682,11 +2778,12 @@ export const Button = ({
     select={{
       values: { variant: variant === 'tertiary' ? 'outline' : variant === 'quaternary' ? 'dark' : variant === 'inverse' ? 'primary' : variant === 'iconOnly' ? 'primary' : variant, size, viewport },
       booleans: {  },
-      flags: { disabled, loading }
+      flags: { disabled: !loading && (disabled || rest['aria-disabled'] === true || rest['aria-disabled'] === 'true'), loading }
     }}
     slots={{ label }}
     forceState={forceState}
     disabled={disabled}
+    busy={loading}
     action={{ ...rest, children, leadingIcon, trailingIcon, iconOnly, appearance: variant === 'inverse' || variant === 'iconOnly' ? variant : undefined }}
   />
 )

@@ -8,6 +8,7 @@ import {
   type AnchorHTMLAttributes,
   type ButtonHTMLAttributes,
   type HTMLAttributes,
+  type Ref,
   type ReactNode
 } from 'react'
 import { FigmaInteractions } from './figma-interactions'
@@ -268,6 +269,7 @@ type Attributes = Omit<HTMLAttributes<HTMLElement>, 'children'>
 const RESERVED_PROPS: ReadonlySet<string> = new Set([
   'as',
   'action',
+  'busy',
   'attributes',
   'component',
   'counts',
@@ -310,13 +312,22 @@ type ActionProps = {
   iconOnly?: boolean
   appearance?: 'inverse' | 'iconOnly'
 } & (
-  | (ButtonHTMLAttributes<HTMLButtonElement> & { href?: never })
+  | (ButtonHTMLAttributes<HTMLButtonElement> & { href?: never; ref?: Ref<HTMLButtonElement> })
   | (Omit<AnchorHTMLAttributes<HTMLAnchorElement>, 'type'> & {
       href: string
+      ref?: Ref<HTMLAnchorElement>
       disabled?: boolean
       type?: never
     })
 )
+
+type ControlName = { 'aria-label': string } | { 'aria-labelledby': string }
+type ControlContent = { children: ReactNode } | { label: ReactNode } | ControlName
+type IconOnlyContract = { iconOnly?: false } | ({ iconOnly: true } & ControlName)
+
+function opensContext(target: string | undefined): boolean {
+  return !!target && !['_self', '_parent', '_top'].includes(target.toLowerCase())
+}
 
 function safeRel(rel: string | undefined): string {
   return [...new Set([...(rel ?? '').split(/\s+/).filter(Boolean), 'noopener', 'noreferrer'])].join(
@@ -327,6 +338,7 @@ function safeRel(rel: string | undefined): string {
 type FigmaViewProps = {
   as?: 'button' | 'div'
   action?: ActionProps
+  busy?: boolean
   views: Record<string, ViewNode>
   select: Selection
   slots: Record<string, ReactNode>
@@ -348,6 +360,7 @@ type FigmaViewProps = {
 function FigmaView({
   as: Tag = 'div',
   action,
+  busy = false,
   views,
   select,
   slots,
@@ -440,29 +453,36 @@ function FigmaView({
     const compact = iconOnly || appearance === 'iconOnly'
     if (compact && !native['aria-label']?.trim() && !native['aria-labelledby']?.trim())
       throw new Error(`${component ?? 'Button'}: iconOnly requires an accessible name`)
+    const label = children === undefined ? (slots.label ?? '') : children
+    const spinner = busy ? view.children?.find((child) => child.name === 'Spinner') : undefined
     const content = (
       <>
-        {leadingIcon != null && (
-          <span className={styles.controlIcon} aria-hidden="true">
-            {leadingIcon}
-          </span>
-        )}
-        {!compact &&
-          view.children?.map((child) =>
-            renderNode(
-              child,
-              children === undefined ? slots : { ...slots, label: children },
-              interaction,
-              semanticProps,
-              countLabels
-            )
+        <span
+          className={[styles.controlContent, busy && styles.busyContent].filter(Boolean).join(' ')}
+        >
+          {leadingIcon != null && (
+            <span className={styles.controlIcon} aria-hidden="true">
+              {leadingIcon}
+            </span>
           )}
-        {trailingIcon != null && (
-          <span className={styles.controlIcon} aria-hidden="true">
-            {trailingIcon}
+          {!compact &&
+            view.children
+              ?.filter((child) => child !== spinner)
+              .map((child) =>
+                renderNode(child, { ...slots, label }, interaction, semanticProps, countLabels)
+              )}
+          {compact && children}
+          {trailingIcon != null && (
+            <span className={styles.controlIcon} aria-hidden="true">
+              {trailingIcon}
+            </span>
+          )}
+        </span>
+        {spinner && (
+          <span className={styles.controlSpinner} data-loading-indicator aria-hidden="true">
+            {renderNode(spinner, slots, null, semanticProps, countLabels)}
           </span>
         )}
-        {compact && leadingIcon == null && trailingIcon == null && children}
       </>
     )
     const common = {
@@ -484,7 +504,7 @@ function FigmaView({
     const unavailable = native['aria-disabled'] === true || native['aria-disabled'] === 'true'
     if (typeof native.href === 'string') {
       const { href, target, rel, onClick, onAuxClick, disabled: actionDisabled, ...anchor } = native
-      const inactive = disabled || actionDisabled
+      const inactive = disabled || busy || actionDisabled
       return (
         <a
           {...common}
@@ -492,8 +512,9 @@ function FigmaView({
           href={inactive ? undefined : href}
           role={inactive ? (native.role ?? 'link') : native.role}
           target={target}
-          rel={target === '_blank' ? safeRel(rel) : rel}
+          rel={opensContext(target) ? safeRel(rel) : rel}
           aria-disabled={inactive || native['aria-disabled']}
+          aria-busy={busy || native['aria-busy']}
           tabIndex={inactive ? -1 : native.tabIndex}
           onClick={(event) => {
             if (inactive || unavailable) {
@@ -525,16 +546,17 @@ function FigmaView({
         {...common}
         {...button}
         type={type}
-        disabled={disabled || button.disabled}
+        disabled={disabled || busy || button.disabled}
+        aria-busy={busy || button['aria-busy']}
         onClick={(event) => {
-          if (unavailable) {
+          if (unavailable || busy) {
             event.preventDefault()
             return
           }
           onClick?.(event)
         }}
         onAuxClick={(event) => {
-          if (unavailable) {
+          if (unavailable || busy) {
             event.preventDefault()
             return
           }
@@ -566,4 +588,4 @@ function FigmaView({
 }
 
 export { FigmaView, registerComponent }
-export type { ActionProps, ForcedState, ViewNode }
+export type { ActionProps, ControlContent, ControlName, IconOnlyContract, ForcedState, ViewNode }

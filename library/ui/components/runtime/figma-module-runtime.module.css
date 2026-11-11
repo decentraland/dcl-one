@@ -81,6 +81,7 @@
 @layer dcl.components {
   .node.control {
     display: inline-flex;
+    position: relative;
     width: auto;
     text-decoration: none;
   }
@@ -129,7 +130,7 @@
     color: var(--dcl-neutrals-charcoal);
   }
 
-  .inverse > [data-n] {
+  .inverse [data-n] {
     color: inherit;
   }
 
@@ -141,5 +142,40 @@
   .node.inverse:active:not(:disabled):not([aria-disabled='true']),
   .node.inverse[data-force-state='pressed'] {
     background: var(--dcl-neutrals-gray);
+  }
+}
+
+@layer dcl.components {
+  .controlContent {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: inherit;
+  }
+
+  .busyContent {
+    opacity: 0;
+  }
+
+  .controlSpinner {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .controlSpinner > [data-n] {
+    animation: controlSpin 800ms linear infinite;
+  }
+
+  @keyframes controlSpin {
+    to {
+      transform: translate(-50%, -50%) rotate(1turn);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .controlSpinner > [data-n] {
+      animation: none;
+    }
   }
 }

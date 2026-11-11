@@ -6,8 +6,8 @@ import { findBrowser, openSession } from '../figma/review/scripts/capture-browse
 type Measurement = {
   width: number
   color: string
-  labelColor: string
-  iconColor: string
+  labelColor: string | null
+  iconColor: string | null
   background: string
 }
 let server: ViteDevServer
@@ -20,9 +20,10 @@ async function evaluate<T = unknown>(expression: string): Promise<T> {
     returnByValue: true
   })) as {
     result: { value: T }
-    exceptionDetails?: { text: string }
+    exceptionDetails?: { text: string; exception?: { description?: string } }
   }
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.text)
+  if (result.exceptionDetails)
+    throw new Error(result.exceptionDetails.exception?.description ?? result.exceptionDetails.text)
   return result.result.value
 }
 
@@ -59,7 +60,7 @@ beforeAll(async () => {
   )
   await session.send('Page.navigate', { url: server.resolvedUrls!.local[0] })
   await evaluate(
-    `(async()=>{for(let n=0;n<100 && document.querySelectorAll('button').length!==4;n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
+    `(async()=>{for(let n=0;n<100 && document.querySelectorAll('button').length!==10;n++)await new Promise(r=>setTimeout(r,100));await document.fonts.ready})()`
   )
 }, 30_000)
 
@@ -73,7 +74,7 @@ afterAll(async () => {
 
 const measure = (control: string): Promise<Measurement> =>
   evaluate<Measurement>(
-    `(()=>{const root=document.querySelector('[data-control="${control}"]'),label=root.querySelector('[data-n]'),icon=root.querySelector('svg');return {width:root.getBoundingClientRect().width,color:getComputedStyle(root).color,labelColor:label&&getComputedStyle(label).color,iconColor:getComputedStyle(icon).color,background:getComputedStyle(root).backgroundColor}})()`
+    `(()=>{const root=document.querySelector('[data-control="${control}"]'),label=root.querySelector('[data-n]'),icon=root.querySelector('svg');return {width:root.getBoundingClientRect().width,color:getComputedStyle(root).color,labelColor:label&&getComputedStyle(label).color,iconColor:icon&&getComputedStyle(icon).color,background:getComputedStyle(root).backgroundColor}})()`
   )
 
 describe('when a public Button enters a captured interaction state', () => {
@@ -128,4 +129,102 @@ describe('when a public Button enters a captured interaction state', () => {
     expect(icon.background).toBe(neutral)
     expect(icon.width).toBeGreaterThanOrEqual(48)
   })
+})
+
+describe('when busy and focusable disabled controls use the public runtime', () => {
+  it('should retain label geometry and center every busy indicator within its control', async () => {
+    for (const [idle, busy] of [
+      ['base', 'loading'],
+      ['plain', 'loading-plain']
+    ]) {
+      const before = await measure(idle!)
+      const after = await measure(busy!)
+      expect(after.width).toBeCloseTo(before.width, 1)
+      const placement = await evaluate<{
+        dx: number
+        dy: number
+        inside: boolean
+        mask: string
+        color: string
+        fill: string
+      }>(
+        `(()=>{const root=document.querySelector('[data-control="${busy}"]'),spinner=root.querySelector('[data-loading-indicator] > [data-n]');if(!spinner)throw new Error(root.outerHTML);const box=root.getBoundingClientRect(),r=spinner.getBoundingClientRect(),s=getComputedStyle(spinner);return {dx:r.x+r.width/2-(box.x+box.width/2),dy:r.y+r.height/2-(box.y+box.height/2),inside:r.left>=box.left&&r.right<=box.right&&r.top>=box.top&&r.bottom<=box.bottom,mask:s.maskImage,color:getComputedStyle(root).color,fill:s.backgroundColor}})()`
+      )
+      expect(placement.dx).toBeCloseTo(0, 1)
+      expect(placement.dy).toBeCloseTo(0, 1)
+      expect(placement.inside).toBe(true)
+      expect(placement.mask).not.toBe('none')
+      expect(placement.fill).toBe(placement.color)
+    }
+    const doc = (await session.send('DOM.getDocument')) as { root: { nodeId: number } }
+    const selected = (await session.send('DOM.querySelector', {
+      nodeId: doc.root.nodeId,
+      selector: '[data-control="loading"]'
+    })) as { nodeId: number }
+    const described = (await session.send('DOM.describeNode', { nodeId: selected.nodeId })) as {
+      node: { backendNodeId: number }
+    }
+    const accessibility = (await session.send('Accessibility.getPartialAXTree', {
+      backendNodeId: described.node.backendNodeId,
+      fetchRelatives: false
+    })) as { nodes: { role?: { value: string }; name?: { value: string } }[] }
+    expect(accessibility.nodes.find((node) => node.role?.value === 'button')?.name?.value).toBe(
+      'A LONGER BUTTON LABEL'
+    )
+  })
+
+  it('should keep aria-disabled visuals equal to native disabled through pointer states', async () => {
+    const native = await evaluate<string>(
+      `getComputedStyle(document.querySelector('[data-control="native-disabled"]')).opacity`
+    )
+    const before = await measure('aria-disabled')
+    const point = await evaluate<{ x: number; y: number }>(
+      `(()=>{const el=document.querySelector('[data-control="aria-disabled"]');el.focus();const r=el.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()`
+    )
+    await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...point })
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mousePressed',
+      button: 'left',
+      clickCount: 1,
+      ...point
+    })
+    const after = await measure('aria-disabled')
+    await session.send('Input.dispatchMouseEvent', {
+      type: 'mouseReleased',
+      button: 'left',
+      clickCount: 1,
+      ...point
+    })
+    expect(after).toEqual(before)
+    const result = await evaluate<{ opacity: string; focused: boolean; disabled: boolean }>(
+      `(()=>{const el=document.querySelector('[data-control="aria-disabled"]');return {opacity:getComputedStyle(el).opacity,focused:document.activeElement===el,disabled:el.disabled}})()`
+    )
+    expect(result.opacity).toBe(native)
+    expect(Number(result.opacity)).toBeLessThan(1)
+    expect(result.focused).toBe(true)
+    expect(result.disabled).toBe(false)
+  })
+})
+
+it('should preserve control identity and native focus behavior across loading transitions', async () => {
+  const result = await evaluate<{
+    buttonFocusedBefore: boolean
+    buttonMatchesNativeBusyFocus: boolean
+    buttonStable: boolean
+    noFocusSteal: boolean
+    linkFocusedBefore: boolean
+    linkRetainsFocus: boolean
+    linkStable: boolean
+    linkHrefRestored: boolean
+  }>(`(async()=>{
+    const probe=document.createElement('button');document.body.append(probe);probe.focus();probe.disabled=true;await new Promise(requestAnimationFrame);const nativeRetainsFocus=document.activeElement===probe;probe.remove();
+    const button=document.querySelector('[data-control="transition"]'),link=document.querySelector('[data-control="transition-link"]');
+    const setBusy=async value=>{window.dispatchEvent(new CustomEvent('button-busy',{detail:value}));for(let i=0;i<100 && button.disabled!==value;i++)await new Promise(r=>setTimeout(r,10))};
+    button.focus();const buttonFocusedBefore=document.activeElement===button;
+    await setBusy(true);await new Promise(requestAnimationFrame);const buttonMatchesNativeBusyFocus=(document.activeElement===button)===nativeRetainsFocus,buttonStable=button===document.querySelector('[data-control="transition"]');
+    const focusOwner=document.createElement('button');focusOwner.textContent='Other action';document.body.append(focusOwner);focusOwner.focus();await setBusy(false);const noFocusSteal=document.activeElement===focusOwner;focusOwner.remove();
+    link.focus();const linkFocusedBefore=document.activeElement===link;await setBusy(true);const linkRetainsFocus=document.activeElement===link;await setBusy(false);
+    return {buttonFocusedBefore,buttonMatchesNativeBusyFocus,buttonStable,noFocusSteal,linkFocusedBefore,linkRetainsFocus,linkStable:link===document.querySelector('[data-control="transition-link"]'),linkHrefRestored:link.getAttribute('href')==='/save'};
+  })()`)
+  expect(Object.values(result)).toEqual(Array(8).fill(true))
 })

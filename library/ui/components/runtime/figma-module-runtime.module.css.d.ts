@@ -11,5 +11,9 @@ declare const styles: {
   readonly "controlIcon": string
   readonly "iconOnly": string
   readonly "inverse": string
+  readonly "controlContent": string
+  readonly "busyContent": string
+  readonly "controlSpinner": string
+  readonly "controlSpin": string
 }
 export default styles

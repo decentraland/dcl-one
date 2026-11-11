@@ -111,13 +111,13 @@
     },
     {
       "path": "library/ui/figma/review/src/components/figma-module-runtime.module.css",
-      "sha256": "2d559673f607dc674d7b597f60988c2c6c13774d14c5244892fbf7fe0abe97e3",
-      "indexBlobSha": "acde06332ff40ae90621410d58a54bbc04ddb397"
+      "sha256": "be056e214ce7912c9c3354ec27b41db67aeaf13b8f0de464482bb6fe500bbeee",
+      "indexBlobSha": "93304cfb59a4b24da0c8ded1ce8d7d1ff50ffc16"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-module-runtime.tsx",
-      "sha256": "3d0f4f10e712582a1b24b917fa71e336cc5ccdfd0921b78953935ff66b1a704c",
-      "indexBlobSha": "5aa3d73d3ae87c3635717fda350609e6b64c92c4"
+      "sha256": "6ebcd8545c33f12698d39fb21fc659aac306a1beb7ac2ba1bf846819e796bd4c",
+      "indexBlobSha": "0bb5bd961aca826cce853bf6006b285a9936d1e4"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-view-state.ts",
@@ -236,8 +236,8 @@
     },
     {
       "path": "library/ui/figma/src/generators/components.ts",
-      "sha256": "98d48df0b92f5b226ec01b41832a618759412e4b6616d559e20c644d4b964eb2",
-      "indexBlobSha": "7a6d940997ed5468cca04362c643aed2fb15e62d"
+      "sha256": "116e4d7543d8bddc5d15d1111f36dda548626349161b14ab1059851bf6dc61a9",
+      "indexBlobSha": "5d3ad5230cb0124c4be73994e66fc26ddcdacc29"
     },
     {
       "path": "library/ui/figma/src/generators/css-layers.ts",
@@ -607,7 +607,7 @@
     },
     {
       "path": "Button/Button.module.css",
-      "sha256": "21bb7680c4726a6057d1786ce1b377d3b5d532405e24f3db9c176cea4e4fa86d"
+      "sha256": "9163554398730be8ed477458fc9760f998cf2ec9077269139cfb276040d79b4c"
     },
     {
       "path": "Button/Button.module.css.d.ts",
@@ -615,7 +615,7 @@
     },
     {
       "path": "Button/Button.tsx",
-      "sha256": "9d20021c2768152f1cb32204cb3e48337c5fe89b63f3e17b6c916eb7d56830d9"
+      "sha256": "72567aec5bca15a24c0358bbd22f235a92106f8748983ea30f47e2c982a1a55b"
     },
     {
       "path": "NavBar/NavBar.figma.ts",
@@ -643,15 +643,15 @@
     },
     {
       "path": "runtime/figma-module-runtime.module.css",
-      "sha256": "2d559673f607dc674d7b597f60988c2c6c13774d14c5244892fbf7fe0abe97e3"
+      "sha256": "be056e214ce7912c9c3354ec27b41db67aeaf13b8f0de464482bb6fe500bbeee"
     },
     {
       "path": "runtime/figma-module-runtime.module.css.d.ts",
-      "sha256": "76c7de0a7ff87cd09acbbb38d812ecad71070e4069d3723080b59f9f4d91850b"
+      "sha256": "1b075d3e85bf0ddb26088bddab142f1a0ea5c7091ff7e3712f758fd8d682d86a"
     },
     {
       "path": "runtime/figma-module-runtime.tsx",
-      "sha256": "6d85e047d957fd6d6614563d34dbc4a547bdda4e8c60a367ad9ec31132356d1a"
+      "sha256": "9badf75ab7b210dd3236b62ca32ba1556a7f8bc08ed0b08d824d548c0673d364"
     },
     {
       "path": "runtime/figma-view-state.ts",

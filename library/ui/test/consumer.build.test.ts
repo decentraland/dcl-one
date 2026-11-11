@@ -36,8 +36,17 @@ describe('when a consumer bundles public foundations and shared components', () 
     ).toBe('')
   }, 60_000)
   it('should bundle the public component with its composed foundation CSS', async () => {
+    const modules: string[] = []
     const result = await build({
       configFile: false,
+      plugins: [
+        {
+          name: 'public-runtime-boundary',
+          generateBundle() {
+            modules.push(...this.getModuleIds())
+          }
+        }
+      ],
       root,
       logLevel: 'silent',
       build: {
@@ -49,6 +58,19 @@ describe('when a consumer bundles public foundations and shared components', () 
         rolldownOptions: { external: ['react', 'react/jsx-runtime'] }
       }
     })
+    expect(
+      modules.some((module) =>
+        module.replaceAll('\\', '/').endsWith('/components/runtime/figma-module-runtime.tsx')
+      )
+    ).toBe(true)
+    expect(
+      modules.filter(
+        (module) =>
+          module.replaceAll('\\', '/').startsWith(root.replaceAll('\\', '/') + '/figma/') ||
+          /^node:/.test(module) ||
+          /__vite-browser-external|@modelcontextprotocol/.test(module)
+      )
+    ).toEqual([])
     const outputs = (Array.isArray(result) ? result : [result]).flatMap((item) =>
       'output' in item ? item.output : []
     )
