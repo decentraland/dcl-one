@@ -77,9 +77,10 @@ const GATEWAY_PREFIXES: Readonly<Record<string, string>> = {
   notifications: '/notifications',
   'assets-cdn': '/assets-cdn'
 }
-// Services the gateway cannot serve yet, reached on their public host instead: abgen's CDN (Bevy
-// variants), whose `/ab-cdn` route reads Unity's ab-cdn and refuses `bevy/` paths
-// (decentraland/dcl-one#631). Matches the engine's `Gateway::segment`.
+// Services the gateway cannot serve yet, reached on Decentraland's public host instead: abgen's
+// CDN (Bevy variants), whose `/ab-cdn` route reads Unity's ab-cdn and refuses `bevy/` paths
+// (decentraland/dcl-one#631). Behind the gateway they compose from decentraland.org, never from
+// the page's own host, as the engine does (`Gateway::segment` → its default base domain).
 const NOT_THROUGH_GATEWAY: ReadonlySet<string> = new Set(['abgen-cdn'])
 
 /** The domain a url without ?baseDomain= means here: derived from the hosting origin, else this host. */
@@ -168,7 +169,10 @@ export function serviceUrl(name: string): string {
     const scheme = s.value === 'websocket' ? (secure ? 'wss' : 'ws') : secure ? 'https' : 'http'
     return `${scheme}://${ONE_GATEWAY_HOST}${prefix}${s.path}`
   }
-  const host = s.sub === '' ? BASE_DOMAIN : `${s.sub}.${BASE_DOMAIN}`
+  // on the gateway host no ?baseDomain= was given, so an ungated service takes the upstream default
+  const domain =
+    BASE_DOMAIN === ONE_GATEWAY_HOST && NOT_THROUGH_GATEWAY.has(s.sub) ? TRUSTED_BASE_DOMAINS[0] : BASE_DOMAIN
+  const host = s.sub === '' ? domain : `${s.sub}.${domain}`
   return s.value === 'authority' ? host : `${s.scheme}://${host}${s.path}`
 }
 window.__serviceUrl = serviceUrl

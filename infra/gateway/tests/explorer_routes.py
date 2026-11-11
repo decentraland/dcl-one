@@ -57,7 +57,8 @@ def check(rows, root):
             if name == "pulseServer":
                 assert hud_base == "example.test", hud_base
             elif name in ungated:
-                assert hud_base == f'https://{row["sub"]}.example.test{row["path"]}', hud_base
+                # composed from Decentraland's domain, never from the page's own host
+                assert hud_base == f'https://{row["sub"]}.decentraland.org{row["path"]}', hud_base
             else:
                 expected_scheme = "wss" if row["value"] == "websocket" else "https"
                 assert urlsplit(hud_base).scheme == expected_scheme, hud_base

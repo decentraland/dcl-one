@@ -808,9 +808,15 @@ impl IpfsIo {
                 dds
             }
             Decoded::BrotliGlb => {
-                // the browser hands over the decoded bytes; anything but a GLB falls back
-                if !fetched.starts_with(b"glTF") {
-                    let reason = "the Brotli copy did not decode to a GLB".to_owned();
+                // the browser hands over the decoded bytes, which are the original `.glb` byte
+                // for byte: checked against the original's own content hash, a truncated or
+                // corrupt copy falls back here, and one that passes is the original, so a glTF
+                // loader failure on it is the original's own and needs no reload
+                if !content_hash::matches_content_hash(&original, &fetched) {
+                    let reason = format!(
+                        "{} bytes from the Brotli copy are not the original `{original}`",
+                        fetched.len()
+                    );
                     variants.fail(scene, file, Some(&variant.path), reason);
                     return None;
                 }

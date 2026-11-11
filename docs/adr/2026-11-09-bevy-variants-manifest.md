@@ -127,8 +127,10 @@ Excluded from variants: source maps, audio, video and scene code.
   (`crates/ipfs/src/bevy_variants`): the class, the file types it may replace,
   what the GPU must support and what the bytes decode as. The table holds the
   BC texture class (BC1, BC5 or BC7, read from the KTX2 header) and, in the web
-  build only, `glb-br`: the browser decodes the Brotli copy and the GLB goes to
-  the glTF loader of the original path. Native loads original models until its
+  build only, `glb-br`: the browser decodes the Brotli copy, the bytes must hash
+  to the original's own CID (they are the original byte for byte, so a copy that
+  passes needs no reload if the glTF loader then fails), and the GLB goes to the
+  glTF loader of the original path. Native loads original models until its
   http client can decode Brotli. `glb` is not taken because the glTF loader
   rejects a file that requires `KHR_texture_basisu`.
 
