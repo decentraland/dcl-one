@@ -77,7 +77,7 @@ const config = {
       },
     ],
     extraResources: ['buildResources/icon.ico'],
-    verifyUpdateCodeSignature: false,
+    verifyUpdateCodeSignature: true,
     signtoolOptions: {
       publisherName: 'Decentraland Foundation',
     },

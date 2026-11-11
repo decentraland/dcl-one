@@ -209,6 +209,24 @@ jobs:
           INPUT_TOTP_SECRET: ${{ secrets.ES_TOTP_SECRET }}
           INPUT_CREDENTIAL_ID: ${{ secrets.WINDOWS_CREDENTIAL_ID_SIGNER }}
 
+      # Installed Windows apps check each update's signature against `publisherName`
+      # (electron-builder.cjs `win.signtoolOptions`). A certificate whose name differs would make
+      # every Windows update fail, so a release whose installer doesn't match fails here, before
+      # anyone promotes it.
+      - name: Check the installer's signature matches the update check
+        if: ${{ github.ref == 'refs/heads/main' && matrix.os == 'windows-latest' && !inputs.dry-run }}
+        shell: pwsh
+        working-directory: apps/creator-hub/packages/creator-hub
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          $expected = node -p "require('./electron-builder.cjs').win.signtoolOptions.publisherName"
+          $signature = Get-AuthenticodeSignature "dist/Decentraland Creator Hub-$env:VERSION-win-x64.exe"
+          if ($signature.Status -ne 'Valid') { throw "The installer's signature is $($signature.Status)" }
+          $name = $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          if ($name -ne $expected) { throw "The certificate is issued to '$name', but updates check for '$expected'" }
+          Write-Output "Signed by '$name', as updates expect"
+
       - name: Move artifacts to upload folder
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
         working-directory: apps/creator-hub/packages/creator-hub
