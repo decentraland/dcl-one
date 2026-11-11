@@ -89,12 +89,12 @@ function TitleLink({
   onOpen
 }: {
   card: PlaceCardData
-  className: string
+  className?: string
   onOpen?: PlaceCardHandlers['onOpen']
 }) {
   return (
     <a
-      className={`${styles.titleLink} ${className}`}
+      className={`${styles.titleLink} ${className ?? ''}`}
       href={card.href}
       onClick={onOpen && ((event: MouseEvent<HTMLAnchorElement>) => onOpen(card, event))}
     >
@@ -111,13 +111,13 @@ function JumpIn({
 }: {
   card: PlaceCardData
   labels: PlaceCardLabels
-  className: string
+  className?: string
   onJumpIn?: PlaceCardHandlers['onJumpIn']
 }) {
   if (!card.jumpHref) return null
   return (
     <a
-      className={`${styles.jumpIn} ${className}`}
+      className={`${styles.jumpIn} ${className ?? ''}`}
       href={card.jumpHref}
       aria-label={`${labels.jumpIn}: ${card.title}`}
       onClick={onJumpIn && ((event: MouseEvent<HTMLAnchorElement>) => onJumpIn(card, event))}
