@@ -2,6 +2,7 @@
 
 - [Development](development.md)
 - [UI standards](ui-standards.md)
+- [UI component adoption](ui-components.md)
 - [Web app architecture standards](web-app-standards.md)
 - [Frontend testing standards](frontend-testing.md)
 - [Database contract](../DATABASE.md)
