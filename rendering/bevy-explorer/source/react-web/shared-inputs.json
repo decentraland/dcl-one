@@ -3914,7 +3914,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "aea88fbff7da33041d92592505934ca0068f40714b0de3ce78f56e155f28cfb2"
+      "sha256": "9e8a700567b3e4f6ac8ca0fcf9c05736b58b6e8b17d3acd0842bd226a90d86e0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -3930,7 +3930,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "7ed3a910fe84057d41106a58e1c95b735b934cdfe5fd9d1826560445ff93c4ab"
+      "sha256": "69407d1fe4c85b8358bcb6505fb7c685e9da4784f2b4420813b2ba8a13175125"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -4106,7 +4106,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "5a77f5c3c5a11ff17c045b08d4c4cc7cb4ebae34fa57ac852595b14f69f4bfd0"
+      "sha256": "29db5e29cf57111a645a1f417b305887d764942f15092200beee74a760df6f38"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
@@ -4254,7 +4254,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "59b843d6c022149964d0bee0ee00162e13a04dfe4e182588e597ec7e3ecdbfab"
+      "sha256": "4ad58e33d5e40e37875d130347d7dbd254d76cfe06cf8121abf6e01fd8047023"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",
@@ -5718,7 +5718,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/CountBadge.module.css",
-      "sha256": "88d46d213083a4f75d426fe070305792c81042676e62478844b0177384fda2bd"
+      "sha256": "5222d20981f44c407d4a900a1e98e54832ba01a2aa519d1fa1cebae99a283330"
     },
     {
       "path": "library/ui/apps/hud/design/CountBadge.tsx",
@@ -6114,7 +6114,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "49cc28e3b35195c3bc9c2625344f338aef704f3e7929f8877fb1addf1216109e"
+      "sha256": "87138ff569c44a7a5ef8ac421c68e08b8bba1b6ff927732270336bc49255a253"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
