@@ -55,8 +55,8 @@
     },
     {
       "path": "library/ui/figma/module-graph.mjs",
-      "sha256": "2542b38e4356b48ca311894ebfcaaec219afd44a96112b9edd716e1b04015f7d",
-      "indexBlobSha": "ee7c55499c207cf9319cbe69c4fa6412069abb56"
+      "sha256": "1e452ea11e005dde0a5ff93a6d41310124bc311c919145e35e3c641bb05991db",
+      "indexBlobSha": "85f290697324fb9015756071f606f078ee0ffbfc"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-interactions.tsx",
