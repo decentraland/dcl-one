@@ -675,6 +675,12 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         content::history_prune::PruneOptions::from_config(&config),
     );
 
+    if config.shop.credits_trial_mode {
+        shop::credits::trial::refuse_a_shared_key(
+            config.shop.credits_revoker_key.as_deref(),
+            config.economy.relayer_private_key.as_deref(),
+        )?;
+    }
     let economy_settings = shop::evm::Settings {
         min_sale_value_in_wei: config.economy.min_sale_value_in_wei.clone(),
         max_transactions_per_day: config.economy.max_transactions_per_day,
@@ -687,6 +693,18 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         polygon_rpc_url: Config::non_empty(&config.economy.rpc_endpoint_polygon),
         max_gas_price_allowed_in_wei: config.economy.max_gas_price_allowed_in_wei,
         max_gas_limit: config.economy.max_gas_limit,
+        relayer_max_fee_per_gas_wei: config.economy.relayer_max_fee_per_gas_wei,
+        trial_mode: config.shop.credits_trial_mode,
+        // The same list, parsed the same way, as the credits lane's (credits::Settings::parse).
+        trial_buyers: config
+            .shop
+            .credits_trial_mode
+            .then(|| {
+                shop::credits::trial::TrialBuyers::parse(
+                    config.shop.credits_trial_buyers.as_deref(),
+                )
+            })
+            .transpose()?,
         oz_relayer_url: Config::non_empty(&config.economy.oz_relayer_url),
         oz_relayer_id: Config::non_empty(&config.economy.oz_relayer_id),
         oz_relayer_api_key: Config::non_empty(&config.economy.oz_relayer_api_key),
@@ -1376,6 +1394,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             "/events-notifier",
             shop::market::tips::router(market.clone()),
         )
+        .nest(
+            "/asset-bundle-registry",
+            shop::market::profiles::registry::router(market.clone()),
+        )
         .nest("/marketplace-api", shop::market::market_router(market))
         .merge(land_authz::router(land))
         .merge(economy_routes(&economy_state))
@@ -1553,6 +1575,61 @@ struct OpsStates {
     imposters: explore::imposters::Shared,
 }
 
+/// The credits settings, `CREDITS_TRIAL_MODE`'s start requirements included. Only `serve` builds
+/// them: `catalyst index` runs no credits job, though it still resolves every `*_FILE` it is given
+/// at start, so the credits configuration and its key files belong to `serve`'s environment only.
+fn credits_settings(config: &Config) -> anyhow::Result<shop::credits::Settings> {
+    let non_empty = Config::non_empty;
+    shop::credits::Settings::parse(shop::credits::RawSettings {
+        writes_enabled: config.ops.ops_writes_enabled,
+        admin_token: non_empty(&config.shop.catalyrst_credits_admin_token),
+        captcha_secret: non_empty(&config.shop.credits_captcha_secret),
+        captcha_verify_url: config.shop.credits_captcha_verify_url.clone(),
+        stripe_secret_key: non_empty(&config.shop.stripe_secret_key),
+        stripe_webhook_secret: non_empty(&config.shop.stripe_webhook_secret),
+        stripe_api_base: config.shop.stripe_api_base.clone(),
+        credits_currency: config.shop.credits_currency.clone(),
+        marketplace_markup_bps: config.shop.marketplace_markup_bps,
+        mana_price_max_staleness_secs: {
+            if let Some(warning) = config.price_staleness_warning() {
+                tracing::warn!("{warning}");
+            }
+            config.shop.mana_price_max_staleness_secs
+        },
+        credits_usd_pegged_feed_max_age_secs: config.shop.credits_usd_pegged_feed_max_age_secs,
+        checkout_fulfillment_mode: config.shop.checkout_fulfillment_mode.clone(),
+        require_purchase_intent: config.shop.credits_require_purchase_intent,
+        checkout_worker_interval_secs: config.shop.checkout_worker_interval_secs,
+        checkout_max_attempts: config.shop.checkout_max_attempts,
+        escrow_lock_days: config.shop.escrow_lock_days,
+        mock_fulfillment: config.shop.credits_mock_fulfillment,
+        mock_card: config.shop.credits_mock_card,
+        credits_signer_key: non_empty(&config.shop.credits_signer_key),
+        credits_manager_contract: non_empty(&config.shop.credits_manager_contract),
+        credits_onchain_authorize_enabled: config.shop.credits_onchain_authorize_enabled,
+        checkout_success_url: config.shop.credits_checkout_success_url.clone(),
+        checkout_cancel_url: config.shop.credits_checkout_cancel_url.clone(),
+        checkout_success_url_builder: non_empty(&config.shop.credits_checkout_success_url_builder),
+        checkout_cancel_url_builder: non_empty(&config.shop.credits_checkout_cancel_url_builder),
+        usage_index_enabled: config.shop.credits_usage_index_enabled,
+        usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
+        usage_chain_id: config.economy.collections_chain_id as i64,
+        usage_start_block: config.shop.credits_usage_start_block,
+        usage_interval_secs: config.shop.credits_usage_index_interval_secs,
+        usage_requests_per_pass: config.shop.credits_usage_index_requests_per_pass,
+        usage_replay_from_block: config.shop.credits_usage_replay_from_block,
+        usage_stop_block: config.shop.credits_usage_stop_block,
+        credit_ttl_seconds: config.shop.credits_ttl_seconds,
+        credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
+        credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
+        credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
+        trial_mode: config.shop.credits_trial_mode,
+        trial_buyers: non_empty(&config.shop.credits_trial_buyers),
+        shop_base_url: config.shop.shop_base_url.clone(),
+    })
+    .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
+}
+
 async fn ops_states(
     config: &Config,
     pool: &sqlx::PgPool,
@@ -1565,7 +1642,7 @@ async fn ops_states(
     let credits = Arc::new(shop::credits::State::new(
         pool.clone(),
         http_client.clone(),
-        crate::index::credits_settings(config)?,
+        credits_settings(config)?,
         shop::credits::Sources {
             market: Some(sources.market.clone()),
             price: Some(sources.price.clone()),
@@ -1817,7 +1894,7 @@ async fn worlds_states(
             encryption_key: non_empty(&config.worlds.encryption_key),
             authoritative_server_address: non_empty(&config.social.authoritative_server_address),
             authorized_addresses: config.worlds.authorized_addresses.clone(),
-            storage_cache_enabled: config.worlds.storage_cache_enabled,
+            storage_cache_enabled: config.worlds.storage_cache_enabled.clone(),
             storage_cache_ttl_seconds: config.worlds.storage_cache_ttl_seconds,
             storage_cache_max: config.worlds.storage_cache_max,
             storage_cache_max_value_bytes: config.worlds.storage_cache_max_value_bytes,
@@ -1832,6 +1909,7 @@ async fn worlds_states(
             export_scene_cooldown_seconds: config.worlds.export_scene_cooldown_seconds,
             export_timeout_seconds: config.worlds.export_timeout_seconds,
             export_max_size_bytes: config.worlds.export_max_size_bytes,
+            export_stream_query_timeout_ms: config.worlds.pg_component_stream_query_timeout,
         })
         .context("ENCRYPTION_KEY / AUTHORIZED_ADDRESSES / *_STORAGE_MAX_* configuration")?,
         eip1654.clone(),
@@ -1914,7 +1992,6 @@ async fn worlds_states(
     tracing::info!(
         scene_host = scene_host.is_some(),
         worlds_admin = config.worlds.catalyrst_worlds_admin_token.is_some(),
-        encryption_key = config.worlds.encryption_key.is_some(),
         nats = config.worlds.nats_url.is_some(),
         federation = config.worlds_fed.worlds_fed_peers_file.is_some(),
         "worlds routes"

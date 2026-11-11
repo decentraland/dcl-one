@@ -315,6 +315,7 @@ export function ProfilePassport({
   onAddFriend,
   onUnfriend,
   onMessage,
+  onCall,
   onCancelRequest,
   onAcceptRequest,
   onUnblock,
@@ -338,6 +339,8 @@ export function ProfilePassport({
   onUnfriend?: (address: string) => void
   /** Open a DM with this user. */
   onMessage?: (address: string) => void
+  /** Ring the user (a private voice call). */
+  onCall?: (address: string) => void
   onCancelRequest?: (address: string) => void
   onAcceptRequest?: (address: string) => void
   onUnblock?: (address: string) => void
@@ -481,6 +484,11 @@ export function ProfilePassport({
             {!isSelf && relationship !== 'blocked' && !theyBlockedYou && onMessage != null && (
               <button type="button" className={styles.headBtn} onClick={() => onMessage(profile.address)}>
                 CHAT
+              </button>
+            )}
+            {!isSelf && relationship !== 'blocked' && onCall != null && (
+              <button type="button" className={styles.headBtn} onClick={() => onCall(profile.address)}>
+                CALL
               </button>
             )}
             {!isSelf &&

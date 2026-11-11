@@ -6,20 +6,30 @@
 // [ ] - move into scene loop
 // [/] - consider how global raycasts interact with this setup (it works, pointer events use a global raycast already. but need to optimise by ordering scenes based on ray)
 
+use std::time::Duration;
+
 use bevy::{color::palettes::basic, prelude::*};
 use bevy_console::ConsoleCommand;
-use common::dynamics::PLAYER_COLLIDER_OVERLAP;
+use common::{
+    dynamics::{PLAYER_COLLIDER_OVERLAP, PLAYER_COLLIDER_RADIUS},
+    structs::PrimaryUser,
+};
+use web_time::Instant;
 
 use crate::{
     initialize_scene::SuperUserScene,
+    update_scene::raycast_budget::{
+        budget, candidate_order, raycast_budget, raycast_stats, run_within_budget, Candidate,
+        RaycastBudgetCommand, RaycastBudgetOverride, RaycastStats, RaycastStatsCommand,
+    },
     update_world::{
         gltf_container::GLTF_LOADING,
         mesh_collider::{GlobalGroundCollider, RaycastResult, SceneColliderData},
         raycast::Raycast,
     },
-    ContainingScene, RendererSceneContext, SceneEntity, SceneSets,
+    ContainingScene, RendererSceneContext, SceneEntity, SceneSets, SceneUpdates,
 };
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use dcl_component::{
     proto_components::{
         common::Vector3,
@@ -39,8 +49,35 @@ impl Plugin for RaycastResultPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Update, run_raycasts.in_set(SceneSets::Input));
         app.init_resource::<DebugRaycast>();
+        app.init_resource::<RaycastStats>();
+        app.init_resource::<RaycastBudgetOverride>();
         app.init_resource::<SuperUserRaycastScene>();
         app.add_preview_console_command::<DebugRaycastCommand, _>(debug_raycast);
+        app.add_console_command::<RaycastStatsCommand, _>(raycast_stats);
+        app.add_console_command::<RaycastBudgetCommand, _>(raycast_budget);
+        app.add_debug_section(DebugSection {
+            title: "Raycasts",
+            query: "/raycast_stats",
+            fields: &[
+                ("Capped budget (ms)", "budgetMs"),
+                ("Capped ran (last pass)", "ran"),
+                ("Capped deferred (last pass)", "deferred"),
+                ("Capped spent (last pass, ms)", "spentMs"),
+                ("Uncapped ran (last pass)", "uncappedRan"),
+                ("Uncapped spent (last pass, ms)", "uncappedSpentMs"),
+            ],
+            inputs: &[DebugInput {
+                label: "Capped budget override (ms)",
+                field: "budgetMs",
+                command: "/raycast_budget {value}",
+                kind: DebugInputKind::Number {
+                    min: 0.0,
+                    max: 10.0,
+                    step: 0.1,
+                },
+            }],
+            actions: &[("Automatic budget", "/raycast_budget auto")],
+        });
     }
 }
 
@@ -90,6 +127,10 @@ fn run_raycasts(
         (Entity, &mut SceneColliderData),
         (With<GlobalGroundCollider>, Without<RendererSceneContext>),
     >,
+    updates: Res<SceneUpdates>,
+    budget_override: Res<RaycastBudgetOverride>,
+    mut stats: ResMut<RaycastStats>,
+    player: Query<Entity, With<PrimaryUser>>,
 ) {
     // redraw non-continuous gizmos for 1 sec
     gizmo_cache.retain(|(until, origin, end)| {
@@ -97,11 +138,18 @@ fn run_raycasts(
         time.elapsed_secs_f64() > *until
     });
 
-    for (e, scene_ent, mut raycast, transform) in raycast_requests.iter_mut() {
-        debug!("{e:?} has raycast request: {raycast:?}");
-        let Ok((_, context, mut scene_data, scene_transform, super_user)) =
-            scene_context.get_mut(scene_ent.root)
-        else {
+    // the scenes the player stands in, plus every portable
+    let player_scenes = player
+        .single()
+        .map(|player| containing_scene.get_area(player, PLAYER_COLLIDER_RADIUS))
+        .unwrap_or_default();
+
+    // collect the requests that are due this frame: uncapped for the system scene, portables and
+    // the player's scenes, capped (in the order they should run) for every other scene
+    let mut uncapped: Vec<Entity> = Vec::new();
+    let mut capped: Vec<(Entity, Candidate)> = Vec::new();
+    for (e, scene_ent, raycast, _) in raycast_requests.iter() {
+        let Ok((_, context, _, _, super_user)) = scene_context.get(scene_ent.root) else {
             continue;
         };
 
@@ -119,6 +167,35 @@ fn run_raycasts(
         if continuous && raycast.last_run >= context.last_update_frame {
             continue;
         }
+
+        if super_user || player_scenes.contains(&scene_ent.root) {
+            uncapped.push(e);
+        } else {
+            capped.push((
+                e,
+                Candidate {
+                    priority: context.priority,
+                    last_run: raycast.last_run,
+                    entity_id: e.index(),
+                },
+            ));
+        }
+    }
+    capped.sort_by(|(_, a), (_, b)| candidate_order(a, b));
+    let capped: Vec<Entity> = capped.into_iter().map(|(e, _)| e).collect();
+
+    // returns false when the request or its scene is gone, so it counts as neither ran nor deferred
+    let mut cast_one = |e: Entity| -> bool {
+        let Ok((_, scene_ent, mut raycast, transform)) = raycast_requests.get_mut(e) else {
+            return false;
+        };
+        debug!("{e:?} has raycast request: {raycast:?}");
+        let Ok((_, context, mut scene_data, scene_transform, super_user)) =
+            scene_context.get_mut(scene_ent.root)
+        else {
+            return false;
+        };
+        let continuous = raycast.raycast.continuous.unwrap_or(false);
         raycast.last_run = context.last_update_frame;
         debug!("running raycast");
 
@@ -150,7 +227,7 @@ fn run_raycasts(
             }
             None => {
                 warn!("no direction on raycast");
-                continue;
+                return true;
             }
         }
         .normalize();
@@ -380,5 +457,17 @@ fn run_raycasts(
             scene_ent.id,
             &result,
         );
+        true
+    };
+
+    // each tier's stats describe its last frame that had something to cast
+    if !uncapped.is_empty() {
+        stats.uncapped =
+            run_within_budget(uncapped, Duration::MAX, &mut Instant::now, &mut cast_one);
+    }
+    // the frame target is the previous scene loop's, as raycasts run before the loop
+    stats.budget = budget(updates.frame_target, *budget_override);
+    if !capped.is_empty() {
+        stats.capped = run_within_budget(capped, stats.budget, &mut Instant::now, &mut cast_one);
     }
 }

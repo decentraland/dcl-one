@@ -5,8 +5,8 @@
 
 import { useSyncExternalStore } from 'react'
 import type { AppNotification } from '../../engine/protocol'
-import type { FriendsState, NotificationsState } from '../session/useEngineSession'
-import { friendshipTarget, summarize } from './summary'
+import type { ChatState, FriendsState, NotificationsState, VoiceChatSession } from '../session/useEngineSession'
+import { friendshipTarget, streamTarget, summarize } from './summary'
 import styles from './NotificationToast.module.css'
 
 export const TOAST_MS = 5000
@@ -49,15 +49,19 @@ const getSnapshot = (): AppNotification | null => current
 
 export function NotificationToastHost({
   notifications,
-  friends
+  friends,
+  voiceChat,
+  chat
 }: {
   notifications: NotificationsState
   friends?: FriendsState
+  voiceChat?: VoiceChatSession
+  chat?: ChatState
 }): React.JSX.Element | null {
   const n = useSyncExternalStore(subscribe, getSnapshot)
   if (n == null) return null
   const { title, body, image } = summarize(n)
-  const target = friendshipTarget(n, friends)
+  const target = friendshipTarget(n, friends) ?? streamTarget(n, voiceChat, chat)
   const open = (): void => {
     showNext()
     if (target != null) target()

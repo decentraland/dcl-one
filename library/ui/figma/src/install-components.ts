@@ -1,6 +1,11 @@
+import { posix } from 'node:path'
+import { componentRegistryEntries } from '../component-generation.mjs'
+import postcss from 'postcss'
+import postcssModules from 'postcss-modules'
 import type { FigmaConfig } from './config.js'
 import { expandVariants } from './capture/expand-variants.js'
 import { generateComponents } from './generators/components.js'
+import { generateFoundations } from './generators/tokens.js'
 import { assertIdentifier } from './generators/naming.js'
 import type { ComponentSpec, ViewNode } from './ir/components.js'
 import type { RawComponent } from './ir/raw-components.js'
@@ -13,7 +18,8 @@ import { loadSpecsFromSource } from './specs.js'
 type ComponentPlanContext = {
   source: FigmaSource
   config: FigmaConfig
-  registry: { components: readonly string[]; internal?: readonly string[] }
+  // Public entries are names or { name, limits }; internal entries are names.
+  registry: { components: readonly unknown[]; internal?: readonly string[] }
   runtime: ReadonlyMap<string, Buffer>
 }
 type ComponentInstallPlan = {
@@ -49,45 +55,54 @@ function relocate(content: string): string {
     )
 }
 
-function cssDeclaration(content: string): string {
-  const names = new Set<string>()
-  let prelude = ''
-  let quote = ''
-  let parentheses = 0
-  let brackets = 0
-  // Only qualified-rule preludes contain selectors. Ignore strings, comments and
-  // declaration bodies so dots in URLs, layer names and composition paths stay out.
-  for (let index = 0; index < content.length; index++) {
-    const character = content[index]!
-    if (quote) {
-      if (character === '\\') index++
-      else if (character === quote) quote = ''
-      continue
+async function cssDeclarations(
+  files: ReadonlyMap<string, Buffer>,
+  foundations: string
+): Promise<Map<string, Buffer>> {
+  const stylesheets = new Map(
+    [...files]
+      .filter(([file]) => file.endsWith('.module.css'))
+      .map(([file, bytes]) => ['/components/' + file, bytes.toString('utf8')])
+  )
+  stylesheets.set('/foundations/typography/text-styles.module.css', foundations)
+  const cache = new Map<string, Record<string, string>>()
+  const load = async (file: string, ancestors: string[] = []): Promise<Record<string, string>> => {
+    if (ancestors.includes(file)) throw new Error('Recursive CSS module composition: ' + file)
+    const cached = cache.get(file)
+    if (cached) return cached
+    const content = stylesheets.get(file)
+    if (content === undefined) throw new Error('Unknown CSS module input: ' + file)
+    let exports: Record<string, string> = {}
+    class DeclarationLoader {
+      fetch(specifier: string, relativeTo: string): Promise<Record<string, string>> {
+        if (!specifier.startsWith('.'))
+          throw new Error('Unsupported CSS module import: ' + specifier)
+        return load(posix.resolve(posix.dirname(relativeTo), specifier), [...ancestors, file])
+      }
     }
-    if (content.startsWith('/*', index)) {
-      const end = content.indexOf('*/', index + 2)
-      if (end === -1) break
-      index = end + 1
-      prelude += ' '
-      continue
-    }
-    if (character === '"' || character === "'") {
-      quote = character
-      prelude += ' '
-      continue
-    }
-    if (character === '[') brackets++
-    else if (character === ']') brackets--
-    if (brackets) continue
-    if (character === '(') parentheses++
-    else if (character === ')') parentheses--
-    if (!parentheses && (character === '{' || character === '}' || character === ';')) {
-      if (character === '{' && !prelude.trimStart().startsWith('@'))
-        for (const match of prelude.matchAll(/\.([a-zA-Z_][\w-]*)/g)) names.add(match[1]!)
-      prelude = ''
-    } else prelude += character
+    await postcss([
+      postcssModules({
+        Loader: DeclarationLoader,
+        getJSON: (_file, tokens) => {
+          exports = tokens
+        }
+      })
+    ]).process(content, { from: file })
+    cache.set(file, exports)
+    return exports
   }
-  return `declare const styles: {\n${[...names].map((name) => `  readonly ${literal(name)}: string`).join('\n')}\n}\nexport default styles\n`
+  const declarations = new Map<string, Buffer>()
+  for (const [file] of files) {
+    if (!file.endsWith('.module.css')) continue
+    const names = Object.keys(await load('/components/' + file))
+    declarations.set(
+      file + '.d.ts',
+      Buffer.from(
+        `declare const styles: {\n${names.map((name) => `  readonly ${literal(name)}: string`).join('\n')}\n}\nexport default styles\n`
+      )
+    )
+  }
+  return declarations
 }
 
 function componentMapping(spec: ComponentSpec, raw: RawComponent, config: FigmaConfig): string {
@@ -155,29 +170,50 @@ export default {
 `
 }
 
+type AcceptedLimit = { id: string; text: string }
+
+// The registry the install writes back: public names keep their accepted limits, in the { name, limits } form.
+function registryBytes(
+  components: readonly string[],
+  publicNames: ReadonlySet<string>,
+  limits: Readonly<Record<string, readonly AcceptedLimit[]>> = {}
+): Buffer {
+  const visibility = {
+    components: components
+      .filter((name) => publicNames.has(name))
+      .map((name) => (Object.hasOwn(limits, name) ? { name, limits: limits[name] } : name)),
+    ...(components.some((name) => !publicNames.has(name))
+      ? { internal: components.filter((name) => !publicNames.has(name)) }
+      : {})
+  }
+  return Buffer.from(JSON.stringify(visibility, null, 2) + '\n')
+}
+
 /** Consumes verified inputs supplied by runInstall; it never verifies, publishes or writes files. */
 async function planComponents(context: ComponentPlanContext): Promise<ComponentInstallPlan> {
   const { source, config, registry, runtime } = context
   if (config.imageFills !== 'placeholder')
     throw new Error('Public component installation requires the placeholder raster policy')
+  let entries: { components: string[]; internal: string[]; limits: Record<string, AcceptedLimit[]> }
+  try {
+    entries = componentRegistryEntries(registry)
+  } catch (error) {
+    throw new Error(
+      'Component registry must contain public and internal name lists only: ' +
+        (error as Error).message,
+      { cause: error }
+    )
+  }
+  const requested = [...entries.components, ...entries.internal]
   if (
-    !registry ||
-    typeof registry !== 'object' ||
-    Array.isArray(registry) ||
-    Object.keys(registry).some((key) => key !== 'components' && key !== 'internal') ||
-    !Array.isArray(registry.components) ||
-    (registry.internal !== undefined && !Array.isArray(registry.internal))
-  )
-    throw new Error('Component registry must contain public and internal name lists only')
-  const requested = [...registry.components, ...(registry.internal ?? [])]
-  if (
-    !requested.length ||
     requested.some((name) => typeof name !== 'string') ||
     new Set(requested).size !== requested.length
   )
     throw new Error('Component registry must contain unique component names only')
   for (const name of requested) assertIdentifier(name)
-  const publicNames = new Set(registry.components)
+  const publicNames = new Set(entries.components)
+  if (!requested.length)
+    return { components: [], files: new Map([['promotion.json', registryBytes([], publicNames)]]) }
   for (const file of runtimeFiles)
     if (!runtime.get(file)?.length) throw new Error(`Missing locked runtime input: ${file}`)
   const loaded = await loadSpecsFromSource(source, config, 'promotion')
@@ -250,19 +286,27 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
           .replaceAll(`from '../generated/icons'`, `from '../../foundations/icons'`)
       )
     )
-  for (const [file, bytes] of [...files])
-    if (file.endsWith('.module.css'))
-      files.set(file + '.d.ts', Buffer.from(cssDeclaration(bytes.toString('utf8'))))
+  const [collections, textStyles, gradients] = await Promise.all([
+    source.getTokenCollections(),
+    source.getTextStyles(),
+    source.getGradients()
+  ])
+  const foundations = generateFoundations({
+    collections,
+    textStyles,
+    gradients,
+    excludedPrimitives: config.excludedPrimitives
+  })
+  const textStyleModule = foundations.find(
+    (file) => file.path === 'typography/text-styles.module.css'
+  )
+  if (!textStyleModule) throw new Error('Missing generated typography CSS module')
+  for (const [file, bytes] of await cssDeclarations(files, textStyleModule.content))
+    files.set(file, bytes)
   const components = specs.map((spec) => spec.name)
-  const visibility = {
-    components: components.filter((name) => publicNames.has(name)),
-    ...(components.some((name) => !publicNames.has(name))
-      ? { internal: components.filter((name) => !publicNames.has(name)) }
-      : {})
-  }
-  files.set('promotion.json', Buffer.from(JSON.stringify(visibility, null, 2) + '\n'))
+  files.set('promotion.json', registryBytes(components, publicNames, entries.limits))
   return { components, files }
 }
 
-export { planComponents }
+export { planComponents, cssDeclarations }
 export type { ComponentPlanContext, ComponentInstallPlan }

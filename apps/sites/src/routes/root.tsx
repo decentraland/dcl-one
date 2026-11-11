@@ -14,6 +14,7 @@ import "@ui/atoms/primitives.css";
 import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
 
 import SignInModalHost from "@/features/components/auth/SignInModalHost";
+import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
 import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
 import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
@@ -256,9 +257,7 @@ export default function App() {
   // The @ui components read profiles and the like through react-query hooks
   // (ui3/src/data/hooks); one client per request on the server, one per page
   // in the browser, so SSR never shares a cache between visitors.
-  const [queryClient] = useState(
-    () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }),
-  );
+  const [queryClient] = useState(() => new QueryClient(QUERY_CLIENT_CONFIG));
   useEffect(() => {
     appHydrated = true;
     document.documentElement.removeAttribute("data-nav-loading");

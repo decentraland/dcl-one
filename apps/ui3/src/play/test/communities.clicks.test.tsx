@@ -27,9 +27,21 @@ const community = (over: Partial<Community>): Community => ({
 describe('communities page clicks', () => {
   // The community detail modal opens as a popup and reads live data via useSession(), so the page and
   // <PopupHost/> must share one SessionProvider (its `communities` is what the popup content reads).
-  function renderPage(list: Community[]): CommunitiesState {
+  // `mine` is My Communities; `items` the browse grid's pages.
+  function renderPage(items: Community[], opts: { mine?: Community[]; browse?: Partial<CommunitiesState['browse']> } = {}): CommunitiesState {
     const session = fakeSession()
-    session.communities = { ...session.communities, open: true, list, join: vi.fn(), loadDetail: vi.fn() }
+    session.communities = {
+      ...session.communities,
+      open: true,
+      list: opts.mine ?? [],
+      browse: { search: '', items, total: items.length, loading: false, loadingMore: false, ...opts.browse },
+      join: vi.fn(),
+      requestToJoin: vi.fn(),
+      cancelRequest: vi.fn(),
+      loadDetail: vi.fn(),
+      loadBrowse: vi.fn(),
+      loadMoreBrowse: vi.fn()
+    }
     render(
       <SessionProvider value={session}>
         <CommunitiesPage communities={session.communities} profile={fakeProfileState()} onNavigate={vi.fn()} />
@@ -39,10 +51,42 @@ describe('communities page clicks', () => {
     return session.communities
   }
 
-  it('Join on a browse card joins that community', async () => {
+  it('opening the page reads the first page of every community', () => {
+    const communities = renderPage([])
+    expect(vi.mocked(communities.loadBrowse)).toHaveBeenCalledWith('')
+  })
+
+  it('Join on a public browse card joins that community', async () => {
     const communities = renderPage([community({ id: 'c1', role: 'none' })])
+    expect(screen.getByText(/Public · 12 Members/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Join' }))
     expect(vi.mocked(communities.join)).toHaveBeenCalledWith('c1')
+  })
+
+  it('a private card asks to join, and cancels a request in flight', async () => {
+    const communities = renderPage([
+      community({ id: 'p1', name: 'Locked', privacy: 'private' }),
+      community({ id: 'p2', name: 'Asked', privacy: 'private', pendingRequestId: 'r2' })
+    ])
+    expect(screen.getAllByText(/Private · 12 Members/)).toHaveLength(2)
+    expect(screen.queryByRole('button', { name: 'Join' })).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Request to Join' }))
+    expect(vi.mocked(communities.requestToJoin)).toHaveBeenCalledWith('p1')
+    await userEvent.click(screen.getByRole('button', { name: 'Cancel join request' }))
+    expect(vi.mocked(communities.cancelRequest)).toHaveBeenCalledWith('p2', 'r2')
+    // neither click opened the card
+    expect(vi.mocked(communities.loadDetail)).not.toHaveBeenCalled()
+  })
+
+  it("shows the user's friends in the community and its description", () => {
+    const friends = [
+      { address: '0xa', name: 'Mojito', hasClaimedName: true },
+      { address: '0xb', name: 'Kimbo', hasClaimedName: false }
+    ]
+    renderPage([community({ id: 'c1', friends })])
+    expect(screen.getByLabelText('Friends in this community: Mojito, Kimbo')).toBeInTheDocument()
+    expect(screen.getByRole('tooltip', { name: 'Mojito' })).toBeInTheDocument()
+    expect(screen.getByText('we build')).toBeInTheDocument()
   })
 
   it('View on a joined community opens its modal and loads detail', async () => {
@@ -52,23 +96,111 @@ describe('communities page clicks', () => {
     expect(screen.getByRole('heading', { name: 'Builders' })).toBeInTheDocument()
   })
 
-  // the bridge adds the user's communities the browse page left out (unlisted ones too) to the list
-  it('My Communities lists every membership in the list, an unlisted one included', async () => {
+  // My Communities is its own list (every membership, an unlisted one too), apart from the grid
+  it('My Communities lists every membership, an unlisted one included', async () => {
     const hidden = community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner', privacy: 'private', visibility: 'unlisted' })
-    const communities = renderPage([community({ id: 'c1', role: 'none' }), hidden])
+    const communities = renderPage([community({ id: 'c1', role: 'none' })], { mine: [hidden] })
     expect(screen.queryByText("You haven't joined any communities yet.")).toBeNull()
-    // its row under My Communities, and its card at the end of the Browse grid
-    const rows = screen.getAllByRole('button', { name: /Secret Club/ })
-    expect(rows).toHaveLength(2)
-    await userEvent.click(rows[0])
+    await userEvent.click(screen.getByRole('button', { name: /Secret Club/ }))
     expect(vi.mocked(communities.loadDetail)).toHaveBeenCalledWith('c-unlisted')
     expect(screen.getByRole('heading', { name: 'Secret Club' })).toBeInTheDocument()
   })
 
   it('VIEW ALL shows the communities the user is a member of', async () => {
-    renderPage([community({ id: 'c1', role: 'none' }), community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner' })])
+    renderPage([community({ id: 'c1', role: 'none' })], { mine: [community({ id: 'c-unlisted', name: 'Secret Club', role: 'owner' })] })
+    expect(screen.getByText('Browse Communities')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /VIEW ALL/ }))
-    expect(screen.getByText('My Communities (1)')).toBeInTheDocument()
+    expect(screen.getByText('My Communities', { selector: 'span:not([class*="sideHead"])' })).toBeInTheDocument()
+    expect(screen.getByText('(1)')).toBeInTheDocument()
+  })
+
+  it("titles the grid with the service's total", () => {
+    renderPage([community({ id: 'c1' })], { browse: { total: 57 } })
+    expect(screen.getByText('Browse Communities')).toBeInTheDocument()
+    expect(screen.getByText('(57)')).toBeInTheDocument()
+  })
+
+  it('searches a second after typing stops, at once on Enter, and lists everything when cleared', () => {
+    vi.useFakeTimers()
+    try {
+      const communities = renderPage([])
+      const loadBrowse = vi.mocked(communities.loadBrowse)
+      loadBrowse.mockClear()
+      const field = screen.getByRole('textbox', { name: 'Search' })
+      fireEvent.change(field, { target: { value: 'pi' } })
+      fireEvent.change(field, { target: { value: 'pix' } })
+      act(() => vi.advanceTimersByTime(999))
+      expect(loadBrowse).not.toHaveBeenCalled()
+      act(() => vi.advanceTimersByTime(1))
+      expect(loadBrowse).toHaveBeenCalledTimes(1)
+      expect(loadBrowse).toHaveBeenCalledWith('pix')
+      fireEvent.change(field, { target: { value: 'pixel' } })
+      fireEvent.keyDown(field, { key: 'Enter' })
+      expect(loadBrowse).toHaveBeenLastCalledWith('pixel')
+      // the delayed search for the same text was cancelled
+      act(() => vi.advanceTimersByTime(2000))
+      expect(loadBrowse).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByRole('button', { name: 'Clear search' }))
+      expect(loadBrowse).toHaveBeenLastCalledWith('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('the same search again reads nothing', () => {
+    const communities = renderPage([], { browse: { search: 'pix' } })
+    const loadBrowse = vi.mocked(communities.loadBrowse)
+    loadBrowse.mockClear()
+    const field = screen.getByRole('textbox', { name: 'Search' })
+    fireEvent.change(field, { target: { value: 'pix' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(loadBrowse).not.toHaveBeenCalled()
+  })
+
+  it("titles search results, says when nothing matches, and goes back to every community", async () => {
+    const communities = renderPage([], { browse: { search: 'zzzz' } })
+    expect(screen.getByText("Results for 'zzzz'")).toBeInTheDocument()
+    expect(screen.getByText('(0)')).toBeInTheDocument()
+    expect(screen.getByText('No Communities match your search terms.')).toBeInTheDocument()
+    vi.mocked(communities.loadBrowse).mockClear()
+    await userEvent.click(screen.getByRole('button', { name: 'Back to Browse Communities' }))
+    expect(vi.mocked(communities.loadBrowse)).toHaveBeenCalledWith('')
+  })
+
+  it('a failed first page shows no count and no empty state (the toast says it failed)', () => {
+    renderPage([], { browse: { failed: true, total: 0 } })
+    expect(screen.getByText('Browse Communities')).toBeInTheDocument()
+    expect(screen.queryByText('(0)')).toBeNull()
+    expect(screen.queryByText('No Communities match your search terms.')).toBeNull()
+  })
+
+  it('shows a spinner and no count while the first page is read', () => {
+    renderPage([], { browse: { loading: true, total: 0 } })
+    expect(screen.queryByText('(0)')).toBeNull()
+    expect(screen.queryByText('No Communities match your search terms.')).toBeNull()
+  })
+
+  it("reads the next page when the grid's end comes into view, while there is one", () => {
+    const observed: Array<(entries: Array<{ isIntersecting: boolean }>) => void> = []
+    class FakeObserver {
+      constructor(cb: (entries: Array<{ isIntersecting: boolean }>) => void) {
+        observed.push(cb)
+      }
+      observe(): void {}
+      disconnect(): void {}
+    }
+    vi.stubGlobal('IntersectionObserver', FakeObserver)
+    try {
+      const communities = renderPage([community({ id: 'c1' })], { browse: { total: 30 } })
+      act(() => observed.at(-1)?.([{ isIntersecting: true }]))
+      expect(vi.mocked(communities.loadMoreBrowse)).toHaveBeenCalledTimes(1)
+      cleanup()
+      observed.length = 0
+      renderPage([community({ id: 'c1' })], { browse: { total: 1 } })
+      expect(observed).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 })
 

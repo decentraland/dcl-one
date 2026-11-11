@@ -48,6 +48,27 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
+export interface PointerReport {
+  hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+  events: { event: string; button: string; tick: number }[]
+  diagnosis: string | null
+}
+
+/** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
+export interface RaycastStats {
+  budgetMs: number
+  ran: number
+  deferred: number
+  spentMs: number
+  uncappedRan: number
+  uncappedSpentMs: number
+}
+
 export interface Control {
   found: true
   role: string
@@ -132,6 +153,48 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** `/voice`'s actions: ring (`call`), answer (`accept` / `reject`), hang up or leave (`end`), open,
+ *  join or close a community stream, raise the hand, the call mic, and moderation (`deny` turns
+ *  down a raised hand). */
+export type VoiceAction =
+  | ['call', string]
+  | ['accept' | 'reject' | 'end' | 'close']
+  | ['start' | 'join', string]
+  | ['hand', 'up' | 'down']
+  | ['mic', 'on' | 'off']
+  | ['promote' | 'demote' | 'kick' | 'deny', string]
+
+/** The private call or community stream as the HUD sees it: its status
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+  /** `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure. */
+  errorIsNotice: boolean
+}
+
 /** `/community_state`: community chat's routing and counters (no message bodies). */
 export interface CommunityState {
   routerIdentity: string
@@ -153,6 +216,8 @@ export interface VoiceState {
   connected: boolean | null
   rooms: { scene: boolean; state: string }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
 }
 
 export interface ScreenPosition {
@@ -530,6 +595,12 @@ export class Explorer {
     return this.json<VoiceState>('/voice_state')
   }
 
+  /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and
+   *  refusals). Only queues the request: `/voice_state` `call` follows. */
+  async voice(...action: VoiceAction): Promise<void> {
+    await this.run(['/voice', ...action].join(' '))
+  }
+
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */
   async time(hours?: number, speed?: number): Promise<{ before: string; after: string; speed: number }> {
     const reply = await this.run(['/time', hours === undefined ? '' : String(hours), speed === undefined ? '' : String(speed)].join(' '))
@@ -597,6 +668,49 @@ export class Explorer {
 
   entityScreenPosition(entity: string | number, options: { bounds?: boolean } = {}): Promise<ScreenPosition> {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
+  }
+
+  /** Aims the pointer at an entity and reports what it hovers; a blocked outcome resolves with `diagnosis` set; a refusal rejects. */
+  hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
+    let line = `/hover_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.frames !== undefined) line += ` --frames ${options.frames}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  async clearPointer(): Promise<void> {
+    await this.run('/hover_entity --clear')
+  }
+
+  clickEntity(
+    entity: string | number,
+    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+  ): Promise<PointerReport> {
+    let line = `/click_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.button) line += ` --button ${options.button}`
+    if (options.event) line += ` --event ${options.event}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  raycastStats(): Promise<RaycastStats> {
+    return this.json<RaycastStats>('/raycast_stats')
+  }
+
+  /** The capped raycast tier's budget in ms; with `ms`, overrides it first, and `'auto'` returns it to a tenth of the target frame. */
+  async raycastBudget(ms?: number | 'auto'): Promise<number> {
+    const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
+    const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
+    if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
+    return Number(match[1])
+  }
+
+  /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    return reply === '(no logs)' ? [] : reply.split('\n')
   }
 
   async close(): Promise<void> {

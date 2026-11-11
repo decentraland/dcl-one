@@ -1,0 +1,125 @@
+[
+  {
+    "name": "null-lfs",
+    "mutation": "null-lfs",
+    "valid": false
+  },
+  {
+    "name": "extra-lfs-key",
+    "mutation": "extra-lfs-key",
+    "valid": false
+  },
+  {
+    "name": "unsafe-lfs-size",
+    "mutation": "unsafe-lfs-size",
+    "valid": false
+  },
+  {
+    "name": "duplicate-groups",
+    "mutation": "duplicate-groups",
+    "valid": false
+  },
+  {
+    "name": "owned-file",
+    "mutation": "owned-file",
+    "valid": false
+  },
+  {
+    "name": "node-modules-file",
+    "mutation": "node-modules-file",
+    "valid": false
+  },
+  {
+    "name": "duplicate-edge",
+    "mutation": "duplicate-edge",
+    "valid": false
+  },
+  {
+    "name": "unsorted-edges",
+    "mutation": "unsorted-edges",
+    "valid": false
+  },
+  {
+    "name": "integral-decimal",
+    "mutation": "integral-decimal",
+    "valid": true
+  },
+  {
+    "name": "fractional-lfs-size",
+    "mutation": "fractional-lfs-size",
+    "valid": false
+  },
+  {
+    "name": "boolean-lfs-size",
+    "mutation": "boolean-lfs-size",
+    "valid": false
+  },
+  {
+    "name": "unmaterialized-lfs",
+    "mutation": "unmaterialized-lfs",
+    "valid": false
+  },
+  {
+    "name": "missing-resolution-scope",
+    "mutation": "missing-resolution-scope",
+    "valid": false
+  },
+  {
+    "name": "extra-resolution-scope",
+    "mutation": "extra-resolution-scope",
+    "valid": false
+  },
+  {
+    "name": "unsorted-namespace",
+    "mutation": "unsorted-namespace",
+    "valid": false
+  },
+  {
+    "name": "duplicate-namespace-name",
+    "mutation": "duplicate-namespace-name",
+    "valid": false
+  },
+  {
+    "name": "unsafe-namespace-name",
+    "mutation": "unsafe-namespace-name",
+    "valid": false
+  },
+  {
+    "name": "invalid-namespace-kind",
+    "mutation": "invalid-namespace-kind",
+    "valid": false
+  },
+  {
+    "name": "control-character-namespace-name",
+    "mutation": "control-character-namespace-name",
+    "valid": false
+  },
+  {
+    "name": "boolean-schema",
+    "mutation": "boolean-schema",
+    "valid": false
+  },
+  {
+    "name": "fractional-schema",
+    "mutation": "fractional-schema",
+    "valid": false
+  },
+  {
+    "name": "forged-pointer-raw-hash",
+    "mutation": "forged-pointer-raw-hash",
+    "valid": false,
+    "nixValid": true
+  },
+  {
+    "name": "forged-crlf-pointer-lfs",
+    "mutation": "forged-crlf-pointer-lfs",
+    "valid": false,
+    "nixValid": true
+  },
+  {
+    "name": "wrong-materialized-lfs-size",
+    "mutation": "wrong-materialized-lfs-size",
+    "valid": false,
+    "nixValid": true
+  }
+]

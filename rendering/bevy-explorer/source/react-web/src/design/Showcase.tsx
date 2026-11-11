@@ -17,6 +17,7 @@ import reelShareIcon from '../assets/camera-reel/share-x.png'
 import reelLinkIcon from '../assets/camera-reel/copy-link.png'
 import reelDownloadIcon from '../assets/camera-reel/download.png'
 import reelDeleteIcon from '../assets/camera-reel/delete.png'
+import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
@@ -41,6 +42,7 @@ import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
 import { seedProfiles } from '../features/session/profileStore'
 import { EmoteSlot } from '../features/emotes/EmoteSlot'
 import { catalystThumbUrl } from '../lib/identity'
+import streamBadge from '../assets/voice/stream-badge.png'
 
 // A chat bubble resolves its sender through the profile store, so the demo line's author is seeded.
 const MOJITO = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
@@ -489,6 +491,7 @@ export function Showcase(): React.JSX.Element {
           ))}
           <IconButton icon="profile" label="Profile (avatar)" avatar={{ name: 'Mojito', color: 'var(--lavender)' }} />
           <IconButton icon="voice-hearing" label="Voice (connected)" indicator />
+          <IconButton icon="communities" label="Communities (live stream)" cornerArt={{ src: streamBadge, label: 'A community stream is live' }} />
         </Panel>
       </Section>
 
@@ -536,6 +539,13 @@ export function Showcase(): React.JSX.Element {
 
       <Section title="AnchoredMenu (a ContextMenu opened from a button, as the photo options use it)">
         <AnchoredMenuDemo />
+      </Section>
+
+      <Section title="KebabMenu (md · sm)">
+        <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
+          <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
+          <KebabMenu size="sm" label="Participant options" items={(close) => [{ label: 'View profile', onClick: close }]} />
+        </div>
       </Section>
 
       <Section title="HintsButton (opens upward)">

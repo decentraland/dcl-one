@@ -52,9 +52,13 @@ const INTERNAL_PARAMS = [
   'showcase',
   'gate',
   'nogate',
+  // forces the integrated-GPU guide (features/gate/IntegratedGpuGuide.tsx) for a look at it
+  'gpuGuide',
   'bundled',
   'simerror',
   'simhover',
+  'mockcall',
+  'mockstream',
   'previousLogin',
   'perm',
   'worldpw',

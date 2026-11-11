@@ -234,6 +234,18 @@ class ConfigurationTest(unittest.TestCase):
         for body in bodies:
             self.assertIn(f"limit_conn deploy_uploads {gateway.DEPLOY_CONNECTIONS_PER_ADDRESS};", body)
 
+    def test_protected_storage_keeps_the_apps_content_headers(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_STORAGE_ROOT": "/content"})
+        table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [], "deploy": ["/entities"]}
+        text = gateway.render(table, cfg, "/mime.types")
+        body = re.search(r"location \^~ /__protected_storage/ \{\n(.*?)\n\}", text, re.S)[1]
+        # The app's Cache-Control passes through the redirect; a second one would double it.
+        self.assertNotIn("Cache-Control", body)
+        self.assertIn("add_header Access-Control-Expose-Headers "
+                      "$upstream_http_access_control_expose_headers always;", body)
+        # Ranges the app does not answer itself get the whole file, as upstream.
+        self.assertIn("max_ranges 0;", body)
+
     def worlds_locations(self):
         cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1", "GATEWAY_DOMAIN": "example.test"})
         table = {"sites": [], "internal": ["/metrics"], "node": [], "aliases": [],
