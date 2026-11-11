@@ -353,9 +353,10 @@ async function memberSection(id: string, section: CommunityMemberSection): Promi
   return await sectionRows(`${b}/requests?type=${type}&limit=${SECTION_LIMIT}&offset=0`)
 }
 
-// The browser's Invites & Requests section: the user's invites, the join requests each community they own or moderate received (read up to 1000
-// each), and their own join requests. A list that cannot be read is named in `failed`.
-const REQUESTS_RECEIVED_LIMIT = 1000
+// The browser's Invites & Requests section: the user's invites, the join requests each community
+// they own or moderate received (the first 100 each, the service's page cap), and their own join
+// requests. A list that cannot be read is named in `failed`.
+const REQUESTS_RECEIVED_LIMIT = 100
 async function invitesAndRequests(): Promise<CommunityInvitesMessage> {
   const failed: CommunityInvitesMessage['failed'] = []
   const asCommunities = async (type: PendingType, list: 'invites' | 'requestsSent'): Promise<Community[]> => {
@@ -390,6 +391,26 @@ async function invitesAndRequests(): Promise<CommunityInvitesMessage> {
     asCommunities('request_to_join', 'requestsSent')
   ])
   return { kind: 'communityInvites', invites, requestsReceived, requestsSent, failed }
+}
+
+// The sidebar's counter alone, read when the Communities page opens: how many invites the user has
+// and how many join requests their owned or moderated communities received, from each read's total
+// (one row asked for). A read that fails counts nothing.
+async function invitesCount(): Promise<number> {
+  const owner = signedInAddress()
+  if (owner === '') return 0
+  const total = async (url: string): Promise<number> => {
+    const res = await signed<{ total?: number }>(url).catch((e: unknown) => {
+      console.error('[communities] count read failed', e)
+      return undefined
+    })
+    return typeof res?.total === 'number' ? res.total : 0
+  }
+  const invites = total(`${await serviceBase('socialApi')}/v2/members/${encodeURIComponent(owner)}/requests?type=invite&limit=1`)
+  const managed = (await memberOfRaw().catch(() => [])).filter((c) => c.role === 'owner' || c.role === 'moderator')
+  const b = await base('v2')
+  const received = managed.map(async (c) => await total(`${b}/${encodeURIComponent(c.id)}/requests?type=request_to_join&limit=1&offset=0`))
+  return (await Promise.all([invites, ...received])).reduce((n, t) => n + t, 0)
 }
 
 // The form's places picker, as unity-explorer's CommunityCreationEditionController: the places
@@ -736,6 +757,9 @@ export function registerCommunities(ctx: Ctx): void {
     ctx.send(await invitesAndRequests())
   }
   ctx.on('getCommunityInvites', sendInvites)
+  ctx.on('getCommunityInvitesCount', async () => {
+    ctx.send({ kind: 'communityInvitesCount', count: await invitesCount() })
+  })
   const sendSection = async (id: string, section: CommunityMemberSection): Promise<void> => {
     const read = await memberSection(id, section).catch((e: unknown) => {
       console.error(`[communities] ${section} read failed`, e)

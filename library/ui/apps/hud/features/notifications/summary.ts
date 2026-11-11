@@ -2,6 +2,7 @@
 // age, and where clicking it leads. Shared by the panel and the new-notification toast.
 
 import { openCommunityModal } from '../communities/CommunityModal'
+import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
 import type { AppNotification } from '@explorer-core/engine/protocol'
 import type { ChatState, FriendsState, VoiceChatSession } from '../session/useEngineSession'
 import { nativeProfileImage } from '@hud-host'
@@ -138,12 +139,9 @@ export function streamTarget(n: AppNotification, voiceChat?: VoiceChatSession, c
   }
 }
 
-// the notifications that open their community's card
-const COMMUNITY_CARD_TYPES = new Set(['community_invite_received', 'community_request_to_join_received', 'community_request_to_join_accepted'])
-
 /** A community invite or join request notification opens that community's card. */
 export function communityTarget(n: AppNotification): (() => void) | undefined {
-  if (!COMMUNITY_CARD_TYPES.has(n.type)) return undefined
+  if (!COMMUNITY_REQUEST_NOTIFICATIONS.has(n.type)) return undefined
   const communityId = str(n.metadata, 'communityId')
   if (communityId == null) return undefined
   return () => {

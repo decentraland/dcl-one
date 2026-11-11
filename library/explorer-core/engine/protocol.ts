@@ -230,6 +230,7 @@ export type PageToScene =
   | CancelJoinRequestRequest
   | ManageCommunityRequestRequest
   | GetCommunityInvitesRequest
+  | GetCommunityInvitesCountRequest
   | GetCommunityMemberSectionRequest
   | GetInvitableCommunitiesRequest
   | InviteToCommunityRequest
@@ -1423,6 +1424,16 @@ export interface CommunityRequestsGroup {
 export interface GetCommunityInvitesRequest {
   kind: 'getCommunityInvites'
 }
+/** The sidebar's counter alone (page → scene), read when the Communities page opens: the full
+ *  section is read only when it opens. */
+export interface GetCommunityInvitesCountRequest {
+  kind: 'getCommunityInvitesCount'
+}
+/** How many invites and requests received wait on the user (scene → page). */
+export interface CommunityInvitesCountMessage {
+  kind: 'communityInvitesCount'
+  count: number
+}
 /** The answer to GetCommunityInvitesRequest (scene → page). `failed` names the lists that could not
  *  be read; those are empty. */
 export interface CommunityInvitesMessage {
@@ -2176,6 +2187,7 @@ export type SceneToPage =
   | RequestFailedMessage
   | CommunityDetailMessage
   | CommunityInvitesMessage
+  | CommunityInvitesCountMessage
   | CommunityMemberSectionMessage
   | InvitableCommunitiesMessage
   | CommunityInviteSentMessage

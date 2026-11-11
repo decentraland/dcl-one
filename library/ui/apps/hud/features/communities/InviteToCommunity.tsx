@@ -20,6 +20,11 @@ export function InviteToCommunityIcon(): React.JSX.Element {
   )
 }
 
+/** The items with `close` run first, so picking a community closes the menu it is in. */
+export function closingFirst(items: ContextMenuItem[], close: () => void): ContextMenuItem[] {
+  return items.map((it) => ('onClick' in it && it.onClick != null ? { ...it, onClick: () => { close(); it.onClick?.() } } : it))
+}
+
 /** The submenu's items for a person: one per community the user may invite them to, empty while
  *  reading or when there are none. Nothing is read when `enabled` is false (the user's own menu, a
  *  guest, or a host that has no invite). */

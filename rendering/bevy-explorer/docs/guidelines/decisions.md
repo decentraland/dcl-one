@@ -181,9 +181,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   opens Invites, Requests Received (only for a user who owns or moderates a community; one group
   per community, each request with ACCEPT, REJECT and the member menu without owner actions) and
   Requests Sent, each titled with its count, and "No pending invites or requests." when all are
-  empty. Its counter is the invites plus the requests received. It is read when the page opens,
-  when the section opens, after any answer, and when an invite or request notification arrives
-  while the page is open. The card shows ACCEPT INVITE and REJECT INVITE (asked first) for a
+  empty. Its counter is the invites plus the requests received. Unlike unity-explorer, opening the
+  page reads only the counter (each read's total, one row asked for); the section is read in full
+  when it opens, after any answer, and when an invite or request notification arrives while the
+  page is open (the counter alone until the section has been opened). Requests Received shows a
+  community's first 100 requests, the service's page cap. The card shows ACCEPT INVITE and REJECT INVITE (asked first) for a
   pending invite, and its Members tab gives owners and moderators MEMBERS, BANNED (with UNBAN),
   JOIN REQUESTS (private communities, with its counter) and INVITED (with CANCEL). Invite to
   Community, in the user menus, the member menus and the passport but not the voice panel's,

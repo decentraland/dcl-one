@@ -18,7 +18,7 @@ import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@explorer-cor
 import { PROFILE_FIELDS } from '@explorer-core/features/profile/profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
-import { INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
+import { closingFirst, INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
 
 type Tab = 'overview' | 'badges' | 'photos' | 'creations'
@@ -380,7 +380,7 @@ export function ProfilePassport({
       kind: 'submenu',
       label: INVITE_TO_COMMUNITY,
       icon: <InviteToCommunityIcon />,
-      items: inviteItems.map((it) => ('onClick' in it && it.onClick != null ? { ...it, onClick: () => { setMenuOpen(false); it.onClick?.() } } : it))
+      items: closingFirst(inviteItems, () => setMenuOpen(false))
     })
   }
   if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })

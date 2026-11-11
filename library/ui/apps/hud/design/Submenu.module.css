@@ -25,17 +25,13 @@
   font-size: var(--fs-lg);
 }
 
-/* Beside the row, its top level with the row's, scrolled past 600px. */
+/* Beside the row, its top level with the row's. */
 .flyout {
   position: absolute;
   top: 0;
   left: 100%;
   padding-left: 4px;
   z-index: var(--z-popup);
-}
-.flyout > * {
-  max-height: 600px;
-  overflow-y: auto;
 }
 
 /* No room on the right: the list opens on the row's left. */

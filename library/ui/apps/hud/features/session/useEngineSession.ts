@@ -36,6 +36,7 @@ import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
+import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
 import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
@@ -148,8 +149,11 @@ export const INVITES_LOAD_ERROR: Record<CommunityInvitesMessage['failed'][number
 export const INVITE_SENT = 'Invite to Community Sent'
 export const INVITE_FAILED = 'Error sending invitation. Please try again.'
 export const INVITABLE_FAILED = "Error loading 'Invite to Community' menu option. Reopen menu to try again."
-// the notifications that change the Invites & Requests section
-const INVITE_NOTIFICATIONS = new Set(['community_invite_received', 'community_request_to_join_received', 'community_request_to_join_accepted'])
+// A community member as the profile store keeps them: an unclaimed name with its #tag, as every
+// explorer shows it (the card reads a bare name as claimed).
+function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfiles>[0] {
+  return members.map((m) => ({ address: m.address, name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`, picture: m.picture, claimed: m.hasClaimedName }))
+}
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
 // Fallbacks only: the menu reads the live clock with `/time` when it opens.
@@ -347,6 +351,11 @@ export interface CommunitiesState {
   invites: CommunityInvitesMessage | null
   /** Read the Invites & Requests section (and its counter) again. */
   loadInvites: () => void
+  /** How many invites and requests received wait on the user, for the sidebar's counter; null
+   *  until read. */
+  pendingCount: number | null
+  /** Read the counter alone (the Communities page opening). */
+  loadInvitesCount: () => void
   /** Accept, reject or cancel an invite or a join request. `address` names the member when an
    *  owner or moderator answers their request or cancels their invite; without it the request is
    *  the user's own invite. A failure is toasted. */
@@ -1338,6 +1347,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // The community whose card asked for its detail last: details for any other are dropped.
   const detailWanted = useRef<string | null>(null)
   const [communityInvites, setCommunityInvites] = useState<CommunityInvitesMessage | null>(null)
+  const communityInvitesRef = useRef<CommunityInvitesMessage | null>(null)
+  communityInvitesRef.current = communityInvites
+  const [pendingCount, setPendingCount] = useState<number | null>(null)
   const [memberSections, setMemberSections] = useState<Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>>>({})
   const [invitable, setInvitable] = useState<InvitableCommunitiesMessage | null>(null)
   const invitableWanted = useRef<string | null>(null)
@@ -1827,7 +1839,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           // an invite or a request arriving while the Communities page is open reads its Invites &
           // Requests section again
-          if (communitiesOpenRef.current && fresh.some((n) => INVITE_NOTIFICATIONS.has(n.type))) driverRef.current?.send({ kind: 'getCommunityInvites' })
+          // (the whole section once it has been read, else its counter alone)
+          if (communitiesOpenRef.current && fresh.some((n) => COMMUNITY_REQUEST_NOTIFICATIONS.has(n.type))) {
+            driverRef.current?.send({ kind: communityInvitesRef.current != null ? 'getCommunityInvites' : 'getCommunityInvitesCount' })
+          }
           // a request of the user's accepted: they are a member now. My Communities, the grid and
           // that community's open card are read again
           const joined = fresh.filter((n) => n.type === 'community_request_to_join_accepted').map((n) => n.metadata?.communityId).filter((id): id is string => typeof id === 'string')
@@ -1948,13 +1963,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           answering.current.clear()
           for (const list of msg.failed) showToast(INVITES_LOAD_ERROR[list], { tone: 'error' })
           // the requesters' names and faces, for their menu and the passport they open
-          seedProfiles(msg.requestsReceived.flatMap((g) => g.requests).map((m) => ({ address: m.address, name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`, picture: m.picture, claimed: m.hasClaimedName })))
+          seedProfiles(memberProfiles(msg.requestsReceived.flatMap((g) => g.requests)))
           setCommunityInvites({ ...msg, invites: msg.invites.map(withSavedPicture), requestsSent: msg.requestsSent.map(withSavedPicture) })
+          setPendingCount(msg.invites.length + msg.requestsReceived.reduce((n, g) => n + g.total, 0))
+          break
+        case 'communityInvitesCount':
+          setPendingCount(msg.count)
           break
         case 'communityMemberSection':
           // only the card open now
           if (msg.id !== detailWanted.current) break
-          seedProfiles(msg.members.map((m) => ({ address: m.address, name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`, picture: m.picture, claimed: m.hasClaimedName })))
+          seedProfiles(memberProfiles(msg.members))
           setMemberSections((prev) => ({ ...prev, [msg.section]: msg }))
           break
         case 'invitableCommunities':
@@ -1994,16 +2013,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communityDetail':
           // only the card open now: a re-read for a card already closed must not replace its detail
           if (msg.id !== detailWanted.current) break
-          // the members' names and faces, for the member menu and the passport they open; an unclaimed
-          // name with its #tag, as every explorer shows it (the card reads a bare name as claimed)
-          seedProfiles(
-            msg.members.map((m) => ({
-              address: m.address,
-              name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`,
-              picture: m.picture,
-              claimed: m.hasClaimedName
-            }))
-          )
+          // the members' names and faces, for the member menu and the passport they open
+          seedProfiles(memberProfiles(msg.members))
           setCommunityDetail(msg)
           break
         case 'communityChannels': {
@@ -3398,6 +3409,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const loadCommunityInvites = useCallback(() => {
     driverRef.current?.send({ kind: 'getCommunityInvites' })
   }, [])
+  const loadCommunityInvitesCount = useCallback(() => {
+    driverRef.current?.send({ kind: 'getCommunityInvitesCount' })
+  }, [])
   const manageCommunityRequest = useCallback((id: string, requestId: string, intention: 'accepted' | 'rejected' | 'cancelled', address?: string) => {
     // one answer per request: a second click while the first runs would answer a request the
     // first already settled, and toast an error after the success
@@ -3607,6 +3621,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunities([])
     setCommunityCards({})
     setCommunityInvites(null)
+    setPendingCount(null)
     answering.current.clear()
     setMemberSections({})
     setInvitable(null)
@@ -4412,7 +4427,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, manageRequest: manageCommunityRequest, memberSections, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

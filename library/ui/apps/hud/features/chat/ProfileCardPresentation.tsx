@@ -8,7 +8,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
-import { INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
+import { closingFirst, INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
@@ -237,7 +237,7 @@ export function ProfileCardPresentation({
       className={styles.row}
       label={INVITE_TO_COMMUNITY}
       icon={<InviteToCommunityIcon />}
-      items={inviteItems.map((it) => ('onClick' in it && it.onClick != null ? { ...it, onClick: () => { onClose(); it.onClick?.() } } : it))}
+      items={closingFirst(inviteItems, onClose)}
     />
   )
   const call = showCall && (

@@ -1175,6 +1175,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       }
       const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
       changes.set(msg.address, role)
+      // as the bridge, a ban adds the member to the Banned section and sends it again
+      if (msg.action === 'ban') {
+        mockSections.banned.set(msg.id, [...mockSection('banned', msg.id), { address: msg.address, name: msg.address.slice(0, 10), role: 'none', requestId: '' }])
+        reply({ kind: 'communityMemberSection', id: msg.id, section: 'banned', members: mockSection('banned', msg.id), total: mockSection('banned', msg.id).length })
+      }
       mockMemberChanges.set(msg.id, changes)
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (msg.action === 'transfer' && c != null) {
@@ -1197,6 +1202,12 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         requestsSent: mockCommunities.filter((c) => c.pendingRequestId != null).map((c) => ({ ...c })),
         failed: []
       })
+    }
+    if (msg.kind === 'getCommunityInvitesCount') {
+      const invites = mockCommunities.filter((c) => c.pendingInviteId != null).length
+      const received = mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator').reduce((n, c) => n + mockSection('requests', c.id).length, 0)
+      setTimeout(() => reply({ kind: 'communityInvitesCount', count: invites + received }), 300)
+      return
     }
     if (msg.kind === 'getCommunityInvites') {
       setTimeout(sendInvites, 400)

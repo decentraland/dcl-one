@@ -19,6 +19,8 @@ export type ContextMenuItem =
 
 interface ContextMenuProps {
   items: ContextMenuItem[]
+  /** Scroll past a long list's maximum height (a submenu's list of names). */
+  scroll?: boolean
 }
 
 function shortAddress(a: string): string {
@@ -26,9 +28,9 @@ function shortAddress(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`
 }
 
-export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
+export function ContextMenu({ items, scroll = false }: ContextMenuProps): React.JSX.Element {
   return (
-    <div className={styles.ctx} role="menu">
+    <div className={`${styles.ctx} ${scroll ? styles.scroll : ''}`.trim()} role="menu">
       {items.map((it, i) => {
         if (it.kind === 'separator') return <div className={styles.sep} key={i} />
 

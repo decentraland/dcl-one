@@ -39,7 +39,7 @@ const ME = '0x' + 'e'.repeat(40)
 
 function renderPage(over: Partial<CommunitiesState> = {}): CommunitiesState {
   const session = fakeSession()
-  session.communities = { ...session.communities, open: true, manageRequest: vi.fn(), loadInvites: vi.fn(), ...over }
+  session.communities = { ...session.communities, open: true, manageRequest: vi.fn(), loadInvites: vi.fn(), loadInvitesCount: vi.fn(), ...over }
   render(
     <SessionProvider value={session}>
       <CommunitiesPage communities={session.communities} profile={fakeProfileState({ data: { address: ME, name: 'Me', hasClaimedName: true, isGuest: false } as never })} onNavigate={vi.fn()} />
@@ -59,15 +59,10 @@ const invites = (over: Partial<CommunityInvitesMessage> = {}): CommunityInvitesM
 })
 
 describe('the browser’s Invites & Requests', () => {
-  it('reads the section when the page opens, and counts invites and requests received', () => {
-    const c = renderPage({
-      list: [community({ id: 'c8', role: 'owner' })],
-      invites: invites({
-        invites: [community({ id: 'c3', pendingInviteId: 'i3' })],
-        requestsReceived: [{ community: community({ id: 'c8', role: 'owner' }), requests: [person(1), person(2)], total: 2 }]
-      })
-    })
-    expect(vi.mocked(c.loadInvites)).toHaveBeenCalled()
+  it('reads only the counter when the page opens, and shows it', () => {
+    const c = renderPage({ pendingCount: 3 })
+    expect(vi.mocked(c.loadInvitesCount)).toHaveBeenCalled()
+    expect(vi.mocked(c.loadInvites)).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Invites & Requests, 3 pending' })).toHaveTextContent('3')
   })
 
@@ -85,8 +80,8 @@ describe('the browser’s Invites & Requests', () => {
     expect(screen.getByRole('heading', { name: 'Requests Received (1)' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Requests Sent (1)' })).toBeInTheDocument()
     expect(screen.getByText('1 Request Received')).toBeInTheDocument()
-    // the section is read again on opening it
-    expect(vi.mocked(c.loadInvites)).toHaveBeenCalledTimes(2)
+    // the section is read on opening it
+    expect(vi.mocked(c.loadInvites)).toHaveBeenCalledTimes(1)
   })
 
   it('accepts an invite, and rejects one only after asking', async () => {
@@ -279,9 +274,13 @@ describe('the session’s invites and requests', () => {
     expect(h.driver.sentOf('getCommunityInvites')).toHaveLength(1)
     expect(h.driver.sentOf('manageCommunityRequest')).toEqual([{ kind: 'manageCommunityRequest', id: 'c8', requestId: 'rq1', intention: 'accepted', address: '0xa' }])
     expect(h.driver.sentOf('getCommunityMemberSection')).toEqual([{ kind: 'getCommunityMemberSection', id: 'c8', section: 'banned' }])
+    act(() => h.driver.emit({ kind: 'communityInvitesCount', count: 4 }))
+    expect(h.session().communities.pendingCount).toBe(4)
     act(() => h.driver.emit(invites({ failed: ['invites'] })))
     expect(await screen.findByText(INVITES_LOAD_ERROR.invites)).toBeInTheDocument()
     expect(h.session().communities.invites?.invites).toEqual([])
+    // the full read sets the counter too
+    expect(h.session().communities.pendingCount).toBe(0)
     act(() => h.driver.emit({ kind: 'communityInviteSent', id: 'c8', address: '0xa', ok: true }))
     expect(await screen.findByText(INVITE_SENT)).toBeInTheDocument()
   })

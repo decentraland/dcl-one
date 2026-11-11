@@ -153,13 +153,6 @@ function LoadMore({ count, onVisible }: { count: number; onVisible: () => void }
   return <div ref={ref} className={styles.loadMore} aria-hidden="true" />
 }
 
-/** How many invites and requests wait on the user, for the sidebar's counter: their invites and
- *  the requests their communities received. */
-export function invitesCount(invites: CommunityInvitesMessage | null): number {
-  if (invites == null) return 0
-  return invites.invites.length + invites.requestsReceived.reduce((n, g) => n + g.total, 0)
-}
-
 /** The ⋮ menu on a request's row: the member menu without owner actions (View Profile, Chat,
  *  Call, Block, Report, Invite to Community). */
 function openRequestMenu(member: CommunityRequestMember, anchor: HTMLElement, onClose: () => void): void {
@@ -292,7 +285,7 @@ export function CommunitiesPage({
   // The "Streaming" filter: only the communities with a live voice stream.
   const [streaming, setStreaming] = useState(false)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { loadBrowse, loadMoreBrowse, browse, loadInvites } = communities
+  const { loadBrowse, loadMoreBrowse, browse, loadInvites, loadInvitesCount } = communities
   // what a delayed search compares with: the grid as it is when the delay ends
   const shown = useRef({ search: browse.search, tab })
   shown.current = { search: browse.search, tab }
@@ -319,10 +312,10 @@ export function CommunitiesPage({
     setQuery('')
     setTab('browse')
     loadBrowse('')
-    // the sidebar's counter
-    loadInvites()
+    // the sidebar's counter alone: the section is read when it opens
+    loadInvitesCount()
     return cancelSearch
-  }, [communities.open, loadBrowse, loadInvites])
+  }, [communities.open, loadBrowse, loadInvitesCount])
 
   // The same text again does nothing; empty text lists
   // every community; a search always shows the grid, even from My Communities.
@@ -360,7 +353,7 @@ export function CommunitiesPage({
     onAcceptInvite: (id, inviteId) => communities.manageRequest(id, inviteId, 'accepted'),
     onRejectInvite: (id, inviteId) => communities.manageRequest(id, inviteId, 'rejected')
   }
-  const pendingCount = invitesCount(communities.invites)
+  const pendingCount = communities.pendingCount ?? 0
   const openInvites = (): void => {
     cancelSearch()
     setTab('invites')

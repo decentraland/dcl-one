@@ -66,7 +66,7 @@ export function Submenu({ label, icon, items, className }: SubmenuProps): React.
       </button>
       {open && (
         <div id={listId} ref={flyout} className={`${styles.flyout} ${left ? styles.flyoutLeft : ''}`.trim()}>
-          <ContextMenu items={items} />
+          <ContextMenu items={items} scroll />
         </div>
       )}
     </div>

@@ -387,8 +387,8 @@ describe('bridge community invites and requests', () => {
       [invitesRead]: { results: [{ id: 'inv1', communityId: 'c3', name: 'VTATV', description: '', membersCount: 4, role: 'none', privacy: 'public' }] },
       [requestsRead]: { results: [{ id: 'rq1', communityId: 'c2', name: 'Chiri', description: '', membersCount: 9, role: 'none', privacy: 'private' }] },
       [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' }), raw('c9', { role: 'moderator' }), raw('c1', { role: 'member' })], total: 3 },
-      [`GET ${v2}/c8/requests?type=request_to_join&limit=1000&offset=0`]: { results: [{ id: 'r-a', memberAddress: '0xa' }, { id: 'r-b', memberAddress: '0xb' }], total: 2 },
-      [`GET ${v2}/c9/requests?type=request_to_join&limit=1000&offset=0`]: { results: [], total: 0 }
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=100&offset=0`]: { results: [{ id: 'r-a', memberAddress: '0xa' }, { id: 'r-b', memberAddress: '0xb' }], total: 2 },
+      [`GET ${v2}/c9/requests?type=request_to_join&limit=100&offset=0`]: { results: [], total: 0 }
     })
     const h = fakeCtx()
     await h.req({ kind: 'getCommunityInvites' })
@@ -399,6 +399,19 @@ describe('bridge community invites and requests', () => {
     // only the communities with requests, and a plain member's community is never read
     expect(m?.requestsReceived).toHaveLength(1)
     expect(m?.requestsReceived[0]).toMatchObject({ community: { id: 'c8' }, total: 2, requests: [{ address: '0xa', requestId: 'r-a' }, { address: '0xb', requestId: 'r-b' }] })
+    expect(signed.mock.calls.some((c) => String(c[0]).includes('/c1/requests'))).toBe(false)
+  })
+
+  it("counts the sidebar's invites and requests received from each read's total", async () => {
+    serve({
+      [`${invitesRead}&limit=1`]: { results: [{ id: 'i' }], total: 2 },
+      [memberOf]: { results: [raw('c8', { role: 'owner' }), raw('c1', { role: 'member' })], total: 2 },
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=1&offset=0`]: { results: [{ id: 'r' }], total: 5 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityInvitesCount' })
+    expect(h.sent).toEqual([{ kind: 'communityInvitesCount', count: 7 }])
+    // a plain member's community is never read
     expect(signed.mock.calls.some((c) => String(c[0]).includes('/c1/requests'))).toBe(false)
   })
 
@@ -448,6 +461,36 @@ describe('bridge community invites and requests', () => {
     ])
     // a reject changes no member: the card's members are not read
     expect(h.sent.some((m) => m.kind === 'communityDetail')).toBe(false)
+  })
+
+  it("accepting a member's request reads the card's members and the community again", async () => {
+    serve({
+      [`PATCH ${s}/v1/communities/c8/requests/r-a`]: {},
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=100&offset=0`]: { results: [], total: 0 },
+      [`GET ${v2}/c8/requests?type=invite&limit=100&offset=0`]: { results: [], total: 0 },
+      [`GET ${v2}/c8/members?limit=100`]: { results: [{ memberAddress: '0xa', role: 'member' }] },
+      [`GET ${v2}/c8`]: raw('c8', { role: 'owner', membersCount: 2 }),
+      [invitesRead]: { results: [] },
+      [requestsRead]: { results: [] },
+      [memberOf]: { results: [], total: 0 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'manageCommunityRequest', id: 'c8', requestId: 'r-a', intention: 'accepted', address: '0xa' })
+    expect(h.sent.map((m) => m.kind)).toEqual(['communityMemberSection', 'communityMemberSection', 'communityDetail', 'community', 'communityInvites'])
+    expect(last(h.sent, 'communityDetail')?.members).toMatchObject([{ address: '0xa' }])
+    expect(last(h.sent, 'community')?.community.membersCount).toBe(2)
+  })
+
+  it('a ban sends the Banned section again', async () => {
+    serve({
+      [`POST ${s}/v1/communities/c8/members/0xbad/bans`]: {},
+      [`GET ${v2}/c8/bans?limit=100&offset=0`]: { results: [{ memberAddress: '0xbad' }], total: 1 },
+      [`GET ${v2}/c8`]: raw('c8', { role: 'owner' }),
+      [memberOf]: { results: [], total: 0 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'communityMemberAction', id: 'c8', address: '0xbad', action: 'ban' })
+    expect(last(h.sent, 'communityMemberSection')).toMatchObject({ section: 'banned', members: [{ address: '0xbad' }] })
   })
 
   it('says which answer failed, and reads nothing after it', async () => {
