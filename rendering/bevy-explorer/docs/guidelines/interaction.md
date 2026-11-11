@@ -23,7 +23,8 @@ Scene raycast requests run in two tiers each frame (`update_scene/raycast_budget
 - **Uncapped.** Requests of the system scene (`SuperUserScene`), every portable and the scenes the
   player stands in (`get_area(player, PLAYER_COLLIDER_RADIUS)`) all run every frame they are due.
   Scenes drive movement from their results (`movement-scene` casts continuous `RS_AVATAR` rays for
-  ground and walls), so these never wait.
+  ground and walls), so these never wait. They cast together, on the compute pool once eight or
+  more are due (see [scheduling](scheduling.md)).
 - **Capped.** Requests of every other scene run nearest scene first (`RendererSceneContext::priority`),
   then the one that ran longest ago (never-run first), then entity id, while the time spent is
   under the budget. A cast that starts under budget finishes, so the last one may cross the line.

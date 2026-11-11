@@ -545,7 +545,8 @@ def project(config, postgres_only=False):
         'nats': nats,
     }
     if config['profile'] in ('mirror', 'testnet'):
-        # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`.
+        # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
+        # runs in `serve`: its fold debits the credits ledger.
         processes['index'] = process('index', {'postgres': 'process_healthy',
                                                'api-build': 'process_completed_successfully'})
     return {'version': '0.5', 'processes': processes}

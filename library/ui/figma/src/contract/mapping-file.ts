@@ -203,7 +203,9 @@ function parseMappingSource(raw: string, file: string): ParsedMapping {
   const imports = importsBlock
     ? [...importsBlock.matchAll(new RegExp(STRING, 'g'))].map((m) => pick(m[1], m[2])!)
     : []
-  const id = /\bid:\s*'([^']+)'/.exec(source)?.[1]
+  // The generator writes the id with JSON.stringify (double quotes); a hand-written mapping may use single quotes.
+  const idMatch = new RegExp(String.raw`\bid:\s*${STRING}`).exec(source)
+  const id = (idMatch?.[1] ?? idMatch?.[2]) || undefined
   if (example === undefined) {
     issues.push(diagnostic('unsupported-construct', `${file}: no figma.tsx/code example found`))
   }

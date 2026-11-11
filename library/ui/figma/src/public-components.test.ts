@@ -64,6 +64,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
       indexBlobSha: git('hash-object', file).toString().trim()
     }
   }
+  const read = (file: string) => readFileSync(path.join(root, file))
   const reseal = (file: string, bytes: Buffer | string) => {
     put(scope + file, bytes)
     lock.publicComponents.files[file]!.sha256 = hash(bytes)
@@ -86,8 +87,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
     }
     for (const file of [
       'component-generation.mjs',
+      'module-graph.mjs',
       'source-identity.mjs',
       'tsconfig.json',
+      'src/install-main.ts',
       'src/install.ts',
       'src/install-components.ts',
       'src/generators/components.ts',
@@ -106,7 +109,9 @@ describe('when the offline component guard checks a staged internal plan', () =>
           ? '{"imageFills":"placeholder"}\n'
           : file === 'ledger/retirements.json'
             ? '{"schema":1,"retired":[]}\n'
-            : '// synthetic input: ' + file + '\n'
+            : file === 'tsconfig.json'
+              ? '{"compilerOptions":{}}\n'
+              : '// synthetic input: ' + file + '\n'
       put(full, bytes)
       source.files[full] = { sha256: hash(bytes) }
     }
@@ -135,9 +140,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
     ])
     metadata = createComponentGeneration({
       source,
+      read,
       files,
       config: identity(componentConfigPath),
-      modules: componentModulePaths(source).map(identity),
+      modules: componentModulePaths(source, read).map(identity),
       dependencies: componentDependencyPaths.map(identity)
     })
     files.set('generation.json', metadata)
@@ -169,6 +175,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
         'public-output.mjs',
         'public-components-policy.mjs',
         'component-generation.mjs',
+        'module-graph.mjs',
         'source-identity.mjs'
       ]) {
         const file = 'library/ui/figma/' + name
@@ -197,9 +204,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       lock.publicFoundations = { files: foundationTable }
       metadata = createComponentGeneration({
         source,
+        read,
         files: new Map([...files].filter(([file]) => file !== 'generation.json')),
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       files.set('generation.json', metadata)
@@ -269,9 +277,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       files.set('NavBar/NavBar.figma.ts', Buffer.from('export const mapping = true\n'))
       metadata = createComponentGeneration({
         source,
+        read,
         files,
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       files.set('generation.json', metadata)
@@ -320,9 +329,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       files.set('promotion.json', Buffer.from('{"components":[],"internal":[]}\n'))
       metadata = createComponentGeneration({
         source,
+        read,
         files,
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       files.set('generation.json', metadata)
@@ -466,7 +476,8 @@ describe('when the offline component guard checks a staged internal plan', () =>
       git('add', '--', scope + 'generation.json')
       expect(publicComponentsProblems(root, lock)).toEqual(['changed public file: generation.json'])
     })
-    it('should reject a stale table after a module and its metadata change', () => {
+    // Stops at the table digest, like the tamper case above: a real module change still needs the table resealed.
+    it('should refuse a module change whose regenerated generation.json the table does not pin', () => {
       put(installer, '// changed implementation\n')
       source.files[installer] = { sha256: hash('// changed implementation\n') }
       git('add', '--', installer)
@@ -492,6 +503,47 @@ describe('when the offline component guard checks a staged internal plan', () =>
         value.modules.find((entry) => entry.path === installer)!.sha256 = forged
       })
       expect(publicComponentsProblems(root, lock)).toEqual(['changed public input: ' + installer])
+    })
+  })
+  describe('and a locked tooling module outside the read-set is edited and resealed', () => {
+    const tool = 'library/ui/figma/src/extra-generator.ts'
+    beforeEach(() => {
+      put(tool, '// edited tooling\n')
+      source.files[tool] = { sha256: hash('// edited tooling\n') }
+      git('add', '--', tool)
+    })
+    it('should accept the unchanged generation record', () => {
+      expect(
+        JSON.parse(metadata.toString()).modules.map((entry: { path: string }) => entry.path)
+      ).not.toContain(tool)
+      expect(publicComponentsProblems(root, lock)).toEqual([])
+    })
+  })
+  describe('and a bound module gains an import of a locked tooling module', () => {
+    beforeEach(() => {
+      const bytes = "import './extra-generator.js'\n"
+      put(installer, bytes)
+      source.files[installer] = { sha256: hash(bytes) }
+      git('add', '--', installer)
+    })
+    it('should refuse the record until the newly reached module is bound', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'invalid component generation metadata: Incomplete component module identities'
+      ])
+    })
+  })
+  describe('and a bound module loads code the closure cannot follow', () => {
+    beforeEach(() => {
+      const bytes = 'export const load = (name) => import(name)\n'
+      put(installer, bytes)
+      source.files[installer] = { sha256: hash(bytes) }
+      git('add', '--', installer)
+    })
+    it('should fail closed', () => {
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'invalid component generation metadata: A dynamic import needs one string literal in ' +
+          installer
+      ])
     })
   })
   describe('and a mandatory module is omitted from the source lock', () => {
@@ -529,9 +581,10 @@ describe('when the offline component guard checks a staged internal plan', () =>
       files.delete('generation.json')
       metadata = createComponentGeneration({
         source,
+        read,
         files,
         config: identity(componentConfigPath),
-        modules: componentModulePaths(source).map(identity),
+        modules: componentModulePaths(source, read).map(identity),
         dependencies: componentDependencyPaths.map(identity)
       })
       lock.publicComponents.files = Object.fromEntries(

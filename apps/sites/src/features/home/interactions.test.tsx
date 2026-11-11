@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Carousel } from "@dcl/one-ui/apps/sites/shared/Carousel";
 import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
-import { homeActions } from "./actions";
+import { downloadActions } from "../download/actions";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -358,7 +358,10 @@ describe("clip playback intent", () => {
       expect(video.getAttribute("preload")).toBe("none");
   });
   it("renders the mobile store branch without a desktop installer action", () => {
-    const { store } = homeActions({ kind: "mobile", os: "android" }, "+438K");
+    const { store } = downloadActions(
+      { kind: "mobile", os: "android" },
+      "+438K",
+    );
     render(<ComeHangOut title="Come" store={store} />);
     const anchor = screen.getByRole("link");
     expect(anchor.getAttribute("href")).toContain("play.google.com");
