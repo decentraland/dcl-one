@@ -216,13 +216,12 @@ consumer, and verify a change to it in every app that imports it.
   app.
 - Each app keeps its own global entry point for its resets and base rules.
 - When a second app or the Bevy HUD needs the same component or foundation,
-  move it from `library/ui/apps/<app>/` (or from the app, until `library/ui` is
-  implemented) to the shared `components/` or `foundations/`, update its
+  move it from `library/ui/apps/<app>/` (or from the app) to the shared `components/` or `foundations/`, update its
   consumers and remove the old copy.
 
 ## Shared UI: `library/ui`
 
-The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Runtime component and consumer integration are separate work. Keep each surface's existing tokens and components until its integration has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
+The shared foundations are implemented in `library/ui/foundations`, with bundled fonts and typed browser exports. Shared components live in `library/ui/components`, written from the component template above, and are exported from `library/ui/index.ts`. A surface keeps its existing tokens and components until its migration to the shared ones has been reviewed. The decision is recorded in the [shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
 
 `library/ui` is the home of the shared UI foundation:
 

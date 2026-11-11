@@ -3,7 +3,7 @@
 Shared UI foundations and components for dcl-one, and the Node-only Figma tooling that generates the foundations, the Review previews and the NavBar bridge.
 The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standards.md).
 
-The [component adoption tracker](../../docs/ui-components.md) links the authoritative local contracts, pending work and verified application adoption. Update it in each verified port or consumer migration PR.
+The [component adoption tracker](../../docs/ui-components.md) links the authoritative local contracts, pending work and verified application adoption. Update it in each PR that adds a public component or migrates a consumer.
 
 | Path                   | What it is                                                                                                                                                                                                                                                                   |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
