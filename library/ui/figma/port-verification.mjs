@@ -6,18 +6,19 @@
 // paths, narrative changes, deviation reasons and per-file notes), plus the bytes of every tracked file under
 // library/ui/figma except tests, test fixtures and Markdown documentation. Exempt files keep their lock entry and FDS
 // counterpart bound, because fetch-source compares every counterpart with the pinned FDS commit; only their own digest
-// and deviation codes are left out. On every head it first fails when a port input's code names an exempt file or this
-// validator imports anything beyond its two bound modules (scanProblems). It then passes when the port inputs are unchanged from the base or the head has
-// no lock, and otherwise only when the record names exactly the head's port inputs and every required check passed. A
+// and deviation codes are left out. A head without the lock carries no port and passes. On any other head it first fails
+// when a port input names an exempt file or this validator imports anything beyond SELF_IMPORTS (its two bound modules
+// and four Node built-ins), whether or not a port input changed (scanProblems). It then passes when the port inputs are
+// unchanged from the base, and otherwise only when the record names exactly the head's port inputs and every required check passed. A
 // changed port input without a matching record fails; it is never skipped. The record states what a local run
 // reported: it is not an attestation, a proof that the checks ran, an independent review or evidence of live Figma
 // parity. Dependency-free; it needs no install, no credential and no capture.
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import path, { resolve } from 'node:path'
+import { posix, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isComponentModulePath } from './component-generation.mjs'
-import { LOCK, SCOPE, fdsSource, parseListing, readBlobs } from './lock-digests.mjs'
+import { LOCK, SCOPE, digestsOf, fdsSource, parseListing, readBlobs } from './lock-digests.mjs'
 
 const RECORD = 'library/ui/port-verification.json'
 const SCHEMA = 2
@@ -40,7 +41,7 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
 /** The test directories under library/ui/figma; a test or fixture elsewhere is exempt only by its *.test or *.spec name. */
 const TEST_ROOTS = ['test/', 'review/test/']
-/** Bound although it is a test: it holds the scan that keeps the exemption sound. */
+/** Bound although it is a test: it pins the cases the scan must flag, so weakening them needs a new record. */
 const BOUND_TESTS = [`${SCOPE}/port-verification.test.ts`]
 const SELF = `${SCOPE}/port-verification.mjs`
 /** The only modules this file may import, so the exemption rule cannot move into an exempt file. */
@@ -52,14 +53,75 @@ const SELF_IMPORTS = [
   './component-generation.mjs',
   './lock-digests.mjs'
 ]
-const CODE = /\.(?:[cm]?[jt]sx?|mts|cts)$/
-// A single-, double- or back-quoted literal without escapes or interpolation.
-const LITERAL = /(['"`])((?:(?!\1)[^\\\n$])*)\1/g
+/** Literals of the validator itself that name exempt paths on purpose: the exemption rule's own declarations. */
+// The two declarations of the exemption rule, exactly as written above, left out of the validator's own literal scan.
+// They are rebuilt from the values, so no exempt path appears as a literal outside the declarations; any other content
+// on those lines (a spread, a read, another path) is scanned like the rest of the file.
+const declaration = (name, items) => 'const ' + name + ' = [' + items.join(', ') + ']'
+const RULE_DECLARATIONS = [
+  declaration(
+    'TEST_ROOTS',
+    TEST_ROOTS.map((root) => "'" + root + "'")
+  ),
+  declaration(
+    'BOUND_TESTS',
+    BOUND_TESTS.map((test) => '\x60${SCOPE}' + test.slice(SCOPE.length) + '\x60')
+  )
+]
+const withoutRuleDeclarations = (text) =>
+  text
+    .split('\n')
+    .filter((line) => !RULE_DECLARATIONS.includes(line))
+    .join('\n')
+/** Port inputs whose text is scanned by extension: code, styles, markup and SVG (SCANNED_FILES adds named data files). */
+const SCANNED = /\.(?:[cm]?[jt]sx?|mts|cts|css|html|svg)$/
+/** Data the tooling reads, scanned although JSON: its config, the retirement and orphan ledgers, and the Review catalog. */
+const SCANNED_FILES = [
+  `${SCOPE}/figma.config.json`,
+  `${SCOPE}/ledger/orphaned-assets.json`,
+  `${SCOPE}/ledger/retirements.json`,
+  `${SCOPE}/review/src/review/catalog.json`
+]
+// A single-, double- or back-quoted literal on one line without escapes or interpolation; it also finds a literal
+// nested inside a template interpolation.
+const STATIC_LITERAL = /(['"`])((?:(?!\1)[^\\\n$])*)\1/g
+// A single-, double- or back-quoted literal on one line; escapes and interpolations stay inside it.
+const LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g
+// Comments, removed in the second pass so an apostrophe in one cannot pair with a later quote.
+function stripComments(text) {
+  const parts = []
+  let kept = 0
+  let at = 0
+  while (at < text.length - 1) {
+    if (text[at] === '/' && text[at + 1] === '*') {
+      const close = text.indexOf('*/', at + 2)
+      // An unclosed `/*` (a glob such as src/* in a string) is kept as text, so the rest is still scanned.
+      if (close < 0) break
+      parts.push(text.slice(kept, at))
+      at = kept = close + 2
+    } else if (
+      text[at] === '/' &&
+      text[at + 1] === '/' &&
+      text[at - 1] !== ':' &&
+      text[at - 1] !== '\\'
+    ) {
+      const end = text.indexOf('\n', at)
+      parts.push(text.slice(kept, at))
+      at = kept = end < 0 ? text.length : end
+    } else at += 1
+  }
+  parts.push(text.slice(kept))
+  return parts.join('')
+}
+// A regular expression literal after an operator or keyword. The second pass removes it so a quote inside it cannot pair
+// with a later literal; the raw passes still run, so a false match here can only add candidates, never hide one.
+const REGEX_LITERAL =
+  /(^|[=(,:[!&|?;>)}]|\b(?:return|typeof))(\s*)\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[dgimsuyv]*/gm
 
 /**
  * Whether a path under library/ui/figma has its bytes outside the port inputs: a file under TEST_ROOTS, a *.test or
  * *.spec file, or Markdown, and never a component generation input (component-generation.mjs) or a BOUND_TESTS file.
- * port-verification.test.ts scans the port inputs for path literals that point at an exempt file.
+ * scanProblems fails a head whose port inputs name an exempt file.
  */
 export function isRecordExempt(file) {
   if (typeof file !== 'string' || !file.startsWith(`${SCOPE}/`)) return false
@@ -72,48 +134,148 @@ export function isRecordExempt(file) {
   )
 }
 
+/** Whether a glob token has a brace alternative that is Markdown; linear in the token's length. */
+function braceHasMarkdown(token) {
+  for (const group of token.matchAll(/\{([^{}]*)\}/g))
+    if (group[1].split(',').some((choice) => /^\.?md$/i.test(choice.trim()))) return true
+  return false
+}
+
+/** Whether `token` contains `name` with no word character, dot or hyphen directly before or after it. */
+function containsName(token, name) {
+  const edge = (character) => character === undefined || !/[\w.-]/.test(character)
+  for (let at = token.indexOf(name); at >= 0; at = token.indexOf(name, at + 1))
+    if (edge(token[at - 1]) && edge(token[at + name.length])) return true
+  return false
+}
+
+/** Whether one token (a piece with no whitespace) names an exempt file, seen from `file`. */
+function tokenNamesExempt(file, token, exemptNames, single, pathCall) {
+  const bare = token.replace(/\\(.)/g, '$1').replace(/[?#].*$/, '')
+  if (!bare) return false
+  const pathLike = bare.startsWith('.') || bare.includes('/')
+  const target = bare.startsWith('.')
+    ? posix.normalize(posix.join(posix.dirname(file), bare))
+    : undefined
+  const base = posix.basename(bare)
+  return (
+    (target !== undefined &&
+      (isRecordExempt(target) ||
+        isRecordExempt(`${target}.ts`) ||
+        isRecordExempt(`${target}/x.ts`))) ||
+    /\.(?:test|spec)(?:\.[^/]+)?$/i.test(base) ||
+    (single && [...exemptNames].some((name) => containsName(bare, name))) ||
+    (single && pathLike && /\.md$/i.test(bare)) ||
+    (pathLike &&
+      bare.includes('*') &&
+      /^[\w./*-]+$/.test(bare) &&
+      /[\w-]\/(?:[^/]*\/)*[^/]*\*/.test(bare)) ||
+    (/\*\*|\*\.[\w{]/.test(bare) &&
+      (pathLike || /\*\.md$/i.test(bare) || braceHasMarkdown(bare))) ||
+    (single &&
+      (pathCall ? /^(?:test|fixtures|__tests__)$/i : /^(?:test|fixtures|__tests__)$/).test(bare)) ||
+    (bare.includes('/') && /(?:^|\/)(?:test|fixtures|__tests__)(?:\/|$)/i.test(bare))
+  )
+}
+
+/**
+ * Whether one static piece of a literal names an exempt file: the whole piece (a path may contain spaces) or any of its
+ * whitespace-separated tokens (a command line). A Markdown name counts only in a single-token piece, since prose often
+ * mentions documents it never reads.
+ */
+function namesExempt(file, piece, exemptNames, pathCall) {
+  const tokens = piece.split(/\s+/).filter(Boolean)
+  if (tokens.length === 0) return false
+  if (tokens.length === 1) return tokenNamesExempt(file, tokens[0], exemptNames, true, pathCall)
+  return [piece.trim(), ...tokens].some((token) =>
+    tokenNamesExempt(file, token, exemptNames, false, pathCall)
+  )
+}
+
+// A call on the same line that takes a path, so a bare directory word there is a path segment, not a label.
+const PATH_CALL =
+  /\b(?:join|resolve|URL|readFile\w*|readdir\w*|stat\w*|open\w*|glob\w*|existsSync|createReadStream)\s*\(/
+// Unquoted references in CSS (url(...)) and HTML attributes (src=..., href=...).
+const UNQUOTED = /\burl\(\s*([^'")\s]+)\s*\)|\b(?:src|href|srcset|data)=([^\s"'>]+)/g
+/** For each line of `text`, whether it calls a path function; looked up by offset in O(log n). */
+function pathCallLines(text) {
+  const starts = [0]
+  for (let at = text.indexOf('\n'); at >= 0; at = text.indexOf('\n', at + 1)) starts.push(at + 1)
+  const calls = starts.map((start, line) =>
+    PATH_CALL.test(text.slice(start, line + 1 < starts.length ? starts[line + 1] : text.length))
+  )
+  return (index) => {
+    let low = 0
+    let high = starts.length - 1
+    while (low < high) {
+      const middle = (low + high + 1) >> 1
+      if (starts[middle] <= index) low = middle
+      else high = middle - 1
+    }
+    return calls[low]
+  }
+}
+
 /**
  * The string literals in `text` (the source of `file`) that name an exempt file: a relative path into one, a test or
- * spec basename, a Markdown name, or a test directory segment, ignoring query strings and fragments and letter case.
- * This is a tripwire, not a proof: a path built by concatenation or at run time is not seen.
+ * spec basename, the basename of a tracked exempt Markdown file, a path-like Markdown name, a path-like glob, or a test
+ * directory segment. Query strings and fragments are ignored; each static piece of a template literal is checked on its
+ * own. Literals are extracted four ways (with and without interpolations, each on the raw text and with comments and
+ * regex literals removed) and every way only adds candidates. This is a tripwire, not a proof: a path built by
+ * concatenation or at run time is not seen, and an apostrophe in JSX text can still pair with a later quote on the
+ * same line.
  */
-export function exemptReferences(file, text) {
-  const found = []
-  for (const match of text.matchAll(LITERAL)) {
-    const literal = match[2]
-    const bare = literal.replace(/[?#].*$/, '')
-    const target = bare.startsWith('.')
-      ? path.posix.normalize(path.posix.join(path.posix.dirname(file), bare))
-      : undefined
-    if (
-      (target && (isRecordExempt(target) || isRecordExempt(`${target}/x.ts`))) ||
-      /(?:\.|[{,])md\b/i.test(literal) ||
-      /\.(?:test|spec)\.[^/]+$/i.test(path.posix.basename(bare)) ||
-      /^(?:test|fixtures|__tests__)$/i.test(bare) ||
-      /(?:^|\/)(?:test|fixtures|__tests__)\//i.test(bare)
-    )
-      found.push(literal)
+export function exemptReferences(file, text, exemptNames = new Set()) {
+  const found = new Set()
+  for (const match of text.matchAll(UNQUOTED)) {
+    const reference = match[1] ?? match[2]
+    if (namesExempt(file, reference, exemptNames, true)) found.add(reference)
   }
-  return found
+  for (const source of [text, stripComments(text).replace(REGEX_LITERAL, '$1$2null')]) {
+    const pathCallAt = pathCallLines(source)
+    for (const [pattern, interpolated] of [
+      [STATIC_LITERAL, false],
+      [LITERAL, true]
+    ])
+      for (const match of source.matchAll(pattern)) {
+        const literal = match[2]
+        const pieces = interpolated && match[1] === '`' ? literal.split(/\$\{[^}]*\}/) : [literal]
+        const pathCall = pathCallAt(match.index)
+        if (pieces.some((piece) => namesExempt(file, piece, exemptNames, pathCall)))
+          found.add(literal)
+      }
+  }
+  return [...found]
 }
 
 /**
  * Problems with the exemption at a commit, from the bytes of every tracked file under the scope: a port input's code
- * that names an exempt file, or this validator importing anything beyond SELF_IMPORTS. The validator and its own test
- * spell out exempt paths on purpose and are bound, so they are not scanned for literals.
+ * that names an exempt file, or this validator importing anything beyond SELF_IMPORTS, loading modules with require or
+ * naming an exempt path outside its two rule declarations (RULE_DECLARATIONS). Its own test spells out exempt paths on
+ * purpose and is bound, so it is not scanned for literals.
  */
 export function scanProblems(blobs) {
   const problems = []
+  const exemptNames = new Set(
+    Object.keys(blobs)
+      .filter((file) => isRecordExempt(file) && /\.md$/.test(file))
+      .map((file) => posix.basename(file))
+  )
   for (const [file, content] of Object.entries(blobs)) {
-    if (!CODE.test(file) || isRecordExempt(file)) continue
+    if (!(SCANNED.test(file) || SCANNED_FILES.includes(file)) || isRecordExempt(file)) continue
+    if (BOUND_TESTS.includes(file)) continue
     const text = content.toString('utf8')
     if (file === SELF) {
-      for (const match of text.matchAll(/(?:\bfrom|^import|\bimport\()\s*['"]([^'"]+)['"]/gm))
+      for (const match of text.matchAll(
+        /(?:\bfrom\s*['"]|(?:^|[;{}])\s*import\s*['"]|\bimport\s*\(\s*['"`])([^'"`]+)['"`]/gm
+      ))
         if (!SELF_IMPORTS.includes(match[1])) problems.push(`${file} imports ${match[1]}`)
-      continue
+      if (/\b(?:createRequire|require)\s*\(/.test(text))
+        problems.push(`${file} loads modules with require`)
     }
-    if (BOUND_TESTS.includes(file)) continue
-    for (const literal of exemptReferences(file, text))
+    // The validator spells out its own exempt roots only in the rule declarations, which are left out of its scan.
+    const scanned = file === SELF ? withoutRuleDeclarations(text) : text
+    for (const literal of exemptReferences(file, scanned, exemptNames))
       problems.push(`${file} names the exempt path ${JSON.stringify(literal)}`)
   }
   return problems
@@ -261,20 +423,23 @@ export function trackedFilesAt(root, commit) {
   return digestsOf(trackedBlobsAt(root, commit))
 }
 
-const digestsOf = (blobs) =>
-  Object.fromEntries(Object.entries(blobs).map(([file, content]) => [file, sha256(content)]))
-
 /** Command-line entry point. Returns the exit code. */
 export function main(argv, root = process.cwd()) {
-  const option = (name) => {
-    const at = argv.indexOf(name)
-    return at >= 0 ? argv[at + 1] : undefined
+  // Every argument is a known flag, each at most once, and --base and --head take a value; anything else is refused.
+  const flags = {}
+  let usable = true
+  for (let at = 0; at < argv.length; at += 1) {
+    const flag = argv[at]
+    if (flag in flags || !['--base', '--head', '--print-hash'].includes(flag)) usable = false
+    else if (flag === '--print-hash') flags[flag] = true
+    else if (at + 1 < argv.length && argv[at + 1] !== '' && !argv[at + 1].startsWith('--'))
+      flags[flag] = argv[(at += 1)]
+    else usable = false
   }
-  const printHash = argv.includes('--print-hash')
-  const base = option('--base')
-  const head = option('--head') ?? 'HEAD'
-  const expected = (printHash ? 1 : 2) + (argv.includes('--head') ? 2 : 0)
-  if ((printHash ? base !== undefined : !base) || argv.length !== expected) {
+  const printHash = flags['--print-hash'] === true
+  const base = flags['--base']
+  const head = flags['--head'] ?? 'HEAD'
+  if (!usable || (printHash ? base !== undefined : base === undefined)) {
     process.stderr.write(
       'Usage: port-verification --base <commit> [--head <commit>] | --print-hash [--head <commit>]\n'
     )
@@ -286,6 +451,12 @@ export function main(argv, root = process.cwd()) {
     requireCommit(top, head, 'head')
     const lock = lockAt(top, head)
     // A head without the lock (a branch cut before the library existed, or one that removes it) carries no port.
+    if (!lock && printHash) {
+      process.stderr.write(
+        `port-verification: no upstream.lock.json at ${head}; there is no hash to print\n`
+      )
+      return 1
+    }
     if (!lock) {
       process.stdout.write(
         'port-verification: no upstream.lock.json at this head; no port to verify\n'

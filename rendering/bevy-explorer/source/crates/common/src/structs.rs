@@ -965,10 +965,15 @@ pub enum AudioType {
     Avatar,
 }
 
+// a field missing from a saved config takes its default (a failed parse resets the whole config)
 #[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct AudioSettings {
     pub master: i32, // 0-100
+    /// nearby players' voices
     pub voice: i32,
+    /// private calls and community voice streams
+    pub voice_chat: i32,
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
@@ -979,6 +984,7 @@ impl Default for AudioSettings {
         Self {
             master: 100,
             voice: 100,
+            voice_chat: 100,
             scene: 100,
             system: 100,
             avatar: 100,
@@ -989,6 +995,9 @@ impl Default for AudioSettings {
 impl AudioSettings {
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
+    }
+    pub fn voice_chat(&self) -> f32 {
+        (self.voice_chat * self.master) as f32 / 10_000.0
     }
     pub fn scene(&self) -> f32 {
         (self.scene * self.master) as f32 / 10_000.0
@@ -1928,6 +1937,25 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_config_saved_before_the_voice_chat_volume_keeps_its_audio() {
+        let config = AppConfig::from_json(
+            br#"{"user_id":"u","audio":{"master":80,"voice":40,"scene":30,"system":20,"avatar":10}}"#,
+        );
+        assert_eq!(config.user_id, "u");
+        assert_eq!(
+            config.audio,
+            AudioSettings {
+                master: 80,
+                voice: 40,
+                voice_chat: 100,
+                scene: 30,
+                system: 20,
+                avatar: 10,
+            }
+        );
+    }
 
     #[test]
     fn reset_outdated_settings_caps_uncapped_uploads() {

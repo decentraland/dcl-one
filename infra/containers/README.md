@@ -67,7 +67,7 @@ python3 tooling/image-smoke.py
   also start cold and publication remains blocked until a successful build.
 - Cache quota and idle eviction apply; dependency keys remain stable across
   source-only changes. Runtime caches exclude Cargo target trees. Hosted image
-  jobs fetch only the docs media from Git LFS and remove unused SDKs only when
+  jobs fetch Sites content and page media plus shared UI fonts from Git LFS and remove unused SDKs only when
   the runner starts with less than 50 GiB free. Smaller hosted disks still need
   that cleanup; larger runners skip it. Jobs log disk space before and after
   this check, memory before checkout, and disk space after cache import and image

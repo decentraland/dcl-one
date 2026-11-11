@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 import { componentOwnerById } from './guard/component-identity.js'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
 import { errorText } from './server-errors.js'
-import { checkMappings, resolveComponent } from './contract/resolve.js'
+import { resolveBatch } from './contract/batch.js'
+import { checkMappingsReport, resolveComponent } from './contract/resolve.js'
 import { retirementArtifacts } from './guard/apply-retirements.js'
 import { checkScope } from './guard/check-scope.js'
 import { buildOwnership } from './guard/ownership.js'
@@ -18,10 +19,12 @@ import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
 import { runInstall } from './install.js'
+import { portPrepare, portVerify } from './port.js'
 import { fetchFdsSource } from './sources/fds-source.js'
 
 const USAGE = `Usage:
   dcl-figma fetch-source [--seal]
+  dcl-figma port prepare | port verify
   dcl-figma key-guard [--range <base>..<head> | --no-range] [--no-worktree] [--path <dir>]...
   dcl-figma probe
   dcl-figma install foundations|components [--source snapshot] [--out <private-stage>]
@@ -29,10 +32,42 @@ const USAGE = `Usage:
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
-  dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--mapping-root <dir>] [--config <file>]
-  dcl-figma check-mappings [--mapping-root <dir>] [--config <file>]
+  dcl-figma resolve (--node-id <id> | --name <name>) [--variant 'Prop=Value']... [--boolean 'Prop=true|false']... [--text 'Layer=Value']... [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma resolve --batch <file|-> [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
+
+// The `figma` script of this package runs `cd figma`, and pnpm sets INIT_CWD to where it was run, so a path
+// reads as typed. Any other launch (the dcl-figma bin from another package's script, which inherits that
+// script's INIT_CWD) reads paths from its own working directory.
+function invocationDirectory(): string {
+  const { INIT_CWD, npm_lifecycle_event, npm_package_name } = process.env
+  return INIT_CWD && npm_lifecycle_event === 'figma' && npm_package_name === '@dcl/one-ui'
+    ? INIT_CWD
+    : process.cwd()
+}
+
+// Repeated "Key=Value" flags. A pair without "=", an empty key or a repeated key is refused, never guessed.
+function pairs(flag: string, entries: string[] | undefined): Record<string, string> | undefined {
+  if (!entries?.length) return undefined
+  // No prototype: a key such as __proto__ is kept as data and its repeat is still detected.
+  const result: Record<string, string> = Object.create(null)
+  for (const entry of entries) {
+    const split = entry.indexOf('=')
+    const key = split > 0 ? entry.slice(0, split) : ''
+    if (!key) throw new Error(`--${flag} takes "Name=Value", got "${entry}"`)
+    if (Object.hasOwn(result, key)) throw new Error(`--${flag} names "${key}" twice`)
+    result[key] = entry.slice(split + 1)
+  }
+  return result
+}
+
+async function readStdin(): Promise<string> {
+  const chunks: Buffer[] = []
+  for await (const chunk of process.stdin) chunks.push(chunk as Buffer)
+  return Buffer.concat(chunks).toString('utf8')
+}
 
 const print = (value: unknown) => process.stdout.write(`${JSON.stringify(value, null, 2)}\n`)
 
@@ -47,6 +82,15 @@ function sourceKind(value: string | undefined): SourceKind {
 async function main(argv: string[]): Promise<number> {
   // The guard has its own flags (--range, --path, ...) and needs no Figma config.
   if (argv[0] === 'key-guard') return keyGuard(argv.slice(1))
+  // The maintainer port: prepare mutates the tree in order and stops at the first failed stage; verify runs the
+  // seven checks on a clean tree and writes the record only when all pass. Maintainers only, never CI.
+  if (argv[0] === 'port') {
+    if (argv.length !== 2 || (argv[1] !== 'prepare' && argv[1] !== 'verify'))
+      throw new Error('port takes prepare or verify')
+    const result = argv[1] === 'prepare' ? portPrepare(process.cwd()) : portVerify(process.cwd())
+    print(result)
+    return result.ok ? 0 : 1
+  }
   // Materializes the figma-design-system capture pinned in upstream.lock.json; maintainers only, never CI.
   if (argv[0] === 'fetch-source') {
     const rest = argv.slice(1)
@@ -75,12 +119,27 @@ async function main(argv: string[]): Promise<number> {
       'node-id': { type: 'string' },
       name: { type: 'string' },
       variant: { type: 'string', multiple: true },
+      boolean: { type: 'string', multiple: true },
+      text: { type: 'string', multiple: true },
+      batch: { type: 'string' },
+      'mapping-only': { type: 'boolean' },
       'mapping-root': { type: 'string' },
       'library-range': { type: 'string' },
       config: { type: 'string' }
     }
   })
   const [command] = positionals
+  if (values['mapping-only'] && command !== 'resolve' && command !== 'check-mappings')
+    throw new Error('--mapping-only applies only to resolve and check-mappings')
+  if (values.text && command !== 'resolve') throw new Error('--text applies only to resolve')
+  if (values.boolean && command !== 'resolve') throw new Error('--boolean applies only to resolve')
+  if (values.batch !== undefined) {
+    if (command !== 'resolve') throw new Error('--batch applies only to resolve')
+    if (values['node-id'] || values.name || values.variant || values.boolean || values.text)
+      throw new Error(
+        '--batch takes its instances from the file; drop --node-id, --name, --variant, --boolean and --text'
+      )
+  }
 
   if (command === 'install') {
     if (positionals.length !== 2) throw new Error(USAGE)
@@ -100,31 +159,59 @@ async function main(argv: string[]): Promise<number> {
   }
 
   if (command === 'resolve' || command === 'check-mappings') {
+    // Flags are parsed before the runtime, so a malformed flag is reported even when the cache is broken.
+    const input = {
+      nodeId: values['node-id'],
+      name: values.name,
+      variantProperties: pairs('variant', values.variant),
+      booleanProperties: pairs('boolean', values.boolean),
+      texts: pairs('text', values.text)
+    }
+    // A batch that cannot be read is a broken invocation (exit 2), told apart from an entry that fails (exit 1).
+    let batchEntries: unknown
+    if (values.batch !== undefined) {
+      let text: string
+      try {
+        text =
+          values.batch === '-'
+            ? await readStdin()
+            : await readFile(path.resolve(invocationDirectory(), values.batch), 'utf8')
+      } catch (error) {
+        process.stderr.write(
+          `--batch cannot read ${values.batch}: ${(error as NodeJS.ErrnoException).code ?? 'error'}\n`
+        )
+        return 2
+      }
+      try {
+        batchEntries = JSON.parse(text)
+      } catch {
+        batchEntries = undefined
+      }
+      if (!Array.isArray(batchEntries) || batchEntries.length === 0) {
+        process.stderr.write('--batch needs a non-empty JSON array of instances\n')
+        return 2
+      }
+    }
     const runtime = await createRuntime({
       cwd: process.cwd(),
       env: process.env,
       configPath: values.config,
       mappingRoot: values['mapping-root'],
-      libraryRange: values['library-range']
+      libraryRange: values['library-range'],
+      mappingOnly: values['mapping-only']
     })
     const context = await runtime.resolveContext()
     if (command === 'check-mappings') {
-      const results = await checkMappings(context)
-      const failing = results.filter((r) => r.diagnostics.some((d) => d.severity === 'error'))
-      print({ ok: failing.length === 0, checked: results.length, results })
-      return failing.length === 0 ? 0 : 1
+      const report = await checkMappingsReport(context)
+      print(report)
+      return report.ok ? 0 : 1
     }
-    const variantProperties = Object.fromEntries(
-      (values.variant ?? []).map((pair) => {
-        const [key, ...rest] = pair.split('=')
-        return [key!, rest.join('=')]
-      })
-    )
-    const result = await resolveComponent(context, {
-      nodeId: values['node-id'],
-      name: values.name,
-      variantProperties
-    })
+    if (batchEntries !== undefined) {
+      const batch = await resolveBatch(context, batchEntries)
+      print(batch)
+      return batch.ok ? 0 : 1
+    }
+    const result = await resolveComponent(context, input)
     print(result)
     return result.ok ? 0 : 1
   }

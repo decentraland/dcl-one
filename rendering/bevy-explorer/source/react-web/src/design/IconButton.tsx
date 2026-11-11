@@ -25,6 +25,8 @@ interface IconButtonProps
   shortcut?: string
   /** Green status dot (e.g. connected voice). */
   indicator?: boolean
+  /** Full-colour art in the top-right corner, announced as `label`. */
+  cornerArt?: { src: string; label: string }
   /** Render this profile picture in place of the icon. */
   avatar?: { src?: string; name: string; color?: string }
   /** Art drawn at `size` in place of the icon: white-on-transparent takes the icon colour, `color`
@@ -46,6 +48,7 @@ export function IconButton({
   art,
   size = 32,
   indicator = false,
+  cornerArt,
   className = '',
   type = 'button',
   children,
@@ -71,6 +74,9 @@ export function IconButton({
         )}
         {children}
         {indicator && <span className={styles.indicator} data-indicator />}
+        {cornerArt != null && (
+          <img className={styles.cornerArt} src={cornerArt.src} alt={cornerArt.label} width={14} height={14} draggable={false} />
+        )}
         {badge != null && badge > 0 && (
           <span
             className={`${styles.badge} ${badgeTone === 'lavender' ? styles.badgeLavender : ''}`.trim()}

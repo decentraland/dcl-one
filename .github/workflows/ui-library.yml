@@ -53,7 +53,7 @@ jobs:
             changed=true
           else
             changed=false
-            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
             [ -z "$files" ] || changed=true
           fi
           echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
@@ -80,7 +80,9 @@ jobs:
         run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --allowlist-from "$HEAD_SHA"
       # The checks against the Figma capture run where it is readable (locally, after pnpm figma fetch-source). When a
       # port input changes (the lock outside its provenance text, or a tracked file under library/ui/figma other than
-      # tests, fixtures and Markdown), this step requires the record of their results for exactly those inputs.
+      # tests, fixtures and Markdown), this step requires the record of their results for exactly those inputs. It also
+      # fails on any head with a lock when a port input names an exempt file, or the validator imports beyond its own
+      # modules, loads code with require or names an exempt path outside its rule, even if no port input changed.
       - name: Require the port verification record when a port input changes
         env:
           EVENT: ${{ github.event_name }}
@@ -112,6 +114,8 @@ jobs:
           node-version: 24
       # Every tracked file under figma/ matches the digest upstream.lock.json pins for it.
       - run: node figma/lock-digests.mjs
+      # The skill installed at the repository root matches its source in figma/agent-kit (dependency-free).
+      - run: node figma/agent-kit/cli.mjs check --target ../..
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm format:check
