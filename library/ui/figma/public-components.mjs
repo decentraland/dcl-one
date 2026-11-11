@@ -18,14 +18,20 @@ const SCOPE = 'library/ui/components'
 const RUNTIME = 'library/ui/figma/review/src/components/'
 const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
-/** Fixed classifications and the emitted manifest determine origins, never a lock entry's claimed kind. */
+/**
+ * Fixed classifications and the emitted manifest determine origins, never a lock entry's claimed kind.
+ * Origins carry no module map: the table pins generation.json by digest, and that record's module list is
+ * validated against each module's digest in the source lock.
+ */
 export function componentExpectedFiles(manifest, metadataDigest) {
-  const modules = Object.fromEntries(manifest.modules.map(({ path, sha256 }) => [path, sha256]))
+  // Only to look up the runtime files' digests; origins never carry the module list.
+  const moduleDigests = Object.fromEntries(
+    manifest.modules.map(({ path, sha256 }) => [path, sha256])
+  )
   const generated = {
     kind: 'generated',
     source: JSON.stringify(manifest.source),
-    transform: manifest.transform.id,
-    modules
+    transform: manifest.transform.id
   }
   return new Map(
     [...manifest.output, { path: componentGenerationFile, sha256: metadataDigest }].map(
@@ -39,7 +45,7 @@ export function componentExpectedFiles(manifest, metadataDigest) {
                   ...generated,
                   kind,
                   path: RUNTIME + file.slice('runtime/'.length),
-                  sha256: modules[RUNTIME + file.slice('runtime/'.length)]
+                  sha256: moduleDigests[RUNTIME + file.slice('runtime/'.length)]
                 }
               : generated
         return [file, { sha256: outputDigest, origin }]

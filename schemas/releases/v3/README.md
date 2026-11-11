@@ -51,6 +51,12 @@ The runner ignores ambient database settings; infrastructure tests exercise
 setup failures, test failures and cleanup. A run without a database is not
 release evidence.
 
+`catalyst schema migrate --release` runs the same release from the binary:
+build.rs inlines both includes and drops the `\set`, `BEGIN;` and `COMMIT;` lines,
+and the migrator runs the result and the additive steps in one transaction,
+only while no other client session is connected to the database.
+`social_voice_upgrade.rs` exercises it against both genuine origins.
+
 Merging these release definitions does not execute SQL or establish deployment
 readiness. Before a cutover, provide a compatible artifact, stop every writer,
 poller and administrative write path, verify backup restoration, execute the

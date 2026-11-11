@@ -101,7 +101,77 @@ function identities(values, expected, label) {
   return ordered(found).map(([, value]) => value)
 }
 
-function visibility(registry) {
+const LIMIT_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
+const LIMIT_TEXT_MAX = 300
+// Each limit is repeated verbatim into a consumer agent's report, so a component carries only a few.
+const LIMITS_MAX = 10
+const COMPONENT_NAME = /^[A-Za-z_$][\w$]*$/
+// A link in any spelling the text could carry: a scheme with or without //, a bare www. host or a Figma address.
+const LINK = /:\/\/|figma\.com|www\.|\b(?:javascript|mailto|data|vbscript|file|tel):/i
+
+/**
+ * Plain committed text an agent may repeat verbatim: non-empty, at most `max` characters, with no control,
+ * format (bidi, zero-width) or line/paragraph separator character, no `<` or `>` and no link. The rule the
+ * retirement ledger and the accepted limits share.
+ * @param {unknown} text
+ * @param {number} max
+ * @returns {boolean}
+ */
+export function isPlainText(text, max) {
+  return (
+    typeof text === 'string' &&
+    text.length > 0 &&
+    text.length <= max &&
+    !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}<>]/u.test(text) &&
+    !LINK.test(text)
+  )
+}
+
+/** @typedef {{ id: string, text: string }} AcceptedLimit */
+
+// A public entry is a name, or { name, limits } where limits are the owner-accepted gaps the resolver repeats to
+// consumers: unique kebab-case ids and short plain sentences, never a link. Internal entries are names only.
+function accepted(entry) {
+  if (typeof entry === 'string') return { name: entry }
+  if (!record(entry) || Object.keys(entry).some((key) => key !== 'name' && key !== 'limits'))
+    throw new Error('Invalid component registry entry')
+  const { name, limits } = entry
+  if (typeof name !== 'string' || !COMPONENT_NAME.test(name))
+    throw new Error('A component registry entry object needs a component name')
+  if (!Array.isArray(limits) || !limits.length || limits.length > LIMITS_MAX)
+    throw new Error(
+      `A component registry entry object needs between 1 and ${LIMITS_MAX} limits: ${name}`
+    )
+  const ids = new Set()
+  for (const limit of limits) {
+    if (
+      !record(limit) ||
+      Object.keys(limit).length !== 2 ||
+      typeof limit.id !== 'string' ||
+      !LIMIT_ID.test(limit.id) ||
+      limit.id.length > 48 ||
+      ids.has(limit.id) ||
+      !isPlainText(limit.text, LIMIT_TEXT_MAX) ||
+      limit.text !== limit.text.trim()
+    )
+      throw new Error('Invalid or duplicate accepted limit of component ' + String(name))
+    ids.add(limit.id)
+  }
+  return { name, limits: limits.map(({ id, text }) => ({ id, text })) }
+}
+
+/** The name of one validated registry entry, whether it is a bare name or { name, limits }. */
+export function componentRegistryEntryName(entry) {
+  return accepted(entry).name
+}
+
+/**
+ * Names and accepted limits of a component registry (components/promotion.json), validated once for the
+ * installer, the guard, the resolver and the generation record.
+ * @param {unknown} registry
+ * @returns {{ components: string[], internal: string[], limits: Record<string, AcceptedLimit[]> }}
+ */
+export function componentRegistryEntries(registry) {
   if (
     !record(registry) ||
     Object.keys(registry).some((key) => key !== 'components' && key !== 'internal') ||
@@ -109,7 +179,32 @@ function visibility(registry) {
     (registry.internal !== undefined && !Array.isArray(registry.internal))
   )
     throw new Error('Invalid component visibility registry')
-  const all = [...registry.components, ...(registry.internal ?? [])]
+  if ((registry.internal ?? []).some((entry) => typeof entry !== 'string'))
+    throw new Error('Internal component registry entries are names only, without limits')
+  const publicEntries = registry.components.map(accepted)
+  // One entry per name, compared the way visibility() compares them, so no reader keeps a later entry's limits.
+  const seen = new Set()
+  for (const name of [...publicEntries.map((entry) => entry.name), ...(registry.internal ?? [])]) {
+    const key = String(name).normalize('NFC').toLowerCase()
+    if (seen.has(key))
+      throw new Error(
+        'Duplicate component registry name: ' +
+          (COMPONENT_NAME.test(String(name)) ? name : '(not an identifier)')
+      )
+    seen.add(key)
+  }
+  return {
+    components: publicEntries.map((entry) => entry.name),
+    internal: [...(registry.internal ?? [])],
+    limits: Object.fromEntries(
+      publicEntries.filter((entry) => entry.limits).map((entry) => [entry.name, entry.limits])
+    )
+  }
+}
+
+function visibility(registry) {
+  const entries = componentRegistryEntries(registry)
+  const all = [...entries.components, ...entries.internal]
   if (
     all.some(
       (name) => typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/.test(name) || !safe(name)
@@ -117,12 +212,21 @@ function visibility(registry) {
     new Set(all.map((name) => name.normalize('NFC').toLowerCase())).size !== all.length
   )
     throw new Error('Invalid or duplicate component visibility name')
-  return {
-    components: [...registry.components].sort(),
-    internal: [...(registry.internal ?? [])].sort()
-  }
+  return { components: [...entries.components].sort(), internal: [...entries.internal].sort() }
 }
 
+// The visibility a generation record states, validated as a registry of names.
+function recordedVisibility(recorded) {
+  if (
+    !Array.isArray(recorded.components) ||
+    recorded.components.some((name) => typeof name !== 'string')
+  )
+    throw new Error('Invalid component generation registry names')
+  return visibility({ components: recorded.components, internal: recorded.internal })
+}
+
+// The generation record names the registry's public and internal components; the accepted limits stay in the
+// registry itself, which the record pins by sha256.
 export function componentRegistryIdentity(bytes) {
   return {
     path: 'promotion.json',
@@ -301,7 +405,7 @@ export function validateComponentGeneration(bytes, source, expected = {}) {
   const registry = {
     path: 'promotion.json',
     sha256: parsed.registry.sha256,
-    ...visibility({ components: parsed.registry.components, internal: parsed.registry.internal })
+    ...recordedVisibility(parsed.registry)
   }
   const output = outputIdentities(parsed.output, registry)
   const canonical = generationRecord(source, registry, config, dependencies, modules, output)

@@ -126,6 +126,7 @@ async function loadConfig(cwd = process.cwd()): Promise<FigmaConfig> {
 
 export {
   configSchema,
+  contractSchema,
   FILE_KEY_ENV,
   exclusionNameErrors,
   loadConfig,

@@ -1,0 +1,364 @@
+/* Voice chat panel — the private call titlebar (incoming / outgoing / connecting / in call / error)
+   and the community stream (speakers, people, controls). The panel stacks over the chat in a 738px
+   shared area: it is --panel-h tall (VOICE_PANEL_SIZE, set by VoiceChatPanel.tsx) and sits on the chat column
+   (--chat-h), scaled with the HUD from the bottom-left like the chat. Layout only: every control is
+   a design primitive. */
+.root {
+  --panel-h: 46px;
+  --chat-h: 46px;
+  position: fixed;
+  left: 56px;
+  bottom: calc(5px + (var(--chat-h) + 3px) * var(--ui-scale));
+  z-index: var(--z-hud);
+  display: flex;
+  flex-direction: column;
+  width: 356px;
+  height: var(--panel-h);
+  background: var(--panel-translucent);
+  border-radius: var(--r-md);
+  font-family: var(--font-family);
+  color: var(--text);
+  transform: scale(var(--ui-scale)) translateZ(0);
+  transform-origin: bottom left;
+  contain: layout paint;
+  overflow: hidden;
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 8px 0 10px;
+  background: var(--panel-head);
+  flex: none;
+}
+.headTitle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.15;
+}
+.title {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.subtitle {
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.headActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The private call titlebar (46px): the peer and two text lines on the
+   left, the round buttons on the right. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 10px;
+}
+.barLeft {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.barRight {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.barText {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.barHead {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+.bar[data-ringing='true'] .barHead {
+  animation: ring-pulse 1s ease-in-out infinite alternate;
+}
+.barName,
+.barLine {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.barTag {
+  font-weight: var(--fw-regular);
+  color: var(--text-dim);
+}
+.bar[role] .barLine {
+  font-weight: var(--fw-regular);
+}
+.peer {
+  position: relative;
+  flex: none;
+}
+.peer[data-speaking='true']::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--voice-green);
+}
+@keyframes ring-pulse {
+  from { opacity: 0.45; }
+  to { opacity: 1; }
+}
+
+/* The round 28px call buttons (hang up, accept, microphone). */
+.hangUp {
+  background: var(--error);
+  color: var(--text);
+}
+.hangUp:hover:not(:disabled) {
+  background: var(--danger-strong);
+}
+.accept {
+  background: var(--success);
+  color: var(--text);
+}
+.accept:hover:not(:disabled) {
+  background: var(--green);
+}
+.micOn {
+  background: var(--voice-green);
+}
+.micOff {
+  background: var(--white-10);
+}
+.handUp {
+  background: var(--brand);
+}
+.people {
+  position: relative;
+  overflow: visible;
+}
+.handsBadge {
+  position: absolute;
+  top: -5px;
+  right: -8px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: var(--r-pill);
+  background: var(--brand);
+  font-size: var(--fs-2xs);
+  line-height: 14px;
+}
+.errorIcon {
+  flex: none;
+  color: var(--error);
+}
+
+/* The community stream body. */
+.body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--divider-strong) transparent;
+}
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  padding: 0 14px;
+  border-top: 1px solid var(--divider-strong);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+}
+.sectionCount {
+  color: var(--text);
+}
+.speakers {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px 4px;
+  padding: 4px 10px 8px;
+}
+.speakerItem {
+  display: flex;
+  min-width: 0;
+}
+.speaker {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.speakerFace {
+  position: relative;
+}
+.speakerFace[data-speaking='true']::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: var(--r-pill);
+  border: 2px solid var(--voice-green);
+}
+.badge {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--r-pill);
+  background: var(--panel);
+  font-size: var(--fs-2xs);
+}
+.speakerName {
+  max-width: 100%;
+  font-size: var(--fs-2xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.speakerState {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 12px;
+  font-size: var(--fs-2xs);
+  color: var(--voice-green);
+}
+.more {
+  align-self: center;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 44px;
+  padding: 0 8px 0 14px;
+}
+.row:hover {
+  background: var(--list-row-hover);
+}
+.rowName {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.rowRole {
+  font-size: var(--fs-2xs);
+  color: var(--text-dim);
+  text-transform: uppercase;
+}
+.rowActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.search {
+  flex: 1;
+  min-width: 0;
+  margin-left: 6px;
+}
+.empty {
+  padding: 10px 14px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* Footer controls (expanded) or the collapsed strip. */
+.foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 10px;
+  border-top: 1px solid var(--divider-strong);
+  flex: none;
+}
+.footSpacer {
+  flex: 1;
+}
+
+/* The "stream in this scene" banner (50px) in the panel's dock: it
+   composes .root. */
+.banner {
+  gap: 10px;
+  padding: 0 10px;
+  box-sizing: border-box;
+  flex-direction: row;
+  align-items: center;
+}
+.bannerText {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.bannerName {
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bannerSub {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-dim);
+}
+
+/* read by assistive technology only */
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

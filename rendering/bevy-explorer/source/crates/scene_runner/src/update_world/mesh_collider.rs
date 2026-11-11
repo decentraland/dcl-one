@@ -460,7 +460,7 @@ impl SceneColliderData {
         None
     }
 
-    fn update_bvh(&mut self) {
+    pub(crate) fn update_bvh(&mut self) {
         if !self.changed_colliders.is_empty() || !self.removed_colliders.is_empty() {
             let changed = self.changed_colliders.drain().collect::<Vec<_>>();
             let removed = self.removed_colliders.drain().collect::<Vec<_>>();
@@ -499,7 +499,29 @@ impl SceneColliderData {
         specific_collider: Option<&ColliderId>,
     ) -> Option<RaycastResult> {
         self.update_bvh();
+        self.cast_ray_nearest_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            specific_collider,
+        )
+    }
 
+    /// [`Self::cast_ray_nearest`] without the lazy flush, so it can share the data across threads.
+    /// Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_ray_nearest_flushed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        specific_collider: Option<&ColliderId>,
+    ) -> Option<RaycastResult> {
         let ray = Ray {
             origin: origin.as_dvec3().into(),
             dir: direction.as_dvec3().into(),
@@ -620,7 +642,19 @@ impl SceneColliderData {
         skip_inside: bool,
     ) -> Vec<RaycastResult> {
         self.update_bvh();
+        self.cast_ray_all_flushed(origin, direction, distance, collision_mask, skip_inside)
+    }
 
+    /// [`Self::cast_ray_all`] without the lazy flush, so it can share the data across threads.
+    /// Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_ray_all_flushed(
+        &self,
+        origin: Vec3,
+        direction: Vec3,
+        distance: f32,
+        collision_mask: u32,
+        skip_inside: bool,
+    ) -> Vec<RaycastResult> {
         let ray = Ray {
             origin: origin.as_dvec3().into(),
             dir: direction.as_dvec3().into(),
@@ -676,10 +710,34 @@ impl SceneColliderData {
         include_sensors: bool,
         size_adjust: f32,
     ) -> Vec<RaycastResult> {
+        self.update_bvh();
+        self.cast_avatar_all_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            size_adjust,
+        )
+    }
+
+    /// [`Self::cast_avatar_all`] without the lazy flush, so it can share the data across threads.
+    /// Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_avatar_all_flushed(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        size_adjust: f32,
+    ) -> Vec<RaycastResult> {
         let mut results = Vec::new();
         let mut ignore = HashSet::new();
 
-        while let Some(result) = self.cast_avatar_nearest(
+        while let Some(result) = self.cast_avatar_nearest_flushed(
             origin,
             direction,
             distance,
@@ -708,7 +766,31 @@ impl SceneColliderData {
         size_adjust: f32,
     ) -> Option<RaycastResult> {
         self.update_bvh();
+        self.cast_avatar_nearest_flushed(
+            origin,
+            direction,
+            distance,
+            collision_mask,
+            skip_inside,
+            include_sensors,
+            exclude_colliders,
+            size_adjust,
+        )
+    }
 
+    /// [`Self::cast_avatar_nearest`] without the lazy flush, so it can share the data across
+    /// threads. Panics unless [`Self::update_bvh`] ran since the last collider change.
+    pub(crate) fn cast_avatar_nearest_flushed(
+        &self,
+        origin: DVec3,
+        direction: DVec3,
+        distance: f64,
+        collision_mask: u32,
+        skip_inside: bool,
+        include_sensors: bool,
+        exclude_colliders: HashSet<&ColliderId>,
+        size_adjust: f32,
+    ) -> Option<RaycastResult> {
         if !direction.is_finite() {
             return None;
         }

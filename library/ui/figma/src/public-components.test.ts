@@ -31,7 +31,7 @@ type Table = Record<string, { sha256: string; origin: Record<string, unknown> }>
 type Manifest = {
   source: { codeRevision: string; snapshotRevision: string; digestTableHash: string }
   transform: { id: string }
-  modules: { sha256: string; indexBlobSha: string }[]
+  modules: { path: string; sha256: string; indexBlobSha: string }[]
   output: { path: string; sha256: string }[]
   inputs: { dependencies: { indexBlobSha: string }[]; config: { indexBlobSha: string } }
 }
@@ -177,8 +177,7 @@ describe('when the offline component guard checks a staged internal plan', () =>
         source.files[file] = { sha256: hash(bytes) }
       }
       Object.assign(source, {
-        changes: ['Synthetic dependency-free checker fixture.'],
-        deviationCodes: { fixture: 0 }
+        deviationCodes: { fixture: 'Synthetic dependency-free checker fixture.' }
       })
       for (const entry of Object.values(source.files))
         Object.assign(entry, { fds: null, deviation: 'fixture' })
@@ -443,6 +442,57 @@ describe('when the offline component guard checks a staged internal plan', () =>
       expect(publicComponentsProblems(root, lock)).toEqual([
         'invalid component generation metadata: ' + error
       ])
+    })
+  })
+  describe('and the module map is pinned once by the generation record', () => {
+    it('should emit origins without a per-output module map', () => {
+      for (const entry of Object.values(lock.publicComponents.files))
+        expect(Object.hasOwn(entry.origin, 'modules')).toBe(false)
+    })
+    it('should reject a table that still repeats the module map in an output origin', () => {
+      const modules = Object.fromEntries(
+        (JSON.parse(metadata.toString()) as Manifest).modules.map((m) => [m.path, m.sha256])
+      )
+      const entry = lock.publicComponents.files['NavBar/NavBar.tsx']!
+      entry.origin = { ...entry.origin, modules }
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        'component origin differs: NavBar/NavBar.tsx'
+      ])
+    })
+    it('should reject tampered generation metadata whose digest the table does not pin', () => {
+      const value = JSON.parse(metadata.toString()) as Manifest
+      value.modules[0]!.sha256 = 'd'.repeat(64)
+      put(scope + 'generation.json', JSON.stringify(value, null, 2) + '\n')
+      git('add', '--', scope + 'generation.json')
+      expect(publicComponentsProblems(root, lock)).toEqual(['changed public file: generation.json'])
+    })
+    // Stops at the table digest, like the tamper case above: a real module change still needs the table resealed.
+    it('should refuse a module change whose regenerated generation.json the table does not pin', () => {
+      put(installer, '// changed implementation\n')
+      source.files[installer] = { sha256: hash('// changed implementation\n') }
+      git('add', '--', installer)
+      const value = JSON.parse(metadata.toString()) as Manifest
+      const module = value.modules.find((entry) => entry.path === installer)!
+      Object.assign(module, identity(installer))
+      put(scope + 'generation.json', JSON.stringify(value, null, 2) + '\n')
+      git('add', '--', scope + 'generation.json')
+      expect(publicComponentsProblems(root, lock)).toEqual(['changed public file: generation.json'])
+    })
+    it('should reject metadata that drops a module despite an outer reseal', () => {
+      editMetadata((value) => {
+        value.modules = value.modules.filter((entry) => entry.path !== installer)
+      })
+      expect(publicComponentsProblems(root, lock)).toEqual([
+        expect.stringMatching(/^invalid component generation metadata: /)
+      ])
+    })
+    it('should reject a module digest that the source lock and metadata agree on but the file does not have', () => {
+      const forged = 'd'.repeat(64)
+      source.files[installer] = { sha256: forged }
+      editMetadata((value) => {
+        value.modules.find((entry) => entry.path === installer)!.sha256 = forged
+      })
+      expect(publicComponentsProblems(root, lock)).toEqual(['changed public input: ' + installer])
     })
   })
   describe('and a mandatory module is omitted from the source lock', () => {
