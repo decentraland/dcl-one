@@ -30,6 +30,7 @@ import {
   componentModulePaths,
   componentPackages,
   createComponentGeneration,
+  handWrittenComponentDirectories,
   isComponentModulePath
 } from '../component-generation.mjs'
 
@@ -496,7 +497,7 @@ async function componentPhysicalInventory(
 async function installComponents(
   app: App,
   outDir: string,
-  lock: { sources: ComponentSource[] },
+  lock: { sources: ComponentSource[]; publicComponents?: { files?: Record<string, unknown> } },
   source: ReturnType<App['createSource']>,
   configFile: string,
   configBytes: Buffer,
@@ -629,7 +630,55 @@ async function installComponents(
     await assertLock()
   }
   await verifyInputs()
-  return publishInstall(root, 'components', outDir, planned, verifyInputs)
+  return publishInstall(
+    root,
+    'components',
+    outDir,
+    planned,
+    verifyInputs,
+    handWrittenComponents(await tree(outDir), lock.publicComponents?.files, planned)
+  )
+}
+
+/**
+ * Hand-written components in the current target: directories that hold none of the outputs the lock's public table
+ * pins or the current generation record lists. They are carried into the published tree byte for byte, never
+ * planned, regenerated or deleted, and a plan that would write into one is refused.
+ */
+function handWrittenComponents(
+  current: Map<string, Buffer> | undefined,
+  table: Record<string, unknown> | undefined,
+  planned: ReadonlyMap<string, Buffer>
+): Map<string, Buffer> {
+  const kept = new Map<string, Buffer>()
+  if (!current) return kept
+  const owned = new Set(Object.keys(table ?? {}))
+  const record = current.get('generation.json')
+  if (record) {
+    let output: unknown
+    try {
+      output = (JSON.parse(record.toString('utf8')) as { output?: unknown }).output
+    } catch {
+      throw new Error('The installed component generation record is not valid JSON')
+    }
+    if (!Array.isArray(output))
+      throw new Error('The installed component generation record has no output')
+    for (const entry of output as { path?: unknown }[])
+      if (typeof entry?.path === 'string') owned.add(entry.path)
+  }
+  const directories = new Set(handWrittenComponentDirectories(current.keys(), owned))
+  const fold = (name: string) => name.normalize('NFC').toLowerCase()
+  const plannedDirectories = new Set(
+    [...planned.keys()]
+      .filter((file) => file.includes('/'))
+      .map((file) => fold(file.split('/')[0]!))
+  )
+  for (const directory of directories)
+    if (plannedDirectories.has(fold(directory)))
+      throw new Error('Component install would overwrite a hand-written component: ' + directory)
+  for (const [file, bytes] of current)
+    if (file.includes('/') && directories.has(file.split('/')[0]!)) kept.set(file, bytes)
+  return kept
 }
 
 type FoundationSource = {
@@ -694,14 +743,17 @@ async function publishInstall(
   target: string,
   outDir: string,
   planned: Map<string, Buffer>,
-  verifyInputs: () => Promise<void>
+  verifyInputs: () => Promise<void>,
+  kept: ReadonlyMap<string, Buffer> = new Map()
 ): Promise<InstallResult> {
   const current = await tree(outDir)
-  await cleanTarget(root, target, outDir, current, planned)
+  // Kept files are published as they are and are not reported as install output.
+  const publication = new Map([...planned, ...kept])
+  await cleanTarget(root, target, outDir, current, publication)
   const result = {
     target,
     outDir,
-    changed: !same(current, planned),
+    changed: !same(current, publication),
     files: [...planned]
       .sort(([a], [b]) => a.localeCompare(b, 'en'))
       .map(([file, bytes]) => ({ path: file, sha256: digest(bytes) }))
@@ -721,7 +773,7 @@ async function publishInstall(
       throw new Error('Install target changed concurrently')
     if (!result.changed) return result
     temporary = await mkdtemp(path.join(path.dirname(outDir), `.${target}-install-`))
-    for (const [file, bytes] of planned) {
+    for (const [file, bytes] of publication) {
       const target = await resolveContained(temporary, file)
       await mkdir(path.dirname(target), { recursive: true })
       await writeFile(target, bytes)
