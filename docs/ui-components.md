@@ -14,7 +14,7 @@ The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts
 
 The [local review manifest](../library/ui/figma/review/src/generated/components/manifest.ts) owns preview names, node identities, variants and `needsManual` flags. It is not an application import surface. Do not duplicate its records here or infer visual parity from a passing build.
 
-To make another component available, follow the [verified port workflow](../library/ui/figma/MAINTENANCE.md#refresh-workflow), then confirm its local implementation, public export, mapping and accepted limits. Keep unresolved blockers in the authoritative component records.
+To make another component available, write it by hand from the component template in [UI standards](ui-standards.md), then confirm its public export, mapping and accepted limits. Generated review previews are not a source for public components. Keep unresolved blockers in the authoritative component records.
 
 ## Pending work
 

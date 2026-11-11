@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "c3ee9df26299e35f36b7044455a3fa993b2bcac685e188906aae2fed85ee4dac",
+          "sha256": "cbcde98f1750f0a763388127349ec3ead0d8dedc000fa61dd2c184e65ddc3ad7",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -622,7 +622,8 @@
             "resolver-followups",
             "port-command-followups",
             "port-safe-restore",
-            "generation-import-closure"
+            "generation-import-closure",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -679,7 +680,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "6a73bad4dffdd030260367d84a44466dc674607d2383a4ae83aff50bbff453a8",
+          "sha256": "5a0c362ac450066e4236dce71ab1c5b1c9cf6ae45a90e0b8790dfef1c69d69ce",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -691,17 +692,19 @@
             "name-identity",
             "accepted-limits",
             "skill-kit-followups",
-            "resolver-followups"
+            "resolver-followups",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "d9dc813769c17ce8d7866826f3a7f299084362483c85c01fc5b5eee4c0d85e08",
+          "sha256": "7c9734caa582b0c46e0be1c92b157424ff01d20cd02be5bab606dd9dc309853a",
           "fds": null,
           "deviation": [
             "port-command",
             "skill-kit-followups",
             "port-command-followups",
-            "port-safe-restore"
+            "port-safe-restore",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/component-generation.mjs": {
@@ -4359,6 +4362,7 @@
         "gallery-disclosure": "The gallery discloses what it does not provide: the catalog records, per component, how many image fills its generated stylesheet replaced with the neutral placeholder (counted from the generated CSS; a missing stylesheet fails the manifest), the component page states that those image fills are not provided and that the gallery makes no claim of visual parity, and the navigation says Figma image fills are not provided. review-notes.json, the per-component visual review statuses and findings the gallery displayed, is removed with the visual review it reported. Affected components: PlaceCard, SearchBar, NavBar, ProfilePic, NavNotificationsButton, NavProfileButton, NavNotificationItem, SearchResultItem, WebTheme, ShopModals, NavProfileMenu, WebThemeDarkMode, NavBarExplorer.",
         "generated": "Generated Review output (figma/review/src/generated and figma/review/src/review/catalog.json) is regenerated here by this tree's generator and figma.config.json from the pinned capture: it differs from figma-design-system's committed output wherever the ports above, the keyless context or the imageFills placeholder differ. figma diff against the fetched cache reports no change.",
         "generation-import-closure": "components/generation.json binds the import closure of the install process instead of every tooling module (docs/adr/2026-11-11-generation-binds-installer-import-closure.md). module-graph.mjs computes the closure without dependencies and fails closed on any import it cannot resolve to one tracked file or a sanctioned package; componentModulePaths selects the fixed inputs, that closure and non-code files under figma/src from lock-verified bytes, and the generation record is schema 2. dcl-figma install runs in its own process (src/install-main.ts), so the modules it loads are the closure; createApp moves to src/app-context.ts so that process does not load the sync tooling. The install and offline inventories still require every candidate module to be tracked and pinned.",
+        "hand-written-public-components": "Public library components are written by hand from templates/component/ per docs/ui-standards.md; generation backs the Review previews and the NavBar bridge only. The maintainer skill sends a new public component to the template instead of components/promotion.json or promotion.include, the consumer skill attributes a difference to the capture the mappings follow, and MAINTENANCE.md describes components/ as hand-written components plus the NavBar bridge.",
         "internal-components": "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "key-download-identity": "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard.",
         "key-guard-integrity": "Key guard integrity: the key scan runs in two jobs. prepare holds no secret: it validates the triggering run, fetches the scanned commits and prefetches their LFS objects, checks the Review artifact, posts the failed check for every skip or failure, and uploads the commits as a git bundle (prerequisites: the parents of the default branch commit it checked out) and the LFS objects as the key-scan-input artifact. key-scan holds FIGMA_FILE_KEY and has only pinned actions/checkout of the default branch into trusted/ without persisted credentials, actions/setup-node, actions/download-artifact into runner.temp, the key step and a report step. The policy test requires a key step's run to equal, once trimmed, one of the fixed templates in figma/test/key-step.ts (the trusted/ scan, or an artifact scan over a workspace root checkout with the build in .preview/input), and its env to hold exactly FIGMA_FILE_KEY, TRUSTED_SHA (github.sha or github.workflow_sha), GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL and GIT_NO_REPLACE_OBJECTS at their hardening values, and the template's data variables, each from an allowlisted expression; the optional report step must equal the report template and come last. Any other step, action, action input or step key in a key job is rejected, so no shell runs before the key step and no command is parsed. The key step copies key-guard.mjs from TRUSTED_SHA by object id with --no-replace-objects before it fetches the bundle (into refs/key-scan/ only), reads the url allowlist from TRUSTED_SHA, names it with --revision, and reads LFS objects from the downloaded store (--lfs-store), each verified against its oid. Key jobs run on GitHub-hosted runners, and the import check covers export from and dynamic loads.",
