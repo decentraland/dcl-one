@@ -3374,7 +3374,7 @@
         },
         "library/ui/figma/src/install-components.test.ts": {
           "fds": null,
-          "sha256": "db1cb63c9449bb5b500b35dbc4a0d55370ff379cbcfe6f41a4ccbce429d7abce",
+          "sha256": "d3ceb29f0024b815dce488d10a835bc86372a17ca0fdcad064b84396d8cfba80",
           "deviation": [
             "local-components-plan",
             "internal-components",
@@ -4021,7 +4021,7 @@
           "deviation": "live-read-restored"
         },
         "library/ui/figma/test/accepted-limits.test.ts": {
-          "sha256": "e3cdf2f75a93530e6104253a6b35aa6e35561a416d5ef19e156c3e81dae66c4b",
+          "sha256": "d7300094f702a2baf30bdcb9119e631a1dc07891c28593e57baebda6c3dcc37a",
           "fds": null,
           "deviation": [
             "accepted-limits",

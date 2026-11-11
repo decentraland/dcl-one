@@ -22,14 +22,22 @@ function readmeLimits(markdown: string): { id: string; text: string }[] {
   return limits
 }
 
-describe('the accepted NavBar limits', () => {
-  it('should be the same list, by id and text, in the README and the component registry', () => {
+const sample = [
+  { id: 'logo-size', text: 'The logo is pending.' },
+  { id: 'avatar', text: 'The avatar is a placeholder.' }
+]
+
+describe('the accepted limits of generated public components', () => {
+  // NavBar, the last generated public component, is hand-written: its limits live in docs/ui-components.md.
+  it('should record no limits in the component registry', () => {
     const registry = componentRegistryEntries(
       JSON.parse(readFileSync(path.join(ui, 'components/promotion.json'), 'utf8'))
     )
-    expect(readmeLimits(readFileSync(path.join(ui, 'README.md'), 'utf8'))).toEqual(
-      registry.limits.NavBar
-    )
+    expect(registry.limits).toEqual({})
+  })
+
+  it('should keep no accepted-limits list in the README', () => {
+    expect(readFileSync(path.join(ui, 'README.md'), 'utf8')).not.toContain(MARKER)
   })
 
   it.each([
@@ -40,13 +48,15 @@ describe('the accepted NavBar limits', () => {
         list.map((l, i) => (i ? l : { ...l, text: 'Reworded.' }))
     ]
   ])('should fail the comparison when the README %s a limit', (_label, change) => {
-    const registry = componentRegistryEntries(
-      JSON.parse(readFileSync(path.join(ui, 'components/promotion.json'), 'utf8'))
-    ).limits.NavBar!
-    const readme = `${MARKER}\n\n${change(registry)
+    const readme = `${MARKER}\n\n${change(sample)
       .map((l) => `- \`${l.id}\`: ${l.text}`)
       .join('\n')}\n`
-    expect(readmeLimits(readme)).not.toEqual(registry)
+    expect(readmeLimits(readme)).not.toEqual(sample)
+  })
+
+  it('should read back an unchanged list', () => {
+    const readme = `${MARKER}\n\n${sample.map((l) => `- \`${l.id}\`: ${l.text}`).join('\n')}\n`
+    expect(readmeLimits(readme)).toEqual(sample)
   })
 
   it('should refuse a README without the marker', () => {
