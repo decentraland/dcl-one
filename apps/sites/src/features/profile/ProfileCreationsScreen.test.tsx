@@ -46,7 +46,7 @@ function creation(n: number, over: Partial<ProfileCreation> = {}): ProfileCreati
   };
 }
 
-const page = (items: ProfileCreation[], total = items.length) => ({ items, total });
+const page = (items: ProfileCreation[], total = items.length) => ({ items, received: items.length, total });
 
 function profile(over: Partial<ProfileVM> = {}): ProfileVM {
   return { ...emptyProfile(A), name: "Billyjuice", nameColor: "#ff8362", ...over };
@@ -90,7 +90,7 @@ describe("profile creations", () => {
     expect(within(hat).getByRole("img", { name: "Hat" })).toBeTruthy();
     expect(within(hat).getByRole("img", { name: "Unisex" })).toBeTruthy();
     expect(within(hat).getByRole("img", { name: "Smart wearable" })).toBeTruthy();
-    expect(within(hat).getByRole("link", { name: "Buy" }).getAttribute("href")).toBe("/shop/item/0xabc/0");
+    expect(within(hat).getByRole("link", { name: "Buy Hat 0" }).getAttribute("href")).toBe("/shop/item/0xabc/0");
     expect(screen.getByRole("link", { name: "View all" }).getAttribute("href")).toBe(`/shop/accounts/${A}`);
     // Announced in the live region when loading ends.
     expect(screen.getByText("1 creation").closest('[role="status"]')).not.toBeNull();
@@ -103,8 +103,8 @@ describe("profile creations", () => {
 
     const hat = await screen.findByRole("link", { name: "Hat 0" }).then(() => card("Hat 0"));
     expect(within(hat).getByText("Not for sale")).toBeTruthy();
-    expect(within(hat).queryByRole("link", { name: "Buy" })).toBeNull();
-    expect(within(hat).getByRole("link", { name: "View in Shop" }).getAttribute("href")).toBe("/shop/item/0xabc/0");
+    expect(within(hat).queryByRole("link", { name: "Buy Hat 0" })).toBeNull();
+    expect(within(hat).getByRole("link", { name: "View Hat 0 in Shop" }).getAttribute("href")).toBe("/shop/item/0xabc/0");
   });
 
   it("shows a card whose image, rarity and traits are missing without inventing them", async () => {
@@ -196,12 +196,35 @@ describe("profile creations", () => {
     show();
     await screen.findByRole("link", { name: "Hat 0" });
 
-    await user.click(screen.getByRole("button", { name: "Load more" }));
+    const button = screen.getByRole("button", { name: "Load more" });
+    await user.click(button);
 
     expect(await screen.findByRole("link", { name: "Hat 25" })).toBeTruthy();
     expect(net.fetchProfileCreations.mock.calls[1]?.[1]).toMatchObject({ skip: PROFILE_COLLECTIBLES_PAGE });
     expect(screen.getAllByRole("link", { name: `Hat ${PROFILE_COLLECTIBLES_PAGE - 1}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("keeps focus on Load more while the next page loads, without asking twice", async () => {
+    const user = userEvent.setup();
+    const first = Array.from({ length: PROFILE_COLLECTIBLES_PAGE }, (_, n) => creation(n));
+    let release!: (value: unknown) => void;
+    net.fetchProfileCreations
+      .mockResolvedValueOnce(page(first, 30))
+      .mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    show();
+    await screen.findByRole("link", { name: "Hat 0" });
+    const button = screen.getByRole("button", { name: "Load more" });
+
+    await user.click(button);
+
+    expect(await screen.findByText("Loading more creations")).toBeTruthy();
+    expect(document.activeElement).toBe(button);
+    expect(button.getAttribute("aria-disabled")).toBe("true");
+    await user.click(button);
+    expect(net.fetchProfileCreations).toHaveBeenCalledTimes(2);
+    await act(async () => release(page([creation(24)], 30)));
+    expect(await screen.findByRole("link", { name: "Hat 24" })).toBeTruthy();
   });
 
   it("keeps the loaded rows when the next page fails, and retries it", async () => {
@@ -216,9 +239,13 @@ describe("profile creations", () => {
 
     await user.click(screen.getByRole("button", { name: "Load more" }));
 
-    expect(await screen.findByText("More creations could not be loaded.")).toBeTruthy();
+    // Announced, and the same button keeps the focus while it turns into Try again.
+    const failure = await screen.findByText("More creations could not be loaded.");
+    expect(failure.getAttribute("role")).toBe("status");
     expect(screen.getByRole("link", { name: "Hat 0" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Try again" }));
+    const retry = screen.getByRole("button", { name: "Try again" });
+    expect(document.activeElement).toBe(retry);
+    await user.click(retry);
     await waitFor(() => expect(screen.getByRole("link", { name: "Hat 24" })).toBeTruthy());
   });
 });

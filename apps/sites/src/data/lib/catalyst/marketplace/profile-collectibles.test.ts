@@ -62,6 +62,7 @@ describe("fetchProfileCreations", () => {
     });
     expect(page).toEqual({
       total: 12,
+      received: 1,
       items: [
         {
           id: `${CONTRACT}-0`,
@@ -109,10 +110,11 @@ describe("fetchProfileCreations", () => {
   it("leaves out a row without an identity and reports it", async () => {
     json.mockResolvedValue({ data: [item({ id: undefined }), item({ id: "b", itemId: "1" })], total: 2 });
 
-    const { items, total } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+    const { items, received, total } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
     expect(items.map((row) => row.id)).toEqual(["b"]);
     expect(total).toBe(2);
+    expect(received).toBe(2);
     expect(warnInvalid).toHaveBeenCalledWith("ProfileCreation", expect.anything());
   });
 

@@ -71,11 +71,12 @@ export const profileQuery = (address: string) =>
 
 /**
  * The next page starts after every row already requested, while the catalogue says there are more.
- * A page that brings nothing ends the list, so a total the catalogue overstates cannot loop.
+ * A page the catalogue sends empty ends the list, so a total it overstates cannot loop; a page whose
+ * rows all failed to parse does not.
  */
 export function nextCollectiblesPage(last: CollectiblePage<unknown>, pages: readonly unknown[]): number | undefined {
   const requested = pages.length * PROFILE_COLLECTIBLES_PAGE;
-  return last.items.length > 0 && requested < last.total ? requested : undefined;
+  return last.received > 0 && requested < last.total ? requested : undefined;
 }
 
 export const creationsQuery = (address: string, category: CreationsCategory) =>

@@ -37,23 +37,34 @@ export function catalogueTotal(data: InfiniteData<CollectiblePage<unknown>>): nu
   return data.pages[data.pages.length - 1]?.total ?? 0;
 }
 
-/** Under a list: its next page loading, why it failed with a way to retry, Load more, or nothing at the end. */
+/**
+ * Under a list: one button that stays mounted (so keyboard focus survives a click) reading Load more,
+ * or Try again after the next page failed, plus a live region that announces the page loading and
+ * its failure. Nothing at the end of the list.
+ */
 export function loadMore<T>(query: CollectiblesQuery<T>, noun: string): ReactNode {
-  if (query.isFetchingNextPage) return <ProfileCollectiblesProgress label={`Loading more ${noun}`} />;
-  if (query.isFetchNextPageError) {
-    return (
-      <>
-        <span>More {noun} could not be loaded.</span>
-        <Button variant="secondary" onClick={() => void query.fetchNextPage()}>
-          Try again
-        </Button>
-      </>
-    );
-  }
-  if (!query.hasNextPage) return null;
+  const fetching = query.isFetchingNextPage;
+  const failed = query.isFetchNextPageError && !fetching;
+  if (!query.hasNextPage && !fetching) return null;
   return (
-    <Button variant="secondary" onClick={() => void query.fetchNextPage()}>
-      Load more
-    </Button>
+    <>
+      <span role="status">
+        {fetching ? (
+          <ProfileCollectiblesProgress label={`Loading more ${noun}`} />
+        ) : failed ? (
+          `More ${noun} could not be loaded.`
+        ) : null}
+      </span>
+      <Button
+        variant="secondary"
+        // Not `disabled`: a disabled button drops the focus it holds.
+        aria-disabled={fetching}
+        onClick={() => {
+          if (!fetching) void query.fetchNextPage();
+        }}
+      >
+        {failed ? "Try again" : "Load more"}
+      </Button>
+    </>
   );
 }

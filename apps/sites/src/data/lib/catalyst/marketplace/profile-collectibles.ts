@@ -60,8 +60,11 @@ export type ProfileAsset = {
   traits: CollectibleTraits;
 };
 
-/** One read's rows and how many the catalogue holds in all. */
-export type CollectiblePage<T> = { items: T[]; total: number };
+/**
+ * One read's rows and how many the catalogue holds in all. `received` counts the rows the catalogue
+ * sent, before any that fail to parse are left out, so paging follows the catalogue's offsets.
+ */
+export type CollectiblePage<T> = { items: T[]; received: number; total: number };
 
 /** Only the fields the cards show are required, so an unrelated catalogue change does not drop a row. */
 const CreationRowSchema = CatalogItemSchema.pick({
@@ -205,7 +208,7 @@ export async function fetchProfileCreations(
     }),
     path,
   );
-  return { items: collect(page.data, toCreation), total: page.total };
+  return { items: collect(page.data, toCreation), received: page.data.length, total: page.total };
 }
 
 /** The tokens a wallet owns, newest first, optionally of one category. */
@@ -228,5 +231,5 @@ export async function fetchProfileAssets(
     }),
     path,
   );
-  return { items: collect(page.data, toAsset), total: page.total };
+  return { items: collect(page.data, toAsset), received: page.data.length, total: page.total };
 }

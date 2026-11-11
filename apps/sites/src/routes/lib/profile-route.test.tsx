@@ -261,7 +261,7 @@ describe("profile route, creations and assets", () => {
 
   it("shows a member's creations under their own tab", async () => {
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchProfileCreations.mockResolvedValue({ items: [hat], total: 1 });
+    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
 
     mount(`/profile/${A}/creations`);
 
@@ -272,7 +272,7 @@ describe("profile route, creations and assets", () => {
   it("shows the owner's assets on their own profile", async () => {
     auth.state = { isConnected: true, address: A, identity };
     net.fetchProfile.mockResolvedValue(avatar("Alice"));
-    net.fetchProfileAssets.mockResolvedValue({ items: [{ ...hat, id: "t-1", tokenId: "7", category: "wearable" }], total: 1 });
+    net.fetchProfileAssets.mockResolvedValue({ items: [{ ...hat, id: "t-1", tokenId: "7", category: "wearable" }], received: 1, total: 1 });
 
     mount(`/profile/${A}/assets`);
 

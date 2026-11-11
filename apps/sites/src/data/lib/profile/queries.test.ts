@@ -203,7 +203,7 @@ describe("photosQuery", () => {
 });
 
 describe("nextCollectiblesPage", () => {
-  const page = (rows: number, total: number) => ({ items: Array.from({ length: rows }, (_, n) => n), total });
+  const page = (rows: number, total: number, received = rows) => ({ items: Array.from({ length: rows }, (_, n) => n), received, total });
 
   it("starts the next page after every row already requested", () => {
     const first = page(PROFILE_COLLECTIBLES_PAGE, 60);
@@ -214,6 +214,11 @@ describe("nextCollectiblesPage", () => {
   it("ends when every row the catalogue holds was requested", () => {
     const last = page(12, 36);
     expect(nextCollectiblesPage(last, [page(24, 36), last])).toBeUndefined();
+  });
+
+  it("keeps going past a page whose rows all failed to parse", () => {
+    const unreadable = page(0, 60, PROFILE_COLLECTIBLES_PAGE);
+    expect(nextCollectiblesPage(unreadable, [unreadable])).toBe(PROFILE_COLLECTIBLES_PAGE);
   });
 
   it("ends on an empty page even when the total says there are more", () => {
@@ -237,6 +242,6 @@ describe("assetsQuery", () => {
       sortBy: "newest",
     });
     expect(calls[0].signal).toBeInstanceOf(AbortSignal);
-    expect(owned.pages).toEqual([{ items: [], total: 0 }]);
+    expect(owned.pages).toEqual([{ items: [], received: 0, total: 0 }]);
   });
 });

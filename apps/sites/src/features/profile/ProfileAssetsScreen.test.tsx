@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -18,6 +18,8 @@ vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original)
   fetchProfileAssets: net.fetchProfileAssets,
 }));
 vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null, isConnected: false, address: null }) }));
+
+import { CatalogCard } from "@dcl/one-ui/apps/sites/provisional/CatalogCard/CatalogCard";
 
 import type { ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import { emptyProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
@@ -47,9 +49,9 @@ function asset(n: number, over: Partial<ProfileAsset> = {}): ProfileAsset {
 }
 
 const name = (n: number, label: string) =>
-  asset(n, { contractAddress: "0xens", category: "ens", name: label, rarity: undefined, traits: { bodyShapes: [], isSmart: false } });
+  asset(n, { contractAddress: "0xens", category: "ens", name: label, image: undefined, rarity: undefined, traits: { bodyShapes: [], isSmart: false } });
 
-const page = (items: ProfileAsset[], total = items.length) => ({ items, total });
+const page = (items: ProfileAsset[], total = items.length) => ({ items, received: items.length, total });
 
 function profile(): ProfileVM {
   return { ...emptyProfile(A), name: "Billyjuice", nameColor: "#ff8362" };
@@ -105,6 +107,27 @@ describe("profile assets", () => {
     expect(within(ens).getByRole("link", { name: "Transfer brai" }).getAttribute("href")).toBe("/shop/token/0xens/5/transfer");
     expect(within(ens).queryByRole("link", { name: /^View/ })).toBeNull();
     expect(screen.getByText("1 asset")).toBeTruthy();
+  });
+
+  it("shows a NAME's glyph where the catalogue has no image", async () => {
+    net.fetchProfileAssets.mockResolvedValue(page([name(5, "brai")]));
+
+    show();
+
+    const ens = await screen.findByRole("link", { name: "brai" }).then(() => card("brai"));
+    expect(ens.querySelector("img")).toBeNull();
+    expect(ens.querySelector("svg[aria-hidden], [aria-hidden] svg")).not.toBeNull();
+  });
+
+  it("drops a card image that fails to load, showing its glyph instead", () => {
+    const { container } = render(
+      <CatalogCard title="Broken" href="/shop/token/0xabc/1" imageUrl="https://example.com/missing.png" placeholder={<svg data-glyph="" />} />,
+    );
+
+    fireEvent.error(container.querySelector("img") as HTMLImageElement);
+
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("[data-glyph]")).not.toBeNull();
   });
 
   it("lists NAMEs as rows under the Names filter", async () => {

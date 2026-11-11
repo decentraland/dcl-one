@@ -80,7 +80,7 @@ const keysOf = (data: ProfileLoaderData) => data.dehydratedState.queries.map((q)
 
 beforeEach(() => {
   net.fetchProfile.mockImplementation(async (address: string) => avatar(address === A ? "Alice" : "Bob"));
-  net.fetchProfileCreations.mockResolvedValue({ items: [], total: 0 });
+  net.fetchProfileCreations.mockResolvedValue({ items: [], received: 0, total: 0 });
 });
 afterEach(() => vi.resetAllMocks());
 
@@ -179,7 +179,7 @@ describe("profile loader, dehydrated state", () => {
   });
 
   it("reads the signed-in member's own assets, every category, first page", async () => {
-    net.fetchProfileAssets.mockResolvedValue({ items: [], total: 0 });
+    net.fetchProfileAssets.mockResolvedValue({ items: [], received: 0, total: 0 });
 
     const out = await run(`/profile/${A}/assets`, { address: A, tab: "assets" }, A);
 
@@ -279,7 +279,7 @@ describe("profile loader, canonical paths", () => {
   });
 
   it("opens a browser-wallet member's own-only tab from a deep link", async () => {
-    net.fetchProfileAssets.mockResolvedValue({ items: [], total: 0 });
+    net.fetchProfileAssets.mockResolvedValue({ items: [], received: 0, total: 0 });
 
     const out = await run(`/profile/${A}/assets`, { address: A, tab: "assets" }, A);
 

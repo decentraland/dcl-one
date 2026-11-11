@@ -58,9 +58,11 @@ function CreationCard({ item, creator }: { item: ProfileCreation; creator: strin
       badges={<CollectibleBadges {...item.traits} />}
       action={
         item.price ? (
-          <Button href={href}>Buy</Button>
+          <Button href={href} aria-label={`Buy ${item.name}`}>
+            Buy
+          </Button>
         ) : (
-          <Button href={href} variant="secondary">
+          <Button href={href} variant="secondary" aria-label={`View ${item.name} in Shop`}>
             View in Shop
           </Button>
         )
