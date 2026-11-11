@@ -49,7 +49,7 @@ const HOME_CONTENT: HomeContent = {
       id: "whatson",
       kind: "events",
       title: "Jump Into What's Happening",
-      viewAll: { label: "View All", href: "/whats-on" },
+      viewAll: { label: "View All", href: "/events" },
       items: [],
     },
     {
@@ -63,7 +63,7 @@ const HOME_CONTENT: HomeContent = {
       id: "rituals",
       kind: "rituals",
       title: "Your Weekly Rituals",
-      viewAll: { label: "View All", href: "/whats-on" },
+      viewAll: { label: "View All", href: "/events" },
       items: [],
     },
   ],

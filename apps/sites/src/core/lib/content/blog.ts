@@ -111,7 +111,7 @@ const BLOG_POSTS: BlogPost[] = [
       {
         type: "p",
         content:
-          "The listing reflects the event data this node serves \u{2014} no editorial curation, just what's actually scheduled. Check it out at /whats-on.",
+          "The listing reflects the event data this node serves \u{2014} no editorial curation, just what's actually scheduled. Check it out at /events.",
       },
     ],
   },

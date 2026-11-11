@@ -127,7 +127,7 @@ export function eventToRitualItem(e: Event): RitualRailItem {
     title: e.name ?? "Untitled event",
     day: day == null ? null : WEEKDAY_NAMES[day] ?? null,
     image: e.image ?? null,
-    href: `/whats-on/${encodeURIComponent(e.id)}`,
+    href: `/events?id=${encodeURIComponent(e.id)}`,
   };
 }
 

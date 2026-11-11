@@ -63,7 +63,7 @@ export const ROUTES: Route[] = [
   { path: "/shop", auth: "out" },
   { path: "/marketplace", auth: "out" },
   { path: "/discover", auth: "out" },
-  { path: "/whats-on", auth: "out" },
+  { path: "/events", auth: "out" },
   { path: "/places", auth: "out" },
   { path: "/shop/my-items", auth: "both", allowConsole: [AUTH_PROBE] },
   { path: "/blog", auth: "out" },

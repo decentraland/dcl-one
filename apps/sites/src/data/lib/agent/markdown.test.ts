@@ -387,11 +387,11 @@ describe("whatsOnToMarkdown", () => {
     expect(md).toContain("1 live now, 1 upcoming.");
     expect(md).toContain("(filter: week)");
     expect(md).toContain("## Live now");
-    expect(md).toContain("[DJ Night](/whats-on/e1)");
+    expect(md).toContain("[DJ Night](/events?id=e1)");
     expect(md).toContain("LIVE");
     expect(md).toContain("42 attending");
     expect(md).toContain("## Upcoming");
-    expect(md).toContain("[Art Expo](/whats-on/e2)");
+    expect(md).toContain("[Art Expo](/events?id=e2)");
     expect(md).toContain("(0,0)");
     expect(md).toContain("weekly");
     expect(md).not.toMatch(NO_HTML);

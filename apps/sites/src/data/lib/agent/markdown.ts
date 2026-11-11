@@ -289,7 +289,7 @@ function eventLine(e: Event): string {
     (e.total_attendees ?? 0) > 0 ? `${e.total_attendees} attending` : null,
   ]);
   const title = clean(e.name || "Untitled event");
-  return `- [${title}](/whats-on/${encodeURIComponent(e.id)})${meta ? ` \u{2014} ${meta}` : ""}`;
+  return `- [${title}](/events?id=${encodeURIComponent(e.id)})${meta ? ` \u{2014} ${meta}` : ""}`;
 }
 
 export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
@@ -297,8 +297,8 @@ export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
     return joinBlocks([
       heading(1, "My Hangouts"),
       "Open My Hangouts in a browser and sign in to load your private hangout catalogue and manage authorized approvals.",
-      "[Open My Hangouts](/whats-on?tab=my)",
-      "[Browse public hangouts](/whats-on)",
+      "[Open My Hangouts](/events?tab=my)",
+      "[Browse public hangouts](/events)",
     ]);
   }
   const live = data.live ?? [];

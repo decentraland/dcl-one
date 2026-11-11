@@ -22,7 +22,7 @@ function eventCard(event: Event): ChHappening {
   return {
     id: event.id, kind: "event", title: event.name ?? "Untitled event", image: event.image,
     meta: event.live ? "Happening now" : happeningDate(event.next_start_at ?? event.start_at),
-    href: `/whats-on/${encodeURIComponent(event.id)}`, live: event.live,
+    href: `/events?id=${encodeURIComponent(event.id)}`, live: event.live,
   };
 }
 

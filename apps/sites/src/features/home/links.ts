@@ -1,4 +1,4 @@
-/** Open the existing detail route directly; the legacy /events redirect does not select an event. */
+/** Opens the event's detail on the Events page. */
 export function homeEventHref(id: string): string {
-  return `/whats-on/${encodeURIComponent(id)}`;
+  return `/events?id=${encodeURIComponent(id)}`;
 }

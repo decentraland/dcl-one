@@ -24,7 +24,7 @@ describe.each(["hangout", "schedule"] as const)("when signed in to the %s wizard
       { path: "/edit", element: kind === "hangout"
         ? <SubmitHangout trackCtx={trackCtx} categories={[]} signedIn track={track} upload={upload} />
         : <ScheduleWizard trackCtx={trackCtx} schedules={[]} source="empty" signedIn track={track} /> },
-      { path: "/whats-on", element: <h1>What's On</h1> },
+      { path: "/events", element: <h1>What's On</h1> },
     ], { initialEntries: ["/edit"] });
     render(<RouterProvider router={router} />);
   });
@@ -32,7 +32,7 @@ describe.each(["hangout", "schedule"] as const)("when signed in to the %s wizard
 
   it("should leave the first step without revisiting the sign-in gate or starting again", async () => {
     await user.click(await screen.findByRole("link", { name: "Back" }));
-    await waitFor(() => expect(router.state.location.pathname).toBe("/whats-on"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/events"));
     expect(track.mock.calls.filter(([event]) => event === (kind === "hangout" ? "lp_hangout_started" : "lp_schedule_started"))).toHaveLength(1);
     expect(track.mock.calls.filter(([event]) => event === (kind === "hangout" ? "lp_hangout_signin_gate_viewed" : "lp_schedule_gate_viewed"))).toHaveLength(1);
   });
@@ -44,7 +44,7 @@ describe.each(["hangout", "schedule"] as const)("when signed in to the %s wizard
       });
       it("should abort the upload when leaving the editor", async () => {
         await user.click(screen.getByRole("link", { name: "Back" }));
-        await waitFor(() => expect(router.state.location.pathname).toBe("/whats-on"));
+        await waitFor(() => expect(router.state.location.pathname).toBe("/events"));
         expect((upload.mock.calls[0]?.[2] as AbortSignal).aborted).toBe(true);
       });
     });

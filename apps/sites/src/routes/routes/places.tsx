@@ -39,7 +39,7 @@ export const handle = { agentMarkdown: "placesIndex" } satisfies AgentMarkdownHa
 
 const PLACES_TABS = EXPLORE_TABS.filter((tab) => PUBLIC_WORLD_TABS.has(tab.id));
 const TAB_ROUTES: Partial<Record<TabId, string>> = {
-  events: "/whats-on",
+  events: "/events",
   places: "/places",
   communities: "/social",
   marketplace: "/shop",
