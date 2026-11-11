@@ -1,10 +1,13 @@
 /* Source's backdrop: a radial purple glow (token mixes nearest source's design values) under a
-   black fade, with a 700px photo from tablet up. */
+   black fade, with source's 700px top photo from tablet up. Source draws the photo from the top of the
+   document under its translucent header; the Sites header (72px) is opaque, so the photo starts under
+   it, skips the 72px the header would cover and still ends 700px down the document. The page runs the
+   full width with source's side margins: 64px from desktop, 32px on tablets, and phones edge to edge. */
 .root {
   position: relative;
   min-height: 100vh;
   overflow: hidden;
-  padding: var(--dcl-space-48) var(--dcl-layout-margin-x) 0;
+  padding: var(--dcl-space-32) var(--dcl-space-64) 0;
   background: radial-gradient(
     61.64% 109.58% at 50% 54.49%,
     color-mix(in srgb, var(--dcl-brand-lavender) 60%, var(--dcl-brand-purple)) 0%,
@@ -18,7 +21,11 @@
   position: absolute;
   inset: 0;
   z-index: 1;
-  background: linear-gradient(to bottom, var(--dcl-transparencies-black-60) 0%, transparent 100%);
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--dcl-neutrals-black) 80%, transparent) 0%,
+    transparent 100%
+  );
   pointer-events: none;
 }
 
@@ -30,9 +37,9 @@
   display: none;
   width: 100%;
   max-width: none;
-  height: 700px;
+  height: calc(700px - 72px);
   object-fit: cover;
-  object-position: top center;
+  object-position: 50% -72px;
   transform: translateX(-50%);
   pointer-events: none;
   user-select: none;
@@ -44,7 +51,12 @@
   }
 }
 
-/* Phones run the sections edge to edge, as source. */
+@media (max-width: 1023px) {
+  .root {
+    padding-inline: var(--dcl-space-32);
+  }
+}
+
 @media (max-width: 767px) {
   .root {
     padding: 0;
@@ -56,16 +68,13 @@
   z-index: 2;
   display: flex;
   flex-direction: column;
-  max-width: 1440px;
-  margin: 0 auto;
 }
 
 .notice {
   composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
   position: relative;
   z-index: 2;
-  max-width: 1440px;
-  margin: 0 auto var(--dcl-space-16);
+  margin: 0 0 var(--dcl-space-16);
   padding: var(--dcl-space-12) var(--dcl-space-16);
   border-radius: var(--dcl-radius-md);
   background: var(--dcl-feedback-error-subtle);

@@ -39,7 +39,6 @@
 .liveCard {
   flex-direction: column;
   height: 100%;
-  container-type: inline-size;
   transition:
     transform 0.3s,
     box-shadow 0.3s;
@@ -52,30 +51,58 @@
   }
 }
 
-/* Source's cover: 62.5% of the card width, at most 297px (design measurements). */
+/* Source's cover: 62.5% of the card width (8:5), at most 297px; on a 390px phone it gives 62px of
+   that to Jump In, 358 by 162 (design measurements). The ratio sizes the card before layout, so the
+   rail never stretches the cards past it. */
 .liveMedia {
   position: relative;
   flex: none;
-  height: min(62.5cqw, 297px);
+  overflow: hidden;
+  aspect-ratio: 8 / 5;
+  max-height: 297px;
   background: var(--dcl-neutrals-onix);
 }
 
+/* Out of flow, so the poster's own size never stretches the ratio box. */
+.liveMedia .image {
+  position: absolute;
+  inset: 0;
+}
+
+@media (max-width: 767px) {
+  .liveMedia {
+    aspect-ratio: 358 / 162;
+  }
+}
+
+/* Source's body: at least 123px (149px on phones), the title, then the by-line at the bottom. */
 .liveBody {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--dcl-space-16);
+  box-sizing: border-box;
   min-height: 123px;
   padding: var(--dcl-space-16);
   background: var(--dcl-transparencies-black-40);
 }
 
+@media (max-width: 767px) {
+  .liveBody {
+    min-height: 149px;
+  }
+}
+
 .liveTitle {
-  composes: text68656164696e672f35 from '../../../../foundations/typography/text-styles.module.css';
+  composes: text68656164696e672f34 from '../../../../foundations/typography/text-styles.module.css';
   overflow: hidden;
-  margin: 0;
+  margin: 0 0 7px;
+  line-height: 32px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.liveBody .creatorRow {
+  margin-top: auto;
 }
 
 .jumpIn {
@@ -87,6 +114,7 @@
   justify-content: center;
   gap: var(--dcl-space-8);
   min-height: 46px;
+  margin-top: var(--dcl-space-8);
   border-radius: var(--dcl-radius-md);
   background: var(--dcl-action-primary);
   color: var(--dcl-text-on-action);
@@ -102,24 +130,17 @@
   outline-offset: 2px;
 }
 
-/* From desktop, Jump In appears on hover or focus, as source; phones always show it. */
+/* From desktop, Jump In appears under the by-line on hover or focus and the card grows, as source;
+   phones always show it. */
 @media (hover: hover) and (min-width: 768px) {
   .liveCard .jumpIn {
-    position: absolute;
-    right: var(--dcl-space-16);
-    bottom: var(--dcl-space-16);
-    left: var(--dcl-space-16);
-    opacity: 0;
-    transform: translateY(8px);
-    transition:
-      opacity 0.2s,
-      transform 0.2s;
+    display: none;
   }
 
   .liveCard:hover .jumpIn,
   .liveCard:focus-within .jumpIn {
-    opacity: 1;
-    transform: none;
+    display: flex;
+    margin-top: var(--dcl-space-16);
   }
 }
 
@@ -218,6 +239,11 @@
   text-decoration: none;
 }
 
+/* Live Now's by-line is source's 13.3px body text, the nearest token being body/sm. */
+.liveCard .by {
+  font-size: var(--dcl-font-size-body-sm);
+}
+
 .liveCard .creator {
   color: inherit;
   font-weight: 700;
@@ -256,15 +282,15 @@ a.creator:focus-visible {
 
 /* Upcoming */
 
+/* Source's compact card: 140px tall, the cover 42% of its width. */
 .smallCard {
-  min-height: 112px;
+  min-height: 140px;
   background: var(--dcl-transparencies-black-40);
 }
 
 .smallMedia {
   flex: none;
   width: 42%;
-  max-width: 128px;
   background: var(--dcl-neutrals-onix);
 }
 
@@ -279,7 +305,7 @@ a.creator:focus-visible {
 }
 
 .smallTitle {
-  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  composes: text626f64792f6d642d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
   display: -webkit-box;
   overflow: hidden;
   margin: 0;
@@ -362,9 +388,9 @@ a.creator:focus-visible {
 .dayBody {
   display: flex;
   flex-direction: column;
-  gap: var(--dcl-space-8);
+  gap: var(--dcl-space-12);
   min-width: 0;
-  padding: var(--dcl-space-12);
+  padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-16);
 }
 
 .dayTitle {
@@ -377,7 +403,6 @@ a.creator:focus-visible {
 
 @media (prefers-reduced-motion: reduce) {
   .liveCard,
-  .liveCard .jumpIn,
   .card .actions {
     transition: none;
   }

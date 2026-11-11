@@ -27,6 +27,8 @@
   align-items: center;
   gap: var(--dcl-space-8);
   margin: 0 0 var(--dcl-space-24);
+  font-weight: 600;
+  line-height: 1.334;
 }
 
 .icon {
@@ -45,7 +47,10 @@
 }
 
 /* Room for the hover lift and glow inside the scroller. */
+/* Cards keep their own height (cover plus body), as source; stretching them to the tallest leaves
+   empty space under the by-line. */
 .track {
+  align-items: flex-start;
   gap: var(--dcl-space-16);
   margin: calc(-1 * var(--dcl-space-24)) calc(-1 * var(--dcl-space-16))
     calc(-1 * var(--dcl-space-16));

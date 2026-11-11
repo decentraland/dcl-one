@@ -1,17 +1,17 @@
 .root {
-  padding: var(--dcl-space-64) 0 var(--dcl-space-48);
+  padding: var(--dcl-space-64) 0 var(--dcl-space-96);
 }
 
 @media (max-width: 767px) {
   .root {
-    padding: var(--dcl-space-48) var(--dcl-space-16) var(--dcl-space-32);
+    padding: var(--dcl-space-32) var(--dcl-space-16);
   }
 }
 
 .title {
   composes: text68656164696e672f31 from '../../../foundations/typography/text-styles.module.css';
-  margin: 0 0 var(--dcl-space-24);
-  font-weight: 400;
+  margin: 0 0 var(--dcl-space-32);
+  font-weight: 500;
 }
 
 @media (max-width: 767px) {
@@ -46,6 +46,7 @@
 
 @media (min-width: 768px) {
   .grid {
+    column-gap: var(--dcl-space-24);
     grid-template-columns: repeat(2, minmax(0, 1fr));
     grid-template-rows: none;
     grid-auto-flow: row;
