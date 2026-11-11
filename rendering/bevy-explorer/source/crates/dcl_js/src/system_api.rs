@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use bevy::{log::debug, math::Vec4};
 use common::{
     inputs::{Action, BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     rpc::{RpcCall, RpcResultReceiver, RpcResultSender, RpcStreamReceiver, RpcStreamSender},
     structs::{
         MicState, PermissionLevel, PermissionStrings, PermissionType, PermissionUsed,
@@ -16,11 +16,12 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
-    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
+    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
+    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -681,6 +682,48 @@ pub async fn op_get_user_profile(
         .map_err(|_| anyhow::anyhow!("Not found"))
 }
 
+/// The most addresses one `getCompactProfiles` call may ask about.
+pub const COMPACT_PROFILES_MAX: usize = 200;
+
+/// The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses
+/// in one call, through the engine's profile cache: what a list row shows, without fetching
+/// whole profiles. In request order; an address that can't be resolved is left out.
+/// Only the system scene may call it (the web worker exposes every op to every scene), with at
+/// most `COMPACT_PROFILES_MAX` addresses: one call bypasses the per-tick RPC limit, and every
+/// address it names stays cached and fetched until the answer is complete.
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<impl State>>,
+    addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("getCompactProfiles is only available to the system scene");
+    }
+    if addresses.len() > COMPACT_PROFILES_MAX {
+        anyhow::bail!(
+            "getCompactProfiles takes at most {COMPACT_PROFILES_MAX} addresses, got {}",
+            addresses.len()
+        );
+    }
+
+    let (sx, rx) = RpcResultSender::channel();
+
+    let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
+    debug!(
+        "[{scene:?}] -> op_get_compact_profiles ({} addresses)",
+        addresses.len()
+    );
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::GetCompactProfiles {
+            addresses,
+            response: sx,
+        })?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
+}
+
 pub fn op_quit(state: Rc<RefCell<impl State>>) {
     state
         .borrow_mut()
@@ -1316,6 +1359,71 @@ pub async fn op_read_dm_user_state_stream(
 /// Ends the stream: wakes a parked read, and drops the receiver so the engine's sender closes.
 pub fn op_close_dm_user_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
     close_stream::<DmUserStateData>(&mut *state.borrow_mut(), rid);
+}
+
+/// The voice chat state (private calls, community streams): a snapshot now, then on change.
+/// The HUD keeps it open for the session; `close` ends it.
+pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetVoiceChatStateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_voice_chat_state_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<VoiceChatState>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_voice_chat_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<VoiceChatState>(&mut *state.borrow_mut(), rid);
+}
+
+/// Every community voice chat started / ended broadcast the social service sends.
+pub fn op_get_community_voice_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityVoiceUpdateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_voice_update_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityVoiceUpdate>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_community_voice_update_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<CommunityVoiceUpdate>(&mut *state.borrow_mut(), rid);
+}
+
+/// A voice chat command; its outcome shows on the state stream.
+pub fn op_voice_chat_action(
+    state: Rc<RefCell<impl State>>,
+    action: VoiceChatAction,
+) -> Result<(), anyhow::Error> {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::VoiceChatAction(action))?;
+    Ok(())
 }
 
 pub async fn op_get_dm_history(

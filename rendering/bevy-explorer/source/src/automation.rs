@@ -1,4 +1,4 @@
-//! Console commands end-to-end tests and agents drive the native client with
+//! Console commands end-to-end tests and agents drive the client with
 //! (docs/guidelines/running.md, "Test commands"):
 //!
 //! - [`AutomationPlugin`]: `/press_key` and `/click_at`, which feed the engine the same input
@@ -6,11 +6,13 @@
 //!   every unlocked-cursor mouse event, react_hud_cef.rs) see them. On the web the browser, not
 //!   the engine, delivers input, so react-web's `lib/hudAutomation.ts` answers these two commands
 //!   in the page.
+//! - [`pointer`], in the same plugin: `/hover_entity` and `/click_entity`, which hover and click
+//!   a scene entity by id through the pointer pipeline, on native and web alike.
 //! - [`remote`]: the loopback server that runs any console command from outside the process, for
 //!   callers holding the run's token, started by [`AutomationOptions`] (`--automation-token`).
 //!
-//! `/world_state` is `world_state.rs`, which the headless client has too. This module is native
-//! only (lib.rs).
+//! `/world_state` is `world_state.rs`, which the headless client has too. [`AutomationPlugin`]
+//! runs on every target; [`remote`] is native only (lib.rs).
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
@@ -82,7 +84,7 @@ impl AutomationOptions {
     }
 }
 
-/// `/press_key` and `/click_at`, in every native build.
+/// `/press_key`, `/click_at`, `/hover_entity` and `/click_entity`, in every build.
 pub struct AutomationPlugin;
 
 impl Plugin for AutomationPlugin {
@@ -94,8 +96,11 @@ impl Plugin for AutomationPlugin {
                 PreUpdate,
                 input::play_input_script.before(bevy::input::InputSystem),
             );
+        pointer::register(app);
     }
 }
+
+pub(crate) mod pointer;
 
 pub(crate) mod input {
     use std::collections::VecDeque;
@@ -110,15 +115,40 @@ pub(crate) mod input {
     use common::rpc::RpcResultSender;
     use console::PendingConsoleResponses;
 
-    /// Input queued by `/press_key`, `/click_at` and the standalone's `/hud_fill`, one step a
-    /// frame so each lands as a frame of its own, the way a person's key or click would.
+    /// Input queued by `/press_key`, `/click_at`, `/click_entity` and the standalone's
+    /// `/hud_fill`, one step a frame so each lands as a frame of its own, the way a person's key or
+    /// click would. Steps are numbered from 1 in the order they are queued; [`Self::played`] counts
+    /// the steps played so far, so a caller can tell when its step has landed.
     #[derive(Resource, Default)]
-    pub struct InputScript(VecDeque<Step>);
+    pub struct InputScript {
+        steps: VecDeque<Step>,
+        queued: u64,
+        played: u64,
+    }
 
     impl InputScript {
+        /// Queue a step after those already queued, and return its number: the step has been
+        /// played once [`Self::played`] reaches it.
+        pub(crate) fn push(&mut self, step: Step) -> u64 {
+            self.steps.push_back(step);
+            self.queued += 1;
+            self.queued
+        }
+
+        /// How many steps have been played (each in the `PreUpdate` of its frame).
+        pub(crate) fn played(&self) -> u64 {
+            self.played
+        }
+
+        fn pop(&mut self) -> Option<Step> {
+            let step = self.steps.pop_front()?;
+            self.played += 1;
+            Some(step)
+        }
+
         #[cfg(test)]
         pub fn steps(&self) -> usize {
-            self.0.len()
+            self.steps.len()
         }
     }
 
@@ -142,7 +172,7 @@ pub(crate) mod input {
                 ),
             };
             for state in [ButtonState::Pressed, ButtonState::Released] {
-                script.0.push_back(Step::Key {
+                script.push(Step::Key {
                     key_code,
                     logical_key: logical_key.clone(),
                     text: Some(text.clone()),
@@ -150,7 +180,7 @@ pub(crate) mod input {
                 });
             }
         }
-        script.0.push_back(Step::Done(reply, message));
+        script.push(Step::Done(reply, message));
     }
 
     pub enum Step {
@@ -172,7 +202,7 @@ pub(crate) mod input {
         mut keys: EventWriter<KeyboardInput>,
         mut buttons: EventWriter<MouseButtonInput>,
     ) {
-        let Some(step) = script.0.pop_front() else {
+        let Some(step) = script.pop() else {
             return;
         };
         let Ok((window_entity, mut window)) = windows.single_mut() else {
@@ -248,7 +278,7 @@ pub(crate) mod input {
             }
         };
         for state in states {
-            script.0.push_back(Step::Key {
+            script.push(Step::Key {
                 key_code,
                 logical_key: logical_key.clone(),
                 text: text.clone(),
@@ -256,9 +286,7 @@ pub(crate) mod input {
             });
         }
         let (reply, rx) = RpcResultSender::channel();
-        script
-            .0
-            .push_back(Step::Done(reply, format!("pressed {}", command.code)));
+        script.push(Step::Done(reply, format!("pressed {}", command.code)));
         pending.push_receiver(rx, |result| result, input.take_responder());
     }
 
@@ -296,13 +324,15 @@ pub(crate) mod input {
             }
         };
         let position = Vec2::new(command.x, command.y);
-        script.0.extend([
+        for step in [
             Step::Cursor(position),
             Step::Button(button, ButtonState::Pressed),
             Step::Button(button, ButtonState::Released),
-        ]);
+        ] {
+            script.push(step);
+        }
         let (reply, rx) = RpcResultSender::channel();
-        script.0.push_back(Step::Done(
+        script.push(Step::Done(
             reply,
             format!("clicked at ({}, {})", command.x, command.y),
         ));

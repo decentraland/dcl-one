@@ -3,8 +3,27 @@ import { describe, test } from 'node:test'
 import { ConsoleError, FakeConsole } from '../driver/console.ts'
 import { Explorer, type WorldState } from '../driver/explorer.ts'
 import { type AuthIdentity, addressOf } from '../driver/identity.ts'
-import { MAX_BOOTS, arrive, closeSessions, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
+import { MAX_BOOTS, arrive, closeSession, closeSessions, keepBootFailure, openSession, parsePosition, sameRealm, signIn } from '../driver/session.ts'
 import type { Target } from '../driver/target.ts'
+import { BootError } from '../driver/web.ts'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
+
+describe('keepBootFailure', () => {
+  test("keeps the page's console with its credentials replaced", async () => {
+    const dir = await mkdtemp(path.join(tmpdir(), 'e2e-boot-'))
+    try {
+      const error = new BootError('the console never came', ['booting', 'connecting to livekit:wss://rooms.example.test/r?access_token=tok3n'], undefined)
+      await keepBootFailure(1, error, dir)
+      const kept = await readFile(path.join(dir, 'boot-1.console.txt'), 'utf8')
+      assert.ok(kept.includes('access_token=REDACTED'), kept)
+      assert.ok(!kept.includes('tok3n'), kept)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+})
 
 function world(overrides: Partial<WorldState> = {}): string {
   return JSON.stringify({
@@ -119,6 +138,20 @@ describe('signIn', () => {
     assert.deepEqual(fake.sent('login_guest'), [])
   })
 
+  test("a web unsigned guest is the engine's /login_guest, with no HUD sign-in and no wait for a world", async () => {
+    const fake = new FakeConsole({ hud_login: landed, login_guest: '', world_state: () => world({ inWorld: false, worldHeld: true }) })
+    const state = await signIn(new Explorer(fake), web, 'unsigned-guest')
+    assert.deepEqual(fake.sent('hud_login'), [])
+    assert.deepEqual(fake.sent('login_guest'), ['/login_guest'])
+    assert.equal(state.signedIn, true)
+  })
+
+  test('on the standalone an unsigned guest is the engine\'s /login_guest', async () => {
+    const fake = new FakeConsole({ login_guest: '', world_state: () => world() })
+    await signIn(new Explorer(fake), target, 'unsigned-guest')
+    assert.deepEqual(fake.sent('login_guest'), ['/login_guest'])
+  })
+
   test("a web sign-in the HUD refuses fails the boot with the HUD's reason, the identity redacted", async () => {
     const fake = new FakeConsole({
       hud_login: (line) => {
@@ -174,5 +207,9 @@ describe('openSession', () => {
       console.error = original
       await closeSessions()
     }
+  })
+
+  test('closing a session never opened does nothing', async () => {
+    await closeSession({ signIn: 'unsigned-guest' }, target)
   })
 })

@@ -124,12 +124,15 @@ pub(super) const RAW_INT_IS_CASTABLE_RE: &str = r"^-?[0-9]{1,10}$";
 /// catalogue probe (`place_positions_path_gin`) bounds the answer by the
 /// catalogue, not by the owner's holdings, so a large holding neither loads
 /// its parcels into memory nor reaches the list's `@> ANY` clause.
-pub async fn operated_positions_in_catalogue(
-    pool: &sqlx::PgPool,
+pub async fn operated_positions_in_catalogue<'e, E>(
+    executor: E,
     land_registry: &str,
     estate_registry: &str,
     owner: &str,
-) -> Result<Vec<String>, sqlx::Error> {
+) -> Result<Vec<String>, sqlx::Error>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     sqlx::query_scalar(
         "SELECT DISTINCT format('%s,%s', p.x, p.y) \
          FROM (SELECT tr.x, tr.y FROM land_authz.token_right tr \
@@ -147,7 +150,7 @@ pub async fn operated_positions_in_catalogue(
     .bind(land_registry)
     .bind(owner)
     .bind(estate_registry)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
 }
 

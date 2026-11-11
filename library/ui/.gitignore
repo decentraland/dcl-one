@@ -1,0 +1,8 @@
+node_modules
+figma/review/review-dist
+figma/.figma-cache
+*.log
+# The Figma capture is materialized from figma-design-system by `pnpm figma fetch-source`, never committed.
+figma/figma-snapshot/
+figma/figma-snapshot.staging-*/
+figma/figma-snapshot.previous-*/

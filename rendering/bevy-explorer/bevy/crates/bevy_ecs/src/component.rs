@@ -1197,7 +1197,7 @@ impl ComponentDescriptor {
 pub type ComponentCloneFn = fn(&SourceComponent, &mut ComponentCloneCtx);
 
 /// The clone behavior to use when cloning a [`Component`].
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub enum ComponentCloneBehavior {
     /// Uses the default behavior (which is passed to [`ComponentCloneBehavior::resolve`])
     #[default]
@@ -1207,6 +1207,18 @@ pub enum ComponentCloneBehavior {
     /// Uses a custom [`ComponentCloneFn`].
     Custom(ComponentCloneFn),
 }
+
+impl PartialEq for ComponentCloneBehavior {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Default, Self::Default) | (Self::Ignore, Self::Ignore) => true,
+            (Self::Custom(a), Self::Custom(b)) => core::ptr::fn_addr_eq(*a, *b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for ComponentCloneBehavior {}
 
 impl ComponentCloneBehavior {
     /// Set clone handler based on `Clone` trait.

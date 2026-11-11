@@ -137,8 +137,8 @@ Files read:
 | 10 | POST | `/gc` | `/worlds-content-server/gc` and `/worlds-content-server/admin/gc` → `worlds/src/core/admin.rs:90`; no root route | DIVERGENT |
 
 Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 9, MISSING 1. Every remaining difference on the
-DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's rarer formats, WR-15's key
-order and WR-25 (a capture). The cross-cutting rules (404/405,
+DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's rarer formats and WR-15's
+key order. The cross-cutting rules (404/405,
 error envelope, CORS, mounts) are in "Common notes" and the backlog.
 
 ---
@@ -173,7 +173,7 @@ mount (`content/src/get_content.rs:95-132,147-281`) at both paths under the pref
 | 400 | Invalid key: empty body. | Not answered: an invalid key is a 404 (WR-02). |
 | 404 | Missing: empty body. | Empty body (`get_world_content`) (WR-03). |
 | 500 | A storage error other than `RangeError` rethrows → `{"error":"Internal Server Error"}` (`content-file-handler.ts:163-173`). | A storage fault → 500 `{"error":"Internal Server Error"}` (`content/src/errors.rs:56-61`). MATCH. |
-| Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and nginx serves the file, adding its own `Cache-Control: public, max-age=31536000, immutable` and `Access-Control-Allow-Origin: *` (`get_content.rs:263-275`, `infra/gateway/gateway.py:221-229`). Which `Cache-Control` the client sees needs a capture (WR-25). |
+| Full GET with `STORAGE_X_ACCEL_BASE` | n/a | The app answers 200 with `X-Accel-Redirect` and its content headers; nginx serves the file with the app's `Content-Type`, `Cache-Control`, `ETag` and expose list (one value each) plus `Access-Control-Allow-Origin: *`, and gives a range the app does not support the whole file (`get_content.rs:367-380`, `infra/gateway/gateway.py:265-272`). MATCH (WR-25). |
 | CORS | `Access-Control-Allow-Origin: *` on a request with `Origin`. | `shared::cors` (WR-06; shape WR-32). |
 
 ### Data dependency
@@ -563,15 +563,21 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       `available_content_reads_literal_cids_and_lists_denylisted_ones`.
     - Severity: none (closed).
 
-25. **WR-25 · `/contents` with `STORAGE_X_ACCEL_BASE` · headers nginx adds.** Status: open (needs a capture against a gateway-fronted node).
-    - dcl-one: a full GET is handed to nginx, whose protected-storage location adds
-      `Cache-Control: public, max-age=31536000, immutable` and `Access-Control-Allow-Origin: *`
-      beside the app's headers (`gateway.py:221-229`). Whether the client sees one or two
-      `Cache-Control` values, and which `Content-Type`, needs a request against a gateway-fronted
-      node.
-    - Proposed fix: capture; if doubled, set `proxy_hide_header Cache-Control` or drop the gateway's
-      `add_header` for that location.
-    - Severity: P2.
+25. **WR-25 · `/contents` with `STORAGE_X_ACCEL_BASE` · headers nginx adds.** Status: MATCH, no work.
+    - Upstream: one `Cache-Control: public,max-age=31536000,s-maxage=31536000,immutable`, the sniffed
+      `Content-Type` and `Access-Control-Expose-Headers` on a full GET; a `Range` it does not support
+      (multi-range, `bytes=-`, another unit) gets the whole file (`content-file-handler.ts:27-111`).
+    - dcl-one: the app answers a full GET with its content headers and `X-Accel-Redirect`
+      (`content/src/get_content.rs:367-380`). nginx keeps the app's `Content-Type`, `Accept-Ranges`
+      and `Cache-Control` across the redirect; the protected-storage location copies back `ETag` and
+      `Access-Control-Expose-Headers`, adds no `Cache-Control` of its own, and with `max_ranges 0`
+      serves the whole file for a range the app passed on (`infra/gateway/gateway.py:265-272`). A
+      capture through the gateway's rendered nginx config showed one value of each header and a 200
+      for `bytes=0-1,3-4`, `bytes=-` and `items=0-1` on `/worlds-content-server/contents`, `/ipfs`, the
+      worlds host and `/content/contents`. Pinned by `infra/gateway/tests/test_config.py`
+      `test_protected_storage_keeps_the_apps_content_headers` and the accel block of
+      `infra/gateway/smoke.py`.
+    - Severity: none (closed).
 
 26. **WR-26 · 405 · `Allow` spelling under the prefix.** Status: MATCH, no work.
     - Upstream: `Allow: HEAD, GET` (koa-router registration order, `", "`).

@@ -1,5 +1,8 @@
 // The in-world Shop page in the web shell: the Credits pill, BUY and BUY ITEM asking the shell to buy (the
 // shell, faked here, owns the dialog and the wallet), and what the page does as the purchase moves on.
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -20,8 +23,9 @@ vi.mock('../lib/shell', () => ({
 }))
 
 import InWorldShop, { type InWorldShopProps } from '../features/shop/InWorldShop'
+import shopStyles from '../features/shop/InWorldShop.module.css'
 import { primeRemoteFlags } from '../../shop/discovery/lib/remoteFlags'
-import { SHOP_EVENT } from '../lib/shopProtocol'
+import { LEGACY_SHOP_BUSY_MESSAGE, SHOP_EVENT, shopBusy } from '../lib/shopProtocol'
 import type { Wearable } from '../engine/protocol'
 import { fakeProfileState } from './harness'
 import { PopupHost, resetPopups } from '../design'
@@ -83,11 +87,12 @@ function serveCatalogue(flags: Record<string, boolean> = {}): ReturnType<typeof 
 }
 
 let balance = 700
-function answerShell(wallet: 'managed' | 'web3' = 'managed', marketplace: boolean | 'reject' = wallet === 'web3'): void {
+/** The shell's answers; `codedErrors` false is a shell from before codes, whose refusals carry words alone. */
+function answerShell(wallet: 'managed' | 'web3' = 'managed', marketplace: boolean | 'reject' = wallet === 'web3', codedErrors = true): void {
   shell.request.mockImplementation(async (method: string) => {
     if (method === 'shop.capabilities') {
       if (marketplace === 'reject') throw new Error('the shell did not answer')
-      return { v: 1, buyer: BUYER, wallet, credits: true, marketplace }
+      return { v: 1, buyer: BUYER, wallet, credits: true, marketplace, ...(codedErrors ? { codedErrors } : {}) }
     }
     if (method === 'shop.balance') return { v: 1, credits: balance }
     if (method === 'shop.buy') return { v: 1, operation: 'op', state: 'reviewing', items: [{ contract: CONTRACT, itemId: '1', quantity: 1 }] }
@@ -119,6 +124,16 @@ function renderShop(): InWorldShopProps {
     </QueryClientProvider>
   )
   return props
+}
+
+/** The page's own stylesheet in the document, under the class names the module gives it. The path is this file's
+ *  (Vite rewrites a `new URL(…, import.meta.url)` in tests), so it holds wherever vitest starts. */
+function withShopStyles(): HTMLStyleElement {
+  const sheet = document.createElement('style')
+  const names = shopStyles as Record<string, string>
+  sheet.textContent = readFileSync(resolve(dirname(fileURLToPath(import.meta.url)), '../features/shop/InWorldShop.module.css'), 'utf8').replace(/\.([a-zA-Z]\w*)/g, (selector, name: string) => (names[name] ? `.${names[name]}` : selector))
+  document.head.append(sheet)
+  return sheet
 }
 
 const emit = (event: Record<string, unknown>): void =>
@@ -208,7 +223,7 @@ describe('buying in the in-world Shop', () => {
   })
 
   it('offers the web Shop when the shell can’t open the purchase: a refusal, or an answer in another version', async () => {
-    for (const answer of [Promise.reject(new Error('a purchase is already open')), Promise.resolve({ v: 2, operation: 'op', state: 'reviewing' })]) {
+    for (const answer of [Promise.reject(new Error('this item is not sold here')), Promise.resolve({ v: 2, operation: 'op', state: 'reviewing' })]) {
       answer.catch(() => {})
       serveCatalogue()
       answerShell()
@@ -222,6 +237,64 @@ describe('buying in the in-world Shop', () => {
       cleanup()
       resetPopups()
     }
+  })
+
+  it('names the web Shop’s page in the confirmation, broken anywhere so a url stays inside the dialog', async () => {
+    const sheet = withShopStyles()
+    try {
+      const refusal = Promise.reject(new Error('this item is not sold here'))
+      refusal.catch(() => {})
+      serveCatalogue()
+      answerShell()
+      const usual = shell.request.getMockImplementation()!
+      shell.request.mockImplementation(async (method: string, params?: unknown) => (method === 'shop.buy' ? refusal : usual(method, params)))
+      renderShop()
+      const card = (await screen.findByText('Golden Armor', {}, { timeout: 5000 })).closest('[data-rarity]') as HTMLElement
+      await userEvent.click(within(card).getByRole('button', { name: 'BUY' }))
+      const dialog = await screen.findByRole('dialog', {}, { timeout: 5000 })
+      const page = dialog.querySelector<HTMLElement>(`.${shopStyles.link}`)
+      expect(page?.textContent).toContain(`/shop/item/${CONTRACT}/1`)
+      expect(getComputedStyle(page!).overflowWrap).toBe('anywhere')
+    } finally {
+      sheet.remove()
+    }
+  })
+
+  /** BUY on the card, with the shell's capabilities saying `codedErrors` or not (or never answering), and its BUY failing with `error`. */
+  const buyFailing = async (error: Error, codedErrors: boolean, capabilities: 'answered' | 'never' = 'answered'): Promise<void> => {
+    serveCatalogue()
+    answerShell('managed', capabilities === 'never' ? 'reject' : false, codedErrors)
+    const usual = shell.request.getMockImplementation()!
+    shell.request.mockImplementation(async (method: string, params?: unknown) => {
+      if (method === 'shop.buy') throw error
+      return usual(method, params)
+    })
+    renderShop()
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.capabilities', undefined))
+    const card = (await screen.findByText('Golden Armor', {}, { timeout: 5000 })).closest('[data-rarity]') as HTMLElement
+    await userEvent.click(within(card).getByRole('button', { name: 'BUY' }))
+    await waitFor(() => expect(shell.request).toHaveBeenCalledWith('shop.buy', expect.anything()))
+  }
+
+  // Both shells this HUD may be hosted by: this one, busy by its code, and one from before codes, busy in the
+  // same words alone, whose page this HUD may outlive. A shell whose capabilities never answered may be either,
+  // so both forms of busy hold there too.
+  for (const [host, error, codedErrors, capabilities] of [
+    ['the shell', shopBusy(), true, 'answered'],
+    ['a shell from before codes', new Error(LEGACY_SHOP_BUSY_MESSAGE), false, 'answered'],
+    ['a shell whose capabilities never answered, by its code,', shopBusy(), true, 'never'],
+    ['a shell whose capabilities never answered, in the words alone,', new Error(LEGACY_SHOP_BUSY_MESSAGE), true, 'never']
+  ] as const) {
+    it(`sends nowhere when ${host} is busy with another purchase: that purchase’s dialog, open or opening, is what the buyer sees`, async () => {
+      await buyFailing(error, codedErrors, capabilities)
+      await act(() => new Promise((resolve) => setTimeout(resolve, 50)))
+      expect(screen.queryByText('You will be redirected to the web Shop')).toBeNull()
+    })
+  }
+
+  it('takes the busy words without their code as a refusal from a shell whose refusals carry one: the web Shop', async () => {
+    await buyFailing(new Error(LEGACY_SHOP_BUSY_MESSAGE), true)
+    expect(await screen.findByRole('dialog', {}, { timeout: 5000 })).toHaveTextContent('You will be redirected to the web Shop')
   })
 
   it('ignores a malformed event', async () => {

@@ -11,8 +11,6 @@
 //!
 //! - This backend does not provide `position` or `normal` in `HitData`.
 
-use core::f32;
-
 use bevy_ecs::prelude::*;
 use bevy_render::camera::NormalizedRenderTarget;
 

@@ -1740,6 +1740,125 @@ async fn a_failing_subgraph_answers_lamb2s_status() {
     }
 }
 
+/// A LAND read that checked the land index before its cursor was rebound,
+/// then stalled while the new registries folded their links, reads its
+/// estates' parcels from its snapshot when it resumes: an estate keeps its
+/// own parcels, never the ones another registry's estate of the same id
+/// links. A new request after the rebind answers the index envelope.
+#[tokio::test]
+async fn estate_parcels_read_on_the_land_snapshot_never_join_a_rebound_registry() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let estate_5 = || vec!["5".to_string()];
+    let coordinates =
+        |parcels: std::collections::HashMap<String, Vec<super::nfts::EstateParcel>>| {
+            parcels
+                .get("5")
+                .map(|ps| ps.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>())
+                .unwrap_or_default()
+        };
+
+    // The read checks the seeded index (estate 5 holds LAND 2) and stalls.
+    let mut held = super::nft_reads::land_snapshot(&db.pool)
+        .await
+        .expect("the seeded land index is published");
+
+    // Another node rebinds the mainnet cursor to other registries, and their
+    // fold links LAND 9 into their own estate 5.
+    let other = crate::land_authz::Settings {
+        land_registry: "0x00000000000000000000000000000000000000aa".into(),
+        estate_registry: "0x00000000000000000000000000000000000000bb".into(),
+        ..crate::land_authz::Settings::for_tests()
+    };
+    assert_eq!(
+        crate::land_authz::indexer::begin_replay(&db.pool, &other, other.start_block)
+            .await
+            .unwrap(),
+        crate::land_authz::indexer::ReplayStart::Begun
+    );
+    sqlx::query(
+        "INSERT INTO land_authz.authz_event (block_number, log_index, block_time, token_address, kind, token_id, estate_id) \
+         VALUES (20, 0, 1600000020, $1, 'add_land', 9, 5)",
+    )
+    .bind(&other.estate_registry)
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    crate::land_authz::indexer::fold(&db.pool, &other, None)
+        .await
+        .unwrap();
+
+    // Control: outside a snapshot, the shop's estate 5 now lists the other
+    // registry's LAND 9.
+    let mut conn = db.pool.acquire().await.unwrap();
+    let outside = super::nft_reads::estate_parcels(&mut conn, &estate_5())
+        .await
+        .unwrap();
+    assert_eq!(coordinates(outside), vec![(0, 9)]);
+    drop(conn);
+
+    // The stalled read resumes on its snapshot: estate 5 still holds LAND 2.
+    let resumed = super::nft_reads::estate_parcels(&mut held.tx, &estate_5())
+        .await
+        .unwrap();
+    assert_eq!(coordinates(resumed), vec![(0, 2)]);
+    drop(held);
+
+    let (status, body) = get(&state, &format!("/lambdas/users/{OWNER}/genesis-parcels")).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    db.drop().await;
+}
+
+/// `/lambdas/users/{a}/lands` holds one connection, its land snapshot, and
+/// checks the nft index on it: with a pool of one connection and both
+/// indexes published, it answers the page at once, instead of waiting on a
+/// second connection and reading the timeout as an unpublished index.
+#[tokio::test]
+async fn user_lands_answer_on_a_pool_of_one_connection() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let one = PgPoolOptions::new()
+        .max_connections(1)
+        .acquire_timeout(std::time::Duration::from_secs(2))
+        .connect_with((*db.pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let state = Arc::new(MarketplaceState::new(
+        one.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let (status, body) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        get(&state, &format!("/lambdas/users/{OWNER}/lands")),
+    )
+    .await
+    .expect("the route answers well within the pool's acquire timeout");
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tokens: Vec<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["tokenId"].as_str())
+        .collect();
+    assert_eq!(
+        (body["totalAmount"].as_i64(), tokens),
+        (Some(2), vec!["5", "1"])
+    );
+    one.close().await;
+    db.drop().await;
+}
+
 /// LL-24: on a subgraph outage `/users/{a}/names` answers the last good list
 /// for lamb2's 120 s and `/users/{a}/lands` for as long as the outage lasts,
 /// while `graph::owned_names`, the read worlds' NAME owner and comms
@@ -1815,4 +1934,53 @@ async fn names_and_lands_serve_stale_on_outage_and_ownership_does_not() {
     let (status, body) = get(&state, &names_uri).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY, "{body}");
     assert_eq!(get(&state, &lands_uri).await, (StatusCode::OK, lands));
+}
+
+/// The nft leg of `/v1/prices` reads after its gate; if the land index
+/// stops being ready in between, the route answers the land index's
+/// envelope, as `/v1/nfts` does, and any other failure stays internal.
+#[tokio::test]
+async fn nft_prices_answer_the_land_index_envelope_when_it_stops_being_ready_after_the_gate() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_indexes(&db.pool).await;
+    let state = Arc::new(MarketplaceState::new(
+        db.pool.clone(),
+        crate::http::Outbound::for_tests(),
+        Settings::for_tests(),
+    ));
+    let parcels = super::nfts::NftFilters {
+        category: Some(super::wire::NftCategory::Parcel),
+        ..Default::default()
+    };
+    let read = super::nft_reads::nft_prices(&state, &parcels).await;
+    assert!(read.is_ok(), "{read:?}");
+
+    // The mainnet cursor is rebound to other registries.
+    sqlx::query(
+        "UPDATE land_authz.index_cursor SET land_registry = '0x00000000000000000000000000000000000000aa' \
+         WHERE network = 'ethereum-mainnet'",
+    )
+    .execute(&db.pool)
+    .await
+    .unwrap();
+    let refused = super::nft_reads::nft_prices(&state, &parcels)
+        .await
+        .unwrap_err();
+    assert_eq!(refused, super::nft_reads::NFT_PRICES_LAND_UNAVAILABLE);
+    let answer = |e: String| async move {
+        let response = super::prices::nft_prices_error(e);
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, serde_json::from_slice::<Value>(&bytes).unwrap())
+    };
+    let (status, body) = answer(refused).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(body["source"], "land-authz-index", "{body}");
+    let (status, body) = answer("statement timeout".into()).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR, "{body}");
+    db.drop().await;
 }

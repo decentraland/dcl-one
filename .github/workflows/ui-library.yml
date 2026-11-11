@@ -1,0 +1,136 @@
+name: Shared UI library
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ui-library-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  # Pull requests supersede their earlier run. Main pushes use unique groups so pending runs cannot
+  # replace each other before their history is scanned.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Runs before anything is installed. This workflow holds no secret: it runs pull request code, so it does the
+  # url check only. The Figma file key check runs in ui-library-key-scan.yml, from the default branch, over this
+  # run's commits and Review build as data.
+  key-guard:
+    # Controller-generated job metadata carries the push boundary to the privileged workflow_run scan.
+    # Pull request checks keep their stable name; job scripts and artifacts cannot supply this boundary.
+    name: ${{ github.event_name == 'push' && format('UI key push boundary {0}..{1}', github.event.before, github.sha) || 'key-guard' }}
+    runs-on: ubuntu-26.04
+    outputs:
+      ui_changed: ${{ steps.scope.outputs.ui_changed }}
+    steps:
+      # The scripts run from the merge commit, so a pull request branched before they existed still gets them.
+      # The scanned range stays on the pull request head, an ancestor of that commit in the full history.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          # LFS content is fetched by oid below, only for the blobs the range adds or changes.
+          lfs: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Select the range and library scope
+        id: scope
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          base="$BEFORE"
+          [ "$EVENT" != pull_request ] || base="$PR_BASE"
+          range="$base..$HEAD_SHA"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            range="$HEAD_SHA"
+            changed=true
+          else
+            changed=false
+            files=$(git log --format= --name-only --diff-merges=cc "$range" -- library/ui .claude/skills/implement-figma-design .claude/skills/maintain-figma-library .agents .github/workflows/ui-library.yml .github/workflows/ui-library-key-scan.yml .gitattributes)
+            [ -z "$files" ] || changed=true
+          fi
+          echo "ui_changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+      # Every LFS object a blob of the range points to, in any path and in commits a later one deletes, is
+      # downloaded by oid from this repository's fixed LFS endpoint, so the scan reads each payload locally.
+      - name: Prefetch the LFS objects the range points to
+        env:
+          RANGE: ${{ steps.scope.outputs.range }}
+          REPOSITORY: ${{ github.repository }}
+          READ_TOKEN: ${{ github.token }}
+        run: |
+          authorization="Basic $(printf 'x-access-token:%s' "$READ_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$authorization"
+          node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --lfs-objects > "$RUNNER_TEMP/lfs-objects.jsonl"
+          LFS_AUTHORIZATION="$authorization" node library/ui/figma/lfs-prefetch.mjs \
+            --endpoint "https://github.com/$REPOSITORY.git/info/lfs" --objects "$RUNNER_TEMP/lfs-objects.jsonl"
+      # This unprivileged scan reads the allowlist from the pull request head, never from the merge commit. The
+      # privileged scan in ui-library-key-scan.yml reads it from the default branch, so only main can suppress a url.
+      - name: Scan every outgoing commit for Figma urls
+        env:
+          RANGE: ${{ steps.scope.outputs.range }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: node library/ui/figma/key-guard.mjs --no-worktree --range "$RANGE" --allowlist-from "$HEAD_SHA"
+      # The checks against the Figma capture run where it is readable (locally, after pnpm figma fetch-source). When a
+      # port input changes (the lock outside its provenance text, or a tracked file under library/ui/figma other than
+      # tests, fixtures and Markdown), this step requires the record of their results for exactly those inputs. It also
+      # fails on any head with a lock when a port input names an exempt file, or the validator imports beyond its own
+      # modules, loads code with require or names an exempt path outside its rule, even if no port input changed.
+      - name: Require the port verification record when a port input changes
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          base="$BEFORE"
+          [ "$EVENT" != pull_request ] || base="$PR_BASE"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then base="$HEAD_SHA^"; fi
+          node library/ui/figma/port-verification.mjs --base "$base" --head "$HEAD_SHA"
+
+  library:
+    needs: key-guard
+    if: needs.key-guard.outputs.ui_changed == 'true'
+    runs-on: ubuntu-26.04
+    defaults:
+      run:
+        working-directory: library/ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          lfs: false
+      # Hydrate only library/ui's LFS objects (the foundation fonts), never the whole monorepo's.
+      - run: git lfs pull --include "library/ui/**"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # Every tracked file under figma/ matches the digest upstream.lock.json pins for it.
+      - run: node figma/lock-digests.mjs
+      # The skill installed at the repository root matches its source in figma/agent-kit (dependency-free).
+      - run: node figma/agent-kit/cli.mjs check --target ../..
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm review:build
+      # The built gallery works where it is served: catalog and variant navigation and a non-empty render.
+      - run: node figma/review/scripts/check-build.mjs figma/review/review-dist
+      # Url check only; ui-library-key-scan.yml checks this artifact for the key, from the default branch.
+      - name: Scan the Review build for Figma urls before upload
+        run: node figma/key-guard.mjs --no-worktree --no-range --path library/ui/figma/review/review-dist
+      # Named by the commit it was built for, which ui-library-key-scan.yml downloads by that same SHA.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-review-${{ github.event.pull_request.head.sha || github.sha }}
+          path: library/ui/figma/review/review-dist
+          retention-days: 14

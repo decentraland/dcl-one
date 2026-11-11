@@ -75,7 +75,8 @@ async function ensureFirstSlotSaved(explorer: Explorer): Promise<void> {
 
 /** Put the pointer on a saved outfit and press the EQUIP that appears over it. */
 async function equipOutfit(explorer: Explorer, slot: number): Promise<void> {
-  const { action } = await hoverCard(explorer, { name: `Outfit ${slot}`, selector: savedOutfit(slot) }, ['EQUIP'])
+  // a saved outfit's EQUIP sits beside its card, not in it, so the card's text does not name it
+  const { action } = await hoverCard(explorer, { name: `Outfit ${slot}`, selector: savedOutfit(slot) }, ['EQUIP'], 'EQUIP')
   if (!action) throw new Error(`Outfit ${slot} offered no EQUIP button`)
   await explorer.hud.click(action.selector)
 }

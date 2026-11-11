@@ -128,6 +128,21 @@ module.exports.getUserProfile = async function(address) {
     return await Deno.core.ops.op_get_user_profile(address);
 }
 
+// the compact profiles of a list of addresses in one call, through the engine's profile cache:
+// what a list row shows, without fetching whole profiles. In request order; an address that
+// can't be resolved is left out. At most 200 addresses a call; more rejects.
+// addresses: string[] => CompactProfile[]
+// type CompactProfile = {
+//   pointer: string,               // lowercase 0x address
+//   name: string,
+//   hasClaimedName: boolean,
+//   nameColor: Color3 | null,      // the claimed name's colour, if one is set
+//   thumbnailUrl: string,          // the face snapshot's url; empty when there is none
+// }
+module.exports.getCompactProfiles = async function(addresses) {
+    return await Deno.core.ops.op_get_compact_profiles(addresses);
+}
+
 // get the next key/button pressed by the user, identified as a string
 // -> string
 module.exports.getNativeInput = async function() {
@@ -732,6 +747,47 @@ module.exports.social = {
   // the community channels the local user listens to (community ids); replaces the previous set
   setCommunityChannels: function(ids) {
     Deno.core.ops.op_set_community_channels(ids);
+  }
+}
+
+// Voice chat: private calls and community streams. The state stream carries one snapshot per
+// change; actions are fire-and-forget and their outcome shows on it.
+// type VoiceChatState = { status: string, kind: string, callId: string | null, communityId: string | null,
+//   peer: string | null, connection: string, participants: VoiceChatParticipant[], micEnabled: boolean,
+//   localSpeaker: boolean, localRole: string, localRequestingToSpeak: boolean, error: string | null }
+// type CommunityVoiceUpdate = { communityId: string, status: 'started' | 'ended', createdAt: number,
+//   endedAt: number | null, positions: string[], worlds: string[], isMember: boolean,
+//   communityName: string, communityImage: string | null }
+// type VoiceChatAction = { op: string, address?: string, communityId?: string, raise?: boolean, enabled?: boolean }
+function closeableStream(rid, read, close) {
+  async function* streamGenerator() {
+    try {
+      while (true) {
+        const next = await read(rid);
+        if (next === null) break;
+        yield next;
+      }
+    } finally {
+      close(rid);
+    }
+  }
+
+  const stream = streamGenerator();
+  stream.close = () => close(rid);
+  return stream;
+}
+
+module.exports.voiceChat = {
+  getStateStream: function() {
+    const rid = Deno.core.ops.op_get_voice_chat_state_stream();
+    return closeableStream(rid, Deno.core.ops.op_read_voice_chat_state_stream, Deno.core.ops.op_close_voice_chat_state_stream);
+  },
+  getCommunityUpdateStream: function() {
+    const rid = Deno.core.ops.op_get_community_voice_update_stream();
+    return closeableStream(rid, Deno.core.ops.op_read_community_voice_update_stream, Deno.core.ops.op_close_community_voice_update_stream);
+  },
+  action: function(action) {
+    Deno.core.ops.op_voice_chat_action(action);
   }
 }
 

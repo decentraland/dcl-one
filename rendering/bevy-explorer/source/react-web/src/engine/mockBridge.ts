@@ -5,6 +5,7 @@
 
 import {
   bridgeChannelName,
+  type ActiveCommunityVoiceChat,
   type AppNotification,
   type Badge,
   type BadgeTier,
@@ -23,6 +24,10 @@ import {
   type ProfileEdit,
   type SceneToPage,
   type Setting,
+  type VoiceChatActionWire,
+  type VoiceChatParticipant,
+  type VoiceChatRole,
+  type VoiceChatState,
   type Wearable
 } from './protocol'
 import { applyProfileEdit } from './profileEdit'
@@ -119,6 +124,17 @@ const MOCK_NEARBY = [
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
 
+// The places the mock user can link to a community, and what each community links.
+const MOCK_OWNED_PLACES = [
+  { id: 'place-land-1', isWorld: false, label: 'Mock Plaza (12,-34)', ownerName: 'You' },
+  { id: 'place-world-1', isWorld: true, label: 'Mock Mansion (mock.dcl.eth)', ownerName: 'You' }
+]
+const mockLinkedPlaces = new Map<string, string[]>()
+// The card places unlinked per community.
+const mockRemovedPlaces = new Map<string, Set<string>>()
+// The card's member actions by community: a member's new role, or null once kicked or banned.
+const mockMemberChanges = new Map<string, Map<string, string | null>>()
+
 const mockCommunities: Community[] = [
   { id: 'c1', name: 'Decentraland Foundation', description: 'The official Decentraland Foundation community. Stay up to date with events, releases and everything happening across the metaverse.', thumbnail: 'https://picsum.photos/seed/dcl/540/360', membersCount: 1242, role: 'member', ownerName: 'DCLOfficial', privacy: 'public' },
   { id: 'c2', name: 'Chiri Storytelling', description: "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!", thumbnail: '', membersCount: 374, role: 'none', ownerName: 'Chiri', privacy: 'private' },
@@ -127,8 +143,51 @@ const mockCommunities: Community[] = [
   { id: 'c5', name: 'Toxic Events', description: 'The wildest parties and events in DCL.', thumbnail: '', membersCount: 601, role: 'member', ownerName: 'ToxicWaifu' },
   { id: 'c6', name: 'Last Slice Creators', description: 'A community of pizza-loving 3D creators.', thumbnail: '', membersCount: 164, role: 'none', ownerName: 'Lastraum' },
   { id: 'c7', name: 'SheFi', description: 'Empowering women in web3 and DeFi.', thumbnail: '', membersCount: 310, role: 'none', ownerName: 'msjoedor' },
-  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' }
+  { id: 'c8', name: 'Community Building DCL', description: 'Helping communities grow in Decentraland.', thumbnail: '', membersCount: 639, role: 'owner', ownerName: 'TheCryptKeeper' },
+  // more than two browse pages (20 a page), every third private, some with friends in them
+  ...Array.from({ length: 40 }, (_, i): Community => ({
+    id: `b${i + 1}`,
+    name: `${['Pixel', 'Neon', 'Genesis', 'Lunar', 'Voxel'][i % 5]} ${['Builders', 'Club', 'Guild', 'Collective', 'Lounge', 'Crew', 'Society', 'Hub'][i % 8]} ${i + 1}`,
+    description: `Mock community ${i + 1}, here so the browse grid has pages to load.`,
+    thumbnail: '',
+    membersCount: 20 + ((i * 37) % 400),
+    role: 'none',
+    ownerName: `owner${i + 1}`,
+    privacy: i % 3 === 2 ? 'private' : 'public'
+  }))
 ]
+// The user's friends in a community (the browse card's faces).
+const mockFriend = (n: number): { address: string; name: string; picture: string; hasClaimedName: boolean } => ({
+  address: `0x${(n + 100).toString(16).padStart(40, '0')}`,
+  name: ['Mojito', 'KazeNoKai', 'laurenmae', 'Kimbo'][n % 4],
+  picture: `https://picsum.photos/seed/friend${n}/64/64`,
+  hasClaimedName: n % 2 === 0
+})
+mockCommunities[0].friends = [mockFriend(0), mockFriend(1), mockFriend(2)]
+mockCommunities[2].friends = [mockFriend(3)]
+mockCommunities[9].friends = [mockFriend(1), mockFriend(2)]
+// My Communities: the ones the user is a member of
+const mockMine = (): Community[] => mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator' || c.role === 'member')
+
+// A live stream on one community for the Communities page's chip and the scene banner.
+mockCommunities[0].voiceChatStatus = { isActive: true, participantCount: 12, moderatorCount: 1 }
+const MOCK_ACTIVE_CHATS: ActiveCommunityVoiceChat[] = [
+  { communityId: 'c1', communityName: 'Decentraland Foundation', communityImage: 'https://picsum.photos/seed/dcl/540/360', isMember: true, positions: ['0,0', '0,1'], worlds: [], participantCount: 12, moderatorCount: 1 }
+]
+
+/** Voice chat: a scripted call so every panel state shows in ?mock=1. `?mockcall=incoming` rings
+ *  on start; the Call buttons and the community Start / Join flows drive the rest. */
+const MOCK_ME = '0x0000000000000000000000000000000000000001'
+function mockParticipant(address: string, name: string, picture: string | undefined, role: VoiceChatRole, isSpeaker: boolean, extra: Partial<VoiceChatParticipant> = {}): VoiceChatParticipant {
+  return { address, name, hasClaimedName: !/\d/.test(name), profilePictureUrl: picture ?? '', role, isSpeaker, isRequestingToSpeak: false, isMuted: false, isSpeaking: false, ...extra }
+}
+const idleVoice: VoiceChatState = { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false, errorSeq: 0 }
+let voice: VoiceChatState = { ...idleVoice }
+let mockVoiceAction: ((action: VoiceChatActionWire) => void) | null = null
+const voiceTimers: ReturnType<typeof setTimeout>[] = []
+const clearVoiceTimers = (): void => {
+  while (voiceTimers.length > 0) clearTimeout(voiceTimers.pop())
+}
 
 const RARITIES = ['base', 'common', 'uncommon', 'rare', 'epic', 'legendary', 'mythic', 'unique', 'exotic']
 const thumb = (urn: string): string => `https://peer.decentraland.org/lambdas/collections/contents/${urn}/thumbnail`
@@ -229,7 +288,8 @@ const mockSettings: Setting[] = [
   { name: 'resolution', category: 'general', description: '', minValue: 0, maxValue: 2, namedVariants: [v('1280 × 720'), v('1920 × 1080'), v('2560 × 1440')], value: 1, default: 1, stepSize: 1 },
   { name: 'graphics_quality', category: 'graphics', description: 'Overall visual quality.', minValue: 0, maxValue: 3, namedVariants: [v('Low'), v('Medium'), v('High'), v('Ultra')], value: 2, default: 1, stepSize: 1 },
   { name: 'fps_limit', category: 'graphics', description: 'Cap the frame rate.', minValue: 30, maxValue: 144, namedVariants: [], value: 60, default: 60, stepSize: 1 },
-  { name: 'Voice', category: 'audio', description: 'The volume of incoming voice audio from other players.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1 },
+  { name: 'Voice Volume', category: 'audio', description: "The volume of nearby players' voices.", minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1 },
+  { name: 'Voice Chat Volume', category: 'audio', description: 'The volume of private calls and community voice streams.', minValue: 0, maxValue: 100, namedVariants: [], value: 100, default: 100, stepSize: 1 },
   { name: 'master_volume', category: 'audio', description: '', minValue: 0, maxValue: 100, namedVariants: [], value: 80, default: 100, stepSize: 1 },
   { name: 'voice_chat', category: 'audio', description: 'Enable voice chat.', minValue: 0, maxValue: 1, namedVariants: [v('Off'), v('On')], value: 1, default: 1, stepSize: 1 }
 ]
@@ -342,6 +402,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     { id: 'n4', type: 'event_started', read: true, timestamp: new Date(mockNow - 86_400_000).toISOString(), metadata: { title: 'Event live', description: 'Music Festival is happening now in Genesis Plaza.' } },
     // Title-less types (server sends only structured fields) — formatted client-side in the panel.
     { id: 'n5', type: 'community_post_added', read: false, timestamp: new Date(mockNow - 2400_000).toISOString(), metadata: { communityName: 'Toxic Events', communityId: 'c5', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
+    { id: 'n10', type: 'community_voice_chat_started', read: false, timestamp: new Date(mockNow - 600_000).toISOString(), metadata: { communityId: 'c1', communityName: 'Decentraland Foundation', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } },
     { id: 'n6', type: 'credits_reminder_claim_credits', read: false, timestamp: new Date(mockNow - 5400_000).toISOString(), metadata: {} }
   ]
   // Mock camera-reel gallery — ~3-day spacing spans two months (exercises month grouping).
@@ -525,7 +586,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     reply({ kind: 'realmInfo', realm: 'https://realm-provider.decentraland.org/main', satelliteView: GENESIS_SATELLITE_VIEW })
     // The real bridge resolves this per parcel from the live scene list; the mock circles
     // inside one scene, so a single push is the whole story.
-    reply({ kind: 'sceneInfo', title: 'Genesis Plaza', scene: 'bafkreigenesisplazahash' })
+    reply({ kind: 'sceneInfo', title: 'Genesis Plaza', scene: 'bafkreigenesisplazahash', parcel: { x: 0, y: 0 }, realm: 'main' })
     let t = 0
     poseTimer = setInterval(() => {
       t += 0.05
@@ -549,6 +610,132 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     )
     // One nearby player is talking in voice chat, so the speaking indicator is visible in ?mock=1.
     setTimeout(() => reply({ kind: 'voiceActivity', address: MOCK_NEARBY[0].address, active: true }), 1500)
+
+    // Voice chat: the engine's first snapshot and the live streams (one is at Genesis Plaza's parcel).
+    const pushVoice = (next: Partial<VoiceChatState>): void => {
+      voice = { ...voice, ...next }
+      reply({ kind: 'voiceChatState', state: voice })
+    }
+    const voiceLater = (ms: number, next: () => void): void => {
+      voiceTimers.push(setTimeout(next, ms))
+    }
+    setTimeout(() => {
+      pushVoice({})
+      reply({ kind: 'activeCommunityVoiceChats', chats: [...MOCK_ACTIVE_CHATS] })
+    }, 1600)
+    const setLive = (id: string, live: boolean): void => {
+      const c = mockCommunities.find((m) => m.id === id)
+      if (c == null) return
+      const at = MOCK_ACTIVE_CHATS.findIndex((a) => a.communityId === id)
+      if (live && at < 0) MOCK_ACTIVE_CHATS.push({ communityId: id, communityName: c.name, isMember: c.role !== 'none', positions: [], worlds: [], participantCount: 1, moderatorCount: 1 })
+      if (!live && at >= 0) MOCK_ACTIVE_CHATS.splice(at, 1)
+      reply({ kind: 'activeCommunityVoiceChats', chats: [...MOCK_ACTIVE_CHATS] })
+    }
+    // ?mockstream=start: Toxic Events goes live a few seconds in, with its broadcast and notification.
+    if (new URLSearchParams(location.search).get('mockstream') === 'start') {
+      setTimeout(() => {
+        reply({ kind: 'communityVoiceUpdate', communityId: 'c5', status: 'started', createdAt: Date.now(), endedAt: null, positions: [], worlds: [], isMember: true, communityName: 'Toxic Events', communityImage: null })
+        setLive('c5', true)
+        const started: AppNotification = { id: 'n-stream-c5', type: 'community_voice_chat_started', read: false, timestamp: new Date().toISOString(), metadata: { communityId: 'c5', communityName: 'Toxic Events', thumbnailUrl: 'https://picsum.photos/seed/dcl/80/80' } }
+        mockNotifications.unshift(started)
+        reply({ kind: 'notificationsNew', notifications: [started] })
+      }, 5000)
+    }
+    const mockCall = new URLSearchParams(location.search).get('mockcall')
+    if (mockCall === 'incoming') {
+      setTimeout(() => pushVoice({ status: 'receivedCall', kind: 'private', callId: 'mock-call', peer: MOCK_NEARBY[0].address }), 2000)
+    }
+    mockVoiceAction = (action) => {
+      const community = (id: string): VoiceChatParticipant[] => [
+        mockParticipant(MOCK_ME, 'You', undefined, id === 'c8' ? 'owner' : 'user', id === 'c8'),
+        mockParticipant(MOCK_NEARBY[0].address, MOCK_NEARBY[0].name, MOCK_NEARBY[0].picture, 'moderator', true, { isSpeaking: true }),
+        mockParticipant(MOCK_NEARBY[1].address, MOCK_NEARBY[1].name, MOCK_NEARBY[1].picture, 'user', true, { isMuted: true }),
+        mockParticipant(MOCK_NEARBY[2].address, MOCK_NEARBY[2].name, MOCK_NEARBY[2].picture, 'user', false, { isRequestingToSpeak: true }),
+        mockParticipant(MOCK_NEARBY[3].address, MOCK_NEARBY[3].name, undefined, 'user', false),
+        mockParticipant(MOCK_NEARBY[4].address, MOCK_NEARBY[4].name, undefined, 'user', false),
+        mockParticipant(MOCK_NEARBY[5].address, MOCK_NEARBY[5].name, undefined, 'user', false)
+      ]
+      const peerOf = (address: string): VoiceChatParticipant => {
+        const known = MOCK_NEARBY.find((p) => p.address.toLowerCase() === address.toLowerCase())
+        return mockParticipant(address, known?.name ?? 'Caller', known?.picture, 'none', true)
+      }
+      switch (action.op) {
+        case 'startPrivateCall': {
+          clearVoiceTimers()
+          const busy = MOCK_NEARBY[2].address.toLowerCase() === action.address.toLowerCase()
+          pushVoice({ ...idleVoice, status: 'startingCall', kind: 'private', peer: action.address })
+          voiceLater(600, () => {
+            if (busy) pushVoice({ ...idleVoice, status: 'busy', error: 'One of the users is busy calling someone else', errorSeq: voice.errorSeq + 1 })
+            else pushVoice({ status: 'startedCall', callId: 'mock-call' })
+          })
+          if (!busy) {
+            voiceLater(4000, () => pushVoice({ status: 'inCall', connection: 'connecting' }))
+            voiceLater(5000, () => pushVoice({ connection: 'connected', micEnabled: true, localSpeaker: true, participants: [peerOf(action.address)] }))
+          }
+          break
+        }
+        case 'acceptCall':
+          clearVoiceTimers()
+          pushVoice({ status: 'startingCall' })
+          voiceLater(500, () => pushVoice({ status: 'inCall', connection: 'connecting' }))
+          voiceLater(1200, () => pushVoice({ connection: 'connected', micEnabled: true, localSpeaker: true, participants: [peerOf(voice.peer ?? MOCK_NEARBY[0].address)] }))
+          break
+        case 'rejectCall':
+          clearVoiceTimers()
+          pushVoice({ status: 'rejectingCall' })
+          voiceLater(300, () => pushVoice({ ...idleVoice }))
+          break
+        case 'endCall':
+        case 'leaveCall':
+          clearVoiceTimers()
+          pushVoice({ ...idleVoice, status: voice.kind === 'private' ? 'endingCall' : 'disconnected' })
+          voiceLater(300, () => pushVoice({ ...idleVoice }))
+          break
+        case 'startCommunityCall':
+        case 'joinCommunityCall': {
+          clearVoiceTimers()
+          const id = action.communityId
+          const owner = id === 'c8'
+          pushVoice({ ...idleVoice, status: 'startingCall', kind: 'community', communityId: id })
+          voiceLater(600, () => {
+            pushVoice({ status: 'inCall', connection: 'connecting', localSpeaker: owner, localRole: owner ? 'owner' : 'user' })
+            // the bridge re-reads the live list on entering the stream
+            if (action.op === 'startCommunityCall') setLive(id, true)
+          })
+          voiceLater(1400, () => pushVoice({ connection: 'connected', micEnabled: owner, participants: community(id) }))
+          break
+        }
+        case 'endCommunityCall': {
+          clearVoiceTimers()
+          const id = voice.communityId
+          pushVoice({ ...idleVoice })
+          if (id != null) setLive(id, false)
+          break
+        }
+        case 'requestToSpeak':
+          pushVoice({ localRequestingToSpeak: action.raise })
+          break
+        case 'promoteSpeaker':
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isSpeaker: true, isRequestingToSpeak: false } : p)) })
+          break
+        case 'demoteSpeaker':
+          if (action.address.toLowerCase() === MOCK_ME) pushVoice({ localSpeaker: false, micEnabled: false })
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isSpeaker: false } : p)) })
+          break
+        case 'rejectSpeakRequest':
+          pushVoice({ participants: voice.participants.map((p) => (p.address === action.address ? { ...p, isRequestingToSpeak: false } : p)) })
+          break
+        case 'kickPlayer':
+          pushVoice({ participants: voice.participants.filter((p) => p.address !== action.address) })
+          break
+        case 'setMic':
+          pushVoice({ micEnabled: action.enabled && voice.localSpeaker })
+          break
+        case 'dismissError':
+          pushVoice({ ...idleVoice })
+          break
+      }
+    }
 
     // ?simhover=N seeds N world-hover prompts so the radial cursor tooltips are visible/verifiable in
     // ?mock=1 (the real engine hover stream isn't mocked). React positions them at the live DOM cursor,
@@ -700,6 +887,10 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
 
     if (msg.kind === 'chatBubbleText') return // no avatars' bubbles in the mock
     if (msg.kind === 'navAction') return // no scene menus in the mock
+    if (msg.kind === 'voiceChatAction') {
+      mockVoiceAction?.(msg.action)
+      return
+    }
     if (msg.kind === 'friendAction') {
       // No social service in the mock: acknowledge so the page's flows (toasts, popups) run.
       reply({ kind: 'friendActionDone', op: msg.op, address: msg.address })
@@ -919,7 +1110,18 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       return
     }
     if (msg.kind === 'getCommunities') {
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
+      return
+    }
+    if (msg.kind === 'browseCommunities') {
+      // a name search on the "server", 20 a page; a search for "error" fails, to show the toast
+      const term = msg.search.trim().toLowerCase()
+      const found = mockCommunities.filter((c) => c.visibility !== 'unlisted' && c.name.toLowerCase().includes(term))
+      const from = (msg.page - 1) * 20
+      setTimeout(() => {
+        if (term === 'error') reply({ kind: 'communityBrowse', search: msg.search, page: msg.page, communities: [], total: 0, failed: true })
+        else reply({ kind: 'communityBrowse', search: msg.search, page: msg.page, communities: found.slice(from, from + 20).map((c) => ({ ...c })), total: found.length })
+      }, 500)
       return
     }
     if (msg.kind === 'getCommunity') {
@@ -944,18 +1146,98 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({ kind: 'communityOnlineMembers', id: msg.id, members: msg.id === 'c1' ? onlineMembers() : onlineMembers().slice(0, 3) })
       return
     }
+    if (msg.kind === 'removeCommunityPlace') {
+      // unlinked from this community; the card reads its places again
+      const removed = mockRemovedPlaces.get(msg.id) ?? new Set<string>()
+      removed.add(msg.placeId)
+      mockRemovedPlaces.set(msg.id, removed)
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    if (msg.kind === 'communityMemberAction') {
+      // the member's new role (null: removed); a transfer also makes the user a moderator
+      const changes = mockMemberChanges.get(msg.id) ?? new Map<string, string | null>()
+      const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
+      changes.set(msg.address, role)
+      mockMemberChanges.set(msg.id, changes)
+      const c = mockCommunities.find((x) => x.id === msg.id)
+      if (msg.action === 'transfer' && c != null) {
+        c.role = 'moderator'
+        reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockMine() })
+      }
+      const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+      setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
+      return
+    }
+    if (msg.kind === 'getCommunityPlaceOptions') {
+      // one LAND and one World the user owns, and what each community links
+      const linked = msg.communityId != null ? (mockLinkedPlaces.get(msg.communityId) ?? []) : []
+      const options = { kind: 'communityPlaceOptions' as const, communityId: msg.communityId, owned: MOCK_OWNED_PLACES, linked: MOCK_OWNED_PLACES.filter((p) => linked.includes(p.id)), hiddenLinkedIds: [], linkedFailed: false, errors: [] }
+      setTimeout(() => reply(options), 300)
+      return
+    }
     if (msg.kind === 'createCommunity') {
+      // A name with "flagged" or "unavailable" in it gets the content check's two refusals, so the
+      // form's moderation views can be seen without a backend.
+      const lower = msg.name.toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'create', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const id = `new-${mockCommunities.length}`
+      mockLinkedPlaces.set(id, msg.placeIds)
       mockCommunities.unshift({
-        id: `new-${mockCommunities.length}`,
+        id,
         name: msg.name,
         description: msg.description,
-        thumbnail: '',
+        thumbnail: msg.thumbnail ?? '',
         membersCount: 1,
         role: 'owner',
         ownerName: 'You',
         privacy: msg.privacy
       })
-      reply({ kind: 'communities', communities: mockCommunities })
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'create', id })
+        reply({ kind: 'communities', communities: mockMine() })
+      }, 600)
+      return
+    }
+    if (msg.kind === 'deleteCommunity') {
+      const at = mockCommunities.findIndex((m) => m.id === msg.id)
+      if (at >= 0) mockCommunities.splice(at, 1)
+      setTimeout(() => {
+        reply({ kind: 'communityDeleted', id: msg.id })
+        reply({ kind: 'communities', communities: mockMine() })
+      }, 300)
+      return
+    }
+    if (msg.kind === 'updateCommunity') {
+      // as createCommunity: a name with "flagged" or "unavailable" gets the content check's refusals
+      const lower = (msg.name ?? '').toLowerCase()
+      if (lower.includes('flagged') || lower.includes('unavailable')) {
+        const unavailable = lower.includes('unavailable')
+        const issues = { name: unavailable ? [] : ['Offensive language'], description: [], image: [] }
+        setTimeout(() => reply({ kind: 'communitySaveResult', mode: 'update', moderation: { issues, unavailable } }), 600)
+        return
+      }
+      const c = mockCommunities.find((m) => m.id === msg.id)
+      if (c != null) {
+        if (msg.name != null) c.name = msg.name
+        if (msg.description != null) c.description = msg.description
+        if (msg.privacy != null) c.privacy = msg.privacy
+        if (msg.discoverable != null) c.visibility = msg.discoverable ? 'all' : 'unlisted'
+        if (msg.thumbnail != null) c.thumbnail = msg.thumbnail
+        if (msg.placeIds != null) mockLinkedPlaces.set(c.id, msg.placeIds)
+      }
+      setTimeout(() => {
+        reply({ kind: 'communitySaveResult', mode: 'update', id: msg.id })
+        if (c != null) reply({ kind: 'community', community: { ...c } })
+        reply({ kind: 'communities', communities: mockMine() })
+      }, 600)
       return
     }
     if (msg.kind === 'joinCommunity') {
@@ -964,20 +1246,23 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         c.role = 'member'
         c.membersCount += 1
         reply({ kind: 'communityChannelAdded', community: { id: c.id, name: c.name, thumbnail: c.thumbnail ?? '', role: c.role } })
+        reply({ kind: 'community', community: { ...c } })
       }
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
-      reply({ kind: 'communities', communities: mockCommunities })
+      if (c) reply({ kind: 'community', community: { ...c } })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
-      reply({ kind: 'communities', communities: mockCommunities })
+      if (c) reply({ kind: 'community', community: { ...c } })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'leaveCommunity') {
@@ -986,8 +1271,9 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         c.role = 'none'
         c.membersCount = Math.max(0, c.membersCount - 1)
         reply({ kind: 'communityChannelRemoved', id: c.id })
+        reply({ kind: 'community', community: { ...c } })
       }
-      reply({ kind: 'communities', communities: mockCommunities })
+      reply({ kind: 'communities', communities: mockMine() })
       return
     }
     if (msg.kind === 'getCommunityDetail') {
@@ -996,22 +1282,26 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
       reply({
         kind: 'communityDetail',
         id: msg.id,
-        members: memberNames.map((name, i) => ({
-          address: addr(i),
-          name,
-          role: i === 0 ? 'owner' : i < 3 ? 'moderator' : 'member',
-          picture: `https://i.pravatar.cc/80?u=${name}`,
-          hasClaimedName: true,
-          isFriend: i % 5 === 0
-        })),
+        members: memberNames
+          .map((name, i) => {
+            const changed = mockMemberChanges.get(msg.id)
+            const base = i === 0 ? 'owner' : i < 3 ? 'moderator' : 'member'
+            // a transfer hands the owner's role over: the old owner (the first row) becomes a moderator
+            const handedOver = i === 0 && [...(changed?.values() ?? [])].includes('owner')
+            const role = changed?.has(addr(i)) === true ? changed.get(addr(i)) : handedOver ? 'moderator' : base
+            // every third name unclaimed, so the rows show the #tag
+            return role == null ? null : { address: addr(i), name, role, picture: `https://i.pravatar.cc/80?u=${name}`, hasClaimedName: i % 3 !== 2 }
+          })
+          .filter((m) => m != null),
         posts: [
           { id: 'p1', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'It was TIME for an update. See you all in the new Plaza. Enjoy!', timestamp: Date.now() - 2 * day, likes: 10 },
           { id: 'p2', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'EPIC Launch Party happening now in the theatre!', timestamp: Date.now() - 16 * day, likes: 4 },
           { id: 'p3', author: 'Kimbo', authorAddress: addr(7), authorPicture: 'https://i.pravatar.cc/80?u=Kimbo', text: 'Hey everyone! Happy Epic and Mobile Launch Day!!! Please help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.', timestamp: Date.now() - 18 * day, likes: 1 }
         ],
+        // the mock user owns this one, so an owner or moderator can delete it from the card
         places: [
-          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1 }
-        ],
+          { id: 'pl1', title: 'Music Festival Main Stage', thumbnail: 'https://picsum.photos/seed/mfest/420/260', positions: '-66,56', likeRate: 1, isMine: true }
+        ].filter((pl) => !(mockRemovedPlaces.get(msg.id)?.has(pl.id) ?? false)),
         photos: Array.from({ length: 9 }, (_, i) => ({
           id: `ph${i}`,
           url: `https://picsum.photos/seed/dclph${i}/600/600`,

@@ -1,20 +1,24 @@
 // explorer-automation `CommunitiesTests` (4): the Communities section's content, invites view,
 // search and community detail. The Bevy page is read-only here: no scenario creates, joins or
-// leaves a community. Its titles ("My Communities", "Browse Communities (N)"), its Invites &
-// Requests label and its empty messages are text without a role, so the HUD commands cannot read
-// them. A card is a button named by its whole text,
-// `[initial] <name> [owner] Public · <n> Members (Join|View)`, so a community's name is read as a
-// part of the card's name. Opening a card clicks its cover, near the card's top: the card's centre
-// can be its Join button.
+// leaves a community. Its titles ("My Communities", "Browse Communities (N)", "Results for '…'"),
+// its Invites & Requests label and its empty messages are text without a role, so the HUD commands
+// cannot read them. A card is a button named by its whole text, `[initial] <name> [owner] [the
+// friends in it] [description] (Public|Private) · <n> Members (Join|View|Request to Join|Cancel join
+// request)`, so a community's name is read as a part of the card's name. The grid holds 20 cards a
+// page and reads the next as its end scrolls into view; a search runs on the server a second after
+// typing stops. The initial stands in for a cover image that did not load, which shows
+// only once the image fails, so the scenarios drop it from the names they read and find a card by
+// the rest. Opening a card clicks its cover, near the card's top: the card's centre can be its
+// Join button.
 //
 // | Unity test                    | Here                                                                 | Class   |
 // | TestCommunitiesPanelContent   | CREATE A COMMUNITY, the search field and a card; not the Invites & Requests entry, the two titles or the count | Partial |
 // | TestOpenInvitesAndRequests    | Invites & Requests is a label, and there is no such view             | Gap     |
-// | TestSearchCommunities         | the query is a word of the first card read, not "Decentraland"; a query nothing matches empties the grid; no results title, count or Back button | Partial |
+// | TestSearchCommunities         | the query is a word of the first card read, not "Decentraland"; a query nothing matches empties the grid; Back returns to every community; no readable results title or count | Partial |
 // | TestOpenCommunityDetail       | the detail's name is part of the card's name, not equal to it; the ANNOUNCEMENTS tab stands for the sections and there is no private notice | Partial |
 import assert from 'node:assert/strict'
-import { settled, spec, until, type Explorer } from '../driver/index.ts'
-import { PAGES, closePage, openWithKey } from './pages.ts'
+import { spec, until, type Explorer } from '../driver/index.ts'
+import { PAGES, cardSelector, closePage, openWithKey, withoutInitial } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -25,34 +29,33 @@ const SEARCH = { name: 'Search', role: 'textbox' } as const
 const CREATE = { name: '+ CREATE A COMMUNITY', role: 'button' } as const
 const DETAIL = { name: 'Community sections', role: 'tablist' } as const
 const ANNOUNCEMENTS = { name: 'ANNOUNCEMENTS', role: 'tab' } as const
-const CARD_TAIL = /\s*Public\s*·\s*\d+\s*Members\s+(?:Join|View)$/
+const CARD_TAIL = /\s*(?:Public|Private)\s*·\s*\d+\s*Members\s+(?:Join|View|Request to Join|Cancel join request)$/
+const BACK = { name: 'Back to Browse Communities', role: 'button' } as const
+/** A card without its privacy, member count and button, which can change between two reads. */
+const cardKey = (card: string): string => card.replace(CARD_TAIL, '')
 /** Unity tries up to five cards until one opens. */
 const CARDS_TRIED = 5
 
-/** The names of the community cards on the page. */
+/** The names of the community cards on the page, without their covers' initials. */
 async function communityCards(explorer: Explorer): Promise<string[]> {
   const buttons = await explorer.hud.list('button')
-  return buttons.map((button) => button.name).filter((name) => CARD_TAIL.test(name))
+  return buttons.map((button) => button.name).filter((name) => CARD_TAIL.test(name)).map(withoutInitial)
 }
 
-/** The cards once the live communities list has arrived and stopped changing. */
-async function waitForCards(explorer: Explorer): Promise<string[]> {
-  await until(() => communityCards(explorer), (cards) => cards.length > 0, { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the community cards to load' })
-  return settled(() => communityCards(explorer), { timeoutMs: TEXT_TIMEOUT_MS, intervalMs: 500, what: 'the community cards to stop changing' })
+/** The cards once the grid's first page has arrived. */
+function waitForCards(explorer: Explorer): Promise<string[]> {
+  return until(() => communityCards(explorer), (cards) => cards.length > 0, { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the community cards to load' })
 }
 
-/** The first word of the community's name, read from a card's name. Without a cover image the
- *  card starts with the name's initial, which is dropped when the next word starts with it. */
+/** The first word of the community's name, read from a card's name. */
 function searchWordOf(cardName: string): string {
-  const words = cardName.replace(CARD_TAIL, '').split(' ')
-  if (words.length > 1 && words[0]!.length === 1 && words[1]!.toLowerCase().startsWith(words[0]!.toLowerCase())) words.shift()
-  return words[0]!
+  return cardName.replace(CARD_TAIL, '').split(' ')[0]!
 }
 
 /** Click a card's cover and say whether the detail opened. */
 async function openCard(explorer: Explorer, card: string): Promise<string | undefined> {
   try {
-    const target = await explorer.hud.wait({ name: card, role: 'button' }, { state: 'actionable', timeoutMs: TEXT_TIMEOUT_MS })
+    const target = await explorer.hud.wait(cardSelector(card), { state: 'actionable', timeoutMs: TEXT_TIMEOUT_MS })
     if (!target.found) return `"${card}" was not found`
     await explorer.clickAt(target.x + target.width / 2, target.y + Math.min(24, target.height / 4))
     await explorer.hud.wait(DETAIL, { timeoutMs: TEXT_TIMEOUT_MS })
@@ -88,14 +91,17 @@ scenario('searching communities filters the cards and emptying the search restor
     timeoutMs: TEXT_TIMEOUT_MS,
     what: `only community cards matching "${query}"`
   })
+  assert.ok(await explorer.hud.isVisible(BACK), 'Search results should offer Back to every community')
 
   await explorer.hud.fill(SEARCH, `no-community-called-${Date.now()}`)
   await until(() => communityCards(explorer), (cards) => cards.length === 0, { timeoutMs: TEXT_TIMEOUT_MS, what: 'no community cards for a name nothing matches' })
 
+  // the grid reads further pages as they scroll into view, so its first card stands for the rest
   await explorer.hud.fill(SEARCH, '')
-  await until(() => communityCards(explorer), (cards) => cards.length === all.length, { timeoutMs: TEXT_TIMEOUT_MS, what: 'every community card to return when the search is emptied' })
+  const first = cardKey(all[0]!)
+  await until(() => communityCards(explorer), (cards) => cards.some((card) => cardKey(card) === first), { timeoutMs: TEXT_TIMEOUT_MS, what: 'every community to return when the search is emptied' })
   assert.equal(await explorer.hud.value(SEARCH), '', 'the search field should be empty')
-  await explorer.escape()
+  assert.equal(await explorer.hud.isVisible(BACK), false, 'Browsing every community should offer no Back')
   await closePage(explorer, 'communities')
 })
 

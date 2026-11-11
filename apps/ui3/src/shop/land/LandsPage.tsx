@@ -11,9 +11,9 @@ import { useNavigate, useSearchParams } from "react-router";
 import Button from "../../atoms/Button";
 import ManaMark from "../../atoms/ManaMark";
 import EmptyState from "../../components/EmptyState";
-import type { ShopClient } from "../api/shop";
-import { chainLabel, gasTokenSymbol } from "../model/chain";
-import { reasonText } from "../payment/copy";
+import type { ShopClient } from "@shop/api/shop";
+import { chainLabel, gasTokenSymbol } from "@shop/model/chain";
+import { reasonText } from "@shop/payment/copy";
 import { useShopWallet } from "../wallet/context";
 import {
   fetchLandNfts,
@@ -30,7 +30,7 @@ import {
   type LandFilters,
   type LandStatusFilter,
 } from "./api";
-import { landChainId } from "./contracts";
+import { landChainId } from "./chain";
 import LandCard from "./LandCard";
 import LandMap from "./LandMap";
 import LandPriceChart from "./LandPriceChart";
