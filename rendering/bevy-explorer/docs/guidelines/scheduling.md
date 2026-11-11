@@ -8,6 +8,11 @@ from a separate schedule that `Update` runs inside its frame budget.
 You should not need to add a schedule, a set or an ordering point. Every system belongs in one
 of the slots below. If a change seems to need a new one, raise it before writing it.
 
+A per-frame time budget is a share of the target frame (`SceneUpdates::frame_target`, the
+frame of 60 fps when the frame rate is uncapped): a tenth for capped raycasts, a quarter for
+instantiation. A fixed duration is a different share at 30, 60 and 144 fps. Budget from the
+target, not the measured frame, so a slow frame does not raise the next frame's budget.
+
 All set types live in `crates/common/src/sets.rs`; the chains are configured in
 `crates/scene_runner/src/lib.rs` (`SceneSets`, `SceneLoopSets`) and
 `crates/scene_runner/src/update_world/transform_and_parent.rs` (`PostUpdateSets`).

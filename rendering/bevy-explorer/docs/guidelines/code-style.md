@@ -17,6 +17,10 @@ side map is not allowed and will fail a review.
   inspector; `if thing.playing` hides it.
 - One-shot facts are events. State is components. Bevy `States` are reserved for the handful
   of platform toggles (microphone, transmitter, parcel grass).
+- Work that spans frames keeps its progress in a component inserted when the work starts,
+  updated in place each frame and removed once when it ends. Don't take it out with `mem::take`
+  and write it back, and don't split one population over two queries only to order it: order
+  from the state itself, as glTF processing takes models whose cursor has moved first.
 - Scene data arrives as proto `Pb*` types and becomes an engine component through `TryFrom`.
   Keep the two apart: the proto type is the wire shape, the component is what systems read.
   Never redeclare a type whose shape already exists in the protocol or SDK crates; import it.
@@ -43,6 +47,23 @@ side map is not allowed and will fail a review.
   keeps that scene's state alive, which is exactly the parked-future leak that moved stream
   senders onto the scene root as components. The same applies to anything a scene owns: put
   it on the scene entity, where its lifetime is already correct.
+
+## Plugins and systems
+
+- A feature's resources, systems and debug section belong to one `Plugin`, which Bevy checks
+  for a duplicate add; not to a free `register(app)` function, and not spread over the plugins
+  of the areas it touches. Another plugin's systems order against it by system or set.
+- A system takes `Res<T>` for a resource the app always adds. `Option<Res<T>>` hides a missing
+  registration; tests insert the resource instead.
+- A membership check reads as one: `Query<(), Without<C>>` and `.contains(entity)`, not
+  `Query<Has<C>>` with `let Ok(false) = … else`.
+- A system that loops over items calls a function for each item. When the item needs several
+  resources, bundle them in a `SystemParam` with the function as its method, so the system shows
+  the loop and the function shows the work.
+- Time with `bevy::platform::time::Instant`, which works on every platform.
+- An operation that refuses (a panic or an error) checks before it changes anything, so a
+  caller that recovers finds the state as it was; a test of the refusal checks that state too,
+  not only the visible outcome.
 
 ## Explicit updates over clever ordering
 
@@ -79,6 +100,10 @@ side map is not allowed and will fail a review.
 
 - `tracing` macros. `debug!` for per-frame detail, `info!` for lifecycle, `warn!` for a
   recoverable problem a scene caused, `error!` for something that is our bug.
+- A measurement is a Bevy diagnostic (`DiagnosticPath`, `register_diagnostic`,
+  `Diagnostics::add_measurement`), as `ipfs` and `spawn_timing` report theirs, so the debug
+  panel and tools read it. A log line is for an event with its context, such as which model
+  took longest.
 - Filter directives match the target by string prefix, so `av=debug` also enables `avatar`.
   Use the shortest prefix that covers a crate family rather than listing crates.
 
