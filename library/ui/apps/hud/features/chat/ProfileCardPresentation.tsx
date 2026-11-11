@@ -8,7 +8,7 @@
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { Avatar, BlockUserIcon, ContextMenu, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
-import { closingFirst, INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
+import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
@@ -232,9 +232,10 @@ export function ProfileCardPresentation({
   )
   const hasDestructive = !!block || !!report
   // picking a community invites and closes the card, as any other row does
-  const invite = other && inviteItems.length > 0 && (
-    <Submenu className={styles.row} label={INVITE_TO_COMMUNITY} icon={<InviteToCommunityIcon />}>
-      <ContextMenu items={closingFirst(inviteItems, onClose)} scroll />
+  const inviteEntry = other ? inviteSubmenuItem(inviteItems, onClose) : null
+  const invite = inviteEntry != null && (
+    <Submenu className={styles.row} label={inviteEntry.label} icon={inviteEntry.icon}>
+      <ContextMenu items={inviteEntry.items ?? []} scroll />
     </Submenu>
   )
   const call = showCall && (

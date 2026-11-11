@@ -18,7 +18,7 @@ import type { Badge, Emote, Profile, ProfileEdit, Wearable } from '@explorer-cor
 import { PROFILE_FIELDS } from '@explorer-core/features/profile/profileFields'
 import { ProfileEditForm } from './ProfileEditForm'
 import type { Relationship } from '../chat/ProfileCardPresentation'
-import { closingFirst, INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
+import { inviteSubmenuItem } from '../communities/InviteToCommunity'
 import styles from './ProfilePassport.module.css'
 
 type Tab = 'overview' | 'badges' | 'photos' | 'creations'
@@ -374,15 +374,9 @@ export function ProfilePassport({
   if (!isSelf && relationship !== 'blocked' && onBlock != null) {
     options.push({ label: 'Block', icon: <BlockUserIcon />, danger: true, onClick: pick(onBlock) })
   }
-  // after Block, as the reference client's menu; picking a community invites and closes the menu
-  if (!isSelf && inviteItems.length > 0) {
-    options.push({
-      kind: 'submenu',
-      label: INVITE_TO_COMMUNITY,
-      icon: <InviteToCommunityIcon />,
-      items: closingFirst(inviteItems, () => setMenuOpen(false))
-    })
-  }
+  // after Block, as the reference client's menu
+  const inviteEntry = isSelf ? null : inviteSubmenuItem(inviteItems, () => setMenuOpen(false))
+  if (inviteEntry != null) options.push(inviteEntry)
   if (!isSelf && onReport != null) options.push({ label: 'Report', icon: <ReportFlag />, danger: true, onClick: pick(onReport) })
   const menuRef = useRef<HTMLDivElement>(null)
   useEffect(() => {

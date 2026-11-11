@@ -12,7 +12,7 @@ import { confirmBlock, confirmUnfriend, reportUser } from '../friends/friendDial
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { splitName } from '@explorer-core/lib/identity'
 import { startCallWith } from '../voiceChat/callGate'
-import { useInviteToCommunityItems } from '../communities/InviteToCommunity'
+import { offersInvite, useInviteToCommunityItems } from '../communities/InviteToCommunity'
 
 export function ProfileCard({
   userId,
@@ -46,7 +46,7 @@ export function ProfileCard({
   const act = session.friends.act
   // the user menus and the member menus offer it; the friend request and blocked lists' menus do not
   const isMe = session.profile.data?.address?.toLowerCase() === userId.toLowerCase()
-  const inviteItems = useInviteToCommunityItems(userId, invite && !isMe && context !== 'request' && context !== 'blocked')
+  const inviteItems = useInviteToCommunityItems(userId, invite && offersInvite(isMe, context))
   return (
     <ProfileCardPresentation
       user={user}

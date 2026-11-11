@@ -21,8 +21,22 @@ export function InviteToCommunityIcon(): React.JSX.Element {
 }
 
 /** The items with `close` run first, so picking a community closes the menu it is in. */
-export function closingFirst(items: ContextMenuItem[], close: () => void): ContextMenuItem[] {
+function closingFirst(items: ContextMenuItem[], close: () => void): ContextMenuItem[] {
   return items.map((it) => ('onClick' in it && it.onClick != null ? { ...it, onClick: () => { close(); it.onClick?.() } } : it))
+}
+
+/** Whether a person's menu offers Invite to Community: every menu but the user's own and those of
+ *  the friend request and blocked lists. */
+export function offersInvite(isSelf: boolean, context?: 'default' | 'friend' | 'request' | 'blocked' | 'community'): boolean {
+  return !isSelf && context !== 'request' && context !== 'blocked'
+}
+
+/** The Invite to Community menu entry, for the profile card and the passport alike: a submenu of
+ *  the communities, each closing the menu (`close`) before it invites. Null when there are none,
+ *  so the entry is hidden. */
+export function inviteSubmenuItem(items: ContextMenuItem[], close: () => void): Extract<ContextMenuItem, { kind?: 'item' | 'submenu' }> | null {
+  if (items.length === 0) return null
+  return { kind: 'submenu', label: INVITE_TO_COMMUNITY, icon: <InviteToCommunityIcon />, items: closingFirst(items, close) }
 }
 
 /** The submenu's items for a person: one per community the user may invite them to, empty while

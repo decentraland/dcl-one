@@ -1357,7 +1357,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [memberSections, setMemberSections] = useState<Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>>>({})
   const [invitable, setInvitable] = useState<InvitableCommunitiesMessage | null>(null)
   const invitableWanted = useRef<string | null>(null)
-  // the requests being answered; every answer ends with the section read again or a failure
+  // the requests being answered, each released when the bridge says it settled
   const answering = useRef(new Set<string>())
   // the community whose card is open, if any
   const openCard = useRef<string | null>(null)
@@ -1961,7 +1961,6 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         }
         case 'communityActionFailed':
-          if (msg.action === 'acceptInvite' || msg.action === 'rejectInvite' || msg.action === 'manageRequest') answering.current.clear()
           if (TOASTED_COMMUNITY_ACTIONS.has(msg.action)) showToast(COMMUNITY_ERROR[msg.action], { tone: 'error' })
           else {
             setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
@@ -1971,8 +1970,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             }
           }
           break
+        case 'communityRequestSettled':
+          answering.current.delete(msg.requestId)
+          break
         case 'communityInvites':
-          answering.current.clear()
           for (const list of msg.failed) showToast(INVITES_LOAD_ERROR[list], { tone: 'error' })
           // the requesters' names and faces, for their menu and the passport they open
           seedProfiles(memberProfiles(msg.requestsReceived.flatMap((g) => g.requests)))
@@ -3434,7 +3435,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const manageCommunityRequest = useCallback((id: string, requestId: string, intention: 'accepted' | 'rejected' | 'cancelled', address?: string) => {
     // one answer per request: a second click while the first runs would answer a request the
-    // first already settled, and toast an error after the success
+    // first already settled, and toast an error after the success. Released when the bridge says
+    // this request settled.
     if (answering.current.has(requestId)) return
     answering.current.add(requestId)
     driverRef.current?.send({ kind: 'manageCommunityRequest', id, requestId, intention, ...(address != null ? { address } : {}) })

@@ -11,7 +11,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, SwapLabel, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import { confirmRejectInvite, MemberRow, openCommunityModal } from './CommunityModal'
+import { confirmRejectInvite, MemberRow, openCommunityModal, SECTION_LOAD_ERROR } from './CommunityModal'
 import { RequestRowActions, type RequestAnswer } from './RequestRowActions'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { openPassport } from '../profile/Passport'
@@ -218,7 +218,8 @@ function InvitesAndRequests({
   live,
   actions,
   onOpen,
-  onManage
+  onManage,
+  onRetry
 }: {
   invites: CommunityInvitesMessage | null
   /** The user owns or moderates a community: Requests Received is shown. */
@@ -228,11 +229,17 @@ function InvitesAndRequests({
   actions: CardActions
   onOpen: (id: string) => void
   onManage: (communityId: string, member: CommunityRequestMember, intention: RequestAnswer) => void
+  /** Read the section again (a list could not be read). */
+  onRetry: () => void
 }): React.JSX.Element {
   if (invites == null) return <div className={styles.loading}><Spinner /></div>
+  // a list that could not be read says so, rather than claiming nothing is pending
+  const failed = (list: CommunityInvitesMessage['failed'][number]): boolean => invites.failed.includes(list)
+  const unread = <EmptyState variant="inline" tone="error" title={SECTION_LOAD_ERROR} actions={[{ label: 'RETRY', variant: 'outline', onClick: onRetry }]} />
+  if (failed('invites') && failed('requestsReceived') && failed('requestsSent')) return unread
   // the service's totals, as the sidebar's counter counts them
   const received = invites.requestsReceived.reduce((n, g) => n + g.total, 0)
-  if (invites.invites.length === 0 && received === 0 && invites.requestsSent.length === 0) {
+  if (invites.failed.length === 0 && invites.invites.length === 0 && received === 0 && invites.requestsSent.length === 0) {
     return <EmptyState variant="inline" title="No pending invites or requests." />
   }
   const cards = (list: Community[]): React.JSX.Element => (
@@ -243,11 +250,11 @@ function InvitesAndRequests({
   return (
     <div className={styles.invitesSection}>
       <h2 className={styles.invitesHead}>{`Invites (${invites.invites.length})`}</h2>
-      {invites.invites.length > 0 ? cards(invites.invites) : <EmptyState variant="inline" title="No Invites" />}
+      {failed('invites') ? unread : invites.invites.length > 0 ? cards(invites.invites) : <EmptyState variant="inline" title="No Invites" />}
       {canManage && (
         <>
           <h2 className={styles.invitesHead}>{`Requests Received (${received})`}</h2>
-          {received > 0 ? (
+          {failed('requestsReceived') ? unread : received > 0 ? (
             invites.requestsReceived.map((g) => (
               <RequestsGroup key={g.community.id} group={g} me={me} onOpen={() => onOpen(g.community.id)} onManage={(m, intention) => onManage(g.community.id, m, intention)} />
             ))
@@ -257,7 +264,7 @@ function InvitesAndRequests({
         </>
       )}
       <h2 className={styles.invitesHead}>{`Requests Sent (${invites.requestsSent.length})`}</h2>
-      {invites.requestsSent.length > 0 ? cards(invites.requestsSent) : <EmptyState variant="inline" title="No Requests" />}
+      {failed('requestsSent') ? unread : invites.requestsSent.length > 0 ? cards(invites.requestsSent) : <EmptyState variant="inline" title="No Requests" />}
     </div>
   )
 }
@@ -433,6 +440,7 @@ export function CommunitiesPage({
                 actions={actions}
                 onOpen={setOpenId}
                 onManage={(id, m, intention) => communities.manageRequest(id, m.requestId, intention, m.address)}
+                onRetry={loadInvites}
               />
             </>
           ) : (

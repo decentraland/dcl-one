@@ -12,6 +12,7 @@ import { communityTarget } from '../../features/notifications/summary'
 import { SessionProvider } from '../../features/session/SessionContext'
 import { INVITE_SENT, INVITES_LOAD_ERROR } from '../../features/session/useEngineSession'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
+import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import type { AppNotification, Community, CommunityInvitesMessage, CommunityMemberSectionMessage, CommunityRequestMember } from '@explorer-core/engine/protocol'
 import type { CommunitiesState, EngineSession } from '../../features/session/useEngineSession'
 import { enterAsGuest, fakeProfileState, fakeSession, renderSession } from '../harness'
@@ -114,6 +115,23 @@ describe('the browser’s Invites & Requests', () => {
     expect(screen.queryByRole('heading', { name: /Requests Received/ })).toBeNull()
     expect(screen.getByRole('heading', { name: 'Requests Sent (0)' })).toBeInTheDocument()
     expect(screen.getByText('No Requests')).toBeInTheDocument()
+  })
+
+  it('says when a list could not be read, with RETRY, instead of nothing pending', async () => {
+    const c = renderPage({ invites: invites({ failed: ['invites', 'requestsReceived', 'requestsSent'] }) })
+    await userEvent.click(screen.getByRole('button', { name: /Invites & Requests/ }))
+    expect(screen.getByText('There was an error loading this list. Please try again.')).toBeInTheDocument()
+    expect(screen.queryByText('No pending invites or requests.')).toBeNull()
+    vi.mocked(c.loadInvites).mockClear()
+    await userEvent.click(screen.getByRole('button', { name: 'RETRY' }))
+    expect(vi.mocked(c.loadInvites)).toHaveBeenCalled()
+  })
+
+  it('a list that failed alone says so; the others show what they have', async () => {
+    renderPage({ invites: invites({ invites: [community({ id: 'c3', pendingInviteId: 'i3' })], failed: ['requestsSent'] }) })
+    await userEvent.click(screen.getByRole('button', { name: /Invites & Requests/ }))
+    expect(screen.getByRole('button', { name: 'Accept invite' })).toBeInTheDocument()
+    expect(screen.getByText('There was an error loading this list. Please try again.')).toBeInTheDocument()
   })
 
   it('says when nothing is pending', async () => {
@@ -258,17 +276,20 @@ describe('the Invite to Community submenu', () => {
     expect(vi.mocked(s.communities.invite)).toHaveBeenCalledWith('c8', '0xfriend')
   })
 
-  it('opens from the keyboard, moves through its communities and closes on Escape', async () => {
+  it('opens from the keyboard, Tab moves through it, and Cancel closes it before the card', async () => {
     renderProfileCard((s) => {
       s.communities.invitable = { kind: 'invitableCommunities', address: '0xfriend', communities: [{ id: 'c8', name: 'Builders' }, { id: 'c9', name: 'Crafters' }] }
     })
     const row = screen.getByRole('menuitem', { name: /Invite to Community/ })
     row.focus()
-    await userEvent.keyboard('{ArrowRight}')
+    await userEvent.keyboard('{Enter}')
     expect(screen.getByRole('menuitem', { name: 'Builders' })).toHaveFocus()
-    await userEvent.keyboard('{ArrowDown}')
+    await userEvent.tab()
     expect(screen.getByRole('menuitem', { name: 'Crafters' })).toHaveFocus()
-    await userEvent.keyboard('{Escape}')
+    // Cancel reaches the HUD through the cancel-layer stack: the submenu is the top layer
+    act(() => {
+      expect(dispatchCancelLayer()).toBe(true)
+    })
     expect(screen.queryByRole('menuitem', { name: 'Builders' })).toBeNull()
     expect(row).toHaveFocus()
   })
@@ -321,19 +342,28 @@ describe('the session’s invites and requests', () => {
     expect(h.session().communities.error).toBeNull()
   })
 
-  it('sends one answer per request until the section is read again', async () => {
+  it('sends one answer per request until that request settles, whatever else arrives', async () => {
     const h = renderSession()
     await enterAsGuest(h)
-    act(() => h.session().communities.manageRequest('c3', 'i3', 'accepted'))
-    act(() => h.session().communities.manageRequest('c3', 'i3', 'accepted'))
-    expect(h.driver.sentOf('manageCommunityRequest')).toHaveLength(1)
-    act(() => h.driver.emit(invites()))
-    act(() => h.session().communities.manageRequest('c3', 'i3', 'rejected'))
+    act(() => h.session().communities.manageRequest('c8', 'rA', 'accepted', '0xa'))
+    act(() => h.session().communities.manageRequest('c8', 'rB', 'accepted', '0xb'))
     expect(h.driver.sentOf('manageCommunityRequest')).toHaveLength(2)
-    // a failure releases it too
-    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c3', action: 'rejectInvite', message: 'HTTP 500' }))
-    act(() => h.session().communities.manageRequest('c3', 'i3', 'rejected'))
+    // A settles, and an unrelated read of the section arrives: B is still held
+    act(() => h.driver.emit({ kind: 'communityRequestSettled', id: 'c8', requestId: 'rA' }))
+    act(() => h.driver.emit(invites()))
+    act(() => h.session().communities.manageRequest('c8', 'rB', 'accepted', '0xb'))
+    expect(h.driver.sentOf('manageCommunityRequest')).toHaveLength(2)
+    act(() => h.driver.emit({ kind: 'communityRequestSettled', id: 'c8', requestId: 'rB' }))
+    act(() => h.session().communities.manageRequest('c8', 'rB', 'rejected', '0xb'))
     expect(h.driver.sentOf('manageCommunityRequest')).toHaveLength(3)
+  })
+
+  it('a failed unban is toasted', async () => {
+    render(<ToastHost />)
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.driver.emit({ kind: 'communityActionFailed', id: 'c8', action: 'unban', message: 'HTTP 500' }))
+    expect(await screen.findByText('There was an error unbanning the user. Please try again.')).toBeInTheDocument()
   })
 
   it("an accepted request reads that community's open card again", async () => {

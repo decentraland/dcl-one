@@ -1189,7 +1189,8 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     // The Invites & Requests section: the invites, the requests the user's owned or moderated
     // communities received, and the user's own requests.
     const sendInvites = (): void => {
-      const managed = mockCommunities.filter((c) => (c.role === 'owner' || c.role === 'moderator') && mockSection('requests', c.id).length > 0)
+      // as the bridge: only private communities take join requests
+      const managed = mockCommunities.filter((c) => (c.role === 'owner' || c.role === 'moderator') && c.privacy === 'private' && mockSection('requests', c.id).length > 0)
       reply({
         kind: 'communityInvites',
         invites: mockCommunities.filter((c) => c.pendingInviteId != null).map((c) => ({ ...c })),
@@ -1205,7 +1206,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getCommunityInvitesCount') {
       const invites = mockCommunities.filter((c) => c.pendingInviteId != null).length
-      const received = mockCommunities.filter((c) => c.role === 'owner' || c.role === 'moderator').reduce((n, c) => n + mockSection('requests', c.id).length, 0)
+      const received = mockCommunities.filter((c) => (c.role === 'owner' || c.role === 'moderator') && c.privacy === 'private').reduce((n, c) => n + mockSection('requests', c.id).length, 0)
       setTimeout(() => reply({ kind: 'communityInvitesCount', count: invites + received }), 300)
       return
     }
@@ -1246,6 +1247,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         }
       }
       sendInvites()
+      reply({ kind: 'communityRequestSettled', id: msg.id, requestId: msg.requestId })
       return
     }
     if (msg.kind === 'getInvitableCommunities') {
@@ -1341,6 +1343,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'requestToJoinCommunity') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) c.pendingRequestId = `req-${c.id}`
+      reply({ kind: 'communityJoinRequest', id: msg.id, requestId: `req-${msg.id}` })
       if (c) reply({ kind: 'community', community: { ...c } })
       reply({ kind: 'communities', communities: mockMine() })
       return
@@ -1348,8 +1351,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'cancelJoinRequest') {
       const c = mockCommunities.find((x) => x.id === msg.id)
       if (c) delete c.pendingRequestId
+      reply({ kind: 'communityJoinRequest', id: msg.id })
       if (c) reply({ kind: 'community', community: { ...c } })
       reply({ kind: 'communities', communities: mockMine() })
+      // as the bridge, the Invites & Requests section loses the cancelled request
+      sendInvites()
       return
     }
     if (msg.kind === 'leaveCommunity') {

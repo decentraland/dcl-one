@@ -1,10 +1,12 @@
-// Submenu — a menu row that opens a list of further items beside it: on hover, on click, or from
-// the keyboard (ArrowRight, Enter or Space opens it and focuses its first item; ArrowDown and
-// ArrowUp move through the items; ArrowLeft or Escape closes it and returns to the row). The list is
-// the children, usually a scrolling ContextMenu. The row takes the host menu's own row style
-// through `className`.
+// Submenu — a menu row that opens a list of further items beside it, on hover or click. A click
+// from the keyboard (Enter or Space on the focused row) also moves focus to the list's first item,
+// and Tab moves through the list. Cancel closes it through the cancel-layer stack, so one press
+// closes the list, not the menu it sits in. The list is the children, usually a scrolling
+// ContextMenu. It opens to the right and down, flipping left or up where that side has no room.
+// The row takes the host menu's own row style through `className`.
 
-import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
 import styles from './Submenu.module.css'
 
 export interface SubmenuProps {
@@ -16,71 +18,55 @@ export interface SubmenuProps {
   className?: string
 }
 
-/** Where the list stops being visible on the right: the window's edge, or that of the nearest
- *  ancestor that clips its overflow (a passport, a scrolling panel). */
-function clipRight(el: HTMLElement): number {
+/** Where the list stops being visible: the window's edges, or those of the nearest ancestor that
+ *  clips its overflow (a passport, a scrolling panel). */
+function clipEdges(el: HTMLElement): { right: number; bottom: number } {
   let right = window.innerWidth
+  let bottom = window.innerHeight
   for (let p = el.parentElement; p != null; p = p.parentElement) {
-    if (getComputedStyle(p).overflowX !== 'visible') {
-      right = Math.min(right, p.getBoundingClientRect().right)
+    const style = getComputedStyle(p)
+    if (style.overflowX !== 'visible' || style.overflowY !== 'visible') {
+      const r = p.getBoundingClientRect()
+      right = Math.min(right, r.right)
+      bottom = Math.min(bottom, r.bottom)
       break
     }
   }
-  return right
+  return { right, bottom }
 }
-
-const menuItems = (list: HTMLElement | null): HTMLElement[] =>
-  list == null ? [] : Array.from(list.querySelectorAll<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)'))
 
 export function Submenu({ label, icon, children, className }: SubmenuProps): React.JSX.Element {
   const [open, setOpen] = useState(false)
-  // opens to the left when the right has no room for it
-  const [left, setLeft] = useState(false)
-  // the keyboard opened it: its first item takes focus
+  // where the list has no room: it opens to the left, or upward
+  const [flip, setFlip] = useState({ left: false, up: false })
+  // a keyboard click opened it: its first item takes focus
   const [focusFirst, setFocusFirst] = useState(false)
   const flyout = useRef<HTMLDivElement>(null)
   const row = useRef<HTMLButtonElement>(null)
   const listId = useId()
   useLayoutEffect(() => {
     if (!open) {
-      setLeft(false)
+      setFlip({ left: false, up: false })
       return
     }
     const el = flyout.current
     if (el == null) return
-    if (el.getBoundingClientRect().right > clipRight(el)) setLeft(true)
+    const r = el.getBoundingClientRect()
+    const edges = clipEdges(el)
+    setFlip({ left: r.right > edges.right, up: r.bottom > edges.bottom })
     if (focusFirst) {
-      menuItems(el)[0]?.focus()
+      el.querySelector<HTMLElement>('[role^="menuitem"]:not([aria-disabled="true"]):not(:disabled)')?.focus()
       setFocusFirst(false)
     }
   }, [open, focusFirst])
-  const close = (): void => {
-    setOpen(false)
-    row.current?.focus()
-  }
-  const onRowKey = (e: React.KeyboardEvent): void => {
-    if (e.key === 'ArrowRight' || e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      setFocusFirst(true)
-      setOpen(true)
-    }
-  }
-  const onListKey = (e: React.KeyboardEvent): void => {
-    if (e.key === 'Escape' || e.key === 'ArrowLeft') {
-      // the submenu closes, not the menu it sits in
-      e.preventDefault()
-      e.stopPropagation()
-      close()
-      return
-    }
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
-    e.preventDefault()
-    const list = menuItems(flyout.current)
-    if (list.length === 0) return
-    const at = list.indexOf(document.activeElement as HTMLElement)
-    const next = e.key === 'ArrowDown' ? (at + 1) % list.length : (at - 1 + list.length) % list.length
-    list[next]?.focus()
-  }
+  // Cancel (Escape, the gamepad's back) closes the list first, then the menu on the next press
+  useEffect(() => {
+    if (!open) return
+    return registerCancelLayer(() => {
+      setOpen(false)
+      row.current?.focus()
+    })
+  }, [open])
   return (
     <div
       className={styles.wrap}
@@ -98,16 +84,23 @@ export function Submenu({ label, icon, children, className }: SubmenuProps): Rea
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? listId : undefined}
-        // a click opens it (hovering already may have); leaving the row or its list closes it
-        onClick={() => setOpen(true)}
-        onKeyDown={onRowKey}
+        // a click opens it (hovering already may have); one from the keyboard (detail 0) also
+        // focuses the list. Leaving the row or its list closes it.
+        onClick={(e) => {
+          if (e.detail === 0) setFocusFirst(true)
+          setOpen(true)
+        }}
       >
         {icon != null && <span className={styles.icon}>{icon}</span>}
         <span className={styles.label}>{label}</span>
         <span className={styles.chev} aria-hidden="true">›</span>
       </button>
       {open && (
-        <div id={listId} ref={flyout} className={`${styles.flyout} ${left ? styles.flyoutLeft : ''}`.trim()} onKeyDown={onListKey}>
+        <div
+          id={listId}
+          ref={flyout}
+          className={`${styles.flyout} ${flip.left ? styles.flyoutLeft : ''} ${flip.up ? styles.flyoutUp : ''}`.replace(/\s+/g, ' ').trim()}
+        >
           {children}
         </div>
       )}

@@ -3,12 +3,28 @@
   align-items: center;
   justify-content: center;
   flex: none;
-  min-width: 20px;
-  height: 20px;
-  padding: 0 6px;
   border-radius: var(--r-pill);
   background: var(--brand);
   color: var(--text);
-  font-size: var(--fs-xs);
   font-weight: 700;
+}
+.md {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: var(--fs-xs);
+}
+/* a tab's count */
+.sm {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+/* a count in an equal-width (fill) tab strip */
+.xs {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 11px;
 }

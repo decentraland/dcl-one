@@ -185,9 +185,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Requests Sent, each titled with its count, and "No pending invites or requests." when all are
   empty. Its counter is the invites plus the requests received, and Requests Received's title
   counts the same totals. Unlike unity-explorer, opening the page reads only the counter (each
-  read's total, one row asked for); the section is read in full when it opens, after any answer,
-  and when an invite or request notification arrives while the page is open (the counter alone
-  until the section has been opened). Only private communities are read for join requests, a
+  read's total, one row asked for); the section is read in full when it opens, and again after
+  any answer or cancel and when an invite or request notification arrives while the page is open
+  (the counter alone until the section has been opened). A section that cannot be read says so,
+  with RETRY. Only private communities are read for join requests, a
   community's first 100 (the service's page cap); one whose read fails is left out, and the list
   fails only when none could be read. A card the user is invited to offers Accept and Reject
   (asked first) instead of Join in the grid, and ACCEPT INVITE and REJECT INVITE on the community
@@ -195,12 +196,14 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   REQUESTS (private communities, with its counter) and INVITED (with CANCEL). Invite to Community,
   in the user menus, the member menus and the passport but not the voice panel's, lists the
   communities the user may invite the person to, is hidden when there are none, and is read again
-  after an invite. It opens beside its row, on the left when the right has no room, and from the
-  keyboard. Clicking an invite, a request received or a request accepted notification opens the
+  after an invite. It opens beside its row, on the left or upward where there is no room, and from
+  the keyboard (a keyboard click on the row focuses its first community, Tab moves through them);
+  Cancel closes it before the menu around it. Clicking an invite, a request received or a request accepted notification opens the
   community's card, and every opening of a card reads its community again, so an invite or an
   accepted request that arrived since shows. An accepted request also reads My Communities, the
   grid and that open card again. Call in the member menu closes the card first, as Chat does.
-  Answers and an unban are toasted when they fail, and a request takes one answer at a time.
+  Answers and an unban are toasted when they fail. A request takes one answer at a time, released
+  when that answer settles, and a request answered here never comes back from an older read.
   Differences: a Members section that cannot be read says so, with RETRY (unity-explorer keeps
   what it showed and tries again on the next read, so a first read that fails looks empty); each section reads its first 100 rows without paging, as the Members list does;
   the section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's

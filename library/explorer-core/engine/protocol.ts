@@ -1425,6 +1425,13 @@ export interface ManageCommunityRequestRequest {
   address?: string
 }
 
+/** An answer to a request ended, well or not (scene → page): that request's buttons are released. */
+export interface CommunityRequestSettledMessage {
+  kind: 'communityRequestSettled'
+  id: string
+  requestId: string
+}
+
 /** A pending join request or invite as a member row: who it is for, and the request's id. */
 export interface CommunityRequestMember extends CommunityMember {
   requestId: string
@@ -2207,6 +2214,7 @@ export type SceneToPage =
   | CommunityInvitesMessage
   | CommunityInvitesCountMessage
   | CommunityJoinRequestMessage
+  | CommunityRequestSettledMessage
   | CommunityMemberSectionMessage
   | InvitableCommunitiesMessage
   | CommunityInviteSentMessage

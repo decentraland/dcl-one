@@ -31,7 +31,8 @@ import type {
   CommunityRequestAction,
   CommunityRequestMember,
   CommunityRequestsGroup,
-  CommunitySaveResultMessage
+  CommunitySaveResultMessage,
+  ManageCommunityRequestRequest
 } from '@explorer-core/engine/protocol'
 
 // Community events live on the (public) events-api, filtered by community_id. Community photos
@@ -116,12 +117,21 @@ async function memberRequests(type: PendingType): Promise<MemberRequestRaw[]> {
   if (!Array.isArray(rows)) throw new Error(`${type} answer has no results list`)
   const ids = pendingFor(type)
   ids.clear()
-  for (const r of rows) if (typeof r.id === 'string' && typeof r.communityId === 'string') ids.set(r.communityId.toLowerCase(), r.id)
+  // a read that started before an answer can still list the request it settled: it stays settled
+  for (const r of rows) if (typeof r.id === 'string' && typeof r.communityId === 'string' && !answered.has(r.id)) ids.set(r.communityId.toLowerCase(), r.id)
   return rows
 }
 // A failed read keeps the ones known before it; the card still offers Request to Join.
 const tryLoadPending = async (type: PendingType): Promise<void> => {
   await memberRequests(type).catch((e: unknown) => console.error(`[communities] ${type} read failed`, e))
+}
+// The requests the user answered (accepted, rejected or cancelled) this session, by id, so a read
+// that was already on its way does not bring one back. Bounded: the oldest are forgotten.
+const answered = new Set<string>()
+const ANSWERED_KEPT = 200
+function markAnswered(requestId: string): void {
+  answered.add(requestId)
+  if (answered.size > ANSWERED_KEPT) answered.delete(answered.values().next().value as string)
 }
 function setPending(type: PendingType, communityId: string, requestId: string | undefined): void {
   const ids = pendingFor(type)
@@ -563,9 +573,9 @@ export function registerCommunities(ctx: Ctx): void {
     })
     if (raw == null) return
     remember(raw)
-    // is an invite of theirs pending? Then, for a community the user
-    // can't enter and has no invite to, is a join request of theirs pending?
-    await tryLoadPending('invite')
+    // for a community the user is not in: is an invite of theirs pending? Then, for one they can't
+    // enter and have no invite to, is a join request of theirs pending?
+    if (raw.role === 'none') await tryLoadPending('invite')
     if (raw.privacy === 'private' && raw.role === 'none' && pendingId('invite', raw) == null) await tryLoadPending('request_to_join')
     const [community] = await communities([raw])
     if (community != null) ctx.send({ kind: 'community', community })
@@ -753,11 +763,12 @@ export function registerCommunities(ctx: Ctx): void {
     await write(msg.id, 'cancelJoinRequest', async () => {
       const url = `${await base('v1')}/${encodeURIComponent(msg.id)}/requests/${encodeURIComponent(msg.requestId)}`
       await signed(url, 'PATCH', { intention: 'cancelled' })
+      markAnswered(msg.requestId)
       setPending('request_to_join', msg.id, undefined)
       ctx.send({ kind: 'communityJoinRequest', id: msg.id })
     })
     // the Invites & Requests section lists the user's requests: a cancelled one leaves it
-    await sendInvites()
+    await sendInvitesOrCount()
   })
   // The browser's Invites & Requests section and its counter.
   // Answers even when the read throws, so the section never waits on a reply that will not come.
@@ -768,7 +779,16 @@ export function registerCommunities(ctx: Ctx): void {
     })
     ctx.send(message)
   }
-  ctx.on('getCommunityInvites', sendInvites)
+  // Whether the page has read the section: until then, a change sends only the counter.
+  let sectionRead = false
+  const sendInvitesOrCount = async (): Promise<void> => {
+    if (sectionRead) await sendInvites()
+    else ctx.send({ kind: 'communityInvitesCount', count: await invitesCount() })
+  }
+  ctx.on('getCommunityInvites', async () => {
+    sectionRead = true
+    await sendInvites()
+  })
   ctx.on('getCommunityInvitesCount', async () => {
     ctx.send({ kind: 'communityInvitesCount', count: await invitesCount() })
   })
@@ -786,6 +806,14 @@ export function registerCommunities(ctx: Ctx): void {
   // or moderator's answer changes the card's Requests and Invites sections, and its members when a
   // request is accepted. Either way the Invites & Requests section is read again for its counter.
   ctx.on('manageCommunityRequest', async (msg) => {
+    try {
+      await manageRequest(msg)
+    } finally {
+      // whatever happened, the page releases this request's buttons, and only this one's
+      ctx.send({ kind: 'communityRequestSettled', id: msg.id, requestId: msg.requestId })
+    }
+  })
+  const manageRequest = async (msg: ManageCommunityRequestRequest): Promise<void> => {
     const action: CommunityRequestAction = msg.address != null ? 'manageRequest' : msg.intention === 'accepted' ? 'acceptInvite' : 'rejectInvite'
     const done = await base('v1')
       .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/requests/${encodeURIComponent(msg.requestId)}`, 'PATCH', { intention: msg.intention }))
@@ -801,10 +829,11 @@ export function registerCommunities(ctx: Ctx): void {
     if (!done) {
       if (msg.address != null) {
         await Promise.all([sendSection(msg.id, 'requests'), sendSection(msg.id, 'invites')])
-        await sendInvites()
+        await sendInvitesOrCount()
       }
       return
     }
+    markAnswered(msg.requestId)
     if (msg.address == null) {
       setPending('invite', msg.id, undefined)
       await sendOne(msg.id)
@@ -817,8 +846,8 @@ export function registerCommunities(ctx: Ctx): void {
         await sendOne(msg.id)
       }
     }
-    await sendInvites()
-  })
+    await sendInvitesOrCount()
+  }
   // The Invite to Community submenu: the communities the user owns or moderates that the person is
   // not in, and the invite itself.
   const sendInvitable = async (address: string): Promise<void> => {

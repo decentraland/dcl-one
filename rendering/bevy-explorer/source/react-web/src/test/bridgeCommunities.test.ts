@@ -472,7 +472,9 @@ describe('bridge community invites and requests', () => {
     const h = fakeCtx()
     await h.req({ kind: 'manageCommunityRequest', id: 'c3', requestId: 'inv1', intention: 'accepted' })
     expect(signed).toHaveBeenCalledWith(`${s}/v1/communities/c3/requests/inv1`, 'PATCH', { intention: 'accepted' })
-    expect(h.sent.map((m) => m.kind)).toEqual(['community', 'communities', 'communityChannels', 'communityInvites'])
+    // the section was never read here: only its counter, then the request's release
+    expect(h.sent.map((m) => m.kind)).toEqual(['community', 'communities', 'communityChannels', 'communityInvitesCount', 'communityRequestSettled'])
+    expect(h.sent.at(-1)).toEqual({ kind: 'communityRequestSettled', id: 'c3', requestId: 'inv1' })
   })
 
   it("answers a member's request, then reads the card's requests and invites again", async () => {
@@ -507,8 +509,11 @@ describe('bridge community invites and requests', () => {
       [memberOf]: { results: [], total: 0 }
     })
     const h = fakeCtx()
+    // the user opened Invites & Requests, so an answer reads it again
+    await h.req({ kind: 'getCommunityInvites' })
     await h.req({ kind: 'manageCommunityRequest', id: 'c8', requestId: 'r-a', intention: 'accepted', address: '0xa' })
-    expect(h.sent.map((m) => m.kind)).toEqual(['communityMemberSection', 'communityMemberSection', 'communityDetail', 'community', 'communityInvites'])
+    // the section has been read, so it is read again
+    expect(h.sent.map((m) => m.kind)).toEqual(['communityInvites', 'communityMemberSection', 'communityMemberSection', 'communityDetail', 'community', 'communityInvites', 'communityRequestSettled'])
     expect(last(h.sent, 'communityDetail')?.members).toMatchObject([{ address: '0xa' }])
     expect(last(h.sent, 'community')?.community.membersCount).toBe(2)
   })
@@ -529,11 +534,11 @@ describe('bridge community invites and requests', () => {
     serve({ [`PATCH ${s}/v1/communities/c3/requests/inv1`]: new Error('HTTP 500'), [`PATCH ${s}/v1/communities/c8/requests/r`]: new Error('HTTP 500') })
     const h = fakeCtx()
     await h.req({ kind: 'manageCommunityRequest', id: 'c3', requestId: 'inv1', intention: 'rejected' })
-    expect(h.sent).toEqual([expect.objectContaining({ kind: 'communityActionFailed', id: 'c3', action: 'rejectInvite' })])
+    expect(h.sent).toEqual([expect.objectContaining({ kind: 'communityActionFailed', id: 'c3', action: 'rejectInvite' }), { kind: 'communityRequestSettled', id: 'c3', requestId: 'inv1' }])
     await h.req({ kind: 'manageCommunityRequest', id: 'c8', requestId: 'r', intention: 'cancelled', address: '0xa' })
     // a member's row is read again, which releases it
-    expect(h.sent.slice(1).map((m) => m.kind)).toEqual(['communityActionFailed', 'communityMemberSection', 'communityMemberSection', 'communityInvites'])
-    expect(h.sent[1]).toMatchObject({ kind: 'communityActionFailed', action: 'manageRequest' })
+    expect(h.sent.slice(2).map((m) => m.kind)).toEqual(['communityActionFailed', 'communityMemberSection', 'communityMemberSection', 'communityInvitesCount', 'communityRequestSettled'])
+    expect(h.sent[2]).toMatchObject({ kind: 'communityActionFailed', action: 'manageRequest' })
   })
 
   it("reads the card's banned members, and unbans one", async () => {
@@ -581,8 +586,54 @@ describe('bridge community invites and requests', () => {
     })
     const h = fakeCtx()
     await h.req({ kind: 'cancelJoinRequest', id: 'c2', requestId: 'rq1' })
-    expect(h.sent.map((m) => m.kind)).toEqual(['communityJoinRequest', 'community', 'communities', 'communityChannels', 'communityInvites'])
+    // before the section is read, only its counter; once read, the section itself
+    expect(h.sent.map((m) => m.kind)).toEqual(['communityJoinRequest', 'community', 'communities', 'communityChannels', 'communityInvitesCount'])
+    await h.req({ kind: 'getCommunityInvites' })
+    h.sent.length = 0
+    serve({
+      [`PATCH ${s}/v1/communities/c2/requests/rq2`]: {},
+      [`GET ${v2}/c2`]: raw('c2', { privacy: 'private' }),
+      [memberOf]: { results: [], total: 0 },
+      [invitesRead]: { results: [] },
+      [requestsRead]: { results: [] }
+    })
+    await h.req({ kind: 'cancelJoinRequest', id: 'c2', requestId: 'rq2' })
     expect(last(h.sent, 'communityInvites')?.requestsSent).toEqual([])
+  })
+
+  it('a read that was already on its way does not bring back an invite just answered', async () => {
+    serve({ [`PATCH ${s}/v1/communities/c3/requests/inv1`]: {}, [`GET ${v2}/c3`]: raw('c3'), [memberOf]: { results: [], total: 0 }, [invitesRead]: { results: [{ id: 'inv1', communityId: 'c3' }] } })
+    const h = fakeCtx()
+    await h.req({ kind: 'manageCommunityRequest', id: 'c3', requestId: 'inv1', intention: 'rejected' })
+    // the service still lists it (a stale read): the card shows no invite
+    await h.req({ kind: 'getCommunity', id: 'c3' })
+    expect(last(h.sent, 'community')?.community.pendingInviteId).toBeUndefined()
+  })
+
+  it("does not read the user's invites when a member opens the card", async () => {
+    serve({ [`GET ${v2}/c1`]: raw('c1', { role: 'member' }) })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunity', id: 'c1' })
+    expect(signed.mock.calls.some((c) => String(c[0]).includes('/requests'))).toBe(false)
+  })
+
+  it('counts what it could read when some count reads fail', async () => {
+    serve({
+      [`${invitesRead}&limit=1`]: new Error('HTTP 500'),
+      [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' })], total: 1 },
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=1&offset=0`]: { results: [], total: 3 }
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityInvitesCount' })
+    expect(h.sent).toEqual([{ kind: 'communityInvitesCount', count: 3 }])
+  })
+
+  it('a failed unban is reported, and the Banned section is read again', async () => {
+    serve({ [`DELETE ${s}/v1/communities/c8/members/0xbad/bans`]: new Error('HTTP 500'), [`GET ${v2}/c8/bans?limit=100&offset=0`]: { results: [{ memberAddress: '0xbad' }], total: 1 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'unbanCommunityMember', id: 'c8', address: '0xbad' })
+    expect(h.sent.map((m) => m.kind)).toEqual(['communityActionFailed', 'communityMemberSection'])
+    expect(h.sent[0]).toMatchObject({ action: 'unban' })
   })
 
   it('reports a failed invitable read and a failed invite', async () => {
