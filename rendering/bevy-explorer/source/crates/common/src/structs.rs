@@ -1044,26 +1044,16 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
     })
 }
 
-/// bevy's default directional depth bias, a world length: the constant floor under the
-/// per-cascade normal bias
-pub const SUN_SHADOW_DEPTH_BIAS: f32 = 0.02;
-/// The soft shadow filter's kernel radius in texels: the bias must clear the whole kernel, so it
-/// scales the per-texel bias
-const SOFT_SHADOW_KERNEL_RADIUS: f32 = 2.5;
-
-/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels) for a quality.
-/// 1.75 (Low) and 1.56 (High) texels of each cascade, times the soft kernel radius. bevy's depth bias is one world length for every
-/// cascade, so those texels go to its normal bias, the bias bevy scales by each cascade's texel;
-/// the depth bias stays bevy's small default. A depth bias sized from the widest cascade instead
-/// over-biased the near cascades and still let the soft filter's wide kernel shade the ground with
-/// its own shadow (acne) on the far ones.
+/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels) for a quality:
+/// bevy's defaults on Low and High (see decisions.md).
 pub fn sun_shadow_bias(setting: ShadowSetting) -> (f32, f32) {
-    let texels = match setting {
-        ShadowSetting::Off => return (0.0, 0.0),
-        ShadowSetting::Low => 1.75,
-        ShadowSetting::High => 1.56,
-    };
-    (SUN_SHADOW_DEPTH_BIAS, texels * SOFT_SHADOW_KERNEL_RADIUS)
+    match setting {
+        ShadowSetting::Off => (0.0, 0.0),
+        ShadowSetting::Low | ShadowSetting::High => (
+            DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS,
+            DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS,
+        ),
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1986,21 +1976,6 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn sun_shadow_bias_scales_with_cascade_texels() {
-        // texels times the soft kernel radius, per cascade texel through the normal bias;
-        // the depth bias is bevy's small floor, whatever the quality
-        assert_eq!(
-            sun_shadow_bias(ShadowSetting::Low),
-            (SUN_SHADOW_DEPTH_BIAS, 1.75 * 2.5)
-        );
-        assert_eq!(
-            sun_shadow_bias(ShadowSetting::High),
-            (SUN_SHADOW_DEPTH_BIAS, 1.56 * 2.5)
-        );
-        assert_eq!(sun_shadow_bias(ShadowSetting::Off), (0.0, 0.0));
-    }
 
     #[test]
     fn sun_cascades_split_the_shadow_distance() {

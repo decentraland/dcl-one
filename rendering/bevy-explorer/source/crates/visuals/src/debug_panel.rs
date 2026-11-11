@@ -86,11 +86,7 @@ pub(super) fn register(app: &mut App) {
                 "presetBias",
             ),
         ],
-        actions: &[
-            ("Restore quality bias", "/shadowbias --reset"),
-            // bevy's default biases, which main uses on a 4096 map
-            ("Main's bias", "/shadowbias --depth 0.02 --normal 1.8"),
-        ],
+        actions: &[("Restore quality bias", "/shadowbias --reset")],
         inputs: &[
             DebugInput {
                 label: "Shadow map size (texels)",

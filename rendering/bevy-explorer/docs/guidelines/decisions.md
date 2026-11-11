@@ -17,12 +17,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
-- **Sun shadow bias goes to bevy's normal bias.** URP biases each cascade by its own texel
-  (`DepthBias` 1.75 or 1.56 texels, times the soft kernel radius 2.5). bevy's depth bias is one
-  world length for every cascade and only its normal bias scales per cascade texel, so Unity's
-  texels times 2.5 are the normal bias and the depth bias stays bevy's 0.02 m. A depth bias
-  sized from the widest cascade let the soft filter shade the ground with its own shadow,
-  jagged-edged patches in Low and High alike, and lost contact shadows.
+- **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
+  URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
+  normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
+  shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
+  (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
+  bias.
 - **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
   ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
   darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
