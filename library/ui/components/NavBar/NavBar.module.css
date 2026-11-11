@@ -8,7 +8,7 @@
     align-items: center;
     justify-content: space-between;
     gap: var(--dcl-space-16);
-    min-height: 64px;
+    min-height: var(--dcl-space-64);
     padding: var(--dcl-space-12) var(--dcl-layout-margin-x);
     background: var(--dcl-bg-navbar-mobile);
     box-shadow:
@@ -70,7 +70,7 @@
     border: 0;
     border-radius: var(--dcl-radius-md);
     background: transparent;
-    color: var(--dcl-neutrals-pearl);
+    color: var(--dcl-text-primary);
     text-decoration: none;
     white-space: nowrap;
     cursor: pointer;
@@ -151,9 +151,8 @@
     border: 0;
     border-radius: var(--dcl-radius-xs);
     background: transparent;
-    box-shadow: inset 0 0 0 1px var(--dcl-neutrals-snow);
-    color: var(--dcl-neutrals-snow);
-    line-height: 24px;
+    box-shadow: inset 0 0 0 1px currentColor;
+    color: var(--dcl-text-primary);
     text-decoration: none;
     white-space: nowrap;
     cursor: pointer;
@@ -183,7 +182,7 @@
 
   .balance + .balance {
     padding-left: var(--dcl-space-16);
-    border-left: 1px solid var(--dcl-neutrals-cloudy-sky);
+    border-left: 1px solid var(--dcl-border-strong);
   }
 
   .balanceIcon {
@@ -213,14 +212,15 @@
     position: absolute;
     top: var(--dcl-space-0);
     left: 50%;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     min-width: 20px;
     height: 20px;
     padding: 0 var(--dcl-space-4);
     border-radius: var(--dcl-radius-full);
     background: var(--dcl-action-primary);
     color: var(--dcl-text-on-action);
-    line-height: 20px;
-    text-align: center;
   }
 
   .accountTrigger {
@@ -280,35 +280,6 @@
     width: 40px;
     height: 40px;
     background: var(--dcl-bg-hover);
-  }
-
-  .menuBars,
-  .menuBars::before,
-  .menuBars::after {
-    display: block;
-    width: 24px;
-    height: 3px;
-    border-radius: var(--dcl-radius-full);
-    background: currentColor;
-  }
-
-  .menuBars {
-    position: relative;
-  }
-
-  .menuBars::before,
-  .menuBars::after {
-    position: absolute;
-    left: 0;
-    content: '';
-  }
-
-  .menuBars::before {
-    top: calc(-1 * var(--dcl-space-8));
-  }
-
-  .menuBars::after {
-    top: var(--dcl-space-8);
   }
 
   .drawerLayer {
@@ -459,8 +430,8 @@
     }
 
     .avatar {
-      width: 48px;
-      height: 48px;
+      width: var(--dcl-space-48);
+      height: var(--dcl-space-48);
     }
   }
 

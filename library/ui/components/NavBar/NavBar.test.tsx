@@ -35,11 +35,11 @@ describe('NavBar', () => {
     user = userEvent.setup()
   })
 
-  describe('when signed out with a sign-in callback', () => {
+  describe('when signed out with a sign-in action', () => {
     let onSignIn: Mock<() => void>
     beforeEach(() => {
       onSignIn = vi.fn<() => void>()
-      render(<NavBar sections={sections} onSignIn={onSignIn} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: onSignIn }} />)
     })
 
     it('should render a navigation landmark named Main', () => {
@@ -54,7 +54,7 @@ describe('NavBar', () => {
       expect(screen.getByRole('link', { name: 'Shop' })).toHaveAttribute('href', '/shop')
     })
 
-    it('should call onSignIn when Sign in is pressed', async () => {
+    it('should call the sign-in onSelect when Sign in is pressed', async () => {
       await user.click(screen.getByRole('button', { name: 'Sign in' }))
       expect(onSignIn).toHaveBeenCalledOnce()
     })
@@ -68,9 +68,9 @@ describe('NavBar', () => {
     })
   })
 
-  describe('when signed out with only a sign-in href', () => {
+  describe('when signed out with a sign-in href', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} signInHref="/sign-in" />)
+      render(<NavBar sections={sections} signIn={{ href: "/sign-in" }} />)
     })
 
     it('should render Sign in as a link', () => {
@@ -78,19 +78,9 @@ describe('NavBar', () => {
     })
   })
 
-  describe('when signed out without a sign-in action', () => {
-    beforeEach(() => {
-      render(<NavBar sections={sections} />)
-    })
-
-    it('should not render a Sign in control', () => {
-      expect(screen.queryByText('Sign in')).not.toBeInTheDocument()
-    })
-  })
-
   describe('when signed in with no notification count or balances', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} onNotificationsClick={() => {}} />)
+      render(<NavBar sections={sections} account={account} notifications={{ onSelect: () => {} }} />)
     })
 
     it('should name the notifications button without a count', () => {
@@ -124,9 +114,9 @@ describe('NavBar', () => {
     })
   })
 
-  describe('when signed in without onNotificationsClick', () => {
+  describe('when signed in without notifications', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} notificationCount={3} />)
+      render(<NavBar sections={sections} account={account} />)
     })
 
     it('should not render a notifications button', () => {
@@ -145,8 +135,7 @@ describe('NavBar', () => {
         <NavBar
           sections={sections}
           account={account}
-          notificationCount={notificationCount}
-          onNotificationsClick={() => {}}
+          notifications={{ count: notificationCount, onSelect: () => {} }}
         />
       )
     })
@@ -162,7 +151,7 @@ describe('NavBar', () => {
 
   describe('when the notification count is 3', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} notificationCount={3} onNotificationsClick={() => {}} />)
+      render(<NavBar sections={sections} account={account} notifications={{ count: 3, onSelect: () => {} }} />)
     })
 
     it('should show the count in the badge', () => {
@@ -176,7 +165,7 @@ describe('NavBar', () => {
 
   describe('when the notification count is larger than the badge can show', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} notificationCount={250} onNotificationsClick={() => {}} />)
+      render(<NavBar sections={sections} account={account} notifications={{ count: 250, onSelect: () => {} }} />)
     })
 
     it('should cap the badge at 99+', () => {
@@ -192,11 +181,11 @@ describe('NavBar', () => {
     let onNotificationsClick: Mock<() => void>
     beforeEach(async () => {
       onNotificationsClick = vi.fn<() => void>()
-      render(<NavBar sections={sections} account={account} onNotificationsClick={onNotificationsClick} />)
+      render(<NavBar sections={sections} account={account} notifications={{ onSelect: onNotificationsClick }} />)
       await user.click(notifications())
     })
 
-    it('should call onNotificationsClick', () => {
+    it('should call the notifications onSelect', () => {
       expect(onNotificationsClick).toHaveBeenCalledOnce()
     })
   })
@@ -232,7 +221,7 @@ describe('NavBar', () => {
 
   describe('when balances are passed while signed out', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} balances={{ credits: 5 }} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} balances={{ credits: 5 }} signIn={{ onSelect: () => {} }} />)
     })
 
     it('should not render them', () => {
@@ -271,7 +260,7 @@ describe('NavBar', () => {
   describe('when a dropdown section is focused and opened with the keyboard', () => {
     let trigger: HTMLElement
     beforeEach(async () => {
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       trigger = screen.getByRole('button', { name: 'Discover' })
       trigger.focus()
       await user.keyboard('{Enter}')
@@ -328,7 +317,7 @@ describe('NavBar', () => {
   describe('when a dropdown opened without focus (as Safari does on click) is pressed outside', () => {
     let trigger: HTMLElement
     beforeEach(() => {
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       trigger = screen.getByRole('button', { name: 'Discover' })
       fireEvent.click(trigger)
       fireEvent.pointerDown(document.body)
@@ -342,7 +331,7 @@ describe('NavBar', () => {
   describe('when focus leaves an open dropdown without a new focus target', () => {
     let trigger: HTMLElement
     beforeEach(async () => {
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       trigger = screen.getByRole('button', { name: 'Discover' })
       await user.click(trigger)
       fireEvent.blur(trigger, { relatedTarget: null })
@@ -356,7 +345,7 @@ describe('NavBar', () => {
   describe('when a dropdown section is closed', () => {
     let trigger: HTMLElement
     beforeEach(() => {
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       trigger = screen.getByRole('button', { name: 'Discover' })
     })
 
@@ -434,7 +423,7 @@ describe('NavBar', () => {
   describe('when a dropdown link is clicked', () => {
     let trigger: HTMLElement
     beforeEach(async () => {
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       trigger = screen.getByRole('button', { name: 'Discover' })
       await user.click(trigger)
       fireEvent.click(screen.getByRole('link', { name: 'Jump in' }))
@@ -455,7 +444,7 @@ describe('NavBar', () => {
           sections={sections}
           account={account}
           balances={{ credits: 30 }}
-          onNotificationsClick={() => {}}
+          notifications={{ onSelect: () => {} }}
           accountActions={[{ label: 'Sign out', onSelect: () => {} }]}
         />
       )
@@ -563,7 +552,7 @@ describe('NavBar', () => {
 
   describe('when the mobile menu backdrop is pressed', () => {
     beforeEach(async () => {
-      const { container } = render(<NavBar sections={sections} onSignIn={() => {}} />)
+      const { container } = render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       // The backdrop is aria-hidden, so it has no role to query by.
       fireEvent.click(container.querySelector('[aria-hidden="true"]:not(svg):not(span)')!)
@@ -586,7 +575,7 @@ describe('NavBar', () => {
           removeEventListener: () => {}
         }))
       )
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       act(() => listeners.forEach((listener) => listener({ matches: true } as MediaQueryListEvent)))
     })
@@ -611,7 +600,7 @@ describe('NavBar', () => {
           removeEventListener: () => {}
         }))
       )
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       act(() => listeners.forEach((listener) => listener({ matches: false } as MediaQueryListEvent)))
     })
@@ -624,19 +613,9 @@ describe('NavBar', () => {
     })
   })
 
-  describe('when both onSignIn and signInHref are given', () => {
-    beforeEach(() => {
-      render(<NavBar sections={sections} onSignIn={() => {}} signInHref="/sign-in" />)
-    })
-
-    it('should render Sign in as a button', () => {
-      expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
-    })
-  })
-
   describe('when a custom logoHref is given', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} logoHref="/home" />)
+      render(<NavBar sections={sections} logoHref="/home" signIn={{ href: '/sign-in' }} />)
     })
 
     it('should link the logo to it', () => {
@@ -644,12 +623,12 @@ describe('NavBar', () => {
     })
   })
 
-  describe('when an external signInHref is given with a link component', () => {
+  describe('when an external sign-in href is given with a link component', () => {
     beforeEach(() => {
       render(
         <NavBar
           sections={sections}
-          signInHref="https://auth.example.com/"
+          signIn={{ href: 'https://auth.example.com/' }}
           linkComponent={(props) => <a {...props} data-router="true" />}
         />
       )
@@ -684,7 +663,7 @@ describe('NavBar', () => {
     let onSignIn: Mock<() => void>
     beforeEach(async () => {
       onSignIn = vi.fn<() => void>()
-      render(<NavBar sections={sections} onSignIn={onSignIn} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: onSignIn }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign in' }))
     })
@@ -693,14 +672,14 @@ describe('NavBar', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
 
-    it('should call onSignIn', () => {
+    it('should call the sign-in onSelect', () => {
       expect(onSignIn).toHaveBeenCalledOnce()
     })
   })
 
   describe('when a Sign in link is followed in the mobile menu', () => {
     beforeEach(async () => {
-      render(<NavBar sections={sections} signInHref="/sign-in" />)
+      render(<NavBar sections={sections} signIn={{ href: "/sign-in" }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Sign in' }))
     })
@@ -710,10 +689,112 @@ describe('NavBar', () => {
     })
   })
 
+  describe('when focus falls out of the open mobile menu', () => {
+    let menuButton: HTMLElement
+    beforeEach(async () => {
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
+      menuButton = screen.getByRole('button', { name: 'Open menu' })
+      await user.click(menuButton)
+      ;(document.activeElement as HTMLElement).blur()
+    })
+
+    describe('and Escape is pressed', () => {
+      beforeEach(async () => {
+        await user.keyboard('{Escape}')
+      })
+
+      it('should close the dialog', () => {
+        expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+      })
+    })
+
+    // fireEvent moves no focus by itself, so only the dialog's own handling can put focus back in the panel.
+    describe('and Tab is pressed', () => {
+      beforeEach(() => {
+        fireEvent.keyDown(document.body, { key: 'Tab' })
+      })
+
+      it('should move focus back to the first control of the dialog', () => {
+        expect(screen.getByRole('button', { name: 'Close menu' })).toHaveFocus()
+      })
+    })
+
+    describe('and Shift+Tab is pressed', () => {
+      beforeEach(() => {
+        fireEvent.keyDown(document.body, { key: 'Tab', shiftKey: true })
+      })
+
+      it('should move focus back to the last control of the dialog', () => {
+        expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign in' })).toHaveFocus()
+      })
+    })
+  })
+
+  describe('when a section link is followed in the mobile menu', () => {
+    let menuButton: HTMLElement
+    beforeEach(async () => {
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
+      menuButton = screen.getByRole('button', { name: 'Open menu' })
+      await user.click(menuButton)
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Shop' }))
+    })
+
+    it('should return focus to the menu button', () => {
+      expect(menuButton).toHaveFocus()
+    })
+  })
+
+  describe('when the locale is one Intl rejects', () => {
+    beforeEach(() => {
+      render(<NavBar sections={sections} account={account} balances={{ mana: 1234.5 }} locale="en_US" />)
+    })
+
+    it('should format balances in en-US instead of failing', () => {
+      expect(screen.getByText(/MANA/).parentElement).toHaveTextContent('MANA: 1,234.5')
+    })
+  })
+
+  describe.each([
+    ['a backslash after the slash', '/\\elsewhere.example.com/'],
+    ['a tab inside the double slash', '/\t/elsewhere.example.com/'],
+    ['a newline inside the double slash', '/\n/elsewhere.example.com/'],
+    ['a leading backslash', '\\elsewhere.example.com/']
+  ])('when a section href has %s and a link component is given', (_, href) => {
+    beforeEach(() => {
+      render(
+        <NavBar
+          sections={[{ label: 'Elsewhere', href }]}
+          signIn={{ href: 'https://auth.example.com/' }}
+          linkComponent={(props) => <a {...props} data-router="true" />}
+        />
+      )
+    })
+
+    it('should render it as a plain anchor', () => {
+      expect(screen.getByRole('link', { name: 'Elsewhere' })).not.toHaveAttribute('data-router')
+    })
+  })
+
+  describe('when a path with a backslash later on is given with a link component', () => {
+    beforeEach(() => {
+      render(
+        <NavBar
+          sections={[{ label: 'Path', href: '/shop\\items' }]}
+          signIn={{ href: 'https://auth.example.com/' }}
+          linkComponent={(props) => <a {...props} data-router="true" />}
+        />
+      )
+    })
+
+    it('should still route it as internal', () => {
+      expect(screen.getByRole('link', { name: 'Path' })).toHaveAttribute('data-router', 'true')
+    })
+  })
+
   describe('when the mobile menu is opened while signed out', () => {
     let dialog: HTMLElement
     beforeEach(async () => {
-      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       dialog = screen.getByRole('dialog', { name: 'Menu' })
     })
@@ -727,7 +808,7 @@ describe('NavBar', () => {
     let LinkComponent: Mock<(props: NavBarLinkProps) => ReactElement>
     beforeEach(() => {
       LinkComponent = vi.fn((props: NavBarLinkProps) => <a {...props} data-router="true" />)
-      render(<NavBar sections={sections} onSignIn={() => {}} linkComponent={LinkComponent} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} linkComponent={LinkComponent} />)
     })
 
     it('should render internal links with it', () => {
@@ -748,6 +829,7 @@ describe('NavBar', () => {
       render(
         <NavBar
           sections={[{ label: 'Elsewhere', href: '//elsewhere.example.com/' }]}
+          signIn={{ href: '/sign-in' }}
           linkComponent={(props) => <a {...props} data-router="true" />}
         />
       )
@@ -763,7 +845,7 @@ describe('NavBar', () => {
       render(
         <NavBar
           sections={sections}
-          onSignIn={() => {}}
+          signIn={{ onSelect: () => {} }}
           labels={{ navigation: 'Principal', signIn: 'Iniciar sesión' }}
         />
       )
@@ -783,8 +865,7 @@ describe('NavBar', () => {
       sections,
       account: { ...account, avatarUrl: '/face.png' },
       balances: { credits: 30, mana: 12.5 },
-      notificationCount: 4,
-      onNotificationsClick: () => {},
+      notifications: { count: 4, onSelect: () => {} },
       accountActions: [{ label: 'Sign out', onSelect: () => {} }]
     }
     beforeEach(async () => {

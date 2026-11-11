@@ -18,6 +18,7 @@ import {
   GeneralDecentralandColor,
   GeneralDownArrow,
   GeneralManaColour,
+  GeneralMenu,
   GeneralPolygonMana
 } from '../../foundations/icons/general'
 import { ShopCredits } from '../../foundations/icons/shop'
@@ -59,6 +60,15 @@ export type NavBarAccountAction =
   | { label: string; href: string; onSelect?: undefined }
   | { label: string; onSelect: () => void; href?: undefined }
 
+/** The Sign in action: a link or a callback. */
+export type NavBarSignIn = { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
+
+export type NavBarNotifications = {
+  /** Unread notifications; the badge is hidden when 0, negative or not finite. */
+  count?: number
+  onSelect: () => void
+}
+
 export type NavBarLabels = {
   navigation: string
   home: string
@@ -74,28 +84,28 @@ export type NavBarLabels = {
   polygonMana: string
 }
 
-export type NavBarProps = {
+type NavBarCommonProps = {
   sections: readonly NavBarSection[]
   /** Defaults to `/`. */
   logoHref?: string
-  /** The signed-in account; signed out when undefined. */
-  account?: NavBarAccount
-  /** Signed out: the Sign in action. Takes precedence over `signInHref`. */
-  onSignIn?: () => void
-  signInHref?: string
   balances?: NavBarBalances
-  /** Unread notifications; the badge is hidden when 0 or undefined. */
-  notificationCount?: number
-  /** Signed in: shows the notifications button. */
-  onNotificationsClick?: () => void
+  /** Signed in: the notifications button. */
+  notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
   accountActions?: readonly NavBarAccountAction[]
   linkComponent?: NavBarLinkComponent
   labels?: Partial<NavBarLabels>
-  /** BCP 47 locale for balance numbers; defaults to `en-US`. Pass the page's locale so server and client agree. */
+  /**
+   * BCP 47 locale for balance numbers; defaults to `en-US`, which is also used for a locale `Intl` rejects. Pass the
+   * page's locale so server and client agree.
+   */
   locale?: string
   className?: string
 }
+
+/** Signed in with an `account`; signed out without one, which then requires a `signIn` action. */
+export type NavBarProps = NavBarCommonProps &
+  ({ account: NavBarAccount; signIn?: NavBarSignIn } | { account?: undefined; signIn: NavBarSignIn })
 
 const defaultLabels: NavBarLabels = {
   navigation: 'Main',
@@ -117,7 +127,20 @@ const BADGE_MAX = 99
 const DESKTOP_QUERY = `(min-width: ${breakpoints.desktop}px)`
 const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
-const isInternalHref = (href: string) => href.startsWith('/') && !href.startsWith('//')
+// URL parsing drops tabs and newlines and reads `\\` as `/` in http(s) URLs, so `/\\host` and `/\t/host` are
+// protocol-relative too: only a single `/` followed by anything else is a path on this origin.
+const isInternalHref = (href: string) => {
+  const url = href.replace(/[\t\n\r]/g, '')
+  return url.startsWith('/') && url[1] !== '/' && url[1] !== '\\'
+}
+
+const numberFormat = (locale: string) => {
+  try {
+    return new Intl.NumberFormat(locale, { maximumFractionDigits: 2 })
+  } catch {
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 })
+  }
+}
 
 const shortAddress = (address: string) =>
   address.length > 10 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address
@@ -281,15 +304,11 @@ function AccountActionList({
   actions,
   renderLink,
   onDone,
-  onActionDone = onDone,
   className
 }: {
   actions: readonly NavBarAccountAction[]
   renderLink: LinkRenderer
-  /** After a link is followed. */
   onDone: () => void
-  /** After a button action; defaults to onDone. */
-  onActionDone?: () => void
   className: string | undefined
 }) {
   return (
@@ -303,7 +322,7 @@ function AccountActionList({
               type="button"
               className={styles.menuItem}
               onClick={() => {
-                onActionDone()
+                onDone()
                 action.onSelect()
               }}
             >
@@ -387,30 +406,34 @@ function Drawer({
     const desktop = typeof window.matchMedia === 'function' ? window.matchMedia(DESKTOP_QUERY) : undefined
     const onDesktop = (event: MediaQueryListEvent) => event.matches && onClose()
     desktop?.addEventListener('change', onDesktop)
+    // On the document, so Escape and the Tab wrap still work when focus has fallen out of the panel to <body>.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        onClose()
+        return
+      }
+      if (event.key !== 'Tab' || !panel) return
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (!first || !last) return
+      const inside = panel.contains(document.activeElement)
+      if (event.shiftKey && (!inside || document.activeElement === first)) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && (!inside || document.activeElement === last)) {
+        event.preventDefault()
+        first.focus()
+      }
+    }
+    document.addEventListener('keydown', onKeyDown)
     return () => {
       document.body.style.overflow = overflow
       desktop?.removeEventListener('change', onDesktop)
+      document.removeEventListener('keydown', onKeyDown)
     }
   }, [onClose])
-  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Escape') {
-      event.stopPropagation()
-      onClose()
-      return
-    }
-    if (event.key !== 'Tab') return
-    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(FOCUSABLE))
-    const first = focusable[0]
-    const last = focusable[focusable.length - 1]
-    if (!first || !last) return
-    if (event.shiftKey && document.activeElement === first) {
-      event.preventDefault()
-      last.focus()
-    } else if (!event.shiftKey && document.activeElement === last) {
-      event.preventDefault()
-      first.focus()
-    }
-  }
   return (
     <div className={styles.drawerLayer}>
       <div className={styles.backdrop} aria-hidden="true" onClick={onClose} />
@@ -421,7 +444,7 @@ function Drawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        onKeyDown={onKeyDown}
+        tabIndex={-1}
       >
         <div className={styles.drawerHeader}>
           <h2 id={titleId} className={styles.drawerTitle}>
@@ -441,11 +464,9 @@ export function NavBar({
   sections,
   logoHref = '/',
   account,
-  onSignIn,
-  signInHref,
+  signIn: signInAction,
   balances,
-  notificationCount,
-  onNotificationsClick,
+  notifications,
   accountActions = [],
   linkComponent,
   labels: labelOverrides,
@@ -453,45 +474,33 @@ export function NavBar({
   className
 }: NavBarProps) {
   const labels = { ...defaultLabels, ...labelOverrides }
-  const format = useMemo(() => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }), [locale])
+  const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
   const [drawerOpen, setDrawerOpen] = useState(false)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const drawerId = useId()
   const drawerTitleId = useId()
-  const count = unreadCount(notificationCount)
+  const count = unreadCount(notifications?.count)
   const closeDrawer = useCallback(() => {
     setDrawerOpen(false)
     menuButtonRef.current?.focus()
   }, [])
 
-  const signIn = onSignIn ? (
-    <button type="button" className={styles.signIn} onClick={onSignIn}>
-      {labels.signIn}
-    </button>
-  ) : signInHref !== undefined ? (
-    renderLink({ href: signInHref, className: styles.signIn, children: labels.signIn })
-  ) : null
-  // The drawer's copy closes the drawer first, so the app's sign-in UI or route is not left under a modal.
-  const drawerSignIn = onSignIn ? (
-    <button
-      type="button"
-      className={styles.signIn}
-      onClick={() => {
-        setDrawerOpen(false)
-        onSignIn()
-      }}
-    >
-      {labels.signIn}
-    </button>
-  ) : signInHref !== undefined ? (
-    renderLink({
-      href: signInHref,
-      className: styles.signIn,
-      onClick: () => setDrawerOpen(false),
-      children: labels.signIn
-    })
-  ) : null
+  const renderSignIn = (onDone?: () => void) =>
+    !signInAction ? null : signInAction.onSelect ? (
+      <button
+        type="button"
+        className={styles.signIn}
+        onClick={() => {
+          onDone?.()
+          signInAction.onSelect()
+        }}
+      >
+        {labels.signIn}
+      </button>
+    ) : (
+      renderLink({ href: signInAction.href, className: styles.signIn, onClick: onDone, children: labels.signIn })
+    )
 
   return (
     <nav className={className ? `${styles.root} ${className}` : styles.root} aria-label={labels.navigation}>
@@ -527,13 +536,13 @@ export function NavBar({
                 <Balances balances={balances} labels={labels} format={format} />
               </div>
             ) : null}
-            {onNotificationsClick ? (
-              <NotificationsButton count={count} labels={labels} onClick={onNotificationsClick} />
+            {notifications ? (
+              <NotificationsButton count={count} labels={labels} onClick={notifications.onSelect} />
             ) : null}
             <AccountMenu account={account} actions={accountActions} labels={labels} renderLink={renderLink} />
           </>
         ) : (
-          signIn
+          renderSignIn()
         )}
         <button
           ref={menuButtonRef}
@@ -545,7 +554,7 @@ export function NavBar({
           aria-haspopup="dialog"
           onClick={() => setDrawerOpen(true)}
         >
-          <span className={styles.menuBars} aria-hidden="true" />
+          <GeneralMenu size={24} aria-hidden="true" />
         </button>
       </div>
       {drawerOpen ? (
@@ -563,7 +572,7 @@ export function NavBar({
                             href: item.href,
                             className: styles.drawerLink,
                             'aria-current': item.active ? 'page' : undefined,
-                            onClick: () => setDrawerOpen(false),
+                            onClick: closeDrawer,
                             children: item.label
                           })}
                         </li>
@@ -575,7 +584,7 @@ export function NavBar({
                     href: section.href,
                     className: styles.drawerLink,
                     'aria-current': section.active ? 'page' : undefined,
-                    onClick: () => setDrawerOpen(false),
+                    onClick: closeDrawer,
                     children: section.label
                   })
                 )}
@@ -589,13 +598,13 @@ export function NavBar({
                 <span className={styles.accountName}>{account.name || shortAddress(account.address)}</span>
               </div>
               {balances ? <Balances balances={balances} labels={labels} format={format} /> : null}
-              {onNotificationsClick ? (
+              {notifications ? (
                 <button
                   type="button"
                   className={styles.menuItem}
                   onClick={() => {
                     closeDrawer()
-                    onNotificationsClick()
+                    notifications.onSelect()
                   }}
                 >
                   {count > 0 ? labels.unreadNotifications(count) : labels.notifications}
@@ -605,15 +614,14 @@ export function NavBar({
                 <AccountActionList
                   actions={accountActions}
                   renderLink={renderLink}
-                  onDone={() => setDrawerOpen(false)}
-                  onActionDone={closeDrawer}
+                  onDone={closeDrawer}
                   className={styles.menuList}
                 />
               ) : null}
             </div>
-          ) : drawerSignIn ? (
-            <div className={styles.drawerAccount}>{drawerSignIn}</div>
-          ) : null}
+          ) : (
+            <div className={styles.drawerAccount}>{renderSignIn(closeDrawer)}</div>
+          )}
         </Drawer>
       ) : null}
     </nav>

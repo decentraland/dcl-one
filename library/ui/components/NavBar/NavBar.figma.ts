@@ -8,8 +8,8 @@
 import figma from 'figma'
 const instance = figma.selectedInstance
 const property0 = instance.getEnum('signed-in', {
-  'false': ' onSignIn={signIn}',
-  'true': ' account={account} onNotificationsClick={openNotifications} accountActions={accountActions}'
+  'false': ' signIn={signIn}',
+  'true': ' account={account} notifications={notifications} accountActions={accountActions}'
 })
 const property1 = instance.getEnum('balances', {
   'none': '',

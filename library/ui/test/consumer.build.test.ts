@@ -58,7 +58,7 @@ describe('when a consumer bundles public foundations and the NavBar component', 
         .join('\n')
     ).toMatch(/font-family:\s*'?Inter/)
   }, 60_000)
-  it('should execute the SSR bundle and pass selection errors to server route handling', async () => {
+  it('should server-render the signed-out, signed-in and empty-sections contracts through the SSR bundle', async () => {
     directory = await mkdtemp(path.join(root, '.consumer-ssr-'))
     await build({
       configFile: false,
@@ -81,23 +81,24 @@ describe('when a consumer bundles public foundations and the NavBar component', 
       const errors = [];
       const onError = error => { errors.push(error); return '<main role="alert">Navigation unavailable</main>'; };
       const sections = [{ label: 'Shop', href: '/shop' }];
-      const signedOut = renderNavigationRoute({ sections, onSignIn() {} }, onError);
+      const signedOut = renderNavigationRoute({ sections, signIn: { href: '/sign-in' } }, onError);
       assert.equal(signedOut.status, 200);
-      assert.match(signedOut.html, />Sign in</);
+      assert.ok(signedOut.html.includes('href="/sign-in"') && signedOut.html.includes('>Sign in</a>'));
       const signedIn = renderNavigationRoute({ sections, account: { address: '0x0000000000000000000000000000000000000000' } }, onError);
       assert.equal(signedIn.status, 200);
       assert.match(signedIn.html, /aria-label="Account: 0x0000...0000"/);
+      assert.doesNotMatch(signedIn.html, />Sign in</);
+      const empty = renderNavigationRoute({ sections: [], signIn: { onSelect() {} } }, onError);
+      assert.equal(empty.status, 200);
+      assert.match(empty.html, /<nav[^>]*aria-label="Main"/);
       assert.equal(errors.length, 0);
-      const malformed = renderNavigationRoute({}, onError);
-      assert.deepEqual(malformed, {status:500,html:'<main role="alert">Navigation unavailable</main>'});
-      assert.equal(errors.length, 1);
-      console.log('SSR route: signedOut=200 signedIn=200 malformed=500');
+      console.log('SSR route: signedOut=200 signedIn=200 empty=200');
     `
     )
     expect(
       execFileSync(process.execPath, [path.join(directory, 'check.mjs')], {
         encoding: 'utf8'
       })
-    ).toContain('signedOut=200 signedIn=200 malformed=500')
+    ).toContain('signedOut=200 signedIn=200 empty=200')
   }, 60_000)
 })

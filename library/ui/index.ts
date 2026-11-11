@@ -9,6 +9,8 @@ export type {
   NavBarLink,
   NavBarLinkComponent,
   NavBarLinkProps,
+  NavBarNotifications,
   NavBarProps,
-  NavBarSection
+  NavBarSection,
+  NavBarSignIn
 } from './components/NavBar/NavBar'
