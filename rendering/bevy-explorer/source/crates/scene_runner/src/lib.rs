@@ -72,6 +72,7 @@ use dcl_component::ComponentNameRegistry;
 
 pub mod asset_preload;
 pub mod automatic_testing;
+pub mod content_bytes;
 /// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
 /// where it has always lived for callers.
 pub use common::bounds_calc;
@@ -239,6 +240,19 @@ pub struct Toast {
 
 // plugin which creates and runs scripts
 pub struct SceneRunnerPlugin;
+
+/// What the scene loop did in the frame.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct SceneLoopTiming {
+    /// From the loop's start until its deadline passed or no scene work remained.
+    pub loop_ms: f32,
+    /// The frame limiter's sleep after the loop (native only; 0 on web).
+    pub frame_limiter_sleep_ms: f32,
+    /// Runs of the scene schedule in the loop.
+    pub ticks_run_count: u32,
+    /// Scenes still eligible for a tick when the loop ended.
+    pub jobs_left_count: u32,
+}
 
 #[derive(Resource)]
 pub struct SceneLoopSchedule {
@@ -492,6 +506,7 @@ fn run_scene_loop(world: &mut World) {
     } else {
         Duration::from_nanos((1e9 / fps) as u64)
     };
+    let _span = bevy::log::info_span!("run_scene_loop").entered();
     let start_loop_time = Instant::now();
     // Bounded so we neither burn through a backlog after a hitch (a deadline already in
     // the past still leaves a 1ms floor to make progress) nor run a frame longer than the
@@ -505,6 +520,7 @@ fn run_scene_loop(world: &mut World) {
 
     // run at least once to collect updates even if no scenes are eligible
     let mut run_once = false;
+    let mut ticks_run_count = 0u32;
 
     // run until time elapsed or all scenes are updated
     while !run_once
@@ -514,7 +530,10 @@ fn run_scene_loop(world: &mut World) {
     {
         schedule.run(world);
         run_once = true;
+        ticks_run_count += 1;
     }
+    let loop_end_time = Instant::now();
+    let jobs_left_count = world.resource::<SceneUpdates>().eligible_jobs as u32;
 
     let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
     loop_schedule.schedule = schedule;
@@ -525,6 +544,13 @@ fn run_scene_loop(world: &mut World) {
             loop_schedule.sleeper.sleep(sleep_time);
         }
     }
+    let frame_limiter_sleep_ms = loop_end_time.elapsed().as_secs_f32() * 1000.0;
+    world.insert_resource(SceneLoopTiming {
+        loop_ms: (loop_end_time - start_loop_time).as_secs_f32() * 1000.0,
+        frame_limiter_sleep_ms,
+        ticks_run_count,
+        jobs_left_count,
+    });
 }
 
 fn update_scene_priority(
@@ -1635,6 +1661,7 @@ fn process_scene_entity_lifecycle(
     scene_entities: Query<(), With<SceneEntity>>,
     primaries: PrimaryEntities,
 ) {
+    let _span = bevy::log::info_span!("scene entity lifecycle").entered();
     for (root, mut context, mut deleted_entities) in scenes.iter_mut() {
         if !context.nascent.is_empty() {
             debug!("{:?}: nascent: {:?}", root, context.nascent);

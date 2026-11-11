@@ -7,7 +7,8 @@ use std::fmt::Write;
 
 use super::exceptions::Kinds;
 use super::stats::{
-    self, Aggregate, ExceptionVerdict, Incomparable, Verdict, EXCEPTIONS_METRIC, METRICS,
+    self, Aggregate, ExceptionVerdict, Incomparable, Verdict, EXCEPTIONS_METRIC, HICCUPS_METRIC,
+    METRICS, PEAK_MEMORY_METRIC,
 };
 use super::{Build, Note, Options, Section};
 
@@ -95,6 +96,7 @@ pub fn legend(expected_runs: u64) -> String {
          - **— informational** — the 0.1% worst metrics average only the few worst frames of a run, so a single OS hiccup swings them by a lot; they are shown for context and never earn a verdict.\n\
          - **⚠️ no verdict** — the two builds' sessions were not comparable (very different sample counts, or too few usable runs), so no conclusion is drawn from them.\n\
          - **Exceptions per run** — the average number of exceptions in a run's log, not counting teardown ones logged while the app quits. Flagged only on a difference of at least {delta_min} per run and {ratio_min}× the other build; exception kinds the baseline never threw are called out under the table. The *Exception breakdown* groups all of them by the explorer's report category and exception type (as totals across the runs).\n\
+         - **Hiccups per run / Peak memory** — from the `perf_summary` lines an explorer writes when its measured phase ends: frames over its hiccup threshold (the larger of 50 ms and two target frame times) and the peak engine memory. Hiccups follow the exceptions rule; memory the frame-time rule with a floor of {min_mib} MiB. The *Top scopes* list is the self time per run of the scopes the explorer's profiler recorded. Shown only when a run wrote them.\n\
          - A run that logged **unusually many exceptions** (at least {outlier_min} and {outlier_factor}× the median of its build's runs — e.g. a service was down during it) is excluded from all numbers and called out under the table.\n\
          - The **Overall** line at the top only reacts to a metric that moved on **two or more machines**, or by **10% or more** on one — a single modest 🟢/🔴 cell can still be a statistical fluke.\n\
          </details>\n\
@@ -105,6 +107,7 @@ pub fn legend(expected_runs: u64) -> String {
         ratio_min = stats::EXCEPTION_RATIO_MIN,
         outlier_min = stats::OUTLIER_MIN_EXCEPTIONS,
         outlier_factor = stats::OUTLIER_FACTOR,
+        min_mib = stats::MIN_ABS_DELTA_MIB,
     )
 }
 
@@ -142,6 +145,26 @@ pub fn section(section: &Section) -> String {
                 signed_hundredths(change.exceptions - base.exceptions),
                 exception_verdict(comparison.exceptions)
             );
+            if change.summaries > 0 || base.summaries > 0 {
+                let _ = writeln!(
+                    out,
+                    "| {} | {} | {} | {} | {} |",
+                    HICCUPS_METRIC,
+                    hiccups_cell(base),
+                    hiccups_cell(change),
+                    signed_hundredths(f64::from(change.hiccups.median - base.hiccups.median)),
+                    hiccup_verdict(comparison.hiccups)
+                );
+                let _ = writeln!(
+                    out,
+                    "| {} | {} | {} | {} | {} |",
+                    PEAK_MEMORY_METRIC,
+                    memory_cell(base),
+                    memory_cell(change),
+                    signed_mib(change.peak_mib.median - base.peak_mib.median),
+                    memory_verdict(comparison.peak_memory)
+                );
+            }
         }
         None => {
             out += "| Metric | |\n";
@@ -155,7 +178,58 @@ pub fn section(section: &Section) -> String {
                 "| {EXCEPTIONS_METRIC} | {} |",
                 hundredths(change.exceptions)
             );
+            if change.summaries > 0 {
+                let _ = writeln!(out, "| {HICCUPS_METRIC} | {} |", hiccups_cell(change));
+                let _ = writeln!(out, "| {PEAK_MEMORY_METRIC} | {} |", memory_cell(change));
+            }
         }
+    }
+
+    let base_scopes = section
+        .comparison
+        .as_ref()
+        .map(|comparison| comparison.base.scopes.as_slice())
+        .unwrap_or_default();
+    if !change.scopes.is_empty() || !base_scopes.is_empty() {
+        out += "\n<details><summary>Top scopes (self time per run, ms)</summary>\n\n";
+        // the change's scopes first, by its self time; then the baseline's it lacks
+        let mut names: Vec<&str> = change
+            .scopes
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect();
+        for (name, _) in base_scopes {
+            if !names.contains(&name.as_str()) {
+                names.push(name);
+            }
+        }
+        names.truncate(TOP_SCOPES_SHOWN);
+        let self_ms = |scopes: &[(String, f32)], name: &str| {
+            scopes
+                .iter()
+                .find(|(known, _)| known == name)
+                .map_or("-".to_owned(), |(_, ms)| format!("{ms:.1}"))
+        };
+        match &section.comparison {
+            Some(comparison) => {
+                out += "| Scope | Baseline | Change |\n| --- | ---: | ---: |\n";
+                for name in names {
+                    let _ = writeln!(
+                        out,
+                        "| `{name}` | {} | {} |",
+                        self_ms(&comparison.base.scopes, name),
+                        self_ms(&change.scopes, name)
+                    );
+                }
+            }
+            None => {
+                out += "| Scope | Self time |\n| --- | ---: |\n";
+                for name in names {
+                    let _ = writeln!(out, "| `{name}` | {} |", self_ms(&change.scopes, name));
+                }
+            }
+        }
+        out += "</details>\n";
     }
 
     for note in &section.notes {
@@ -280,6 +354,64 @@ fn cell(aggregate: &Aggregate) -> String {
         format!("{median:.1} ms")
     } else {
         format!("{median:.1} ms ({min:.1}–{max:.1})")
+    }
+}
+
+/// Scopes the breakdown lists.
+const TOP_SCOPES_SHOWN: usize = 15;
+
+/// The hiccup count's median and range, with the threshold in effect.
+fn hiccups_cell(build: &Build) -> String {
+    if build.summaries == 0 {
+        return "-".to_owned();
+    }
+    let Aggregate { median, min, max } = build.hiccups;
+    let threshold = build
+        .hiccup_threshold_ms
+        .map_or(String::new(), |ms| format!(" over {ms:.0} ms"));
+    if max - min < 0.5 {
+        format!("{median:.0}{threshold}")
+    } else {
+        format!("{median:.0} ({min:.0}–{max:.0}){threshold}")
+    }
+}
+
+fn memory_cell(build: &Build) -> String {
+    if build.summaries == 0 {
+        return "-".to_owned();
+    }
+    let Aggregate { median, min, max } = build.peak_mib;
+    if max - min < 0.5 {
+        format!("{median:.0} MiB")
+    } else {
+        format!("{median:.0} MiB ({min:.0}–{max:.0})")
+    }
+}
+
+fn signed_mib(delta: f32) -> String {
+    if delta.round() == 0.0 {
+        "0".to_owned()
+    } else {
+        format!("{delta:+.0} MiB")
+    }
+}
+
+fn hiccup_verdict(verdict: ExceptionVerdict) -> String {
+    match verdict {
+        ExceptionVerdict::More => "🔴 more hiccups".to_string(),
+        ExceptionVerdict::Fewer => "🟢 fewer hiccups".to_string(),
+        ExceptionVerdict::NoSignificantChange => "⚪ no significant change".to_string(),
+        ExceptionVerdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
+    }
+}
+
+fn memory_verdict(verdict: Verdict) -> String {
+    match verdict {
+        Verdict::Faster(by) => format!("🟢 {:.0}% less memory", by * 100.0),
+        Verdict::Slower(by) => format!("🔴 {:.0}% more memory", by * 100.0),
+        Verdict::WithinNoise => "⚪ within noise".to_string(),
+        Verdict::Informational => "— informational".to_string(),
+        Verdict::Withheld(reason) => format!("⚠️ no verdict — {reason}"),
     }
 }
 

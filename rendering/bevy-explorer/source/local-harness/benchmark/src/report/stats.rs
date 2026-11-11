@@ -47,6 +47,12 @@ const HAS_VERDICT: [bool; 6] = [true, true, false, true, true, false];
 const GPU_AVERAGE: usize = 3;
 
 pub const EXCEPTIONS_METRIC: &str = "Exceptions per run";
+/// Frames over the explorer's hiccup threshold per run, from the run's `perf_summary` lines.
+pub const HICCUPS_METRIC: &str = "Hiccups per run";
+/// Peak engine memory per run, MiB, from the same lines.
+pub const PEAK_MEMORY_METRIC: &str = "Peak memory";
+/// A smaller peak-memory median difference never gets a verdict.
+pub const MIN_ABS_DELTA_MIB: f32 = 32.0;
 
 /// One run's sample count and its metrics in the order of [`METRICS`], from its CSV. The first
 /// line is the header; every other line is `frame,cpu,gpu`. A CSV with no rows, a row with fewer
@@ -258,6 +264,33 @@ pub fn verdict(
     let improvement = -delta / base.median;
     let separated = change.min > base.max || change.max < base.min;
     if !separated || delta.abs() < MIN_ABS_DELTA_MS {
+        Verdict::WithinNoise
+    } else if improvement >= LAMBDA {
+        Verdict::Faster(improvement)
+    } else if improvement <= -LAMBDA {
+        Verdict::Slower(-improvement)
+    } else {
+        Verdict::WithinNoise
+    }
+}
+
+/// The peak-memory verdict: the metrics' separation and relative floor, with an absolute floor
+/// of [`MIN_ABS_DELTA_MIB`]; `Faster` is less memory, `Slower` more.
+pub fn memory_verdict(
+    change: &Aggregate,
+    base: &Aggregate,
+    incomparable: Option<Incomparable>,
+) -> Verdict {
+    if let Some(incomparable) = incomparable {
+        return Verdict::Withheld(incomparable.reason());
+    }
+    if base.median <= 0.0 {
+        return Verdict::Withheld("no baseline memory");
+    }
+    let delta = change.median - base.median;
+    let improvement = -delta / base.median;
+    let separated = change.min > base.max || change.max < base.min;
+    if !separated || delta.abs() < MIN_ABS_DELTA_MIB {
         Verdict::WithinNoise
     } else if improvement >= LAMBDA {
         Verdict::Faster(improvement)

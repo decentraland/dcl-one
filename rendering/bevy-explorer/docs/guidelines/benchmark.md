@@ -116,8 +116,11 @@ comment ([The workflow](#the-workflow)).
 Each section is a table, **Metric | Baseline | Change | Δ | Result**: *Samples* (the median rows
 per run, × the runs), CPU and GPU *average*, *1% worst* and *0.1% worst* frame time (the mean of
 the worst 1% or 0.1% of a run's frames, the
-[GamersNexus](https://www.youtube.com/watch?v=WcTxrzFqdyw#t=34m17s) method), and *Exceptions per
-run*.
+[GamersNexus](https://www.youtube.com/watch?v=WcTxrzFqdyw#t=34m17s) method), *Exceptions per
+run*, and, where a run's log holds the engine's `perf_summary` lines ([Files](#files)),
+*Hiccups per run* (frames over the engine's hiccup threshold, shown with the threshold) and
+*Peak memory* (the engine's peak memory in MiB), with a collapsed *Top scopes* list of the
+profiler's scopes and their self time per run ([profiling](profiling.md)).
 
 - A value is the **median** of the build's runs, followed by the **(min–max)** range when the runs
   differ. A wide range means a noisy metric, where small differences mean little.
@@ -128,6 +131,9 @@ run*.
     permutation test, one-sided p = 0.05), and the medians differ by at least 3% and at least
     0.5 ms. Only then is a percentage shown, so a noisy number never reads as a win.
   - **⚪ within noise:** the runs overlap or the difference is small. Treat it as no change.
+  - **🟢 fewer / 🔴 more hiccups:** the exceptions rule applied to the hiccup medians; **🟢 _N_%
+    less / 🔴 _N_% more memory:** the frame-time rule applied to the peak memory medians, with an
+    absolute floor of 32 MiB.
   - **— informational:** the 0.1% worst rows. They average the two or three worst frames of a run,
     so one OS hiccup moves them by tens of percent; they never get a verdict.
   - **⚠️ no verdict — _reason_:** the sessions cannot be compared. *too few runs*: a build has
@@ -260,6 +266,16 @@ and `AutopilotPhase`.
   wherever they stand, so no message or category holds either: the exit marker and the handler
   name are broken with a zero-width space after their first character, except in the run's own
   exit line and each block's last line. A scene's error text cannot end the count or add to it.
+  - When the measured phase ends with exit code 0, the engine logs two info-level entries under
+    the target `perf_summary`, before the exit line (`src/perf/benchmark_summary.rs`). The
+    first is `key=value` pairs in a fixed order: `cpu_p99_ms`,
+    `cpu_frames_over_hiccup_threshold_count`, `cpu_hiccup_threshold_ms`, `gpu_p99_ms`,
+    `gpu_frames_over_hiccup_threshold_count`, `used_peak_mib`, `js_heap_used_mib`,
+    `entity_count`, `sample_count`, `snapshot_duration_seconds`; a value the run could not
+    measure is `n/a`. The second is `top_scopes=<name>:<self ms>,...`, up to 30 scopes by self
+    time, with commas, colons and equals signs in a name replaced by spaces. The report reads the
+    last pair before the exit line (`report/summary.rs`); a log without them gets no hiccup,
+    memory or scope rows.
 - Both formats live once in `crates/perf_output/src/format.rs`; the desktop sinks and the page's
   stream take its bytes unchanged. The log layer first replaces every credential in a message or
   a category with `REDACTED` (`crates/perf_output/src/scrub.rs`): `access_token=` values, string

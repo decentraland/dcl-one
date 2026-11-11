@@ -322,6 +322,7 @@ fn update_gltf(
     oow_player: Query<Entity, (With<OutOfWorld>, With<PrimaryUser>)>,
     no_render_app: Option<Res<NoRenderApp>>,
 ) {
+    let _span = bevy::log::info_span!("gltf containers").entered();
     let immediate_scene = oow_player
         .single()
         .ok()

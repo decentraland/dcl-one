@@ -12,7 +12,9 @@
 mod exceptions;
 mod render;
 mod stats;
+mod summary;
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufRead};
 use std::path::{Path, PathBuf};
@@ -24,6 +26,7 @@ use crate::out;
 use exceptions::Kinds;
 pub use exceptions::{EXCEPTION_MARKER, EXIT_MARKER};
 use stats::{Aggregate, ExceptionVerdict, Finding, Incomparable, Verdict};
+use summary::Summary;
 
 /// The exit code when no section has data; the report is written anyway.
 pub const EXIT_NO_DATA: i32 = 2;
@@ -61,6 +64,8 @@ struct Run {
     metrics: [f32; 6],
     exceptions: u64,
     kinds: Kinds,
+    /// The explorer's `perf_summary` lines, when the run wrote them.
+    summary: Option<Summary>,
 }
 
 /// A build's runs in a section, outliers excluded.
@@ -72,12 +77,24 @@ struct Build {
     /// Per run, not in total: after a crash or an exclusion the builds have different run counts.
     exceptions: f64,
     kinds: Kinds,
+    /// The runs that wrote a summary, which the rows below come from.
+    summaries: usize,
+    /// Frames over the hiccup threshold per run, across those runs.
+    hiccups: Aggregate,
+    /// The threshold in effect, the median across those runs.
+    hiccup_threshold_ms: Option<f32>,
+    /// Peak engine memory per run, MiB, across those runs.
+    peak_mib: Aggregate,
+    /// Self time per run, ms, of the scopes the summaries name, highest first.
+    scopes: Vec<(String, f32)>,
 }
 
 struct Comparison {
     base: Build,
     verdicts: [Verdict; 6],
     exceptions: ExceptionVerdict,
+    hiccups: ExceptionVerdict,
+    peak_memory: Verdict,
 }
 
 /// A caveat shown under a section's table.
@@ -132,6 +149,16 @@ impl Section {
         match comparison.exceptions {
             ExceptionVerdict::More => findings.push(found(stats::EXCEPTIONS_METRIC, false, 0.0)),
             ExceptionVerdict::Fewer => findings.push(found(stats::EXCEPTIONS_METRIC, true, 0.0)),
+            _ => {}
+        }
+        match comparison.hiccups {
+            ExceptionVerdict::More => findings.push(found(stats::HICCUPS_METRIC, false, 0.0)),
+            ExceptionVerdict::Fewer => findings.push(found(stats::HICCUPS_METRIC, true, 0.0)),
+            _ => {}
+        }
+        match comparison.peak_memory {
+            Verdict::Faster(by) => findings.push(found(stats::PEAK_MEMORY_METRIC, true, by)),
+            Verdict::Slower(by) => findings.push(found(stats::PEAK_MEMORY_METRIC, false, by)),
             _ => {}
         }
         findings
@@ -264,11 +291,15 @@ fn read_runs(folder: &Path, build: &str) -> Result<Vec<Run>, String> {
             let (exceptions, kinds) = exceptions::count(&log).map_err(|error| {
                 format!("{}: {}", file_name(&log), out::safe(&error.to_string()))
             })?;
+            let summary = summary::read(&log).map_err(|error| {
+                format!("{}: {}", file_name(&log), out::safe(&error.to_string()))
+            })?;
             Ok(Run {
                 samples,
                 metrics,
                 exceptions,
                 kinds,
+                summary,
             })
         })
         .collect()
@@ -313,10 +344,27 @@ fn compare(label: String, change: Vec<Run>, base: Vec<Run>, expected_runs: u64) 
             )
         });
         let exceptions = stats::exception_verdict(change.exceptions, base.exceptions, incomparable);
+        let summaries = change.summaries > 0 && base.summaries > 0;
+        let hiccups = if summaries {
+            stats::exception_verdict(
+                f64::from(change.hiccups.median),
+                f64::from(base.hiccups.median),
+                incomparable,
+            )
+        } else {
+            ExceptionVerdict::Withheld("no summary")
+        };
+        let peak_memory = if summaries {
+            stats::memory_verdict(&change.peak_mib, &base.peak_mib, incomparable)
+        } else {
+            Verdict::Withheld("no summary")
+        };
         Comparison {
             base,
             verdicts,
             exceptions,
+            hiccups,
+            peak_memory,
         }
     });
 
@@ -360,6 +408,16 @@ fn keep(
 
 fn summarize(runs: &[Run]) -> Build {
     let exceptions: u64 = runs.iter().map(|run| run.exceptions).sum();
+    let summaries: Vec<&Summary> = runs.iter().filter_map(|run| run.summary.as_ref()).collect();
+    let mut scope_sums: BTreeMap<&str, f32> = BTreeMap::new();
+    for (name, ms) in summaries.iter().flat_map(|summary| &summary.top_scopes) {
+        *scope_sums.entry(name).or_default() += ms;
+    }
+    let mut scopes: Vec<(String, f32)> = scope_sums
+        .into_iter()
+        .map(|(name, sum)| (name.to_owned(), sum / summaries.len() as f32))
+        .collect();
+    scopes.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
     Build {
         runs: runs.len(),
         samples: stats::median_int(runs.iter().map(|run| run.samples)),
@@ -370,6 +428,27 @@ fn summarize(runs: &[Run]) -> Build {
             exceptions as f64 / runs.len() as f64
         },
         kinds: Kinds::combine(runs.iter().map(|run| &run.kinds)),
+        summaries: summaries.len(),
+        hiccups: stats::aggregate(
+            summaries
+                .iter()
+                .filter_map(|summary| summary.cpu_hiccups)
+                .map(|count| count as f32),
+        ),
+        hiccup_threshold_ms: {
+            let thresholds: Vec<f32> = summaries
+                .iter()
+                .filter_map(|summary| summary.cpu_hiccup_threshold_ms)
+                .collect();
+            (!thresholds.is_empty()).then(|| stats::aggregate(thresholds).median)
+        },
+        peak_mib: stats::aggregate(
+            summaries
+                .iter()
+                .filter_map(|summary| summary.used_peak_mib)
+                .map(|mib| mib as f32),
+        ),
+        scopes,
     }
 }
 

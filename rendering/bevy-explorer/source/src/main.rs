@@ -24,12 +24,14 @@ use perf_output::{
 };
 use system_ui::crash_report;
 use webgpu_build::{
+    perf::{allocation_counter::CountingAllocator, profiled_scopes},
     DecentralandApp, DecentralandAppConfig, DecentralandArguments, CONFIG_READ_ATTEMPTS,
     CONFIG_READ_RETRY_PAUSE,
 };
 
+// mimalloc, counted for `perf/allocs_count_per_frame` (src/perf/allocation_counter.rs)
 #[global_allocator]
-static GLOBAL: MiMalloc = MiMalloc;
+static GLOBAL: CountingAllocator<MiMalloc> = CountingAllocator(MiMalloc);
 static SESSION_LOG: OnceLock<String> = OnceLock::new();
 /// The benchmark log (`--log-file`). The command line is parsed after the logger starts, so the
 /// layer is installed with it and holds what is logged until [`open_benchmark_log`] knows
@@ -68,7 +70,8 @@ fn main() {
                 bevy::log::tracing_subscriber::fmt::layer()
                     .with_writer(non_blocking)
                     .with_ansi(false)
-                    .and_then(PerfLogLayer::new(&BENCHMARK_LOG)),
+                    .and_then(PerfLogLayer::new(&BENCHMARK_LOG))
+                    .and_then(profiled_scopes::layer()),
             ))
         },
         ..default()

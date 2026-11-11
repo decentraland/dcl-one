@@ -79,6 +79,23 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await explorer.hud.click(button('Use configured FPS'))
     await explorer.hud.wait(button('Limit to 30 FPS'))
     assert.equal((await explorer.json<{ overrideFps: number | null }>('/performance_state')).overrideFps, null)
+    await expand('Profiler')
+    await explorer.hud.click(button('Enable profiler'))
+    await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
+      timeoutMs: 10_000, what: 'the profiler to report itself enabled'
+    })
+    const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
+      (reading) => reading.enabled && reading.scopeSummaries.length === 5,
+      { timeoutMs: 10_000, what: 'five profiled scopes' })
+    for (const row of top.scopeSummaries) {
+      assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
+      assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+    }
+    await explorer.hud.click(button('Disable profiler'))
+    await explorer.hud.wait(button('Enable profiler'))
+    const off = await explorer.json<ProfileTop>('/profile_top')
+    assert.equal(off.enabled, false)
+    assert.match(String(off.unavailable.scopeSummary), /disabled/)
     await expand('Avatar')
     await explorer.hud.click(button('Play wave'))
     await until(async () => (await explorer.myAvatar()).emote, (emote) =>
@@ -91,6 +108,45 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
   }
   assert.equal(await explorer.hud.isVisible(button('Play wave')), false)
 })
+
+type ProfileTop = {
+  enabled: boolean
+  scopeSummaries: { scopeName: string; scopeKind: string; callCount: number; selfTimeMs: number; inclusiveTimeMs: number }[]
+  unavailable: Record<string, string>
+}
+
+type PerformanceState = {
+  sampling: { status: 'sampling' | 'paused'; pausedReason: string | null }
+  inProgressSample: { sampledSeconds: number }
+  cpuFrameTimes: { hiccupThresholdMs: number; sampleCount: number; p99Ms: number } | null
+  frameTimeBreakdown: (number | null)[]
+  bottleneck: string | null
+  entityCount: number | null
+  unavailable: Record<string, string>
+}
+
+scenario('the performance sampler samples in world and scales the hiccup threshold to the target', async ({ explorer }) => {
+  const state = await until(() => explorer.json<PerformanceState>('/performance_state'),
+    (reading) => reading.sampling.status === 'sampling' && reading.inProgressSample.sampledSeconds > 0,
+    { timeoutMs: 20_000, what: 'the sampler to run in world' })
+  assert.equal(state.sampling.pausedReason, null)
+  assert.equal(state.frameTimeBreakdown.length, 6)
+  assert.ok(state.frameTimeBreakdown.slice(0, 4).every((ms) => typeof ms === 'number' && ms >= 0), JSON.stringify(state.frameTimeBreakdown))
+  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'gpu', 'present_wait', 'balanced'].includes(state.bottleneck), String(state.bottleneck))
+  assert.ok((state.entityCount ?? 0) > 0)
+  if (state.cpuFrameTimes == null) assert.match(state.unavailable.cpuFrameTimes, /sampled time/)
+  const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
+  try {
+    await explorer.run('/session_graphics fps 30')
+    const capped = await until(() => explorer.json<PerformanceState>('/performance_state'),
+      (reading) => reading.cpuFrameTimes != null && Math.abs(reading.cpuFrameTimes.hiccupThresholdMs - 66.7) < 0.1,
+      { timeoutMs: 40_000, what: 'a snapshot taken at the 30 FPS cap, with its 66.7 ms threshold' })
+    assert.ok(capped.cpuFrameTimes!.sampleCount > 0)
+    assert.ok(capped.cpuFrameTimes!.p99Ms > 0)
+  } finally {
+    await explorer.run(before.overrideFps == null ? '/session_graphics fps' : '/session_graphics fps ' + before.overrideFps)
+  }
+}, { session: { signIn: 'guest' } })
 
 scenario('an unsigned guest does not produce authenticated client login events', async ({ explorer }) => {
   const state = await explorer.json<{ active: boolean; inFlight: boolean; pending: number; memoryOnly: boolean; storageFailures: number }>('/client_login_state')

@@ -1255,6 +1255,7 @@ fn process_avatar(
         Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
     ),
 ) {
+    let _span = bevy::log::info_span!("avatar processing").entered();
     for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
         let (def, emote) = (&def.render, &def.emote);
         let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)

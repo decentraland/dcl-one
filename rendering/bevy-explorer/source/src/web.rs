@@ -546,8 +546,12 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         level: Level::INFO,
         filter,
         custom_layer: |_| {
-            perf_output::stream::log_sink()
-                .map(|sink| Box::new(PerfLogLayer::new(sink)) as BoxedLayer)
+            // the benchmark log when the page streams it, and the scope profiler's layer always
+            Some(Box::new(
+                perf_output::stream::log_sink()
+                    .map(PerfLogLayer::new)
+                    .and_then(crate::perf::profiled_scopes::layer()),
+            ) as BoxedLayer)
         },
     });
 

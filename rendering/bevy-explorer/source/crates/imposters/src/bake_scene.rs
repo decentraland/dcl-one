@@ -309,6 +309,7 @@ fn bake_scene_imposters(
     config: Res<AppConfig>,
     plugin: Res<DclImposterPlugin>,
 ) {
+    let _span = bevy::log::info_span!("imposter bake").entered();
     let realm = &current_realm.about_url;
     if let Ok((baking_ent, mut oven)) = baking.single_mut() {
         let current_scene_ent = {

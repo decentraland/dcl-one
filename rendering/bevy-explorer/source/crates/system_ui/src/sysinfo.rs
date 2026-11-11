@@ -24,6 +24,7 @@ use comms::{global_crdt::ForeignPlayer, Transport};
 use console::DoAddConsoleCommand;
 use scene_material::{SceneMaterial, SCENE_MATERIAL_OUTLINE_MESH_TAGS};
 use scene_runner::{
+    content_bytes::scene_content_bytes,
     initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
     parcel_to_vec3,
     renderer_context::RendererSceneContext,
@@ -627,28 +628,25 @@ fn update_tracker(
 
     display_data.push(("Visible Material Count", visible_mats.len().to_string()));
 
-    let textures = visible_mats
-        .iter()
-        .flat_map(|h| materials.get(h.id()))
-        .flat_map(|mat| {
-            mat.base
-                .base_color_texture
-                .iter()
-                .chain(mat.base.emissive_texture.as_ref())
-                .chain(mat.base.normal_map_texture.as_ref())
-        })
-        .collect::<HashSet<_>>();
+    let content = scene_content_bytes(
+        *scene,
+        mesh_handles.iter(),
+        material_handles.iter(),
+        &meshes,
+        &materials,
+        &images,
+    );
+    let mib = |bytes: u64| ((bytes as f64) / 1024.0 / 1024.0).round() as u64;
 
-    display_data.push(("Total Texture Count", textures.len().to_string()));
-
-    let total_memory = textures
-        .iter()
-        .flat_map(|h| images.get(h.id()).and_then(|t| t.data.as_ref()))
-        .map(|data| data.len())
-        .sum::<usize>();
-    let total_mb = (total_memory as f32 / 1024.0 / 1024.0).round() as usize;
-
-    display_data.push(("Total Texture Memory (mb)", total_mb.to_string()));
+    display_data.push(("Total Texture Count", content.texture_count.to_string()));
+    display_data.push((
+        "Total Texture Memory (mb)",
+        mib(content.texture_bytes_sum).to_string(),
+    ));
+    display_data.push((
+        "Visible Mesh Memory (mb)",
+        mib(content.mesh_bytes_sum).to_string(),
+    ));
 
     display_data.push((
         "Total Entities",

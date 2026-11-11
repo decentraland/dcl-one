@@ -167,6 +167,10 @@ bevy = { version = "0.16.1", default-features = false, features = [
   "bevy_state",
   "pbr_light_textures",
   "reduce_image_sizes",
+  # the scope profiler's spans (src/perf/profiled_scopes.rs) and the system-information
+  # diagnostics, in every build
+  "trace",
+  "sysinfo_plugin",
 ] }
 # leaf bevy crates for dcl_component, which has to build without the engine (system_api_types TS export)
 bevy_math = { version = "0.16.1", default-features = false, features = ["std"] }

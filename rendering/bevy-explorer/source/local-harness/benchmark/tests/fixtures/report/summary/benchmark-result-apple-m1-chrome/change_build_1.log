@@ -1,0 +1,5 @@
+10:00:00.000 - <color=#DBD6C8>[autopilot]</color>: Arriving
+10:00:05.000 - <color=#DBD6C8>[autopilot]</color>: Measuring
+10:01:34.000 - <color=#DBD6C8>[perf_summary]</color>: cpu_p99_ms=40.00 cpu_frames_over_hiccup_threshold_count=1 cpu_hiccup_threshold_ms=50.00 gpu_p99_ms=12.00 gpu_frames_over_hiccup_threshold_count=0 used_peak_mib=900 js_heap_used_mib=64 entity_count=1234 sample_count=10 snapshot_duration_seconds=90.0
+10:01:34.000 - <color=#DBD6C8>[perf_summary]</color>: top_scopes=scene_runner update_scene:120.00,avatar processing:30.00
+10:01:35.000 - <color=#DBD6C8>[autopilot]</color>: [ExitUtils] Exit requested at 2026-10-28T10:01:35.000Z

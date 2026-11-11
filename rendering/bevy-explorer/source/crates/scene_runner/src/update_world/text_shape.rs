@@ -1530,6 +1530,7 @@ fn update_text_shapes(
     ),
     config: Res<AppConfig>,
 ) {
+    let _span = bevy::log::info_span!("text shapes").entered();
     // the scenes the player is in first (they share the build slots and the raster budget
     // with every other scene), then oldest waiting first
     let current_scenes = player

@@ -113,7 +113,11 @@ fn process_rss(system: &mut sysinfo::System) -> Option<u64> {
 // Count live engine allocations so frees lower pressure even though WASM pages never shrink.
 #[cfg(target_arch = "wasm32")]
 #[global_allocator]
-static ENGINE_HEAP: cap::Cap<std::alloc::System> = cap::Cap::new(std::alloc::System, usize::MAX);
+static ENGINE_HEAP: cap::Cap<crate::perf::allocation_counter::CountingAllocator<std::alloc::System>> =
+    cap::Cap::new(
+        crate::perf::allocation_counter::CountingAllocator(std::alloc::System),
+        usize::MAX,
+    );
 
 #[cfg(target_arch = "wasm32")]
 fn sample_memory(
