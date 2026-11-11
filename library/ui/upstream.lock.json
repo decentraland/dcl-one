@@ -3585,7 +3585,7 @@
           ]
         },
         "library/ui/figma/src/module-graph.test.ts": {
-          "sha256": "7c12e748656dc82b949f2d2c772ec877f5ea128c46412817098c8efe2985186a",
+          "sha256": "8944effeeceeaaca1730e8f667a4b5ba8f27ca499a9c3e0d67d6349ae91d1745",
           "fds": null,
           "deviation": "generation-import-closure"
         },

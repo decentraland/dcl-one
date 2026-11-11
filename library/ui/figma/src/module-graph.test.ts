@@ -28,13 +28,32 @@ describe('when the dependency-free import reader scans the tracked Figma tooling
     expect(candidates.length).toBeGreaterThan(50)
   })
 
+  // Every import, re-export and literal dynamic import in the TypeScript syntax tree.
+  const parsedSpecifiers = (text: string, file: string) => {
+    const found: string[] = []
+    const visit = (node: ts.Node) => {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      )
+        found.push(node.moduleSpecifier.text)
+      else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword &&
+        node.arguments[0] &&
+        ts.isStringLiteral(node.arguments[0])
+      )
+        found.push(node.arguments[0].text)
+      ts.forEachChild(node, visit)
+    }
+    visit(ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true))
+    return found.sort()
+  }
+
   it.each(candidates)('should list the same specifiers as the TypeScript parser for %s', (file) => {
     const text = read(file).toString('utf8')
-    const parsed = ts
-      .preProcessFile(text, true, true)
-      .importedFiles.map((entry) => entry.fileName)
-      .sort()
-    expect(moduleSpecifiers(text, file, true).sort()).toEqual(parsed)
+    expect(moduleSpecifiers(text, file, true).sort()).toEqual(parsedSpecifiers(text, file))
   })
 })
 
