@@ -130,8 +130,8 @@ For the distributable, run `make web` in repository-root `apps/bevy-explorer`
 does not start a dev server. `make web-dev` skips wasm optimization. Import the artifact
 with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web` from the
 repository root, then follow the root README to run Sites. Sites serves it under `/play`
-with its own HUD, `apps/ui3/src/play`; see `rendering/bevy-explorer/README.md` for how that
-copy tracks `react-web`. Full DevTools logging needs DevTools open before the page loads.
+with its HUD host, `apps/ui3/src/play`, which runs the same shared HUD as `react-web`; see
+`rendering/bevy-explorer/README.md` for what each host keeps. Full DevTools logging needs DevTools open before the page loads.
 The engine console lives in the app iframe.
 
 ## Headless
@@ -260,7 +260,7 @@ The HUD and input:
   matches need an `index`. `"busy"` is true inside a region that says it is still loading (`aria-busy`), such as
   the Backpack's `Catalog` grid or `Places results` while a query is in flight; `ready` waits for a
   control out of every such region. `/hud_fill` answers with the field
-  as the typing left it. The page's side is `react-web/src/lib/hudAutomation.ts`.
+  as the typing left it. The page's side is `library/explorer-core/lib/hudAutomation.ts`.
 - `/hud_login <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]` (web, and only while a test runner drives the browser: the page registers it
   when `window.__dclTrustedInput` is present): sign in through the HUD's own flow with an
@@ -271,8 +271,8 @@ The HUD and input:
   own), and the destination is picked from the lobby as a link's would be, which releases the held
   world. Replies `{"address", "guest", "phase"}` (`lobby`, `entering` on the way to the destination,
   `picking` or `world`) once the sign-in has landed and the page is done, or fails with its error.
-  The command is `react-web/src/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
-  session provides the sign-in in `react-web/src/features/session/useEngineSession.ts`.
+  The command is `library/explorer-core/lib/hudAutomation.ts` (`LOGIN_COMMANDS`, `provideHudLogin`); the
+  session provides the sign-in in `library/ui/apps/hud/features/session/useEngineSession.ts`.
 - `/press_key <code> [--state down|up]`, with the key named as `KeyboardEvent.code` names it, and
   `/click_at <x> <y> [--button left|right|middle]`.
 - `/hover_entity <entity> [--bounds] [--frames N] [--timeout-frames N]`, `/hover_entity --clear`

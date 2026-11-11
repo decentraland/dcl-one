@@ -11,8 +11,10 @@ const UI = join(__dirname, '../features/shop/ui')
 const ALLOWED = [
   /^react$/,
   /^\.\/[A-Za-z]+(\.module\.css)?$/,
-  /^\.\.\/\.\.\/\.\.\/design$/,
-  /^\.\.\/\.\.\/\.\.\/assets\//,
+  /^@hud\/design$/,
+  /^@hud\/assets\//,
+  // The in-world Shop's own assets, which stay with it here.
+  /^\.\.\/\.\.\/\.\.\/assets\/shop\//,
   /^\.\.\/\.\.\/\.\.\/\.\.\/shop\/credits\/components\/CreditMark$/,
   /^@shop\/(model\/|checkout\/lib\/currency$|discovery\/cardPrice$|discovery\/lib\/price-slider$)/
 ]
