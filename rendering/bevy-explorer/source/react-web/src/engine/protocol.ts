@@ -9,6 +9,7 @@
 
 import type {
   Color3,
+  CommunityVoiceStatus,
   HomeScene,
   SatelliteView,
   SceneLoadingUi,
@@ -380,7 +381,7 @@ export interface VoiceChatActionRequest {
 export interface CommunityVoiceUpdateMessage {
   kind: 'communityVoiceUpdate'
   communityId: string
-  status: 'started' | 'ended'
+  status: CommunityVoiceStatus
   createdAt: number
   endedAt: number | null
   /** Parcels ('x,y') of the community's places, sent to non-members. */

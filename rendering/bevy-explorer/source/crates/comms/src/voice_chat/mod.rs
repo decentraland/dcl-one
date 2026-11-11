@@ -640,10 +640,7 @@ fn drive_voice_chat(
             VoiceEvent::Community(update) => {
                 let data = CommunityVoiceUpdateData {
                     community_id: update.community_id.clone(),
-                    status: match update.status {
-                        social::voice::CommunityVoiceStatus::Started => "started".to_owned(),
-                        social::voice::CommunityVoiceStatus::Ended => "ended".to_owned(),
-                    },
+                    status: update.status,
                     created_at: update.created_at,
                     ended_at: update.ended_at,
                     positions: update.positions.clone(),

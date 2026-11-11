@@ -155,11 +155,7 @@ pub struct PrivateVoiceUpdate {
 }
 
 /// `CommunityVoiceChatStatus`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CommunityVoiceStatus {
-    Started,
-    Ended,
-}
+pub use system_bridge::CommunityVoiceStatus;
 
 /// A `CommunityVoiceChatUpdate`: a community room opened or closed. `positions` (parcels) and
 /// `worlds` are the community's places, sent to non-members so the client can offer the

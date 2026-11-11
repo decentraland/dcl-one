@@ -276,6 +276,16 @@ pub struct VoiceChatState {
     pub error_seq: u32,
 }
 
+/// Whether a community voice chat opened or closed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[derive(ts_rs::TS)]
+#[ts(export)]
+pub enum CommunityVoiceStatus {
+    Started,
+    Ended,
+}
+
 /// A community voice chat started or ended (`GetCommunityVoiceUpdateStream`), as the social
 /// service broadcasts it: to everyone for a public listed community, to members otherwise.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -284,8 +294,7 @@ pub struct VoiceChatState {
 #[ts(export)]
 pub struct CommunityVoiceUpdate {
     pub community_id: String,
-    /// "started" or "ended"
-    pub status: String,
+    pub status: CommunityVoiceStatus,
     pub created_at: i64,
     pub ended_at: Option<i64>,
     /// Parcels ("x,y") of the community's places, sent to non-members.

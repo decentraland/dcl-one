@@ -128,7 +128,7 @@ export function registerVoiceChat(ctx: Ctx): void {
     const msg: CommunityVoiceUpdateMessage = {
       kind: 'communityVoiceUpdate',
       communityId: update.communityId,
-      status: update.status === 'started' ? 'started' : 'ended',
+      status: update.status,
       // i64s arrive as bigint
       createdAt: Number(update.createdAt),
       endedAt: update.endedAt == null ? null : Number(update.endedAt),
