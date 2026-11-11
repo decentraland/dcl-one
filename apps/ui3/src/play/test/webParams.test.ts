@@ -114,6 +114,12 @@ describe('untrustedLaunchParams', () => {
     try {
       expect(untrustedLaunchParams({ native: false })).toEqual([])
     } finally {
+      // `off` only turns the default service off: nothing to warn about
+      window.history.replaceState(null, '', '/?bevyVariants=off')
+    }
+    try {
+      expect(untrustedLaunchParams({ native: false })).toEqual([])
+    } finally {
       window.history.replaceState(null, '', '/?bevyVariants=http://localhost:5147')
     }
     try {

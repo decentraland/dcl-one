@@ -111,12 +111,16 @@ pub fn apply_client(
         imposters::imposter_spec::set_source(source);
     }
 
-    if let Some(url) = bevy_variants
+    // abgen's Bevy variants: the launch option, else the config, else the asset-bundle
+    // generator's CDN for this base domain; `off` in either turns them off
+    let bevy_variants_base = bevy_variants
         .as_deref()
         .or(config.bevy_variants_url.as_deref())
-    {
+        .map(str::to_owned)
+        .unwrap_or_else(|| common::base_domain::service(common::base_domain::Service::AbgenCdn));
+    if !bevy_variants_base.trim().eq_ignore_ascii_case("off") {
         if let Some(ipfs) = app.world().get_resource::<ipfs::IpfsResource>() {
-            ipfs.set_bevy_variants_base(url);
+            ipfs.set_bevy_variants_base(&bevy_variants_base);
         }
     }
 

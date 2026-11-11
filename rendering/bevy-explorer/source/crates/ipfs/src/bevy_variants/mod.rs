@@ -1,8 +1,9 @@
 //! Prototype: GPU-ready "Bevy variants" of the textures and models of scenes, wearables and
 //! emotes, published by abgen.
 //!
-//! Off unless a variants base url is configured (`--bevy-variants-url`, `?bevyVariants=`, or the
-//! `bevy_variants_url` config field). For each scene, wearable and emote entity it loads, the
+//! The variants base is `--bevy-variants-url`, `?bevyVariants=` or the `bevy_variants_url` config
+//! field, else the asset-bundle generator's CDN for the base domain (`https://abgen-cdn.<base>`);
+//! `off` in any of them turns the client off. For each scene, wearable and emote entity it loads, the
 //! explorer fetches
 //! `{base}/bevy/manifest/{entityId}.json` once (schema v3); it maps original content CIDs to the
 //! paths of their variants, `bevy/{prefix}/{name}`, whose prefix letter is the variant's class

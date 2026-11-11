@@ -2480,7 +2480,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
-      "sha256": "9587166a6fb63a55b1eb4137663f2dc2d8a8c9f65a70cbf0d444c4383a5961df"
+      "sha256": "de7911ac2491f208cea278177ee27be463d9309f10c9938eb405dcc705496d39"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/localNetworkFetch.test.ts",
@@ -3176,7 +3176,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/webParams.test.ts",
-      "sha256": "39b23273e4d1aaccdc453a8feebf472983addc8952083fdef418251aa32065fe"
+      "sha256": "628151ab98eec725fffff5b2ba19067366cfeac0627eaec1367dd095b5a30914"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/welcome.test.tsx",

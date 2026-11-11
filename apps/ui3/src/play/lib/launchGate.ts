@@ -58,7 +58,8 @@ const GATES: Record<string, Gate> = {
     warning:
       'Replaces the textures and models of the scenes you visit and the avatars you see with versions from this server. Whoever runs it decides what they look like.',
     read: () => new URLSearchParams(location.search).get('bevyVariants'),
-    isTrusted: isTrustedContentServer
+    // `off` only turns the default (the asset-bundle generator's CDN) off
+    isTrusted: (url) => url.trim().toLowerCase() === 'off' || isTrustedContentServer(url)
   }
 }
 

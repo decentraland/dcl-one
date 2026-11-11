@@ -36,7 +36,10 @@ def check(rows, root):
     hud = json.loads(result.stdout)
     web = {row["name"]: row for row in hud["services"]}
     assert set(web) == {row["name"] for row in rows if row["web"]}, "HUD service table is stale"
-    excluded = {"authPage", "reels", "storage", "ethereumRpc", "socialRpc", "pulseServer"}
+    # Not served by the gateway yet, so the engine and the web page both reach the public host
+    # (decentraland/dcl-one#631): abgen's CDN, whose Bevy variants `/ab-cdn` refuses.
+    ungated = {"abgenCdn"}
+    excluded = {"authPage", "reels", "storage", "ethereumRpc", "socialRpc", "pulseServer"} | ungated
     assert excluded <= {row["name"] for row in rows}, "removed service needs contract review"
 
     for row in rows:
@@ -53,6 +56,8 @@ def check(rows, root):
             hud_base = hud["options"][name]
             if name == "pulseServer":
                 assert hud_base == "example.test", hud_base
+            elif name in ungated:
+                assert hud_base == f'https://{row["sub"]}.example.test{row["path"]}', hud_base
             else:
                 expected_scheme = "wss" if row["value"] == "websocket" else "https"
                 assert urlsplit(hud_base).scheme == expected_scheme, hud_base

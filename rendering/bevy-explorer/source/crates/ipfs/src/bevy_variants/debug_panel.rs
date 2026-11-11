@@ -105,7 +105,7 @@ pub(super) fn snapshot(variants: &BevyVariants) -> Value {
         "fallbacks": session.fallbacks,
         "recentFallbacks": (!recent.is_empty()).then(|| recent.join("\n")),
         "unavailable": {
-            "base": "Off: set --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config.",
+            "base": "Off: --bevy-variants-url, ?bevyVariants= or bevy_variants_url in the config is `off`.",
             "manifests": "No scene has asked for a manifest yet.",
             "recentFallbacks": "No file has fallen back to its original.",
         },

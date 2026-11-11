@@ -99,8 +99,10 @@ Excluded from variants: source maps, audio, video and scene code.
 
 ### Explorer rules
 
-- Off unless a variants base URL is configured (launch option, web parameter or
-  config field). Preview mode, local scenes (`b64-` ids) and entities served
+- The base is the launch option, web parameter or config field when one is
+  set, else abgen's CDN for the base domain (`https://abgen-cdn.<base>`, the
+  `abgen_cdn` service, which a gateway can route like any other); `off` in any
+  of them turns variants off. Preview mode, local scenes (`b64-` ids) and entities served
   from a loopback or file content server never ask for a manifest; in preview
   mode that includes wearables and emotes, so a preview shows deployed files.
 - One manifest request per entity per session: each scene when it loads, and

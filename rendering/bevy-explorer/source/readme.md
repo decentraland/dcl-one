@@ -146,9 +146,9 @@ The launch parameters shared with the web build — realm, spawn parcel, ui scen
 
 ### Bevy variants (prototype)
 
-abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures: KTX2 files holding BC7, BC1 or BC5 blocks with full mip chains, each level zstd-supercompressed. The explorer uses them only when a variants base url is given: `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file. Without one nothing changes.
+abgen can publish, per scene, wearable and emote entity, GPU-ready variants of its textures: KTX2 files holding BC7, BC1 or BC5 blocks with full mip chains, each level zstd-supercompressed. The explorer reads them from `--bevy-variants-url <url>` natively, `?bevyVariants=<url>` on web, or the `bevy_variants_url` field of the config file, and otherwise from abgen's CDN for the base domain (`https://abgen-cdn.decentraland.org`, or the `abgen_cdn` service's override). `off` in any of them turns variants off.
 
-With a base url set:
+With a base url:
 
 - For each scene, wearable and emote entity it loads, the explorer fetches `{base}/bevy/manifest/{entityId}.json` once per session. A 404 means no variants for that entity. The entity's files wait for the manifest for at most two seconds from the request; after that they load their originals, and a manifest that arrives later serves only the files read after it. The manifest (schema `v: 3`) maps each original content CID to the paths of its variants, `bevy/{prefix}/{name}`; a prefix's first letter is the variant's class (`t` a BC KTX2 texture, `m` a `glb-meshopt` model, `g` a GLB). It names no hash for a variant: abgen keeps a path's bytes fixed for the life of its generation, so the explorer trusts a variant by its path from the configured service and rejects only what fails to decode.
 - Nothing in preview mode asks for a manifest, including wearables and emotes, nor do `b64-` entity ids or entities served from a loopback or `file://` content server.

@@ -101,7 +101,8 @@ pub struct ClientOptions {
     #[arg(long, value_name = "url", help_heading = SERVICES)]
     pub imposter_source: Option<String>,
 
-    /// Base url of an abgen Bevy variants service (prototype); absent = off. Textures and
+    /// Base url of an abgen Bevy variants service (prototype); absent = the config's, else the
+    /// asset-bundle generator's CDN (`https://abgen-cdn.<base>`); `off` = off. Textures and
     /// models of scenes, wearables and emotes it has GPU-ready variants of load as those
     /// variants, trusted by their path from this service and rejected only when they fail to
     /// decode; anything else, or any failure, loads the original
