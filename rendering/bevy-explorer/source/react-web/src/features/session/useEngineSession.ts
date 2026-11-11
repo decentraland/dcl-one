@@ -51,6 +51,7 @@ import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
 import { hudActsOn, type EditorHudMode } from '../editorHost/hudMode'
+import { streamHere } from '../voiceChat/streamHere'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -61,6 +62,10 @@ import type {
   MessageReaction,
   Community,
   DmUserState,
+  ActiveCommunityVoiceChat,
+  CommunityVoiceUpdateMessage,
+  VoiceChatActionWire,
+  VoiceChatState,
   CommunityAction,
   CommunityMemberAction,
   CommunityDetailMessage,
@@ -840,6 +845,32 @@ export interface EditorHostState {
   setMode: (mode: EditorHudMode) => void
 }
 
+/** Private calls and community streams: the engine's state, the live streams, and the commands. */
+export interface VoiceChatSession {
+  /** Null until the engine's first snapshot. */
+  state: VoiceChatState | null
+  /** Every live community stream the local user may see. */
+  active: ActiveCommunityVoiceChat[]
+  /** `active` has been read for this account: until then it says nothing about what is live. */
+  activeLoaded: boolean
+  /** The live stream whose places include where the player stands. */
+  scene: ActiveCommunityVoiceChat | null
+  /** A guest account: voice chat is refused. */
+  guest: boolean
+  act: (action: VoiceChatActionWire) => void
+}
+
+type VoiceChatEventListener = (event: CommunityVoiceUpdateMessage) => void
+const voiceChatListeners = new Set<VoiceChatEventListener>()
+/** Subscribe to community stream started / ended broadcasts (toasts); returns the unsubscribe. */
+export function onVoiceChatEvent(listener: VoiceChatEventListener): () => void {
+  voiceChatListeners.add(listener)
+  return () => voiceChatListeners.delete(listener)
+}
+function emitVoiceChatEvent(event: CommunityVoiceUpdateMessage): void {
+  for (const listener of voiceChatListeners) listener(event)
+}
+
 export interface EngineSession {
   phase: SessionPhase
   playerReady: boolean
@@ -908,6 +939,8 @@ export interface EngineSession {
   worldPassword: WorldPasswordState
   editor: EditorHostState
   mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** Private calls and community streams. */
+  voiceChat: VoiceChatSession
   /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
   nav: (action: NavAction) => void
   /** Report (or clear) the screen rect where the scene should render an engine view. */
@@ -1211,6 +1244,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [emotes, setEmotes] = useState<Emote[]>([])
   const [emotesOpen, setEmotesOpen] = useState(false)
   const [mic, setMic] = useState({ enabled: false, available: false })
+  const [voiceChatState, setVoiceChatState] = useState<VoiceChatState | null>(null)
+  const [activeVoiceChats, setActiveVoiceChats] = useState<ActiveCommunityVoiceChat[]>([])
+  const [activeVoiceChatsLoaded, setActiveVoiceChatsLoaded] = useState(false)
+  const [scenePlace, setScenePlace] = useState<{ parcel: string; realm: string } | null>(null)
   const [catalogItems, setCatalogItems] = useState<Wearable[]>([])
   const [catalogTotal, setCatalogTotal] = useState(0)
   const [catalogLoading, setCatalogLoading] = useState(false)
@@ -1626,6 +1663,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         }
+        case 'voiceChatState':
+          setVoiceChatState(msg.state)
+          break
+        case 'communityVoiceUpdate':
+          // the live list follows (the scene re-reads it); the broadcast itself feeds the toasts
+          emitVoiceChatEvent(msg)
+          break
+        case 'activeCommunityVoiceChats':
+          setActiveVoiceChats(msg.chats)
+          setActiveVoiceChatsLoaded(msg.loaded !== false)
+          break
         case 'menuVisibility':
           setMenuOpen(msg.open)
           break
@@ -2032,6 +2080,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         }
         case 'sceneInfo':
           setSceneTitle(msg.title)
+          setScenePlace(msg.parcel == null ? null : { parcel: `${msg.parcel.x},${msg.parcel.y}`, realm: msg.realm ?? '' })
           // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
           // that one); the used permissions and the badge are the current scene's only.
           if (msg.scene !== currentScene.current) {
@@ -3255,6 +3304,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       })
     )
   }, [])
+  const voiceChatAct = useCallback((action: VoiceChatActionWire) => {
+    driverRef.current?.send({ kind: 'voiceChatAction', action })
+  }, [])
+  const sceneVoiceChat = useMemo(
+    () => (scenePlace == null ? null : streamHere(activeVoiceChats, scenePlace.parcel, scenePlace.realm)),
+    [activeVoiceChats, scenePlace]
+  )
   const toggleMic = useCallback(() => {
     setMic((m) => {
       driverRef.current?.send({ kind: 'setMic', enabled: !m.enabled })
@@ -3409,6 +3465,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setNotifications([])
     clearNotificationToasts()
     clearRewardPopups()
+    // the engine sends its state again after an account change
+    setVoiceChatState(null)
+    // the live streams are per account (`isMember`)
+    setActiveVoiceChats([])
+    setActiveVoiceChatsLoaded(false)
     setCommunities([])
     setCommunityCards({})
     communityBrowseWanted.current = null
@@ -4256,6 +4317,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
     editor: { mode: editorMode, setMode: setEditorMode },
     mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    voiceChat: { state: voiceChatState, active: activeVoiceChats, activeLoaded: activeVoiceChatsLoaded, scene: sceneVoiceChat, guest: profile?.isGuest === true, act: voiceChatAct },
     nav,
     setEngineViewport,
     setInteractableArea,

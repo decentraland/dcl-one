@@ -3,7 +3,9 @@ use bevy::{
     prelude::*,
     render::render_resource::Extent3d,
 };
-use common::{debug_panic, structs::AudioSettings, util::AsH160};
+#[cfg(target_arch = "wasm32")]
+use common::structs::AudioSettings;
+use common::{debug_panic, util::AsH160};
 use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
@@ -34,6 +36,10 @@ use crate::livekit::{
     track::HtmlMediaEntity,
     web::{RemoteTrack, TrackKind, TrackSource},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::voice_chat::VoiceRoom;
+#[cfg(target_arch = "wasm32")]
+use crate::voice_chat::VoiceRoomTrack;
 use crate::{
     global_crdt::{PlayerMessage, PlayerUpdate},
     livekit::{
@@ -517,8 +523,10 @@ fn audio_track_is_now_subscribed(
         ),
         With<Subscribed>,
     >,
+    published_by: Query<&PublishedBy>,
+    participants: Query<&HostedBy>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     mut livekit_audio_manager: ResMut<LivekitAudioManager>,
-    audio_settings: Res<AudioSettings>,
 ) {
     let entity = trigger.target();
     let Ok((track, is_audio, has_audio_streaming_sound, has_open_audio_sender, multiplier)) =
@@ -546,10 +554,21 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    let volume = audio_settings.scene() * multiplier.map_or(1.0, |volume| **volume);
-    let Ok(handle) =
-        livekit_audio_manager.play(StreamingSoundData::from_decoder(decoder).volume(volume as f64))
-    else {
+    // a call's voices follow the voice chat volume, casts and streams the scene's
+    let in_voice_room = published_by
+        .get(entity)
+        .ok()
+        .and_then(|published_by| participants.get(published_by.get()).ok())
+        .is_some_and(|hosted_by| voice_rooms.contains(hosted_by.get()));
+    let destination: kira::OutputDestination = if in_voice_room {
+        (&livekit_audio_manager.voice_track).into()
+    } else {
+        (&livekit_audio_manager.scene_track).into()
+    };
+    let sound = StreamingSoundData::from_decoder(decoder)
+        .output_destination(destination)
+        .volume(multiplier.map_or(1.0, |volume| **volume) as f64);
+    let Ok(handle) = livekit_audio_manager.play(sound) else {
         error!("Failed to play track audio in LivekitAudioManager.");
         return;
     };
@@ -838,12 +857,11 @@ fn update_track_volume(
         Option<&AudioTransmitterVolume>,
         Has<Subscribed>,
     )>,
-    audio_settings: Res<AudioSettings>,
 ) {
     use kira::tween::Tween;
     for (mut audio_streaming_handle, multiplier, subscribed) in tracks.into_inner() {
         let volume = if subscribed {
-            audio_settings.scene() * multiplier.map_or(1.0, |volume| **volume)
+            multiplier.map_or(1.0, |volume| **volume)
         } else {
             0.0
         };
@@ -865,14 +883,16 @@ fn update_track_volume(
             &LivekitTrack,
             Option<&AudioTransmitterVolume>,
             Has<ProximityMicrophone>,
+            Has<VoiceRoomTrack>,
         ),
         (With<Audio>, With<Subscribed>),
     >,
     audio_settings: Res<AudioSettings>,
 ) {
-    for (livekit_track, multiplier, proximity_microphone) in tracks.into_inner() {
+    for (livekit_track, multiplier, proximity_microphone, voice_room) in tracks.into_inner() {
         let Some(volume) = scene_track_volume(
             proximity_microphone,
+            voice_room,
             multiplier.map(|volume| **volume),
             audio_settings.scene(),
         ) else {
@@ -888,11 +908,12 @@ fn update_track_volume(
 #[cfg(any(target_arch = "wasm32", test))]
 fn scene_track_volume(
     proximity_microphone: bool,
+    voice_room: bool,
     multiplier: Option<f32>,
     scene_volume: f32,
 ) -> Option<f32> {
-    // Proximity microphone panning is owned by locate_foreign_streams.
-    if proximity_microphone {
+    // Nearby and call microphone gains are owned by their respective panning systems.
+    if proximity_microphone || voice_room {
         return None;
     }
     Some(multiplier.unwrap_or(1.0) * scene_volume)
@@ -904,8 +925,17 @@ mod browser_volume_tests {
 
     #[test]
     fn proximity_microphone_gain_is_never_written_by_the_scene_volume_system() {
-        assert_eq!(scene_track_volume(true, None, 0.5), None);
-        assert_eq!(scene_track_volume(true, Some(0.25), 0.5), None);
-        assert_eq!(scene_track_volume(false, Some(0.25), 0.5), Some(0.125));
+        assert_eq!(scene_track_volume(true, false, None, 0.5), None);
+        assert_eq!(scene_track_volume(true, false, Some(0.25), 0.5), None);
+        assert_eq!(
+            scene_track_volume(false, false, Some(0.25), 0.5),
+            Some(0.125)
+        );
+    }
+
+    #[test]
+    fn call_microphone_gain_is_never_written_by_the_scene_volume_system() {
+        assert_eq!(scene_track_volume(false, true, None, 0.5), None);
+        assert_eq!(scene_track_volume(false, true, Some(0.25), 0.0), None);
     }
 }

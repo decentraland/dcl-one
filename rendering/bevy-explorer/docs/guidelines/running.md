@@ -214,6 +214,11 @@ State, in every build:
   reachability check; terminal admission failures and intentional pauses stay stopped.
   The Connectivity debug section exposes both. The HUD's Connection Lost alert has Retry and
   Exit Application buttons; recovery dismisses it, while Exit signs out through the existing session flow.
+  Room states share the same calculation as voice and room diagnostics: first admission is
+  `connecting`, a refused dial is `failed`, and pauses and terminal refusals retain their
+  specific labels. Room diagnostic `attempts` counts failures since the last stable reset.
+  The HUD receives initial and changed snapshots over the SystemApi bridge stream and sends
+  Retry through that bridge; the console commands remain available for diagnostics.
   The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`

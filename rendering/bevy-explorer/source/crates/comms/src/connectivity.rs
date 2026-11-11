@@ -177,22 +177,23 @@ use bevy::{
 };
 use bevy_console::ConsoleCommand;
 use common::{
-    access_status::AccessScope,
     base_domain::{self, Service},
+    rpc::RpcStreamSender,
     structs::{CurrentRealm, PreviewMode, WorldHold},
     util::{TaskCompat, TaskExt},
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
 use ipfs::IpfsAssetServer;
 use serde::Serialize;
-use system_bridge::SystemApi;
+use system_bridge::{ConnectivityRoomStatus, ConnectivitySnapshot, SystemApi};
 use wallet::Wallet;
 
 use crate::{
+    access_status::AccessScope,
     archipelago::IslandOwner,
     pulse::plugin::PulseSession,
     room_connection::{
-        ConnectionHealth, FailureKind, RealmRoom, RoomAccessScope, RoomRecovery, RoomSuspended,
+        FailureKind, RealmRoom, RoomAccessScope, RoomRecovery, RoomState, RoomStatus, RoomSuspended,
     },
     DisableRealmComms, SceneRoom,
 };
@@ -200,23 +201,12 @@ use crate::{
 #[derive(Resource, Default)]
 struct ConnectivityMonitor(Watchdog);
 
-#[derive(Resource, Default, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ConnectivityStatus {
-    connection_lost: bool,
-    probing: bool,
-    ever_connected: bool,
-    suppressed: bool,
-    rooms: Vec<RoomStatus>,
-}
+#[derive(Resource, Default, Deref, DerefMut, Serialize)]
+#[serde(transparent)]
+struct ConnectivityStatus(ConnectivitySnapshot);
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct RoomStatus {
-    scope: &'static str,
-    state: &'static str,
-    retry_at: Option<f64>,
-}
+#[derive(Component)]
+struct ConnectivitySubscriber(RpcStreamSender<ConnectivitySnapshot>);
 
 #[derive(Component)]
 struct ReachabilityProbe(Task<bool>);
@@ -236,6 +226,7 @@ impl Plugin for ConnectivityPlugin {
                     retry_connectivity,
                     collect_probes,
                     sample_connectivity.pipe(start_probe),
+                    publish_connectivity,
                 )
                     .chain(),
             )
@@ -254,6 +245,31 @@ impl Plugin for ConnectivityPlugin {
                 actions: &[("Retry connections", "/connectivity_retry")],
                 inputs: &[],
             });
+    }
+}
+
+fn publish_connectivity(
+    mut commands: Commands,
+    mut events: EventReader<SystemApi>,
+    status: Res<ConnectivityStatus>,
+    subscribers: Query<(Entity, &ConnectivitySubscriber)>,
+    mut previous: Local<Option<ConnectivitySnapshot>>,
+) {
+    let changed = previous.as_ref() != Some(&status.0);
+    for (entity, subscriber) in &subscribers {
+        if subscriber.0.is_closed() || (changed && subscriber.0.send(status.0.clone()).is_err()) {
+            commands.entity(entity).try_despawn();
+        }
+    }
+    for event in events.read() {
+        if let SystemApi::GetConnectivityStream(sender) = event {
+            if !sender.is_closed() && sender.send(status.0.clone()).is_ok() {
+                commands.spawn(ConnectivitySubscriber(sender.clone()));
+            }
+        }
+    }
+    if changed {
+        *previous = Some(status.0.clone());
     }
 }
 
@@ -333,16 +349,12 @@ fn sample_connectivity(
     disabled: Option<Res<DisableRealmComms>>,
     pulse: Option<Res<PulseSession>>,
     rooms: Query<(
-        Entity,
-        &RoomRecovery,
+        RoomStatus,
         Option<&RoomAccessScope>,
         Has<RealmRoom>,
         Has<SceneRoom>,
         Has<IslandOwner>,
-        Has<RoomSuspended>,
-        Option<&ConnectionHealth>,
     )>,
-    #[cfg(feature = "livekit")] connected: Query<(), With<crate::livekit::room::Connected>>,
     mut monitor: ResMut<ConnectivityMonitor>,
     mut status: ResMut<ConnectivityStatus>,
 ) -> bool {
@@ -353,20 +365,18 @@ fn sample_connectivity(
         .unwrap_or_default();
     let mut healthy = pulse_healthy;
     let mut required = pulse.is_some();
-    let mut room_statuses = Vec::new();
-    for (entity, recovery, scope, realm_room, scene_room, island, suspended, socket) in &rooms {
-        #[cfg(feature = "livekit")]
-        let room_healthy = connected.contains(entity);
-        #[cfg(not(feature = "livekit"))]
-        let room_healthy = {
-            let _ = entity;
-            false
-        };
-        let room_healthy = room_healthy || socket.is_some_and(ConnectionHealth::is_connected);
-        let terminal = recovery
+    let mut room_count = 0;
+    for (room, scope, realm_room, scene_room, island) in &rooms {
+        if !realm_room && !scene_room && !island && scope.is_none() {
+            continue;
+        }
+        let state = room.state();
+        let room_healthy = state == RoomState::Connected;
+        let terminal = room
+            .recovery
             .failure
             .is_some_and(|kind| kind != FailureKind::Transient);
-        let monitored = (realm_room || scene_room || island) && !suspended && !terminal;
+        let monitored = (realm_room || scene_room || island) && !room.suspended && !terminal;
         required |= monitored;
         healthy |= monitored && room_healthy;
         let scope = match scope.map(|scope| &scope.0) {
@@ -375,26 +385,32 @@ fn sample_connectivity(
             _ if scene_room => "scene",
             _ => "realm",
         };
-        let state = if suspended {
-            "paused"
-        } else if room_healthy && !terminal {
-            "connected"
-        } else {
-            match recovery.failure {
-                Some(FailureKind::Denied) => "denied",
-                Some(FailureKind::IdentityConflict) => "identity_conflict",
-                Some(FailureKind::CredentialsRequired) => "credentials_required",
-                Some(FailureKind::Invalid) => "invalid",
-                _ => "reconnecting",
-            }
-        };
         // No adapter, realm URL, scene id, session id, or server error enters the HUD.
-        room_statuses.push(RoomStatus {
-            scope,
+        let retry_at = matches!(
             state,
-            retry_at: (state == "reconnecting").then_some(recovery.retry.due),
-        });
+            RoomState::Reconnecting | RoomState::Disconnected | RoomState::Failed
+        )
+        .then_some(room.recovery.retry.due);
+        if let Some(row) = status.rooms.get_mut(room_count) {
+            if row.scope != scope {
+                row.scope.clear();
+                row.scope.push_str(scope);
+            }
+            if row.state != state.name() {
+                row.state.clear();
+                row.state.push_str(state.name());
+            }
+            row.retry_at = retry_at;
+        } else {
+            status.rooms.push(ConnectivityRoomStatus {
+                scope: scope.to_owned(),
+                state: state.name().to_owned(),
+                retry_at,
+            });
+        }
+        room_count += 1;
     }
+    status.rooms.truncate(room_count);
     let offline = realm
         .comms
         .as_ref()
@@ -416,7 +432,16 @@ fn sample_connectivity(
     status.probing = monitor.0.probe_deadline.is_some();
     status.ever_connected = monitor.0.ever_connected;
     status.suppressed = suppressed;
-    status.rooms = room_statuses;
+    status.rooms.sort_unstable_by(|a, b| {
+        a.scope
+            .cmp(&b.scope)
+            .then_with(|| a.state.cmp(&b.state))
+            .then_with(|| {
+                a.retry_at
+                    .partial_cmp(&b.retry_at)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
+    });
     start
 }
 
@@ -440,8 +465,86 @@ fn start_probe(In(start): In<bool>, mut commands: Commands, ipfs: IpfsAssetServe
 }
 
 #[cfg(test)]
+mod stream_tests {
+    use super::*;
+
+    fn app() -> App {
+        let mut app = App::new();
+        app.add_event::<SystemApi>()
+            .init_resource::<ConnectivityStatus>()
+            .add_systems(Update, publish_connectivity);
+        app
+    }
+
+    #[test]
+    fn connectivity_stream_sends_initial_and_changed_snapshots_once() {
+        let mut app = app();
+        let (first, mut first_rx) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetConnectivityStream(first));
+        app.update();
+        assert_eq!(
+            first_rx.try_recv().unwrap(),
+            ConnectivitySnapshot::default()
+        );
+        app.update();
+        assert!(first_rx.try_recv().is_err());
+
+        let expected = ConnectivitySnapshot {
+            connection_lost: true,
+            rooms: vec![ConnectivityRoomStatus {
+                scope: "realm".to_owned(),
+                state: "reconnecting".to_owned(),
+                retry_at: Some(10.0),
+            }],
+            ..Default::default()
+        };
+        app.world_mut().resource_mut::<ConnectivityStatus>().0 = expected.clone();
+        let (second, mut second_rx) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetConnectivityStream(second));
+        app.update();
+        assert_eq!(first_rx.try_recv().unwrap(), expected);
+        assert_eq!(second_rx.try_recv().unwrap(), expected);
+        // Writing an equal Resource value is not a stream transition.
+        app.world_mut().resource_mut::<ConnectivityStatus>().0 = expected;
+        app.update();
+        assert!(first_rx.try_recv().is_err());
+        assert!(second_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn connectivity_stream_removes_closed_consumers_without_waiting_for_a_change() {
+        let mut app = app();
+        let (sender, receiver) = RpcStreamSender::channel();
+        app.world_mut()
+            .send_event(SystemApi::GetConnectivityStream(sender));
+        app.update();
+        drop(receiver);
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(
+            world.query::<&ConnectivitySubscriber>().iter(world).count(),
+            0
+        );
+
+        let (sender, receiver) = RpcStreamSender::channel();
+        drop(receiver);
+        app.world_mut()
+            .send_event(SystemApi::GetConnectivityStream(sender));
+        app.update();
+        let world = app.world_mut();
+        assert_eq!(
+            world.query::<&ConnectivitySubscriber>().iter(world).count(),
+            0
+        );
+    }
+}
+
+#[cfg(test)]
 mod room_tests {
     use super::*;
+    use crate::room_connection::ConnectionHealth;
     use bevy::ecs::system::RunSystemOnce;
     use std::time::Duration;
 
@@ -456,6 +559,31 @@ mod room_tests {
         world.init_resource::<ConnectivityMonitor>();
         world.init_resource::<ConnectivityStatus>();
         world
+    }
+
+    #[test]
+    fn first_connection_is_not_reported_as_a_reconnection() {
+        let mut world = monitor_world();
+        world.spawn((SceneRoom("scene".into()), RoomRecovery::default()));
+        world.run_system_once(sample_connectivity).unwrap();
+        let status = world.resource::<ConnectivityStatus>();
+        assert_eq!(status.rooms[0].state, "connecting");
+        assert_eq!(status.rooms[0].retry_at, None);
+    }
+
+    #[test]
+    fn standalone_call_rooms_are_not_reported_as_realm_connections() {
+        let mut world = monitor_world();
+        world.spawn(RoomRecovery {
+            failure: Some(FailureKind::Transient),
+            ..Default::default()
+        });
+        world.spawn((RealmRoom, RoomRecovery::default()));
+        world.run_system_once(sample_connectivity).unwrap();
+        let status = world.resource::<ConnectivityStatus>();
+        assert_eq!(status.rooms.len(), 1);
+        assert_eq!(status.rooms[0].scope, "realm");
+        assert_eq!(status.rooms[0].state, "connecting");
     }
 
     #[test]

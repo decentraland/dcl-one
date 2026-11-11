@@ -35,11 +35,6 @@ use {
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::global_crdt::{LocalAudioFrame, LocalAudioSource};
-use crate::livekit::{
-    participant::{HostedBy, LivekitParticipant, Local as LivekitLocalParticipant},
-    LivekitRuntimeRes,
-};
-use crate::recovery::RetryState;
 #[cfg(target_arch = "wasm32")]
 use crate::{
     global_crdt::{ForeignAudioSource, ForeignPlayer, NearbyPanning, VoicePan},
@@ -51,6 +46,15 @@ use crate::{
             TrackSource,
         },
     },
+};
+use crate::{
+    livekit::{
+        participant::{HostedBy, LivekitParticipant, Local as LivekitLocalParticipant},
+        LivekitRuntimeRes,
+    },
+    private_chat::PrivateChatRoom,
+    recovery::RetryState,
+    voice_chat::{CallMic, VoiceRoom},
 };
 
 #[path = "mic_debug.rs"]
@@ -432,8 +436,13 @@ fn tear_down_microphone(mut commands: Commands) {
     commands.remove_resource::<MicrophoneDevice>();
 }
 
-fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>) {
-    if mic_state.enabled {
+/// A call holds the nearby mic off without changing the user's setting.
+fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
+    mic_state.enabled && !call_mic.suppress_nearby
+}
+
+fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
+    if nearby_mic_on(&mic_state, &call_mic) || call_mic.enabled {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -509,8 +518,8 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
     commands.set_state(MicrophoneState::Disabled);
 }
 
-fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>) {
-    if !mic_state.enabled {
+fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
+    if !nearby_mic_on(&mic_state, &call_mic) && !call_mic.enabled {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -524,6 +533,20 @@ fn can_publish_microphone(participant: &Participant) -> bool {
             .is_none_or(|permission| permission.can_publish);
     }
     matches!(participant, Participant::Local(_))
+}
+
+fn microphone_route_enabled(
+    (proximity, private, voice, connected): (bool, bool, bool, bool),
+    mic: &MicState,
+    call_mic: &CallMic,
+) -> bool {
+    connected
+        && !private
+        && if voice {
+            call_mic.enabled
+        } else {
+            proximity && nearby_mic_on(mic, call_mic)
+        }
 }
 
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
@@ -540,10 +563,12 @@ fn reconcile_publications(
     >,
     rooms: Query<(
         Has<crate::Transport>,
-        Has<crate::private_chat::PrivateChatRoom>,
+        Has<PrivateChatRoom>,
+        Has<VoiceRoom>,
         Has<super::room::Connected>,
     )>,
     mic: Res<MicState>,
+    call_mic: Res<CallMic>,
     permission: Res<State<MicrophonePermission>>,
     availability: Res<State<MicrophoneAvailability>>,
     drain: Res<MicrophoneDrain>,
@@ -551,15 +576,15 @@ fn reconcile_publications(
     #[cfg(not(target_arch = "wasm32"))] source: Res<LocalAudioSource>,
     #[cfg(not(target_arch = "wasm32"))] format: Option<Res<CaptureFormat>>,
 ) {
-    let enabled = mic.enabled
+    let enabled = mic.available
         && *permission.get() == MicrophonePermission::Granted
         && *availability.get() == MicrophoneAvailability::Available;
     let eligible = |room: Entity, participant: &LivekitParticipant| {
-        rooms
-            .get(room)
-            .is_ok_and(|(proximity, private, connected)| {
-                enabled && connected && proximity && !private && can_publish_microphone(participant)
-            })
+        rooms.get(room).is_ok_and(|room| {
+            enabled
+                && microphone_route_enabled(room, &mic, &call_mic)
+                && can_publish_microphone(participant)
+        })
     };
 
     // Revoke all old routes before considering any new one. Removing the component runs Drop
@@ -724,7 +749,7 @@ fn locate_foreign_streams(
         &mut VoicePan,
     )>,
     participants: Query<(&LivekitParticipant, &Publishing, &HostedBy)>,
-    proximity_rooms: Query<(), With<crate::Transport>>,
+    proximity_rooms: Query<(), (With<crate::Transport>, Without<VoiceRoom>)>,
     tracks: Query<
         (&LivekitTrack, Option<&AudioTransmitterVolume>),
         (With<Subscribed>, With<ProximityMicrophone>),
@@ -876,6 +901,107 @@ mod routing_tests {
             drain: drain.clone(),
             task: runtime.spawn(std::future::pending()),
         }
+    }
+
+    #[test]
+    fn call_routing_suppresses_nearby_and_waits_for_both_publications_to_stop() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let mic = MicState {
+            available: true,
+            enabled: true,
+        };
+        let mut call_mic = CallMic::default();
+        let nearby_room = (true, false, false, true);
+        let voice_room = (false, false, true, true);
+        let nearby = pending(&runtime, &drain);
+        let nearby_state = nearby.state.clone();
+        assert!(microphone_route_enabled(nearby_room, &mic, &call_mic));
+        assert!(!microphone_route_enabled(voice_room, &mic, &call_mic));
+
+        call_mic.enabled = true;
+        call_mic.in_call = true;
+        call_mic.suppress_nearby = true;
+        assert!(nearby.should_remove(microphone_route_enabled(nearby_room, &mic, &call_mic,)));
+        assert!(microphone_route_enabled(voice_room, &mic, &call_mic));
+        drop(nearby);
+        assert_eq!(drain.pending(), 1);
+        complete_publication(&nearby_state, &drain, true);
+        assert_eq!(drain.pending(), 0);
+
+        let call = pending(&runtime, &drain);
+        let call_state = call.state.clone();
+        call_mic = CallMic::default();
+        assert!(call.should_remove(microphone_route_enabled(voice_room, &mic, &call_mic,)));
+        assert!(microphone_route_enabled(nearby_room, &mic, &call_mic));
+        drop(call);
+        assert_eq!(drain.pending(), 1);
+        complete_publication(&call_state, &drain, true);
+        assert_eq!(drain.pending(), 0);
+        assert!(mic.enabled);
+    }
+
+    #[test]
+    fn call_mute_and_reconnect_never_restore_nearby_publication() {
+        let mic = MicState {
+            available: true,
+            enabled: true,
+        };
+        let mut call_mic = CallMic {
+            enabled: false,
+            in_call: true,
+            suppress_nearby: true,
+        };
+        let nearby_room = (true, false, false, true);
+        let voice_room = (false, false, true, true);
+        assert!(!microphone_route_enabled(nearby_room, &mic, &call_mic));
+        assert!(!microphone_route_enabled(voice_room, &mic, &call_mic));
+
+        call_mic.enabled = true;
+        assert!(microphone_route_enabled(voice_room, &mic, &call_mic));
+        call_mic.in_call = false;
+        assert!(!microphone_route_enabled(
+            (false, false, true, false),
+            &mic,
+            &call_mic,
+        ));
+        assert!(!microphone_route_enabled(nearby_room, &mic, &call_mic));
+        assert!(mic.enabled);
+    }
+
+    #[test]
+    fn call_publication_uses_its_own_mute_and_never_enables_private_chat() {
+        let mic = MicState {
+            available: true,
+            enabled: false,
+        };
+        let call_mic = CallMic {
+            enabled: true,
+            in_call: true,
+            suppress_nearby: true,
+        };
+        assert!(microphone_route_enabled(
+            (false, false, true, true),
+            &mic,
+            &call_mic,
+        ));
+        assert!(!microphone_route_enabled(
+            (false, true, false, true),
+            &mic,
+            &call_mic,
+        ));
+        assert!(!microphone_route_enabled(
+            (true, false, false, true),
+            &mic,
+            &CallMic::default(),
+        ));
+        assert!(!microphone_route_enabled(
+            (false, false, false, true),
+            &mic,
+            &call_mic,
+        ));
     }
 
     #[test]

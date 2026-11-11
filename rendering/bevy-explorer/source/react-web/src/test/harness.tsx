@@ -238,6 +238,15 @@ export function fakeSession(): EngineSession {
     create: { open: false, toggle: vi.fn(), show: vi.fn() },
     editor: { mode: 'off', setMode: vi.fn() },
     mic: { enabled: false, available: true, toggle: vi.fn() },
+    voiceChat: {
+      // the engine's first snapshot: idle (null would mean a build without voice chat)
+      state: { status: 'disconnected', kind: 'none', callId: null, communityId: null, peer: null, connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false, errorSeq: 0 },
+      active: [],
+      activeLoaded: false,
+      scene: null,
+      guest: false,
+      act: vi.fn()
+    },
     nav: vi.fn(),
     setEngineViewport: vi.fn(),
     setInteractableArea: vi.fn(),

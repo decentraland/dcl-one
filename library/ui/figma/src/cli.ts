@@ -32,11 +32,21 @@ const USAGE = `Usage:
   dcl-figma diff [--source snapshot|rest] [--out <dir>]
   dcl-figma retire --page-id <id> [--component-id <id>] --reason <text> [--name <text>]
   dcl-figma guard --base <dir> [--staged <dir>] [--captured <id,...>] [--run-kind automated|developer] [--library-only]
-  dcl-figma resolve (--node-id <id> | --name <name>) [--variant "Prop=Value"]... [--text "Layer=Value"]... [--mapping-only] [--mapping-root <dir>] [--config <file>]
+  dcl-figma resolve (--node-id <id> | --name <name>) [--variant 'Prop=Value']... [--boolean 'Prop=true|false']... [--text 'Layer=Value']... [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma resolve --batch <file|-> [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma check-mappings [--mapping-only] [--mapping-root <dir>] [--config <file>]
   dcl-figma review-manifest [--out <review-root>] [--config <file>]
 `
+
+// The `figma` script of this package runs `cd figma`, and pnpm sets INIT_CWD to where it was run, so a path
+// reads as typed. Any other launch (the dcl-figma bin from another package's script, which inherits that
+// script's INIT_CWD) reads paths from its own working directory.
+function invocationDirectory(): string {
+  const { INIT_CWD, npm_lifecycle_event, npm_package_name } = process.env
+  return INIT_CWD && npm_lifecycle_event === 'figma' && npm_package_name === '@dcl/one-ui'
+    ? INIT_CWD
+    : process.cwd()
+}
 
 // Repeated "Key=Value" flags. A pair without "=", an empty key or a repeated key is refused, never guessed.
 function pairs(flag: string, entries: string[] | undefined): Record<string, string> | undefined {
@@ -109,6 +119,7 @@ async function main(argv: string[]): Promise<number> {
       'node-id': { type: 'string' },
       name: { type: 'string' },
       variant: { type: 'string', multiple: true },
+      boolean: { type: 'string', multiple: true },
       text: { type: 'string', multiple: true },
       batch: { type: 'string' },
       'mapping-only': { type: 'boolean' },
@@ -121,11 +132,12 @@ async function main(argv: string[]): Promise<number> {
   if (values['mapping-only'] && command !== 'resolve' && command !== 'check-mappings')
     throw new Error('--mapping-only applies only to resolve and check-mappings')
   if (values.text && command !== 'resolve') throw new Error('--text applies only to resolve')
+  if (values.boolean && command !== 'resolve') throw new Error('--boolean applies only to resolve')
   if (values.batch !== undefined) {
     if (command !== 'resolve') throw new Error('--batch applies only to resolve')
-    if (values['node-id'] || values.name || values.variant || values.text)
+    if (values['node-id'] || values.name || values.variant || values.boolean || values.text)
       throw new Error(
-        '--batch takes its instances from the file; drop --node-id, --name, --variant and --text'
+        '--batch takes its instances from the file; drop --node-id, --name, --variant, --boolean and --text'
       )
   }
 
@@ -152,9 +164,11 @@ async function main(argv: string[]): Promise<number> {
       nodeId: values['node-id'],
       name: values.name,
       variantProperties: pairs('variant', values.variant),
+      booleanProperties: pairs('boolean', values.boolean),
       texts: pairs('text', values.text)
     }
-    // A batch that cannot be read is a broken invocation (exit 2), told apart from an entry that fails (exit 1).
+    // In batch mode exit 1 means only that an entry failed: a batch that cannot be read, a broken invocation and a
+    // configuration or library that cannot be used all exit 2 (see batchMode below).
     let batchEntries: unknown
     if (values.batch !== undefined) {
       let text: string
@@ -162,7 +176,7 @@ async function main(argv: string[]): Promise<number> {
         text =
           values.batch === '-'
             ? await readStdin()
-            : await readFile(path.resolve(values.batch), 'utf8')
+            : await readFile(path.resolve(invocationDirectory(), values.batch), 'utf8')
       } catch (error) {
         process.stderr.write(
           `--batch cannot read ${values.batch}: ${(error as NodeJS.ErrnoException).code ?? 'error'}\n`
@@ -196,6 +210,7 @@ async function main(argv: string[]): Promise<number> {
     if (batchEntries !== undefined) {
       const batch = await resolveBatch(context, batchEntries)
       print(batch)
+      if ('errors' in batch) return 2
       return batch.ok ? 0 : 1
     }
     const result = await resolveComponent(context, input)
@@ -305,10 +320,16 @@ async function main(argv: string[]): Promise<number> {
   return 2
 }
 
+// A thrown error in batch mode (a misused flag, an unusable configuration) is a broken invocation, never the
+// exit 1 a caller reads as "an entry failed".
+const batchMode = process.argv
+  .slice(2)
+  .some((arg) => arg === '--batch' || arg.startsWith('--batch='))
+
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error: unknown) => {
     process.stderr.write(`${errorText(error)}\n`)
-    process.exit(1)
+    process.exit(batchMode ? 2 : 1)
   }
 )

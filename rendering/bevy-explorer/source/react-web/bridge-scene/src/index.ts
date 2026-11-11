@@ -12,6 +12,7 @@ import { registerAvatarPreview } from './domains/avatarPreview'
 import { registerMinimap } from './domains/minimap'
 import { renderSceneUi } from './ui'
 import { registerSession } from './domains/session'
+import { registerConnectivity } from './domains/connectivity'
 import { registerAnalytics } from './domains/analytics'
 import { registerProfile } from './domains/profile'
 import { registerFriends } from './domains/friends'
@@ -31,6 +32,7 @@ import { registerCommunities } from './domains/communities'
 import { registerGallery } from './domains/gallery'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
+import { registerVoiceChat } from './domains/voiceChat'
 import { registerPointer } from './domains/pointer'
 import { registerPhotoMode } from './domains/photoMode'
 import { registerProximity } from './domains/proximity'
@@ -48,6 +50,7 @@ export function main(): void {
 
   startBridge((ctx) => {
     registerSession(ctx)
+    registerConnectivity(ctx)
     registerAnalytics(ctx)
     registerProfile(ctx)
     registerFriends(ctx)
@@ -55,6 +58,7 @@ export function main(): void {
     registerDm(ctx)
     registerUiSound(ctx)
     registerVoice(ctx)
+    registerVoiceChat(ctx)
     registerEmotes(ctx)
     registerWearables(ctx)
     registerCatalog(ctx)

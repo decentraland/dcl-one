@@ -40,6 +40,13 @@ pub fn validate_url(address: &str) -> Result<Url, InvalidAdapter> {
     }
 }
 
+/// The installation identifier is shared only with trusted HTTPS services.
+pub(crate) fn allows_device_identifier(address: &str) -> bool {
+    validate_url(address).is_ok_and(|url| {
+        url.scheme() == "https" && common::base_domain::decentraland_domain(url.as_str()).is_some()
+    })
+}
+
 pub fn livekit_credentials(address: &str) -> Result<(String, String), InvalidAdapter> {
     let mut url = validate_url(address)?;
     if !matches!(url.scheme(), "ws" | "wss") {
@@ -62,6 +69,10 @@ pub fn parse_adapter(mut adapter: &str) -> Result<(AdapterKind, String), Invalid
         let (protocol, address) = adapter.split_once(':').ok_or(InvalidAdapter)?;
         let kind = match protocol {
             "fixed-adapter" => {
+                adapter = address;
+                continue;
+            }
+            "archipelago" if address.starts_with("archipelago:") => {
                 adapter = address;
                 continue;
             }
@@ -145,6 +156,56 @@ mod tests {
         );
         assert!(parse_adapter(&format!("{}offline:", "fixed-adapter:".repeat(40))).is_err());
         assert!(parse_adapter("unknown:wss://example.org").is_err());
+        assert!(parse_adapter(&format!("{}wss://example.org", "archipelago:".repeat(40))).is_err());
+        assert!(parse_adapter("archipelago:unknown:wss://example.org").is_err());
+        assert!(parse_adapter("archipelago:archipelago:ws://example.org").is_err());
+        assert!(parse_adapter("archipelago:archipelago:wss://user:secret@example.org").is_err());
+    }
+
+    #[test]
+    fn nested_archipelago_realm_adapters_start_the_connector() {
+        use crate::{
+            archipelago::StartArchipelago, global_crdt::GlobalCrdtState,
+            signed_login::StartSignedLogin, websocket_room::StartWsRoom,
+        };
+        use bevy::prelude::*;
+        use common::structs::{CommsConfig, CurrentRealm};
+
+        for adapter in [
+            "archipelago:archipelago:wss://archipelago-ea-ws-connector.decentraland.org/ws",
+            "v3:archipelago:archipelago:wss://archipelago-ea-ws-connector.decentraland.org/ws",
+            "fixed-adapter:archipelago:wss://archipelago-ea-ws-connector.decentraland.org/ws",
+        ] {
+            let mut wallet = wallet::Wallet::default();
+            wallet.finalize_as_guest();
+            let mut app = App::new();
+            app.insert_resource(wallet)
+                .insert_resource(CurrentRealm {
+                    comms: Some(CommsConfig {
+                        healthy: true,
+                        protocol: "v3".into(),
+                        adapter: Some(adapter.into()),
+                        fixed_adapter: None,
+                    }),
+                    ..Default::default()
+                })
+                .add_event::<StartWsRoom>()
+                .add_event::<StartSignedLogin>()
+                .add_event::<StartArchipelago>()
+                .add_systems(Update, crate::process_realm_change);
+            #[cfg(feature = "livekit")]
+            app.add_event::<crate::livekit::StartLivekit>();
+            app.world_mut().spawn(GlobalCrdtState::new(None));
+            app.update();
+            let events = app.world().resource::<Events<StartArchipelago>>();
+            let mut cursor = events.get_cursor();
+            let started: Vec<_> = cursor.read(events).collect();
+            assert_eq!(started.len(), 1, "{adapter}");
+            assert_eq!(
+                started[0].address,
+                "wss://archipelago-ea-ws-connector.decentraland.org/ws"
+            );
+        }
     }
 
     #[test]

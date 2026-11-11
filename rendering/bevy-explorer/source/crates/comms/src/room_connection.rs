@@ -1,8 +1,8 @@
 use bevy::{
+    ecs::query::QueryData,
     prelude::*,
     tasks::{IoTaskPool, Task},
 };
-use common::access_status::{AccessScope, AccessStatus};
 use common::util::{TaskCompat, TaskExt};
 use ipfs::IpfsAssetServer;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use std::sync::{
 use wallet::{sign_service_request, Wallet};
 
 use crate::{
+    access_status::{AccessScope, AccessStatus},
     adapter::{parse_adapter, validate_url, AdapterKind},
     recovery::RetryState,
     AdapterManager,
@@ -126,7 +127,109 @@ impl RoomAccessScope {
 pub struct RealmAdapter;
 
 #[derive(Component)]
+#[component(on_remove = Self::on_remove)]
 pub struct RoomSuspended;
+
+impl RoomSuspended {
+    fn on_remove(
+        mut world: bevy::ecs::world::DeferredWorld,
+        context: bevy::ecs::component::HookContext,
+    ) {
+        // A producer can enqueue after the last paused Update; discard before resuming.
+        #[cfg(feature = "livekit")]
+        if let Some(mut messages) =
+            world.get_mut::<crate::livekit::LivekitNetworkMessage>(context.entity)
+        {
+            while messages.try_recv().is_ok() {}
+        }
+        #[cfg(not(feature = "livekit"))]
+        let _ = (&mut world, context);
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoomState {
+    Connecting,
+    Connected,
+    Reconnecting,
+    Disconnected,
+    Failed,
+    Paused,
+    Denied,
+    Invalid,
+    IdentityConflict,
+    CredentialsRequired,
+}
+
+impl RoomState {
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Connecting => "connecting",
+            Self::Connected => "connected",
+            Self::Reconnecting => "reconnecting",
+            Self::Disconnected => "disconnected",
+            Self::Failed => "failed",
+            Self::Paused => "paused",
+            Self::Denied => "denied",
+            Self::Invalid => "invalid",
+            Self::IdentityConflict => "identity_conflict",
+            Self::CredentialsRequired => "credentials_required",
+        }
+    }
+}
+
+/// The same lifecycle reading for socket and LiveKit rooms, including admission failures.
+#[derive(QueryData)]
+pub struct RoomStatus {
+    pub recovery: &'static RoomRecovery,
+    pub suspended: Has<RoomSuspended>,
+    pub socket: Option<&'static ConnectionHealth>,
+    #[cfg(feature = "livekit")]
+    pub connected: Has<crate::livekit::room::Connected>,
+    #[cfg(feature = "livekit")]
+    pub connecting: Has<crate::livekit::room::Connecting>,
+    #[cfg(feature = "livekit")]
+    pub reconnecting: Has<crate::livekit::room::Reconnecting>,
+    #[cfg(feature = "livekit")]
+    pub disconnected: Has<crate::livekit::room::Disconnected>,
+}
+
+impl RoomStatusItem<'_> {
+    pub fn state(&self) -> RoomState {
+        if self.suspended {
+            return RoomState::Paused;
+        }
+        match self.recovery.failure {
+            Some(FailureKind::Denied) => return RoomState::Denied,
+            Some(FailureKind::Invalid) => return RoomState::Invalid,
+            Some(FailureKind::IdentityConflict) => return RoomState::IdentityConflict,
+            Some(FailureKind::CredentialsRequired) => return RoomState::CredentialsRequired,
+            _ => {}
+        }
+        if self.socket.is_some_and(ConnectionHealth::is_connected) {
+            return RoomState::Connected;
+        }
+        #[cfg(feature = "livekit")]
+        {
+            if self.connected {
+                return RoomState::Connected;
+            }
+            if self.reconnecting {
+                return RoomState::Reconnecting;
+            }
+            if self.disconnected {
+                return RoomState::Disconnected;
+            }
+        }
+        if self.recovery.failure.is_some() {
+            RoomState::Failed
+        } else if self.recovery.retry.attempts > 0 {
+            RoomState::Reconnecting
+        } else {
+            RoomState::Connecting
+        }
+    }
+}
 
 /// Authenticated socket health shared with its async driver and the connectivity watchdog.
 #[derive(Component, Clone, Default)]
@@ -223,7 +326,7 @@ fn publish_access(
             status.set_denied(scope.0.clone());
             commands.entity(entity).try_insert(PublishedDenial);
         } else if recovery.failure.is_none() {
-            status.set_allowed(&scope.0);
+            status.remove_scope(&scope.0);
             commands.entity(entity).try_remove::<PublishedDenial>();
         }
     }
@@ -635,7 +738,7 @@ mod tests {
             .is_denied(&scene_scope));
         app.world_mut()
             .resource_mut::<AccessStatus>()
-            .set_allowed(&scene_scope);
+            .remove_scope(&scene_scope);
         app.update();
         assert_eq!(
             app.world().get::<RoomRecovery>(scene).unwrap().failure,

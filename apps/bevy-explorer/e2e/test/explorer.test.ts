@@ -96,6 +96,36 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
   })
 
+  test('the voice chat actions compose their lines', async () => {
+    const fake = new FakeConsole({ voice: 'queued' })
+    const explorer = new Explorer(fake)
+    await explorer.voice('call', '0xabc')
+    await explorer.voice('accept')
+    await explorer.voice('end')
+    await explorer.voice('join', 'c1')
+    await explorer.voice('close')
+    await explorer.voice('hand', 'up')
+    await explorer.voice('mic', 'off')
+    await explorer.voice('deny', '0xabc')
+    assert.deepEqual(fake.lines, ['/voice call 0xabc', '/voice accept', '/voice end', '/voice join c1', '/voice close', '/voice hand up', '/voice mic off', '/voice deny 0xabc'])
+  })
+
+  test('voiceState carries the call', async () => {
+    const fake = new FakeConsole({
+      voice_state: JSON.stringify({
+        mic: { available: true, enabled: false },
+        livekit: true,
+        connected: true,
+        rooms: [],
+        speakers: [],
+        call: { status: 'receivedCall', kind: 'private', callId: 'c1', communityId: null, peer: '0xabc', connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false }
+      })
+    })
+    const state = await new Explorer(fake).voiceState()
+    assert.equal(state.call?.status, 'receivedCall')
+    assert.equal(state.call?.peer, '0xabc')
+  })
+
   test('photoMode and takePhoto parse the JSON replies and wait for the mode', async () => {
     let active = false
     const fake = new FakeConsole({

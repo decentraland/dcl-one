@@ -59,7 +59,6 @@ pub struct StartWsRoom {
 pub struct WebsocketRoomTransport {
     pub address: String,
     pub receiver: Option<Receiver<NetworkMessage>>,
-    pub retries: usize,
 }
 
 #[derive(Component)]
@@ -101,7 +100,6 @@ pub fn start_ws_room(
             WebsocketRoomTransport {
                 address: ev.address.to_owned(),
                 receiver: Some(receiver),
-                retries: 0,
             },
         ));
     }
@@ -171,7 +169,6 @@ fn reconnect_websocket(
         }
         if let Some((receiver, error)) = connection.0.complete() {
             transport.receiver = Some(receiver);
-            transport.retries = transport.retries.saturating_add(1);
             let error = error
                 .downcast_ref::<AdmissionError>()
                 .copied()
@@ -480,7 +477,6 @@ mod tests {
                 WebsocketRoomTransport {
                     address: "wss://rooms.example/direct".into(),
                     receiver: None,
-                    retries: 1,
                 },
                 WebSocketConnection(task),
                 health,

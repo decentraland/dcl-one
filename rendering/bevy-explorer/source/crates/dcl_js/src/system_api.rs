@@ -16,11 +16,12 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
-    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, ConnectivitySnapshot, DmHistoryEntryData, DmUserStateData,
+    FriendConnectivityEvent, FriendData, FriendRequestData, FriendStatusData,
+    FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo, PermanentPermissionItem,
+    PermissionRequestEvent, PhotoModeState, ProfileChangedEvent, ProximityEvent, SatelliteView,
+    SceneLoadingUi, SetAvatarData, SetPermanentPermission, SetSinglePermission, SystemApi,
+    VoiceChatAction, VoiceChatState, VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -957,6 +958,36 @@ pub async fn op_read_hover_stream(
     Ok(read_stream(state, rid).await)
 }
 
+pub async fn op_get_connectivity_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sender, receiver) = RpcStreamSender::channel();
+    let rid = open_stream(&mut *state.borrow_mut(), receiver);
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetConnectivityStream(sender))
+        .unwrap();
+    rid
+}
+
+pub async fn op_read_connectivity_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<ConnectivitySnapshot>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_connectivity_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<ConnectivitySnapshot>(&mut *state.borrow_mut(), rid);
+}
+
+pub fn op_retry_connectivity(state: Rc<RefCell<impl State>>) {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::RetryConnectivity)
+        .unwrap();
+}
+
 pub async fn op_get_proximity_stream(state: Rc<RefCell<impl State>>) -> u32 {
     let (sx, rx) = RpcStreamSender::channel();
     let rid = open_stream(&mut *state.borrow_mut(), rx);
@@ -1360,6 +1391,71 @@ pub fn op_close_dm_user_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
     close_stream::<DmUserStateData>(&mut *state.borrow_mut(), rid);
 }
 
+/// The voice chat state (private calls, community streams): a snapshot now, then on change.
+/// The HUD keeps it open for the session; `close` ends it.
+pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetVoiceChatStateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_voice_chat_state_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<VoiceChatState>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_voice_chat_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<VoiceChatState>(&mut *state.borrow_mut(), rid);
+}
+
+/// Every community voice chat started / ended broadcast the social service sends.
+pub fn op_get_community_voice_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityVoiceUpdateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_voice_update_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityVoiceUpdate>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_community_voice_update_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<CommunityVoiceUpdate>(&mut *state.borrow_mut(), rid);
+}
+
+/// A voice chat command; its outcome shows on the state stream.
+pub fn op_voice_chat_action(
+    state: Rc<RefCell<impl State>>,
+    action: VoiceChatAction,
+) -> Result<(), anyhow::Error> {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::VoiceChatAction(action))?;
+    Ok(())
+}
+
 pub async fn op_get_dm_history(
     state: Rc<RefCell<impl State>>,
     address: String,
@@ -1487,6 +1583,45 @@ mod stream_tests {
         let mut state = TestState::default();
         state.put(SuperUserScene(sx));
         (Rc::new(RefCell::new(state)), rx)
+    }
+
+    #[test]
+    fn connectivity_reads_and_retry_use_the_trusted_system_channel() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let snapshot = ConnectivitySnapshot {
+            connection_lost: true,
+            ..Default::default()
+        };
+        sender.send(snapshot.clone()).unwrap();
+        assert_eq!(
+            block_on(op_read_connectivity_stream(state.clone(), rid)).unwrap(),
+            Some(snapshot)
+        );
+        op_retry_connectivity(state.clone());
+        assert!(matches!(
+            system.try_recv(),
+            Ok(SystemApi::RetryConnectivity)
+        ));
+        drop(state);
+        assert!(sender.is_closed());
+    }
+
+    #[test]
+    fn closing_connectivity_wakes_its_parked_read() {
+        let (state, mut system) = system_scene();
+        let rid = block_on(op_get_connectivity_stream(state.clone()));
+        let Ok(SystemApi::GetConnectivityStream(sender)) = system.try_recv() else {
+            panic!("expected a connectivity stream request");
+        };
+        let mut parked = Box::pin(op_read_connectivity_stream(state.clone(), rid));
+        assert!(block_on(poll_once(&mut parked)).is_none());
+        op_close_connectivity_stream(state.clone(), rid);
+        assert!(block_on(parked).unwrap().is_none());
+        assert!(sender.is_closed());
     }
 
     // what the engine does with each request: keep the sender

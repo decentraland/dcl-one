@@ -18,7 +18,7 @@ use common::{
 };
 use comms::{
     livekit::{
-        room::{ConnectFailed, Connecting, Disconnected, LivekitRoom, ServerRoomTerminal},
+        room::{Connecting, Disconnected, LivekitRoom, ServerRoomTerminal},
         LivekitTransport,
     },
     AdapterManager, ServerSceneRooms,
@@ -729,17 +729,23 @@ fn dial_scene_room(
 fn reap_terminal_scene_rooms(
     mut commands: Commands,
     mut orch: ResMut<OrchestratedScenes>,
-    terminal: Query<
-        (
-            Entity,
-            &comms::SceneRoom,
-            &SceneRoomAdapter,
-            Has<DisconnectReported>,
-        ),
-        Or<(With<ServerRoomTerminal>, With<ConnectFailed>)>,
-    >,
+    terminal: Query<(
+        Entity,
+        &comms::SceneRoom,
+        &SceneRoomAdapter,
+        Has<DisconnectReported>,
+        &comms::room_connection::RoomRecovery,
+        Has<ServerRoomTerminal>,
+        Has<Disconnected>,
+        Has<Connecting>,
+    )>,
 ) {
-    for (entity, room, adapter, reported) in terminal.iter() {
+    for (entity, room, adapter, reported, recovery, server_terminal, disconnected, connecting) in
+        terminal.iter()
+    {
+        if !server_terminal && (recovery.failure.is_none() || disconnected || connecting) {
+            continue;
+        }
         info!(
             "[headless] scene room for {} terminally disconnected (duplicate identity / kicked / connect refused); tearing down",
             room.0

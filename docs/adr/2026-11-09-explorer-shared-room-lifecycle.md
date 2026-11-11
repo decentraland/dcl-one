@@ -41,24 +41,27 @@ backoff. Removal from a credentialed scene or private room remains a scoped deni
 
 All adapter ingress uses one validator. Diagnostics expose safe failure categories
 and connection phases rather than credentials or upstream response bodies. Signed
-login includes the installation identifier only for HTTPS Decentraland endpoints.
+login, scene and private-chat admission include the installation identifier only
+for HTTPS endpoints under decentraland.org or decentraland.zone.
 
 ## Access and media policy
 
-The shared access-status contract lives in `common`. A denied admission stops
+The shared access-status contract lives in `comms`. A denied admission stops
 automatic recovery for its scope without declaring a platform-wide ban. An identity
 conflict in private chat stops only that room. World-room identity conflicts retain
 the session gate. Identity changes and explicit access updates reset the applicable
 state.
 
-Microphone publication requires a connected proximity transport. Native and browser
+Microphone publication requires an eligible connected room. An active call suppresses
+nearby publication without changing the saved nearby microphone preference. Native and browser
 publication wait for acknowledged cleanup before starting replacement work. A failed
 publication retries after cleanup, using the shared backoff capped at five seconds.
 Known native publish denial suppresses attempts until permission returns.
 Browser playback uses one mixer, and room teardown disposes its remote handles and
 playback independently of asynchronous SDK disconnect events. Private chat remains data-only.
 Browser proximity microphones have one gain writer, combining spatial attenuation,
-voice volume and any transmitter multiplier. Other tracks use the scene-volume path.
+voice volume and any transmitter multiplier. Call audio uses its own voice-chat
+volume; other tracks use the scene-volume path.
 
 ## Connectivity feedback
 
@@ -67,9 +70,12 @@ It requires previous connectivity and excludes intentional offline states and he
 worlds. Terminal or suspended rooms are excluded from the required-room sample;
 their failures do not suppress monitoring of other required rooms. A healthy required transport suppresses an
 offline warning. The HUD presents this shared state through the existing engine
-bridge and supplies Retry and Exit controls; it does not implement another recovery
-or probe policy. Debug sections and the authenticated automation surface expose the
-same safe status and actions.
+bridge stream, receiving an initial snapshot and subsequent changes, and supplies
+Retry and Exit controls. It does not implement another recovery or probe policy.
+Debug sections and the authenticated automation surface expose the same safe status
+and actions. One room-state calculation reads the shared failure record, suspension
+marker and transport phase for connectivity and room diagnostics. First admission
+is distinct from recovery; a stable connection resets the failed-attempt count.
 
 ## Consequences
 

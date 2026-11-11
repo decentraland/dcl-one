@@ -99,7 +99,6 @@ impl Default for IslandChannel {
 pub struct ArchipelagoTransport {
     pub address: String,
     pub receiver: Option<Receiver<NetworkMessage>>,
-    pub retries: usize,
     generation: u64,
 }
 
@@ -144,7 +143,6 @@ pub fn start_archipelago(
             ArchipelagoTransport {
                 address: ev.address.to_owned(),
                 receiver: Some(receiver),
-                retries: 0,
                 generation: existing
                     .get(ev.entity)
                     .map_or(0, |transport| transport.generation.wrapping_add(1)),
@@ -504,14 +502,12 @@ fn reconnect_websocket(
     {
         if health.is_connected() && !connection.authenticated {
             connection.authenticated = true;
-            transport.retries = 0;
             recovery.failure = None;
         }
         if let Some((receiver, error)) = connection.task.complete() {
             health.disconnected();
             transport.generation = transport.generation.wrapping_add(1);
             transport.receiver = Some(receiver);
-            transport.retries = transport.retries.saturating_add(1);
             let error = error
                 .downcast_ref::<AdmissionError>()
                 .copied()
@@ -804,7 +800,6 @@ mod tests {
             .spawn(ArchipelagoTransport {
                 address: "wss://example.org/ws".to_owned(),
                 receiver: None,
-                retries: 0,
                 generation,
             })
             .id()
@@ -855,7 +850,6 @@ mod tests {
             app.world_mut().entity_mut(room).insert((
                 crate::livekit::LivekitTransport {
                     address: "wss://example.org?access_token=test".into(),
-                    retries: 0,
                 },
                 crate::livekit::room::Connecting,
             ));

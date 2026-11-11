@@ -1,3 +1,4 @@
+pub mod access_status;
 pub mod adapter;
 pub mod archipelago;
 mod automation;
@@ -22,6 +23,8 @@ mod test;
 mod traffic;
 #[cfg(feature = "transport_debug")]
 mod transport_debug;
+#[cfg(feature = "livekit")]
+pub mod voice_chat;
 pub mod websocket_room;
 
 use std::marker::PhantomData;
@@ -109,7 +112,11 @@ impl Plugin for CommsPlugin {
         ));
 
         #[cfg(feature = "livekit")]
-        app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
+        app.add_plugins((
+            LivekitPlugin,
+            private_chat::PrivateChatPlugin,
+            voice_chat::VoiceChatPlugin,
+        ));
         app.init_resource::<MicState>()
             .init_resource::<global_crdt::NearbyPanning>();
 
@@ -662,8 +669,11 @@ fn connect_scene_room(
         (None, false, false) => gatekeeper_url(),
     };
     let mut meta = serde_json::json!({
-        "realmName": ev.realm_name, "sceneId": ev.scene_id, "deviceIdentifier": config.user_id,
+        "realmName": ev.realm_name, "sceneId": ev.scene_id,
     });
+    if adapter::allows_device_identifier(&url) {
+        meta["deviceIdentifier"] = serde_json::json!(config.user_id);
+    }
     if common::structs::server_mode() || world.is_some() {
         meta["intent"] = serde_json::json!("dcl:explorer:comms-handshake");
         meta["signer"] = serde_json::json!("dcl:explorer");
@@ -677,9 +687,7 @@ fn connect_scene_room(
         SceneRoom(ev.scene_id.clone()),
         SceneRoomTarget(ev.clone()),
         RoomContext(context),
-        room_connection::RoomAccessScope(common::access_status::AccessScope::Scene(
-            ev.scene_id.clone(),
-        )),
+        room_connection::RoomAccessScope(access_status::AccessScope::Scene(ev.scene_id.clone())),
         CredentialRequest {
             method: "POST",
             url,

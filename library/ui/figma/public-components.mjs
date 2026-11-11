@@ -20,10 +20,14 @@ const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
 
 /**
  * Fixed classifications and the emitted manifest determine origins, never a lock entry's claimed kind.
- * Origins carry no module map: the table pins generation.json, whose module list is the single pin.
+ * Origins carry no module map: the table pins generation.json by digest, and that record's module list is
+ * validated against each module's digest in the source lock.
  */
 export function componentExpectedFiles(manifest, metadataDigest) {
-  const modules = Object.fromEntries(manifest.modules.map(({ path, sha256 }) => [path, sha256]))
+  // Only to look up the runtime files' digests; origins never carry the module list.
+  const moduleDigests = Object.fromEntries(
+    manifest.modules.map(({ path, sha256 }) => [path, sha256])
+  )
   const generated = {
     kind: 'generated',
     source: JSON.stringify(manifest.source),
@@ -41,7 +45,7 @@ export function componentExpectedFiles(manifest, metadataDigest) {
                   ...generated,
                   kind,
                   path: RUNTIME + file.slice('runtime/'.length),
-                  sha256: modules[RUNTIME + file.slice('runtime/'.length)]
+                  sha256: moduleDigests[RUNTIME + file.slice('runtime/'.length)]
                 }
               : generated
         return [file, { sha256: outputDigest, origin }]

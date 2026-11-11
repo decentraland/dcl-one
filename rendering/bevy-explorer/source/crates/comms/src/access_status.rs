@@ -38,11 +38,7 @@ impl AccessStatus {
         self.denied.insert(scope);
     }
 
-    /// A successful admission or explicit access change clears this scope only.
-    pub fn set_allowed(&mut self, scope: &AccessScope) {
-        self.denied.remove(scope);
-    }
-
+    /// Clears the cached denial for this scope only.
     pub fn remove_scope(&mut self, scope: &AccessScope) {
         self.denied.remove(scope);
     }
@@ -73,14 +69,14 @@ mod tests {
     }
 
     #[test]
-    fn allowing_or_removing_a_scope_preserves_other_denials() {
+    fn removing_a_scope_preserves_other_denials() {
         let mut status = AccessStatus::default();
         let scene = AccessScope::Scene("scene".to_owned());
         let private_chat = AccessScope::PrivateChat;
         status.set_denied(scene.clone());
         status.set_denied(private_chat.clone());
 
-        status.set_allowed(&scene);
+        status.remove_scope(&scene);
         assert!(!status.is_denied(&scene));
         assert!(status.is_denied(&private_chat));
 

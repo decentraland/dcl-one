@@ -2,7 +2,7 @@ mod control;
 pub(super) mod diagnostics;
 pub(super) mod plugin;
 
-pub use plugin::{ConnectFailed, ServerRoomTerminal};
+pub use plugin::ServerRoomTerminal;
 
 use bevy::{
     ecs::{component::HookContext, world::DeferredWorld},

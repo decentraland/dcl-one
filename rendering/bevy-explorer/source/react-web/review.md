@@ -43,13 +43,15 @@ deterministically — they have their own tiers (§3, §4).
 ## 1. The testing tiers (why three)
 
 Connectivity feedback is engine-owned. `src/test/connectivity.test.tsx` checks the shared
-console status/retry bridge, stable unchanged snapshots, one Connection Lost alert dialog,
-pending Retry/Exit controls, failed-retry recovery controls, automatic dismissal,
+SystemApi stream/retry bridge, subscription cleanup, stable unchanged snapshots, one Connection Lost alert dialog,
+pending Retry/Exit controls through bridge acknowledgement, reply timeout and session cleanup,
+failed-retry recovery controls, automatic dismissal,
 and scoped access messages. Runtime verification reads `/connectivity_state`, uses
 `/connectivity_retry`, and locates `alertdialog` named `Connection Lost`, buttons `Retry` and
 `Exit Application`, and status `Multiplayer status`. The engine's Connectivity debug section exposes the
 same safe snapshot and Retry action. Preview, held-world and terminal access failures must
-never become an offline alert. A reachable network with a failed room shows its room status.
+never become an offline alert. A reachable network with a failed or disconnected room shows its
+room status. An initial `connecting` room stays quiet during ordinary scene crossings.
 
 | Tier | Command | What it proves | Engine? | Deterministic? |
 |------|---------|----------------|---------|----------------|

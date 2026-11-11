@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PopupHost, closeTopPopup, resetPopups } from '../design'
 import { ConnectivityFeedback } from '../features/error/ConnectivityFeedback'
@@ -38,7 +38,7 @@ describe('connectivity feedback', () => {
     const lost = { connectionLost: true, probing: false, rooms: [] }
     const { rerender } = render(<><PopupHost /><ConnectivityFeedback state={lost} retry={async () => {}} exit={vi.fn()} /></>)
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
-    // A fast failed probe can complete between two HUD polls.
+    // Accepting Retry does not mean the engine has recovered.
     rerender(<><PopupHost /><ConnectivityFeedback state={{ ...lost }} retry={async () => {}} exit={vi.fn()} /></>)
     expect(screen.getByRole('alertdialog', { name: 'Connection Lost' })).toBeVisible()
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled()
@@ -77,49 +77,99 @@ describe('connectivity feedback', () => {
     expect(screen.getByRole('button', { name: 'Exit Application' })).toBeEnabled()
   })
 
-  it('reads engine state, retries through the shared command bridge, and clears on session exit', async () => {
+  it.each([
+    ['failed', 'connection failed'],
+    ['disconnected', 'disconnected'],
+  ])('shows a %s room while the network is reachable', (state, label) => {
+    render(<ConnectivityFeedback state={{ connectionLost: false, probing: false, rooms: [{ scope: 'scene', state }] }} retry={vi.fn()} exit={vi.fn()} />)
+    expect(screen.getByRole('status', { name: 'Multiplayer status' })).toHaveTextContent(`Scene room: ${label}`)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('keeps the initial room connection quiet', () => {
+    render(<ConnectivityFeedback state={{ connectionLost: false, probing: false, rooms: [{ scope: 'scene', state: 'connecting' }] }} retry={vi.fn()} exit={vi.fn()} />)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+  })
+
+  it('subscribes to engine state, sends Retry through the scene, and clears on session exit', async () => {
     const driver = new FakeDriver()
-    driver.commandReply = () => JSON.stringify({ connectionLost: true, probing: false, rooms: [] })
     const { result, rerender } = renderHook(({ active }) => useConnectivity(driver, active), { initialProps: { active: true } })
-    await waitFor(() => expect(result.current.state?.connectionLost).toBe(true))
-    expect(driver.commands).toContain('/connectivity_state')
-    await act(() => result.current.retry())
-    await waitFor(() => expect(driver.commands).toContain('/connectivity_retry'))
+    driver.emit({ kind: 'connectivity', state: { connectionLost: true, probing: false, everConnected: true, suppressed: false, rooms: [] } })
+    expect(result.current.state?.connectionLost).toBe(true)
+    let pending: void | Promise<void>
+    act(() => { pending = result.current.retry() })
+    const request = driver.sent.find(message => message.kind === 'retryConnectivity')!
+    expect(request.requestId).toEqual(expect.any(String))
+    driver.emit({ kind: 'connectivityRetry', requestId: request.requestId })
+    await pending!
+    expect(driver.sent).toEqual([{ kind: 'getConnectivity' }, request])
+    expect(driver.commands).toEqual([])
     rerender({ active: false })
     expect(result.current.state).toBeNull()
   })
 
-  it('never overlaps a pending status read and ignores its result after leaving the session', async () => {
-    vi.useFakeTimers()
-    let finish: (reply: string) => void = () => {}
-    class PendingDriver extends FakeDriver {
-      async command(line: string): Promise<string> {
-        this.commands.push(line)
-        return new Promise(resolve => { finish = resolve })
-      }
-    }
-    const driver = new PendingDriver()
-    const { result, rerender } = renderHook(({ active }) => useConnectivity(driver, active), { initialProps: { active: true } })
-    await act(async () => vi.advanceTimersByTimeAsync(4000))
-    expect(driver.commands).toEqual(['/connectivity_state'])
+  it('unsubscribes on session exit and ignores events and Retry until re-entry', () => {
+    const driver = new FakeDriver()
+    const unsubscribe = vi.fn()
+    const originalOn = driver.on.bind(driver)
+    vi.spyOn(driver, 'on').mockImplementation(listener => {
+      const off = originalOn(listener)
+      return () => { unsubscribe(); off() }
+    })
+    const { result, rerender, unmount } = renderHook(({ active }) => useConnectivity(driver, active), { initialProps: { active: true } })
+    const state = { connectionLost: true, probing: false, everConnected: true, suppressed: false, rooms: [] }
+    driver.emit({ kind: 'connectivity', state })
     rerender({ active: false })
-    await act(async () => finish(JSON.stringify({ connectionLost: true, probing: false, rooms: [] })))
+    driver.emit({ kind: 'connectivity', state })
+    act(() => result.current.retry())
     expect(result.current.state).toBeNull()
+    expect(driver.sent).toEqual([{ kind: 'getConnectivity' }])
+    rerender({ active: true })
+    expect(result.current.state).toBeNull()
+    driver.emit({ kind: 'connectivity', state })
+    expect(result.current.state).toEqual(state)
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(2)
+    driver.emit({ kind: 'connectivity', state: { ...state, connectionLost: false } })
+    expect(result.current.state).toEqual(state)
   })
 
-  it('retains the snapshot identity while polling unchanged engine state', async () => {
-    vi.useFakeTimers()
+  it('retains the snapshot identity on repeated events and accepts changed rooms', () => {
     const driver = new FakeDriver()
-    let snapshot = { connectionLost: false, probing: false, rooms: [] as Array<{scope: string; state: string}> }
-    driver.commandReply = () => JSON.stringify(snapshot)
+    const snapshot = { connectionLost: false, probing: false, everConnected: true, suppressed: false, rooms: [] }
     const { result } = renderHook(() => useConnectivity(driver, true))
-    await act(async () => {})
+    driver.emit({ kind: 'connectivity', state: snapshot })
     const initial = result.current.state
     expect(initial).not.toBeNull()
-    await act(async () => vi.advanceTimersByTimeAsync(3000))
+    driver.emit({ kind: 'connectivity', state: { ...snapshot, rooms: [] } })
     expect(result.current.state).toBe(initial)
-    snapshot = { ...snapshot, rooms: [{ scope: 'private_chat', state: 'denied' }] }
-    await act(async () => vi.advanceTimersByTimeAsync(1000))
-    expect(result.current.state?.rooms).toEqual([{ scope: 'private_chat', state: 'denied' }])
+    driver.emit({ kind: 'connectivity', state: { ...snapshot, rooms: [{ scope: 'private_chat', state: 'denied', retryAt: null }] } })
+    expect(result.current.state?.rooms).toEqual([{ scope: 'private_chat', state: 'denied', retryAt: null }])
+    expect(driver.commands).toEqual([])
+  })
+
+  it('rejects a pending Retry on exit and ignores its late acknowledgement after re-entry', async () => {
+    const driver = new FakeDriver()
+    const { result, rerender } = renderHook(({ active }) => useConnectivity(driver, active), { initialProps: { active: true } })
+    const first = result.current.retry()!
+    const rejected = expect(first).rejects.toThrow('session ended')
+    const firstRequest = driver.sent.find(message => message.kind === 'retryConnectivity')!
+    rerender({ active: false })
+    await rejected
+    rerender({ active: true })
+    const second = result.current.retry()!
+    expect(result.current.retry()).toBe(second)
+    const requests = driver.sent.filter(message => message.kind === 'retryConnectivity')
+    expect(requests).toHaveLength(2)
+    const settled = vi.fn()
+    void second.then(settled)
+    driver.emit({ kind: 'connectivityRetry', requestId: firstRequest.requestId })
+    await Promise.resolve()
+    expect(settled).not.toHaveBeenCalled()
+    driver.emit({ kind: 'connectivityRetry', requestId: requests[1].requestId })
+    await second
+    expect(settled).toHaveBeenCalledOnce()
   })
 })

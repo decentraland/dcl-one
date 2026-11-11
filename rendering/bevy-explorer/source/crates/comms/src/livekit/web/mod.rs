@@ -226,6 +226,18 @@ pub enum DisconnectReason {
     SignalClose = 9,
     /// the room was closed, due to all Standard and Ingress participants having left
     RoomClosed = 10,
+    /// SIP callee did not respond in time
+    UserUnavailable = 11,
+    /// SIP callee rejected the call (busy)
+    UserRejected = 12,
+    /// SIP protocol failure or unexpected response
+    SipTrunkFailure = 13,
+    /// server timed out a participant session
+    ConnectionTimeout = 14,
+    /// media stream failure or media timeout
+    MediaFailure = 15,
+    /// agent encountered an error
+    AgentError = 16,
 }
 
 impl DisconnectReason {
@@ -242,6 +254,12 @@ impl DisconnectReason {
             8 => DisconnectReason::Migration,
             9 => DisconnectReason::SignalClose,
             10 => DisconnectReason::RoomClosed,
+            11 => DisconnectReason::UserUnavailable,
+            12 => DisconnectReason::UserRejected,
+            13 => DisconnectReason::SipTrunkFailure,
+            14 => DisconnectReason::ConnectionTimeout,
+            15 => DisconnectReason::MediaFailure,
+            16 => DisconnectReason::AgentError,
             _ => return None,
         })
     }

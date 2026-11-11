@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { LoginDriver } from '../../engine/driver'
+import type { ConnectivitySnapshot } from '../../engine/generated'
 
 export interface ConnectivityState {
   connectionLost: boolean
@@ -7,36 +8,46 @@ export interface ConnectivityState {
   rooms: Array<{ scope: string; state: string; retryAt?: number | null }>
 }
 
-/** Read the engine policy through the same trusted console seam on native and web.
+/** Subscribe to engine policy through the trusted scene bridge on native and web.
  * The HUD neither probes the network nor decides when a connection should retry. */
 export function useConnectivity(driver: LoginDriver | null, active: boolean) {
-  const [state, setState] = useState<ConnectivityState | null>(null)
-  const refresh = useRef<(() => Promise<void>) | null>(null)
+  const [state, setState] = useState<ConnectivitySnapshot | null>(null)
+  const pending = useRef<{ requestId: string; promise: Promise<void>; finish: (error?: Error) => void } | null>(null)
   useEffect(() => {
     setState(null)
-    if (!active || !driver?.command) return
-    let cancelled = false
-    let pending = false
-    const read = async () => {
-      if (pending || cancelled) return
-      pending = true
-      try {
-        const next = JSON.parse(await driver.command!('/connectivity_state')) as ConnectivityState
-        if (!cancelled && typeof next.connectionLost === 'boolean' && typeof next.probing === 'boolean' && Array.isArray(next.rooms)) {
-          setState(previous => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
-        }
-      } catch {
-        // Console/engine startup errors are handled by the existing session crash path.
-      } finally { pending = false }
+    if (!active || driver == null) return
+    const off = driver.on(message => {
+      if (message.kind === 'connectivity') {
+        setState(previous => JSON.stringify(previous) === JSON.stringify(message.state) ? previous : message.state)
+      } else if (message.kind === 'connectivityRetry' && message.requestId === pending.current?.requestId) {
+        pending.current.finish(message.error == null ? undefined : new Error(message.error))
+      }
+    })
+    driver.send({ kind: 'getConnectivity' })
+    return () => {
+      off()
+      pending.current?.finish(new Error('Connectivity session ended'))
     }
-    refresh.current = read
-    void read()
-    const timer = setInterval(() => void read(), 1000)
-    return () => { cancelled = true; clearInterval(timer); refresh.current = null }
   }, [driver, active])
   const retry = useCallback(() => {
-    if (!active) return
-    return driver?.command?.('/connectivity_retry').then(() => { void refresh.current?.() })
+    if (!active || driver == null) return
+    if (pending.current != null) return pending.current.promise
+    const requestId = crypto.randomUUID()
+    let resolve!: () => void
+    let reject!: (error: Error) => void
+    const promise = new Promise<void>((accept, fail) => { resolve = accept; reject = fail })
+    const finish = (error?: Error): void => {
+      if (pending.current?.requestId !== requestId) return
+      clearTimeout(timer)
+      pending.current = null
+      if (error == null) resolve()
+      else reject(error)
+    }
+    const timer = setTimeout(() => finish(new Error('Connectivity retry timed out')), 10_000)
+    pending.current = { requestId, promise, finish }
+    try { driver.send({ kind: 'retryConnectivity', requestId }) }
+    catch (error) { finish(error instanceof Error ? error : new Error(String(error))) }
+    return promise
   }, [driver, active])
   return { state: active ? state : null, retry }
 }
