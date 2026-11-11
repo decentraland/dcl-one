@@ -19,9 +19,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the extension is not the fix; the long-term answer is still open.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
-  cut into rising ground. A depth bias does not fix that: it shifts the whole quad, so a bias
-  that lifts it out of a metre of slope also draws it through nearby objects, and the blob
-  stays flat rather than lying on the ground. The projection reads the primary camera's
+  cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
+  so a bias that clears a metre of slope also draws it over anything that close, and the
+  blob stays flat rather than lying on the ground. Bevy's own decals do not fit either:
+  clustered decals are true box projectors but need bindless textures, so they do not run
+  on WebGPU or macOS, and `ForwardDecal` is a flat quad with a depth fade, so it has the
+  same slope limits in a softer form. The projection reads the primary camera's
   depth prepass, which the camera therefore keeps; without one the marker draws nothing.
   Keeping it costs nothing new: the camera already renders it on native and web, and it
   saves the main pass shading hidden opaque pixels. It also enables later work: decals,
