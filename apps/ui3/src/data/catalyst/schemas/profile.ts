@@ -25,7 +25,7 @@ const AvatarInfoSchema = z
     snapshots: z
       .object({ face256: z.string().optional(), body: z.string().optional() })
       .passthrough()
-      .optional(),
+      .nullish(),
   })
   .passthrough();
 
@@ -35,9 +35,9 @@ export const AvatarSchema = z
   .object({
     name: nullableStr,
     hasClaimedName: z.boolean().nullish(),
-    nameColor: z.union([Color3Schema, z.string()]).optional(),
+    nameColor: z.union([Color3Schema, z.string()]).nullish(),
     description: nullableStr,
-    links: z.array(LinkSchema).optional(),
+    links: z.array(LinkSchema).nullish(),
     country: nullableStr,
     gender: nullableStr,
     pronouns: nullableStr,

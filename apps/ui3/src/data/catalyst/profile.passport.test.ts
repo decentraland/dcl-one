@@ -54,3 +54,27 @@ describe("fetchUserPhotos", () => {
     ]);
   });
 });
+
+describe("AvatarSchema explicit nulls", () => {
+  it("accepts the nulls lambdas sends for unset nameColor, links and snapshots", () => {
+    const vm = mapProfile(
+      readAvatar({
+        name: "ExampleUser",
+        nameColor: null,
+        links: null,
+        country: null,
+        birthdate: null,
+        avatar: { snapshots: null },
+      }),
+      ADDR,
+    );
+    expect(vm.name).toBe("ExampleUser");
+    expect(vm.links ?? []).toEqual([]);
+  });
+
+  it("still rejects a nameColor, links or snapshots of the wrong type", () => {
+    expect(() => AvatarSchema.parse({ nameColor: 7 })).toThrow();
+    expect(() => AvatarSchema.parse({ links: "https://example.com" })).toThrow();
+    expect(() => AvatarSchema.parse({ avatar: { snapshots: "x" } })).toThrow();
+  });
+});
