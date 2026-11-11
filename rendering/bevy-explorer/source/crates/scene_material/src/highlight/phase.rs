@@ -344,7 +344,7 @@ impl SpecializedMeshPipeline for HighlightMaskPipeline {
 /// texture cameras (mirrors and the like) never show it.
 pub fn extract_highlight_phases(
     mut phases: ResMut<ViewSortedRenderPhases<HighlightMaskItem>>,
-    cameras: Extract<Query<(Entity, &Camera), (With<Camera3d>, With<PrimaryCamera>)>>,
+    cameras: Extract<Query<(Entity, &Camera), With<PrimaryCamera>>>,
 ) {
     let mut live = HashSet::new();
     for (entity, camera) in &cameras {
