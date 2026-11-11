@@ -291,7 +291,7 @@ pub enum ProfiledScopeKind {
     RenderGraphNode,
     /// Any other span of Bevy's: the app update, the render graph run, the present.
     BevyInternal,
-    /// An `info_span!` the explorer adds (the scene loop, JS updates, texture decoding, ...).
+    /// A span the explorer opens inside a function (`js startup`, `js update`, `av-thread`).
     ExplorerSpan,
 }
 

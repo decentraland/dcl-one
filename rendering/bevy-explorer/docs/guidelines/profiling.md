@@ -56,9 +56,9 @@ adapter supports them. The GPU frame time of the whole frame is the explorer's o
 ### Profiler (`/profile_top [count] [sort]`, `/profile_enable on|off|reset`)
 
 The in-app scope profiler. Every build carries Bevy's tracing spans (the `trace` feature is on):
-one per system run, per schedule run and per render-graph node, plus the explorer's own
-(`run_scene_loop`, `scene entity lifecycle`, `gltf containers`, `text shapes`, `imposter bake`,
-`avatar processing`, `js update`, ...). A `tracing` layer in every build times them, but records
+one per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule
+run and per render-graph node, plus the explorer's own spans inside functions (`js startup`,
+`js update`, `av-thread`). A `tracing` layer in every build times them, but records
 nothing until the table is enabled: **Enable profiler** in the section, `/profile_enable on` in
 the console, or the benchmark autopilot for its measured phase. Enabled, it costs two clock reads
 per span and a map update per exit, tens of microseconds a frame on native.

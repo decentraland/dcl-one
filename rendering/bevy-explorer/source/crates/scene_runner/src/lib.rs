@@ -510,7 +510,6 @@ fn run_scene_loop(world: &mut World) {
     } else {
         Duration::from_nanos((1e9 / fps) as u64)
     };
-    let _span = bevy::log::info_span!("run_scene_loop").entered();
     let start_loop_time = Instant::now();
     // Bounded so we neither burn through a backlog after a hitch (a deadline already in
     // the past still leaves a 1ms floor to make progress) nor run a frame longer than the
@@ -1654,7 +1653,6 @@ fn process_scene_entity_lifecycle(
     scene_entities: Query<(), With<SceneEntity>>,
     primaries: PrimaryEntities,
 ) {
-    let _span = bevy::log::info_span!("scene entity lifecycle").entered();
     for (root, mut context, mut deleted_entities) in scenes.iter_mut() {
         if !context.nascent.is_empty() {
             debug!("{:?}: nascent: {:?}", root, context.nascent);
