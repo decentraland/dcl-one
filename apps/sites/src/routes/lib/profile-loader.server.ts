@@ -3,6 +3,7 @@ import { data, redirect } from "react-router";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
+import { readWallet } from "@/data/lib/auth/wallet-cookie";
 import { normalizeAddress } from "@/data/lib/catalyst/social/profile";
 import {
   badgesQuery,
@@ -14,19 +15,28 @@ import {
   placesQuery,
   profileQuery,
 } from "@/data/lib/profile/queries";
+import { isRouteFatal, type ProfileErrorReason } from "@/features/profile/errors";
 import { isOwnProfile, profileHref, readProfileTab, type ProfileTab } from "@/features/profile/tabs";
 
 export type ProfileLoaderData = {
   sid: string;
   address: string;
-  tab: ProfileTab;
-  /** Whether the verified wallet cookie names this profile, so the first render matches the server. */
+  /** Whether the signed-in wallet's cookie names this profile, so the first render matches the server. */
   own: boolean;
   dehydratedState: DehydratedState;
 };
 
-/** The status-bearing error the route's boundary renders on a document request. */
-export type ProfileRouteError = { address: string; reason: "not-found" | "unavailable" };
+/** The body of the status-bearing response the route's boundary renders on a document request. */
+export type ProfileErrorData = { address: string; reason: ProfileErrorReason };
+
+/** `path` with the request's query, minus the parameters a redirect has already turned into the path. */
+function keepQuery(path: string, url: URL): string {
+  const query = new URLSearchParams(url.search);
+  query.delete("tab");
+  query.delete("own");
+  const rest = query.toString();
+  return rest ? `${path}?${rest}` : path;
+}
 
 /** Public reads the active tab shows; a failure leaves them to the browser. */
 /** `assets` reaches here only for the member's own profile: `readProfileTab` refuses it otherwise. */
@@ -63,43 +73,58 @@ export async function profileLoader(
   const raw = params.address ?? "";
   const address = normalizeAddress(raw);
   if (!canReadProfile(address)) {
-    throw data({ address: raw, reason: "not-found" } satisfies ProfileRouteError, { status: 404 });
+    throw data({ address: raw, reason: "not-found" } satisfies ProfileErrorData, { status: 404 });
   }
 
   const session = sidLoader(request);
-  const own = isOwnProfile(address, session.wallet);
+  // The wallet cookie every sign-in method sets (the root loader reads the same one); the verified
+  // cookie only exists after a thirdweb sign-in.
+  const own = isOwnProfile(address, readWallet(request));
 
   const legacyTab = url.searchParams.get("tab");
   if (legacyTab !== null || url.searchParams.has("own")) {
-    throw redirect(profileHref(address, readProfileTab(legacyTab ?? "", own) ?? "overview"));
+    throw redirect(keepQuery(profileHref(address, readProfileTab(legacyTab ?? "", own) ?? "overview"), url));
   }
   const tab = readProfileTab(params.tab, own);
-  if (tab === null) throw redirect(profileHref(address));
-  if (raw !== address) throw redirect(profileHref(address, tab));
+  if (tab === null) throw redirect(keepQuery(profileHref(address), url));
+  const canonical = profileHref(address, tab);
+  if (url.pathname !== canonical) throw redirect(keepQuery(canonical, url));
 
+  // A visitor already gone is not read for; one who leaves mid-load stops the reads.
+  request.signal.throwIfAborted();
   const client = new QueryClient(QUERY_CLIENT_CONFIG);
+  const cancel = () => void client.cancelQueries();
+  request.signal.addEventListener("abort", cancel, { once: true });
   try {
     await Promise.all([client.fetchQuery(profileQuery(address)), prefetchTab(client, address, tab)]);
-  } catch {
-    throw data({ address, reason: "unavailable" } satisfies ProfileRouteError, { status: 503 });
+  } catch (error) {
+    // A profile read's failure is 503; anything else is a bug and stays a 500.
+    if (!isRouteFatal(error)) throw error;
+    throw data({ address, reason: "unavailable" } satisfies ProfileErrorData, { status: 503 });
+  } finally {
+    request.signal.removeEventListener("abort", cancel);
   }
   const dehydratedState = dehydrate(client);
   client.clear();
 
-  return session.wrap({ sid: session.sid, address, tab, own, dehydratedState } satisfies ProfileLoaderData);
+  return session.wrap({ sid: session.sid, address, own, dehydratedState } satisfies ProfileLoaderData);
 }
 
 /** `/profile`, `/profile/me[/:tab]`: the signed-in member's own profile, or sign-in first. */
 export function ownProfileRedirect(request: Request, tab?: string): never {
-  const wallet = sidLoader(request).wallet;
+  const url = new URL(request.url);
+  const wallet = readWallet(request);
   if (!wallet) {
-    const url = new URL(request.url);
     throw redirect(`/auth/login?redirectTo=${encodeURIComponent(url.pathname + url.search)}`);
   }
-  throw redirect(profileHref(wallet, readProfileTab(tab, true) ?? "overview"));
+  // `/profile/me?tab=places`, the query form of the profile site's old links, keeps its tab.
+  const requested = tab ?? url.searchParams.get("tab") ?? undefined;
+  throw redirect(keepQuery(profileHref(wallet, readProfileTab(requested, true) ?? "overview"), url));
 }
 
 /** `/profile/accounts/:address[/:tab]`, the profile site's old paths. */
-export function legacyAccountsRedirect(params: { address?: string; tab?: string }): never {
-  throw redirect(`${profileHref(params.address ?? "")}${params.tab ? `/${encodeURIComponent(params.tab)}` : ""}`);
+export function legacyAccountsRedirect(request: Request, params: { address?: string; tab?: string }): never {
+  const url = new URL(request.url);
+  const path = `${profileHref(params.address ?? "")}${params.tab ? `/${encodeURIComponent(params.tab.toLowerCase())}` : ""}`;
+  throw redirect(keepQuery(path, url));
 }

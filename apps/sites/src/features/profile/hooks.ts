@@ -19,21 +19,20 @@ import {
 } from "@/data/lib/profile/queries";
 import { EMPTY_ASSETS, mapAssets, type ProfileAssets } from "@/data/lib/profile/view";
 
-import { isRouteFatal } from "./errors";
-
 export function useProfile(address: string) {
   return useQuery({ ...profileQuery(address), enabled: canReadProfile(address) });
 }
 
 /**
- * The profile a profile page cannot render without. A failure with nothing cached reaches the route's
- * boundary; a failed background refetch keeps the profile on screen.
+ * The profile a profile page cannot render without. Any failure with nothing cached is thrown: the
+ * route's boundary shows a profile read's failure and hands any other error (a bug) to the root's.
+ * A failed background refetch keeps the profile on screen.
  */
 export function useRequiredProfile(address: string) {
   return useQuery({
     ...profileQuery(address),
     enabled: canReadProfile(address),
-    throwOnError: (error, query) => query.state.data === undefined && isRouteFatal(error),
+    throwOnError: (_error, query) => query.state.data === undefined,
   });
 }
 

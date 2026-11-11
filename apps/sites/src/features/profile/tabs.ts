@@ -34,11 +34,6 @@ export function profileTabs(own: boolean): readonly TabEntry[] {
   return own ? OWN_TABS : MEMBER_TABS;
 }
 
-/** Every tab some profile can show; a segment outside it is not a profile tab at all. */
-export function isProfileTab(segment: string): segment is ProfileTab {
-  return [...MEMBER_TABS, ...OWN_TABS].some((tab) => tab.id === segment);
-}
-
 /** The tab a URL segment names for this viewer, or `null` when this profile does not show it. */
 export function readProfileTab(segment: string | undefined, own: boolean): ProfileTab | null {
   const raw = (segment ?? "").trim().toLowerCase();
