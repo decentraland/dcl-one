@@ -56,7 +56,7 @@ The most important value here is the **Average FPS**, which rounds up the FPS fr
 
 
 > [!WARNING]
-> **📔 Note**: The renderer's FPS is not the same as the scene's updates of the game loop per second. The scene's logic is capped at 30 FPS, the renderer's FPS can go up to 60 or more.
+> **📔 Note**: The scene's game loop runs at the same rate as the renderer. Your systems run once per rendered frame, so the FPS shown here is also how many times per second your scene's logic updates.
 
 
 Hiccups refer to momentary pauses in the frame rate, which might have little impact in the overall FPS number but can be very noticeable to the player. These can typically occur when heavy assets are loaded or similar.

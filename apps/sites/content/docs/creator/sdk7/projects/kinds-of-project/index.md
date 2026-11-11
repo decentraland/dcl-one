@@ -30,7 +30,7 @@ These scenes are linked to NAME tokens. NAME tokens can be bought in the [Market
 
 Scenes published to a World have a parcel limitation of 300x300. The same [size limitations](/docs/creator/sdk7/optimizing/scene-limitations/) per parcel apply as in scenes published to LAND parcels, but you can add more parcels to your scene without any cost.
 
-If it's a Multi-Scene WORLD, different Collaborators (addresses) can have publishing rights to specific parcels of the WORLD, defined by the World Owner (the address that claimed the World NAME). Also, access to a World can be **Public** or **Private**. More information about [Managing Worlds](/docs/creator/scene-editor/publish/publish-scene/#managing-worlds)
+If it's a Multi-Scene WORLD, different Collaborators (addresses) can have publishing rights to specific parcels of the WORLD, defined by the World Owner (the address that claimed the World NAME). Also, access to a World can be **Public** or **Private**. More information in [Manage LANDs and Worlds](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#manage-a-world).
 
 A World can be **Public** or **Private**
 
@@ -45,6 +45,8 @@ Decentraland NAME holders enjoy dynamic storage capacity within the Foundation W
 - Each Decentraland NAME you own grants 100 MB of storage capacity (as well as a World).
 - Each Decentraland LAND parcel you own grants an additional 100 MB of storage capacity.
 - For every 2,000 MANA held in your wallet, an additional 100 MB of storage capacity is granted.
+
+Each upload may use what's left of your budget after everything you have deployed in all your Worlds, not counting the scenes the upload replaces. If your Worlds already use the whole budget, every upload is refused, see [Publishing to a World fails with 0 bytes](/docs/creator/sdk7/debugging/troubleshooting/#issue-publishing-to-a-world-fails-with-a-size-limit-of-0-bytes).
 
 The space in the Foundation Worlds Content Server can be used to host scenes as large as users want, utilizing the Decentraland NAMEs they own and the combined space granted by their collective Decentraland assets. For instance, a user with multiple Worlds (granted by owning multiple NAMES) and a combined storage capacity of 500 MB can choose to deploy one World with a 200 MB scene file, another with a 200 MB scene file, and a third with a 100 MB scene file. Alternatively, they could opt to deploy one World with a 300 MB scene file and another with a 200 MB scene file.
 

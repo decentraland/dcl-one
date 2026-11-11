@@ -74,10 +74,10 @@ To preview your scene on the [Decentraland mobile app](/docs/creator/build-for-m
 npm run start -- --mobile
 ```
 
-To make the preview run smoother and render 3D models just as they'll look once published, add the `--asset-bundles` flag. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
+The Desktop Explorer converts your 3D models to optimized asset bundles while it previews them, so they look exactly as they will once published. To load the raw models instead, pass `--lsd-raw-gltf` after a standalone `--`. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
 
 ```bash
-npm run start -- --asset-bundles
+npx sdk-commands start -- --lsd-raw-gltf
 ```
 
 See [preview scenes](/docs/creator/sdk7/getting-started/preview-scene/) for details and special options when running a preview.

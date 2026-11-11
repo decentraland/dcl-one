@@ -69,7 +69,7 @@ To run a preview of your scene, open it in the Creator Hub and click the **Play*
 
 * [Preview your scene](/docs/creator/sdk7/getting-started/preview-scene/) for more details.
 * Check the [Debug a scene](/docs/creator/sdk7/debugging/debug-in-preview/) for tips on how to debug any issues.
-* Enable **Compress Assets** in the **Desktop Client** submenu of **Play Options** (or run `npm run start -- --local-ab` from the CLI) to load your 3D models as optimized asset bundles. The preview runs smoother and shows the models just as they'll look once published. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
+* The Desktop Explorer previews your 3D models as optimized asset bundles, converted on your machine, so the preview runs smoother and shows the models exactly as they'll look once published. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
 
 
 > [!NOTE]

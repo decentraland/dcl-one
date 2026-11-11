@@ -2,13 +2,20 @@
 // gen-docs-content.mts -- vendor the decentraland/docs GitBook mirror into content/docs,
 // the committed tree the /docs routes render (src/data/lib/docs, src/features/docs).
 // Writes clean CommonMark per page, the SUMMARY.md navigation and page metadata
-// (manifest.json), the full-site search index, every referenced asset and images the
-// upstream Markdown loads from other hosts (_remote/). Raster images (PNG, JPEG, GIF) are
+// (manifest.json, with the moved paths each space's .gitbook.yaml redirects), the full-site
+// search index, every referenced asset and images the upstream Markdown loads from other hosts (_remote/). Raster images (PNG, JPEG, GIF) are
 // replaced by one WebP each (x.png -> x.webp, _media.json); the originals are not copied.
 // No HTML: the SSR routes render the Markdown.
 //
-//   node scripts/gen-docs-content.mts           sync content/docs with the mirror
-//   node scripts/gen-docs-content.mts --check   exit 1 when content/docs differs from what the mirror renders
+// A second source covers the locale variants the live site serves and the mirror does not hold
+// (docs-capture.mts): --capture reads the live sitemap index, fetches every variant page as
+// Markdown and records the capture in _capture.json (date, sitemaps, each page's sha256, the
+// images it loads). Runs without --capture keep the recorded capture as it is.
+//
+//   node scripts/gen-docs-content.mts             sync content/docs with the mirror and the recorded capture
+//   node scripts/gen-docs-content.mts --capture   also refresh the capture from docs.decentraland.org
+//   node scripts/gen-docs-content.mts --check     exit 1 when content/docs differs from what the mirror renders
+//                                                 or from the recorded capture
 //
 // Env: SRC_DOCS (the decentraland/docs checkout, default ${DCL_MIRRORS:-~/github.com-decentraland}/docs),
 // OUT (default content/docs), MAGICK, GIF2WEBP, TOKENCOUNT (a real tokenizer; token counts are omitted without one).
@@ -17,21 +24,28 @@ import fss from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import { validateDocs } from "./docs-validation.mts";
 import { DocsMedia, rasterKind, webpName } from "./docs-images.mts";
 import { RemoteImages } from "./docs-remote-images.mts";
+import {
+  buildNav, englishMatch, fetchText, groupTitles, LIVE, localUrl, mapBounded, parseSitemap,
+  parseSitemapIndex, splitCaptured, translationsOf, unescapeUrls, type Variant, variantOf, variantSpace,
+} from "./docs-capture.mts";
 
 const SITES = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CHECK = process.argv.includes("--check");
+const CAPTURE = !CHECK && process.argv.includes("--capture");
+const CAPTURE_LIMIT = 8;
 const MIRRORS = process.env.DCL_MIRRORS || path.join(os.homedir(), "github.com-decentraland");
 const SRC = path.resolve(process.env.SRC_DOCS || path.join(MIRRORS, "docs"));
 const OUT = path.resolve(process.env.OUT || path.join(SITES, "content/docs"));
 const BASE = "/docs";
 const media = new DocsMedia({ output: OUT, base: BASE, readOnly: CHECK });
 const remote = new RemoteImages({ output: OUT, mirrors: [MIRRORS, `${MIRRORS}-archived`], media, base: BASE, readOnly: CHECK });
-const KEEP_ORIGINAL = new Set(["player/images/favicon.ico"]);
+const FAVICON = "player/images/favicon.ico";
+const KEEP_ORIGINAL = new Set([FAVICON]);
 
 const LEGACY_URLS: Record<string, string> = {
   "/docs/faqs/my-account/": "/docs/player/faqs/my-account/",
@@ -54,7 +68,16 @@ const FALLBACK = "creator/images/wearables-and-emotes/creating-wearables/19_skin
 const FALLBACK_SHA256 = "faf9d0eb4c552ab630da2d11095ff8dd527c6138d872fff357811fd3f16e3dbf";
 const generatedPages = new Map<string, string>();
 
-interface DocSpace { id: string; title: string; blurb: string; icon: "home" | "laptop" | "document" | "api" | "spark"; header?: boolean }
+interface DocSpace {
+  id: string; title: string; blurb: string; icon: "home" | "laptop" | "document" | "api" | "spark"; header?: boolean;
+  path?: string; section?: string; language?: string; label?: string;
+  source?: "mirror" | "capture"; revision?: string; capturedAt?: string; sitemap?: string | null;
+}
+// The live sitemap of each English space (docs.decentraland.org/sitemap.xml).
+const LIVE_SITEMAP: Record<string, string> = {
+  player: `${LIVE}/sitemap-pages.xml`, creator: `${LIVE}/creator/sitemap-pages.xml`,
+  contributor: `${LIVE}/contributor/sitemap-pages.xml`, apis: `${LIVE}/apis/sitemap-pages.xml`,
+};
 
 const SPACES: DocSpace[] = [
   { id: "player", title: "Players", blurb: "Play, avatars, marketplace, DAO, wallets.", icon: "home", header: true },
@@ -77,7 +100,7 @@ const searchIndex: SearchEntry[] = [];
 interface NavNode { type?: "section" | "item"; title?: string; url?: string | null; icon?: string | null; children: NavNode[] }
 interface PageEntry {
   url: string; file: string; title: string; description: string | null; icon: string | null; space: string;
-  source: string | null; updatedAt: string | null; navUrl?: string; tokens?: number;
+  source: string | null; updatedAt: string | null; navUrl?: string; tokens?: number; alternates?: Record<string, string>;
 }
 const pages: PageEntry[] = [];
 const drift: string[] = [];
@@ -185,6 +208,36 @@ function fuzzyPage(url: string, fromRel: string): string | null {
   return null;
 }
 
+// GitBook declares moved pages in a space's .gitbook.yaml `redirects:` map: live path -> page file.
+function gitbookRedirects(yaml: string): [string, string][] {
+  const out: [string, string][] = [];
+  let inside = false;
+  for (const line of yaml.split("\n")) {
+    if (/^\S/.test(line)) { inside = /^redirects:/.test(line); continue; }
+    const m = inside ? line.match(/^\s+([^\s#:][^:]*?)\s*:\s*(\S+)\s*$/) : null;
+    if (m) out.push([m[1].replace(/^["']|["']$/g, ""), m[2].replace(/^["']|["']$/g, "")]);
+  }
+  return out;
+}
+
+// The redirect source URLs under /docs with the mirror page each one names; a source that is
+// itself a page, or a target that is no page (the file's case excepted), is left out.
+async function declaredRedirects(): Promise<Record<string, string>> {
+  const byLower = new Map([...PAGE_URLS].map((u) => [u.toLowerCase(), u]));
+  const redirects: Record<string, string> = {};
+  for (const space of SPACES) {
+    const yaml = await fs.readFile(path.join(SRC, space.id, ".gitbook.yaml"), "utf8").catch(() => null);
+    if (!yaml) continue;
+    for (const [from, to] of gitbookRedirects(yaml)) {
+      const source = cleanUrl(`${space.id}/${from}`);
+      const target = byLower.get(cleanUrl(`${space.id}/${to}`).toLowerCase());
+      if (!target) { console.warn(`[docs-content] redirect to a missing page: ${space.id}/${from} -> ${to}`); continue; }
+      if (!PAGE_URLS.has(source) && source !== target) redirects[source] = target;
+    }
+  }
+  return Object.fromEntries(Object.entries(redirects).sort(([a], [b]) => (a < b ? -1 : 1)));
+}
+
 function pageExists(p: string): boolean {
   const q = p.replace(/\/+$/, "");
   return fss.existsSync(path.join(SRC, q + ".md")) || fss.existsSync(path.join(SRC, q, "README.md")) || fss.existsSync(path.join(SRC, q));
@@ -258,15 +311,16 @@ function vendorRemoteImages(s: string): string {
 }
 
 // Rewrite links/images/HTML attrs in markdown, skipping code so examples stay intact.
-function rewriteLinks(md: string, fromRel: string): string {
+function rewriteLinks(md: string, resolve: (target: string) => string): string {
   const { text, restore } = stashCode(md);
   let s = text.replace(/(!?\[(?:[^\]\\]|\\.)*\])\(\s*(<[^>]*>|[^)\s]+)([^)]*)\)/g,
-    (_m, label, url, tail) => `${label}(${resolveLink(fromRel, url, true)}${tail})`);
-  s = s.replace(/^(\s*\[[^\]]+\]:\s*)(\S+)/gm, (_m, pre, url) => `${pre}${resolveLink(fromRel, url, true)}`);
+    (_m, label, url, tail) => `${label}(${resolve(url)}${tail})`);
+  s = s.replace(/^(\s*\[[^\]]+\]:\s*)(\S+)/gm, (_m, pre, url) => `${pre}${resolve(url)}`);
   s = s.replace(/\b(src|href|poster|data-src)=("([^"]*)"|'([^']*)')/gi,
-    (_m, attr, _q, dq, sq) => `${attr}="${resolveLink(fromRel, dq ?? sq ?? "", true)}"`);
+    (_m, attr, _q, dq, sq) => `${attr}="${resolve(dq ?? sq ?? "")}"`);
   return restore(vendorRemoteImages(s));
 }
+const mirrorLinks = (fromRel: string) => (target: string) => resolveLink(fromRel, target, true);
 
 function repairSource(body: string): string {
   return body
@@ -449,7 +503,7 @@ async function addPage(entry: Omit<PageEntry, "file" | "tokens">, md: string): P
 
 async function writePage(srcRel: string): Promise<void> {
   const { fm, body } = stripFrontMatter(await fs.readFile(path.join(SRC, srcRel), "utf8"));
-  let cleaned = rewriteLinks(embeds(repairSource(body)), srcRel).trim();
+  let cleaned = rewriteLinks(embeds(repairSource(body)), mirrorLinks(srcRel)).trim();
   const title = fmField(fm, "title") || (cleaned.match(/^#\s+(.+)$/m)?.[1]?.trim()) || path.basename(srcRel, ".md");
   const description = fmField(fm, "description");
   if (!/^#\s+/.test(cleaned)) cleaned = `# ${title}\n\n${cleaned}`;
@@ -525,6 +579,100 @@ async function pruneStale(): Promise<void> {
   await removeEmpty(OUT);
 }
 
+const CAPTURE_FILE = "_capture.json";
+interface CapturedPage extends PageEntry { live: string; sha256: string; en: string | null }
+interface CapturedVariant {
+  variant: Variant; capturedAt: string; live: number; groups: string[]; nav: NavNode; pages: CapturedPage[]; images: string[];
+}
+interface CaptureRecord {
+  index: string; capturedAt: string; variants: CapturedVariant[];
+  skipped: Array<{ sitemap: string; reason: string }>;
+}
+interface RawVariant { variant: Variant; capturedAt: string; groups: string[]; entries: Array<{ loc: string; lastmod: string | null; md: string }> }
+
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const spaceOf = (id: string) => SPACES.find((s) => s.id === id)!;
+
+function readCapture(): CaptureRecord | null {
+  try { return JSON.parse(fss.readFileSync(path.join(OUT, CAPTURE_FILE), "utf8")) as CaptureRecord; } catch { return null; }
+}
+
+async function fetchCapture(): Promise<{ index: string; raw: RawVariant[]; skipped: CaptureRecord["skipped"]; enLive: Record<string, string[]> }> {
+  const index = `${LIVE}/sitemap.xml`;
+  const raw: RawVariant[] = [];
+  const skipped: CaptureRecord["skipped"] = [];
+  for (const sitemap of parseSitemapIndex(await fetchText(index, "application/xml"))) {
+    const variant = variantOf(sitemap);
+    if (!variant) {
+      if (!Object.values(LIVE_SITEMAP).includes(sitemap)) skipped.push({ sitemap, reason: "not a known space or locale variant" });
+      continue;
+    }
+    if (!SPACES.some((s) => s.id === variant.section)) { skipped.push({ sitemap, reason: `no English space ${variant.section}` }); continue; }
+    if (walkMd(path.join(SRC, variant.path)).length) { skipped.push({ sitemap, reason: "the mirror holds this variant" }); continue; }
+    const capturedAt = new Date().toISOString();
+    const entries = parseSitemap(await fetchText(sitemap, "application/xml"));
+    const home = `${LIVE}/${variant.path}`;
+    const groups = groupTitles(await fetchText(`${home}/`, "text/html"));
+    const bodies = await mapBounded(entries, CAPTURE_LIMIT, async (entry) => {
+      const md = unescapeUrls(await fetchText(entry.loc.replace(/\/+$/, "") === home ? `${home}/readme.md` : `${entry.loc}.md`, "text/markdown"));
+      if (/^# Page Not Found\n/.test(md)) throw new Error(`live page not found as Markdown: ${entry.loc}`);
+      return md;
+    });
+    raw.push({ variant, capturedAt, groups, entries: entries.map((e, i) => ({ ...e, md: bodies[i] })) });
+    console.log(`[docs-content] captured ${variant.path}: ${entries.length} pages`);
+  }
+  const enLive: Record<string, string[]> = {};
+  for (const section of new Set(raw.map((r) => r.variant.section))) {
+    enLive[section] = parseSitemap(await fetchText(LIVE_SITEMAP[section], "application/xml")).map((e) => e.loc);
+  }
+  return { index, raw, skipped, enLive };
+}
+
+const spaceUrls = (space: string) => pages.filter((p) => p.space === space).map((p) => p.url);
+
+async function renderCapture(raw: RawVariant, enLive: string[], variants: Variant[]): Promise<CapturedVariant> {
+  const { variant } = raw;
+  const resolve = (target: string): string => {
+    const local = localUrl(target, variants);
+    if (local) return local;
+    const live = target.match(/^(?:https?:\/\/docs\.decentraland\.org)?(\/(?:player|creator|contributor|apis)\/[^#)\s]*)(#\S*)?$/i);
+    if (live) {
+      const hit = englishMatch(live[1], spaceUrls(live[1].split("/")[1]));
+      if (hit) return hit + (live[2] ?? "");
+      return `${LIVE}${live[1].replace(/\.md$/i, "")}${live[2] ?? ""}`;
+    }
+    return target;
+  };
+  const out: CapturedPage[] = [];
+  for (const [i, entry] of raw.entries.entries()) {
+    const url = localUrl(entry.loc, [variant])!;
+    // The English page a variant page translates, for the language switcher.
+    const en = enLive[i] ? englishMatch(enLive[i], spaceUrls(variant.section)) : null;
+    const enDescription = en ? pages.find((p) => p.url === en)?.description : null;
+    const { title, description, body } = splitCaptured(entry.md, Boolean(enDescription));
+    let cleaned = rewriteLinks(embeds(body), resolve).trim();
+    if (!/^#\s+/.test(cleaned)) cleaned = `# ${title}\n\n${cleaned}`;
+    const md = (description ? `> ${description}\n\n` : "") + hintsToBlockquote(cleaned) + "\n";
+    const file = pageFile(url);
+    await writeText(file, md);
+    out.push({ url, file, title: title || url, description, icon: null, space: variant.id, source: null, updatedAt: entry.lastmod, live: entry.loc, sha256: sha256(md), en });
+  }
+  const nav = buildNav(`/docs/${variant.path}/`, out, raw.groups) as NavNode;
+  const images = [...new Set(raw.entries.flatMap((e) => remoteImageUrls(e.md)))].sort();
+  console.log(`[docs-content] ${variant.path}: ${out.length} pages, ${raw.groups.length} groups (${spaceOf(variant.section).title})`);
+  return { variant, capturedAt: raw.capturedAt, live: raw.entries.length, groups: raw.groups, nav, pages: out, images };
+}
+
+// A recorded variant as it is: its files must still hold what the capture wrote.
+async function keepCapture(v: CapturedVariant): Promise<void> {
+  for (const page of v.pages) {
+    expected.add(page.file);
+    const current = await fs.readFile(path.join(OUT, page.file), "utf8").catch(() => null);
+    if (current === null) drift.push(`missing (capture): ${page.file}`);
+    else if (sha256(current) !== page.sha256) drift.push(`differs from the capture: ${page.file}`);
+  }
+}
+
 async function main(): Promise<void> {
   if (!fss.existsSync(path.join(SRC, "creator"))) throw new Error(`source docs mirror not found (expected the GitBook monorepo): ${SRC}`);
   await fs.mkdir(OUT, { recursive: true });
@@ -536,6 +684,12 @@ async function main(): Promise<void> {
   });
   const remoteUrls = new Set<string>();
   for (const rel of sources) for (const url of remoteImageUrls(repairSource(stripFrontMatter(fss.readFileSync(path.join(SRC, rel), "utf8")).body))) remoteUrls.add(url);
+  const recorded = readCapture();
+  const fetched = CAPTURE ? await fetchCapture() : null;
+  // A captured page keeps the text it was captured with, so an image the source repair replaces
+  // for the mirror's pages (gone upstream) is not fetched for a capture either.
+  const captured = fetched ? fetched.raw.flatMap((r) => r.entries.flatMap((e) => remoteImageUrls(e.md))) : (recorded?.variants ?? []).flatMap((v) => v.images);
+  for (const url of captured) if (repairSource(url) === url) remoteUrls.add(url);
   await remote.vendor(remoteUrls);
 
   const nav: Record<string, NavNode> = {};
@@ -557,7 +711,7 @@ async function main(): Promise<void> {
   // GitBook exposes the Player space at its site root; /docs/player/ stays as the
   // compatibility alias while /docs/ renders the same page with the Player nav.
   const rootParts = stripFrontMatter(await fs.readFile(path.join(SRC, "player/README.md"), "utf8"));
-  const rootBody = rewriteLinks(embeds(repairSource(rootParts.body)), "player/README.md").trim();
+  const rootBody = rewriteLinks(embeds(repairSource(rootParts.body)), mirrorLinks("player/README.md")).trim();
   await addPage({
     url: `${BASE}/`, title: "Welcome", description: "Everything you need to know to show up, hang out, and be part of Decentraland.",
     icon: fmField(rootParts.fm, "icon"), space: "player", source: "player/README.md", updatedAt: sourceUpdatedAt("player/README.md"), navUrl: `${BASE}/player/`,
@@ -565,7 +719,26 @@ async function main(): Promise<void> {
   const homeSearch = searchIndex.find((entry) => entry.url === `${BASE}/player/`);
   if (homeSearch) searchIndex.unshift({ ...homeSearch, url: `${BASE}/` });
 
-  referencedAssets.add("player/images/favicon.ico");
+  let capture: CaptureRecord | null = recorded;
+  if (fetched) {
+    const rendered: CapturedVariant[] = [];
+    for (const r of fetched.raw) rendered.push(await renderCapture(r, fetched.enLive[r.variant.section] ?? [], fetched.raw.map((x) => x.variant)));
+    const capturedAt = rendered.map((v) => v.capturedAt).sort()[0] ?? new Date().toISOString();
+    capture = { index: fetched.index, capturedAt, variants: rendered, skipped: fetched.skipped };
+  }
+  const variants = capture?.variants ?? [];
+  if (!fetched) for (const v of variants) await keepCapture(v);
+  for (const v of variants) {
+    nav[v.variant.id] = v.nav;
+    for (const { live: _live, sha256: _sha, en: _en, ...page } of v.pages) pages.push(page);
+  }
+  const translations = translationsOf(variants);
+  for (const page of pages) {
+    const alt = translations.get(page.url);
+    if (alt) page.alternates = Object.fromEntries(Object.entries(alt).sort(([a], [b]) => (a < b ? -1 : 1)));
+  }
+
+  referencedAssets.add(FAVICON);
   referencedAssets.add("player/images/DAO Organizational Chart/Revocation.webp");
   expected.add(FALLBACK);
   const fallback = await fs.readFile(path.join(OUT, FALLBACK)).catch(() => null);
@@ -590,8 +763,12 @@ async function main(): Promise<void> {
   const manifest = {
     generator: "sites/scripts/gen-docs-content.mts",
     source: { repo: "decentraland/docs", commit, committedAt, fallbackMedia: [{ file: FALLBACK, sourceCommit: "452eabb509a8a1806d3c503a94adbb886711e53f", sourceFile: "creator/images/wearables-and-emotes/creating-wearables/19_skin_uv.png", sourceSha256: "25cf00f8fb30012e1e8cd8eb646a55cbafb744c2dcec009adecc3161fb2f0493", sha256: FALLBACK_SHA256 }] },
-    spaces: SPACES,
+    spaces: [
+      ...SPACES.map((s): DocSpace => ({ ...s, language: "en", label: "EN", source: "mirror", revision: commit, sitemap: LIVE_SITEMAP[s.id] ?? null })),
+      ...variants.map((v): DocSpace => ({ ...variantSpace(v.variant, spaceOf(v.variant.section), v.capturedAt), source: "capture" }))
+    ],
     nav,
+    redirects: await declaredRedirects(),
     pages,
   };
   await writeText("manifest.json", JSON.stringify(manifest, null, 1) + "\n");
@@ -599,6 +776,7 @@ async function main(): Promise<void> {
   await writeText("_media.json", media.manifest());
   await writeText("_remote/sources.json", remote.manifest());
   for (const problem of validateDocs(generatedPages, expected)) drift.push(problem);
+  if (capture) await writeText(CAPTURE_FILE, JSON.stringify(capture, null, 1) + "\n");
   const failed = [...remote.entries.entries()].filter(([, e]) => "error" in e);
   for (const [url, e] of failed) drift.push(`remote image not vendored (${"error" in e ? e.error : ""}): ${url}`);
   if (!CHECK && drift.length) throw new Error(`invalid generated docs:\n${drift.join("\n")}`);
@@ -609,7 +787,7 @@ async function main(): Promise<void> {
       console.error("[docs-content] regenerate: node scripts/gen-docs-content.mts");
       process.exit(1);
     }
-    console.log(`[docs-content] content/docs matches ${SRC} @ ${commit.slice(0, 12)} (${pages.length} pages)`);
+    console.log(`[docs-content] content/docs matches ${SRC} @ ${commit.slice(0, 12)} and the capture of ${capture?.capturedAt ?? "(none)"} (${pages.length} pages)`);
     return;
   }
   if (drift.length) throw new Error(`invalid generated docs:\n${drift.join("\n")}`);

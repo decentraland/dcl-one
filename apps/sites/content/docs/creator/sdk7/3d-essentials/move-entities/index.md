@@ -562,7 +562,7 @@ MeshRenderer.setBox(myEntity)
 
 In this example we're moving an entity by 0.05 meters per tick of the game loop.
 
-`Vector3.Forward()` returns a vector that faces forward and measures 1 meter in length. In this example we're then scaling this vector down to 1/20 of its length with `Vector3.scale()`. If our scene has 30 frames per second, the entity is moving at 1.5 meters per second in speed.
+`Vector3.Forward()` returns a vector that faces forward and measures 1 meter in length. In this example we're then scaling this vector down to 1/20 of its length with `Vector3.scale()`. The resulting speed depends on the frame rate: at 60 frames per second, the entity moves at 3 meters per second, but on a machine running at 30 frames per second it only moves 1.5 meters per second.
 
 ![](/docs/creator/images/media/gifs/move.webp)
 
@@ -657,7 +657,7 @@ Transform.create(myEntity, {
 MeshRenderer.setBox(myEntity)
 ```
 
-The example above keeps movement at approximately the same speed as the movement example above, even if the frame rate drops. When running at 30 frames per second, the value of `dt` is 1/30.
+The example above moves the entity at a steady 1 meter per second, whatever the frame rate. When running at 60 frames per second, the value of `dt` is 1/60; at 30 frames per second, it's 1/30. To move at a different speed, multiply `dt` by that speed in meters per second: for example, `Vector3.scale(Vector3.Forward(), 3 * dt)` moves the entity at 3 meters per second.
 
 You can also smoothen rotations in the same way by multiplying the rotation amount by `dt`.
 

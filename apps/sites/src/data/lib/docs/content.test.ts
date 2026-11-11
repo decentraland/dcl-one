@@ -27,6 +27,19 @@ describe("resolveDocsRequest", () => {
     expect(resolve("/docs/player/faq")).toEqual({ kind: "redirect", location: "/docs/player/faq/" });
   });
 
+  it("redirects the paths docs.decentraland.org serves to the mirror pages they name", () => {
+    expect(resolve("/docs/faq/")).toEqual({ kind: "redirect", location: "/docs/player/faq/" });
+    expect(resolve("/docs/creator/scenes/intro/deep/?x=1")).toEqual({ kind: "redirect", location: "/docs/creator/intro/deep/?x=1" });
+    expect(resolve("/docs/creator/deep")).toEqual({ kind: "redirect", location: "/docs/creator/intro/deep/" });
+    expect(resolve("/docs/creator/nowhere/")).toEqual({ kind: "missing" });
+    expect(resolve("/docs/player/player-pt/nowhere/")).toEqual({ kind: "missing" });
+  });
+
+  it("follows the moves GitBook declares before matching slugs", () => {
+    expect(resolve("/docs/creator/worlds/cast/")).toEqual({ kind: "redirect", location: "/docs/creator/intro/deep/" });
+    expect(resolve("/docs/creator/worlds/cast?x=1")).toEqual({ kind: "redirect", location: "/docs/creator/intro/deep/?x=1" });
+  });
+
   it("serves committed files and refuses traversal and dotfiles", () => {
     expect(resolve("/docs/.gitbook/assets/shot.webp")).toMatchObject({ kind: "file", rel: ".gitbook/assets/shot.webp" });
     expect(resolve("/docs/nope/")).toEqual({ kind: "missing" });
@@ -55,6 +68,25 @@ describe("docsPageView", () => {
     const entry = { source: "x.png", width: 1170, height: 1710, bytes: 1 };
     expect(addImageDimensions('<img src="/docs/x.webp" width="33%">', () => entry)).toBe('<img src="/docs/x.webp" width="33%">');
     expect(addImageDimensions('<img src="/docs/x.webp" width="585">', () => entry)).toBe('<img src="/docs/x.webp" width="585" height="855">');
+  });
+
+  it("routes a captured locale variant with its sections and language choice", () => {
+    const pt = resolve("/docs/player/player-pt/");
+    if (pt.kind !== "page") throw new Error("expected a page");
+    const view = docsPageView(pt.page);
+    expect(view.spaces.map((s) => s.id)).toEqual(["player-pt", "creator"]);
+    expect(view.languages).toEqual([
+      { label: "EN", url: "/docs/player/", current: false },
+      { label: "PT", url: "/docs/player/player-pt/", current: true },
+    ]);
+    expect(view.breadcrumb[0]).toEqual({ title: "Player", url: "/docs/player/player-pt/" });
+    expect(view.editUrl).toBeNull();
+    const faq = resolve("/docs/player/faq/");
+    if (faq.kind !== "page") throw new Error("expected a page");
+    expect(docsPageView(faq.page).languages.map((l) => [l.label, l.url])).toEqual([["EN", "/docs/player/faq/"], ["PT", "/docs/player/player-pt/"]]);
+    const creator = resolve("/docs/creator/intro/");
+    if (creator.kind !== "page") throw new Error("expected a page");
+    expect(docsPageView(creator.page).languages).toEqual([]);
   });
 
   it("gives the home page the Player navigation entry", () => {

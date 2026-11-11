@@ -16,7 +16,7 @@ The assistant is on by default. Its settings have their own tab:
 1. Click the Creator Hub logo in the top-left corner and select **Settings**.
 2. Go to the **AI** tab.
 
-That tab holds the **Enable AI Assistant** switch, the **Bill this to an API key instead** option, the **Connect** list of coding CLIs, and the **Expose AI assistant MCP server** settings.
+That tab holds the **Enable AI Assistant** switch, the **Bill this to an API key instead** option, the **Connect** list of coding CLIs, and the **Allow other AI apps to edit your scenes** switch. See [Use your own AI tool instead](#use-your-own-ai-tool-instead).
 
 When the assistant is on, an **AI Assistant** button (the sparkles icon) appears in the editor's top bar, to the left of the **Code** button. Click it to open the chat panel beside your scene.
 
@@ -170,6 +170,21 @@ When the assistant runs, the Creator Hub downloads the official [Decentraland SD
 
 They are linked at `.claude/skills` and `.agents/skills` inside your project folder, and both are added to a `.gitignore` for you, so they never end up in your repo.
 
+### Keep your scene's own copy of the skills current
+
+Those links stay on your computer and never reach your repo. A scene can also have its own copy of the skills, which you can commit and share, for example to use them with your own AI tool. Each time you open a scene, the Creator Hub compares the scene's skills with the latest version and offers to install or update them:
+
+- **This scene doesn't have the Decentraland AI skills**, with an **Install** button. It appears every time you open a scene without them.
+- **AI skills update available for this scene**, with an **Update** button.
+
+Installing or updating shows **Installing the latest AI skills...** and then **AI skills are up to date**. The Creator Hub writes real skill folders into `.claude/skills` and `.agents/skills`, plus a `skills-lock.json` file, so you can commit them with your scene. It installs every skill except those for creating, publishing and migrating scenes, which the Creator Hub does for you.
+
+The check follows the **Scene Dependencies** setting on the **SCENES** tab of the settings, the same one that handles SDK updates. See [Change the scenes folder](/docs/creator/scene-editor/get-started/manage-scenes/#change-the-scenes-folder).
+
+- **Notify me of new version updates**: shows the notices above.
+- **Auto-update all my scenes**: installs or updates the skills without asking, then shows **AI skills are up to date**.
+- **Do nothing**: doesn't check.
+
 ## Files the assistant leaves in your scene folder
 
 The assistant can read and edit your open scene through a local MCP server. Each CLI is told about that server differently, so depending on which one you use, you may find new files in your project:
@@ -192,11 +207,23 @@ If you already have one of those configuration files, the Creator Hub merges its
 
 If you already work in Claude Code, Cursor, Codex, or another tool that speaks MCP, you can point it at the open scene rather than using the built-in panel. MCP (Model Context Protocol) is a standard way for an AI tool to call out to another program.
 
-1. Open the main menu from the Creator Hub logo, select **Settings**, and on the **AI** tab expand **Expose AI assistant MCP server**.
-2. Click **Copy configuration**.
-3. Paste it into your tool's MCP configuration.
+This is off by default. To turn it on:
 
-The copied configuration looks like this, with a real port and token filled in:
+1. Open the main menu from the Creator Hub logo, select **Settings**, and go to the **AI** tab.
+2. Switch on **Allow other AI apps to edit your scenes**.
+
+![The AI tab of App Preferences with Allow other AI apps to edit your scenes switched on, showing the configuration box with the server URL and a hidden token, and the Copy configuration button](/docs/creator/images/editor/ai-settings-external-access.webp)
+This switch is separate from **Enable AI Assistant**: the built-in assistant doesn't need it, and turning it off doesn't affect the assistant.
+
+### Connect Claude Code
+
+While the switch is on, the Creator Hub writes a `.mcp.json` file into the scene you have open in the editor. Claude Code started in that scene's folder reads it and connects on its own, with no setup.
+
+The Creator Hub only writes this file if your scene doesn't already have a `.mcp.json` of its own. It adds the file to your `.gitignore` first, and deletes it when you close the scene, turn the switch off, or quit the Creator Hub.
+
+### Connect any other tool
+
+Below the switch, click **Copy configuration** and paste it into your tool's MCP configuration. It looks like this, with a real port and token filled in:
 
 ```json
 {
@@ -210,16 +237,21 @@ The copied configuration looks like this, with a real port and token filled in:
 }
 ```
 
-For Claude Code, you can instead add it from a terminal in your scene folder:
+The Creator Hub also keeps the same details in an `mcp-server.json` file in its application data folder, so tools that know where to look can find them without you copying anything.
 
-```bash
-claude mcp add --transport http --scope local creator-hub http://127.0.0.1:<PORT>/mcp \
-  --header "Authorization: Bearer <TOKEN>"
-```
+### When an AI app asks for access
+
+An AI app on your computer can ask to connect while the switch is off. The Creator Hub then shows **An AI app on this computer wants to see and change your open scene.** Click **Allow** to turn the switch on, or **Don't allow** to keep it off. Nothing connects until you click **Allow**.
+
+### What connected tools can do
+
+A connected tool works on the scene you have open in the editor. When no scene is open, it gets the answer **No scene is open.**
+
+If an outside tool changes the scene while the built-in assistant is answering, **Undo AI changes** on that answer refuses to run, because it would also remove the other tool's changes. Use **Undo** in the editor instead.
 
 
 > [!WARNING]
-> **📔 Note**: The port and the token are new every time the Creator Hub starts. If your tool suddenly gets a `401` error, copy the configuration again. The server only listens on your own machine, and only ever acts on the scene you have open.
+> **📔 Note**: Only apps on your own computer can connect. The port and the token change every time the Creator Hub restarts. Turning the switch off also replaces the token and disconnects every tool right away, but the port stays the same. If your tool suddenly gets a `401` error, copy the configuration again.
 
 
 ## Related pages

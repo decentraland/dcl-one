@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import DclTopBar from "@ui/web/frames/DclTopBar";
 import { useChromeNav } from "@ui/web/frames/chrome-nav";
 import styles from "./DocsPage.module.css";
-import type { DocsPageView, DocsSpace } from "@/data/lib/docs/types";
+import { type DocsPageView, docsSpaceHome } from "@/data/lib/docs/types";
 import DocsIcon from "./DocsIcon";
 import { NavList } from "./DocsNav";
 import DocsSearch, { type DocsSearchHandle } from "./DocsSearch";
@@ -15,14 +15,6 @@ type Theme = "light" | "system" | "dark";
 const THEME_KEY = "dcl-docs-theme";
 // Runs before the first paint so a dark reader never sees a light flash.
 const THEME_BOOT = `try{var c=localStorage.getItem('${THEME_KEY}')||'system',d=c==='dark'||c==='system'&&matchMedia('(prefers-color-scheme:dark)').matches;document.documentElement.dataset.docsTheme=d?'dark':'light';document.documentElement.dataset.docsThemeChoice=c}catch(e){}`;
-const LANGUAGES: Array<[string, string]> = [
-  ["ES", "https://docs.decentraland.org/player/player-es/"],
-  ["PT", "https://docs.decentraland.org/player/player-pt/"],
-  ["KO", "https://docs.decentraland.org/player/player-ko/"],
-  ["ZH", "https://docs.decentraland.org/player/player-zh/"],
-];
-
-const spaceHome = (space: DocsSpace) => (space.id === "player" ? "/docs/" : `/docs/${space.id}/`);
 
 function applyTheme(choice: Theme) {
   const dark = choice === "dark" || (choice === "system" && matchMedia("(prefers-color-scheme:dark)").matches);
@@ -109,7 +101,7 @@ export default function DocsPage({ view }: { view: DocsPageView }) {
   return (
     <>
       <div className={"ui2 docs-topbar " + styles.topbar} data-header-layout={headerLayout}><DclTopBar active="learn" /></div>
-      <div className={"dcl-docs " + styles.root} data-header-layout={headerLayout}>
+      <div className={"dcl-docs " + styles.root} data-header-layout={headerLayout} lang={view.space.language}>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOT }} />
         <header className="site-header">
           <div className="spacebar">
@@ -118,24 +110,27 @@ export default function DocsPage({ view }: { view: DocsPageView }) {
             </button>
             <nav className="spaces" aria-label="Documentation spaces">
               {view.spaces.map((space) => (
-                <a key={space.id} href={spaceHome(space)} className={space.id === view.space.id ? "active" : undefined} aria-current={space.id === view.space.id ? "page" : undefined}>
+                <a key={space.id} href={docsSpaceHome(space)} className={space.id === view.space.id ? "active" : undefined} aria-current={space.id === view.space.id ? "page" : undefined}>
                   <DocsIcon name={space.icon} />
                   {space.title}
                 </a>
               ))}
             </nav>
             <DocsSearch ref={search} mobileOpen={mobileSearch} />
-            <details className="language">
-              <summary aria-label="Language">
-                <DocsIcon name="globe" />
-                <span className="language-label">EN</span>
-                <DocsIcon name="chevron" className="icon chevron" />
-              </summary>
-              <div className="language-menu" role="menu">
-                <a href="/docs/" aria-current="true">EN</a>
-                {LANGUAGES.map(([code, href]) => <a key={code} href={href}>{code}</a>)}
-              </div>
-            </details>
+            {view.languages.length ? (
+              <details className="language">
+                <summary aria-label="Language">
+                  <DocsIcon name="globe" />
+                  <span className="language-label">{view.space.label ?? "EN"}</span>
+                  <DocsIcon name="chevron" className="icon chevron" />
+                </summary>
+                <div className="language-menu" role="menu">
+                  {view.languages.map((language) => (
+                    <a key={language.label} href={language.url} aria-current={language.current ? "true" : undefined}>{language.label}</a>
+                  ))}
+                </div>
+              </details>
+            ) : null}
             <button className="mobile-search" type="button" aria-label="Open search" aria-expanded={mobileSearch} onClick={() => { if (mobileSearch) search.current?.close(); setMobileSearch(!mobileSearch); }}>
               <DocsIcon name="search" />
             </button>

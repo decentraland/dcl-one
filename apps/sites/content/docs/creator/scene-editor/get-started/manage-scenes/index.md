@@ -20,7 +20,7 @@ Once you confirm these steps, the scene project will be created. This may take a
 
 ### Start from a template
 
-To start from a ready-made scene instead of an empty one, click **Templates** on the **Scenes** tab, or scroll to the **Templates** row on the **Home** tab. Templates range from an **Empty Scene** to full scenes like an art gallery or a nightclub. You can filter them by difficulty. Click a template card to create a new scene based on it, then name it and choose a location as you would for an empty scene.
+To start from a ready-made scene instead of an empty one, click **Templates** on the **Scenes** tab, or scroll to the **Templates** row on the **Home** tab. Templates range from an **Empty Scene** to full scenes like an art gallery or a nightclub. You can filter them by difficulty: only the levels that at least one template uses appear as filters. Templates are bundled with the Creator Hub, so the list shows even when you're offline. Click a template card to create a new scene based on it, then name it and choose a location as you would for an empty scene.
 
 ![The Choose a Template screen, with Easy, Medium and Hard difficulty filters and a grid of template cards, including Empty Scene, Art Gallery Template and Cozy House Template.](/docs/creator/images/editor/templates-page.webp)
 
@@ -72,33 +72,10 @@ The same tab also controls what happens when a new version of the scene dependen
 
 To navigate to a project's folder, click the three dots on its card and select **Open Folder Location**.
 
-## Managing Worlds
+## Manage your LANDs and Worlds
 
-If you own a Decentraland NAME or ENS domain, you can publish scenes to your [Decentraland World](/docs/creator/sdk7/publishing/publishing-options/#decentraland-worlds). Worlds appear in the Scene Editor just like regular scenes, and you can publish to them using the same **Publish** button.
+Your scene projects live on the **Scenes** tab. The places you publish them to, your LAND and your Worlds, live on the **Manage** tab. There you can rename a World, see and unpublish the scenes on a LAND or World, add collaborators, check your Worlds storage and make a World private. See [Manage LANDs and Worlds](/docs/creator/scene-editor/publish/manage-lands-and-worlds/).
 
-A World has its own metadata (name, description, and thumbnail), separate from the metadata of each scene published to it. In Worlds with a single scene it's kept in sync with the scene's metadata automatically, in Worlds with multiple scenes it can only be edited in the **Manage** tab. See [World metadata vs scene metadata](/docs/creator/scene-editor/publish/publish-scene/#world-metadata-vs-scene-metadata).
+A World has its own metadata (name, description, and thumbnail), separate from the metadata of each scene published to it. In Worlds with a single scene it's kept in sync with the scene's metadata automatically, in Worlds with multiple scenes it can only be edited in **Manage**. See [World metadata vs scene metadata](/docs/creator/scene-editor/publish/publish-scene/#world-metadata-vs-scene-metadata).
 
-### Visualizing storage space
-
-Scenes published to Worlds count against a storage budget that is shared across all the Worlds owned by your wallet. The budget is calculated from your holdings: each Decentraland NAME or LAND parcel you own grants 100 MB, and every 2,000 MANA held in your wallet grants an additional 100 MB.
-
-You can check your used and remaining storage budget in two places:
-
-- The **Manage** section of the Creator Hub shows how much of your total budget is used and your total storage capacity. Click **View Details** for a breakdown of how your MANA, LAND, and NAME holdings add up.
-
-<img src="/docs/creator/.gitbook/assets/world-storage-budget.webp" width="300" />
-
-- The **Worlds** tab of the [Builder](https://decentraland.org/builder/worlds).
-
-### Undeploying scenes
-
-If you need to free up storage space, you can undeploy scenes from the World Content Server. This can be done through the Builder interface, which allows you to easily undeploy scenes to release storage space.
-
-For Decentraland NAME holders, if you exceed your allocated storage space (for instance, through asset sales or transfers to another wallet), you will be provided with a 48-hour window to address the situation. Failure to do so will result in your Worlds becoming inaccessible after this grace period.
-
-To regain access to a blocked World, you can either:
-
-- Acquire more MANA, Decentraland NAMEs, or LANDS to increase your storage capacity
-- Undeploy existing scenes from the World Content Server to free up storage space
-
-See [Worlds size limits](/docs/creator/sdk7/projects/kinds-of-project/#size-limits) for detailed information on how storage capacity is calculated.
+If you go over your Worlds storage budget, for example after selling or transferring a NAME, you have 48 hours to free space or add to your budget before your Worlds become inaccessible. Unpublish scenes you no longer need from the World's **Scenes** tab in **Manage**. See [World storage budget](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#world-storage-budget).

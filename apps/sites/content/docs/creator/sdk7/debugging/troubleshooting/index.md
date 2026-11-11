@@ -97,6 +97,19 @@ To fix these dependencies, you often must resort to calling functions or object 
 
 Also ensure you have your Node version up to date, at least version 20.
 
+#### Issue: Publishing to a World fails with a size limit of 0 bytes
+
+The full message reads "The deployment is too big. The maximum total size allowed is 0 bytes for scenes". It means your wallet's Worlds already use your whole storage budget, so there's no room left for any upload, however small. Shrinking this scene won't help.
+
+The Worlds server counts everything you have deployed in all your Worlds, minus the scenes this publish replaces. To publish again:
+
+- Free space: unpublish another World, or other scenes of this World, from the [Manage page](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#world-storage-budget) of the Creator Hub.
+- Or grow your budget: get more NAMEs, LAND or MANA.
+
+Being over budget also starts the 48-hour grace period for your other Worlds. See [Worlds size limits](/docs/creator/sdk7/projects/kinds-of-project/#size-limits).
+
+This only applies to Worlds on Decentraland NAMEs. Worlds on ENS domains have a fixed limit per World.
+
 #### Issue: Running `npm run deploy` or `npm run build` reports type errors
 
 Your scene might have type errors reported by TypeScript, for example stating that a certain variable might be type `any` or that `undefined` or `null` are not allowed. When running `npm run deploy`, it also runs `npm run build`, which is a bit more strict with these checks than `npm run start`.
@@ -141,7 +154,7 @@ The low Level of Detail (LOD) versions of your assets, used to render the scene 
 
   Note that the generation of compressed asset-bundle versions of your models takes the servers a little time (usually a few minutes, longer for very large scenes or when the servers are busy). You can check if the models are being loaded as compressed asset bundles or not by writing the following command into the chat window `/detectabs`. Compressed models are tinted green, non-compressed are tinted red.
 
-  You can also reproduce this conversion locally before publishing, by enabling [optimized assets in the preview](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets). This lets you catch and debug these issues without having to deploy the scene.
+  The Desktop Explorer runs the same conversion locally when you [preview your scene](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets), so you can catch these issues without deploying. To compare, preview again with **Load Raw GLTFs** turned on: if the models look fine that way, the conversion is the problem.
 
 #### Issue: My scene vanished entirely
 

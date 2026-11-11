@@ -7,6 +7,24 @@ export interface DocsSpace {
   blurb: string;
   icon: DocsSpaceIcon;
   header?: boolean;
+  /** A locale variant's folder under /docs (`player/player-pt`); English spaces have none. */
+  path?: string;
+  /** The English space a locale variant translates. */
+  section?: string;
+  language?: string;
+  /** The language switcher label: EN, ES, PT, KO, ZH. */
+  label?: string;
+  /** Where the space comes from: the decentraland/docs mirror or a dated live capture. */
+  source?: "mirror" | "capture";
+  revision?: string;
+  capturedAt?: string;
+  sitemap?: string | null;
+}
+
+/** A space's landing URL: the Player space is the site root, a locale variant sits at its live path. */
+export function docsSpaceHome(space: DocsSpace): string {
+  if (space.path) return `/docs/${space.path}/`;
+  return space.id === "player" ? "/docs/" : `/docs/${space.id}/`;
 }
 
 export interface DocsNavNode {
@@ -28,6 +46,8 @@ export interface DocsPageEntry {
   updatedAt: string | null;
   navUrl?: string;
   tokens?: number;
+  /** The same page in the other languages of its section, by label. */
+  alternates?: Record<string, string>;
 }
 
 export interface DocsManifest {
@@ -35,6 +55,8 @@ export interface DocsManifest {
   source: { repo: string; commit: string; committedAt: string };
   spaces: DocsSpace[];
   nav: Record<string, DocsNavNode>;
+  /** The moved paths each space's .gitbook.yaml redirects, by source URL under /docs; every target is a page URL. */
+  redirects?: Record<string, string>;
   pages: DocsPageEntry[];
 }
 
@@ -58,7 +80,10 @@ export interface DocsPageView {
   editUrl: string | null;
   updatedAt: string | null;
   space: DocsSpace;
+  /** The header's sections, each in the page's language where that variant exists. */
   spaces: DocsSpace[];
+  /** The language choice: every language of the page's section, empty when it has one. */
+  languages: Array<{ label: string; url: string; current: boolean }>;
   nav: DocsNavNode;
   navUrl: string;
   breadcrumb: Array<{ title: string; url: string | null }>;

@@ -131,17 +131,17 @@ The `dt` argument is the real time that elapsed since the last tick of the game 
 
 The smoother a scene runs, the more frequently ticks occur and the smaller each `dt` value is. When a tick takes longer to process, more time passes before the next one and `dt` grows accordingly.
 
-This scene-side frame rate is caped at 30 ticks per second, in which case the value of `dt` is _1/30_ (0.0333...).
+The scene's game loop runs at the same rate as the engine renders frames. For example, if the player's machine renders at 60 FPS, your systems run 60 times per second and `dt` is roughly _1/60_ (0.0166...). This applies to the scene the player is standing in. Other nearby scenes that are loaded update less often.
 
 ![](/docs/creator/images/media/ecs-framerate.webp)
 
-When the processing of a frame takes longer, the drawing of that frame is delayed, and the `dt` passed on the next tick reflects that longer interval. The engine doesn't compensate for the delay retroactively; `dt` always reports the actual elapsed time so your systems can adjust to it.
+When the player's machine takes longer to process a frame, the frame rate drops: ticks happen less often, and the `dt` passed on the next tick reflects that longer interval. The engine doesn't compensate for the delay retroactively; `dt` always reports the actual elapsed time so your systems can adjust to it.
 
 ![](/docs/creator/images/media/ecs-framerate-heavy.webp)
 
 Ideally, you should avoid your scene dropping frames, as it impacts the quality of the player's experience. Since this is dependant on the processing power of the player's machine, it's always a possibility that your scene should be ready to handle gracefully.
 
-The `dt` variable is useful when frame processing exceeds the default time. Assuming that the current frame will take as much time as the previous one, this information may be used to calculate how much to adjust a gradual change, so that the rate of change appears steady and in proportion to the lag between frames.
+Since the frame rate varies between machines and from moment to moment, use `dt` to scale any gradual change. Multiplying a change by `dt` expresses it per second instead of per frame, so the rate of change stays steady at any frame rate.
 
 See [entity positioning](/docs/creator/sdk7/3d-essentials/entity-positioning/) for examples of how to use `dt` to make movement smoother.
 

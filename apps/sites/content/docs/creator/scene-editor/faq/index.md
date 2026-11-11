@@ -177,14 +177,25 @@ See [Worlds size limits](/docs/creator/sdk7/projects/kinds-of-project/#size-limi
 </details>
 
 <details>
-<summary><strong>I edited my World's name, description, or thumbnail in the Manage tab, but it changed back after I published. Why?</strong></summary>
+<summary><strong>I edited my World's name, description, or thumbnail in the Manage page, but it changed back after I published. Why?</strong></summary>
 
 A World has its own metadata (name, description, and thumbnail), separate from the metadata of each scene published to it.
 
-If your World contains a single scene, the World's metadata is updated to match the scene's metadata every time you publish. Any changes made in the World's **Settings** in the **Manage** tab will be overwritten on the next publish. To make the changes stick, edit the scene's settings instead (the pencil icon in the Scene Editor).
+If your World contains a single scene, the World's metadata is updated to match the scene's metadata every time you publish. Any changes made on the World's **Details** tab in the **Manage** page will be overwritten on the next publish. To make the changes stick, edit the scene's settings instead (the pencil icon in the Scene Editor).
 
-If your World contains multiple scenes, the World's metadata is independent from the scenes, and the **Manage** tab is the only place to edit it.
+If your World contains multiple scenes, the World's metadata is independent from the scenes, and the World's **Details** tab in **Manage** is the only place to edit it. See [Manage LANDs and Worlds](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#details).
 
 See [World metadata vs scene metadata](/docs/creator/scene-editor/publish/publish-scene/#world-metadata-vs-scene-metadata) for details.
+
+</details>
+
+<details>
+<summary><strong>The Creator Hub shows "Something went wrong" or says my scene stopped unexpectedly. What should I do?</strong></summary>
+
+If part of the Creator Hub runs into an error, it shows **Something went wrong** instead of a blank window. Your scenes and files are safe. Click **Try again** to reload that part. If that doesn't help, use **Go to Home**, or **Reload** the window. If it happens while publishing, click **Close** and start the publish again.
+
+Under the Bevy renderer, the process that runs your scene in the editor can also stop. The Creator Hub restarts it for you and shows **The scene stopped unexpectedly and was reloaded. Changes from the last few seconds may not have been saved.** Check your last edits.
+
+If it keeps stopping, you see **The scene keeps stopping unexpectedly. Go back and reopen it, or check the logs.** Go back to your scenes and open the scene again. If the problem continues, [report a bug](/docs/creator/sdk7/debugging/report-bug/).
 
 </details>

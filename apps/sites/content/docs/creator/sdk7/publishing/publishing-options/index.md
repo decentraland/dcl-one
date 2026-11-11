@@ -28,7 +28,7 @@ There are two ways to get a Decentraland World:
   You can also get a World by buying an [ENS domain](https://ens.domains/), a decentralized name that can be used across both Web2 & 3. Worlds granted from ENS domains have a fixed maximum scene file size of 36 MB per World, regardless of your other Decentraland holdings.
 
 Once you have a NAME or ENS domain, you can publish scenes to that World using the standard [Publishing](/docs/creator/sdk7/publishing/publishing/) flow.  
-You can also let others publish on to your Decentraland World. Check the [Managing Worlds documentation](/docs/creator/scene-editor/publish/publish-scene/#managing-worlds) to learn more about Multi Scene Worlds and other topics like Private Worlds.
+You can also let others publish on to your Decentraland World. See [Manage LANDs and Worlds](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#manage-a-world) to add collaborators or make a World private, and [Multi-Scene Worlds](/docs/creator/scene-editor/publish/publish-scene/#multi-scene-worlds) to publish several scenes in one World.
 
 ## World Storage Capacity
 
@@ -41,7 +41,7 @@ You can check your used and remaining storage budget in the **Manage** section o
 - [Worlds as a project type](/docs/creator/sdk7/projects/kinds-of-project/#publish-to-worlds) - Learn about size limits and how Worlds differ from LAND scenes
 - [Publishing to Worlds](/docs/creator/sdk7/publishing/publishing/#publishing-to-worlds) - Step-by-step publishing instructions
 - [World configuration](/docs/creator/sdk7/projects/scene-metadata/#world-configuration) - Configure skybox, communication settings, and more
-- [Managing Worlds](/docs/creator/scene-editor/get-started/manage-scenes/#managing-worlds) - Visualize storage space and manage deployments
+- [Manage LANDs and Worlds](/docs/creator/scene-editor/publish/manage-lands-and-worlds/) - Visualize storage space and manage deployments
 - [World FAQs](/docs/creator/scene-editor/faq/) - Common questions about Worlds
 
 ## Publishing to Decentraland LAND

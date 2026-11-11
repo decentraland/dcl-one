@@ -553,7 +553,7 @@ The `fixedAdapter` property indicates which Communication Service should be used
 
 
 > [!WARNING]
-> **📔 Note**: Setting `fixedAdapter` to `"offline:offline"` (or enabling **Single Player** in World Settings via the Creator Hub) disables live streaming. The streaming feature relies on the communications layer to deliver video to viewers. If you need live streaming in your world, do not use this option.
+> **📔 Note**: Setting `fixedAdapter` to `"offline:offline"` (or enabling **Single Player** on the World's [Settings tab](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#settings) in the Creator Hub) disables live streaming. The streaming feature relies on the communications layer to deliver video to viewers. If you need live streaming in your world, do not use this option.
 
 
 ### Places listing configuration

@@ -23,6 +23,9 @@ it("repairs upstream content, validates links and pinned media, and detects drif
   write(source, "player/faqs/my-account.md", "# Account\n");
   write(source, "creator/README.md", '# Creator\n\n![\x01](images/pic.webp)\n\n\\\x01src="../images/wearables-and-emotes/creating-wearables/19\\_skin\\_uv.png"width="600"/>\n\n![Revocations Committee](https://github.com/lordlikedao/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Revocation.png?raw=true)\n');
   write(source, "creator/images/pic.webp", "image");
+  write(source, "creator/sdk7/publishing/publishing-options.md", "# Publishing\n");
+  write(source, "creator/3d-modeling/meshes.md", "# Meshes\n");
+  write(source, "creator/.gitbook.yaml", "structure:\n  readme: README.md\n\nredirects:\n  worlds/cast: sdk7/publishing/publishing-options.md\n  3d-modeling/meshes: 3d-modeling/meshes.md\n  development-guide/sdk-101: sdk7/Publishing/Publishing-Options.md\n  gone: nowhere.md\n");
   write(source, "player/images/favicon.ico", "icon");
   write(source, "player/images/DAO Organizational Chart/Revocation.webp", "chart");
   write(output, fallback, fs.readFileSync(path.join(process.cwd(), "content/docs", fallback)));
@@ -37,6 +40,10 @@ it("repairs upstream content, validates links and pinned media, and detects drif
   expect(creator).toContain(`![Avatar skin UV map](/docs/${fallback})`);
   expect(creator).toContain("/docs/player/images/DAO%20Organizational%20Chart/Revocation.webp");
   expect(creator).not.toContain("\x01");
+  expect(JSON.parse(fs.readFileSync(path.join(output, "manifest.json"), "utf8")).redirects).toEqual({
+    "/docs/creator/development-guide/sdk-101/": "/docs/creator/sdk7/publishing/publishing-options/",
+    "/docs/creator/worlds/cast/": "/docs/creator/sdk7/publishing/publishing-options/",
+  });
   expect(run(true).status).toBe(0);
   fs.unlinkSync(path.join(output, fallback));
   expect(run(true).stderr).toContain("missing or altered pinned image");

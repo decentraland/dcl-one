@@ -125,7 +125,7 @@ Entities and components are places to store information about the objects in a s
 
 Systems are where we implement game logic, they carry out the actions that need to be updated or checked periodically on every tick of the game loop.
 
-A system is a pure and simple function that gets called once on every tick (up to 30 times a second), following the [_update pattern_](http://gameprogrammingpatterns.com/update-method.html).
+A system is a pure and simple function that gets called once on every tick (once per frame rendered by the engine), following the [_update pattern_](http://gameprogrammingpatterns.com/update-method.html).
 
 ```ts
 // Basic system
@@ -157,9 +157,9 @@ The [game loop](http://gameprogrammingpatterns.com/game-loop.html) is the backbo
 
 In most traditional software programs, all events are triggered directly by player actions. Nothing in the program's state will change until the player clicks on a button, opens a menu, etc.
 
-But interactive environments and games are different from that. Not all changes to the scene are necessarily caused by a player's actions. Your scene could have animated objects that move on their own or even non-player characters that have their own AI. Some player actions might also take multiple ticks to be completed, for example if the opening of a door needs to take a whole second, the door's rotation must be incrementally updated about 30 times as it moves.
+But interactive environments and games are different from that. Not all changes to the scene are necessarily caused by a player's actions. Your scene could have animated objects that move on their own or even non-player characters that have their own AI. Some player actions might also take multiple ticks to be completed, for example if the opening of a door needs to take a whole second, the door's rotation must be incrementally updated on every tick as it moves (60 times, if the player's machine renders at 60 FPS).
 
-We call each iteration over the loop a _tick_. Decentraland scenes are rendered at 30 ticks per second, whenever possible. If the machine is struggling to render each tick, it may result in less frequent updates.
+We call each iteration over the loop a _tick_. Decentraland scenes run one tick per rendered frame, so the number of ticks per second matches the engine's frame rate. If the machine is struggling to render each frame, it results in less frequent updates.
 
 In each tick, the scene is updated; then the scene is re-rendered, based on the updated values.
 

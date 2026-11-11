@@ -168,7 +168,7 @@ export class AvocadoScript {
 
 - The **constructor** defines parameters that show up as editable fields on the Script component in the Creator Hub. Don't remove `src` or `entity`.
 - **`start()`** runs **once**, when the scene loads. Use it for setup: creating components, registering click handlers, etc.
-- **`update(dt)`** runs on **every frame** of the game, roughly 30 times per second. Use it for continuous behavior, like movement. `dt` tells you how many seconds passed since the last frame.
+- **`update(dt)`** runs on **every frame** of the game, at the same rate as the engine renders (for example, 60 times per second at 60 FPS). Use it for continuous behavior, like movement. `dt` tells you how many seconds passed since the last frame.
 
 Inside the class, `this.entity` always refers to the entity that holds the Script component: in this case, your avocado. This is what makes scripts reusable: attach the same script to ten items, and each one acts on itself.
 

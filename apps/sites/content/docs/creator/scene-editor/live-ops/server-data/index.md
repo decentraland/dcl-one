@@ -14,10 +14,10 @@ You can view all of this data from a web UI, and you can also **change it direct
 
 You can open the storage UI directly at [decentraland.org/storage](https://decentraland.org/storage).
 
-You can also reach it from the Creator Hub:
+For a World, you can also reach it from the Creator Hub:
 
-1. Open the **Manage** section of the Creator Hub.
-2. Click the **three dots** next to a place where you have published content.
+1. Open the **Manage** page of the Creator Hub, on the **Worlds** tab.
+2. Click the **three dots** on the World's card.
 3. Select **View Storage**.
 
 <img src="/docs/creator/images/editor/view-storage.webp" alt="View Storage option in the Creator Hub" width="400"/>

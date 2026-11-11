@@ -269,39 +269,32 @@ See [NFTs](/docs/creator/scene-editor/build/nfts/) for more details.
 
 ![ ](/docs/creator/images/editor/health-bar.webp)
 
-The **Health Bar** smart item is a great building block for several game mechanics. It can be used in various ways:
+The **Health Bar** smart item tracks the player's health and shows it as a bar floating over the avatar. Drag it anywhere into your scene: when the scene runs, it attaches itself to the player, so you don't need to nest it under anything. The health value is shared with the other players in the scene, so everyone sees the same bar.
 
-- Nest it under the **Player** to display the player's health over the avatar
+Set its **Max Health**, **Start Health**, colors, and whether to show the bar at all in the item's properties.
 
-  ![ ](/docs/creator/images/editor/nested-under-player.webp)
+Other smart items change the player's health:
 
-- Nest it under the **Camera** to display it fixed on the UI
-
-  ![ ](/docs/creator/images/editor/nested-under-camera.webp)
-
-- Nest it under literally any item in the scene to keep track of that item's health
-
-  ![ ](/docs/creator/images/editor/nested-under-barrel.webp)
-
-Other items can interact with the health bar to add or subtract health from it.
-
-- Items like the **Spikes** or **Robot Enemy** can lower health
+- **Spikes** and the **Robot Enemy** damage the player. The **Exploding Barrel** damages everything around it when it explodes.
 
   ![ ](/docs/creator/images/editor/reduce-health.webp)
 
-- items like **First Aid** or the **Healing Pad** can restore it.
+- **First Aid** and the **Healing Pad** restore it.
 
   ![ ](/docs/creator/images/editor/restore-health.webp)
 
-You must configure the Health Bar to define what will happen when the health equals 0. You might respawn the player to the position of a **Respawn Pad** smart item, reset the counter for their score, respawn any enemies, display a UI text, or whatever makes sense in your game logic.
+To decide what happens when the health runs out, use the Health Bar's **Reactions** section. It has a button for each of its events: **When damaged…**, **When healed…** and **When death…**. For example, respawn the player at a **Respawn Pad**, reset a score counter, or show a message. Reactions work like those of the Trigger Area, see [Trigger Area](/docs/creator/scene-editor/interactivity/trigger-area/). The Health Bar also has **Damage**, **Heal**, **Reset** and **Remove** actions that other items can call. **Remove** takes the Health Bar out of the scene.
 
-You can also trigger actions when the health is lower than a certain value, for example play a special music or show a UI hint when health is less than 3.
-
-Health bars can be configured to affect anything! For example, add a health bar nested under the **Wooden Door** smart item. This bar can have its health lowered by the player using the **Sword** smart item, but also from an explosion from the **Barrel** or the attack of the **Robot Enemy**. For this to work, configure the health bar so that it performs an action on its parent item when its value is 0.
+Some items have health of their own instead of a Health Bar: the **Exploding Barrel**, the **Wooden Fence** and the **Robot Enemy**. Set their **Health** in their properties. When it runs out, the barrel explodes, the fence falls, and the robot is destroyed.
 
 ![ ](/docs/creator/images/editor/wall-with-health.webp)
 
-Weapons like the **Sword** can be picked up by the player, and then used to cause damage on any other item with a health bar that's near the player when performing the action.
+Weapons like the **Sword** can be picked up by the player. Once picked up, the player presses the primary button to swing it, damaging the enemies and destructible items in front of them.
+
+
+> [!NOTE]
+> **📔 Note**: These health and combat items are scripts that ship with the item: open the item's `.ts` file from its Script component to read it or change it. See [Using the Script Component](/docs/creator/scene-editor/code/script-component/). Copies placed in a scene before they became scripts keep working as they are.
+
 
 ## Multiplayer
 

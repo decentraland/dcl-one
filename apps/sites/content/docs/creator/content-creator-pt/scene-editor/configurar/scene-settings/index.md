@@ -1,0 +1,168 @@
+> Edite os metadados da sua cena
+
+# Definições da cena
+
+Clique no **ícone de lápis** no canto superior direito da tela. Isto abre uma série de propriedades ao nível da scene para editar.
+
+![](/docs/_remote/a64bc0ae30e4d852f97ccd78.webp)
+
+Aqui pode configurar várias propriedades, incluindo o título e a miniatura, o tamanho da scene, as categorias da scene e os toggles de funcionalidades.
+
+Veja [Metadados da scene](/docs/creator/content-creator-pt/scenes-sdk7/tipos-de-projetos/scene-metadata/).
+
+## Detalhes da scene
+
+O **Detalhes** aba permite configurar vários campos sobre a sua scene. Estes campos são mostrados aos jogadores que possam visitar a sua scene, por exemplo ao expandir a localização no mapa, ao serem convidados a teletransportar-se ou ao partilhar uma ligação para a scene nas redes sociais. Certifique-se de que torna a informação aqui atrativa e precisa para gerar mais tráfego para a sua scene!
+
+![](/docs/_remote/0d1050cf72d4ecbad89ddda0.webp)
+
+Os seguintes campos estão disponíveis:
+
+* **Nome**
+* **Descrição**
+* **Miniatura**
+* **Categorias**
+* **Nome do criador**
+* **Email de contacto do criador** (opcional)
+* **Endereço da Wallet do criador** (opcional)
+
+Veja [metadados da scene](/docs/creator/content-creator-pt/scenes-sdk7/tipos-de-projetos/scene-metadata/) para mais detalhes sobre estes campos.
+
+
+> [!NOTE]
+> **📔 Nota**: Se publicar a sua scene num [World](/docs/creator/content-creator-pt/scenes-sdk7/publicacao/publishing-options/#decentraland-worlds), o World tem o seu próprio nome, descrição e miniatura, separados dos da scene. Se o World contiver uma única scene, os metadados do World são atualizados para corresponder aos detalhes da scene em cada publicação, pelo que este painel é tudo o que precisa de editar. Se o World contiver várias scenes, os metadados do World só podem ser editados na **seção Gerenciar** aba do Creator Hub. Consulte [Metadados do World vs metadados da scene](/docs/creator/content-creator-pt/scene-editor/publicar/publish-scene/#world-metadata-vs-scene-metadata).
+
+
+
+> [!WARNING]
+> **📔 Nota**: A **Classificação etária** da scene não é editada neste painel. Pode definir o `rating` campo diretamente no ficheiro `scene.json` ou, para scenes publicadas num World, alterar a **Classificação de conteúdo** nas Definições do World do Creator Hub depois de publicar. A Decentraland é uma plataforma para maiores de 18, por isso a classificação a definir é `Um` para Adultos. Consulte [Classificação etária](/docs/creator/content-creator-pt/scenes-sdk7/tipos-de-projetos/scene-metadata/#age-rating).
+
+
+### Miniatura da scene
+
+A miniatura tem de ser uma imagem .png ou .jpg com uma **16:9** proporção. 1920x1080 pixels é o tamanho a apontar. Outros tamanhos funcionam desde que mantenham as mesmas proporções 16:9.
+
+Uma imagem que não seja 16:9 é recusada: ao importar uma, é mostrado um erro, e ao escolher uma imagem com proporção incorreta que já esteja no seu projeto é mostrado **Miniatura não suportada** e mantém a miniatura que já tinha.
+
+Algumas partes da plataforma mostram uma versão quadrada reduzida da miniatura, recortada até ao quadrado central. Isso corta cerca de 22% de cada lado. Mantenha tudo o que seja essencial, como texto ou logótipos, dentro dessa área segura para que não se perca.
+
+O **Detalhes** aba mostra a sua miniatura em largura total, com essas duas faixas laterais sombreadas para que possa ver exatamente o que uma vista quadrada elimina, e o tamanho real em píxeis da imagem por baixo.
+
+![Área segura da miniatura da scene: a imagem completa 1920x1080, com o quadrado central 1080x1080 marcado como a área segura e as faixas esquerda e direita marcadas como cortadas](/docs/_remote/a4fca710bad41737e2da1248.webp)
+
+
+> [!NOTE]
+> **💡 Dica**: Se não fornecer uma miniatura, a scene usa a captura automática que vê no cartão da scene. Essa captura é recortada a partir do centro para 16:9 e nunca é ampliada, por isso pode acabar por ficar menor do que 1920 de largura. Carregar a sua própria imagem é quase sempre melhor.
+
+
+#### Mantenha o ficheiro abaixo de 1 MB
+
+Mantenha a miniatura em 1 MB (1,048,576 bytes) ou menos. Publicar uma scene não verifica o tamanho, mas [Definições do World](/docs/creator/content-creator-pt/scene-editor/publicar/publish-scene/#world-settings) verifica: quando o Creator Hub guarda as definições de um World, uma miniatura com mais de 1 MB é rejeitada com um erro como este:
+
+```
+Miniatura inválida: o tamanho 1185064 bytes excede o máximo de 1048576 bytes (1MB).
+```
+
+Um PNG comum de 1920x1080 pode ultrapassar o limite. Duas formas de o manter abaixo desse valor:
+
+* **Exportar um JPEG em vez de um PNG**, com qualidade elevada. Por exemplo, `ffmpeg -i cover.png -vf scale=1344:756 -q:v 2 cover.jpg` redimensiona a imagem para 1344x756 e produz um ficheiro de cerca de 100 KB.
+* **Renderizar a 1344x756** em vez de 1920x1080. Continua a ser 16:9, e o ficheiro menor deixa bastante margem.
+
+#### Não dê ao seu ficheiro o nome `autogenerated-thumbnail.png`
+
+O Creator Hub captura o viewport para `assets/Images/autogenerated-thumbnail.png` sempre que gera uma miniatura para si, incluindo quando uma publicação começa. Substitui o que quer que esteja já nesse caminho. Projetos criados antes do Creator Hub 0.52.0 podem ter uma `pasta assets/images/` em minúsculas, e o Creator Hub continua a usá-la.
+
+Nada lhe indica que isso aconteceu: o Creator Hub só reescreve a entrada da miniatura em `scene.json` quando o ficheiro para o qual aponta está em falta, e depois da substituição o ficheiro continua lá.
+
+Guarde a sua própria capa com um nome diferente, como `assets/Images/cover.png`, e aponte o **Miniatura** campo para esse ficheiro.
+
+### Gorjetas
+
+Pode receber gorjetas dos jogadores que visitam a sua scene. Para ativar as gorjetas, vá para a **Detalhes** aba nas definições da scene e forneça um endereço Ethereum em **Endereço da Wallet do criador**.
+
+![](/docs/_remote/9c99df3549a6adf960b5d332.webp)
+
+Quando um jogador visita a sua scene, verá um ícone de mealheiro no canto superior esquerdo da tela. Clicar nele abre um modal onde pode enviar-lhe uma gorjeta. Este menu também pode ser acedido ao abrir as informações da sua scene no mapa.
+
+![](/docs/_remote/2e01580f2f84c6ab2edcbf00.webp)
+
+O modal de gorjeta permite ao jogador selecionar a quantidade de MANA que pretende enviar. O jogador tem de possuir MANA na sua Wallet para enviar uma gorjeta. Se o endereço que forneceu estiver ligado a um NAME da Decentraland, este modal mostrará o nome do proprietário da Wallet juntamente com o endereço Ethereum.
+
+![](/docs/_remote/1cf2999882d7d551c8ac0687.webp)
+
+Receberá uma notificação na aba de notificações da Decentraland sempre que um jogador lhe enviar uma gorjeta.
+
+## Layout
+
+Pode editar o tamanho da sua scene clicando no *ícone de lápis* e depois alterando o número de linhas e colunas.
+
+As scenes na Decentraland ocupam uma ou várias parcelas LAND adjacentes. Cada parcela LAND mede 16x16 metros.
+
+Defina o número de parcelas para as linhas e colunas e clique em **Aplicar layout** para que isso afete a forma como a sua scene aparece no Canvas do Scene Editor.
+
+![](/docs/_remote/7d1efe3c48ae28dafce2eb3d.webp)
+
+Para construir algo para implantar nas parcelas LAND que possui, certifique-se de que a forma da scene corresponde à forma do local onde quer implantá-la.
+
+
+> [!NOTE]
+> **💡 Dica**: Pode desativar cada célula na grelha clicando nela. Isto permite desenhar formas não retangulares para o layout da sua scene.
+> 
+> <img src="/docs/_remote/6bf863ba796d30b4746af1be.webp" alt="" data-size="original">
+
+
+Se possuir um Decentraland NAME, também pode implantar a sua scene num [Decentraland World](/docs/creator/content-creator-pt/scenes-sdk7/publicacao/publishing-options/#decentraland-worlds). Nesse caso, pode usar qualquer layout de até 300x300 parcels sem precisar de as possuir, mas terá um limite de tamanho em MB.
+
+Veja [Tipos de projeto](/docs/creator/content-creator-pt/scenes-sdk7/tipos-de-projetos/kinds-of-project/) para compreender melhor as diferentes opções.
+
+### Vista avançada
+
+Também pode clicar no **botão Definir coordenadas (Avançado)** para listar manualmente as coordenadas da sua scene.
+
+![](/docs/_remote/2393cd3a4a250cc4420ad0a4.webp)
+
+Em **Coordenadas personalizadas**, escreva as coordenadas de cada uma das parcelas onde deseja publicar. Separe as coordenadas x e y com uma vírgula, e cada conjunto de coordenadas com espaços. Lembre-se de que todas estas coordenadas têm de ser adjacentes para serem válidas. Por exemplo:
+
+`78,-2 79,-2 78,-3 79,-3`
+
+No **Ponto de origem** campo, defina qual das coordenadas na scene deve ser tratada como o ponto de origem. Esta tem de ser uma das coordenadas que listou no **Coordenadas personalizadas** campo. Recomenda-se definir a parcela no canto inferior esquerdo da scene.
+
+## Restrições da scene
+
+Pode desativar determinadas funcionalidades na sua scene se assim o entender, caso possam ser abusadas ou entrar em conflito com o tipo de experiência que quer criar.
+
+![](/docs/_remote/5c421faac03084ef8453fff3.webp)
+
+* **Silenciar Voice Chat**: Impede que os jogadores na sua scene usem voice chat.
+* **Desativar Nearby Voice Chat**: Impede que os jogadores na sua scene usem o voice chat próximo (baseado na proximidade).
+* **Desativar Smart Wearables e Portable Experiences**: Impede que os jogadores usem [Smart Wearables](/docs/creator/content-creator-pt/scenes-sdk7/tipos-de-projetos/smart-wearables/) ou [Portable Experiences](/docs/creator/content-creator-pt/scenes-sdk7/tipos-de-projetos/portable-experiences/).
+
+## Controlo do Skybox
+
+Pode controlar a hora do dia do skybox na **Definições** aba. Pode definir uma hora do dia fixa para a sua scene. Todos os jogadores verão a scene com esta hora do dia, e o skybox não seguirá o ciclo dia/noite.
+
+No Creator Hub, abra as definições da scene e clique na **Definições** aba para encontrar a **Skybox** secção. Desmarque a **Auto** opção para evitar usar o ciclo dia/noite e defina a hora do dia que quiser.
+
+![](/docs/_remote/6242ab0073574f8cc2c9e7d9.webp)
+
+
+---
+
+# Agent Instructions
+This documentation is published with GitBook. GitBook is the documentation platform designed so that both humans and AI agents can read, navigate, and reason over technical content effectively. Learn more at gitbook.com.
+
+## Querying This Documentation
+If you need additional information that is not directly available in this page, you can query the documentation by asking a question.
+
+Perform an HTTP GET request on the following URL with the `ask` and `goal` query parameters:
+
+```
+GET https://docs.decentraland.org/creator/content-creator-pt/scene-editor/configurar/scene-settings.md?ask=<question>&goal=<user_goal>
+```
+
+`ask` is the immediate question: it should be specific, self-contained, and written in natural language.
+`goal` is what the user is ultimately trying to achieve, the reason they need the answer. Sharing it helps GitBook give you a better, more relevant answer. A goal is most helpful when it describes the outcome the user wants rather than restating the question. For example, with `ask=how do I create an API token`, a goal like `automate deployments from our CI pipeline` lets GitBook tailor the answer to that use case.
+
+The response will contain a direct answer to the question and relevant excerpts and sources from the documentation.
+
+Use this mechanism when the answer is not explicitly present in the current page, you need clarification or additional context, or you want to retrieve related documentation sections.

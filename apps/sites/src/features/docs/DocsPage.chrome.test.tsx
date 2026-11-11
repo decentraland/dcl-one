@@ -26,6 +26,7 @@ const view: DocsPageView = {
   next: null,
   html: "<p>Documentation</p>",
   toc: [],
+  languages: [],
 };
 describe("when Docs adapts its offsets to the owning header layout", () => {
   it.each(["native", "legacy"] as const)(

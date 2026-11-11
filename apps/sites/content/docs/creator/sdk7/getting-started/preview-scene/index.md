@@ -28,7 +28,6 @@ Select **Desktop Client** in the **Play Options** menu, then hover over it to op
 - **Enable Landscape Terrains**: Toggles the landscape around the scene. This is enabled by default, disable it to lower the scene's memory footprint. It's greyed out when the scene's own settings already hide the terrain.
 - **Multi-Instance Preview**: Lets several Explorer windows run at the same time, so you can [test a multiplayer scene locally](#test-a-multiplayer-scene-locally). With this on, each window asks you to sign in, so you can connect as a different player in each one. Only visible when your project uses SDK 7.20.4 or later.
 - **Enable MCP Server**: Launches the Explorer with the MCP automation server enabled, so AI agents can see and control the running preview. Only visible when your project uses SDK 7.25.0 or later. See [Vibe Coding with AI](/docs/creator/sdk7/getting-started/vibe-coding/#let-the-ai-see-your-scene-in-world) for the full workflow.
-- **Compress Assets**: Previews the scene with locally generated asset bundles, matching how it renders in production after [asset bundle conversion](/docs/creator/sdk7/optimizing/performance-optimization/#asset-bundle-conversion). The first run converts all assets, which can take several minutes on large scenes. Only visible when your platform and your project's SDK version support it. See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
 
 The scene's console output doesn't need a menu option. The Creator Hub opens it for you every time you run a preview. See [The Creator Hub console](#the-creator-hub-console).
 
@@ -68,7 +67,6 @@ You can add the following flags to the `npm run start` command to change its beh
 - `-- -w` or `-- --no-watch` to not watch for filesystem changes and avoid hot-reload whenever the scene's code changes.
 - `-- --ci` To run the parcel previewer on a remote unix server.
 - `-- --multi-instance` Allow running multiple Explorer instances simultaneously.
-- `-- --asset-bundles` Preview with optimized asset bundles. The Desktop Explorer converts the scene's assets into asset bundles itself during preview, matching how the scene renders in production. Equivalent to the **Compress Assets** option in Creator Hub. Only available with the Desktop Client (not the Bevy Web client). See [Preview with optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets).
 - `-- --no-client` Suppress every auto-launch (desktop Explorer deeplink, browser open, mobile QR). The file watcher still notifies a desktop Explorer if it connects on its own. Useful when an external tool owns the Explorer process.
 - `-- --mcp` Enable the MCP server in the Explorer (forwarded as a deep link parameter).
 - `-- --mcp-port` Port for the MCP server in the Explorer (forwarded as a deep link parameter). For example: `npm run start -- --mcp --mcp-port 3001`.
@@ -80,28 +78,30 @@ You can add the following flags to the `npm run start` command to change its beh
 
 ## Preview with optimized assets
 
-When you publish a scene, the Decentraland servers convert all of its 3D models to asset bundles, an optimized format that is much lighter to load and render. See [Asset bundle conversion](/docs/creator/sdk7/optimizing/performance-optimization/#asset-bundle-conversion). By default, local previews skip this step and load the raw models instead.
+When you publish a scene, the Decentraland servers convert all of its 3D models to asset bundles, an optimized format that is much lighter to load and render. See [Asset bundle conversion](/docs/creator/sdk7/optimizing/performance-optimization/#asset-bundle-conversion).
 
-Enable optimized assets to run this same conversion locally when you preview your scene. This has two benefits:
+The Desktop Explorer runs this same conversion on your machine when you preview your scene, so you don't need to turn anything on. This has two benefits:
 
 - The preview loads faster and runs smoother, especially on scenes with heavy 3D models.
 - You see the models exactly as players will see them after publishing, so you can catch any issues with the asset compression before you publish.
 
-This option only affects your local preview. The published scene is always converted on the servers, whether you use this option or not.
+This only affects your local preview. The published scene is always converted on the servers.
 
-To enable it:
-
-- **In the Creator Hub**: open **Play Options** next to the **Play** button, hover over **Desktop Client**, and check **Compress Assets**.
-- **From the CLI**: run `npm run start -- --asset-bundles`.
-
-![](/docs/creator/images/editor/optimize-assets-checkbox.webp)
-
-With this option enabled, the Decentraland explorer converts the scene's 3D models to asset bundles on your machine before loading them. The conversion is near instant for most scenes, but the first preview can take longer if the scene has very heavy assets. Converted models are cached, so on later previews only new or modified assets need to be converted.
+The conversion is near instant for most scenes, but the first preview can take longer if the scene has very heavy assets. Converted models are cached, so on later previews only new or modified assets need to be converted.
 
 
 > [!NOTE]
-> **💡 Tip**: If the conversion of an asset fails for any reason, the preview falls back to loading the raw 3D models, just like a regular preview.
+> **💡 Tip**: If the conversion of an asset fails for any reason, the preview falls back to loading the raw 3D model.
 
+
+### Preview the raw models instead
+
+To skip the conversion and load your original `.glb` and `.gltf` files, for example to check whether a problem comes from the conversion:
+
+- **In the Creator Hub**: click the Creator Hub logo, select **Settings**, open the **EDITOR** tab and check **Load Raw GLTFs** under **Play Options**. It's off by default. If a preview is already running, it restarts with the new setting the next time you click **Play**.
+- **From the CLI**: add `--lsd-raw-gltf` after a standalone `--`, for example `npx sdk-commands start -- --lsd-raw-gltf`. This needs `@dcl/sdk` 7.26.0 or later in your project.
+
+This setting only affects the Desktop Explorer. The mobile app and the Bevy Web client ignore it.
 
 ## Upload a scene to decentraland
 
@@ -134,9 +134,9 @@ You can also open it by pressing the **\`** key on your keyboard. You can also p
 
 ## The Creator Hub console
 
-The Creator Hub shows the same output without leaving the editor, and it does so by default. Run a preview and a **CONSOLE** tab appears next to **FILE SYSTEM** and **ASSET PACKS** in the panel at the bottom of the editor.
+The Creator Hub shows the same output without leaving the editor, and it does so by default. Run a preview and a **CONSOLE** tab appears next to **LOCAL ASSETS**, **CUSTOM ITEMS** and **ASSET PACKS** in the panel at the bottom of the editor.
 
-To stop the console from opening, uncheck **Open Debug Console** under **Play Options** on the **EDITOR** tab of the Creator Hub settings.
+To stop the console from opening, uncheck **Open Debug Console** under **Play Options** on the **EDITOR** tab of the Creator Hub settings. The same section has **Enable Landscape Terrains** and [Load Raw GLTFs](#preview-the-raw-models-instead).
 
 To move the console out of the way, click the pop-out icon in its header, labeled **Open console in a separate window**. The console opens as its own window titled **Console**, which you can move to a second monitor and keep visible while you edit.
 
@@ -165,7 +165,7 @@ As an alternative, you can open a second Decentraland explorer window by writing
 
 
 > [!NOTE]
-> **💡 Tip**: For most scenes, the simplest way to preview with asset bundles is to enable [optimized assets](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets), which converts your models locally and always reflects their latest version. The mode below is an alternative that reuses the bundles already published on the servers.
+> **💡 Tip**: For most scenes, the default preview is all you need: it [converts your models locally](/docs/creator/sdk7/getting-started/preview-scene/#preview-with-optimized-assets) and always reflects their latest version. The mode below is an alternative that reuses the bundles already published on the servers.
 
 
 For heavy scenes with many 3D models, you can speed up scene loading and reloading by reusing the [asset bundles](/docs/creator/sdk7/optimizing/performance-optimization/#asset-bundle-conversion) that are already published on Decentraland's servers, instead of loading the raw unoptimized 3D models. This is especially useful when iterating on code-only changes.

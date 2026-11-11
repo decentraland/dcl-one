@@ -112,6 +112,11 @@ The allowed types for the constructor parameters are:
 * `boolean`
 * `ActionCallback`
 * `Slider<Min, Max, Step>`
+* A choice of strings, like `'small' | 'large'`
+* An object, like `{ x: number; y: number }`
+* A list, like `string[]` or `Array<{ entity: Entity; label: string }>`
+
+The Creator Hub turns each parameter name into a readable label: `maxHealth` shows as **Max Health**.
 
 ### Number parameters with a slider
 
@@ -135,6 +140,86 @@ constructor(
 > **📔 Note**: Both `public` and `private` constructor parameters are exposed to Creator Hub. The `private` keyword only restricts access within the `BuildingScript` class. For more details, see the official TypeScript documentation on  
 > [Parameter Properties](https://www.typescriptlang.org/docs/handbook/2/classes.html#parameter-properties).
 
+
+### Choice parameters
+
+Type a string parameter as a union of strings to edit it with a dropdown. The default value is the one selected at first.
+
+```ts
+constructor(
+  public src: string,
+  public entity: Entity,
+  // A dropdown with three options, starting on 'player'
+  public target: 'all' | 'player' | 'non_player' = 'player',
+) {}
+```
+
+### Group parameters in an object
+
+Type a parameter as an object to show its fields together, in a group that you can expand and collapse. Groups start collapsed.
+
+```ts
+constructor(
+  public src: string,
+  public entity: Entity,
+  // Shows as a "Spawn Point" group with X, Y and Z fields
+  public spawnPoint: { x: number; y: number; z: number } = { x: 8, y: 0, z: 8 },
+) {}
+```
+
+Objects can contain other objects and lists. Write the shape inline, as above: the Creator Hub doesn't read named types, so a parameter typed with an `interface` or a `type` alias you declared elsewhere doesn't show its fields.
+
+### List parameters
+
+Type a parameter as an array to let the creator add as many rows as they need. Each row has a trash button, and an **Add** button adds a new one.
+
+```ts
+constructor(
+  public src: string,
+  public entity: Entity,
+  // Each row has an Entity picker and a text field
+  public targets: Array<{ entity: Entity; label: string }> = [],
+) {}
+```
+
+`T[]` and `Array<T>` work the same way.
+
+### Narrow pickers with tags
+
+Add one of these tags in a `/** */` comment right before a parameter, or before a field of an object parameter, to change how the Creator Hub edits it. On a list, the tag applies to each row.
+
+| Tag | Use it on | What it does |
+| --- | --- | --- |
+| `@components <name> …` | An `Entity` | Only offers entities that have one of the listed components. |
+| `@actionsOf <field>` | A `string` | Shows a dropdown with the actions of the entity picked in the sibling `<field>`. |
+| `@format wallet` | A `string` | Edits the value as a wallet address. |
+
+```ts
+constructor(
+  public src: string,
+  public entity: Entity,
+  public buttons: Array<{
+    /** @components asset-packs::Actions */
+    entity: Entity
+    /** @actionsOf entity */
+    action: string
+  }> = [],
+  /** @format wallet */
+  public owner: string = '',
+) {}
+```
+
+In this example, each row of **Buttons** only lets you pick items that have actions, and its **Action** dropdown lists the actions of the item picked in that row. Until an item is picked, the dropdown reads **Select an item first**. If a saved action no longer exists on the item, the field says so.
+
+The tags only change the editor. At runtime your script receives plain values: an entity, a string with the action name, and a string with the address.
+
+### File parameters
+
+A string parameter can hold the name of a file that ships with your script, like a sound or a model. Your script reads it from its own folder, as `` `${this.src}/${this.sound}` ``. See [Default parameters](#default-parameters).
+
+The Creator Hub checks these values. If a value names a file that should be in the script's folder but isn't, the field shows `"<file name>" is missing`. URLs and ordinary text are never flagged.
+
+When you rename or move a file inside the script's folder in the **Local Assets** tab, the parameters that use it are updated for you, and deleting it warns you that it's in use. Moving the file out of the script's folder can't be followed, and the Creator Hub tells you that some references couldn't be updated.
 
 ### Accessing Parameters inside the Script
 

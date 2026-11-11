@@ -236,13 +236,13 @@ A dialog opens listing all assets in your scene and highlights those not referen
 
 ![](/docs/creator/images/editor/clean-up-assets.webp)
 
-Select the assets you want to delete using the checkboxes, then click **Remove Selected** to permanently remove them.
+Select the assets you want to delete using the checkboxes, then click **Remove Selected** to remove them.
 
 Deleting an item from the scene does not remove its files. Imported models, textures, or sounds remain in your project until you clean them up, so review unused assets periodically.
 
 
 > [!WARNING]
-> **Important:** If your scene contains code that references assets, some in-use assets may appear as unused. This dialog only detects assets referenced by components in the Creator Hub UI. After you click **Remove Selected**, the files are deleted from the project folder, this action is permanent and can't be undone.
+> **Important:** If your scene contains code that references assets, some in-use assets may appear as unused. This dialog only detects assets referenced by components in the Creator Hub UI. After you click **Remove Selected**, the files are deleted from the project folder. If you removed something by mistake, press Ctrl+Z (Cmd+Z on Mac) to bring the files back.
 
 
 ## Scene settings

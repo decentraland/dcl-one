@@ -25,10 +25,12 @@ To assign admins, you need to add the **Admin Tools** smart item to your scene.
 
 
 > [!WARNING]
-> **📔 Note**: Update your scene to use the latest dependencies.
+> **📔 Note**: The Admin Tools smart item needs `@dcl/sdk` 7.33.0 or later in your scene. With an older SDK, the scene fails to build after you add it. Update your scene to use the latest dependencies.
 >
 > <img src="/docs/creator/images/editor/admin/update-dependencies.webp" alt=" " data-size="original">
 
+
+Admin Tools is a script: its settings appear as groups of fields in the item's Script component. You can also change how the admin panel looks, see [Customize the admin panel](#customize-the-admin-panel).
 
 While you're developing the scene and trying it locally, you are always an admin. Once the scene is published, anyone with publish permissions to the scene is also automatically an admin. This includes:
 
@@ -36,7 +38,7 @@ While you're developing the scene and trying it locally, you are always an admin
 - Anyone who is granted **Operator rights** on these parcels or name. See [Give permissions](/docs/player/marketplace/land-manager/#give-permissions).
 - Any user renting that land. See [Rentals](/docs/player/marketplace/rentals/).
 
-To assign additional admins that don't have publish permission but can do live-ops in the scene:
+To assign additional admins that don't have publish permission but can do live-ops in the scene, add their wallet addresses before publishing, in the **Admin Allow List** of the **Authorized Admin Users** group. Or add them once the scene is live:
 
 1. Publish the scene and visit the live version as an admin
 2. Open the **Permissions** tab (via the icon tabs at the top of the admin panel).
@@ -97,7 +99,7 @@ To enable this, you need to add a **Video Player** smart item to your scene and 
 >     You can include as many video screens as you want. In general, avoid having more than one different video playing at the same time, as that hurts performance a lot.
 
 
-2.  Open the Admin Tools Smart Item, make sure the **Video Screens** checkbox is enabled for this section to show. Then select the screen from a dropdown list and give it a friendly name to display on the Admin UI. You can add as many Video Screens as you want, each screen is controlled independently.
+2.  Open the Admin Tools smart item and expand the **Video Control** group. Make sure **Is Enabled** is checked. Under **Video Players**, click **Add**, pick the screen in the **Entity** field (it only lists Video Player items) and give it a **Custom Name** to display on the admin panel. You can add as many screens as you want, each screen is controlled independently.
 
     <img src="/docs/creator/images/editor/admin/multi-video-setup.webp" alt="Scene name" width="300"/>
 
@@ -174,11 +176,25 @@ Click **View Ban List** to see the list of currently banned players. From this l
 To Trigger an action from any smart item in the scene:
 
 - Add a smart item to your scene
-- Open the settings for the **Admin Tools** Smart Item in the Creator Hub
-- In the **Smart item actions** section, add the smart item from the dropdown, give it a custom name and select a default action
+- Open the settings for the **Admin Tools** Smart Item in the Creator Hub and expand the **Smart Items Control** group
+- Under **Smart Items**, click **Add**, pick the item in the **Entity** field (it only lists items that have actions), give it a **Custom Name**, and choose its **Default Action** from the dropdown
 
 Once the above is configured, admins can trigger the action by opening the **Smart Items** tab of the admin panel and selecting an item from the dropdown list. They can then pick one of the item's actions from the **Actions** dropdown and click **Play Action** to trigger it. There's also a button to **Hide/Show** the selected item.
 
 <img src="/docs/creator/images/editor/admin/smart-item-actions.webp" alt="Scene name" width="300"/>
 
 You can also show or hide any smart item in this list, even if it doesn't include an action to do that.
+
+## Customize the admin panel
+
+The Admin Tools smart item comes with two files, which the Creator Hub copies into your scene when you add the item:
+
+- `AdminTools.ts`: the script that reads the settings you make in the Creator Hub and starts the panel.
+- `AdminPanel.tsx`: the layout of the in-world admin panel, written with [React ECS](/docs/creator/sdk7/2d-ui/onscreen-ui/).
+
+Edit `AdminPanel.tsx` to make the panel your own: add a tab, rearrange the header, add link buttons, or change its branding. The contents of each tab (video, announcements, smart items, moderation) and the services behind them come from the `@dcl/asset-packs` library, so you only edit the frame around them.
+
+
+> [!NOTE]
+> **📔 Note**: An Admin Tools item placed in a scene before it became a script keeps working as it was, with its original settings panel. To get the editable panel, delete it and add Admin Tools again, then set it up from scratch.
+

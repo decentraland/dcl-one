@@ -17,7 +17,7 @@ The [Creator Hub](https://decentraland.org/create) includes an **Analytics** sec
 
 ## View your scene's analytics
 
-1. Open the Creator Hub and sign in with your account.
+1. Open the Creator Hub and sign in with your account. While you're signed out, the **Analytics** tab only shows **Sign in to see your Places analytics**.
 2. Select the **Analytics** tab on the top navigation bar. You'll see a list of all the published scenes you own or operate, with headline metrics for each.
 3. Click on a scene to open its detail page, with the full set of metrics organized into tabs.
 
@@ -53,10 +53,11 @@ A snapshot of your scene's growth, engagement, and user retention.
 
 - **Total Visits**: Every visit to your scene, including repeat visits by the same user.
 - **Unique Visits**: Distinct users who visited your scene, counted once each.
+- **New Decentraland Players**: Wallets that are new to Decentraland and spent most of their first day in your scene. This shows how many players your scene brings to Decentraland.
 - **New Users**: Users who visited your scene for the first time.
 - **Concurrent Users**: The highest number of users in your scene at the same time.
 - **Revenue**: MANA earned in your scene.
-- **Day 7 Retention**: The percentage of new users who returned to your scene at least once over the 7 days after their first visit.
+- **Day 3 Retention** and **Day 7 Retention**, side by side: the percentage of new users who returned to your scene within 3 days, and within 7 days, of their first visit. Both are colored against a 20% benchmark, so you can see at a glance whether they're above or below it.
 - **Median Playtime**: Median time each user spends in your scene per day: half of the daily visits are longer, half shorter.
 - **AFK Time**: Average time users spend in your scene without interacting.
 - **Desktop / Mobile**: Users who visited your scene from a desktop or mobile client.
@@ -87,6 +88,8 @@ How users engage with your scene once they're in it.
 
 The percentage of users who return after their first session.
 
-- **Platforms**: Your 60-day rolling average retention, compared across desktop and mobile.
-- **Day 7 Retention by Cohort Week**: The percentage of users who returned at least once over the 7 days after their first visit, grouped by the week they first jumped into your scene. The chart draws a 20% benchmark line as a healthy reference value.
+- **Platforms**: Your rolling average Day 7 retention, compared across desktop and mobile.
+- **Day 3 Retention**: The percentage of new users who returned within 3 days of their first visit, compared across desktop and mobile.
+- **Day 3 Retention by Cohort Week**: The percentage of new users who returned at least once over the 3 days after their first visit, grouped by the week they first jumped into your scene. The chart draws a 20% benchmark line as a healthy reference value.
+- **Day 7 Retention by Cohort Week**: The same for the 7 days after the first visit, also with a 20% benchmark line. Cohorts that started less than 14 days ago are drawn with a dotted line: their returns are still being counted, so their values can still change.
 - **Weekly Churn Rate**: The percentage of active users from the previous week who did not return this week.

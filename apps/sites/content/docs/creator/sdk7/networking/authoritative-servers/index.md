@@ -24,12 +24,20 @@ Decentraland hosts and deploys the server for you. Publishing your scene via the
 
 ### 1. Install the auth-server SDK version
 
-The native Multiplayer Server APIs (`isServer`, `registerMessages`, `Storage`, `EnvVar`, etc.) are available on a separate SDK branch. Run the following commands to install it in your project instead of the standard SDK branch:
+The native Multiplayer Server APIs (`isServer`, `registerMessages`, `Storage`, `EnvVar`, etc.) are available on a separate SDK branch.
+
+**In the Creator Hub**, open the scene settings and check **Enable Multiplayer Server** in the **Advanced** section of the **Settings** tab. The Creator Hub installs the right SDK and sets up `scene.json` for you. See [Multiplayer Server in Scene Settings](/docs/creator/scene-editor/configure/scene-settings/#multiplayer-server).
+
+**From the command line**, run the following command to install it in your project instead of the standard SDK branch:
 
 ```bash
-npm install @dcl/sdk@auth-server
-npm install @dcl/js-runtime@auth-server
+npm install --save-exact @dcl/sdk@auth-server @dcl/js-runtime@auth-server
 ```
+
+
+> [!WARNING]
+> **📔 Note**: Keep `--save-exact`. Without it, npm saves a version range like `^7.x.y-...` in `package.json`, and the next regular SDK release also matches that range. A later `npm install` can then replace the auth-server build with a regular one, which has no server APIs, and your server code stops building.
+
 
 ### 2. Configure scene.json
 
@@ -43,7 +51,7 @@ Optionally, you can also add the following to your `scene.json` at root level:
 }
 ```
 
-Add `logsPermissions` to give these wallets access to server logs and metrics after deployment. World owners and eligible deployment collaborators also have access, as do Genesis City owners and delegated LAND managers of the scene's base parcel. See [Scene Insights](/docs/creator/sdk7/debugging/scene-insights/) for permissions, sign-in, and commands.
+Add `logsPermissions` to give these wallets access to server logs and metrics after deployment. In the Creator Hub, the **Log Access & Storage** list in the scene settings edits this field for you. World owners and eligible deployment collaborators also have access, as do Genesis City owners and delegated LAND managers of the scene's base parcel. See [Scene Insights](/docs/creator/sdk7/debugging/scene-insights/) for permissions, sign-in, and commands.
 
 ### 3. Run the preview
 
@@ -667,6 +675,11 @@ npx sdk-commands storage player clear --confirm
 
 Each scene value can be up to 512 KB, and all the scene values of a World share 10 MB. Each player value can be up to 100 KB, with 1 MB per player.
 
+
+> [!WARNING]
+> **📔 Note**: There's no way to list which players have stored data. `Storage.player.getValues(address, { prefix, offset })` lists the keys of one player you already know, but neither the SDK, the `storage player` commands nor the [storage UI](#access-stored-data) list player addresses. If you may ever need to go through all your players, for example to migrate their saves or build a leaderboard from them, also keep your own index of addresses in a scene key.
+
+
 ### Load a save without overwriting it
 
 Never assign default data when a player joins and then save it: if their saved data exists but wasn't loaded yet, the defaults replace it. Read first, and create defaults only when `get()` resolves to `null`. If the read throws, leave the player unloaded and try again later.
@@ -763,7 +776,7 @@ You can see and edit the live stored data on your server via the storage UI, by 
 
 [decentraland.org/storage](https://decentraland.org/storage)
 
-You can also reach this page via the Creator Hub. Open the **Manage** tab, click the three dots next to a place where you have published content, and select **View Storage**.
+For a World, you can also reach this page via the Creator Hub. Open the **Manage** page, click the three dots on the World's card, and select **View Storage**.
 
 There you can see a list of all the worlds and land where you can publish scenes.
 
@@ -877,7 +890,7 @@ You can access the data that is stored by the scene's storage by entering this l
 
 [decentraland.org/storage](https://decentraland.org/storage)
 
-You can also reach this page via the Creator Hub. Open the **Manage** tab, click the three dots next to a place where you have published content, and select **View Storage**.
+For a World, you can also reach this page via the Creator Hub. Open the **Manage** page, click the three dots on the World's card, and select **View Storage**.
 
 There you can see a list of all the worlds and land where you can publish scenes.
 
@@ -1265,7 +1278,7 @@ You can access the data that is stored by the scene's storage by entering this l
 
 [decentraland.org/storage](https://decentraland.org/storage)
 
-You can also reach this page via the Creator Hub. Open the **Manage** tab, click the three dots next to a place where you have published content, and select **View Storage**.
+For a World, you can also reach this page via the Creator Hub. Open the **Manage** page, click the three dots on the World's card, and select **View Storage**.
 
 There you can see a list of all the worlds and land where you can publish scenes.
 

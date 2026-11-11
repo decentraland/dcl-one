@@ -177,6 +177,15 @@
   "sourceBytes": 9100024,
   "animated": true
  },
+ "/docs/_remote/92e8eb247fcf289c2feff8f8.webp": {
+  "source": "https://3980763956-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FoPnXBby9S6MrsW83Y9qZ%2Fuploads%2Fgit-blob-a673f6b987216e9e471fdac882879c44fcf94652%2Fconsole-icon.png?alt=media&token=1965a51b-d4b0-4caa-b9d5-d24d738c1fb8",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "b4a582d88c2d7804f0876747",
+  "width": 50,
+  "height": 48,
+  "bytes": 1082,
+  "sourceBytes": 5438
+ },
  "/docs/_remote/95fc62ca479c3f614187167d.webp": {
   "source": "mirror:documentation-creators/images/emotes/head_pivot_rig_2.0.gif",
   "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
@@ -216,6 +225,15 @@
   "bytes": 3889514,
   "sourceBytes": 15494877,
   "animated": true
+ },
+ "/docs/_remote/ad0c0dd6dced1bedf2b986b9.webp": {
+  "source": "https://3980763956-files.gitbook.io/~/files/v0/b/gitbook-x-prod.appspot.com/o/spaces%2FoPnXBby9S6MrsW83Y9qZ%2Fuploads%2Fgit-blob-498b8fc602219919fc16af2f71ffd39de109217b%2Ffolder-icon.png?alt=media",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "3fab803a2a6d6c9ddfa8552d",
+  "width": 26,
+  "height": 25,
+  "bytes": 104,
+  "sourceBytes": 1171
  },
  "/docs/_remote/b25b76a5b0e4c1d0cec817e8.webp": {
   "source": "https://i.ytimg.com/vi/Y7M-B6xnaEM/maxresdefault.jpg",
@@ -424,15 +442,6 @@
   "height": 591,
   "bytes": 112002,
   "sourceBytes": 794762
- },
- "/docs/creator/.gitbook/assets/multi-scene-custom-coordinates.webp": {
-  "source": "creator/.gitbook/assets/multi-scene-custom-coordinates.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "e8fc04c111052c5ebce0b953",
-  "width": 1600,
-  "height": 1100,
-  "bytes": 46196,
-  "sourceBytes": 172428
  },
  "/docs/creator/.gitbook/assets/multi-scene-owner-first-deploy.webp": {
   "source": "creator/.gitbook/assets/multi-scene-owner-first-deploy.webp",
@@ -794,33 +803,6 @@
   "bytes": 17038,
   "sourceBytes": 146104
  },
- "/docs/creator/.gitbook/assets/world-access-all.webp": {
-  "source": "creator/.gitbook/assets/world-access-all.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "a5014190f447580216455631",
-  "width": 1600,
-  "height": 1106,
-  "bytes": 34366,
-  "sourceBytes": 67432
- },
- "/docs/creator/.gitbook/assets/world-access-community.webp": {
-  "source": "creator/.gitbook/assets/world-access-community.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "64456946938b1cc70fc1c317",
-  "width": 1600,
-  "height": 1121,
-  "bytes": 19442,
-  "sourceBytes": 27366
- },
- "/docs/creator/.gitbook/assets/world-access-csv.webp": {
-  "source": "creator/.gitbook/assets/world-access-csv.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "092307e87fa0b4c25233700c",
-  "width": 980,
-  "height": 754,
-  "bytes": 13364,
-  "sourceBytes": 17872
- },
  "/docs/creator/.gitbook/assets/world-invitation-only-modal.webp": {
   "source": "creator/.gitbook/assets/world-invitation-only-modal.webp",
   "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
@@ -830,33 +812,6 @@
   "bytes": 12310,
   "sourceBytes": 79226
  },
- "/docs/creator/.gitbook/assets/world-layout.webp": {
-  "source": "creator/.gitbook/assets/world-layout.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "91a94bf1201de1d812920bf1",
-  "width": 1600,
-  "height": 1209,
-  "bytes": 53668,
-  "sourceBytes": 207060
- },
- "/docs/creator/.gitbook/assets/world-manage-collaborator.webp": {
-  "source": "creator/.gitbook/assets/world-manage-collaborator.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "70d55e4d1a512dad28269b3b",
-  "width": 1600,
-  "height": 1049,
-  "bytes": 63656,
-  "sourceBytes": 594122
- },
- "/docs/creator/.gitbook/assets/world-manage-settings.webp": {
-  "source": "creator/.gitbook/assets/world-manage-settings.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "e045a8195ce50c0705059175",
-  "width": 624,
-  "height": 842,
-  "bytes": 34640,
-  "sourceBytes": 239462
- },
  "/docs/creator/.gitbook/assets/world-password-modal.webp": {
   "source": "creator/.gitbook/assets/world-password-modal.webp",
   "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
@@ -865,24 +820,6 @@
   "height": 748,
   "bytes": 15192,
   "sourceBytes": 117348
- },
- "/docs/creator/.gitbook/assets/world-settings-collaborators.webp": {
-  "source": "creator/.gitbook/assets/world-settings-collaborators.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "9827110ba6cfd83fce966269",
-  "width": 1600,
-  "height": 564,
-  "bytes": 30042,
-  "sourceBytes": 38200
- },
- "/docs/creator/.gitbook/assets/world-storage-budget.webp": {
-  "source": "creator/.gitbook/assets/world-storage-budget.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "f38374bc4387586c4bd01ee4",
-  "width": 991,
-  "height": 1587,
-  "bytes": 24864,
-  "sourceBytes": 806278
  },
  "/docs/creator/images/3d-models-and-animations/3d-essentials/01-3d-essentials-banner.webp": {
   "source": "creator/images/3d-models-and-animations/3d-essentials/01-3d-essentials-banner.webp",
@@ -2162,6 +2099,15 @@
   "bytes": 40030,
   "sourceBytes": 108874
  },
+ "/docs/creator/images/editor/ai-settings-external-access.webp": {
+  "source": "creator/images/editor/ai-settings-external-access.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "20c58eec648b4bfeb50ec135",
+  "width": 800,
+  "height": 870,
+  "bytes": 34196,
+  "sourceBytes": 43036
+ },
  "/docs/creator/images/editor/asset-packs.webp": {
   "source": "creator/images/editor/asset-packs.webp",
   "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
@@ -2658,6 +2604,15 @@
   "bytes": 4172,
   "sourceBytes": 5370
  },
+ "/docs/creator/images/editor/land-details-tab.webp": {
+  "source": "creator/images/editor/land-details-tab.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "1ea21721497a3372008aa753",
+  "width": 1400,
+  "height": 776,
+  "bytes": 22304,
+  "sourceBytes": 29344
+ },
  "/docs/creator/images/editor/lever-to-door.webp": {
   "source": "creator/images/editor/lever-to-door.webp",
   "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
@@ -2666,6 +2621,15 @@
   "height": 1041,
   "bytes": 40878,
   "sourceBytes": 297032
+ },
+ "/docs/creator/images/editor/local-assets-preview-pane.webp": {
+  "source": "creator/images/editor/local-assets-preview-pane.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "0ec2200c1a8fba7fe593f1eb",
+  "width": 1400,
+  "height": 316,
+  "bytes": 24420,
+  "sourceBytes": 30616
  },
  "/docs/creator/images/editor/logs-avocado.webp": {
   "source": "creator/images/editor/logs-avocado.webp",
@@ -2684,6 +2648,15 @@
   "height": 382,
   "bytes": 8020,
   "sourceBytes": 26798
+ },
+ "/docs/creator/images/editor/manage-lands-tab.webp": {
+  "source": "creator/images/editor/manage-lands-tab.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "a0935fe254dd8612bec84f8e",
+  "width": 1400,
+  "height": 1029,
+  "bytes": 36868,
+  "sourceBytes": 59670
  },
  "/docs/creator/images/editor/metadata-ui.webp": {
   "source": "creator/images/editor/metadata-ui.webp",
@@ -2730,33 +2703,6 @@
   "height": 147,
   "bytes": 3028,
   "sourceBytes": 4140
- },
- "/docs/creator/images/editor/nested-under-barrel.webp": {
-  "source": "creator/images/editor/nested-under-barrel.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "65b981cf2eb17bd94f7395cf",
-  "width": 398,
-  "height": 176,
-  "bytes": 2574,
-  "sourceBytes": 7238
- },
- "/docs/creator/images/editor/nested-under-camera.webp": {
-  "source": "creator/images/editor/nested-under-camera.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "d2acf0d1ab72d36ac7733187",
-  "width": 622,
-  "height": 176,
-  "bytes": 2894,
-  "sourceBytes": 7586
- },
- "/docs/creator/images/editor/nested-under-player.webp": {
-  "source": "creator/images/editor/nested-under-player.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "4dfb22b51430ec4094f88bed",
-  "width": 628,
-  "height": 198,
-  "bytes": 2830,
-  "sourceBytes": 7512
  },
  "/docs/creator/images/editor/new-action.webp": {
   "source": "creator/images/editor/new-action.webp",
@@ -2883,15 +2829,6 @@
   "height": 420,
   "bytes": 8852,
   "sourceBytes": 12900
- },
- "/docs/creator/images/editor/optimize-assets-checkbox.webp": {
-  "source": "creator/images/editor/optimize-assets-checkbox.webp",
-  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
-  "key": "ab0afc583fba01a17bfc229b",
-  "width": 332,
-  "height": 496,
-  "bytes": 12628,
-  "sourceBytes": 23666
  },
  "/docs/creator/images/editor/out-of-bounds.webp": {
   "source": "creator/images/editor/out-of-bounds.webp",
@@ -3072,6 +3009,15 @@
   "height": 119,
   "bytes": 2736,
   "sourceBytes": 3836
+ },
+ "/docs/creator/images/editor/scene-settings-advanced.webp": {
+  "source": "creator/images/editor/scene-settings-advanced.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "477b6a9be8b97e49af8b1620",
+  "width": 450,
+  "height": 354,
+  "bytes": 11538,
+  "sourceBytes": 11538
  },
  "/docs/creator/images/editor/scenes-tab.webp": {
   "source": "creator/images/editor/scenes-tab.webp",
@@ -3360,6 +3306,24 @@
   "height": 781,
   "bytes": 116548,
   "sourceBytes": 952878
+ },
+ "/docs/creator/images/editor/world-collaborators-tab.webp": {
+  "source": "creator/images/editor/world-collaborators-tab.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "595c201b0b84a0580bd5df4b",
+  "width": 1400,
+  "height": 636,
+  "bytes": 30470,
+  "sourceBytes": 39584
+ },
+ "/docs/creator/images/editor/world-settings-tab.webp": {
+  "source": "creator/images/editor/world-settings-tab.webp",
+  "encoder": "docs-media-v3-s1600q82l16384-g2w-q70r0.6-a1024:",
+  "key": "282dee301cc984b801a090d6",
+  "width": 1400,
+  "height": 829,
+  "bytes": 29378,
+  "sourceBytes": 38536
  },
  "/docs/creator/images/emotes/Animation_area.webp": {
   "source": "creator/images/emotes/Animation_area.webp",

@@ -12,7 +12,7 @@ Heavy 3D models are the most common reason a scene is slow to load. The Creator 
 
 
 > [!NOTE]
-> **💡 Tip**: You can also start it from the **Local Assets** panel at the bottom of the editor. Open the **File System** tab and click the broom icon, labeled **Optimize models**.
+> **💡 Tip**: You can also start it from the **Local Assets** panel at the bottom of the editor. Open the **Local Assets** tab and click the **Optimize** button in the panel header.
 
 
 The tools run entirely on your machine. They are downloaded from npm the first time you continue, pinned to fixed versions, and kept in the Creator Hub's data folder. About 20 MB is downloaded once. Your models are never uploaded anywhere.

@@ -1,0 +1,62 @@
+# Fetch firmado
+
+El `SignedFetch` El módulo proporciona una implementación de la `fetch` interfaz que es transparentemente compatible con el [signed fetch](/docs/contributor/contributor-es/autenticacion/signed-fetch/) protocolo, que define cómo adjuntar cadenas de [autenticación firmadas](/docs/contributor/contributor-es/autenticacion/authchain/) a las solicitudes salientes.
+
+Los procedimientos para firmar y verificar esta solicitud se detallan en la [cadena de autenticación](/docs/contributor/contributor-es/autenticacion/authchain/) página.
+
+Usando `SignedFetch` desde una escena requiere la [`USE_FETCH`](/docs/contributor/contributor-es/contenido/tipos-de-entidad/scenes/#permissions) permiso.
+
+### Métodos
+
+**`signedFetch`**
+
+Realiza una solicitud HTTP como lo harías con ([`fetch`](/docs/contributor/contributor-es/tiempo-de-ejecucion-de-la-escena/globals/#http)), agregando automáticamente los encabezados de verificación.
+
+```ts
+interface Request {
+  // La URL de destino de la solicitud:
+  url: string;
+
+  // Parámetros opcionales y descriptivos para la solicitud:
+  init?: {
+    method?: string;
+    body?: string;
+    headers: { [key: string]: string };
+  };
+}
+
+interface Response {
+  // Si la solicitud HTTP se realizó correctamente (los códigos distintos de 2xx no se consideran fallos)
+  ok: boolean;
+
+  // Los detalles descriptivos de la respuesta:
+  status: number;
+  statusText: string;
+  headers: { [key: string]: string };
+  body: string;
+}
+
+function signedFetch(Request): Promise<Response>;
+```
+
+
+---
+
+# Agent Instructions
+This documentation is published with GitBook. GitBook is the documentation platform designed so that both humans and AI agents can read, navigate, and reason over technical content effectively. Learn more at gitbook.com.
+
+## Querying This Documentation
+If you need additional information that is not directly available in this page, you can query the documentation by asking a question.
+
+Perform an HTTP GET request on the following URL with the `ask` and `goal` query parameters:
+
+```
+GET https://docs.decentraland.org/contributor/contributor-es/tiempo-de-ejecucion-de-la-escena/modulos-de-tiempo-de-ejecucion/signed-fetch.md?ask=<question>&goal=<user_goal>
+```
+
+`ask` is the immediate question: it should be specific, self-contained, and written in natural language.
+`goal` is what the user is ultimately trying to achieve, the reason they need the answer. Sharing it helps GitBook give you a better, more relevant answer. A goal is most helpful when it describes the outcome the user wants rather than restating the question. For example, with `ask=how do I create an API token`, a goal like `automate deployments from our CI pipeline` lets GitBook tailor the answer to that use case.
+
+The response will contain a direct answer to the question and relevant excerpts and sources from the documentation.
+
+Use this mechanism when the answer is not explicitly present in the current page, you need clarification or additional context, or you want to retrieve related documentation sections.

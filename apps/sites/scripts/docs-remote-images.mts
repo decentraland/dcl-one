@@ -55,26 +55,32 @@ export class RemoteImages {
     return [...this.entries.values()].flatMap((e) => ("file" in e ? [e.file] : []));
   }
 
-  async vendor(urls: Iterable<string>): Promise<void> {
-    for (const url of [...new Set(urls)].sort()) {
-      const prior = this.previous[url];
-      if (prior && "file" in prior && fs.existsSync(path.join(this.opts.output, prior.file))
-        && (prior.replaced ? this.opts.media.keep(prior.file, prior.from) : !/\.(png|jpe?g|gif)$/i.test(prior.file))) {
-        this.entries.set(url, prior);
-        continue;
-      }
-      // A vendored original from before the WebP replacement: convert it instead of refetching.
-      if (!this.opts.readOnly && prior && "file" in prior && !prior.replaced && fs.existsSync(path.join(this.opts.output, prior.file))) {
-        const stored = this.store(fs.readFileSync(path.join(this.opts.output, prior.file)), prior.from);
-        if (stored) { this.entries.set(url, stored); continue; }
-      }
-      if (this.opts.readOnly) {
-        if (prior && "error" in prior) this.entries.set(url, prior);
-        else this.missing.push(url);
-        continue;
-      }
-      this.entries.set(url, await this.fetchOne(url));
+  async vendor(urls: Iterable<string>, concurrency = 8): Promise<void> {
+    const queue = [...new Set(urls)].sort();
+    const worker = async () => {
+      for (let url = queue.shift(); url !== undefined; url = queue.shift()) await this.vendorOne(url);
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, queue.length) }, worker));
+  }
+
+  private async vendorOne(url: string): Promise<void> {
+    const prior = this.previous[url];
+    if (prior && "file" in prior && fs.existsSync(path.join(this.opts.output, prior.file))
+      && (prior.replaced ? this.opts.media.keep(prior.file, prior.from) : !/\.(png|jpe?g|gif)$/i.test(prior.file))) {
+      this.entries.set(url, prior);
+      return;
     }
+    // A vendored original from before the WebP replacement: convert it instead of refetching.
+    if (!this.opts.readOnly && prior && "file" in prior && !prior.replaced && fs.existsSync(path.join(this.opts.output, prior.file))) {
+      const stored = this.store(fs.readFileSync(path.join(this.opts.output, prior.file)), prior.from);
+      if (stored) { this.entries.set(url, stored); return; }
+    }
+    if (this.opts.readOnly) {
+      if (prior && "error" in prior) this.entries.set(url, prior);
+      else this.missing.push(url);
+      return;
+    }
+    this.entries.set(url, await this.fetchOne(url));
   }
 
   private async fetchOne(url: string): Promise<RemoteEntry> {

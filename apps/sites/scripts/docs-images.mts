@@ -95,7 +95,12 @@ export class DocsMedia {
    */
   replace(bytes: Buffer, rel: string, source: string): void {
     const url = `${this.base}/${rel}`;
-    if (this.entries.has(url) || this.pending.has(url)) return;
+    // Several URLs can serve the same bytes; record the smallest so parallel fetches stay deterministic.
+    const known = this.entries.get(url) ?? this.pending.get(url);
+    if (known) {
+      if (source < known.source) known.source = source;
+      return;
+    }
     const key = mediaKey(bytes);
     const destination = path.join(this.opts.output, rel);
     const prior = this.previous[url];

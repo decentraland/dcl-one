@@ -111,3 +111,69 @@ Note that you don't have any control over when the animation starts or stops, or
 If there are multiple players in the scene, they may be seeing the animation out of sync from each other.
 
 To change this behavior, you can include an **Animator** component. See [Make any item smart](/docs/creator/scene-editor/interactivity/make-any-item-smart/) for no-code tools to make your item interactive.
+
+## Browse and organize your assets
+
+The **Local Assets** tab of the bottom panel shows every file in your project's `assets` folder.
+
+![The Local Assets tab, with the folder tree on the left, the toolbar with the search field and type filter pills, a breadcrumb reading Assets > Images, two image cards, and the preview pane on the right showing the selected image with its type, size and dimensions](/docs/creator/images/editor/local-assets-preview-pane.webp)
+### Find a file
+
+The toolbar above the files helps you find what you need:
+
+- **Folder tree**: show or hide it with the button at the left of the toolbar. Drag its edge to resize it, and double-click the edge to reset its width. You can also expand or collapse every folder at once.
+- **Search**: type part of a file name.
+- **Type filters**: labelled pills that show only models, images, audio, video, and so on.
+- **Breadcrumb**: shows where you are when you're inside a subfolder.
+
+While you search or filter, every folder stays in the tree. Folders with matches show how many they contain, and folders without matches are dimmed. The number of results appears above the files, with a **Clear** link to reset the search.
+
+Use the slider in the panel header to make the file cards bigger or smaller. Image cards show the image itself, and 3D models get a generated thumbnail.
+
+### Preview a file
+
+Select a file to see it in the preview pane on the right of the panel. Hide or show the pane with the eye button in the panel header. The pane works in all three tabs: **Local Assets**, **Custom Items** and **Asset Packs**.
+
+- **3D models**: an orbit viewer, with buttons to auto-rotate and to show the wireframe, a list of the model's animations, and its triangle, mesh, material and texture counts.
+- **Images**: shown to fit the pane or at actual size, with their dimensions.
+- **Audio and video**: a player, with the file's duration.
+- **Avatar animations**: played on an avatar, with play and pause, a timeline you can scrub, and a loop option.
+- **Custom items**: their thumbnail, with how many entities and files they contain.
+- **Asset pack items**: their **Description** and **Tags**.
+
+If a file can't be shown, for example a damaged image or an audio format the browser can't decode, the pane reads **Preview unavailable** and explains why.
+
+### Rename, copy, move and delete files
+
+Right-click a file to open its menu: **Rename**, **Duplicate**, **Delete**, **Copy Path** and **Copy file name**. Right-click a folder in the tree for the same options plus **New folder**.
+
+To work with several files at once, Ctrl-click (Cmd-click on Mac) to add files to the selection, or Shift-click to select a range. The menu then offers **Copy Paths** and **Copy file names**, and every action applies to the whole selection. To move files, drag them onto a folder.
+
+When you rename or move a file, the items in your scene that use it are updated to the new path. A `.gltf` model takes its textures and `.bin` files along when you copy or move it. Deleting a file that your scene uses asks you to confirm first. Deleting a folder deletes every file inside it.
+
+All of these changes go into the undo history, so press Ctrl+Z (Cmd+Z on Mac) to take one back.
+
+
+> [!NOTE]
+> **💡 Tip**: Double-click a file while the [AI Assistant](/docs/creator/scene-editor/code/ai-assistant/#point-at-an-asset-in-your-prompt) is open to mention it in your next message.
+
+
+
+> [!WARNING]
+> **📔 Note**: The `assets/scene` folder and the **Built-in animations** folder are read only. You can't rename, move, delete or paste files there. Renames that only change upper and lower case, like `tree.glb` to `Tree.glb`, aren't allowed either: rename the file to a different name and back instead.
+
+
+### Keyboard shortcuts
+
+Click inside the Local Assets tab first. The shortcuts then act on the files, and stop acting on the 3D view until you click it again.
+
+| Shortcut | Action |
+| --- | --- |
+| Ctrl/Cmd+A | Select all |
+| Esc | Clear the selection |
+| Shift+Up / Shift+Down | Extend the selection |
+| Delete or Backspace | Delete the selection |
+| Ctrl/Cmd+C, Ctrl/Cmd+X, Ctrl/Cmd+V | Copy, cut and paste. A pasted file that clashes with an existing name becomes `name copy.ext`, then `name copy 2.ext`. |
+| Ctrl/Cmd+D | Duplicate |
+| Up / Down | Move through the folder tree |
+| Left / Right | Collapse or expand a folder |

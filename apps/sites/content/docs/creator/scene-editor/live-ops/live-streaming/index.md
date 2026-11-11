@@ -148,7 +148,7 @@ To use the Live Streaming feature on your scene you'll need to install a streami
 
 
 > [!WARNING]
-> **Warning**: Live streaming is not supported in Single Player worlds. If your world has **Single Player** enabled in World Settings (or `fixedAdapter` set to `"offline:offline"` in `scene.json`), disable it before setting up streaming. The streaming feature relies on the communications layer, which is disabled in Single Player mode.
+> **Warning**: Live streaming is not supported in Single Player worlds. If your world has **Single Player** enabled on the World's [Settings tab](/docs/creator/scene-editor/publish/manage-lands-and-worlds/#settings) in the Creator Hub (or `fixedAdapter` set to `"offline:offline"` in `scene.json`), disable it before setting up streaming. The streaming feature relies on the communications layer, which is disabled in Single Player mode.
 
 
 ### Get stream credentials

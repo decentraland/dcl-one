@@ -236,6 +236,10 @@ export const uiMenu = () => (
 )
 ```
 
+The `textureSlices` values are a fraction of the **texture's** size, not of the element's. A value of `0.125` on a 128-pixel texture makes 16-pixel corners, and those corners stay 16 virtual pixels wide whether the element is a 100-pixel button or a 1,400-pixel panel. On the desktop client, the corner cells never grow with the element.
+
+So size your art for the corner you want on screen: decide the corner size in virtual pixels, then draw the texture so that `textureSlices` × the texture's size gives that number. If your design has small corners on buttons and large ones on panels, use a separate texture for each size, since a larger `textureSlices` on the same image doesn't make its corner art bigger.
+
 ## Texture UVs
 
 Use the `uvs` property on a `uiBackground` component to display a specific region of a texture. This is useful for picking individual sprites from a sprite sheet, or for rotating an image.
@@ -354,6 +358,12 @@ export const uiMenu = () => (
 ```
 
 The `rotateUVs` function rotates the four UV corners around the center point `(0.5, 0.5)` by the given angle in radians. Because this is called each frame by the React-like renderer, the spinner updates smoothly.
+
+Only the picture turns. The element itself, its clickable area, its children and any text stay where they are. Keep these in mind for a clean rotation:
+
+* **Keep the element square**. On a box that isn't square, the rotating image gets squashed.
+* **Leave a transparent margin around the art**. Past 45°, the corners of the rotated area fall outside the texture, and the edge pixels get stretched into those corners. Keep the art inside the circle that fits in the square, with transparent pixels around it.
+* **Set `wrapMode: 'clamp'`** in the texture, so the edges are stretched rather than repeated: `texture: { src: 'images/spinner.png', wrapMode: 'clamp' }`.
 
 
 > [!NOTE]

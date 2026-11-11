@@ -6,8 +6,9 @@ import { Readable } from "node:stream";
 
 import { markdownResponse, wantsMarkdown } from "../agent/markdown";
 import type { DocsMediaEntry } from "./images";
+import { englishMatch } from "./live";
 import { renderDocsPage } from "./render";
-import type { DocsLink, DocsManifest, DocsNavNode, DocsPageEntry, DocsPageView } from "./types";
+import { type DocsLink, type DocsManifest, type DocsNavNode, type DocsPageEntry, type DocsPageView, type DocsSpace, docsSpaceHome } from "./types";
 
 export const DOCS_BASE = "/docs";
 
@@ -21,6 +22,10 @@ interface Loaded {
   mtimeMs: number;
   manifest: DocsManifest;
   byUrl: Map<string, DocsPageEntry>;
+  /** Each English space's page URLs: what a live docs.decentraland.org path resolves against. */
+  english: Map<string, string[]>;
+  /** The moved paths GitBook redirects, by source URL. */
+  redirects: Map<string, string>;
   images: Record<string, DocsMediaEntry>;
   views: Map<string, DocsPageView>;
 }
@@ -41,7 +46,10 @@ function load(): Loaded | null {
   try {
     images = JSON.parse(fs.readFileSync(path.join(dir, "_media.json"), "utf8"));
   } catch {}
-  loaded = { dir, mtimeMs, manifest, byUrl: new Map(manifest.pages.map((p) => [p.url, p])), images, views: new Map() };
+  const english = new Map<string, string[]>(manifest.spaces.filter((s) => !s.section).map((s) => [s.id, []]));
+  for (const p of manifest.pages) english.get(p.space)?.push(p.url);
+  const redirects = new Map(Object.entries(manifest.redirects ?? {}));
+  loaded = { dir, mtimeMs, manifest, byUrl: new Map(manifest.pages.map((p) => [p.url, p])), english, redirects, images, views: new Map() };
   return loaded;
 }
 
@@ -83,7 +91,7 @@ export function resolveDocsRequest(url: URL, request?: Request): DocsTarget {
   if (rel === null) return { kind: "missing" };
   if (rel === "" || rel.endsWith("/")) {
     const page = state.byUrl.get(`${DOCS_BASE}/${rel}`);
-    if (!page) return { kind: "missing" };
+    if (!page) return liveRedirect(state, rel, url.search);
     return request && wantsMarkdown(request) ? { kind: "markdown", page } : { kind: "page", page };
   }
   if (/(^|\/)index\.md$/.test(rel)) {
@@ -99,7 +107,19 @@ export function resolveDocsRequest(url: URL, request?: Request): DocsTarget {
     return { kind: "missing" };
   }
   if (state.byUrl.has(`${DOCS_BASE}/${rel}/`)) return { kind: "redirect", location: `${DOCS_BASE}/${rel}/${url.search}` };
-  return { kind: "missing" };
+  return liveRedirect(state, rel, url.search);
+}
+
+/** A path as docs.decentraland.org serves it (the Player space at the root, a move GitBook redirects, slugs that differ from the mirror's folders) redirects to the mirror page it names. */
+function liveRedirect(state: Loaded, rel: string, search: string): DocsTarget {
+  const [head, ...rest] = rel.replace(/\/+$/, "").split("/");
+  const space = state.english.has(head) ? head : "player";
+  const tail = space === head ? rest : [head, ...rest];
+  if (tail.length === 0) return { kind: "missing" };
+  const exact = `${DOCS_BASE}/${space}/${tail.join("/")}/`;
+  const target = state.byUrl.has(exact) ? exact
+    : state.redirects.get(exact) ?? englishMatch(`/${[space, ...tail].join("/")}`, state.english.get(space) ?? []);
+  return target && target !== `${DOCS_BASE}/${rel}` ? { kind: "redirect", location: target + search } : { kind: "missing" };
 }
 
 const TYPES: Record<string, string> = {
@@ -183,7 +203,12 @@ export function docsPageView(page: DocsPageEntry): DocsPageView {
   const navUrl = page.navUrl ?? page.url;
   const flat = flatten(nav);
   const index = flat.findIndex((node) => node.url === navUrl);
-  const home = space.id === "player" ? `${DOCS_BASE}/` : `${DOCS_BASE}/${space.id}/`;
+  const home = docsSpaceHome(space);
+  const section = (s: DocsSpace) => s.section ?? s.id;
+  const label = space.label ?? "EN";
+  const languages = manifest.spaces.filter((s) => section(s) === section(space));
+  const spaces = manifest.spaces.filter((s) => s.header).map((s) =>
+    manifest.spaces.find((v) => v.section === s.id && v.label === label) ?? s);
   const trail = (navPath(nav, navUrl) ?? []).slice(0, -1);
   const markdown = fs.readFileSync(path.join(state.dir, page.file), "utf8");
   const images = (src: string) => state.images[src] ?? state.images[safeDecode(src)];
@@ -196,7 +221,10 @@ export function docsPageView(page: DocsPageEntry): DocsPageView {
     editUrl: page.source ? `https://github.com/decentraland/docs/edit/main/${page.source.split("/").map(encodeURIComponent).join("/")}` : null,
     updatedAt: page.updatedAt,
     space,
-    spaces: manifest.spaces.filter((s) => s.header),
+    spaces,
+    languages: languages.length > 1
+      ? languages.map((s) => ({ label: s.label ?? "EN", url: s.id === space.id ? page.url : page.alternates?.[s.label ?? "EN"] ?? docsSpaceHome(s), current: s.id === space.id }))
+      : [],
     nav,
     navUrl,
     breadcrumb: [{ title: space.title, url: home }, ...trail.map((n) => ({ title: n.title ?? "", url: n.url ?? null }))],
