@@ -19,6 +19,8 @@ mod test;
 mod traffic;
 #[cfg(feature = "transport_debug")]
 mod transport_debug;
+#[cfg(feature = "livekit")]
+pub mod voice_chat;
 pub mod websocket_room;
 
 use std::marker::PhantomData;
@@ -115,7 +117,11 @@ impl Plugin for CommsPlugin {
         ));
 
         #[cfg(feature = "livekit")]
-        app.add_plugins((LivekitPlugin, private_chat::PrivateChatPlugin));
+        app.add_plugins((
+            LivekitPlugin,
+            private_chat::PrivateChatPlugin,
+            voice_chat::VoiceChatPlugin,
+        ));
         app.init_resource::<MicState>()
             .init_resource::<global_crdt::NearbyPanning>();
 

@@ -40,13 +40,12 @@ afterEach(async () => {
   await rm(repo, { recursive: true, force: true })
 })
 
-// Gives every pinned file a counterpart-free dcl-one-only deviation linked to a changes[] reason.
+// Gives every pinned file a counterpart-free dcl-one-only deviation with its reason.
 type Lock = {
   sources: {
-    changes?: string[]
     revision?: string
     snapshot?: { revision?: string; digests?: Record<string, string> }
-    deviationCodes?: Record<string, number | null>
+    deviationCodes?: Record<string, string | null>
     files: Record<string, { sha256: string; fds: unknown; deviation?: string; note?: string }>
   }[]
 }
@@ -55,8 +54,7 @@ async function annotate(edit?: (value: Lock) => void) {
   const source = value.sources[0]!
   source.revision = 'a'.repeat(40)
   source.snapshot = { revision: 'b'.repeat(40), digests: { 'pages.json': 'c'.repeat(64) } }
-  source.changes = ['These files are owned by this tree.']
-  source.deviationCodes = { 'dcl-one-only': 0, note: null }
+  source.deviationCodes = { 'dcl-one-only': 'These files are owned by this tree.', note: null }
   for (const entry of Object.values(source.files)) entry.deviation = 'dcl-one-only'
   edit?.(value)
   await put(LOCK, JSON.stringify(value))
@@ -151,7 +149,7 @@ describe('when the lock pins every tracked figma file', () => {
     expect(out).toContain('matches figma-design-system but still names a deviation')
   })
 
-  it('should fail on an unknown code and on a code linked to no changes[] entry', async () => {
+  it('should fail on an unknown code and on a code without a reason', async () => {
     await annotate((value) => {
       value.sources[0].files['library/ui/figma/a.ts'].deviation = 'made-up'
     })
@@ -160,10 +158,86 @@ describe('when the lock pins every tracked figma file', () => {
 
     out = ''
     await annotate((value) => {
-      value.sources[0].deviationCodes['dcl-one-only'] = 7
+      value.sources[0].deviationCodes['dcl-one-only'] = ' '
     })
     expect(run()).toBe(1)
-    expect(out).toContain('deviation code dcl-one-only links to no changes[] entry')
+    expect(out).toContain('deviation code dcl-one-only has no reason')
+
+    out = ''
+    await annotate((value) => {
+      value.sources[0].deviationCodes = { 'dcl-one-only': 0 as unknown as string, note: null }
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation code dcl-one-only has no reason')
+  })
+
+  it('should fail when the note code carries a reason, since each file carries its own', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes!.note = 'shared'
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation code note must map to null')
+  })
+
+  it('should fail on unsorted codes and sort them on --write without changing a reason', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes = {
+        note: null,
+        'dcl-one-only': 'These files are owned by this tree.'
+      }
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation codes are not in sorted order')
+
+    expect(run('--write')).toBe(0)
+    expect((await lock()).sources[0].deviationCodes).toEqual({
+      'dcl-one-only': 'These files are owned by this tree.',
+      note: null
+    })
+    expect(Object.keys((await lock()).sources[0].deviationCodes)).toEqual(['dcl-one-only', 'note'])
+    git('add', LOCK)
+    out = ''
+    expect(run()).toBe(0)
+  })
+
+  it('should report a reason over 4000 characters as too long, not as missing', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes!['dcl-one-only'] = 'x'.repeat(4001)
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation code dcl-one-only has a reason longer than 4000 characters')
+    expect(out).not.toContain('has no reason')
+  })
+
+  it('should refuse an integer-like code id, which a JS object can never keep in string order', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes = {
+        '10': 'Ten.',
+        '9': 'Nine.',
+        'dcl-one-only': 'These files are owned by this tree.',
+        note: null
+      }
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('deviation code 9 is integer-like')
+    expect(out).toContain('deviation code 10 is integer-like')
+  })
+
+  it('should refuse a tracked path with a tab, so a sibling cannot hide an edited file', async () => {
+    await annotate()
+    await put('library/ui/figma/a.ts\t.orig', 'export const a = 1\n')
+    await put('library/ui/figma/a.ts', 'export const a = 9\n')
+    git('add', '-A')
+    expect(run()).toBe(1)
+    expect(out).toContain('control character in its path')
+  })
+
+  it('should fail closed on a deviation code table that is not an object', async () => {
+    await annotate((value) => {
+      value.sources[0].deviationCodes = ['dcl-one-only'] as unknown as Record<string, string>
+    })
+    expect(run()).toBe(1)
+    expect(out).toContain('malformed deviationCodes table')
   })
 
   describe.each(['constructor', 'toString', '__proto__'])(
@@ -192,7 +266,7 @@ describe('when the lock pins every tracked figma file', () => {
     beforeEach(async () => {
       await annotate((lock) => {
         const source = lock.sources[0]!
-        Object.assign(source.deviationCodes!, { constructor: 0 })
+        source.deviationCodes = { constructor: 'Declared on purpose.', ...source.deviationCodes }
         source.files['library/ui/figma/a.ts']!.deviation = 'constructor'
       })
       value = await lock()
@@ -203,11 +277,14 @@ describe('when the lock pins every tracked figma file', () => {
     })
   })
 
-  it('should accept a deviation code declared as an own key linked to a changes[] entry', async () => {
+  it('should accept a deviation code declared as an own key with its reason', async () => {
     await annotate((lock) => {
       const source = lock.sources[0]!
-      source.changes!.push('This file is hardened here.')
-      source.deviationCodes!['hardened'] = 1
+      source.deviationCodes = {
+        'dcl-one-only': source.deviationCodes!['dcl-one-only']!,
+        hardened: 'This file is hardened here.',
+        note: null
+      }
       source.files['library/ui/figma/a.ts']!.deviation = 'hardened'
     })
 

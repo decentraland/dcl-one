@@ -16,11 +16,12 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
-    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
+    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
+    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -1358,6 +1359,71 @@ pub async fn op_read_dm_user_state_stream(
 /// Ends the stream: wakes a parked read, and drops the receiver so the engine's sender closes.
 pub fn op_close_dm_user_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
     close_stream::<DmUserStateData>(&mut *state.borrow_mut(), rid);
+}
+
+/// The voice chat state (private calls, community streams): a snapshot now, then on change.
+/// The HUD keeps it open for the session; `close` ends it.
+pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetVoiceChatStateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_voice_chat_state_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<VoiceChatState>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_voice_chat_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<VoiceChatState>(&mut *state.borrow_mut(), rid);
+}
+
+/// Every community voice chat started / ended broadcast the social service sends.
+pub fn op_get_community_voice_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityVoiceUpdateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_voice_update_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityVoiceUpdate>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_community_voice_update_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<CommunityVoiceUpdate>(&mut *state.borrow_mut(), rid);
+}
+
+/// A voice chat command; its outcome shows on the state stream.
+pub fn op_voice_chat_action(
+    state: Rc<RefCell<impl State>>,
+    action: VoiceChatAction,
+) -> Result<(), anyhow::Error> {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::VoiceChatAction(action))?;
+    Ok(())
 }
 
 pub async fn op_get_dm_history(

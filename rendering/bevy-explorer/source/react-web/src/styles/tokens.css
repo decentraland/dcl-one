@@ -207,6 +207,7 @@
   --voice-fill-hover: #696473;
   --voice-green: #34ce76;
   --voice-live: #30cd00;
+  --voice-stream: #36d41d; /* the chat's "Live Voice Stream" banner */
   --voice-speaking-fill: rgba(26, 198, 45, 0.2);
   --loading-vignette: radial-gradient(ellipse 100% 100% at 50% 50%, #bf00ff 16.7%, #4c0080 66.7%);
   --loading-glow: rgba(168, 0, 190, 0.5);

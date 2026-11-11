@@ -1,7 +1,7 @@
 //! The explorer-api surface unity-explorer hits at boot, served in-process:
 //! the realm-provider about doc over this node's own sync status
-//! ([`realm_provider`]), the asset-bundle registry reads as a cached upstream
-//! reader ([`registry`]), and four mirrors with a local overlay and a
+//! ([`realm_provider`]), the uncached asset-bundle registry gateway
+//! ([`registry`]), and four mirrors with a local overlay and a
 //! persisted pass marker: dcl-lists ([`lists`]), the config denylist
 //! ([`denylist`]), the feature flags ([`feature_flags`]) and the
 //! api.decentraland.org tile grid behind `map.png` ([`map`]), plus the
@@ -67,8 +67,9 @@ pub struct Sources {
     pub denylist: String,
     /// The feature-flags document itself (`.../explorer.json`).
     pub feature_flags: String,
-    /// asset-bundle registry: `POST {registry}/entities/active`, `/profiles`, ...;
-    /// empty reads none.
+    /// Registry reads without a cache (see [`registry`]): a loopback URL is the
+    /// local abgen runtime, any other a public Registry; empty serves `200 []`
+    /// to the boot reads.
     pub registry: String,
     /// atlas API: `GET {map}/v2/tiles/info`, `GET {map}/v2/tiles`.
     pub map: String,
@@ -160,7 +161,7 @@ pub struct Settings {
     /// one of them is a mirror feeding itself.
     pub own_hosts: Vec<String>,
     /// `EXPLORER_MIRRORS_ENABLED`: whether `spawn_jobs` starts the four
-    /// mirrors. The sources are validated either way (the registry reader
+    /// mirrors. The sources are validated either way (the Registry gateway
     /// uses its on demand).
     pub mirrors_enabled: bool,
     /// What the LAND/Estate metadata's `image` points at (`MAP_IMAGE_BASE_URL`;
@@ -372,6 +373,16 @@ impl Settings {
             if source.is_empty() {
                 continue;
             }
+            if name == "EXPLORER_REGISTRY_SOURCE_URL"
+                && matches!(
+                    registry::Backend::parse(source).with_context(|| format!("{name}={source}"))?,
+                    registry::Backend::Native(_)
+                )
+            {
+                // The local abgen runtime: loopback by construction, never an
+                // SSRF target; a public Registry takes the checks below.
+                continue;
+            }
             let parsed = self
                 .guarded_url(source)
                 .with_context(|| format!("{name}={source}"))?;
@@ -465,7 +476,6 @@ pub struct State {
     /// Sync status and public URLs for the realm doc; the profiles reader's
     /// local-first path arrives with the lambdas module.
     pub content: Arc<ContentState>,
-    pub registry: registry::Cache,
     /// Shared with social's referral checks, which read it in place.
     pub denylist: Arc<denylist::Snapshot>,
     pub flags: feature_flags::Snapshot,
@@ -512,7 +522,6 @@ impl State {
             pool,
             http,
             content,
-            registry: registry::Cache::new(),
             denylist: Arc::default(),
             flags: feature_flags::Snapshot::default(),
             map: map::MapState::new(),

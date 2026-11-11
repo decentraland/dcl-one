@@ -245,15 +245,15 @@ pub async fn index_confirms(
                     .unwrap_or(Address::ZERO),
             );
             if land {
-                if !crate::market::nft_reads::land_ready(pool).await {
+                let Some(mut land) = crate::market::nft_reads::land_snapshot(pool).await else {
                     return Ok(Some(false));
-                }
+                };
                 sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM land_authz.token_right WHERE token_address = $1 AND token_id = $2::numeric AND owner = $3 AND updated_block >= $4)")
                     .bind(row.contract_address.as_deref().unwrap_or_default())
                     .bind(row.token_id.as_deref().unwrap_or("0"))
                     .bind(row.expected_owner.as_deref().unwrap_or_default())
                     .bind(block)
-                    .fetch_one(pool)
+                    .fetch_one(&mut *land.tx)
                     .await?
             } else {
                 sqlx::query_scalar::<_, bool>("SELECT EXISTS (SELECT 1 FROM shop.nft WHERE network = $1 AND contract_address = $2 AND token_id = $3::numeric AND owner = $4 AND transferred_block >= $5)")

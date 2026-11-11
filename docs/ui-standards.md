@@ -125,7 +125,7 @@ property and let the module consume it; fixed appearance stays in the module.
 ```tsx
 import type { CSSProperties } from 'react'
 
-<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
+;<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
 ```
 
 Shared components expose runtime geometry through typed props mapped to custom
@@ -235,6 +235,12 @@ dependency. "Bevy HUD" here means the Explorer's React DOM HUD: its source in
 Sharing components with it does not extend to Rust Bevy widgets or SDK scene
 UI.
 
+Use the public `@dcl/one-ui/foundations` entry for foundation-only consumers. The Explorer HUD imports tokens and icons from this entry and keeps generated components outside its compiled source and build fingerprint. The root `@dcl/one-ui` entry remains the public foundation and component surface. Shared foundation CSS continues to use the existing CSS subpaths.
+
+The Explorer HUD records its computed shared-library import closure in `rendering/bevy-explorer/source/react-web/shared-inputs.json`. The owned root inventory contains every tracked file under `rendering/bevy-explorer/source/react-web/src` plus `app.html` and `index.html`. Any edit, addition, deletion or rename of those roots, including comment-only edits, requires regenerating this manifest before CI planning or strict artifact acceptance. Other owned files, including bridge-scene and web-engine sources, become controls only when the actual compiler or Vite graph reaches them; changes to those recorded controls, shared imports or resolver configuration also require regeneration. Unreached owned files remain covered by the separate Explorer source fingerprint. From the repository root, run `npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs` with locked dependencies and canonical Rust-generated bindings available. Local Vite/Vitest configuration still supports ordinary owned-source edits, and native staleness still invokes the existing rebuild without updating the manifest or review pin. `npm run check:shared-inputs` recomputes the compiler, web/native bundle and CSS-processor graphs in CI. The manifest binds all tracked HUD roots and resolver/font identity controls separately from the actually reached UI, Shop and Catalyst API source files. Selection and artifact checks validate each revision's own hashes, reject stale head metadata and conservatively rebuild when a historical revision has no contract. Vite, native stale checks and the pure Nix fileset read the same checked graph. This does not change the separate engine-generated binding inputs or the Sites HUD adaptation review hash.
+
+The manifest also witnesses the immediate names and kinds in the finite ancestor directories of actually reached shared files. Adding, removing or renaming a candidate can change import resolution and requires regeneration even when no recorded body changed; editing an unconsumed existing body does not. Git readers compare exact tracked and physical namespaces. Nix checks the original source before filtering; filtered archives allow only an expected namespace subset while requiring every selected file/control and refusing new names. Installed and named private output directories are separate; similarly prefixed regular files remain witnessed. Unsupported historical contracts rebuild conservatively; current heads require a contract produced by the canonical command.
+
 ### Structure
 
 ```text
@@ -322,7 +328,7 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { theme } from '@dcl/one-ui'
+import { theme } from '@dcl/one-ui/foundations'
 import '@dcl/one-ui/foundations.css'
 ```
 
@@ -336,10 +342,7 @@ include the shared sources so that changes invalidate the affected artifacts.
 - `vite.shared.ts` holds the aliases and the React deduplication, and
   `tsconfig.json` maps the same entries;
 - `src/main.tsx` loads `@dcl/one-ui/foundations.css` once;
-- `tooling/play-artifact.py` (`HUD_SHARED`) makes `library/ui/index.ts` and
-  `library/ui/foundations/` inputs of the HUD artifact and of its CI selection.
-  A test walks what the HUD imports from `library/ui` and fails on any file
-  outside them.
+- `shared-inputs.json` records the actual compiler/Vite shared dependency closure. `tooling/play-artifact.py` and the CI selector validate its identities, while Vite, native and Nix use the same contract; the HUD imports the public foundation entry, so generated components stay outside that closure.
 - Its builds don't fetch Git LFS. The foundations' Inter faces therefore use
   `react-web`'s own `@fontsource-variable/inter`, whose bytes match the digests
   `foundations/typography/font-source.json` pins

@@ -161,9 +161,7 @@ pub async fn prices(
         super::nft_reads::require_prices_sources(state, &nf).await?;
         let key = format!("prices-nft:{f:?}");
         let value = cached(state, Ttl::M5, key, || async {
-            let h = super::nft_reads::nft_prices(state, &nf)
-                .await
-                .map_err(|e| e.to_string())?;
+            let h = super::nft_reads::nft_prices(state, &nf).await?;
             Ok(Value::Array(
                 h.into_iter()
                     .map(|(k, v)| serde_json::json!([k.0, v]))
@@ -171,7 +169,7 @@ pub async fn prices(
             ))
         })
         .await
-        .map_err(|e| ApiError::internal(e).into_response())?;
+        .map_err(nft_prices_error)?;
         return Ok(histogram_from(&value));
     }
     // The item prices read the trade legs too (`build_catalog_query`).
@@ -201,6 +199,16 @@ pub async fn prices(
     .await
     .map_err(|e| ApiError::internal(e).into_response())?;
     Ok(histogram_from(&value))
+}
+
+/// The answer to a failed nft leg: the land-authz index that stopped being
+/// ready after the gate answers its unavailable envelope, as `/v1/nfts`
+/// does; anything else is an internal error.
+pub(crate) fn nft_prices_error(e: String) -> Response {
+    if e == super::nft_reads::NFT_PRICES_LAND_UNAVAILABLE {
+        return super::nft_reads::land_unavailable();
+    }
+    ApiError::internal(e).into_response()
 }
 
 fn histogram_from(value: &Value) -> PricesResponse {

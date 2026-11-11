@@ -317,6 +317,13 @@ pub async fn checkout(
     headers: HeaderMap,
     body: Result<Json<CheckoutBody>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<CheckoutStartOut>, ApiError> {
+    // The cart's checkout spends ledger credits through the economy broker, outside the
+    // CreditsManager and the trial's buyers: a trial spends credits on chain only.
+    if state.settings.trial.is_some() {
+        return Err(ApiError::forbidden(
+            "the cart checkout is disabled in this test (CREDITS_TRIAL_MODE): credits are spent through the CreditsManager only",
+        ));
+    }
     let signer = signer_from(&state, &headers, "post", "/checkout", &original).await?;
     let idem = idempotency_key(&headers)?;
 

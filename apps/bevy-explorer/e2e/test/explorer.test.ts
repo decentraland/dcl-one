@@ -118,6 +118,36 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
   })
 
+  test('the voice chat actions compose their lines', async () => {
+    const fake = new FakeConsole({ voice: 'queued' })
+    const explorer = new Explorer(fake)
+    await explorer.voice('call', '0xabc')
+    await explorer.voice('accept')
+    await explorer.voice('end')
+    await explorer.voice('join', 'c1')
+    await explorer.voice('close')
+    await explorer.voice('hand', 'up')
+    await explorer.voice('mic', 'off')
+    await explorer.voice('deny', '0xabc')
+    assert.deepEqual(fake.lines, ['/voice call 0xabc', '/voice accept', '/voice end', '/voice join c1', '/voice close', '/voice hand up', '/voice mic off', '/voice deny 0xabc'])
+  })
+
+  test('voiceState carries the call', async () => {
+    const fake = new FakeConsole({
+      voice_state: JSON.stringify({
+        mic: { available: true, enabled: false },
+        livekit: true,
+        connected: true,
+        rooms: [],
+        speakers: [],
+        call: { status: 'receivedCall', kind: 'private', callId: 'c1', communityId: null, peer: '0xabc', connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false }
+      })
+    })
+    const state = await new Explorer(fake).voiceState()
+    assert.equal(state.call?.status, 'receivedCall')
+    assert.equal(state.call?.peer, '0xabc')
+  })
+
   test('photoMode and takePhoto parse the JSON replies and wait for the mode', async () => {
     let active = false
     const fake = new FakeConsole({
@@ -340,6 +370,26 @@ describe('Explorer', () => {
     await explorer.clickAt(1, 2)
     await explorer.clickAt(1, 2, 'right')
     assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
+  })
+
+  test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {
+    const report = JSON.stringify({ hit: null, entries: [], events: [], diagnosis: 'blocked by entity 9' })
+    const fake = new FakeConsole({ hover_entity: report, click_entity: report, raycast_stats: JSON.stringify({ budgetMs: 1.67, ran: 1, deferred: 0, spentMs: 0.1, uncappedRan: 2, uncappedSpentMs: 0.2 }), raycast_budget: 'raycast budget: 0.00 ms (override)', scene_logs: '[1.00] Info: a\n[2.00] Info: b' })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.hoverEntity(512, { bounds: true, frames: 10 })).diagnosis, 'blocked by entity 9')
+    await explorer.clickEntity('512', { button: 'primary', event: 'down', timeoutFrames: 60 })
+    await explorer.clearPointer()
+    assert.equal((await explorer.raycastStats()).budgetMs, 1.67)
+    assert.equal(await explorer.raycastBudget(0), 0)
+    assert.deepEqual(await explorer.sceneLogs(50), ['[1.00] Info: a', '[2.00] Info: b'])
+    assert.deepEqual(fake.lines, [
+      '/hover_entity 512 --bounds --frames 10',
+      '/click_entity 512 --button primary --event down --timeout-frames 60',
+      '/hover_entity --clear',
+      '/raycast_stats',
+      '/raycast_budget 0',
+      '/scene_logs 50'
+    ])
   })
 
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
