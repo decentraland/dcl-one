@@ -287,5 +287,8 @@ declare const styles: {
   readonly "v17n1_0_1_1": string
   readonly "v17n1_0_1_1_0": string
   readonly "v17n1_0_2": string
+  readonly "responsiveMobile": string
+  readonly "responsiveDesktop": string
+  readonly "responsiveLargeDesktop": string
 }
 export default styles

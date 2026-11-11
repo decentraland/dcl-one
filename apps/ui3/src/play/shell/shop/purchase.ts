@@ -41,7 +41,7 @@ import { itemAsset } from '@shop/model/asset'
 import { creditsCeil, creditsFloor, type UsdCents } from '@shop/model/money'
 import type { CartLine, GroupProgress, GroupStatus, PurchaseOffer, PurchaseState } from '@shop/model/purchase'
 import type { Session } from '@shop/model/settlement'
-import { loginExpired, rootAddress, type StoredLogin } from '../../features/auth/sso'
+import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
 import type { ShopPurchaseItem, ShopPurchaseStep } from '../../features/shop/ui'
 import { siteUrl } from '../../lib/baseDomain'
 import {
@@ -67,7 +67,7 @@ import {
   type ShopOperationState,
   type ShopWalletKind
 } from '../../lib/shopProtocol'
-import { withUtm } from '../../lib/utm'
+import { withUtm } from '@explorer-core/lib/utm'
 import { trustedCreditsManager, type TrustedManager } from './config'
 import { createLedger, type OperationRecord } from './ledger'
 import { createNamePurchase, nameBuild, namesModeFor, type NameStanding } from './namePurchase'
