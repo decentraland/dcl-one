@@ -52,7 +52,8 @@ fn report_performance_snapshot_system(
                 p95_frame_time: cpu.p95_ms,
                 p99_frame_time: cpu.p99_ms,
 
-                // not reported
+                // TODO: a separate telemetry change reports these from the snapshot's
+                // nearby_player_count, js_heap.used_bytes_sum and client_memory.used_bytes (KB)
                 player_count: -1,
                 used_jsheap_size: -1,
                 memory_usage: -1,
