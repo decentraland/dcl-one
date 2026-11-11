@@ -185,8 +185,8 @@
     },
     {
       "path": "library/ui/figma/src/cli.ts",
-      "sha256": "3317027b777b06f2f61eeed3e4d11b07b1152a28647e1e4396ca3726c602790a",
-      "indexBlobSha": "03cf0ce7c46626a659074ea0a3e30477c5e024bf"
+      "sha256": "bdc6744d887b48cdbe473e1b2a9fb21d2bd3416db95f53a6512a435fe526dbb8",
+      "indexBlobSha": "2f748be35b1cdf42c586a209e7e008b09b8f18c2"
     },
     {
       "path": "library/ui/figma/src/config.ts",
@@ -225,8 +225,8 @@
     },
     {
       "path": "library/ui/figma/src/contract/name-identity.ts",
-      "sha256": "35a4f8aee5dd2478b0cc308e148c4f57567e910e215d0d2d05d09da2bc83096f",
-      "indexBlobSha": "77e67f1a2aa411b8e1f96a1d4aba35a15e24ee27"
+      "sha256": "27dcf330c59330df0da5ec935ddea33912da3801b709602d9ef747d2aad88730",
+      "indexBlobSha": "94aa1bc77fbe29eec5faeb1a2a32f5616e4dca1d"
     },
     {
       "path": "library/ui/figma/src/contract/resolve.ts",
