@@ -1,6 +1,6 @@
 {
   "schema": 2,
-  "portInputHash": "fb8150f8ae42b112b344ee5c0f171e27ea86258e7cb6f78741f66311da765778",
+  "portInputHash": "942fc41f031d234466fe9ae6373d2bd787ccee87ef84d611ebd1ed5ed548ee7f",
   "fdsRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "snapshotRevision": "9c6dfbe61b2c218ff0b820841aac722df4ebd8aa",
   "checks": {
@@ -10,7 +10,7 @@
     },
     "deviations": {
       "result": "pass",
-      "detail": "459 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
+      "detail": "463 tooling pins, 39 foundation origins and 11 component outputs pass the common guard"
     },
     "diff": {
       "result": "pass",
