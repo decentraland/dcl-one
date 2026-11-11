@@ -2,6 +2,8 @@
 import { componentOwnerById } from './guard/component-identity.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
@@ -18,7 +20,6 @@ import { EnvTokenProvider, FigmaClient } from './figma/client.js'
 import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
-import { runInstall } from './install.js'
 import { portPrepare, portVerify } from './port.js'
 import { fetchFdsSource } from './sources/fds-source.js'
 
@@ -143,14 +144,21 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === 'install') {
     if (positionals.length !== 2) throw new Error(USAGE)
-    print(
-      await runInstall(await createApp(process.cwd(), values.config), {
-        target: positionals[1]!,
-        source: sourceKind(values.source),
-        outDir: values.out
-      })
+    // Install runs in its own process, which loads only the import closure components/generation.json binds.
+    const forwarded = [positionals[1]!, '--source', sourceKind(values.source)]
+    if (values.out !== undefined) forwarded.push('--out', values.out)
+    if (values.config !== undefined) forwarded.push('--config', values.config)
+    const child = spawnSync(
+      process.execPath,
+      [
+        ...process.execArgv,
+        fileURLToPath(new URL('./install-main.ts', import.meta.url)),
+        ...forwarded
+      ],
+      { stdio: 'inherit' }
     )
-    return 0
+    if (child.error) throw child.error
+    return child.status ?? 1
   }
 
   if (command === 'review-manifest') {

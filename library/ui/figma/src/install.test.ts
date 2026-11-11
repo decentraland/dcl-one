@@ -767,7 +767,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'src/specs.ts'), 'export const transitive = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -781,7 +781,7 @@ describe('when component installation owns its verified input read-set and trans
       return plan
     })
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
@@ -842,7 +842,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'extra-helper.mts'), 'export const tracked = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -965,11 +965,29 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
+  it('should install with a locked tooling module that is outside the read-set', async () => {
+    const tool = 'library/ui/figma/src/unrelated-tool.ts'
+    await writeFile(path.join(repository, tool), 'export const tool = true\n')
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    lock.sources[0].files[tool] = { sha256: hash('export const tool = true\n') }
+    await writeFile(lockPath, JSON.stringify(lock))
+    await fixtureCommit(repository)
+    const result = await runInstall(app, options)
+    expect(result.changed).toBe(true)
+    expect(
+      vi
+        .mocked(createComponentGeneration)
+        .mock.calls[0]![0].modules.map((module: { path: string }) => module.path)
+    ).not.toContain(tool)
+  })
+
   it('should reject a missing module pin before planning', async () => {
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
     delete lock.sources[0].files[modulePath]
     await writeFile(lockPath, JSON.stringify(lock))
-    await expect(runInstall(app, options)).rejects.toThrow('Missing locked component input')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Component implementation is absent from the source lock'
+    )
     expect(planComponents).not.toHaveBeenCalled()
   })
 

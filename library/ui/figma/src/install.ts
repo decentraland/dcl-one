@@ -1,6 +1,7 @@
 // port:9c6dfbe6, promotion/promote.ts installation subset. Seal, manifest verification and release publication removed.
 import { execFile, execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
+import { lstatSync, readFileSync } from 'node:fs'
 import {
   lstat,
   mkdir,
@@ -15,7 +16,7 @@ import {
 import path from 'node:path'
 import { createRequire } from 'node:module'
 import { promisify } from 'node:util'
-import type { App, SourceKind } from './app.js'
+import type { App, SourceKind } from './app-context.js'
 import { generateFoundations } from './generators/tokens.js'
 import { generateIcons } from './generators/icons.js'
 import { canonicalPath, isMissing, resolveContained, toPosix } from './guard/fs-safe.js'
@@ -25,7 +26,9 @@ import { planComponents } from './install-components.js'
 import { runtimeFiles } from './promotion/eligibility.js'
 import {
   componentDependencyPaths,
+  componentModuleCandidates,
   componentModulePaths,
+  componentPackages,
   createComponentGeneration,
   isComponentModulePath
 } from '../component-generation.mjs'
@@ -426,7 +429,7 @@ async function assertInstallResolverBoundary(ui: string, modules: readonly strin
       directory = path.posix.dirname(directory)
     }
   }
-  const dependencies = ['postcss', 'postcss-modules', 'svgo', 'zod', 'semver', 'typescript']
+  const dependencies = componentPackages
   const installed = await canonicalPath(path.join(ui, 'node_modules'))
   const sanctioned = createRequire(path.join(ui, 'package.json'))
   for (const relative of directories) {
@@ -506,7 +509,15 @@ async function installComponents(
   )
   if (!pinned) throw new Error('Missing component source pin')
   const configPath = toPosix(path.relative(repository, await canonicalPath(configFile)))
-  const modulePaths = componentModulePaths(pinned)
+  // The read-set is the installer's import closure, selected from locked bytes; a regular file only.
+  const readModule = (file: string) => {
+    const full = path.join(repository, file)
+    if (!lstatSync(full, { throwIfNoEntry: false })?.isFile())
+      throw new Error('Component implementation is not a regular file: ' + file)
+    return readFileSync(full)
+  }
+  const modulePaths = componentModulePaths(pinned, readModule)
+  const candidates = componentModuleCandidates(pinned)
   const assertInventory = async () => {
     await assertInstallResolverBoundary(root, modulePaths)
     const listing = (
@@ -526,8 +537,8 @@ async function installComponents(
     for (const file of physical.executable) {
       if (!tracked.has(file))
         throw new Error('Untracked or ignored component implementation override: ' + file)
-      if (!modulePaths.includes(file))
-        throw new Error('Component implementation is absent from the locked read-set: ' + file)
+      if (!candidates.includes(file))
+        throw new Error('Component implementation is absent from the source lock: ' + file)
     }
     const scoped = (file: string) =>
       file.startsWith('library/ui/figma/src/') || path.posix.dirname(file) === 'library/ui/figma'
@@ -538,7 +549,7 @@ async function installComponents(
     if (JSON.stringify(physicalModules) !== JSON.stringify(trackedPhysicalModules))
       throw new Error('Component physical source inventory differs from the committed source lock')
     const inventory = [...tracked].filter(isComponentModulePath).sort()
-    if (JSON.stringify(inventory) !== JSON.stringify([...modulePaths].sort()))
+    if (JSON.stringify(inventory) !== JSON.stringify(candidates))
       throw new Error('Component module inventory differs from the committed source lock')
   }
   await assertInventory()
@@ -590,6 +601,7 @@ async function installComponents(
     Buffer.from(
       createComponentGeneration({
         source: pinned,
+        read: readModule,
         modules,
         dependencies: [...dependencies].map((file) => {
           const { path, sha256, indexBlobSha } = initial.get(file)!

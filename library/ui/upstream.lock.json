@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "5578e9e390958e3251ab0a2bec9083104594dcea0fa6eb5fa8b5730a26402bb4",
+          "sha256": "c3ee9df26299e35f36b7044455a3fa993b2bcac685e188906aae2fed85ee4dac",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -621,7 +621,8 @@
             "skill-kit-followups",
             "resolver-followups",
             "port-command-followups",
-            "port-safe-restore"
+            "port-safe-restore",
+            "generation-import-closure"
           ]
         },
         "library/ui/figma/agent-kit/cli.mjs": {
@@ -708,9 +709,10 @@
           "deviation": [
             "component-install-integrity",
             "accepted-limits",
-            "resolver-followups"
+            "resolver-followups",
+            "generation-import-closure"
           ],
-          "sha256": "3410e9530daf2c43331cef8f6148a4c7c7001474f752b2f900b58ffb4c69353c"
+          "sha256": "38d308ab445b98b80cfda2175f3a7dcd26ea723413dfa43b62fefb882d85c1ad"
         },
         "library/ui/figma/figma.config.json": {
           "sha256": "f31d3c288af78d8d215ed63006416507e8bd5cfef92bd720739ccaf91a92846f",
@@ -811,6 +813,11 @@
             "port-input-binding"
           ]
         },
+        "library/ui/figma/module-graph.mjs": {
+          "sha256": "62b93e936b78d34a4fff40ac9a25a3b72ce90f0232aa8fd58f982ee303968963",
+          "fds": null,
+          "deviation": "generation-import-closure"
+        },
         "library/ui/figma/port-verification.mjs": {
           "sha256": "3fa22e1fd7156d6f2c5973b290f88fac491eea6108384f03384ac9d7f637a3b2",
           "fds": null,
@@ -847,9 +854,10 @@
           "deviation": [
             "component-install-integrity",
             "single-component-module-pin",
-            "resolver-followups"
+            "resolver-followups",
+            "generation-import-closure"
           ],
-          "sha256": "f3feb05d196a094b7e294e7bb3d41ffaee91d6047ca4780edc91da3777e62d4c"
+          "sha256": "f25fce22d2ca374851a891acb8506ad9fa76aaba0a972644228b99d25895721c"
         },
         "library/ui/figma/public-foundations.mjs": {
           "fds": null,
@@ -2305,6 +2313,11 @@
           ],
           "sha256": "9b5b664e6e924bd76f10ee8d1a61e1ad9599b286fbaadbf6f0d6148de9facb57"
         },
+        "library/ui/figma/src/app-context.ts": {
+          "sha256": "b2cbf169957d69a7fe14a4d424169397189fbb56f18f580d1f4bba9f88620e6a",
+          "fds": null,
+          "deviation": "generation-import-closure"
+        },
         "library/ui/figma/src/app.cache-boundary.test.ts": {
           "sha256": "c8319a846deed968d3ace8cc836bf319bc24e579beeec39e9f716c7a3a81fe4a",
           "fds": null,
@@ -2332,7 +2345,7 @@
           ]
         },
         "library/ui/figma/src/app.ts": {
-          "sha256": "6c09e5c801e528f82b1225aa7bc0e4d7b536912f72bc832fce3bf68248c2bc9e",
+          "sha256": "b26ac3e98dabb25f86bfcd698b0b1cc6e8ee223355cade1e712b266355b42042",
           "fds": {
             "path": "dcl-mcp-figma/src/app.ts",
             "sha256": "93677b44b6566ebac7e9be5088f6399a4f61323557d819f7a1b0b312df6d15f1"
@@ -2341,7 +2354,8 @@
             "live-access-removed",
             "capture-removed",
             "live-read-restored",
-            "bot-review-279"
+            "bot-review-279",
+            "generation-import-closure"
           ]
         },
         "library/ui/figma/src/capture/expand-variants.test.ts": {
@@ -2447,7 +2461,7 @@
           ]
         },
         "library/ui/figma/src/cli.ts": {
-          "sha256": "b69f715a218ed5637015eb3ae535b46a43e99d8f26eabb0938a7cb67d2064823",
+          "sha256": "33ca323067d54601a389c7e64a5a1da980916519f494a79f91e544a258126014",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.ts",
             "sha256": "e90f73241aaa4750f564e48c836d169a903a24cbcc53fb2b2d55952aa5b9eda4"
@@ -2464,16 +2478,18 @@
             "name-identity",
             "port-command",
             "skill-kit-followups",
-            "resolver-followups"
+            "resolver-followups",
+            "generation-import-closure"
           ]
         },
         "library/ui/figma/src/component-generation.test.ts": {
           "fds": null,
           "deviation": [
             "component-install-integrity",
-            "resolver-followups"
+            "resolver-followups",
+            "generation-import-closure"
           ],
-          "sha256": "ccd8a1a49226b3515e73bfd328b734a40b64882521bce3cab2ad7e0f55127f22"
+          "sha256": "114229703e86cf0e38e136297ecfaf1547b0540a580cfe415f4df5c80c227d16"
         },
         "library/ui/figma/src/config.ts": {
           "sha256": "fc2364bfeeb8bbf2e8f30c1f1841f37db30d69b7c139bde54bbb5b348ac43e83",
@@ -3351,6 +3367,11 @@
             "resolver-followups"
           ]
         },
+        "library/ui/figma/src/install-main.ts": {
+          "sha256": "4a6c9554b87b19ca4a674d6fe15eba3239facf8e825b65b631201a4dcb7bc44e",
+          "fds": null,
+          "deviation": "generation-import-closure"
+        },
         "library/ui/figma/src/install.test.ts": {
           "fds": null,
           "deviation": [
@@ -3359,9 +3380,10 @@
             "foundation-review",
             "verified-install",
             "component-install-integrity",
-            "accepted-limits"
+            "accepted-limits",
+            "generation-import-closure"
           ],
-          "sha256": "805dae6051246b2abda300d64e7097e8ceef036fd50aff6f030002bcc2587dd6"
+          "sha256": "94cabc49ab7af7334cfc8f9cf853a32a653ef9adb2a19b84a26d775a70129e02"
         },
         "library/ui/figma/src/install.ts": {
           "fds": null,
@@ -3370,9 +3392,10 @@
             "seal-removed",
             "foundation-review",
             "verified-install",
-            "component-install-integrity"
+            "component-install-integrity",
+            "generation-import-closure"
           ],
-          "sha256": "cfbb7325dcf5a96d38c79113967fa14ea2a08f489dd0d8e7b6acecf37cd7eb08"
+          "sha256": "5cb08d3e87945a5bc84b436e35afeb41d87c6d924eae799f539813fc2a838788"
         },
         "library/ui/figma/src/ir/components.ts": {
           "sha256": "e16fb3e95094d99e321f9d072b8aeb05a70bdbd255a481970778187f3df00fc6",
@@ -3561,6 +3584,11 @@
             "live-read-restored"
           ]
         },
+        "library/ui/figma/src/module-graph.test.ts": {
+          "sha256": "7c12e748656dc82b949f2d2c772ec877f5ea128c46412817098c8efe2985186a",
+          "fds": null,
+          "deviation": "generation-import-closure"
+        },
         "library/ui/figma/src/orphan-drain.test.ts": {
           "sha256": "5a266e687db1bb7a1a4a4ac450f9b93eefffb4b37eac698454010b8518d85668",
           "fds": null,
@@ -3650,9 +3678,10 @@
             "component-install-integrity",
             "port-input-binding",
             "single-component-module-pin",
-            "resolver-followups"
+            "resolver-followups",
+            "generation-import-closure"
           ],
-          "sha256": "17427e7ec5099ae976dd3bb70e79c13db53374e973c4c06032e2d340829981eb"
+          "sha256": "dcdb4e049732da33f3ae06f4558b961e644c5585d242c04bac1e0f6c97f70969"
         },
         "library/ui/figma/src/public-foundations.test.ts": {
           "fds": null,
@@ -4329,6 +4358,7 @@
         "foundation-review": "Foundation review hardening regenerates source.json from the verified capture and committed generator identities while preserving the owner bindings. An uncommitted generator or edited provenance template fails before publication.",
         "gallery-disclosure": "The gallery discloses what it does not provide: the catalog records, per component, how many image fills its generated stylesheet replaced with the neutral placeholder (counted from the generated CSS; a missing stylesheet fails the manifest), the component page states that those image fills are not provided and that the gallery makes no claim of visual parity, and the navigation says Figma image fills are not provided. review-notes.json, the per-component visual review statuses and findings the gallery displayed, is removed with the visual review it reported. Affected components: PlaceCard, SearchBar, NavBar, ProfilePic, NavNotificationsButton, NavProfileButton, NavNotificationItem, SearchResultItem, WebTheme, ShopModals, NavProfileMenu, WebThemeDarkMode, NavBarExplorer.",
         "generated": "Generated Review output (figma/review/src/generated and figma/review/src/review/catalog.json) is regenerated here by this tree's generator and figma.config.json from the pinned capture: it differs from figma-design-system's committed output wherever the ports above, the keyless context or the imageFills placeholder differ. figma diff against the fetched cache reports no change.",
+        "generation-import-closure": "components/generation.json binds the import closure of the install process instead of every tooling module (docs/adr/2026-11-11-generation-binds-installer-import-closure.md). module-graph.mjs computes the closure without dependencies and fails closed on any import it cannot resolve to one tracked file or a sanctioned package; componentModulePaths selects the fixed inputs, that closure and non-code files under figma/src from lock-verified bytes, and the generation record is schema 2. dcl-figma install runs in its own process (src/install-main.ts), so the modules it loads are the closure; createApp moves to src/app-context.ts so that process does not load the sync tooling. The install and offline inventories still require every candidate module to be tracked and pinned.",
         "internal-components": "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "key-download-identity": "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard.",
         "key-guard-integrity": "Key guard integrity: the key scan runs in two jobs. prepare holds no secret: it validates the triggering run, fetches the scanned commits and prefetches their LFS objects, checks the Review artifact, posts the failed check for every skip or failure, and uploads the commits as a git bundle (prerequisites: the parents of the default branch commit it checked out) and the LFS objects as the key-scan-input artifact. key-scan holds FIGMA_FILE_KEY and has only pinned actions/checkout of the default branch into trusted/ without persisted credentials, actions/setup-node, actions/download-artifact into runner.temp, the key step and a report step. The policy test requires a key step's run to equal, once trimmed, one of the fixed templates in figma/test/key-step.ts (the trusted/ scan, or an artifact scan over a workspace root checkout with the build in .preview/input), and its env to hold exactly FIGMA_FILE_KEY, TRUSTED_SHA (github.sha or github.workflow_sha), GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL and GIT_NO_REPLACE_OBJECTS at their hardening values, and the template's data variables, each from an allowlisted expression; the optional report step must equal the report template and come last. Any other step, action, action input or step key in a key job is rejected, so no shell runs before the key step and no command is parsed. The key step copies key-guard.mjs from TRUSTED_SHA by object id with --no-replace-objects before it fetches the bundle (into refs/key-scan/ only), reads the url allowlist from TRUSTED_SHA, names it with --revision, and reads LFS objects from the downloaded store (--lfs-store), each verified against its oid. Key jobs run on GitHub-hosted runners, and the import check covers export from and dynamic loads.",
