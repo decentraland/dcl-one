@@ -446,7 +446,8 @@ pub struct ShopConfig {
 
     /// A closed trial of on-chain credits: only CREDITS_TRIAL_BUYERS get new credit
     /// authorizations, the MANA top-up routes refuse, and the node refuses to start with a card
-    /// rail, a mock card, a relay fallback, an uncapped relay or no revoker.
+    /// rail, a mock card, a relay fallback, an uncapped relay or no revoker. The relay's writes
+    /// then open with OPS_WRITES_ENABLED, the credits switch, instead of DATA_WRITES_ENABLED.
     #[arg(long, env = "CREDITS_TRIAL_MODE", default_value_t = false, action = clap::ArgAction::Set)]
     pub credits_trial_mode: bool,
 
