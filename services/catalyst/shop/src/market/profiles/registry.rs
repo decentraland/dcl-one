@@ -2,6 +2,7 @@
 //! Catalyst Lambdas. There is no Registry upstream or separate profile cache.
 
 use axum::body::Bytes;
+use axum::extract::rejection::BytesRejection;
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -15,13 +16,15 @@ use super::{
 };
 
 const INVALID_IDS: &str = "The ids property must be an array of non-empty strings";
+/// Largest request body: 1000 ids of a few dozen bytes each fit well within it.
+const BODY_LIMIT: usize = 256 * 1024;
 
 /// Mount under `/asset-bundle-registry`, using the existing market state.
 pub fn router(state: SharedState) -> Router {
     Router::new()
         .route("/profiles", post(profiles))
         .route("/profiles/metadata", post(metadata))
-        .layer(DefaultBodyLimit::max(256 * 1024))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .layer(tower_http::cors::CorsLayer::permissive())
         .with_state(state)
 }
@@ -83,15 +86,42 @@ fn invalid_ids() -> Box<Response> {
     )
 }
 
-async fn profiles(State(state): State<SharedState>, body: Bytes) -> Response {
+async fn profiles(
+    State(state): State<SharedState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
     respond(state, body, false).await
 }
 
-async fn metadata(State(state): State<SharedState>, body: Bytes) -> Response {
+async fn metadata(
+    State(state): State<SharedState>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
     respond(state, body, true).await
 }
 
-async fn respond(state: SharedState, body: Bytes, compact: bool) -> Response {
+/// A body the extractor refused (over `BODY_LIMIT`, or a broken stream) in
+/// the same JSON envelope as the other errors, not axum's plain text.
+fn body_rejection(rejection: BytesRejection) -> Response {
+    let status = rejection.status();
+    let message = if status == StatusCode::PAYLOAD_TOO_LARGE {
+        format!("The request body exceeds {BODY_LIMIT} bytes")
+    } else {
+        rejection.body_text()
+    };
+    let error = status.canonical_reason().unwrap_or("Bad request");
+    (status, Json(json!({"error": error, "message": message}))).into_response()
+}
+
+async fn respond(
+    state: SharedState,
+    body: Result<Bytes, BytesRejection>,
+    compact: bool,
+) -> Response {
+    let body = match body {
+        Ok(body) => body,
+        Err(rejection) => return body_rejection(rejection),
+    };
     let pointers = match parse_ids(&body) {
         Ok(pointers) => pointers,
         Err(response) => return *response,
@@ -260,6 +290,23 @@ mod tests {
             assert_eq!(
                 call(path, r#"{"ids":[]}"#).await,
                 (StatusCode::OK, json!([]))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn registry_oversized_body_is_a_json_413() {
+        let body = json!({"ids": ["a".repeat(BODY_LIMIT)]}).to_string();
+        for path in ["/profiles", "/profiles/metadata"] {
+            assert_eq!(
+                call(path, &body).await,
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    json!({
+                        "error": "Payload Too Large",
+                        "message": "The request body exceeds 262144 bytes",
+                    })
+                )
             );
         }
     }
