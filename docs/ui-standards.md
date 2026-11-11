@@ -260,7 +260,7 @@ library/ui/
       Button.figma.ts   Figma mapping, read by the tooling only
   apps/
     <app>/              app-specific UI: components and styles used by one app
-  index.ts              public foundation exports; components when installed
+  index.ts              public foundation and component exports
   figma/                Node-only Figma MCP server and CLI, config, verified cache
 ```
 
