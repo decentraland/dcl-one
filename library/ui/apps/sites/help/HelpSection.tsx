@@ -4,7 +4,7 @@ import styles from './HelpSection.module.css'
 type HelpSectionProps = {
   title: string
   description?: ReactNode
-  /** The questions, in a list that scrolls on its own past a fixed height. */
+  /** The questions, in a list that fills the section's height and scrolls on its own. */
   children: ReactNode
   /** A line under the list, such as a support address. */
   footer?: ReactNode

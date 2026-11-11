@@ -10,7 +10,8 @@
   max-width: 900px;
   min-height: 220px;
   align-items: center;
-  margin: var(--dcl-space-48) auto 0;
+  /* Close under the section list, which fills the page down to here. */
+  margin: var(--dcl-space-24) auto 0;
   padding: var(--dcl-space-32);
   overflow: hidden;
   border-radius: var(--dcl-radius-lg);

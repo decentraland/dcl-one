@@ -2,12 +2,15 @@
  * Source: decentraland/sites HelpPageWrapper, HelpPageContainer, HelpSidebar*, HelpContentArea and the status
  * wrappers (src/pages/help/HelpPage.styled.ts). One grid places every part, so the status control is rendered once
  * and moves from the right column (wider screens) to beside the title (phones).
+ *
+ * From 768px up the page is one viewport high (never under 640px, where the page scrolls instead): the chat banner
+ * keeps its height at the bottom and the active section's list fills the rest, scrolling on its own.
  */
 .root {
   display: flex;
   box-sizing: border-box;
-  min-height: calc(100vh - var(--site-header-h, 64px));
-  min-height: calc(100svh - var(--site-header-h, 64px));
+  height: max(640px, calc(100vh - var(--site-header-h, 64px)));
+  height: max(640px, calc(100svh - var(--site-header-h, 64px)));
   flex-direction: column;
   padding: var(--dcl-space-32) 20px 20px;
   background: var(--dcl-bg-page);
@@ -19,14 +22,15 @@
 
 .layout {
   display: grid;
-  flex: 1 0 auto;
+  min-height: 0;
+  flex: 1 1 auto;
   grid-template-areas:
     'title panel status'
     'description panel status'
     'tabs panel status'
     '. panel .';
   grid-template-columns: minmax(0, 300px) minmax(0, 1fr) auto;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   align-items: start;
   padding-left: var(--dcl-space-48);
 }
@@ -54,8 +58,12 @@
 }
 
 .panel {
-  grid-area: panel;
+  display: flex;
   min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  grid-area: panel;
+  align-self: stretch;
   margin: 18px 0 0 80px;
 }
 
@@ -82,12 +90,17 @@
   }
 }
 
+/* Phones keep the page's natural height: the list keeps its fixed height and the banner sticks to the bottom. */
 @media (max-width: 767px) {
   .root {
+    height: auto;
+    min-height: calc(100vh - var(--site-header-h, 64px));
+    min-height: calc(100svh - var(--site-header-h, 64px));
     padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-32);
   }
 
   .layout {
+    flex: 1 0 auto;
     grid-template-areas:
       'title status'
       'description description'
@@ -124,6 +137,7 @@
   }
 
   .panel {
+    display: block;
     width: 100%;
     max-width: 375px;
     justify-self: center;

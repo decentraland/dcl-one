@@ -1,5 +1,12 @@
 /* Source: decentraland/sites HelpSectionTexts, HelpSectionTitle, HelpSectionDescription, AccordionContainer and
    CreatorFundContact (src/pages/help/HelpPage.styled.ts). */
+.root {
+  display: flex;
+  min-height: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
 .texts {
   display: flex;
   flex-direction: column;
@@ -30,7 +37,11 @@
 }
 
 .scroller {
-  max-height: 380px;
+  /* Takes its content's height, shrinking to the space left above the chat banner and scrolling there; a short
+     window still shows a few questions. Its width ends at the questions, so the scrollbar sits beside them. */
+  max-width: 680px;
+  min-height: 240px;
+  flex: 0 1 auto;
   margin-top: var(--dcl-space-16);
   padding-right: var(--dcl-space-8);
   overflow-y: auto;
@@ -47,7 +58,12 @@
     font-size: var(--dcl-font-size-heading-4);
   }
 
+  .root {
+    display: block;
+  }
+
   .scroller {
+    min-height: 0;
     max-height: 340px;
   }
 }
