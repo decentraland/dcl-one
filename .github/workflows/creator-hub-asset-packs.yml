@@ -129,8 +129,7 @@ jobs:
           bucket: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           region: ${{ secrets.SDK_TEAM_AWS_REGION }}
           prefix: 'creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/asset-packs'
-          aws-access-key-id: ${{ secrets.SDK_TEAM_AWS_ID }}
-          aws-secret-access-key: ${{ secrets.SDK_TEAM_AWS_SECRET }}
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
           content-type: 'application/gzip'
           acl: 'public-read'
           cache-control: 'max-age=0,private'
@@ -151,6 +150,7 @@ jobs:
     environment: creator-hub-release
     permissions:
       contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/creator-hub-lfs
@@ -166,11 +166,15 @@ jobs:
       - name: build
         run: make build-asset-packs
 
+      - name: AWS role for the production asset CDN
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_ASSETS_PRD_ROLE_ARN }}
+          aws-region: us-east-1
+
       - name: upload assets to S3 prod
         run: make upload-asset-packs
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.BUILDER_ITEMS_AWS_ID_PRD }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.BUILDER_ITEMS_AWS_SECRET_PRD }}
           S3_BUCKET_NAME: ${{ secrets.BUILDER_ITEMS_S3_BUCKET_PRD }}
           S3_REGION: us-east-1
           S3_UPLOAD_CONCURRENCY: 20

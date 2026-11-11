@@ -55,10 +55,15 @@ What else changes:
   `creator-hub-drop.yml` their token. The desktop workflow tags `creator-hub@X.Y.Z` here, from
   which `semantic-version` (`change_path: apps/creator-hub`) computes the next version. That
   repository is not archived: an archived repository takes no new releases.
-- **Secrets.** Jobs that run on pull requests read repository secrets: the SDK bucket, the
-  development asset CDN, the end-to-end wallet and the app's build-time keys. Signing,
-  notarization, the production asset CDN, the Sentry upload token and the release App key live
-  in the `creator-hub-release` environment, limited to `main`. Jobs pick it with
+- **Secrets.** No AWS keys are stored: every upload assumes an IAM role through GitHub OIDC
+  (`aws-actions/configure-aws-credentials` with `role-to-assume`, `id-token: write`). The role
+  ARNs are repository variables: `CREATOR_HUB_SDK_BUCKET_ROLE_ARN` (PR packages, installers and
+  inspector previews), `CREATOR_HUB_ASSETS_DEV_ROLE_ARN` (the `/upload-assets` comment) and
+  `CREATOR_HUB_ASSETS_PRD_ROLE_ARN` (the production asset CDN, trusted only from the
+  `creator-hub-release` environment). Jobs that run on pull requests read repository secrets: the
+  bucket names, the end-to-end wallet and the app's build-time keys. Signing, notarization, the
+  Sentry upload token and the release App key live in the `creator-hub-release` environment,
+  limited to `main`. Jobs pick it with
   `github.ref == 'refs/heads/main' && 'creator-hub-release' || ''`.
 - **Inspector previews.** These were GitHub Pages; they are now uploaded to the SDK bucket next to
   the branch's package tarballs.

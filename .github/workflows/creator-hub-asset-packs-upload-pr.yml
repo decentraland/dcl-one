@@ -20,6 +20,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
     steps:
       - name: verify PR is from trusted source
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
@@ -76,11 +77,15 @@ jobs:
       - name: build
         run: make build-asset-packs
 
+      - name: AWS role for the development asset CDN
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_ASSETS_DEV_ROLE_ARN }}
+          aws-region: us-east-1
+
       - name: upload assets to S3 dev (PR-specific path)
         run: make upload-asset-packs
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.BUILDER_ITEMS_AWS_ID_DEV }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.BUILDER_ITEMS_AWS_SECRET_DEV }}
           S3_BUCKET_NAME: ${{ secrets.BUILDER_ITEMS_S3_BUCKET_DEV }}
           S3_REGION: us-east-1
           S3_UPLOAD_CONCURRENCY: 20

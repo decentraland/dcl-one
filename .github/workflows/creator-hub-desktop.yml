@@ -42,13 +42,14 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+      id-token: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     env:
       # Dependabot runs (and re-runs of them) and fork PRs get no repository secrets and a
       # read-only token, so the S3 test build upload and its PR comment can't run there.
       # The compile above them still runs, so the required build checks stay meaningful.
-      CAN_UPLOAD_PR_BUILD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && secrets.SDK_TEAM_AWS_ID != '' }}
+      CAN_UPLOAD_PR_BUILD: ${{ secrets.SDK_TEAM_S3_BUCKET != '' && vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -213,13 +214,18 @@ jobs:
         working-directory: apps/creator-hub/packages/creator-hub
         run: sh -c 'mkdir dist/upload && cp dist/*.dmg dist/*.exe dist/*.zip dist/upload 2> /dev/null || :'
 
+      - name: AWS role for the SDK bucket
+        if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
+          aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
+
       - name: Upload to S3
         if: ${{ github.event.pull_request.number && env.CAN_UPLOAD_PR_BUILD == 'true' }}
         id: upload
         working-directory: apps/creator-hub/packages/creator-hub
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.SDK_TEAM_AWS_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.SDK_TEAM_AWS_SECRET }}
           S3_BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           HEAD_REF: ${{ github.head_ref }}
         run: |

@@ -11,6 +11,8 @@ import { LocalFileSystem } from './utils/local';
 dotenv.config();
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
+// Set with the role credentials CI assumes through GitHub OIDC; long-lived keys have none.
+const sessionToken = process.env.AWS_SESSION_TOKEN;
 const bucketName = process.env.S3_BUCKET_NAME;
 const region = process.env.S3_REGION;
 const concurrency = parseInt(process.env.S3_UPLOAD_CONCURRENCY || '');
@@ -39,6 +41,7 @@ async function main() {
     credentials: {
       accessKeyId,
       secretAccessKey,
+      sessionToken,
     },
   };
 

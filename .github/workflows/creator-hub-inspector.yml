@@ -170,8 +170,7 @@ jobs:
           bucket: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           region: ${{ secrets.SDK_TEAM_AWS_REGION }}
           prefix: 'creator-hub/branch/${{ github.head_ref || github.ref }}/@dcl/inspector'
-          aws-access-key-id: ${{ secrets.SDK_TEAM_AWS_ID }}
-          aws-secret-access-key: ${{ secrets.SDK_TEAM_AWS_SECRET }}
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
           content-type: 'application/gzip'
           acl: 'public-read'
           cache-control: 'max-age=0,private'
@@ -186,12 +185,15 @@ jobs:
       # The Babylon inspector preview for this branch. dcl-one has no GitHub Pages site, so it is
       # served from the SDK bucket next to the branch's package tarballs. Source maps and the
       # Bevy engine/agent bundles stay out: the preview doesn't load them.
+      - name: AWS role for the SDK bucket
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
+        with:
+          role-to-assume: ${{ vars.CREATOR_HUB_SDK_BUCKET_ROLE_ARN }}
+          aws-region: ${{ secrets.SDK_TEAM_AWS_REGION }}
+
       - name: upload preview to S3
         id: preview
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.SDK_TEAM_AWS_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.SDK_TEAM_AWS_SECRET }}
-          AWS_DEFAULT_REGION: ${{ secrets.SDK_TEAM_AWS_REGION }}
           BUCKET: ${{ secrets.SDK_TEAM_S3_BUCKET }}
           SAFE_BRANCH: ${{ steps.sanitize-branch.outputs.safe_branch }}
         run: |
