@@ -1,5 +1,5 @@
 // TODO(figma-ds): replace with the Figma-generated tab bar from library/ui/components.
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, MouseEvent, ReactNode } from 'react'
 import styles from './ProfileTabs.module.css'
 
 type ProfileTabLink = { id: string; label: string; href: string }
@@ -9,7 +9,7 @@ type TabLinkProps = {
   to: string
   className: string
   'aria-current'?: 'page'
-  onClick?: () => void
+  onClick?: (event: MouseEvent<HTMLAnchorElement>) => void
   children: ReactNode
 }
 
@@ -45,7 +45,18 @@ function ProfileTabs({
                 to={tab.href}
                 className={current ? `${styles.tab} ${styles.active}` : styles.tab}
                 aria-current={current ? 'page' : undefined}
-                onClick={() => onSelect?.(tab.id)}
+                onClick={(event) => {
+                  // A modifier or middle click opens a new browser tab; this page's tab does not change.
+                  if (
+                    event.button !== 0 ||
+                    event.metaKey ||
+                    event.ctrlKey ||
+                    event.shiftKey ||
+                    event.altKey
+                  )
+                    return
+                  onSelect?.(tab.id)
+                }}
               >
                 {tab.label}
               </LinkComponent>

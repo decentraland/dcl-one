@@ -168,8 +168,11 @@ describe("profile route, client navigation", () => {
     mount(`/profile/${A}`);
 
     expect(await screen.findByRole("heading", { name: "Profile unavailable" })).toBeTruthy();
-    screen.getByRole("button", { name: "Try again" }).click();
-    expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
+    await act(async () => {
+      screen.getByRole("button", { name: "Try again" }).click();
+    });
+    // The retry is a navigation plus a fresh read; allow for a loaded test machine.
+    expect(await screen.findByRole("heading", { name: "Alice" }, { timeout: 3000 })).toBeTruthy();
     expect(net.fetchProfile).toHaveBeenCalledTimes(2);
   });
 

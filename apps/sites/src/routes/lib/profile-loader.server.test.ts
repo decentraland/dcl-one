@@ -33,7 +33,13 @@ import { createStaticHandler } from "react-router";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { profileKeys } from "@/data/lib/profile/queries";
 
-import { legacyAccountsRedirect, ownProfileRedirect, profileLoader, type ProfileLoaderData } from "./profile-loader.server";
+import {
+  legacyAccountsRedirect,
+  OPTIONAL_READS_BUDGET_MS,
+  ownProfileRedirect,
+  profileLoader,
+  type ProfileLoaderData,
+} from "./profile-loader.server";
 
 const A = "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295";
 const B = "0x1111111111111111111111111111111111111111";
@@ -129,6 +135,25 @@ describe("profile loader, dehydrated state", () => {
     expect(net.fetchProfilePlaces).not.toHaveBeenCalled();
     expect(net.fetchUserPhotos).not.toHaveBeenCalled();
   });
+
+  it("does not hand a wallet with no profile its badges", async () => {
+    net.fetchProfile.mockResolvedValue(null);
+    net.fetchUserBadges.mockResolvedValue([{ id: "x", name: "X" }]);
+
+    const out = await run(`/profile/${A}`, { address: A });
+
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
+  });
+
+  it("renders without an optional read that outlasts the budget, leaving it to the browser", async () => {
+    net.fetchCreations.mockReturnValue(new Promise(() => {}));
+    const started = Date.now();
+
+    const out = await run(`/profile/${A}/creations`, { address: A, tab: "creations" });
+
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
+    expect(Date.now() - started).toBeLessThan(OPTIONAL_READS_BUDGET_MS + 1000);
+  }, 10_000);
 
   it("dehydrates the badges with the profile on Overview", async () => {
     net.fetchUserBadges.mockResolvedValue([]);

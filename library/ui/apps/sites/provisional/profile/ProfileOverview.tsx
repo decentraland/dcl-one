@@ -14,35 +14,24 @@ type ProfileOverviewProps = {
   links: readonly ProfileLinkItem[]
   /** Shown first in the card, as the source orders it: the badges row. */
   badges?: ReactNode
-  /** Further cards below About (badges, equipped items). */
+  /** Further cards below the About card (equipped items, for example). */
   children?: ReactNode
 }
 
-/** Only http(s) links reach the page: a profile's links are written by its owner. */
-function safeUrl(url: string): string | null {
+/** A second safety net for any caller: only http(s) links are rendered. */
+function isHttpUrl(url: string): boolean {
   try {
     const parsed = new URL(url)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:' ? parsed.href : null
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
   } catch {
-    return null
+    return false
   }
-}
-
-/** The site name a link points to, for a link saved without a title. */
-function linkProvider(url: string): string {
-  const host = new URL(url).hostname.replace(/^www\./, '')
-  const first = host.split('.')[0] ?? host
-  return first.charAt(0).toUpperCase() + first.slice(1)
 }
 
 /** About, the profile's details and its links, in the source's translucent card. */
 function ProfileOverview({ bio, emptyBio, info, links, badges, children }: ProfileOverviewProps) {
-  const safeLinks = links.flatMap((link) => {
-    const url = safeUrl(link.url)
-    return url
-      ? [{ title: link.title && link.title !== link.url ? link.title : linkProvider(url), url }]
-      : []
-  })
+  // The caller decides each link's shown title; this only refuses a non-http(s) one.
+  const safeLinks = links.filter((link) => isHttpUrl(link.url))
   const text = bio.trim()
 
   return (
@@ -70,8 +59,8 @@ function ProfileOverview({ bio, emptyBio, info, links, badges, children }: Profi
           <div className={styles.section}>
             <h2 className={styles.title}>Links</h2>
             <ul className={styles.links}>
-              {safeLinks.map((link) => (
-                <li key={link.url}>
+              {safeLinks.map((link, index) => (
+                <li key={`${index}-${link.url}`}>
                   <a
                     className={styles.link}
                     href={link.url}
@@ -92,5 +81,5 @@ function ProfileOverview({ bio, emptyBio, info, links, badges, children }: Profi
   )
 }
 
-export { ProfileOverview, safeUrl }
+export { ProfileOverview }
 export type { ProfileInfoItem, ProfileLinkItem, ProfileOverviewProps }

@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import { getAvatarBackgroundColor, getDisplayName } from "@ui/shop/discovery/lib/avatarColor";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 
 import { Button } from "@dcl/one-ui/apps/sites/shared/Button/Button";
@@ -25,14 +24,18 @@ import {
   type TabLinkProps,
 } from "@dcl/one-ui/apps/sites/provisional/profile/ProfileTabs";
 
+import { shortAddress } from "@/data/lib/catalyst/format/address";
 import type { ProfileBadge } from "@/data/lib/catalyst/social/badges";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
 import { useProfileBadges } from "./hooks";
 
-/** A NAME is bought in the Shop; worlds are managed in the Builder, both served by path. */
-export const GET_A_NAME_HREF = "/shop/items?category=names";
-export const MANAGE_WORLD_HREF = "/builder/worlds";
+/**
+ * A NAME is bought in the Shop's NAMEs page; worlds are managed under Create. Both are the
+ * canonical paths, not the redirects (`/shop/items?category=names`, the legacy `/builder/worlds`).
+ */
+export const GET_A_NAME_HREF = "/shop/names";
+export const MANAGE_WORLD_HREF = "/create/worlds";
 
 const INFO_ICONS: Record<string, ReactNode> = {
   country: <ProfileCountry size={20} />,
@@ -45,8 +48,9 @@ const INFO_ICONS: Record<string, ReactNode> = {
   favorite_hobby: <ProfileHobbies size={20} />,
 };
 
+/** Loads the next tab's code on hover or focus, as the app's other in-app links do. */
 function TabLink({ to, ...props }: TabLinkProps) {
-  return <Link to={to} {...props} />;
+  return <Link to={to} prefetch="intent" {...props} />;
 }
 
 export type ProfileOverviewScreenProps = {
@@ -58,7 +62,6 @@ export type ProfileOverviewScreenProps = {
   onTab: (id: string) => void;
 };
 
-/** Overview with the profile site's look: header, tab bar, avatar column, About and Links. */
 /** The site is in English; a fixed locale keeps the server and browser renders the same. */
 const UNLOCKED = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "short", day: "numeric", timeZone: "UTC" });
 
@@ -69,14 +72,7 @@ export function badgeItems(badges: readonly ProfileBadge[]) {
   }));
 }
 
-/**
- * The name and avatar color every Decentraland client derives from the display name (the
- * explorer's NameColorHelper), not the profile's stored color.
- */
-export function profileNameColor(profile: ProfileVM): string {
-  return getAvatarBackgroundColor(getDisplayName(profile.name, profile.hasClaimedName, profile.address));
-}
-
+/** Overview with the profile site's look: header, tab bar, avatar column, About and Links. */
 export function ProfileOverviewScreen({
   profile,
   hasProfile,
@@ -84,7 +80,7 @@ export function ProfileOverviewScreen({
   tabs,
   onTab,
 }: ProfileOverviewScreenProps) {
-  const nameColor = profileNameColor(profile);
+  const nameColor = profile.nameColor;
   const badges = useProfileBadges(profile.address, hasProfile);
   const actions = own ? (
     profile.hasClaimedName ? (
@@ -101,6 +97,7 @@ export function ProfileOverviewScreen({
         header={
           <ProfileHeader
             address={profile.address}
+            addressLabel={shortAddress(profile.address)}
             name={profile.name}
             nameColor={nameColor}
             hasClaimedName={profile.hasClaimedName}
@@ -129,6 +126,8 @@ export function ProfileOverviewScreen({
               badges={badgeItems(badges.data ?? [])}
               loading={hasProfile && badges.isPending}
               emptyText="No badges yet. Jump in world and start collecting badges!"
+              // A failed background re-read keeps the badges already shown.
+              errorText={badges.isError && !badges.data ? "Badges are unavailable right now." : undefined}
             />
           }
           bio={profile.bio}
