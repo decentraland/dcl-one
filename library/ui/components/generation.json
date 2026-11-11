@@ -95,13 +95,13 @@
     },
     {
       "path": "library/ui/figma/lock-digests.mjs",
-      "sha256": "cacebbcac5974b50223952da8e03d99751041de7016c9a380d8c1bfd2403ecce",
-      "indexBlobSha": "01497528ba954c809c4dc7904182f952edcdcab1"
+      "sha256": "83da197941e8d673b720051907dc4229804af218e21a1880806ed32133574a25",
+      "indexBlobSha": "823d47e83b8ac9e559d6bf295712d92d708ccbe2"
     },
     {
       "path": "library/ui/figma/port-verification.mjs",
-      "sha256": "9b33dc81ff3fd9dfd58e24614a1e703987b2fc0287a31021f9855d0a7f05d42e",
-      "indexBlobSha": "3786c403919e9d32d5a180a36c18c59dcb56fa2d"
+      "sha256": "5885517af1ba58e72bac20cf6c28e58e740c6958d24ee79cafb1c69a1c239fe4",
+      "indexBlobSha": "9f7ff92bb95c1ffe089cec0aad57031351f5d0a9"
     },
     {
       "path": "library/ui/figma/public-components-policy.mjs",
