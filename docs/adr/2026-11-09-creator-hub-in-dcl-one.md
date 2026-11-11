@@ -55,6 +55,13 @@ What else changes:
   `creator-hub-drop.yml` their token. The desktop workflow tags `creator-hub@X.Y.Z` here, from
   which `semantic-version` (`change_path: apps/creator-hub`) computes the next version. That
   repository is not archived: an archived repository takes no new releases.
+- **Promotion.** Every merge publishes a pre-release, which no installed app sees. A person makes
+  it Latest with `creator-hub-promote.yml` (`promote`), and `rollback` turns the current Latest
+  back into a pre-release. Both run in the `creator-hub-promote` environment, which requires a
+  reviewer. A newer merge never cancels a release in progress on `main`.
+- **Windows update signatures.** Installed Windows apps check each update's signature against
+  `publisherName` (`verifyUpdateCodeSignature: true`). The release job fails if the signed
+  installer's certificate carries a different name, before anyone can promote it.
 - **Secrets.** No AWS keys are stored: every upload assumes an IAM role through GitHub OIDC
   (`aws-actions/configure-aws-credentials` with `role-to-assume`, `id-token: write`). The role
   ARNs are repository variables: `CREATOR_HUB_SDK_BUCKET_ROLE_ARN` (PR packages, installers and
