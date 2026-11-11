@@ -28,7 +28,7 @@ const DIAGNOSTICS = {
     severity: 'error',
     audience: 'consumer',
     action:
-      'Point --mapping-root (or DCL_FIGMA_MAPPING_ROOT, or contract.mappingRoot in figma.config.json) at the mapping directory inside the library package. With --mapping-only the default is the library components directory.'
+      'Point --mapping-root (or DCL_FIGMA_MAPPING_ROOT, or contract.mappingRoot in figma.config.json) at a readable mapping directory inside the library package, or remove the setting. Those settings win over the default even with --mapping-only, which uses the library components directory only when none is set.'
   },
   'mapping-missing': {
     severity: 'error',
@@ -106,7 +106,8 @@ const DIAGNOSTICS = {
       'import-path-mismatch': `The mapping imports from another package than the one that owns it. ${REPORT}`,
       'source-missing': `The mapping names a source file that does not exist. ${REPORT}`,
       'export-missing': `The mapped component is not a public export of the library. ${REPORT}`,
-      'figma-drift': `The mapping reads a Figma property the captured component no longer defines. ${REPORT}`
+      'figma-drift': `The mapping reads a Figma property the captured component no longer defines. ${REPORT}`,
+      'component-registry': `The library's component registry (components/promotion.json) cannot be read or is not valid, so the component's accepted limits are unknown. Do not report the component as limit-free. ${REPORT}`
     }
   },
   'unsupported-construct': {
@@ -132,11 +133,17 @@ const DIAGNOSTICS = {
     action:
       'The export could not be confirmed statically. Let the application typecheck confirm the import.'
   },
+  'accepted-limits': {
+    severity: 'warning',
+    audience: 'consumer',
+    action:
+      'The library owners accepted these gaps for this component (resolved.limits). Repeat each limit verbatim when you report the result and do not claim parity on those aspects; they are accepted, not blockers.'
+  },
   'figma-identity-unverified': {
     severity: 'warning',
     audience: 'consumer',
     action:
-      'Identity and variants were checked against the mapping only, not against a capture. Repeat this when you report the result; differences from the live design may come from capture age.'
+      'Identity and variants were checked against the mapping only, not against a capture, so the combination of variant values is not checked against the design. Pass every variant property the instance has (details.notGiven lists mapped ones the usage left out), let the application typecheck confirm the props, and repeat this when you report the result; differences from the live design may come from capture age.'
   },
   'capture-unchecked': {
     severity: 'warning',

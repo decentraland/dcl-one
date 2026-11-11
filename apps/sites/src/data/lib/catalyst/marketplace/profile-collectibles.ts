@@ -3,6 +3,9 @@ import { z } from "zod";
 import { formatManaPrice, parseManaWei } from "@shop/model/money";
 
 import { CatalystError, getJSON, type GetOptions } from "../client";
+import { withDeadline } from "../../request-deadline";
+import { tryQuoteCreditItems } from "./credit-quotes";
+import { cardPayment, type CardPayment, type CardSaleFacts } from "./index";
 import { dataTotalOf } from "../envelope";
 import { CatalogItemSchema, NftSchema, OrderSchema } from "../generated-schemas/market";
 import { warnInvalid } from "../warn";
@@ -12,8 +15,6 @@ export type CreationsCategory = "wearable" | "emote";
 
 /** What a profile's Assets tab filters by; no category is every asset. */
 export type AssetCategory = "wearable" | "emote" | "ens" | "parcel" | "estate";
-
-export const ASSET_CATEGORIES: readonly AssetCategory[] = ["wearable", "emote", "ens", "parcel", "estate"];
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "exotic" | "mythic" | "unique";
 
@@ -38,10 +39,17 @@ export type ProfileCreation = {
   /** Absent when the catalogue sends a rarity this list does not know. */
   rarity?: Rarity;
   network: "ethereum" | "polygon";
-  /** The primary sale price, else the cheapest listing, formatted ("1,500"); absent when not for sale. */
-  price?: string;
+  /**
+   * What the card may show, by the Shop's own card rule (`cardPayment`): a credit-eligible primary
+   * sale is priced in credits (or says the quote is unavailable, never a MANA fallback); anything
+   * else is MANA, or nothing when it is not for sale.
+   */
+  payment: CardPayment;
   traits: CollectibleTraits;
 };
+
+/** How long a page waits for its credit prices, as the Shop's cards do, before showing them unavailable. */
+export const CREATIONS_QUOTES_TIMEOUT_MS = 1_000;
 
 /** One token a wallet owns, as the Assets tab shows it. */
 export type ProfileAsset = {
@@ -50,7 +58,7 @@ export type ProfileAsset = {
   tokenId: string;
   /** `wearable`, `emote`, `ens`, `parcel` or `estate`, as the catalogue names it. */
   category: string;
-  /** For a NAME, its label without `.dcl.eth`. */
+  /** For a NAME, its label without `.dcl.eth`; never blank (see `assetName`). */
   name: string;
   image?: string;
   rarity?: Rarity;
@@ -77,6 +85,10 @@ const CreationRowSchema = CatalogItemSchema.pick({
   network: true,
   price: true,
   minListingPrice: true,
+  isOnSale: true,
+  available: true,
+  chainId: true,
+  category: true,
 }).extend({ data: z.record(z.string(), z.unknown()).nullish() });
 
 const AssetRowSchema = z.object({
@@ -88,7 +100,11 @@ const AssetRowSchema = z.object({
     name: true,
     image: true,
     network: true,
-  }).extend({ data: z.record(z.string(), z.unknown()).nullish() }),
+  }).extend({
+    // Most LAND has no name; a missing one gets the catalogue's fallback, not a dropped row.
+    name: z.string().nullish(),
+    data: z.record(z.string(), z.unknown()).nullish(),
+  }),
   order: OrderSchema.pick({ price: true }).nullish(),
 });
 
@@ -110,9 +126,10 @@ function collect<T>(rows: unknown[], parse: (raw: unknown) => T | null): T[] {
   return out;
 }
 
-function httpUrl(value: string | null | undefined): string | undefined {
+/** Only https images: the site is served over https, so an http one would be mixed content. */
+function httpsUrl(value: string | null | undefined): string | undefined {
   const url = value?.trim() ?? "";
-  return /^https?:\/\//i.test(url) ? url : undefined;
+  return /^https:\/\//i.test(url) ? url : undefined;
 }
 
 function rarityOf(value: unknown): Rarity | undefined {
@@ -144,25 +161,52 @@ function traitsOf(block: Record<string, unknown> | undefined): CollectibleTraits
   };
 }
 
-function toCreation(raw: unknown): ProfileCreation | null {
+type ParsedCreation = { card: Omit<ProfileCreation, "payment">; sale: CardSaleFacts };
+
+function toCreation(raw: unknown): ParsedCreation | null {
   const row = CreationRowSchema.safeParse(raw);
   if (!row.success) {
     warnInvalid("ProfileCreation", row.error.issues);
     return null;
   }
   const item = row.data;
-  return {
+  const card = {
     id: item.id,
     contractAddress: item.contractAddress.toLowerCase(),
     itemId: item.itemId,
-    name: item.name.trim(),
-    thumbnail: httpUrl(item.thumbnail),
+    // A blank name would leave the card link and its actions without an accessible name.
+    name: item.name.trim() || "Untitled",
+    thumbnail: httpsUrl(item.thumbnail),
     rarity: rarityOf(item.rarity),
     network: networkOf(item.network),
-    // A sold-out primary sale still trades on the secondary market at its cheapest listing.
-    price: manaPrice(item.price) ?? manaPrice(item.minListingPrice),
     traits: traitsOf(traitsBlock(item.data)),
   };
+  return { card, sale: item };
+}
+
+/** Each row's credit price, quoted as the Shop's cards are; a failed or slow quote reads as unavailable. */
+async function creditPrices(rows: ParsedCreation[], signal?: AbortSignal): Promise<(string | null)[]> {
+  const refs = rows.map(({ card }) => ({ itemId: card.itemId, collection: card.contractAddress }));
+  try {
+    return await withDeadline((deadline) => tryQuoteCreditItems(refs, { signal: deadline }), CREATIONS_QUOTES_TIMEOUT_MS, signal);
+  } catch {
+    // A visitor who left aborts the read; anything else (the deadline) only loses the quotes.
+    signal?.throwIfAborted();
+    return rows.map(() => null);
+  }
+}
+
+/**
+ * A token's title, as the marketplace names one without a name: a NAME by its label, a parcel by
+ * its coordinates, an estate as "Estate", anything else "Untitled".
+ */
+function assetName(category: string, name: string | null | undefined, data: Record<string, unknown> | null | undefined): string {
+  const given = (category === "ens" ? (name ?? "").replace(/\.dcl\.eth$/i, "") : (name ?? "")).trim();
+  if (given) return given;
+  const parcel = data?.parcel as { x?: unknown; y?: unknown } | undefined;
+  if (category === "parcel" && parcel && parcel.x != null && parcel.y != null) return `Parcel ${String(parcel.x)},${String(parcel.y)}`;
+  if (category === "estate") return "Estate";
+  return "Untitled";
 }
 
 function toAsset(raw: unknown): ProfileAsset | null {
@@ -179,8 +223,8 @@ function toAsset(raw: unknown): ProfileAsset | null {
     contractAddress: nft.contractAddress.toLowerCase(),
     tokenId: nft.tokenId,
     category,
-    name: category === "ens" ? nft.name.replace(/\.dcl\.eth$/i, "").trim() : nft.name.trim(),
-    image: httpUrl(nft.image),
+    name: assetName(category, nft.name, nft.data),
+    image: httpsUrl(nft.image),
     rarity: rarityOf(block?.rarity),
     network: networkOf(nft.network),
     price: manaPrice(order?.price),
@@ -208,7 +252,13 @@ export async function fetchProfileCreations(
     }),
     path,
   );
-  return { items: collect(page.data, toCreation), received: page.data.length, total: page.total };
+  const rows = collect(page.data, toCreation);
+  const credits = rows.length > 0 ? await creditPrices(rows, opts.signal) : [];
+  return {
+    items: rows.map(({ card, sale }, index) => ({ ...card, payment: cardPayment(sale, credits[index] ?? null) })),
+    received: page.data.length,
+    total: page.total,
+  };
 }
 
 /** The tokens a wallet owns, newest first, optionally of one category. */

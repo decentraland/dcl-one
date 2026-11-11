@@ -1,7 +1,19 @@
+import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { promisify } from 'node:util'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createApp, type App } from './app.js'
 import { verifyFdsCache } from './sources/fds-source.js'
@@ -127,6 +139,31 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     vi.restoreAllMocks()
     await rm(root, { recursive: true, force: true })
   })
+
+  it('should install through the CLI in its own process with the same result and exit code', async () => {
+    const cli = async () =>
+      JSON.parse(
+        (
+          await promisify(execFile)(
+            process.execPath,
+            [
+              '--import',
+              import.meta.resolve('tsx'),
+              path.join(import.meta.dirname, 'cli.ts'),
+              'install',
+              'foundations'
+            ],
+            { cwd: figma }
+          )
+        ).stdout
+      ) as Awaited<ReturnType<typeof runInstall>>
+    const first = await cli()
+    const second = await cli()
+    expect(first.changed).toBe(true)
+    expect(second.changed).toBe(false)
+    expect(second.files).toEqual(first.files)
+    expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
+  }, 60_000)
 
   it('should preserve maintained files and give identical bytes on a second install', async () => {
     const first = await runInstall(app, { target: 'foundations' })
@@ -548,6 +585,36 @@ describe('when component installation owns its verified input read-set and trans
     )
   })
 
+  it('should refuse a registry with limits on an internal name and leave the installed output byte-identical', async () => {
+    await runInstall(app, options)
+    await fixtureCommit(repository)
+    const snapshot = async () =>
+      Object.fromEntries(
+        await Promise.all(
+          (await readdir(path.join(root, 'components'), { recursive: true }))
+            .filter((file) => file !== 'promotion.json')
+            .sort()
+            .map(async (file) => {
+              const full = path.join(root, 'components', file)
+              return [file, (await lstat(full)).isFile() ? hash(await readFile(full)) : 'dir']
+            })
+        )
+      )
+    const before = await snapshot()
+    await writeFile(
+      registryPath,
+      JSON.stringify({
+        components: [],
+        internal: [{ name: 'DemoNav', limits: [{ id: 'a', text: 'x.' }] }]
+      })
+    )
+    await fixtureCommit(repository)
+
+    await expect(runInstall(app, options)).rejects.toThrow('names only, without limits')
+
+    expect(await snapshot()).toEqual(before)
+  })
+
   it('should retire the last component through the same canonical transaction and then no-op', async () => {
     await runInstall(app, options)
     await fixtureCommit(repository)
@@ -727,7 +794,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'src/specs.ts'), 'export const transitive = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -741,7 +808,7 @@ describe('when component installation owns its verified input read-set and trans
       return plan
     })
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
@@ -802,7 +869,7 @@ describe('when component installation owns its verified input read-set and trans
     await writeFile(path.join(figma, 'extra-helper.mts'), 'export const tracked = true')
     await fixtureCommit(repository)
     await expect(runInstall(app, options)).rejects.toThrow(
-      'implementation is absent from the locked read-set'
+      'implementation is absent from the source lock'
     )
     expect(planComponents).not.toHaveBeenCalled()
     expect(await readFile(registryPath)).toEqual(originalRegistry)
@@ -925,11 +992,29 @@ describe('when component installation owns its verified input read-set and trans
     expect(await readFile(registryPath)).toEqual(originalRegistry)
   })
 
+  it('should install with a locked tooling module that is outside the read-set', async () => {
+    const tool = 'library/ui/figma/src/unrelated-tool.ts'
+    await writeFile(path.join(repository, tool), 'export const tool = true\n')
+    const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+    lock.sources[0].files[tool] = { sha256: hash('export const tool = true\n') }
+    await writeFile(lockPath, JSON.stringify(lock))
+    await fixtureCommit(repository)
+    const result = await runInstall(app, options)
+    expect(result.changed).toBe(true)
+    expect(
+      vi
+        .mocked(createComponentGeneration)
+        .mock.calls[0]![0].modules.map((module: { path: string }) => module.path)
+    ).not.toContain(tool)
+  })
+
   it('should reject a missing module pin before planning', async () => {
     const lock = JSON.parse(await readFile(lockPath, 'utf8'))
     delete lock.sources[0].files[modulePath]
     await writeFile(lockPath, JSON.stringify(lock))
-    await expect(runInstall(app, options)).rejects.toThrow('Missing locked component input')
+    await expect(runInstall(app, options)).rejects.toThrow(
+      'Component implementation is absent from the source lock'
+    )
     expect(planComponents).not.toHaveBeenCalled()
   })
 

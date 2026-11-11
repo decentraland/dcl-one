@@ -130,6 +130,26 @@ describe("profile assets", () => {
     expect(container.querySelector("[data-glyph]")).not.toBeNull();
   });
 
+  it("shows Lands and Estates as named cards with their View action", async () => {
+    const user = userEvent.setup();
+    const land = asset(3, { category: "parcel", name: "Parcel 162,-133", rarity: undefined, traits: { bodyShapes: [], isSmart: false } });
+    const estate = asset(4, { category: "estate", name: "Estate", rarity: undefined, traits: { bodyShapes: [], isSmart: false } });
+    net.fetchProfileAssets.mockImplementation(async (_a: string, params: { category?: string }) =>
+      page(params.category === "estate" ? [estate] : params.category === "parcel" ? [land] : [asset(1)]),
+    );
+    show();
+    await screen.findByRole("link", { name: "Power Up 1" });
+
+    await user.click(screen.getByRole("button", { name: "Lands" }));
+    const parcel = await screen.findByRole("link", { name: "Parcel 162,-133" }).then(() => card("Parcel 162,-133"));
+    expect(within(parcel).getByRole("link", { name: "View Parcel 162,-133" }).getAttribute("href")).toBe("/shop/token/0xabc/3");
+    expect(within(parcel).queryByText("Common")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Estates" }));
+    const plot = await screen.findByRole("link", { name: "Estate" }).then(() => card("Estate"));
+    expect(within(plot).getByRole("link", { name: "View Estate" }).getAttribute("href")).toBe("/shop/token/0xabc/4");
+  });
+
   it("lists NAMEs as rows under the Names filter", async () => {
     const user = userEvent.setup();
     net.fetchProfileAssets.mockImplementation(async (_a: string, params: { category?: string }) =>
@@ -159,6 +179,27 @@ describe("profile assets", () => {
 
     expect(await screen.findByText("0 assets")).toBeTruthy();
     expect(screen.queryByText("No assets yet")).toBeNull();
+  });
+
+  it("says a page whose every row failed to read could not be read, not that there are none", async () => {
+    net.fetchProfileAssets.mockResolvedValue({ items: [], received: 3, total: 3 });
+
+    show();
+
+    expect(await screen.findByText("These assets could not be read right now.")).toBeTruthy();
+    expect(screen.queryByText("No assets yet")).toBeNull();
+  });
+
+  it("shows the retry loading instead of the stale error", async () => {
+    const user = userEvent.setup();
+    net.fetchProfileAssets.mockRejectedValueOnce(new Error("503")).mockReturnValueOnce(new Promise(() => {}));
+    show();
+    await screen.findByText("Assets are unavailable right now.");
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Loading assets")).toBeTruthy();
+    expect(screen.queryByText("Assets are unavailable right now.")).toBeNull();
   });
 
   it("sends an owner with nothing to the Shop", async () => {

@@ -42,23 +42,11 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     shop::rentals::index::spawn_job(&market, &jobs, config.shop.shop_rentals_index_enabled);
     let land = Arc::new(land_authz::LandAuthzState::new(
         pool.clone(),
-        http.clone(),
+        http,
         land_settings(&config)?,
         Some(market.index.clone()),
     ));
     land.spawn_jobs(&jobs);
-    let credits = Arc::new(shop::credits::State::new(
-        pool.clone(),
-        http,
-        credits_settings(&config, false)?,
-        shop::credits::Sources {
-            market: Some(market),
-            price: None,
-            economy: None,
-        },
-        None,
-    ));
-    credits.spawn_usage_index(&jobs);
     let shutdown = crate::serve::shutdown_signal();
     tracing::info!(jobs = ?jobs.report().iter().map(|j| &j.name).collect::<Vec<_>>(), "index worker started");
     shutdown.await;
@@ -172,62 +160,4 @@ pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Setti
     land_settings.replay_from_block = config.land_authz.land_authz_replay_from_block;
     land_settings.stop_block = config.land_authz.land_authz_stop_block;
     Ok(land_settings)
-}
-
-/// `trial_applies`: whether this process takes `CREDITS_TRIAL_MODE`'s start requirements. `serve`
-/// issues, revokes and takes top-ups, so it does; `index` only folds the CreditUsed index, so it
-/// starts without the trial's signing keys.
-pub(crate) fn credits_settings(
-    config: &Config,
-    trial_applies: bool,
-) -> anyhow::Result<shop::credits::Settings> {
-    let non_empty = Config::non_empty;
-    shop::credits::Settings::parse(shop::credits::RawSettings {
-        writes_enabled: config.ops.ops_writes_enabled,
-        admin_token: non_empty(&config.shop.catalyrst_credits_admin_token),
-        captcha_secret: non_empty(&config.shop.credits_captcha_secret),
-        captcha_verify_url: config.shop.credits_captcha_verify_url.clone(),
-        stripe_secret_key: non_empty(&config.shop.stripe_secret_key),
-        stripe_webhook_secret: non_empty(&config.shop.stripe_webhook_secret),
-        stripe_api_base: config.shop.stripe_api_base.clone(),
-        credits_currency: config.shop.credits_currency.clone(),
-        marketplace_markup_bps: config.shop.marketplace_markup_bps,
-        mana_price_max_staleness_secs: {
-            if let Some(warning) = config.price_staleness_warning() {
-                tracing::warn!("{warning}");
-            }
-            config.shop.mana_price_max_staleness_secs
-        },
-        credits_usd_pegged_feed_max_age_secs: config.shop.credits_usd_pegged_feed_max_age_secs,
-        checkout_fulfillment_mode: config.shop.checkout_fulfillment_mode.clone(),
-        require_purchase_intent: config.shop.credits_require_purchase_intent,
-        checkout_worker_interval_secs: config.shop.checkout_worker_interval_secs,
-        checkout_max_attempts: config.shop.checkout_max_attempts,
-        escrow_lock_days: config.shop.escrow_lock_days,
-        mock_fulfillment: config.shop.credits_mock_fulfillment,
-        mock_card: config.shop.credits_mock_card,
-        credits_signer_key: non_empty(&config.shop.credits_signer_key),
-        credits_manager_contract: non_empty(&config.shop.credits_manager_contract),
-        credits_onchain_authorize_enabled: config.shop.credits_onchain_authorize_enabled,
-        checkout_success_url: config.shop.credits_checkout_success_url.clone(),
-        checkout_cancel_url: config.shop.credits_checkout_cancel_url.clone(),
-        checkout_success_url_builder: non_empty(&config.shop.credits_checkout_success_url_builder),
-        checkout_cancel_url_builder: non_empty(&config.shop.credits_checkout_cancel_url_builder),
-        usage_index_enabled: config.shop.credits_usage_index_enabled,
-        usage_rpc_url: non_empty(&config.economy.rpc_endpoint_polygon),
-        usage_chain_id: config.economy.collections_chain_id as i64,
-        usage_start_block: config.shop.credits_usage_start_block,
-        usage_interval_secs: config.shop.credits_usage_index_interval_secs,
-        usage_requests_per_pass: config.shop.credits_usage_index_requests_per_pass,
-        usage_replay_from_block: config.shop.credits_usage_replay_from_block,
-        usage_stop_block: config.shop.credits_usage_stop_block,
-        credit_ttl_seconds: config.shop.credits_ttl_seconds,
-        credit_cap_headroom_pct: config.shop.credits_cap_headroom_pct,
-        credit_buffer_bps: config.shop.credits_oracle_buffer_bps,
-        credits_revoker_key: non_empty(&config.shop.credits_revoker_key),
-        trial_mode: trial_applies && config.shop.credits_trial_mode,
-        trial_buyers: non_empty(&config.shop.credits_trial_buyers),
-        shop_base_url: config.shop.shop_base_url.clone(),
-    })
-    .context("CREDITS_* / STRIPE_* / CHECKOUT_* configuration")
 }

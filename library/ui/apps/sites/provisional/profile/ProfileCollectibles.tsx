@@ -1,5 +1,5 @@
 // TODO(figma-ds): replace with the Figma-generated profile collectibles panel from library/ui/components.
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, ReactNode, Ref } from 'react'
 import { GeneralName, GeneralRightArrow } from '../../../../foundations/icons'
 import styles from './ProfileCollectibles.module.css'
 
@@ -19,6 +19,8 @@ type ProfileCollectiblesState =
       /** Cards in a grid, full-width rows (NAMEs), or the photo grid. */
       layout?: 'grid' | 'rows' | 'photos'
       children: ReactNode
+      /** The list element, so the page can move focus to a row it loaded. */
+      listRef?: Ref<HTMLUListElement>
       /** Under the list: Load more, its progress, or why the next page failed. */
       more?: ReactNode
     }
@@ -29,16 +31,18 @@ type ProfileCollectiblesProps = {
   /** Beside the filters, e.g. a "View all" link. */
   aside?: ReactNode
   state: ProfileCollectiblesState
+  /** Makes the panel focusable from script, so focus has somewhere to go when a control leaves. */
+  panelRef?: Ref<HTMLDivElement>
 }
 
 /** A profile's Creations, Assets or Photos tab body: the filters, then loading, an error, an empty state or the list. */
-function ProfileCollectibles({ filters, aside, state }: ProfileCollectiblesProps) {
+function ProfileCollectibles({ filters, aside, state, panelRef }: ProfileCollectiblesProps) {
   const list = state.kind === 'list' ? state : null
   const countShown = list !== null && list.showCount !== false
   const more = state.kind === 'list' || state.kind === 'empty-note' ? state.more : undefined
 
   return (
-    <div className={styles.root}>
+    <div ref={panelRef} className={styles.root} tabIndex={panelRef ? -1 : undefined}>
       {filters || aside ? (
         <div className={styles.header}>
           {filters}
@@ -71,7 +75,11 @@ function ProfileCollectibles({ filters, aside, state }: ProfileCollectiblesProps
         <div className={styles.errorAction}>{state.action}</div>
       ) : null}
       {state.kind === 'empty' ? state.children : null}
-      {list ? <ul className={styles[list.layout ?? 'grid']}>{list.children}</ul> : null}
+      {list ? (
+        <ul ref={list.listRef} className={styles[list.layout ?? 'grid']}>
+          {list.children}
+        </ul>
+      ) : null}
       {more ? <div className={styles.more}>{more}</div> : null}
     </div>
   )

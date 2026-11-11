@@ -56,6 +56,30 @@ describe('parseMappingSource', () => {
     })
   })
 
+  describe('when reading the template id', () => {
+    it.each([
+      ['single quotes', "id: 'button'", 'button'],
+      ['double quotes, as the generator writes it', 'id: "button"', 'button'],
+      ['an empty id', "id: ''", undefined]
+    ])('should read it written with %s', (_label, line, expected) => {
+      const mapping = parseMappingSource(
+        mappingSource().replace("id: 'button'", line),
+        'B.figma.ts'
+      )
+
+      expect(mapping.id).toBe(expected)
+    })
+
+    // The nearest false positive: a nodeId property is not the template id.
+    it('should not take a nodeId property for the id', () => {
+      const source = mappingSource()
+        .replace("id: 'button',", '')
+        .replace('metadata: {', "metadata: { nodeId: 'x',")
+
+      expect(parseMappingSource(source, 'B.figma.ts').id).toBeUndefined()
+    })
+  })
+
   describe('when the template calls an API outside the supported subset', () => {
     it('should report unsupported-construct instead of ignoring it', () => {
       const mapping = parseMappingSource(

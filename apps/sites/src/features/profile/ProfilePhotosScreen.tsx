@@ -21,7 +21,7 @@ import { formatPhotoDate, type ProfilePhoto } from "@/data/lib/catalyst/social/p
 import { normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { canReadProfile, signsFor } from "@/data/lib/profile/queries";
 
-import { catalogueTotal, loadedRows, loadMore } from "./collectibles";
+import { catalogueTotal, loadedRows, loadMore, useFocusNewRows } from "./collectibles";
 import { usePlaceOwners, useProfilePhoto, useProfilePhotos } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 import { profileHref } from "./tabs";
@@ -134,6 +134,7 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
   const rows = query.data ? loadedRows(query.data) : [];
   const filtered = signed && visibility !== "all";
   const shown = filtered ? rows.filter((photo) => photo.isPublic === (visibility === "public")) : rows;
+  const focus = useFocusNewRows(shown.length, query.dataUpdatedAt + query.errorUpdatedAt);
 
   // The open photo is looked up among the ones shown, so the arrows follow the grid.
   const openIndex = openId === null ? -1 : shown.findIndex((photo) => photo.id === openId);
@@ -195,7 +196,13 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
       kind: "error",
       message: "Photos are unavailable right now.",
       action: (
-        <Button variant="secondary" onClick={() => void query.refetch()}>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            focus.expectRowsFrom(0);
+            void query.refetch();
+          }}
+        >
           Try again
         </Button>
       ),
@@ -226,7 +233,7 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
     state = {
       kind: "empty-note",
       message: filtered ? "No photos match this filter." : "None of the photos loaded so far can be shown.",
-      more: loadMore(query, "photos"),
+      more: loadMore(query, "photos", () => focus.expectRowsFrom(0)),
     };
   } else {
     state = {
@@ -244,13 +251,14 @@ export function ProfilePhotosScreen({ profile, own, tabs, onTab }: ProfilePhotos
           />
         </ProfileCollectiblesItem>
       )),
-      more: loadMore(query, "photos"),
+      listRef: focus.listRef,
+      more: loadMore(query, "photos", () => focus.expectRowsFrom(shown.length)),
     };
   }
 
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="photos" onTab={onTab}>
-      <ProfileCollectibles filters={filters} state={state} />
+      <ProfileCollectibles filters={filters} state={state} panelRef={focus.panelRef} />
       {openIndex >= 0 ? (
         <OpenPhoto
           photos={shown}

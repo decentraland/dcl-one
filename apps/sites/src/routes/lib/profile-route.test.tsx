@@ -261,7 +261,7 @@ describe("profile route, places", () => {
 });
 
 describe("profile route, creations and assets", () => {
-  const hat = { id: "c-0", contractAddress: "0xabc", itemId: "0", name: "Billyjuice", network: "polygon", traits: { bodyShapes: [], isSmart: false } };
+  const hat = { id: "c-0", contractAddress: "0xabc", itemId: "0", name: "Billyjuice", network: "polygon", payment: { kind: "none" }, traits: { bodyShapes: [], isSmart: false } };
 
   it("shows a member's creations under their own tab", async () => {
     net.fetchProfile.mockResolvedValue(avatar("Alice"));

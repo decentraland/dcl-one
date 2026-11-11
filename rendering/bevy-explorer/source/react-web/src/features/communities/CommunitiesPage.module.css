@@ -263,6 +263,19 @@
   color: var(--ink-45);
 }
 
+/* A live voice stream on the card's cover. */
+.live {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--voice-live);
+  color: var(--text);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semibold);
+  letter-spacing: 0.04em;
+}
 .loading {
   display: flex;
   justify-content: center;

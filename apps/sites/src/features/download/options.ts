@@ -1,9 +1,9 @@
 type DownloadArch = "amd64" | "arm64";
 type DownloadOs = "windows" | "macos";
 
-// Home platform selection follows Sites components/DownloadOptions/DownloadOptions.tsx
-// and the ui2 native artifact contract at 2cca0cf3. Detection
-// runs on the request's user agent so the server render already shows the right buttons.
+// Home and /download platform selection follows Sites components/DownloadOptions/DownloadOptions.tsx
+// and the ui2 native artifact contract at 2cca0cf3. Detection runs on the request's user agent so
+// the server render already shows the right actions.
 
 export type DetectedPlatform =
   | { kind: "unknown" }

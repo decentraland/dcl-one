@@ -6,7 +6,7 @@ import { Hero } from "@dcl/one-ui/apps/sites/home/Hero";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { WhatsOn } from "@dcl/one-ui/apps/sites/home/WhatsOn";
 import { Carousel } from "@dcl/one-ui/apps/sites/shared/Carousel";
-import { homeActions } from "./actions";
+import { downloadActions } from "../download/actions";
 
 vi.hoisted(() =>
   Object.assign(window, { __vite_plugin_react_preamble_installed__: true }),
@@ -34,7 +34,7 @@ describe("home sections", () => {
     vi.unstubAllGlobals();
   });
   it("renders both counters with the single solid white product badge", () => {
-    const { actions, store } = homeActions({ kind: "unknown" }, "+438K");
+    const { actions, store } = downloadActions({ kind: "unknown" }, "+438K");
     const html = renderToString(
       <>
         <Hero
