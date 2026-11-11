@@ -25,6 +25,8 @@ function item(over: Record<string, unknown> = {}) {
     network: "MATIC",
     price: MANA(369),
     minListingPrice: null,
+    isOnSale: true,
+    available: 72,
     data: { wearable: { category: "upper_body", bodyShapes: ["BaseMale", "BaseFemale"], isSmart: false } },
     ...over,
   };
@@ -85,6 +87,30 @@ describe("fetchProfileCreations", () => {
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
     expect(items[0]?.price).toBe("1,500");
+  });
+
+  it("prices a sold-out item at its listing, not its stale primary price", async () => {
+    json.mockResolvedValue({ data: [item({ available: 0, minListingPrice: MANA(80) })], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(items[0]?.price).toBe("80");
+  });
+
+  it("gives a delisted item with no listing no price, though the catalogue keeps its old one", async () => {
+    json.mockResolvedValue({ data: [item({ isOnSale: false })], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(items[0]?.price).toBeUndefined();
+  });
+
+  it("names an item with a blank name Untitled", async () => {
+    json.mockResolvedValue({ data: [item({ name: "  " })], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(items[0]?.name).toBe("Untitled");
   });
 
   it("leaves an item with no sale and no listing without a price", async () => {
@@ -171,12 +197,36 @@ describe("fetchProfileAssets", () => {
     expect(items[0]?.traits).toEqual({ category: undefined, bodyShapes: [], isSmart: false });
   });
 
-  it("drops an image that is not an http(s) URL", async () => {
-    json.mockResolvedValue({ data: [token({ image: "javascript:alert(1)" })], total: 1 });
+  it.each(["javascript:alert(1)", "http://peer.example/image"])("drops the image %s, keeping only https", async (image) => {
+    json.mockResolvedValue({ data: [token({ image })], total: 1 });
 
     const { items } = await fetchProfileAssets(CREATOR, { first: 24 });
 
     expect(items[0]?.image).toBeUndefined();
+  });
+
+  it("names a parcel without a name by its coordinates, and keeps a row whose name is null", async () => {
+    json.mockResolvedValue({
+      data: [
+        token({ category: "parcel", name: "", data: { parcel: { x: "162", y: "-133", description: null, estate: null } } }),
+        token({ id: "e-1", category: "estate", name: null, data: { estate: { size: 2, description: null, parcels: [] } } }),
+        token({ id: "n-1", category: "ens", name: ".dcl.eth", data: { ens: { subdomain: "" } } }),
+        token({ id: "w-1", name: null }),
+      ],
+      total: 4,
+    });
+
+    const { items } = await fetchProfileAssets(CREATOR, { first: 24 });
+
+    expect(items.map((row) => row.name)).toEqual(["Parcel 162,-133", "Estate", "Untitled", "Untitled"]);
+  });
+
+  it("keeps a parcel's own name when it has one", async () => {
+    json.mockResolvedValue({ data: [token({ category: "parcel", name: "Genesis Plaza", data: { parcel: { x: "0", y: "0" } } })], total: 1 });
+
+    const { items } = await fetchProfileAssets(CREATOR, { category: "parcel", first: 24 });
+
+    expect(items[0]?.name).toBe("Genesis Plaza");
   });
 
   it("fails on a response without the paged shape", async () => {

@@ -1,5 +1,5 @@
 // TODO(figma-ds): replace with the Figma-generated profile collectibles panel from library/ui/components.
-import type { ComponentType, ReactNode } from 'react'
+import type { ComponentType, ReactNode, Ref } from 'react'
 import { GeneralName, GeneralRightArrow } from '../../../../foundations/icons'
 import styles from './ProfileCollectibles.module.css'
 
@@ -18,6 +18,8 @@ type ProfileCollectiblesState =
       /** Cards in a grid, or full-width rows (NAMEs). */
       layout?: 'grid' | 'rows'
       children: ReactNode
+      /** The list element, so the page can move focus to a row it loaded. */
+      listRef?: Ref<HTMLUListElement>
       /** Under the list: Load more, its progress, or why the next page failed. */
       more?: ReactNode
     }
@@ -71,7 +73,9 @@ function ProfileCollectibles({ filters, aside, state }: ProfileCollectiblesProps
       {state.kind === 'empty' ? state.children : null}
       {list ? (
         <>
-          <ul className={list.layout === 'rows' ? styles.rows : styles.grid}>{list.children}</ul>
+          <ul ref={list.listRef} className={list.layout === 'rows' ? styles.rows : styles.grid}>
+            {list.children}
+          </ul>
           {list.more ? <div className={styles.more}>{list.more}</div> : null}
         </>
       ) : null}

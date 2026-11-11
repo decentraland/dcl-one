@@ -60,7 +60,7 @@
 }
 
 .note {
-  color: var(--dcl-text-disabled);
+  color: var(--dcl-text-secondary);
   font-style: italic;
   line-height: 1.5;
 }
@@ -184,7 +184,7 @@
 }
 
 .nameSuffix {
-  color: var(--dcl-text-disabled);
+  color: var(--dcl-text-secondary);
   font-weight: 500;
 }
 

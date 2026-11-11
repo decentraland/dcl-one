@@ -22,7 +22,7 @@ import { assetPage } from "@/core/lib/shop/redirects";
 import type { AssetCategory, ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import { catalogueTotal, CollectibleLink, loadedRows, loadMore } from "./collectibles";
+import { catalogueTotal, CollectibleLink, loadedRows, loadMore, useFocusNewRows } from "./collectibles";
 import { useProfileAssets } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
@@ -98,6 +98,8 @@ function AssetCard({ asset }: { asset: ProfileAsset }) {
 export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssetsScreenProps) {
   const [category, setCategory] = useState<AssetCategory | null>(null);
   const query = useProfileAssets(profile.address, category);
+  const rows = query.data ? loadedRows(query.data) : [];
+  const focus = useFocusNewRows(rows.length);
 
   const filters = (
     <FilterChipGroup label="Assets shown">
@@ -120,7 +122,13 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
       kind: "error",
       message: "Assets are unavailable right now.",
       action: (
-        <Button variant="secondary" onClick={() => void query.refetch()}>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            focus.expectRowsFrom(0);
+            void query.refetch();
+          }}
+        >
           Try again
         </Button>
       ),
@@ -128,8 +136,7 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
   } else if (!query.data) {
     state = { kind: "loading", label: "Loading assets" };
   } else {
-    const assets = loadedRows(query.data);
-    if (assets.length === 0) {
+    if (rows.length === 0) {
       state =
         category !== null
           ? { kind: "empty-note", message: countLabel(0) }
@@ -153,7 +160,7 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
         kind: "list",
         count: countLabel(catalogueTotal(query.data)),
         layout: names ? "rows" : "grid",
-        children: assets.map((asset) => (
+        children: rows.map((asset) => (
           <ProfileCollectiblesItem key={asset.id}>
             {names ? (
               <ProfileNameCard name={asset.name} actions={<NameActions asset={asset} />} />
@@ -162,7 +169,8 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
             )}
           </ProfileCollectiblesItem>
         )),
-        more: loadMore(query, "assets"),
+        listRef: focus.listRef,
+            more: loadMore(query, "assets", () => focus.expectRowsFrom(rows.length)),
       };
     }
   }

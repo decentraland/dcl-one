@@ -161,7 +161,10 @@
   line-height: 1.5;
 }
 
+/* Above the title link's overlay, so the badge tooltips can be hovered. */
 .badges {
+  position: relative;
+  z-index: 2;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -229,6 +232,23 @@
 .withAction:hover .badges,
 .withAction:focus-within .badges {
   opacity: 0;
+}
+
+/* A touch screen has no hover: the action sits under the badges, always shown, and the image
+ * gives up the room. */
+@media (hover: none) {
+  .action {
+    position: static;
+    padding: var(--dcl-space-8) 0 0;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .withAction:hover .badges,
+  .withAction:focus-within .badges {
+    opacity: 1;
+  }
 }
 
 .visuallyHidden {

@@ -17,7 +17,7 @@ import type { CreationsCategory, ProfileCreation } from "@/data/lib/catalyst/mar
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { DEFAULT_CREATIONS_CATEGORY } from "@/data/lib/profile/queries";
 
-import { catalogueTotal, CollectibleLink, loadedRows, loadMore } from "./collectibles";
+import { catalogueTotal, CollectibleLink, loadedRows, loadMore, useFocusNewRows } from "./collectibles";
 import { useProfileCreations } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
@@ -76,6 +76,8 @@ function CreationCard({ item, creator }: { item: ProfileCreation; creator: strin
 export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCreationsScreenProps) {
   const [category, setCategory] = useState<CreationsCategory>(DEFAULT_CREATIONS_CATEGORY);
   const query = useProfileCreations(profile.address, category);
+  const rows = query.data ? loadedRows(query.data) : [];
+  const focus = useFocusNewRows(rows.length);
   const creator = displayName(profile);
 
   const filters = (
@@ -105,7 +107,13 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
       kind: "error",
       message: "Creations are unavailable right now.",
       action: (
-        <Button variant="secondary" onClick={() => void query.refetch()}>
+        <Button
+          variant="secondary"
+          onClick={() => {
+            focus.expectRowsFrom(0);
+            void query.refetch();
+          }}
+        >
           Try again
         </Button>
       ),
@@ -113,9 +121,8 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
   } else if (!query.data) {
     state = { kind: "loading", label: "Loading creations" };
   } else {
-    const items = loadedRows(query.data);
     state =
-      items.length === 0
+      rows.length === 0
         ? {
             kind: "empty-note",
             message: own ? "Items you create will appear here." : "This account has not created anything yet.",
@@ -123,14 +130,15 @@ export function ProfileCreationsScreen({ profile, own, tabs, onTab }: ProfileCre
         : {
             kind: "list",
             // The source shows no count here; it is only announced.
-            count: countLabel(items.length, catalogueTotal(query.data)),
+            count: countLabel(rows.length, catalogueTotal(query.data)),
             showCount: false,
-            children: items.map((item) => (
+            children: rows.map((item) => (
               <ProfileCollectiblesItem key={item.id}>
                 <CreationCard item={item} creator={creator} />
               </ProfileCollectiblesItem>
             )),
-            more: loadMore(query, "creations"),
+            listRef: focus.listRef,
+            more: loadMore(query, "creations", () => focus.expectRowsFrom(rows.length)),
           };
   }
 

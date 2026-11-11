@@ -169,6 +169,7 @@ describe("profile creations", () => {
     await user.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(await screen.findByRole("link", { name: "Hat 0" })).toBeTruthy();
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("link", { name: "Hat 0" })));
   });
 
   it("keeps the list on screen when a background re-read fails", async () => {
@@ -201,6 +202,8 @@ describe("profile creations", () => {
 
     expect(await screen.findByRole("link", { name: "Hat 25" })).toBeTruthy();
     expect(net.fetchProfileCreations.mock.calls[1]?.[1]).toMatchObject({ skip: PROFILE_COLLECTIBLES_PAGE });
+    // The list ended, so the button went away: focus moves to the first new card, not the page body.
+    await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("link", { name: "Hat 24" })));
     expect(screen.getAllByRole("link", { name: `Hat ${PROFILE_COLLECTIBLES_PAGE - 1}` })).toHaveLength(1);
     expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
@@ -210,7 +213,7 @@ describe("profile creations", () => {
     const first = Array.from({ length: PROFILE_COLLECTIBLES_PAGE }, (_, n) => creation(n));
     let release!: (value: unknown) => void;
     net.fetchProfileCreations
-      .mockResolvedValueOnce(page(first, 30))
+      .mockResolvedValueOnce(page(first, 60))
       .mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
     show();
     await screen.findByRole("link", { name: "Hat 0" });
@@ -223,8 +226,10 @@ describe("profile creations", () => {
     expect(button.getAttribute("aria-disabled")).toBe("true");
     await user.click(button);
     expect(net.fetchProfileCreations).toHaveBeenCalledTimes(2);
-    await act(async () => release(page([creation(24)], 30)));
+    await act(async () => release(page([creation(24)], 60)));
     expect(await screen.findByRole("link", { name: "Hat 24" })).toBeTruthy();
+    // More remain, so the button stays and keeps the focus.
+    expect(document.activeElement).toBe(button);
   });
 
   it("keeps the loaded rows when the next page fails, and retries it", async () => {

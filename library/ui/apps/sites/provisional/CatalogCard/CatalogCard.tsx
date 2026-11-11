@@ -138,8 +138,8 @@ function CatalogCard({
           {rarity ? <span className={styles.rarity}>{RARITY_LABEL[rarity]}</span> : null}
           {badges ? <span className={styles.info}>{badges}</span> : null}
         </div>
+        {action ? <div className={styles.action}>{action}</div> : null}
       </div>
-      {action ? <div className={styles.action}>{action}</div> : null}
     </article>
   )
 }

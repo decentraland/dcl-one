@@ -50,7 +50,7 @@ export type ProfileAsset = {
   tokenId: string;
   /** `wearable`, `emote`, `ens`, `parcel` or `estate`, as the catalogue names it. */
   category: string;
-  /** For a NAME, its label without `.dcl.eth`. */
+  /** For a NAME, its label without `.dcl.eth`; never blank (see `assetName`). */
   name: string;
   image?: string;
   rarity?: Rarity;
@@ -77,6 +77,8 @@ const CreationRowSchema = CatalogItemSchema.pick({
   network: true,
   price: true,
   minListingPrice: true,
+  isOnSale: true,
+  available: true,
 }).extend({ data: z.record(z.string(), z.unknown()).nullish() });
 
 const AssetRowSchema = z.object({
@@ -88,7 +90,11 @@ const AssetRowSchema = z.object({
     name: true,
     image: true,
     network: true,
-  }).extend({ data: z.record(z.string(), z.unknown()).nullish() }),
+  }).extend({
+    // Most LAND has no name; a missing one gets the catalogue's fallback, not a dropped row.
+    name: z.string().nullish(),
+    data: z.record(z.string(), z.unknown()).nullish(),
+  }),
   order: OrderSchema.pick({ price: true }).nullish(),
 });
 
@@ -110,9 +116,10 @@ function collect<T>(rows: unknown[], parse: (raw: unknown) => T | null): T[] {
   return out;
 }
 
-function httpUrl(value: string | null | undefined): string | undefined {
+/** Only https images: the site is served over https, so an http one would be mixed content. */
+function httpsUrl(value: string | null | undefined): string | undefined {
   const url = value?.trim() ?? "";
-  return /^https?:\/\//i.test(url) ? url : undefined;
+  return /^https:\/\//i.test(url) ? url : undefined;
 }
 
 function rarityOf(value: unknown): Rarity | undefined {
@@ -155,14 +162,29 @@ function toCreation(raw: unknown): ProfileCreation | null {
     id: item.id,
     contractAddress: item.contractAddress.toLowerCase(),
     itemId: item.itemId,
-    name: item.name.trim(),
-    thumbnail: httpUrl(item.thumbnail),
+    // A blank name would leave the card link and its actions without an accessible name.
+    name: item.name.trim() || "Untitled",
+    thumbnail: httpsUrl(item.thumbnail),
     rarity: rarityOf(item.rarity),
     network: networkOf(item.network),
-    // A sold-out primary sale still trades on the secondary market at its cheapest listing.
-    price: manaPrice(item.price) ?? manaPrice(item.minListingPrice),
+    // The catalogue keeps `price` after a delisting or a sell-out, so it counts only while the
+    // creator still sells; otherwise the item trades at its cheapest listing, if any.
+    price: (item.isOnSale && item.available > 0 ? manaPrice(item.price) : undefined) ?? manaPrice(item.minListingPrice),
     traits: traitsOf(traitsBlock(item.data)),
   };
+}
+
+/**
+ * A token's title, as the marketplace names one without a name: a NAME by its label, a parcel by
+ * its coordinates, an estate as "Estate", anything else "Untitled".
+ */
+function assetName(category: string, name: string | null | undefined, data: Record<string, unknown> | null | undefined): string {
+  const given = (category === "ens" ? (name ?? "").replace(/\.dcl\.eth$/i, "") : (name ?? "")).trim();
+  if (given) return given;
+  const parcel = data?.parcel as { x?: unknown; y?: unknown } | undefined;
+  if (category === "parcel" && parcel && parcel.x != null && parcel.y != null) return `Parcel ${String(parcel.x)},${String(parcel.y)}`;
+  if (category === "estate") return "Estate";
+  return "Untitled";
 }
 
 function toAsset(raw: unknown): ProfileAsset | null {
@@ -179,8 +201,8 @@ function toAsset(raw: unknown): ProfileAsset | null {
     contractAddress: nft.contractAddress.toLowerCase(),
     tokenId: nft.tokenId,
     category,
-    name: category === "ens" ? nft.name.replace(/\.dcl\.eth$/i, "").trim() : nft.name.trim(),
-    image: httpUrl(nft.image),
+    name: assetName(category, nft.name, nft.data),
+    image: httpsUrl(nft.image),
     rarity: rarityOf(block?.rarity),
     network: networkOf(nft.network),
     price: manaPrice(order?.price),
