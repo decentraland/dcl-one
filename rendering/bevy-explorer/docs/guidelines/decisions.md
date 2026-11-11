@@ -89,6 +89,12 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - `nearby_voice_user_mute` is sent for the user's Hush or Hear only; unity-explorer also sends
     it for every mute read from the saved list.
   - Muting oneself is refused, as the service refuses it; the menu never offers it.
+  - Changes are saved one at a time, in the order the user made them, and only once the saved
+    list has been read: the service applies each request on its own, so a Hush and a Hear sent
+    together could land in either order, and a row removed while the list is read page by page
+    makes the next page skip one.
+  - A saved list that cannot be read is read again after 2, 4 and 8 seconds; after that it stays
+    unread until the account changes.
   - Hush and Hear are on the profile card's default and friend menus, for a blocked user too, as
     unity-explorer's user menu has them; the request, blocked-list and community-member menus
     do not carry them.

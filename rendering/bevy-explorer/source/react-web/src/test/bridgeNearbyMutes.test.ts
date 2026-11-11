@@ -2,7 +2,7 @@ import { beforeEach, describe, it, expect, vi } from 'vitest'
 
 const { relay } = vi.hoisted(() => ({ relay: vi.fn() }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay }))
-const api = vi.hoisted(() => ({ setNearbyMuted: vi.fn(), getNearbyMuteStream: vi.fn() }))
+const api = vi.hoisted(() => ({ setNearbyMuted: vi.fn() as ReturnType<typeof vi.fn> | undefined, getNearbyMuteStream: vi.fn() }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: api }))
 
 const { isHushed, registerNearbyMutes } = await import('../../bridge-scene/src/domains/nearbyMutes')
@@ -25,7 +25,9 @@ function bridge(): { sent: Sent[]; on: Map<string, (msg?: unknown) => void>; eng
 const ADDR = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
 
 describe('saved mutes for nearby voice (bridge)', () => {
-  beforeEach(() => api.setNearbyMuted.mockReset())
+  beforeEach(() => {
+    api.setNearbyMuted = vi.fn()
+  })
 
   it("relays the engine's list to the page and to the nametags", () => {
     const b = bridge()
@@ -50,7 +52,7 @@ describe('saved mutes for nearby voice (bridge)', () => {
 
   it('passes a mute to the engine', () => {
     const b = bridge()
-    api.setNearbyMuted.mockResolvedValue(undefined)
+    api.setNearbyMuted?.mockResolvedValue(undefined)
     b.on.get('setNearbyMute')?.({ kind: 'setNearbyMute', address: ADDR, muted: true })
     expect(api.setNearbyMuted).toHaveBeenCalledWith(ADDR, true)
   })
@@ -62,9 +64,20 @@ describe('saved mutes for nearby voice (bridge)', () => {
     // a thenable, not a rejected promise: this runner fails a test whose mock returned one, even handled
     const refused = Promise.reject(new Error('Cannot mute yourself'))
     refused.catch(() => undefined)
-    api.setNearbyMuted.mockImplementation(() => ({ catch: (fn: (e: unknown) => void) => refused.catch(fn) }))
+    api.setNearbyMuted?.mockImplementation(() => ({ catch: (fn: (e: unknown) => void) => refused.catch(fn) }))
     b.on.get('setNearbyMute')?.({ kind: 'setNearbyMute', address: ADDR, muted: true })
     for (let i = 0; i < 5; i++) await Promise.resolve()
+    expect(b.sent).toEqual([
+      { kind: 'nearbyMutes', addresses: [] },
+      { kind: 'nearbyMutes', addresses: [] }
+    ])
+  })
+
+  it("puts the engine's list back on the page when the engine cannot mute", () => {
+    const b = bridge()
+    b.engine([])
+    api.setNearbyMuted = undefined
+    b.on.get('setNearbyMute')?.({ kind: 'setNearbyMute', address: ADDR, muted: true })
     expect(b.sent).toEqual([
       { kind: 'nearbyMutes', addresses: [] },
       { kind: 'nearbyMutes', addresses: [] }

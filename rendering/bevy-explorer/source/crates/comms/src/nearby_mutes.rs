@@ -2,7 +2,10 @@
 //! by the social service (`/v1/mutes`), mirrored here, and applied only on this client, where the
 //! nearby voice of a muted wallet plays at volume 0. Calls and community streams ignore it.
 
-use std::collections::{BTreeSet, HashSet};
+use std::{
+    collections::{BTreeSet, HashSet, VecDeque},
+    time::Duration,
+};
 
 use alloy_core::primitives::Address;
 use bevy::{
@@ -32,9 +35,10 @@ impl Plugin for NearbyMutesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<NearbyMutes>()
             .init_resource::<NearbyMuteStreams>()
+            .init_resource::<Saves>()
             .add_systems(
                 Update,
-                (follow_account, respond_to_system_api, publish).chain(),
+                (follow_account, respond_to_system_api, publish, send_saves).chain(),
             )
             .add_console_command::<NearbyMutesCommand, _>(nearby_mutes_command)
             .add_console_command::<NearbyMuteCommand, _>(nearby_mute_command)
@@ -228,46 +232,113 @@ async fn load_mutes(
     Ok(muted)
 }
 
-/// Saves one change. A failure is only logged: the mute already holds for this session, and the
-/// next change to that wallet is sent on its own.
-fn save(address: Address, muted: bool, client: reqwest::Client, wallet: Wallet) {
-    IoTaskPool::get()
-        .spawn_compat(async move {
-            let method = if muted { "POST" } else { "DELETE" };
-            let body = json!({ "muted_address": format!("{address:#x}") });
-            match signed_request(method, mutes_url(), Some(body), &client, &wallet).await {
-                Ok(response) => {
-                    response.discard();
-                }
-                Err(e) => warn!("nearby mutes: {method} for {address:#x} failed: {e}"),
+/// One change to save, signed by the account that made it.
+struct Save {
+    address: Address,
+    muted: bool,
+    wallet: Wallet,
+}
+
+/// The changes still to save, oldest first, and the one being sent. The service applies each
+/// request on its own, so they go out one at a time: two in flight could land in either order.
+#[derive(Resource, Default)]
+struct Saves {
+    queue: VecDeque<Save>,
+    sending: Option<Task<()>>,
+}
+
+/// The change to send now, if any. Nothing is sent while the saved list is being read: a row
+/// removed between two pages moves the rest up, and the next page would skip one.
+fn next_save<T>(queue: &mut VecDeque<T>, sending: bool, load: Load) -> Option<T> {
+    if sending || load == Load::Loading {
+        return None;
+    }
+    queue.pop_front()
+}
+
+/// A failure is only logged: the mute already holds for this session, and the next change to
+/// that wallet is sent on its own.
+fn send_saves(mut saves: ResMut<Saves>, mutes: Res<NearbyMutes>, ipfs: IpfsAssetServer) {
+    let saves = &mut *saves;
+    if saves
+        .sending
+        .as_mut()
+        .is_some_and(|task| task.complete().is_some())
+    {
+        saves.sending = None;
+    }
+    let Some(Save {
+        address,
+        muted,
+        wallet,
+    }) = next_save(&mut saves.queue, saves.sending.is_some(), mutes.load)
+    else {
+        return;
+    };
+    let client = ipfs.ipfs().client();
+    saves.sending = Some(IoTaskPool::get().spawn_compat(async move {
+        let method = if muted { "POST" } else { "DELETE" };
+        let body = json!({ "muted_address": format!("{address:#x}") });
+        match signed_request(method, mutes_url(), Some(body), &client, &wallet).await {
+            Ok(response) => {
+                response.discard();
             }
-        })
-        .detach();
+            Err(e) => warn!("nearby mutes: {method} for {address:#x} failed: {e}"),
+        }
+    }));
 }
 
 type LoadTask = Task<(Address, Result<Vec<Address>, anyhow::Error>)>;
 
+/// How long to wait before reading the saved list again after `failures` failed reads in a row,
+/// or `None` when the list stays failed until the account changes.
+fn retry_delay(failures: u32) -> Option<Duration> {
+    (1..=3)
+        .contains(&failures)
+        .then(|| Duration::from_secs(1 << failures))
+}
+
+#[derive(Default)]
+struct LoadState {
+    task: Option<LoadTask>,
+    failures: u32,
+    /// On the app's clock.
+    retry_at: Option<Duration>,
+}
+
+fn spawn_load(account: Address, wallet: &Wallet, ipfs: &IpfsAssetServer) -> LoadTask {
+    let client = ipfs.ipfs().client();
+    let wallet = wallet.snapshot();
+    IoTaskPool::get().spawn_compat(async move { (account, load_mutes(client, wallet).await) })
+}
+
 fn follow_account(
     wallet: Res<Wallet>,
     ipfs: IpfsAssetServer,
+    time: Res<Time>,
     mut mutes: ResMut<NearbyMutes>,
-    mut task: Local<Option<LoadTask>>,
+    mut load: Local<LoadState>,
 ) {
     let account = wallet.address();
     if account != mutes.account {
         mutes.reset(account);
-        *task = account.map(|account| {
-            let client = ipfs.ipfs().client();
-            let wallet = wallet.snapshot();
-            IoTaskPool::get()
-                .spawn_compat(async move { (account, load_mutes(client, wallet).await) })
-        });
+        *load = LoadState {
+            task: account.map(|account| spawn_load(account, &wallet, &ipfs)),
+            ..default()
+        };
     }
 
-    let Some((account, result)) = task.as_mut().and_then(|task| task.complete()) else {
+    if let Some(account) = mutes.account {
+        if load.retry_at.is_some_and(|at| time.elapsed() >= at) {
+            load.retry_at = None;
+            load.task = Some(spawn_load(account, &wallet, &ipfs));
+        }
+    }
+
+    let Some((account, result)) = load.task.as_mut().and_then(|task| task.complete()) else {
         return;
     };
-    *task = None;
+    load.task = None;
     // an answer for an account that has since left
     if mutes.account != Some(account) {
         return;
@@ -279,18 +350,27 @@ fn follow_account(
             mutes.load = Load::Loaded;
         }
         Err(e) => {
-            warn!("nearby mutes: the saved list could not be read: {e}");
-            mutes.load = Load::Failed;
+            load.failures += 1;
+            match retry_delay(load.failures) {
+                Some(delay) => {
+                    warn!("nearby mutes: the saved list could not be read, trying again in {delay:?}: {e}");
+                    load.retry_at = Some(time.elapsed() + delay);
+                }
+                None => {
+                    warn!("nearby mutes: the saved list could not be read: {e}");
+                    mutes.load = Load::Failed;
+                }
+            }
         }
     }
 }
 
 fn apply(
     mutes: &mut NearbyMutes,
+    saves: &mut Saves,
     address: &str,
     muted: bool,
     wallet: &Wallet,
-    ipfs: &IpfsAssetServer,
 ) -> Result<(), String> {
     let address = address
         .as_h160()
@@ -299,7 +379,11 @@ fn apply(
         return Err("Cannot mute yourself".to_owned());
     }
     if mutes.set_muted(address, muted) && mutes.account.is_some() {
-        save(address, muted, ipfs.ipfs().client(), wallet.snapshot());
+        saves.queue.push_back(Save {
+            address,
+            muted,
+            wallet: wallet.snapshot(),
+        });
     }
     Ok(())
 }
@@ -308,13 +392,13 @@ fn respond_to_system_api(
     mut events: EventReader<SystemApi>,
     mut mutes: ResMut<NearbyMutes>,
     mut streams: ResMut<NearbyMuteStreams>,
+    mut saves: ResMut<Saves>,
     wallet: Res<Wallet>,
-    ipfs: IpfsAssetServer,
 ) {
     for event in events.read() {
         match event {
             SystemApi::SetNearbyMuted(address, muted, sender) => {
-                sender.send(apply(&mut mutes, address, *muted, &wallet, &ipfs));
+                sender.send(apply(&mut mutes, &mut saves, address, *muted, &wallet));
             }
             SystemApi::GetNearbyMuteStream(sender) => {
                 let _ = sender.send(mutes.sorted());
@@ -380,14 +464,14 @@ struct NearbyMuteCommand {
 fn nearby_mute_command(
     mut input: ConsoleCommand<NearbyMuteCommand>,
     mut mutes: ResMut<NearbyMutes>,
+    mut saves: ResMut<Saves>,
     wallet: Res<Wallet>,
-    ipfs: IpfsAssetServer,
 ) {
     let Some(Ok(command)) = input.take() else {
         return;
     };
     let muted = command.state == Switch::On;
-    match apply(&mut mutes, &command.address, muted, &wallet, &ipfs) {
+    match apply(&mut mutes, &mut saves, &command.address, muted, &wallet) {
         Ok(()) => input.reply_ok(if muted { "Muted" } else { "Unmuted" }),
         Err(e) => input.reply_failed(e),
     }
@@ -492,6 +576,34 @@ mod tests {
         assert_eq!(next_offset(200, 50, 250), None);
         // a total the server overstates
         assert_eq!(next_offset(100, 0, 250), None);
+    }
+
+    #[test]
+    fn saves_go_out_in_order_one_at_a_time() {
+        let mut queue = VecDeque::from(["hush", "hear"]);
+        assert_eq!(next_save(&mut queue, false, Load::Loaded), Some("hush"));
+        // the first is still in flight
+        assert_eq!(next_save(&mut queue, true, Load::Loaded), None);
+        assert_eq!(next_save(&mut queue, false, Load::Loaded), Some("hear"));
+        assert_eq!(next_save(&mut queue, false, Load::Loaded), None);
+    }
+
+    #[test]
+    fn saves_wait_for_the_saved_list() {
+        let mut queue = VecDeque::from(["hear"]);
+        assert_eq!(next_save(&mut queue, false, Load::Loading), None);
+        // a list that could not be read holds nothing back, nor does a signed-out session
+        assert_eq!(next_save(&mut queue, false, Load::Failed), Some("hear"));
+        queue.push_back("hush");
+        assert_eq!(next_save(&mut queue, false, Load::Idle), Some("hush"));
+    }
+
+    #[test]
+    fn a_failed_read_is_tried_three_more_times() {
+        assert_eq!(retry_delay(1), Some(Duration::from_secs(2)));
+        assert_eq!(retry_delay(2), Some(Duration::from_secs(4)));
+        assert_eq!(retry_delay(3), Some(Duration::from_secs(8)));
+        assert_eq!(retry_delay(4), None);
     }
 
     #[test]

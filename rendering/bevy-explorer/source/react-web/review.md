@@ -288,7 +288,7 @@ back as `analyticsSession`). Expectations:
   (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
 - **Social**: Friend Request, Friend Accept, Unfriend, Block User on the action.
 - **Nearby voice**: `nearby_voice_user_mute` {wallet_id, is_muted} on the profile menu's Hush or
-  Hear; not for the mutes read from the saved list.
+  Hear; not for the mutes read from the saved list, nor for a Hush or Hear the list already has.
 - **In world**: the engine's First Move In World (an `analytics` message over the bridge, which
   relays the engine's own Segment events by name; a metre walked since logging in), once per page load, with the terms accepted (the welcome
   flow's answer, or the engine's persisted config), posts `bevy-shell:in-world` {login_type,

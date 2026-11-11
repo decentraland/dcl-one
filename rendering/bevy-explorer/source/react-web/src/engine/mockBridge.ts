@@ -123,7 +123,6 @@ const MOCK_NEARBY = [
   { address: '0x77a0b1c2d3e4f5061728394a5b6c7d8e9f001122', name: 'SpottyGoat' },
   { address: '0xc0ffee254729296a45a3885639ac7e10f9d54979', name: '' }
 ]
-const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
 
 // The places the mock user can link to a community, and what each community links.
 const MOCK_OWNED_PLACES = [
@@ -391,6 +390,7 @@ let running: (() => void) | null = null
 export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
   if (running) return running
   const o = { ...DEFAULTS, ...opts }
+  const mockNearbyMuted = new Set<string>([MOCK_NEARBY[1].address.toLowerCase()])
   // Stateful so markNotificationsRead persists across reopens (like the real service).
   const mockNow = 1_700_000_000_000
   // Shapes mirror the real notifications service: friendship notifications carry the other user

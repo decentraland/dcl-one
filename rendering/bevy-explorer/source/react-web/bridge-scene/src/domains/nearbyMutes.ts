@@ -18,9 +18,15 @@ export function registerNearbyMutes(ctx: Ctx): void {
   }
 
   ctx.on('setNearbyMute', (msg) => {
-    BevyApi.setNearbyMuted?.(msg.address, msg.muted).catch((e: unknown) => {
+    // the page changed its copy before asking: a refusal, or an engine that cannot mute, puts
+    // the engine's list back
+    const set = BevyApi.setNearbyMuted
+    if (set == null) {
+      send()
+      return
+    }
+    set(msg.address, msg.muted).catch((e: unknown) => {
       console.error('[nearbyMutes] set failed', e)
-      // the page changed its copy before asking: put the engine's list back
       send()
     })
   })

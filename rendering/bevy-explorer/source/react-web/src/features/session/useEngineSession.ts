@@ -1142,6 +1142,12 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [members, setMembers] = useState<NearbyMember[]>([])
   const [speaking, setSpeaking] = useState<ReadonlySet<string>>(() => new Set())
   const [nearbyMuted, setNearbyMuted] = useState<ReadonlySet<string>>(() => new Set())
+  // what `nearbyMuted` holds, readable before the next render: two changes in one turn each see the other
+  const nearbyMutedRef = useRef<ReadonlySet<string>>(nearbyMuted)
+  const applyNearbyMuted = useCallback((next: ReadonlySet<string>) => {
+    nearbyMutedRef.current = next
+    setNearbyMuted(next)
+  }, [])
   // Mirror cursor-lock into a ref so the run-once message handler reads it without a stale closure —
   // avatarClick uses it to centre the card while the camera has the pointer locked.
   const cursorLockedRef = useRef(false)
@@ -1784,7 +1790,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setMic({ enabled: msg.enabled, available: msg.available })
           break
         case 'nearbyMutes':
-          setNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
+          applyNearbyMuted(new Set(msg.addresses.map((a) => a.toLowerCase())))
           break
         case 'requestFailed':
           fetchedRef.current.delete(msg.request)
@@ -3323,14 +3329,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
   const setNearbyMute = useCallback((address: string, muted: boolean) => {
     const wallet_id = address.toLowerCase()
+    // nothing to change: no event for a mute that did not happen
+    if (nearbyMutedRef.current.has(wallet_id) === muted) return
     // optimistic; the engine's list confirms or puts it back
-    setNearbyMuted((prev) => {
-      if (prev.has(wallet_id) === muted) return prev
-      const next = new Set(prev)
-      if (muted) next.add(wallet_id)
-      else next.delete(wallet_id)
-      return next
-    })
+    const next = new Set(nearbyMutedRef.current)
+    if (muted) next.add(wallet_id)
+    else next.delete(wallet_id)
+    applyNearbyMuted(next)
     track('nearby_voice_user_mute', { wallet_id, is_muted: muted })
     driverRef.current?.send({ kind: 'setNearbyMute', address: wallet_id, muted })
   }, [])

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { ProfileCardPresentation } from '../features/chat/ProfileCardPresentation'
+import { pending } from '../lib/analytics'
 import { enterAsGuest, renderSession } from './harness'
 
 const ADDR = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
@@ -36,6 +37,37 @@ describe('saved mutes for nearby voice', () => {
     act(() => h.session().nearbyMutes.set(ADDR, false))
     expect(h.session().nearbyMutes.muted.has(ADDR)).toBe(false)
     expect(h.driver.last('setNearbyMute')).toEqual({ kind: 'setNearbyMute', address: ADDR, muted: false })
+  })
+
+  it('reports the change once, and nothing for a state the list already has', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    const events = (): unknown[] =>
+      pending()
+        .filter((e) => e.event === 'nearby_voice_user_mute')
+        .map((e) => [e.properties.wallet_id, e.properties.is_muted])
+    const from = events().length
+    const asked = (): number => h.driver.sent.filter((m) => m.kind === 'setNearbyMute').length
+    const before = asked()
+    // twice in one turn: the second sees the first
+    act(() => {
+      h.session().nearbyMutes.set(ADDR, true)
+      h.session().nearbyMutes.set(ADDR, true)
+    })
+    act(() => h.session().nearbyMutes.set('0x00000000000000000000000000000000000000aa', false))
+    expect(events().slice(from)).toEqual([[ADDR, true]])
+    expect(asked()).toBe(before + 1)
+  })
+
+  it("the engine's list puts back a mute it refused, and the next Hush is reported again", async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    act(() => h.session().nearbyMutes.set(ADDR, true))
+    act(() => h.driver.emit({ kind: 'nearbyMutes', addresses: [] }))
+    expect(h.session().nearbyMutes.muted.has(ADDR)).toBe(false)
+    act(() => h.session().nearbyMutes.set(ADDR, true))
+    expect(h.session().nearbyMutes.muted.has(ADDR)).toBe(true)
+    expect(h.driver.last('setNearbyMute')).toEqual({ kind: 'setNearbyMute', address: ADDR, muted: true })
   })
 
   it('the menu offers Hush after Call, and closes on it', async () => {
