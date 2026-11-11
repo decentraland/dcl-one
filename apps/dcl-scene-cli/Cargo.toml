@@ -68,6 +68,8 @@ brotli-decompressor = "6"
 image.workspace = true
 wasmtime = { version = "=50.0.0", default-features = false, features = ["anyhow", "cranelift", "parallel-compilation", "runtime", "std"] }
 wasmtime-wasi = { version = "=50.0.0", default-features = false, features = ["p1"] }
+# The encoder's per-texture scratch directory: random name, owner-only.
+tempfile = "3"
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

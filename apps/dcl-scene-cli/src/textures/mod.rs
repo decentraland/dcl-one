@@ -4,11 +4,11 @@
 //! models and new `.ktx2` files live in the staging directory, and an original
 //! image only drops out of the published list ([`Overlay::removed`]).
 //!
-//! `start` imports in the background ([`import`]), always, like a game
-//! engine's asset import: every run fills the cache, and its finished overlay
-//! replaces the previous one in one swap. Whether the overlay is applied is
-//! the project's setting ([`settings`]). `deploy` finishes whatever the cache
-//! lacks in the foreground ([`stage_for_deploy`]).
+//! While the project's setting ([`settings`]) enables it, `start` imports in
+//! the background ([`import`]), like a game engine's asset import: every run
+//! fills the cache, and its finished overlay replaces the previous one in one
+//! swap. `deploy` finishes whatever the cache lacks in the foreground
+//! ([`stage_for_deploy`]).
 //!
 //! The overlay is applied where the payload is decided — `deploy`'s
 //! `with_release_files`/`payload_path` and the preview's scene entity and
@@ -211,10 +211,9 @@ fn stamp(rel: &str, path: &Path) -> Stamp {
     )
 }
 
+/// The preview's inputs: the tree files it serves.
 fn stamps_of(root: &Path, rels: &[String]) -> Vec<Stamp> {
-    rels.iter()
-        .map(|rel| stamp(rel, &crate::deploy::tree_payload_path(root, rel)))
-        .collect()
+    rels.iter().map(|rel| stamp(rel, &root.join(rel))).collect()
 }
 
 /// While held, the payload `deploy` reads carries its own run's overlay (or
@@ -296,10 +295,12 @@ pub async fn stage_for_deploy(
     Ok(stage)
 }
 
-/// One foreground run for `deploy`, on every core: the release bundle is the
-/// one searched for names, since it is the one uploaded.
+/// One foreground run for `deploy`, on every core, over the files it uploads:
+/// the tree's publishable files and the release build's own, each read where
+/// the payload reads it.
 fn deploy_run(root: &Path, settings: Settings, quiet: bool) -> Result<Overlay> {
-    let rels = crate::deploy::collect_publishable_files(root)?;
+    let rels =
+        crate::deploy::tree_payload_files(root, crate::deploy::collect_publishable_files(root)?);
     let encoder = basisu::WasmBasisu::shared()?;
     let line = (!quiet).then(|| ux::Slow::start("optimizing textures"));
     let announced = std::sync::atomic::AtomicBool::new(false);
@@ -428,7 +429,6 @@ pub struct Summary {
     pub bytes_after: u64,
     pub ignored: Vec<String>,
     pub kept_originals: Vec<(String, String)>,
-    pub mixed: Vec<String>,
     /// Distinct textures this run handled, and those that failed to encode.
     pub total: usize,
     pub failed: usize,
@@ -472,13 +472,6 @@ impl Summary {
             ux::note(format!(
                 "\u{2026} and {} more kept originals",
                 self.kept_originals.len() - SHOWN
-            ));
-        }
-        if !self.mixed.is_empty() {
-            ux::note(format!(
-                "{} image(s) are sampled both as colour and as data and were encoded as sRGB: {}",
-                self.mixed.len(),
-                self.mixed.join(", ")
             ));
         }
         ux::note_absent(KTX2_WARNING);
@@ -528,7 +521,6 @@ enum Planned {
         job: usize,
         source_len: u64,
         mode: ColorMode,
-        mixed: bool,
     },
 }
 
@@ -654,8 +646,9 @@ fn prune_models(stage: &Path, keep: &Overlay) {
 }
 
 /// Whether `text` names the image file `rel`: its file name anywhere, or its
-/// bare stem as a quoted string (`'wall'`, `"wall"`, `` `wall` ``), the shape
-/// of code that appends the extension itself. `text` is lowercase.
+/// bare stem closed by a quote and opened by one (`'wall'`, `"wall"`,
+/// `` `wall` ``) or by a folder (`'images/wall'`), the shape of code that
+/// appends the extension itself. `text` is lowercase.
 fn names_image(text: &str, rel: &str) -> bool {
     let name = rel.rsplit('/').next().unwrap_or(rel).to_lowercase();
     if text.contains(&name) {
@@ -665,17 +658,19 @@ fn names_image(text: &str, rel: &str) -> bool {
         .rsplit_once('.')
         .map_or(name.as_str(), |(stem, _)| stem);
     !stem.is_empty()
-        && ['\'', '"', '`']
-            .iter()
-            .any(|q| text.contains(&format!("{q}{stem}{q}")))
+        && ['\'', '"', '`'].iter().any(|q| {
+            text.contains(&format!("{q}{stem}{q}")) || text.contains(&format!("/{stem}{q}"))
+        })
 }
 
-/// One full run over the publishable files `rels` of `root`: plan every
+/// One full run over the published files `rels` of `root`: plan every
 /// model's images, encode what is not cached (`run.workers` encoders),
 /// stage the rewritten models and decide which originals drop out. Nothing
 /// is applied here: the caller swaps the overlay in and writes the
-/// manifest. `payload` is where a published file's bytes are read from (the
-/// release copy of a bundle, when a deploy built one).
+/// manifest. `payload` is where a published file's bytes are read from —
+/// models, images and the files searched for names alike — so the run sees
+/// what is served or uploaded: the tree for the preview, the release copy of
+/// a bundle for a deploy that built one.
 pub(crate) fn optimize(
     root: &Path,
     rels: &[String],
@@ -688,16 +683,17 @@ pub(crate) fn optimize(
     let stage = root.join(STAGE);
     let by_lower: HashMap<String, &String> = rels.iter().map(|r| (r.to_lowercase(), r)).collect();
     let published = |path: &str| by_lower.get(&path.to_lowercase()).map(|r| r.to_string());
-    let read = |path: &str| -> Option<Vec<u8>> { std::fs::read(root.join(published(path)?)).ok() };
+    let read = |path: &str| -> Option<Vec<u8>> { std::fs::read(payload(&published(path)?)).ok() };
 
     let mut jobs: Vec<Job> = Vec::new();
     let mut job_of: HashMap<(String, ColorMode), usize> = HashMap::new();
     let mut models: Vec<ModelWork> = Vec::new();
     let mut kept: Vec<(String, String)> = Vec::new();
-    // models this run cannot read are searched like scene code
+    // searched like scene code: models this run cannot read, and image URIs
+    // it cannot resolve to a scene file (a Windows path a client may still read)
     let mut unparsed: Vec<(String, String)> = Vec::new();
     for rel in rels.iter().filter(|r| is_model(r)) {
-        let bytes = match std::fs::read(root.join(rel)) {
+        let bytes = match std::fs::read(payload(rel)) {
             Ok(b) => b,
             Err(e) => {
                 kept.push((rel.clone(), format!("model not readable: {e}")));
@@ -712,6 +708,10 @@ pub(crate) fn optimize(
                 continue;
             }
         };
+        let rejected = gltf::unresolved_image_uris(&model, rel);
+        if !rejected.is_empty() {
+            unparsed.push((rel.clone(), rejected.join("\n").to_lowercase()));
+        }
         let plans = gltf::plan_images(&model);
         let mut images = Vec::with_capacity(plans.len());
         for (index, plan) in plans.into_iter().enumerate() {
@@ -723,7 +723,7 @@ pub(crate) fn optimize(
             let planned = match plan {
                 gltf::ImagePlan::Unused => Planned::Unused,
                 gltf::ImagePlan::Keep(why) => Planned::Keep(why),
-                gltf::ImagePlan::Encode { mode, mixed } => {
+                gltf::ImagePlan::Encode { mode } => {
                     let bytes = match source {
                         Ok(gltf::ImageSource::Embedded(b)) => Ok(b),
                         Ok(gltf::ImageSource::External(path)) => external
@@ -750,7 +750,6 @@ pub(crate) fn optimize(
                                 job,
                                 source_len,
                                 mode,
-                                mixed,
                             }
                         }
                     }
@@ -841,7 +840,6 @@ pub(crate) fn optimize(
                     job,
                     source_len,
                     mode,
-                    mixed,
                 } => match &results[*job] {
                     Encoded::Failed(why) => {
                         keep_file(&mut kept_files);
@@ -867,9 +865,6 @@ pub(crate) fn optimize(
                         let ktx2_rel = published_ktx2(&work.rel, ktx2_sha);
                         let uri = gltf::relative_uri(&work.rel, &ktx2_rel);
                         replacements.insert(image.index, uri);
-                        if *mixed {
-                            summary.mixed.push(label.clone());
-                        }
                         if let Some(path) = &image.external {
                             replaced_files.insert(path.clone());
                         }
@@ -949,7 +944,7 @@ pub(crate) fn optimize(
                     .kept_originals
                     .push((candidate, format!("referenced by scene code ({file})"))),
                 None => {
-                    summary.bytes_before += std::fs::metadata(root.join(&candidate))
+                    summary.bytes_before += std::fs::metadata(payload(&candidate))
                         .map(|m| m.len())
                         .unwrap_or(0);
                     overlay.removed.insert(candidate);
@@ -991,7 +986,6 @@ pub(crate) fn optimize(
         "keptImages": reasons(&summary.kept, "image"),
         "ignoredOriginals": ignored,
         "keptOriginals": reasons(&summary.kept_originals, "path"),
-        "mixedColorUse": summary.mixed,
         "bytes": {"before": summary.bytes_before, "after": summary.bytes_after},
     });
     Ok(Outcome {

@@ -313,6 +313,68 @@ fn a_quoted_stem_keeps_the_original() {
     assert!(!names_image("const wall = 1", "images/wall.png"));
     assert!(!names_image("'wallpaper'", "images/wall.png"));
     assert!(!names_image("''", "images/.png"), "no empty stem");
+    // a folder before the stem, the extension appended
+    assert!(names_image("'images/wall' + '.png'", "images/wall.png"));
+    assert!(names_image("`${dir}/wall`", "images/wall.png"));
+    assert!(!names_image("'images/wallpaper'", "images/wall.png"));
+}
+
+/// A deploy searches what it uploads: a file only the release build wrote
+/// names the image, so the image is published.
+#[test]
+fn a_deploy_searches_the_release_only_files() {
+    let (_t, root, _) = scene("textures-release");
+    write(
+        &root,
+        &format!("{}/bin/chunk.js", crate::build::RELEASE_OUT),
+        b"load('images/wall.png')",
+    );
+    let rels = crate::deploy::tree_payload_files(
+        &root,
+        crate::deploy::collect_publishable_files(&root).unwrap(),
+    );
+    assert!(rels.iter().any(|r| r == "bin/chunk.js"));
+    let run = Run {
+        workers: 2,
+        progress: &|_| {},
+    };
+    let out = optimize(
+        &root,
+        &rels,
+        Settings::default(),
+        &FakeEncoder { bloat: false },
+        &|rel| crate::deploy::tree_payload_path(&root, rel),
+        &run,
+    )
+    .unwrap();
+    assert!(out.overlay.removed.is_empty(), "{:?}", out.overlay.removed);
+    let wall = out
+        .summary
+        .kept_originals
+        .iter()
+        .find(|(p, _)| p == "images/wall.png")
+        .unwrap();
+    assert!(wall.1.contains("bin/chunk.js"), "{}", wall.1);
+}
+
+/// An image URI no scene file answers (a Windows path) is still searched for
+/// names: a client that reads it would 404 if the original were left out.
+#[test]
+fn an_unresolved_image_uri_keeps_the_original() {
+    let (t, root, _) = scene("textures-backslash");
+    t.write(
+        "models/c.gltf",
+        r#"{"asset":{"version":"2.0"},"images":[{"uri":"..\\images\\wall.png"}],"textures":[{"source":0}],"materials":[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]}"#,
+    );
+    let out = run(&root, Settings::default(), &FakeEncoder { bloat: false });
+    assert!(out.overlay.removed.is_empty(), "{:?}", out.overlay.removed);
+    let wall = out
+        .summary
+        .kept_originals
+        .iter()
+        .find(|(p, _)| p == "images/wall.png")
+        .unwrap();
+    assert!(wall.1.contains("models/c.gltf"), "{}", wall.1);
 }
 
 #[test]
@@ -510,35 +572,49 @@ fn the_overlay_swaps_whole_when_a_run_ends() {
 }
 
 #[test]
-fn the_import_runs_with_the_setting_off_and_applies_nothing() {
+fn the_import_encodes_nothing_with_the_setting_off() {
     let (_t, root, _) = scene("textures-off");
     let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
     let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
-    assert!(import::import_once(&root, &fake, 2, &send, false));
-    let last = *sent.lock().unwrap().last().unwrap();
-    assert_eq!(last.state, import::ImportState::Ready);
-    assert!(!last.enabled);
-    // the cache is warm, the preview serves the tree
-    assert_eq!(staged_source(&root, "models/a.glb"), None);
+    let untouched = || -> anyhow::Result<&'static dyn Encoder> {
+        panic!("no encoder is asked for with the setting off")
+    };
+    assert!(!import::import_once(&root, &untouched, 2, &send, false));
+    assert!(sent.lock().unwrap().is_empty(), "nothing to tell");
+    assert!(!root.join(STAGE).join("cache").exists(), "nothing encoded");
     let rels = crate::deploy::collect_publishable_files(&root).unwrap();
     assert_eq!(publishable(&root, rels.clone()), rels);
-    let warm = run(&root, Settings::default(), &FAKE);
-    assert_eq!(warm.summary.encoded, 0);
 
-    // turned on: the next run applies it without encoding anything
+    // turned on: the next run encodes and applies it
     enable_in_settings(&root);
-    sent.lock().unwrap().clear();
     assert!(import::import_once(&root, &fake, 2, &send, false));
-    let sent = sent.lock().unwrap();
-    assert_eq!(sent.len(), 1, "no RUNNING: nothing to encode");
-    assert!(sent[0].enabled && sent[0].state == import::ImportState::Ready);
+    let last = *sent.lock().unwrap().last().unwrap();
+    assert!(last.enabled && last.state == import::ImportState::Ready);
     assert!(staged_source(&root, "models/a.glb").is_some());
+
+    // turned off again: the overlay goes and clients are told once
+    settings::apply(
+        &root,
+        Overrides {
+            optimize_textures: Some(false),
+            keep_source_textures: None,
+        },
+    )
+    .unwrap();
+    sent.lock().unwrap().clear();
+    assert!(import::import_once(&root, &untouched, 2, &send, false));
+    assert!(!import::import_once(&root, &untouched, 2, &send, false));
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 1);
+    assert!(!sent[0].enabled && sent[0].state == import::ImportState::Ready);
+    assert_eq!(staged_source(&root, "models/a.glb"), None);
     registry().remove(&root);
 }
 
 #[test]
 fn an_import_that_cannot_start_fails_loudly() {
     let (_t, root, _) = scene("textures-fail");
+    enable_in_settings(&root);
     let sent: Mutex<Vec<import::ImportStatus>> = Mutex::new(Vec::new());
     let send = |s: import::ImportStatus| sent.lock().unwrap().push(s);
     let broken = || -> anyhow::Result<&'static dyn Encoder> { anyhow::bail!("no encoder") };

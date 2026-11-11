@@ -1,7 +1,8 @@
 //! `start`'s background texture import, like a game engine's asset import:
-//! it runs at startup and after every watch batch, whether or not the project
-//! enables optimized textures, so the cache is warm when it is turned on or a
-//! deploy needs it. The preview never waits for it.
+//! it runs at startup and after every watch batch while the project enables
+//! optimized textures, so the preview serves them and a deploy finds the cache
+//! warm. With the setting off a run encodes nothing; a deploy that turns it on
+//! queues the next run when it ends. The preview never waits for it.
 //!
 //! One thread per project runs the import ([`Scheduler`]): a request while a
 //! run is in progress queues exactly one more run. A run that finds its
@@ -246,8 +247,10 @@ pub fn background_workers() -> usize {
         .unwrap_or(1)
 }
 
-/// One background run; `true` when it changed what clients see. Inputs
-/// unchanged since the last run (files, setting): nothing is done or sent.
+/// One background run; `true` when it changed what clients see. With the
+/// setting off nothing is encoded: the overlay is dropped and, when it was
+/// applied until now, READY goes out with `enabled: false`. Inputs unchanged
+/// since the last run (files, setting): nothing is done or sent.
 /// Otherwise RUNNING goes out while textures are encoded (throttled), then
 /// READY once the new overlay is in place — when it differs from the last,
 /// or when RUNNING went out — or FAILED.
@@ -281,6 +284,30 @@ pub(crate) fn import_once<'e>(
         });
         false
     };
+    if !enabled {
+        let was_enabled = registry().get(root).is_some_and(|e| e.enabled);
+        swap(
+            root,
+            Entry {
+                enabled: false,
+                settings,
+                overlay: None,
+                stamps: None,
+            },
+        );
+        if was_enabled {
+            send(ImportStatus {
+                state: ImportState::Ready,
+                done: 0,
+                total: 0,
+                failed: 0,
+                bytes_before: 0,
+                bytes_after: 0,
+                enabled: false,
+            });
+        }
+        return was_enabled;
+    }
     let rels = match crate::deploy::collect_publishable_files(root) {
         Ok(rels) => rels,
         Err(e) => return failed(e),
@@ -322,7 +349,7 @@ pub(crate) fn import_once<'e>(
         &rels,
         settings,
         encoder,
-        &|rel| crate::deploy::tree_payload_path(root, rel),
+        &|rel| root.join(rel),
         &Run {
             workers,
             progress: &progress,

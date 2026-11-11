@@ -256,6 +256,18 @@ fn buffer_bytes(
     }
 }
 
+/// The image URIs of `model` that name no file of the scene (not `data:`):
+/// a Windows path, an absolute path or one leaving the scene.
+pub fn unresolved_image_uris(model: &Model, model_rel: &str) -> Vec<String> {
+    model
+        .array("images")
+        .iter()
+        .filter_map(|image| image.get("uri").and_then(Value::as_str))
+        .filter(|uri| !uri.starts_with("data:") && resolve_uri(model_rel, uri).is_none())
+        .map(str::to_string)
+        .collect()
+}
+
 /// Image `i`'s bytes or file; `Err` says why there is nothing to read.
 pub fn image_source(
     model: &Model,
@@ -331,9 +343,8 @@ pub enum ImagePlan {
     Unused,
     /// Left as it is, and why.
     Keep(String),
-    /// To be encoded with this colour mode; `mixed` when colour and data
-    /// slots share it.
-    Encode { mode: ColorMode, mixed: bool },
+    /// To be encoded with this colour mode.
+    Encode { mode: ColorMode },
 }
 
 /// One plan per image, from the textures and the material slots sampling it.
@@ -399,8 +410,12 @@ pub fn plan_images(model: &Model) -> Vec<ImagePlan> {
             if ktx2 {
                 return ImagePlan::Keep("already KTX2".into());
             }
-            let (mode, mixed) = resolve_mode(&uses[i]);
-            ImagePlan::Encode { mode, mixed }
+            // one KTX2 serves every slot sampling the image: sRGB would skew
+            // the data slots, linear the colour ones
+            match resolve_mode(&uses[i]) {
+                (_, true) => ImagePlan::Keep("sampled both as colour and as data".into()),
+                (mode, false) => ImagePlan::Encode { mode },
+            }
         })
         .collect()
 }
@@ -470,7 +485,12 @@ pub fn apply(model: &mut Model, replacements: &BTreeMap<usize, String>) -> bool 
     }
     let used = model.strings("extensionsUsed");
     let safe = used.iter().all(|e| repack_safe(e));
-    model.glb && model.bin.is_some() && safe && repack(model, &freed_views)
+    // the binary chunk is buffer 0 only when that buffer names no file
+    let bin_is_buffer_0 = model
+        .array("buffers")
+        .first()
+        .is_some_and(|b| b.get("uri").is_none());
+    model.glb && model.bin.is_some() && bin_is_buffer_0 && safe && repack(model, &freed_views)
 }
 
 /// Every buffer-view reference this module knows how to remap: accessors
@@ -853,35 +873,61 @@ mod tests {
         let plans = plan_images(&model);
         assert_eq!(
             plans[0],
-            ImagePlan::Encode {
-                mode: Srgb,
-                mixed: true
-            }
+            ImagePlan::Keep("sampled both as colour and as data".into())
         );
-        assert_eq!(
-            plans[1],
-            ImagePlan::Encode {
-                mode: Normal,
-                mixed: false
-            }
-        );
-        assert_eq!(
-            plans[2],
-            ImagePlan::Encode {
-                mode: Linear,
-                mixed: false
-            }
-        );
-        assert_eq!(
-            plans[3],
-            ImagePlan::Encode {
-                mode: Linear,
-                mixed: false
-            }
-        );
+        assert_eq!(plans[1], ImagePlan::Encode { mode: Normal });
+        assert_eq!(plans[2], ImagePlan::Encode { mode: Linear });
+        assert_eq!(plans[3], ImagePlan::Encode { mode: Linear });
         assert_eq!(plans[4], ImagePlan::Keep("already KTX2".into()));
         assert!(matches!(plans[5], ImagePlan::Keep(_)));
         assert!(matches!(plans[6], ImagePlan::Keep(_)));
+    }
+
+    /// A GLB whose first buffer names a file: its binary chunk is some other
+    /// buffer's, so it is never rebuilt from buffer 0's views.
+    #[test]
+    fn a_glb_with_an_external_first_buffer_is_not_repacked() {
+        let bin = vec![9u8; 16];
+        let json = json!({
+            "asset": {"version": "2.0"},
+            "buffers": [{"uri": "geometry.bin", "byteLength": 20}, {"byteLength": 16}],
+            "bufferViews": [
+                {"buffer": 0, "byteOffset": 0, "byteLength": 12},
+                {"buffer": 0, "byteOffset": 12, "byteLength": 8}
+            ],
+            "accessors": [{"bufferView": 0, "componentType": 5126, "count": 1, "type": "VEC3"}],
+            "images": [{"bufferView": 1, "mimeType": "image/png"}],
+            "textures": [{"source": 0}]
+        });
+        let mut model = Model {
+            json,
+            bin: Some(bin.clone()),
+            glb: true,
+        };
+        let replacements = BTreeMap::from([(0, "t.ktx2".to_string())]);
+        assert!(!apply(&mut model, &replacements));
+        assert_eq!(model.bin.as_deref(), Some(bin.as_slice()));
+        assert_eq!(model.json["bufferViews"].as_array().unwrap().len(), 2);
+        assert_eq!(model.json["images"][0]["uri"], json!("t.ktx2"));
+    }
+
+    #[test]
+    fn unresolved_image_uris_are_listed() {
+        let model = Model {
+            json: json!({"images": [
+                {"uri": "ok.png"},
+                {"uri": "tex\\wall.png"},
+                {"uri": "/abs.png"},
+                {"uri": "data:image/png;base64,AAAA"},
+                {"bufferView": 0}
+            ]}),
+            bin: None,
+            glb: false,
+        };
+        assert_eq!(
+            unresolved_image_uris(&model, "models/m.gltf"),
+            ["tex\\wall.png", "/abs.png"]
+        );
     }
 
     #[test]

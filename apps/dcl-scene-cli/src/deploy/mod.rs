@@ -790,10 +790,10 @@ fn uses_release(root: &Path) -> bool {
     matches!(crate::build_script::command(root), Ok(None))
 }
 
-/// The payload's paths: the tree's publishable files plus any the release
-/// build alone emits (a chunk only the production build splits out), with
-/// the optimized-texture overlay applied when the project enables one.
-fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
+/// The payload's paths before the texture overlay: the tree's publishable
+/// files plus any the release build alone emits (a chunk only the production
+/// build splits out).
+pub(crate) fn tree_payload_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
     if uses_release(root) {
         for rel in release_rel_files(&root.join(crate::build::RELEASE_OUT)) {
             if !rels.contains(&rel) {
@@ -801,7 +801,13 @@ fn with_release_files(root: &Path, mut rels: Vec<String>) -> Vec<String> {
             }
         }
     }
-    crate::textures::publishable(root, rels)
+    rels
+}
+
+/// The payload's paths, with the optimized-texture overlay applied when the
+/// project enables one.
+fn with_release_files(root: &Path, rels: Vec<String>) -> Vec<String> {
+    crate::textures::publishable(root, tree_payload_files(root, rels))
 }
 
 /// Where a payload path is read from. rustc keeps debug and release

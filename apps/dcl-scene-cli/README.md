@@ -130,14 +130,15 @@ server, parcels to the first healthy public catalyst (`--target-server` /
 
 ### Optimized textures
 
-`start` imports the textures GLB and glTF models sample in the background, whatever the project's
-setting: the images become UASTC KTX2 (`-uastc -ktx2 -uastc_level 1 -uastc_rdo_l 1.0`, sRGB for base
+With the project's setting on, `start` imports the textures GLB and glTF models sample in the
+background: the images become UASTC KTX2 (`-uastc -ktx2 -uastc_level 1 -uastc_rdo_l 1.0`, sRGB for base
 colour and emissive, `-normal_map` for normals, `-linear` otherwise), resized to at most 1024 px in
 whole 4x4 blocks. The encoder is the Basis Universal WASI build pinned in `basisu-release.lock`, run
 in-process with one instance per core (all cores but one in the background); its output is
 byte-identical on every machine. The import runs at startup and after every saved change, never
 blocks the preview, and queues one more run when changes arrive during a run. A run whose inputs are
-unchanged does nothing. Your files are never changed: rewritten models and KTX2 files are staged in
+unchanged does nothing, and with the setting off a run encodes nothing; a deploy that turns it on
+queues the next run. Your files are never changed: rewritten models and KTX2 files are staged in
 `.dcl-one/optimized-textures/` with a `manifest.json` and a cache keyed by source bytes, encoder and
 settings.
 
@@ -147,7 +148,8 @@ and `--no-optimize-textures` on `start` or `deploy` set and store it; later runs
 page's Deploy read it back. With it on, models are rewritten with `KHR_texture_basisu` and no
 fallback, and each texture is published beside its model as `<sha256>.ktx2` (no `..` in the URI; the
 same texture in several folders is uploaded once, by content hash). An image stays as it was when its
-KTX2 is not smaller or it fails to decode.
+KTX2 is not smaller, it fails to decode, or it is sampled both as colour and as data (one KTX2
+cannot be sRGB and linear at once).
 
 The preview applies a finished import in one swap: until then it serves the previous optimized
 files, never part of a run. Rewritten models are staged under names taken from their bytes, so a run
@@ -166,10 +168,11 @@ scene: a texture that fails alone keeps its original, and a failed run stops the
 
 An original image only GLB/glTF models used is left out of the upload when no published `.js`,
 `.json`, `main.crdt` or `.composite` names it. A name is its file name anywhere, or its bare stem in
-quotes (`'wall'`, `"wall"` or `` `wall` `` keeps `wall.png`). `deploy` warns about every original it
+quotes or after a folder (`'wall'`, `"wall"`, `` `wall` `` or `'images/wall'` keeps `wall.png`). Image
+URIs a model gives that name no scene file (a Windows path) are searched too. `deploy` warns about every original it
 leaves out, since scene code that builds texture paths at runtime would get a 404 for them. It also
 lists the originals it treats differently from the preview's last import: the deploy searches the
-release bundle and the preview the dev bundle. `--keep-source-textures` (stored like the setting)
+files it uploads, release build included, and the preview the files it serves. `--keep-source-textures` (stored like the setting)
 keeps every original. Standalone SDK `Material` and UI textures are not converted. Clients without
 KTX2 support (Unity's local raw-glTF preview, older Bevy explorer builds) show the models
 untextured; Unity production needs abgen's KTX2 support. See
