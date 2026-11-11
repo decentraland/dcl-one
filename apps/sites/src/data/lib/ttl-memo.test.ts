@@ -48,4 +48,25 @@ describe("ttlMemo", () => {
     await memo("x");
     expect(load).toHaveBeenCalledTimes(7);
   });
+
+  it("expires retained values at their value-specific ttl", async () => {
+    vi.useFakeTimers();
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce("unavailable")
+      .mockResolvedValue("ready");
+    const memo = ttlMemo({
+      ttlMs: 1000,
+      ttlMsForValue: (value: string) => (value === "unavailable" ? 100 : 1000),
+      load,
+    });
+
+    await expect(memo()).resolves.toBe("unavailable");
+    vi.advanceTimersByTime(99);
+    await expect(memo()).resolves.toBe("unavailable");
+    expect(load).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1);
+    await expect(memo()).resolves.toBe("ready");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
 });
