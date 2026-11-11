@@ -32,8 +32,10 @@ function useScrollPages<T extends HTMLElement = HTMLDivElement>(count: number) {
     if (!el) return
     sync()
     if (typeof ResizeObserver === 'undefined') return
+    // The content's width moves the page count too, without resizing the track itself.
     const observer = new ResizeObserver(sync)
     observer.observe(el)
+    for (const child of el.children) observer.observe(child)
     return () => observer.disconnect()
   }, [count, sync])
   const goTo = useCallback((page: number) => {

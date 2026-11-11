@@ -4,7 +4,11 @@
   margin-top: var(--dcl-space-32);
   padding: var(--dcl-space-32) var(--dcl-space-24);
   border-radius: var(--dcl-radius-lg);
-  background: radial-gradient(63.39% 112.69% at 49.33% 50.11%, #a042cd 0%, #32134c 100%);
+  background: radial-gradient(
+    63.39% 112.69% at 49.33% 50.11%,
+    color-mix(in srgb, var(--dcl-brand-lavender) 60%, var(--dcl-brand-purple)) 0%,
+    color-mix(in srgb, var(--dcl-brand-purple-dark) 65%, var(--dcl-neutrals-black)) 100%
+  );
   box-shadow: 0 4px 25px 0 var(--dcl-transparencies-white-20);
 }
 

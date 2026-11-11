@@ -1,11 +1,15 @@
-/* Source's backdrop: radial #A042CD to #270537 under a black fade, with a 700px photo from
-   tablet up (design values). */
+/* Source's backdrop: a radial purple glow (token mixes nearest source's design values) under a
+   black fade, with a 700px photo from tablet up. */
 .root {
   position: relative;
   min-height: 100vh;
   overflow: hidden;
   padding: var(--dcl-space-48) var(--dcl-layout-margin-x) 0;
-  background: radial-gradient(61.64% 109.58% at 50% 54.49%, #a042cd 0%, #270537 100%);
+  background: radial-gradient(
+    61.64% 109.58% at 50% 54.49%,
+    color-mix(in srgb, var(--dcl-brand-lavender) 60%, var(--dcl-brand-purple)) 0%,
+    color-mix(in srgb, var(--dcl-brand-purple-dark) 50%, var(--dcl-neutrals-black)) 100%
+  );
   color: var(--dcl-text-primary);
 }
 
