@@ -1,6 +1,7 @@
 import {
   componentRegistryEntries,
-  componentRegistryEntryName
+  componentRegistryEntryName,
+  type AcceptedLimit
 } from '../../component-generation.mjs'
 import { componentOwnerById, componentIdOfFile } from './component-identity.js'
 import path from 'node:path'
@@ -11,7 +12,6 @@ import type { Ownership } from './ownership.js'
 const LIBRARY_GENERATED = 'components/'
 const LIBRARY_INDEX = 'index.ts'
 const LIBRARY_PROMOTION = 'components/promotion.json'
-type AcceptedLimit = { id: string; text: string }
 type LibraryComponentEntry = {
   name: string
   visibility: 'public' | 'internal'
@@ -27,7 +27,7 @@ function libraryComponentEntries(value: unknown): LibraryComponentEntry[] {
   )
     throw new Error('Invalid library component registry name list')
   // Names and accepted limits are validated once, by the same reader the installer uses.
-  let parsed: { components: string[]; internal: string[]; limits: Record<string, AcceptedLimit[]> }
+  let parsed: ReturnType<typeof componentRegistryEntries>
   try {
     // Other keys of the registry document are the guard's concern (aggregates keeps them), not entries.
     parsed = componentRegistryEntries({

@@ -22,7 +22,7 @@ Sites bundles our Bevy web build under `/play/`; no other engine is used.
 
 - `--production` imports only a fully successful main CI artifact and rejects `--from-build`.
 - Dev and PR images may import once the web job uploads its artifact, or `--from-build` a local `make bevy-web`.
-- A PR that changes no engine input (engine source, protos, HUD, build scripts) takes the newest main build that uploaded its web app and has not failed, validated against the commit that built it (`--trust-inputs` in the PR image build); a PR that does gets its own Bevy run and waits for that exact build. HUD review and bindings must match the tree either way.
+- A PR that changes no engine input (engine source, protos, HUD, build scripts) takes the newest main build that uploaded its web app and has not failed, validated against the commit that built it (`--trust-inputs` in the PR image build); a PR that does gets its own Bevy run and waits for that exact build. The bindings must match the tree either way.
 - `PLAY_WEB_DIR` is a build input only.
 - Image CI runs `--prepare-production RECEIPT`, then `--verify-production RECEIPT` before publishing.
 - Rerun both PR workflows on the same merge SHA.
@@ -47,8 +47,8 @@ python3 tooling/image-smoke.py
 - PRs build and smoke-test AMD64 only unless they change an
   architecture-sensitive input (the `arches` job in `apis-sites-images.yml` lists
   them); main, tag and manual runs build both architectures. Before the APIs image
-  compiles, the build checks the reviewed Sites HUD lock and builds the Sites
-  dependencies, so those failures report within minutes.
+  compiles, the build builds the Sites dependencies, so those failures report
+  within minutes.
 - Image caches separate Catalyst dependencies, Sites dependencies/toolchain and
   the compiled API runtime closure, keyed by exact Nix derivation identities and
   architecture. Container revision labels are still rebuilt for each commit.

@@ -99,4 +99,48 @@ describe("ttlMemo", () => {
     await memo("b");
     expect(load).toHaveBeenCalledTimes(3);
   });
+
+  it("expires retained values at their value-specific ttl", async () => {
+    vi.useFakeTimers();
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce("unavailable")
+      .mockResolvedValue("ready");
+    const memo = ttlMemo({
+      ttlMs: 1000,
+      ttlMsForValue: (value: string) => (value === "unavailable" ? 100 : 1000),
+      load,
+    });
+
+    await expect(memo()).resolves.toBe("unavailable");
+    vi.advanceTimersByTime(99);
+    await expect(memo()).resolves.toBe("unavailable");
+    expect(load).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(1);
+    await expect(memo()).resolves.toBe("ready");
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+
+  it("measures the stale window from a value-specific expiry, and keeps nothing for a ttl of 0", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+    let n = 0;
+    const load = vi.fn(async (k: string) => `${k}${++n}`);
+    const memo = ttlMemo({
+      ttlMs: 1000,
+      ttlMsForValue: (value: string) => (value.startsWith("short") ? 100 : value.startsWith("none") ? 0 : 1000),
+      staleMs: 500,
+      keyOf: (k: string) => k,
+      load,
+    });
+    expect(await memo("short")).toBe("short1");
+    vi.setSystemTime(Date.now() + 400);
+    expect(await memo("short")).toBe("short1");
+    await settle();
+    expect(await memo("short")).toBe("short2");
+    vi.setSystemTime(Date.now() + 700);
+    expect(await memo("short")).toBe("short3");
+    expect(await memo("none")).toBe("none4");
+    expect(await memo("none")).toBe("none5");
+  });
 });

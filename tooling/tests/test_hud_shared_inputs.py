@@ -58,7 +58,7 @@ class CheckedGraphTests(unittest.TestCase):
     def test_filtered_source_excludes_canonical_produced_bindings_from_owned_roots(self):
         expected = reader.input_hashes(self.root)
         shutil.rmtree(self.root / '.git')
-        self.write(WEB + 'src/engine/generated/Player.ts', 'export interface Player {}')
+        self.write(reader.BINDINGS + '/Player.ts', 'export interface Player {}')
         self.assertEqual(expected, reader.input_hashes(self.root))
         self.write(WEB + 'src/new.ts', 'export const newRoot = 1')
         with self.assertRaisesRegex(reader.ManifestError, 'root inventory'):

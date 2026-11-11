@@ -31,7 +31,9 @@ function renderError(element: ReactElement): unknown {
 describe('the generated runtime', () => {
   describe('when an untyped caller selects a NavBar combination Figma never drew', () => {
     it('should throw an error naming the component and every axis value', () => {
-      expect(String(renderError(<UntypedNavBar balances="credits" />))).toContain(
+      expect(
+        String(renderError(<UntypedNavBar viewport="largeDesktop" balances="credits" />))
+      ).toContain(
         'NavBar has no captured view for viewport="largeDesktop", balances="credits", theme="dark", signedIn=false'
       )
     })
@@ -43,7 +45,11 @@ describe('the generated runtime', () => {
     })
 
     it('should throw for the same selection spread from an untyped object', () => {
-      const props: Record<string, unknown> = { signedIn: false, balances: 'creditsMana' }
+      const props: Record<string, unknown> = {
+        viewport: 'largeDesktop',
+        signedIn: false,
+        balances: 'creditsMana'
+      }
       expect(String(renderError(<UntypedNavBar {...props} />))).toContain(
         'NavBar has no captured view for viewport="largeDesktop", balances="creditsMana"'
       )
@@ -275,6 +281,7 @@ describe('caller isolation through real rendering', () => {
       let element: HTMLElement | null = null
       const { container } = render(
         <UntypedNavBar
+          viewport="largeDesktop"
           className="consumer"
           style={{ outline: '1px solid red' }}
           onClick={onClick}
@@ -437,6 +444,7 @@ describe('reserved runtime names passed by an untyped caller', () => {
     'component',
     'counts',
     'defaultKey',
+    'responsive',
     'select',
     'semanticProps',
     'slots',
@@ -446,9 +454,13 @@ describe('reserved runtime names passed by an untyped caller', () => {
   const injected = Object.fromEntries(
     RESERVED.map((name) => [name, name === 'as' ? 'button' : { injected: true }])
   )
+  // A ref names one element, so the NavBar renders a single view here.
+  const SingleNavBar = (props: Record<string, unknown>) => (
+    <UntypedNavBar viewport="largeDesktop" {...props} />
+  )
 
   it.each([
-    ['NavBar', UntypedNavBar],
+    ['NavBar', SingleNavBar],
     ['Button', UntypedButton]
   ] as const)(
     'should never reach the DOM of %s while public props survive, on the client',
