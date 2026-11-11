@@ -56,7 +56,7 @@ describe("parsePosition", () => {
     expect(parsePosition(value)).toEqual({ coordinates, isValid: true });
   });
 
-  it.each(["", "10", "a,b", "1,2,3", ",", "1abc,2", "1,2x", "3000000000,0", "0,-2147483649", "1.5,2"])("should reject %j", (value) => {
+  it.each(["", "10", "a,b", "1,2,3", ",", "1abc,2", "1,2x", "1000,0", "0,-1000", "3000000000,0", "1.5,2"])("should reject %j", (value) => {
     expect(parsePosition(value)).toEqual({ coordinates: [0, 0], isValid: false });
   });
 });
@@ -82,6 +82,10 @@ describe("readJumpTarget", () => {
     expect(readJumpTarget(new URLSearchParams("realm=Foo.DCL.eth"))).toMatchObject({ realm: "foo.dcl.eth", validRealm: true });
     expect(readJumpTarget(new URLSearchParams("realm=main"))).toMatchObject({ realm: undefined, validRealm: true });
     expect(readJumpTarget(new URLSearchParams())).toMatchObject({ realm: undefined, validRealm: true });
+  });
+
+  it("should fall back to ?world= when ?realm= is empty", () => {
+    expect(readJumpTarget(new URLSearchParams("realm=&world=Foo.dcl.eth")).realm).toBe("foo.dcl.eth");
   });
 
   it("should read an empty realm as Genesis City", () => {

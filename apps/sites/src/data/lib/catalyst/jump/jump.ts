@@ -5,18 +5,16 @@ const DEFAULT_REALM = "main";
 
 export type ParsedPosition = { coordinates: [number, number]; isValid: boolean };
 
-const COORDINATE = /^-?\d+$/;
-/** The backend reads a parcel as a pair of 32-bit integers and rejects anything wider. */
-const I32 = 2 ** 31;
+/** The places and events services accept up to three digits per side (explore `POSITION_PATTERN`). */
+const COORDINATE = /^-?\d{1,3}$/;
 
-/** "x,y" and "x.y" are the same pair: the dot is a separator, not a decimal. Each side is a whole 32-bit integer. */
+/** "x,y" and "x.y" are the same pair: the dot is a separator, not a decimal. */
 export function parsePosition(value: string): ParsedPosition {
   const tokens = value.split(/[,.]/).map((token) => token.trim());
   if (tokens.length !== 2 || !tokens.every((token) => COORDINATE.test(token))) {
     return { coordinates: [0, 0], isValid: false };
   }
   const [x, y] = tokens.map(Number);
-  if (![x, y].every((n) => n >= -I32 && n < I32)) return { coordinates: [0, 0], isValid: false };
   return { coordinates: [x, y], isValid: true };
 }
 
@@ -53,7 +51,7 @@ export function readJumpTarget(params: URLSearchParams): JumpTarget {
   const rawPosition = params.get("position");
   const parsed = parsePosition(rawPosition ?? DEFAULT_POSITION);
   // An empty `realm=` is the default, as the source and the explorer read it.
-  const realmParam = (params.get("realm") ?? params.get("world") ?? "").trim().toLowerCase() || DEFAULT_REALM;
+  const realmParam = (params.get("realm")?.trim() || params.get("world")?.trim() || DEFAULT_REALM).toLowerCase();
   const realm = isEnsRealm(realmParam) ? realmParam : undefined;
   const id = params.get("id")?.trim() ?? "";
   return {
