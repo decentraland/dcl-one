@@ -86,6 +86,49 @@ describe('when the CLI receives an explicit configuration outside its working di
     })
   })
 
+  it('should forward a --config value that starts with a dash to the install process as a value', async () => {
+    await writeFile(path.join(cwd, '-dash.config.json'), await readFile(config))
+    const result = execute(
+      process.execPath,
+      [
+        '--import',
+        import.meta.resolve('tsx'),
+        path.join(import.meta.dirname, 'cli.ts'),
+        'install',
+        'components',
+        '--config=-dash.config.json',
+        '--out=-stage'
+      ],
+      { cwd }
+    )
+    // The child read the dashed configuration and reached the output check.
+    await expect(result).rejects.toMatchObject({
+      stderr: expect.stringContaining('Install output must be components')
+    })
+  })
+
+  it('should report an install process that ends on a signal', async () => {
+    const kill =
+      "data:text/javascript,if(process.argv.some(a=>a.endsWith('install-main.ts')))process.kill(process.pid,'SIGKILL')"
+    const result = execute(
+      process.execPath,
+      [
+        '--import',
+        import.meta.resolve('tsx'),
+        path.join(import.meta.dirname, 'cli.ts'),
+        'install',
+        'components',
+        '--config',
+        config
+      ],
+      { cwd, env: { ...process.env, NODE_OPTIONS: '--import=' + kill } }
+    )
+    await expect(result).rejects.toMatchObject({
+      code: 1,
+      stderr: expect.stringContaining('The install process ended on signal SIGKILL')
+    })
+  }, 30_000)
+
   it('should reject an unknown install target', async () => {
     await expect(run(['install', 'unknown'])).rejects.toMatchObject({
       stderr: expect.stringContaining('Unknown install target')

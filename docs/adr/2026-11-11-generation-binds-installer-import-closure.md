@@ -43,9 +43,9 @@ Two small structural changes make the closure equal what an install runs, and ne
 - a relative specifier without a `.js`, `.mjs` or `.json` extension, with a query, fragment, percent escape (Node decodes `%61` to `a`) or backslash escape, that resolves outside the top of `library/ui/figma` and its `src` tree, to a test, fixture or Markdown file, to no tracked file, or to more than one candidate (`x.js` beside `x.ts`);
 - a bare specifier that is not a `node:` built-in or one of the six packages the installer already sanctions (`componentPackages`), which covers `#` subpath imports, the package's own name, a new dependency and an unprefixed built-in;
 - a module that is JSX, a module it cannot tokenize to the end, and unbalanced brackets;
-- a `/` where only a full parser can tell a regular expression from a division: after a closing brace, a postfix `++`/`--` or a TypeScript non-null `!`. A `/` after the condition of `if`, `while`, `for` or `with`, or after a prefix `!`, is read as a regular expression; after any other `)` or `]` as a division.
+- a `/` where only a full parser can tell a regular expression from a division: after a closing brace, a postfix `++`/`--`, a TypeScript non-null `!`, a `>` (comparison or closing type arguments) or a contextual keyword (`of`, `as`, `satisfies`). A `/` after the condition of `if`, `while`, `for`, `for await` or `with`, a template substitution opening, a prefix `!` or a reserved word that starts an expression (`return`, `default`, `await`...) is read as a regular expression; after any other `)`, `]`, name, property or literal as a division. A `//` comment ends at any line terminator.
 
-These rules make a misread `/`, the one place a hand-written tokenizer can hide an import inside a literal, an error in the dependency-free guard itself, not only in the test that compares the tokenizer with the TypeScript parser.
+These rules aim to make a misread `/`, the one place a hand-written tokenizer can hide an import inside a literal, an error in the dependency-free guard itself. They are checked against the TypeScript parser on the real tree; an input that defeats them would also need to survive that comparison in CI.
 
 - a `figma/tsconfig.json` that is not plain JSON or that sets `paths`, `baseUrl`, `rootDirs` or `extends`, since tsx would resolve through them.
 
@@ -60,11 +60,11 @@ The inventories that protect resolution keep their wider class (`isComponentModu
 - An edit to an unbound module changes neither the closure nor any bound digest. It needs resealed lock digests and no install.
 - Deleting or renaming a bound module leaves an import that resolves to no tracked file, which fails.
 
-Two tests hold the analysis to the real tree. One compares the specifiers the tokenizer finds in every candidate module with the TypeScript parser's. The other runs `install-main.ts` under a hook that reports each module the process loads and requires that list to equal the code in the closure.
+Two tests hold the analysis to the real tree. One compares the specifiers the tokenizer finds in every candidate module with the TypeScript parser's. A third checks with the TypeScript parser that no candidate module names a loader the reader refuses. The other runs `install-main.ts` under a hook that reports each module the process loads and requires that list to equal the code in the closure.
 
 ## What stays outside the guarantee
 
-- A bound module that reads a file under `library/ui/figma` at run time without importing it (outside `src`), evaluates text, or starts another program is not followed. The retirement ledger and the runtime sources are bound by name for this reason; a new run-time read needs a new fixed input. Review owned this boundary before and still does.
+- A bound module that reads a file under `library/ui/figma` at run time without importing it (outside `src`), evaluates text, reaches a loader through computed property access (`process['getBuiltin' + 'Module']`), or starts another program is not followed. The reader refuses every loader it can name (`require`, `getBuiltinModule`, `createRequire` other than `.resolve`, any key or destructure with those names); computed access is left to review. The retirement ledger and the runtime sources are bound by name for this reason; a new run-time read needs a new fixed input. Review owned this boundary before and still does.
 - Installed dependency contents are bound through `package.json` and `pnpm-lock.yaml` and checked against the sanctioned installation, as before.
 - The process environment (`NODE_OPTIONS`, a different loader) is not an input of the record.
 - The port verification record still binds every tracked file under `library/ui/figma` that is not a test, a fixture or Markdown. An edit to unbound tooling still needs a new port verification record; it no longer needs a component install or a new public component table.

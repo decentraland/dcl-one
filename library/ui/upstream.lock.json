@@ -814,7 +814,7 @@
           ]
         },
         "library/ui/figma/module-graph.mjs": {
-          "sha256": "2542b38e4356b48ca311894ebfcaaec219afd44a96112b9edd716e1b04015f7d",
+          "sha256": "1e452ea11e005dde0a5ff93a6d41310124bc311c919145e35e3c641bb05991db",
           "fds": null,
           "deviation": "generation-import-closure"
         },
@@ -2447,7 +2447,7 @@
           "note": "differed from figma-design-system before this pull request; this pull request restores its live read path or its cache check"
         },
         "library/ui/figma/src/cli.test.ts": {
-          "sha256": "25a29f244c8e0e263e6c6dea0217cd058f20810cff1b2ff70e58d4e269b2a68d",
+          "sha256": "47cf1095d9d61265abb3c4884de3ecc608c3f57b289487ffede30554cc33c72f",
           "fds": {
             "path": "dcl-mcp-figma/src/cli.test.ts",
             "sha256": "e0a6f001d53d1eb8e69c5601873d52c348bff503c067b3804f749e834ff8acd5"
@@ -2489,7 +2489,7 @@
             "resolver-followups",
             "generation-import-closure"
           ],
-          "sha256": "5685d23a448d0b91ed84e01c995a55a2a4ea0389f6a61bd67aca9dbc712de193"
+          "sha256": "0e4cfe1b9549e8e1117574736a221743786898233c5132b9fdf19896d3ec9ccb"
         },
         "library/ui/figma/src/config.ts": {
           "sha256": "fc2364bfeeb8bbf2e8f30c1f1841f37db30d69b7c139bde54bbb5b348ac43e83",
@@ -3383,7 +3383,7 @@
             "accepted-limits",
             "generation-import-closure"
           ],
-          "sha256": "225044a225f30e7451261258b4e772e0449ca4e3716a3e4f1a5f8c40a1fc6c2c"
+          "sha256": "cd8a9e545d642d0d22b68c1129dc0ee3eb4987b10a01b6cd2dd25b85d611e91f"
         },
         "library/ui/figma/src/install.ts": {
           "fds": null,
@@ -3585,7 +3585,7 @@
           ]
         },
         "library/ui/figma/src/module-graph.test.ts": {
-          "sha256": "8944effeeceeaaca1730e8f667a4b5ba8f27ca499a9c3e0d67d6349ae91d1745",
+          "sha256": "118150ac387a7615e23efa8136aa9488f00ab43bc49504e18b37f27456a56d66",
           "fds": null,
           "deviation": "generation-import-closure"
         },

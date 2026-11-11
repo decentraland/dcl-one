@@ -311,7 +311,28 @@ describe('when validating component generation as an offline consistency record'
       'ambiguous / after ++'
     ],
     ['a / after a non-null assertion', 'const h = value! / 2', 'non-null assertion'],
-    ['a / after a closing brace', "if (a) {}\n/'/.test(b)", 'ambiguous / after }']
+    ['a / after a closing brace', "if (a) {}\n/'/.test(b)", 'ambiguous / after }'],
+    [
+      'a renaming destructure of getBuiltinModule',
+      "const { getBuiltinModule: g } = process\nconst { createRequire: c } = g('node:module')\nc(import.meta.url)('./x.cjs')",
+      'getBuiltinModule is not'
+    ],
+    [
+      'a renaming destructure of createRequire',
+      'const { createRequire: c } = m',
+      'createRequire is used only'
+    ],
+    [
+      'an object key named require',
+      'const table = { require: 1 }',
+      'require is not a static import'
+    ],
+    [
+      'a / after of',
+      "const of = 4\nof / 2\nimport './unrelated-tool.js' //'",
+      'ambiguous / after of'
+    ],
+    ['a / after type arguments', 'const n = x as Array<number> / 2', 'ambiguous / after >']
   ])('should fail closed when a bound module has %s', (_case, text, message) => {
     lock('src/helper.test.ts')
     lock('src/fixtures/data.json', '{}')
@@ -326,6 +347,31 @@ describe('when validating component generation as an offline consistency record'
   it('should fail closed when two tracked files could answer one import', () => {
     lock('src/extra-production.js')
     expect(() => componentModulePaths(source, read)).toThrow('ambiguous import')
+  })
+
+  it.each([
+    [
+      'a regular expression at the start of a substitution',
+      "const a = `${/'/.source}`\nimport './cycle.js'\nconst b = `${/'/.source}`"
+    ],
+    [
+      'export default of a regular expression',
+      "export default /'/\nimport './cycle.js'\nexport const x = /'/"
+    ],
+    [
+      'for await with a regular expression body',
+      "for await (const x of y) /'/.test(x)\nimport './cycle.js' //'"
+    ],
+    ['while with a regular expression body', "while (a) /'/.test(b)\nimport './cycle.js' //'"],
+    ['for with a regular expression body', "for (;;) /'/.test(b)\nimport './cycle.js' //'"],
+    ['a property named return divided', "it.return / 2\nimport './cycle.js' //'"],
+    ['a method named for divided', "const y = Symbol.for('a') / 2\nimport './cycle.js' //'"],
+    ['a method named if divided', "const y = x.if(a) / 2\nimport './cycle.js' //'"],
+    ['a comment ended by a carriage return', "// note\rimport './cycle.js'"],
+    ['a comment ended by a line separator', "// note\u2028import './cycle.js'"]
+  ])('should find the import after %s', (_case, text) => {
+    lock('src/extra-production.ts', text)
+    expect(componentModulePaths(source, read)).toContain(prefix + 'src/cycle.ts')
   })
 
   it('should read regular expressions after a condition or a prefix ! and allow createRequire(...).resolve', () => {
@@ -359,7 +405,7 @@ describe('when validating component generation as an offline consistency record'
         "// import './unrelated-tool.js'",
         "/* export * from './unrelated-tool.js' */",
         "const c = /import\\('x'\\)/.test(a)",
-        'const d = { import: 1, require: 2 }.import',
+        'const d = { import: 1, export: 2 }.import',
         'const e = import.meta.url'
       ].join('\n')
     )

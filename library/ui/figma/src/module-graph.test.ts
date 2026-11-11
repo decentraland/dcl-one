@@ -51,6 +51,34 @@ describe('when the dependency-free import reader scans the tracked Figma tooling
     return found.sort()
   }
 
+  // Every identifier named require or getBuiltinModule, and every createRequire that is not the imported binding or
+  // the callee of an immediate .resolve() call: the loaders the reader must refuse.
+  const parsedLoaders = (text: string, file: string) => {
+    const found: string[] = []
+    const visit = (node: ts.Node) => {
+      if (ts.isIdentifier(node) && ['require', 'getBuiltinModule'].includes(node.text))
+        found.push(node.text)
+      if (ts.isIdentifier(node) && node.text === 'createRequire') {
+        const call = node.parent
+        const sanctioned =
+          ts.isImportSpecifier(call) ||
+          (ts.isCallExpression(call) &&
+            call.expression === node &&
+            ts.isPropertyAccessExpression(call.parent) &&
+            call.parent.name.text === 'resolve' &&
+            ts.isCallExpression(call.parent.parent))
+        if (!sanctioned) found.push(node.text)
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true))
+    return found
+  }
+
+  it.each(candidates)('should find no module loader the reader refuses in %s', (file) => {
+    expect(parsedLoaders(read(file).toString('utf8'), file)).toEqual([])
+  })
+
   it.each(candidates)('should list the same specifiers as the TypeScript parser for %s', (file) => {
     const text = read(file).toString('utf8')
     expect(moduleSpecifiers(text, file, true).sort()).toEqual(parsedSpecifiers(text, file))

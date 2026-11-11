@@ -6,12 +6,13 @@
 // tokenize. The installed contents of sanctioned packages are bound by the dependency manifests, not here.
 import { posix } from 'node:path'
 
+// Reserved words after which an expression starts, so a `/` begins a regular expression. `await` and `yield` are
+// reserved in modules. Contextual words (`of`, `as`, `satisfies`) can also be names, so a `/` after them fails.
 const KEYWORDS_BEFORE_EXPRESSION = new Set([
   'return',
   'typeof',
   'instanceof',
   'in',
-  'of',
   'new',
   'delete',
   'void',
@@ -19,12 +20,13 @@ const KEYWORDS_BEFORE_EXPRESSION = new Set([
   'case',
   'do',
   'else',
+  'default',
   'yield',
   'await',
-  'extends',
-  'satisfies',
-  'as'
+  'extends'
 ])
+const CONTEXTUAL = new Set(['of', 'as', 'satisfies'])
+const LINE_TERMINATOR = /[\n\r\u2028\u2029]/
 const IDENTIFIER_START = /[\p{ID_Start}$_\\]/u
 const IDENTIFIER_PART = /[\p{ID_Continue}$\\]/u
 const PUNCTUATORS = [
@@ -83,17 +85,24 @@ export function tokenize(text, file) {
   const stack = []
   let at = 0
   const previous = () => tokens[tokens.length - 1]
+  const memberName = (index) =>
+    tokens[index - 1]?.type === 'punct' && ['.', '?.'].includes(tokens[index - 1].value)
   // Whether a `/` here starts a regular expression. The contexts where only a full parser can tell (after a closing
-  // brace, a postfix `++`/`--` or a TypeScript non-null `!`) fail instead of being guessed, because a wrong guess
-  // can hide an import inside a misread literal.
+  // brace, a postfix `++`/`--`, a TypeScript non-null `!`, a `>` that may close type arguments or a contextual
+  // keyword) fail instead of being guessed, because a wrong guess can hide an import inside a misread literal.
   const regexAllowed = () => {
     const last = previous()
     if (!last) return true
-    if (last.type === 'name') return KEYWORDS_BEFORE_EXPRESSION.has(last.value)
+    if (last.type === 'template') return !last.tail
+    if (last.type === 'name') {
+      if (memberName(tokens.length - 1)) return false
+      if (CONTEXTUAL.has(last.value)) fail(file, 'An ambiguous / after ' + last.value)
+      return KEYWORDS_BEFORE_EXPRESSION.has(last.value)
+    }
     if (last.type !== 'punct') return false
     if (last.value === ')') return last.control === true
     if (last.value === ']') return false
-    if (last.value === '}' || last.value === '++' || last.value === '--')
+    if (['}', '++', '--', '>'].includes(last.value))
       fail(file, 'An ambiguous / after ' + last.value)
     if (last.value === '!') {
       const before = tokens[tokens.length - 2]
@@ -136,8 +145,8 @@ export function tokenize(text, file) {
     if (/\s/.test(character) || character === '﻿') {
       at += 1
     } else if (character === '/' && text[at + 1] === '/') {
-      const end = text.indexOf('\n', at)
-      at = end < 0 ? text.length : end
+      const end = text.slice(at).search(LINE_TERMINATOR)
+      at = end < 0 ? text.length : at + end
     } else if (character === '/' && text[at + 1] === '*') {
       const end = text.indexOf('*/', at + 2)
       if (end < 0) fail(file, 'Unterminated comment')
@@ -149,7 +158,7 @@ export function tokenize(text, file) {
       let value = ''
       at += 1
       for (;;) {
-        if (at >= text.length || text[at] === '\n') fail(file, 'Unterminated string literal')
+        if (at >= text.length || /[\n\r]/.test(text[at])) fail(file, 'Unterminated string literal')
         if (text[at] === character) break
         if (text[at] === '\\') {
           value += text.slice(at, at + 2)
@@ -190,12 +199,17 @@ export function tokenize(text, file) {
       while (at < text.length && /[\w.]/.test(text[at])) at += 1
       tokens.push({ type: 'number', value: text.slice(start, at) })
     } else if (character in CLOSERS) {
-      // A parenthesis after if, while, for or with closes a condition, after which `/` starts a regular expression.
-      const last = previous()
+      // A parenthesis after the keyword if, while, for or with (or `for await`) closes a condition, after which `/`
+      // starts a regular expression; a property with that name is a call.
+      let keyword = tokens.length - 1
+      if (tokens[keyword]?.type === 'name' && tokens[keyword].value === 'await') keyword -= 1
       stack.push(
         character === '(' &&
-          last?.type === 'name' &&
-          ['if', 'while', 'for', 'with'].includes(last.value)
+          tokens[keyword]?.type === 'name' &&
+          (tokens[keyword].value === 'for' ||
+            (keyword === tokens.length - 1 &&
+              ['if', 'while', 'with'].includes(tokens[keyword].value))) &&
+          !memberName(keyword)
           ? 'control'
           : character
       )
@@ -266,14 +280,12 @@ export function moduleSpecifiers(text, file, erased = false) {
   for (let index = 0; index < tokens.length; index += 1) {
     const token = tokens[index]
     if (token.type !== 'name') continue
-    // An object key named like a keyword is not a use of it.
-    const key =
-      is(index + 1, 'punct', ':') && (is(index - 1, 'punct', '{') || is(index - 1, 'punct', ','))
     // Any other way to load a module at run time: require in any form, a built-in fetched by name, and a
-    // createRequire result used for anything but an immediate .resolve(), which only resolves a path.
-    if (!key && (token.value === 'require' || token.value === 'getBuiltinModule'))
+    // createRequire result used for anything but an immediate .resolve(), which only resolves a path. Object keys
+    // with these names fail too, because a renaming destructure (`{ getBuiltinModule: g } = process`) reads them.
+    if (token.value === 'require' || token.value === 'getBuiltinModule')
       fail(file, token.value + ' is not a static import')
-    if (!key && token.value === 'createRequire') {
+    if (token.value === 'createRequire') {
       const close = is(index + 1, 'punct', '(') ? after(index + 1) : -1
       if (
         member(index) ||
@@ -285,6 +297,9 @@ export function moduleSpecifiers(text, file, erased = false) {
         fail(file, 'createRequire is used only as createRequire(...).resolve(...)')
       continue
     }
+    // An object key named like a keyword is not a use of it.
+    const key =
+      is(index + 1, 'punct', ':') && (is(index - 1, 'punct', '{') || is(index - 1, 'punct', ','))
     if (member(index) || key) continue
     if (token.value === 'import') {
       if (is(index + 1, 'punct', '.')) continue // import.meta

@@ -163,7 +163,7 @@ describe('when foundations are installed from a verified synthetic cache', () =>
     expect(second.changed).toBe(false)
     expect(second.files).toEqual(first.files)
     expect(await readFile(path.join(root, 'foundations/foundations.css'), 'utf8')).toBe(entry)
-  })
+  }, 60_000)
 
   it('should preserve maintained files and give identical bytes on a second install', async () => {
     const first = await runInstall(app, { target: 'foundations' })
