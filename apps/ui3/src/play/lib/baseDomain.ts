@@ -17,7 +17,7 @@
 // loader (deploy/web/engine/boot.js), which composes the default realm / worlds prefix for its
 // url sync exactly as the HUD does.
 
-import { SERVICES, type ServiceDef } from '../engine/generated'
+import { SERVICES, type ServiceDef } from '@explorer-core/engine/generated'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).

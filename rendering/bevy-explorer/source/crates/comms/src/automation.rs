@@ -310,6 +310,8 @@ impl LivekitVoice {
 struct VoiceState {
     mic: MicState,
     livekit: Option<LivekitVoice>,
+    /// The private call or community stream (`VoiceChatState`); null without `livekit`.
+    call: Option<Value>,
 }
 
 impl VoiceState {
@@ -317,6 +319,7 @@ impl VoiceState {
         let livekit = self.livekit.as_ref();
         json!({
             "mic": { "available": self.mic.available, "enabled": self.mic.enabled },
+            "call": self.call,
             "livekit": livekit.is_some(),
             "connected": livekit.map(|livekit| livekit.connected()),
             "rooms": livekit.map(|livekit| livekit.rooms.iter().map(|room| json!({
@@ -351,9 +354,11 @@ type ActiveSpeakers<'w, 's> = Query<'w, 's, &'static LivekitParticipant, With<Ac
 
 /// Report, as JSON, the microphone as `mic` (`available`, `enabled`) and, in a build with the
 /// `livekit` feature, `connected` (a realm or scene voice room is connected), `rooms` (each
-/// `scene` and `state`: connecting, connected, reconnecting, disconnected or failed) and
-/// `speakers` (addresses speaking now, the local player's included). `livekit` says whether the
-/// build has them; without it they are null
+/// `scene` and `state`: connecting, connected, reconnecting, disconnected or failed),
+/// `speakers` (addresses speaking now, the local player's included) and `call` (the private
+/// call or community stream as the HUD sees it: `status`, `kind`, `callId`, `communityId`,
+/// `peer`, `connection`, `participants`, `micEnabled`, `localSpeaker`, `localRole`, `error`).
+/// `livekit` says whether the build has them; without it they are null
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/voice_state")]
 struct VoiceStateCommand;
@@ -363,8 +368,18 @@ fn voice_state_cmd(
     mic: Res<MicState>,
     #[cfg(feature = "livekit")] rooms: VoiceRooms,
     #[cfg(feature = "livekit")] speakers: ActiveSpeakers,
+    #[cfg(feature = "livekit")] call: Option<Res<crate::voice_chat::VoiceChat>>,
+    #[cfg(feature = "livekit")] call_mic: Option<Res<crate::voice_chat::CallMic>>,
+    #[cfg(feature = "livekit")] call_participants: crate::voice_chat::CallParticipants,
 ) {
     if let Some(Ok(_)) = input.take() {
+        #[cfg(feature = "livekit")]
+        let call = call.zip(call_mic).map(|(call, call_mic)| {
+            serde_json::to_value(call.snapshot(&call_mic, &call_participants))
+                .unwrap_or(Value::Null)
+        });
+        #[cfg(not(feature = "livekit"))]
+        let call = None;
         #[cfg(feature = "livekit")]
         let livekit = Some(LivekitVoice::new(
             rooms.iter().map(
@@ -383,6 +398,7 @@ fn voice_state_cmd(
         let state = VoiceState {
             mic: mic.clone(),
             livekit,
+            call,
         };
         input.reply_ok(state.to_json().to_string());
     }
@@ -591,11 +607,13 @@ mod tests {
                 enabled: false,
             },
             livekit: None,
+            call: None,
         };
         assert_eq!(
             state.to_json(),
             json!({
                 "mic": { "available": true, "enabled": false },
+                "call": null,
                 "livekit": false,
                 "connected": null,
                 "rooms": null,
@@ -624,11 +642,13 @@ mod tests {
                 ],
                 [address(0xab)],
             )),
+            call: Some(json!({ "status": "disconnected" })),
         };
         assert_eq!(
             state.to_json(),
             json!({
                 "mic": { "available": true, "enabled": true },
+                "call": { "status": "disconnected" },
                 "livekit": true,
                 "connected": true,
                 "rooms": [
