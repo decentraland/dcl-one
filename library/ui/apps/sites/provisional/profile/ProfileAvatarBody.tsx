@@ -11,7 +11,12 @@ function ProfileAvatarBody({ imageUrl, name }: ProfileAvatarBodyProps) {
   return (
     <div className={styles.root}>
       {imageUrl && !failed ? (
-        <img className={styles.image} src={imageUrl} alt={`${name}'s avatar`} onError={() => setFailed(true)} />
+        <img
+          className={styles.image}
+          src={imageUrl}
+          alt={`${name}'s avatar`}
+          onError={() => setFailed(true)}
+        />
       ) : null}
     </div>
   )

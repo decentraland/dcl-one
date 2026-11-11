@@ -37,7 +37,9 @@ function linkProvider(url: string): string {
 function ProfileOverview({ bio, emptyBio, info, links, children }: ProfileOverviewProps) {
   const safeLinks = links.flatMap((link) => {
     const url = safeUrl(link.url)
-    return url ? [{ title: link.title && link.title !== link.url ? link.title : linkProvider(url), url }] : []
+    return url
+      ? [{ title: link.title && link.title !== link.url ? link.title : linkProvider(url), url }]
+      : []
   })
   const text = bio.trim()
 
@@ -67,7 +69,12 @@ function ProfileOverview({ bio, emptyBio, info, links, children }: ProfileOvervi
             <ul className={styles.links}>
               {safeLinks.map((link) => (
                 <li key={link.url}>
-                  <a className={styles.link} href={link.url} target="_blank" rel="noopener noreferrer">
+                  <a
+                    className={styles.link}
+                    href={link.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
                     <GeneralLink size={22} aria-hidden="true" />
                     {link.title}
                   </a>

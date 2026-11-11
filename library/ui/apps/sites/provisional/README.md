@@ -4,11 +4,11 @@ Components ported from the current `decentraland/sites` pages to CSS Modules and
 
 A test in `apps/sites` fails when a component in this folder is missing from this table.
 
-| Component | Source in `decentraland/sites` | Expected Figma component | Consumers |
-| --- | --- | --- | --- |
-| `ProfileAvatar/ProfileAvatar` | `src/components/profile/ProfileAvatar` | Avatar | `profile/ProfileHeader` |
-| `profile/ProfileLayout` | `src/components/profile/ProfileLayout` | Profile layout | `apps/sites` profile page |
-| `profile/ProfileHeader` | `src/components/profile/ProfileHeader` | Profile header | `apps/sites` profile page |
-| `profile/ProfileTabs` | `src/components/profile/ProfileTabs` | Tabs | `apps/sites` profile page |
-| `profile/ProfileOverview` | `src/pages/profile/tabs/OverviewTab` | Profile overview | `apps/sites` profile page |
-| `profile/ProfileAvatarBody` | `src/components/profile/AvatarRender` (its fallback image) | Avatar render | `apps/sites` profile page |
+| Component                     | Source in `decentraland/sites`                             | Expected Figma component | Consumers                 |
+| ----------------------------- | ---------------------------------------------------------- | ------------------------ | ------------------------- |
+| `ProfileAvatar/ProfileAvatar` | `src/components/profile/ProfileAvatar`                     | Avatar                   | `profile/ProfileHeader`   |
+| `profile/ProfileLayout`       | `src/components/profile/ProfileLayout`                     | Profile layout           | `apps/sites` profile page |
+| `profile/ProfileHeader`       | `src/components/profile/ProfileHeader`                     | Profile header           | `apps/sites` profile page |
+| `profile/ProfileTabs`         | `src/components/profile/ProfileTabs`                       | Tabs                     | `apps/sites` profile page |
+| `profile/ProfileOverview`     | `src/pages/profile/tabs/OverviewTab`                       | Profile overview         | `apps/sites` profile page |
+| `profile/ProfileAvatarBody`   | `src/components/profile/AvatarRender` (its fallback image) | Avatar render            | `apps/sites` profile page |
