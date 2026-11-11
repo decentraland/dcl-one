@@ -3,7 +3,7 @@
 Shared UI foundations and components for dcl-one, and the Node-only Figma tooling that produces them.
 The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standards.md).
 
-The [component migration inventory](COMPONENTS.md) tracks captured previews, public component contracts, unresolved blockers and application adoption. Update it in each import, promotion or consumer migration PR.
+The [component migration inventory](../../docs/ui-components.md) tracks captured previews, public component contracts, unresolved blockers and application adoption. Update it in each verified port or consumer migration PR.
 
 | Path                   | What it is                                                                                                                                                                                                                                                                   |
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
