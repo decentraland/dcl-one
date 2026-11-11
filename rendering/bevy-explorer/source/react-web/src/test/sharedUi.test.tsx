@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { ShopCart, theme } from '@dcl/one-ui'
+import { ShopCart, theme } from '@dcl/one-ui/foundations'
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { INTER_FILES, SHARED_ALIASES, SHARED_FONTS, SHARED_TREES } from '../../vite.shared'
@@ -24,7 +24,7 @@ function sources(path: string): string[] {
 }
 
 describe('the shared UI foundations in the HUD', () => {
-  it('compile from the public entry and render with this app’s React', () => {
+  it('compile from the public foundations entry and render with this app’s React', () => {
     expect(theme.palette.primary.primary).toBe('var(--dcl-primary-primary)')
     const { getByRole } = render(<ShopCart role="img" aria-label="Cart" size={24} />)
     expect(getByRole('img', { name: 'Cart' }).getAttribute('width')).toBe('24')

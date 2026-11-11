@@ -35,6 +35,8 @@ const exactKeys = (value, keys) =>
  * Pure policy over verified identities and an independently emitted plan. The caller must
  * acquire and verify inputs before calling; the opaque source identity is not a receipt.
  * Filesystem, index, LFS and public table verification belong to the common inspector.
+ * Precondition: `transformModules` comes from a validated generation.json whose digest the
+ * public table pins. This policy checks each listed module, not that the list is complete.
  *
  * @param {{inspection?: {problems: string[], outputs: ReadonlyMap<string, {sha256: string, indexBlobSha: string, origin: unknown}>, inputs: ReadonlyMap<string, {sha256: string, indexBlobSha: string}>}, expected?: ReadonlyMap<string, {sha256: string, origin: Record<string, unknown>}>, source?: string, sourceFiles?: Record<string, {sha256: string}>, transformModules?: ReadonlyMap<string, string>}} context
  * @returns {string[]}
@@ -54,6 +56,7 @@ export function publicComponentProblems(context = {}) {
   if (typeof source !== 'string' || !source.trim())
     problems.push('missing component source identity')
   if (!record(sourceFiles)) problems.push('missing locked component source files')
+  // Origins never repeat the module map; its single pin is the caller's validated generation.json.
   const modulesValid =
     transformModules instanceof Map &&
     transformModules.size > 0 &&
@@ -68,13 +71,6 @@ export function publicComponentProblems(context = {}) {
         Boolean(inspection.inputs.get(file)?.indexBlobSha)
     )
   if (!modulesValid) problems.push('missing or mismatched component transform identities')
-  const modulesMatch = (modules) =>
-    record(modules) &&
-    transformModules instanceof Map &&
-    Object.keys(modules).length === transformModules.size &&
-    [...transformModules].every(
-      ([file, hash]) => Object.hasOwn(modules, file) && modules[file] === hash
-    )
   const originValid = (file, origin) => {
     if (file === 'promotion.json')
       return (
@@ -87,8 +83,8 @@ export function publicComponentProblems(context = {}) {
       !exactKeys(
         origin,
         origin.kind === 'runtime'
-          ? ['kind', 'source', 'transform', 'modules', 'path', 'sha256']
-          : ['kind', 'source', 'transform', 'modules']
+          ? ['kind', 'source', 'transform', 'path', 'sha256']
+          : ['kind', 'source', 'transform']
       )
     )
       return false
@@ -96,8 +92,7 @@ export function publicComponentProblems(context = {}) {
       typeof source !== 'string' ||
       !source.trim() ||
       origin.source !== source ||
-      origin.transform !== TRANSFORM ||
-      !modulesMatch(origin.modules)
+      origin.transform !== TRANSFORM
     )
       return false
     if (origin.kind === 'generated') return true
@@ -135,9 +130,7 @@ export function publicComponentProblems(context = {}) {
     const claim = actual.origin
     if (
       !originValid(file, claim) ||
-      !Object.keys(emitted.origin).every(
-        (key) => key === 'modules' || emitted.origin[key] === claim[key]
-      )
+      !Object.keys(emitted.origin).every((key) => emitted.origin[key] === claim[key])
     )
       problems.push('component origin differs: ' + file)
   }

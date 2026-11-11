@@ -9,8 +9,9 @@
 //! Stripe call runs outside a transaction; the state change is one guarded
 //! UPDATE (`status = 'pending'`), so a late webhook or a second click moves
 //! nothing twice. An order whose session completed with its payment still
-//! processing is never retired by these routes or the sweep, and a payment
-//! that settles after its order was retired still credits it
+//! processing is never retired by these routes or the sweep (the settlement
+//! job reports one that stays processing for too long), and a payment that
+//! settles after its order was retired still credits it
 //! (`packs::SETTLEABLE_STATUSES`).
 
 use sqlx::Row;
@@ -21,6 +22,21 @@ use super::store::Credits;
 
 /// A Stripe Checkout Session lives 24 h; two more for clock skew and webhook backlogs.
 pub const ABANDON_AFTER: chrono::Duration = chrono::Duration::hours(26);
+
+/// How old a processing order (its session completed with the payment still
+/// on its way), counted from when the order was opened (`created_at`), is
+/// before the settlement job reports it for a manual check at Stripe. An
+/// operating threshold chosen well past the usual settlement of a delayed
+/// debit, not a limit Stripe guarantees: the report never moves the order,
+/// nor infers from its age whether the money arrived.
+pub const REPORT_PROCESSING_AFTER: chrono::Duration = chrono::Duration::days(30);
+
+/// The processing orders older than a cutoff: how many, and the oldest one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleProcessing {
+    pub count: i64,
+    pub oldest_order: Option<String>,
+}
 
 /// What Stripe says about a session, as the order routes read it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,6 +154,32 @@ impl Credits {
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected())
+    }
+
+    /// The processing orders opened before `after` ago. Only their payment's
+    /// outcome moves them (`async_payment_succeeded` or `_failed`, or a
+    /// `payment_intent.succeeded`), so one this old has most likely lost
+    /// that event: past Stripe's retries, the endpoint not subscribed to it,
+    /// or a settled amount that did not match. They are reported, never
+    /// moved: whether the money arrived is a question for Stripe.
+    pub async fn stale_processing_orders(
+        &self,
+        after: chrono::Duration,
+    ) -> Result<StaleProcessing, ApiError> {
+        let cutoff = super::store::now() - after;
+        let (count, oldest_order): (i64, Option<String>) = sqlx::query_as(
+            "SELECT count(*), (array_agg(order_id ORDER BY created_at, order_id))[1] \
+             FROM credits.purchases \
+             WHERE status = 'pending' AND stripe_checkout_session IS NOT NULL \
+               AND stripe_payment_intent IS NOT NULL AND created_at < $1",
+        )
+        .bind(cutoff)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(StaleProcessing {
+            count,
+            oldest_order,
+        })
     }
 }
 

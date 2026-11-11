@@ -143,7 +143,7 @@ pub async fn land_snapshot(pool: &PgPool) -> Option<ReadySnapshot> {
     }
 }
 
-fn land_unavailable() -> Response {
+pub(crate) fn land_unavailable() -> Response {
     unavailable(
         Source::LandAuthzIndex,
         "LAND and estate ownership reads the land-authz index, which is not published yet",
@@ -176,20 +176,43 @@ impl std::ops::DerefMut for ReadConn {
     }
 }
 
-/// The connection a read of `sources` runs on; a LAND read whose index is
-/// not ready answers its unavailable envelope.
-async fn read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, Response> {
+/// Why no connection was opened for a read of [`Sources`].
+enum ReadConnError {
+    /// It reads LAND, and the land-authz index is not ready.
+    LandUnavailable,
+    Pool(sqlx::Error),
+}
+
+/// The connection a read of `sources` runs on: the land snapshot when it
+/// reads LAND, else a pool connection.
+async fn open_read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, ReadConnError> {
     if sources.land {
         return land_snapshot(pool)
             .await
             .map(ReadConn::Land)
-            .ok_or_else(land_unavailable);
+            .ok_or(ReadConnError::LandUnavailable);
     }
     pool.acquire()
         .await
         .map(ReadConn::Pool)
-        .map_err(|e| ApiError::internal(e.to_string()).into_response())
+        .map_err(ReadConnError::Pool)
 }
+
+/// [`open_read_conn`] for a route: a LAND read whose index is not ready
+/// answers its unavailable envelope.
+async fn read_conn(pool: &PgPool, sources: Sources) -> Result<ReadConn, Response> {
+    open_read_conn(pool, sources).await.map_err(|e| match e {
+        ReadConnError::LandUnavailable => land_unavailable(),
+        ReadConnError::Pool(e) => ApiError::internal(e.to_string()).into_response(),
+    })
+}
+
+/// [`nft_prices`]'s error when the LAND index stopped being ready after
+/// [`require_prices_sources`] passed. It is a string because the prices memo
+/// shares errors as strings; the route answers [`land_unavailable`] for it,
+/// the envelope `/v1/nfts` answers in the same state.
+pub(crate) const NFT_PRICES_LAND_UNAVAILABLE: &str =
+    "the nft prices read LAND, and the land-authz index is not published";
 
 /// `Err(envelope)` unless every index `sources` needs for `f` is published.
 pub async fn require_ready(
@@ -907,13 +930,17 @@ pub async fn require_prices_sources(
 /// The nft leg of `/v1/prices`: the order price of every nft on sale that
 /// matches (upstream reads the nfts query with `isOnSale` for LAND, estates
 /// and names); `category` narrows the sources as `/v1/nfts` does. Read
-/// only after [`require_prices_sources`].
+/// only after [`require_prices_sources`]; if the LAND index stops being
+/// ready meanwhile, the error is [`NFT_PRICES_LAND_UNAVAILABLE`].
 pub async fn nft_prices(state: &MarketplaceState, f: &NftFilters) -> Result<Histogram, String> {
     let f = on_sale(f);
     let sources = sources_for(&f);
-    let mut conn = read_conn(&state.pool, sources)
+    let mut conn = open_read_conn(&state.pool, sources)
         .await
-        .map_err(|_| "the nft prices' LAND index is not published".to_string())?;
+        .map_err(|e| match e {
+            ReadConnError::LandUnavailable => NFT_PRICES_LAND_UNAVAILABLE.to_string(),
+            ReadConnError::Pool(e) => format!("acquiring a connection for the nft prices: {e}"),
+        })?;
     let mut b = Builder::new();
     let ctes = build_candidates(
         &mut b,

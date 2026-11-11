@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs'
 import { readFile, readdir } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod'
+import { readFdsPin } from '../sources/fds-source.js'
 
 const packageSchema = z.object({
   name: z.string(),
@@ -67,5 +68,19 @@ async function findMappingFiles(mappingRoot: string): Promise<string[]> {
   return found.sort()
 }
 
-export { findMappingFiles, loadLibrary }
+// The capture revision the library's tracked lock pins, read with the same pin reader fetch-source uses and
+// without touching the capture itself. A library with no lock has none; a lock that exists but does not pin
+// a capture is a broken checkout and throws.
+async function readCaptureRevision(rootDir: string): Promise<string | undefined> {
+  let text: string
+  try {
+    text = await readFile(path.join(rootDir, 'upstream.lock.json'), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
+    throw error
+  }
+  return readFdsPin(JSON.parse(text)).snapshotRevision
+}
+
+export { findMappingFiles, loadLibrary, readCaptureRevision }
 export type { LibraryInfo }
