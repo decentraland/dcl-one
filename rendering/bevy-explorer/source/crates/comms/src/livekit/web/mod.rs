@@ -26,7 +26,7 @@ use std::{
     fmt::{Display, Formatter},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Arc,
+        Arc, Mutex,
     },
 };
 
@@ -34,7 +34,6 @@ use bevy::{platform::collections::HashMap, prelude::*};
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use media::MediaId;
 use once_cell::sync::OnceCell;
-use parking_lot::Mutex;
 use tokio::sync::{mpsc, oneshot};
 
 pub use crate::livekit::web::{
@@ -387,6 +386,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
     let (sender, receiver) = oneshot::channel();
     PENDING
         .lock()
+        .unwrap()
         .get_or_insert_default()
         .insert(request, sender);
     if host.commands.unbounded_send(command(request)).is_err() {
@@ -400,7 +400,7 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
 fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Arc<Mutex<String>>) {
     let (sender, receiver) = mpsc::unbounded_channel();
     let metadata = Arc::new(Mutex::new(String::new()));
-    ROOM_EVENTS.lock().get_or_insert_default().insert(
+    ROOM_EVENTS.lock().unwrap().get_or_insert_default().insert(
         room,
         RoomChannel {
             events: sender,
@@ -414,15 +414,16 @@ fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Ar
 fn set_room_metadata(room: RoomId, metadata: &str) {
     if let Some(channel) = ROOM_EVENTS
         .lock()
+        .unwrap()
         .as_ref()
         .and_then(|rooms| rooms.get(&room))
     {
-        *channel.metadata.lock() = metadata.to_owned();
+        *channel.metadata.lock().unwrap() = metadata.to_owned();
     }
 }
 
 fn unregister_room_events(room: RoomId) {
-    if let Some(rooms) = ROOM_EVENTS.lock().as_mut() {
+    if let Some(rooms) = ROOM_EVENTS.lock().unwrap().as_mut() {
         rooms.remove(&room);
     }
 }
@@ -457,7 +458,9 @@ pub struct LivekitEventReceiver(Option<UnboundedReceiver<LivekitEvent>>);
 
 /// Takes the page → engine event receiver; call from the plugin's build.
 pub fn take_event_receiver() -> LivekitEventReceiver {
-    let events = HOST.get().and_then(|host| host.events.lock().take());
+    let events = HOST
+        .get()
+        .and_then(|host| host.events.lock().unwrap().take());
     if events.is_none() {
         warn!("no livekit host: livekit rooms will not connect");
     }
@@ -480,6 +483,7 @@ pub fn dispatch_page_events(
                 }
                 let sender = PENDING
                     .lock()
+                    .unwrap()
                     .as_mut()
                     .and_then(|pending| pending.remove(&request));
                 match sender {
@@ -491,14 +495,14 @@ pub fn dispatch_page_events(
                 }
             }
             LivekitEvent::Room { room, event } => {
-                let mut guard = ROOM_EVENTS.lock();
+                let mut guard = ROOM_EVENTS.lock().unwrap();
                 let Some(channel) = guard.as_mut().and_then(|rooms| rooms.get(&room)) else {
                     debug!("event for unknown room {room}: {event:?}");
                     continue;
                 };
                 // the metadata is written before the event that reports it is forwarded
                 if let RoomEvent::RoomMetadataChanged { metadata } = &event {
-                    *channel.metadata.lock() = metadata.clone();
+                    *channel.metadata.lock().unwrap() = metadata.clone();
                 }
                 if channel.events.send(event).is_err() {
                     // the engine's LivekitRoom is gone

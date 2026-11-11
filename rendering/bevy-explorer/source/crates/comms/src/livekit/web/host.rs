@@ -226,7 +226,7 @@ pub fn livekit_host_main() {
     if HOST
         .set(HostHandle {
             commands: commands_tx,
-            events: parking_lot::Mutex::new(Some(events_rx)),
+            events: std::sync::Mutex::new(Some(events_rx)),
         })
         .is_err()
     {
