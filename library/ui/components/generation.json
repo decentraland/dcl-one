@@ -236,8 +236,8 @@
     },
     {
       "path": "library/ui/figma/src/generators/components.ts",
-      "sha256": "9efd380ad76e7fe52ef91a1ad2185b4707d1ad880690f19c882bcaac3f9bef7c",
-      "indexBlobSha": "86586a7bd0738c4dc3d690d91185b89dc129473e"
+      "sha256": "98d48df0b92f5b226ec01b41832a618759412e4b6616d559e20c644d4b964eb2",
+      "indexBlobSha": "7a6d940997ed5468cca04362c643aed2fb15e62d"
     },
     {
       "path": "library/ui/figma/src/generators/css-layers.ts",
@@ -607,7 +607,7 @@
     },
     {
       "path": "Button/Button.module.css",
-      "sha256": "9c89052a5f0290c7064202a00121174863786b9ab1d378b1e7655454eaa22587"
+      "sha256": "21bb7680c4726a6057d1786ce1b377d3b5d532405e24f3db9c176cea4e4fa86d"
     },
     {
       "path": "Button/Button.module.css.d.ts",
