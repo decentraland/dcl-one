@@ -75,6 +75,8 @@ function nodeProxy(): Record<string, ProxyOptions> {
     }),
     "/places/api/": to(),
     "/events/api/": to(),
+    // The Events page reads the event list here from the browser too (`fetchEvents`).
+    "/events/v1/": to(),
     "/shop-api": to(),
     "/marketplace-api": to(),
     "/social-api": to(),

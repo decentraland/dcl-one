@@ -1,4 +1,4 @@
-import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { queryOptions, skipToken, useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import {
@@ -11,19 +11,12 @@ import {
 type Toggle = { identity: AuthIdentity; eventId: string; attending: boolean };
 
 /**
- * Remind Me for one event: the member's attending flag, flipped optimistically and rolled back on failure.
- * The identity travels in the mutation variables, so a write started before an account switch signs as the
- * account that started it.
+ * The attending write, flipped optimistically and rolled back on failure. The identity travels in the
+ * mutation variables, so a write started before an account switch signs as the account that started it.
  */
-/** `enabled` is false where the page offers no Remind me, so no signed read goes out for it. */
-export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSignIn: () => void, enabled = true) {
+function useAttendanceToggle() {
   const client = useQueryClient();
-  const query = useQuery(
-    identity && enabled
-      ? attendingQuery(identity, eventId)
-      : { queryKey: attendanceKeys.attending("", eventId), queryFn: skipToken, staleTime: ATTENDANCE_STALE_MS },
-  );
-  const mutation = useMutation({
+  return useMutation({
     mutationFn: ({ identity, eventId, attending }: Toggle) => writeAttendance(identity, eventId, attending),
     onMutate: async ({ identity, eventId, attending }: Toggle) => {
       const key = attendanceKeys.attending(identity.signer, eventId);
@@ -44,6 +37,23 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
       void client.invalidateQueries({ queryKey: attendanceKeys.attending(identity.signer, eventId) });
     },
   });
+}
+
+/** No member, no read: the entry stays unread under an empty account. */
+const unread = (eventId: string) =>
+  queryOptions<boolean, Error, boolean, ReturnType<typeof attendanceKeys.attending>>({
+    queryKey: attendanceKeys.attending("", eventId),
+    queryFn: skipToken,
+    staleTime: ATTENDANCE_STALE_MS,
+  });
+
+/**
+ * Remind Me for one event: the member's attending flag, flipped optimistically and rolled back on failure.
+ * `enabled` is false where the page offers no Remind me, so no signed read goes out for it.
+ */
+export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSignIn: () => void, enabled = true) {
+  const query = useQuery(identity && enabled ? attendingQuery(identity, eventId) : unread(eventId));
+  const mutation = useAttendanceToggle();
 
   return {
     active: identity ? query.data === true : false,
@@ -56,6 +66,41 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
         return;
       }
       mutation.mutate({ identity, eventId, attending: query.data !== true });
+    },
+  };
+}
+
+export type Reminder = { active: boolean; pending: boolean; toggle: () => void };
+
+/**
+ * Remind Me for a list of events: one signed read per event while signed in, none signed out. `failed`
+ * names the event whose last write failed for the member signed in now.
+ */
+export function useReminders(identity: AuthIdentity | null, eventIds: readonly string[], onSignIn: () => void) {
+  const results = useQueries({
+    queries: eventIds.map((eventId) => (identity ? attendingQuery(identity, eventId) : unread(eventId))),
+  });
+  const mutation = useAttendanceToggle();
+  const byId = new Map(eventIds.map((eventId, i) => [eventId, results[i]]));
+  const failedId =
+    mutation.isError && mutation.variables?.identity.signer === identity?.signer ? mutation.variables.eventId : null;
+
+  return {
+    failed: failedId,
+    get: (eventId: string): Reminder => {
+      const query = byId.get(eventId);
+      const writing = mutation.isPending && mutation.variables?.eventId === eventId;
+      return {
+        active: identity ? query?.data === true : false,
+        pending: Boolean(identity) && (query?.isPending !== false || writing),
+        toggle: () => {
+          if (!identity) {
+            onSignIn();
+            return;
+          }
+          mutation.mutate({ identity, eventId, attending: query?.data !== true });
+        },
+      };
     },
   };
 }

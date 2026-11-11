@@ -1,4 +1,7 @@
+import type { DehydratedState } from "@tanstack/react-query";
 import type { EntryContext } from "react-router";
+
+import { eventsAgentData } from "../catalyst/places/events-page";
 
 import { LEGAL_DOCS } from "@ui/data/legalPageConfig";
 
@@ -41,8 +44,9 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
     return d?.place ? placeToMarkdown(d.place) : null;
   },
   whatsOn: (data) => {
-    const d = data as Parameters<typeof whatsOnToMarkdown>[0] | undefined;
-    return d ? whatsOnToMarkdown(d) : null;
+    const d = data as { tab?: "my" | null; dehydratedState?: DehydratedState | null } | undefined;
+    if (!d) return null;
+    return whatsOnToMarkdown(d.tab === "my" ? { tab: "my" } : eventsAgentData(d.dehydratedState));
   },
   eventDetail: (data) => {
     const d = data as { event?: Parameters<typeof eventDetailToMarkdown>[0] | null } | undefined;

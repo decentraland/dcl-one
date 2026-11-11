@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchEvents, fetchEventPage } from "./events";
+import { fetchEvents } from "./events";
 
 describe("when discovery reads an event page", () => {
   let fetchImpl: typeof fetch;
@@ -40,16 +40,6 @@ describe("when discovery reads an event page", () => {
     });
   });
 
-  describe("and only the lookahead row is malformed", () => {
-    beforeEach(() => {
-      body = { ok: true, data: [record, { ...record, id: "second" }, { id: "bad-lookahead" }] };
-      vi.spyOn(console, "warn").mockImplementation(() => {});
-    });
-    it("should retain next-page navigation without warning about hidden rows on this page", async () => {
-      await expect(fetchEventPage({ limit: 2 }, { base: "https://node.example", fetchImpl })).resolves.toMatchObject({ data: [{ id: "valid" }, { id: "second" }], hasMore: true, invalidCount: 0 });
-    });
-  });
-
   describe("and a row is malformed", () => {
     beforeEach(() => {
       body = { ok: true, data: [{ ...record, name: 42 }, record, { ...record, id: "lookahead" }] };
@@ -57,10 +47,6 @@ describe("when discovery reads an event page", () => {
     });
     it("should preserve valid rows and report the malformed record", async () => {
       await expect(fetchEvents({}, { base: "https://node.example", fetchImpl })).resolves.toMatchObject({ data: [{ id: "valid" }, { id: "lookahead" }], received: 3, invalidCount: 1 });
-    });
-    it("should preserve raw page boundaries and lookahead while skipping invalid rows", async () => {
-      await expect(fetchEventPage({ limit: 2 }, { base: "https://node.example", fetchImpl })).resolves.toMatchObject({ data: [{ id: "valid" }], hasMore: true, invalidCount: 1 });
-      expect(requested!.searchParams.get("limit")).toBe("3");
     });
   });
 });
