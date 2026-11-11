@@ -4,7 +4,7 @@ This is dcl-one’s adoption tracker. Check the local runtime contract before im
 
 ## Available contracts
 
-The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts), with accepted limitations in the [promotion registry](../library/ui/components/promotion.json). This table records adoption work rather than duplicating the generated component manifest.
+The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts), with the NavBar bridge's accepted limitations in the [promotion registry](../library/ui/components/promotion.json). This table records adoption work rather than duplicating the generated component manifest.
 
 | Component | Runtime contract                                         | Limitations                                                                                                                                  | Verified app adoption |
 | --------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
@@ -14,7 +14,7 @@ The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts
 
 The [local review manifest](../library/ui/figma/review/src/generated/components/manifest.ts) owns preview names, node identities, variants and `needsManual` flags. It is not an application import surface. Do not duplicate its records here or infer visual parity from a passing build.
 
-To make another component available, write it by hand from the component template in [UI standards](ui-standards.md), then confirm its public export and mapping. Generated review previews are not a source for public components. Keep unresolved blockers in the authoritative component records.
+To make another component available, write it by hand from the component template in [UI standards](ui-standards.md), then confirm its public export and mapping. Generated review previews are not a source for public components. A hand-written component records its accepted limits and unresolved blockers in its row of the table above; the resolver repeats limits (`resolved.limits`) only for registry entries.
 
 ## Pending work
 

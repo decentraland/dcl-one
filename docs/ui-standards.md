@@ -70,8 +70,7 @@ Component.figma.ts     Figma-to-component mapping for the tooling
 
 Define component-owned props and types in the component file by default. Use a
 separate types file for a substantial contract shared across components.
-Export the component and its public prop types from `library/ui/index.ts`
-(created with the first shared component).
+Export the component and its public prop types from `library/ui/index.ts`.
 The mapping is used by the Figma tooling and is not imported by browser code.
 The template is not a production component. Replace the Figma mapping
 placeholder with the actual component's node and properties when its tooling
