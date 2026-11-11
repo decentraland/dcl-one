@@ -315,6 +315,31 @@ class ConfigurationTest(unittest.TestCase):
         self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
         self.assertIn("location /places/ {\nproxy_pass http://sites;", config)
 
+    def test_legal_documents_route_to_sites_without_claiming_api_paths(self):
+        root = Path(__file__).parents[3]
+        legal_fixtures = root / "apps/sites/src/data/legal/fixtures"
+        canonical_paths = {
+            json.loads(path.read_text())["path"] for path in legal_fixtures.glob("*.json")
+        }
+        public_paths = canonical_paths | {"/content-policy", "/rewards", "/referral"}
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {
+            "sites": ["$slug.tsx"],
+            "internal": [],
+            "aliases": [],
+            "node": [{"path": "/credits", "exact": True}],
+            "deploy": ["/content/entities"],
+        }
+        config = gateway.render(table, cfg, "/mime.types")
+
+        for path in public_paths:
+            with self.subTest(path=path):
+                self.assertIn(f"location = {path} {{\nproxy_pass http://sites;", config)
+        self.assertIn("location = /credits {\nproxy_pass http://apis;", config)
+        self.assertIn("location /content/ {\nproxy_pass http://apis;", config)
+        self.assertIn("location / {\nproxy_pass http://apis;", config)
+        self.assertNotIn("location /credits/ {\nproxy_pass http://sites;", config)
+
     def test_bundled_event_image_uses_api_without_claiming_other_event_assets(self):
         path = "/events/assets/event-default.webp"
         routes = (Path(__file__).parents[1] / "routes.nix").read_text()

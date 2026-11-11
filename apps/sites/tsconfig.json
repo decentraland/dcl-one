@@ -33,6 +33,9 @@
       "@dcl/one-ui/foundations.css": [
         "../../library/ui/foundations/foundations.css"
       ],
+      "@dcl/one-ui/text-styles.module.css": [
+        "../../library/ui/foundations/typography/text-styles.module.css"
+      ],
       "@dcl/one-ui/*": ["../../library/ui/*"],
       "react-dom": ["./node_modules/@types/react-dom/index.d.ts"],
       "react-dom/*": ["./node_modules/@types/react-dom/*"],

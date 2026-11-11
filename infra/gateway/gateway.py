@@ -266,8 +266,8 @@ def render(table, cfg, mime):
         if prefix not in ("/admin", "/server"):
             locations += pair(prefix, "sites")
     for path in ("/", "/favicon.ico", "/dcl-sdk-types.json", "/docs/index.md", "/_root.data",
-                 "/terms", "/privacy", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
-                 "/referral", "/referral-terms", "/security", "/brand"):
+                 "/terms", "/privacy", "/content", "/content-policy", "/ethics", "/rewards", "/rewards-terms",
+                 "/referral", "/referral-terms", "/credits-terms", "/security", "/brand"):
         locations += location("= " + path, proxy("sites"))
     for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
         locations += location("^~ " + path, proxy("sites"))

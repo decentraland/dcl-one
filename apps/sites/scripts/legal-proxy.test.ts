@@ -26,34 +26,43 @@ describe("when legal pages share a prefix with the node credits API", () => {
 });
 
 describe("when Sites resolves the public foundations stylesheet", () => {
-  it("should map the declared package export to its source file in Vite and TypeScript", () => {
+  it("should map every public stylesheet export to its source file in Vite and TypeScript", () => {
     const uiPackage = JSON.parse(
       readFileSync(
         resolve(import.meta.dirname, "../../../library/ui/package.json"),
         "utf8",
       ),
-    );
+    ) as { exports: Record<string, string> };
     const siteTsconfig = readFileSync(
       resolve(import.meta.dirname, "../tsconfig.json"),
       "utf8",
     );
-    const publicExport = uiPackage.exports["./foundations.css"];
-    const sourceFile = resolve(
-      import.meta.dirname,
-      "../../../library/ui/foundations/foundations.css",
-    );
-    const viteAlias = (config.resolve?.alias as Record<string, string>)[
-      "@dcl/one-ui/foundations.css"
-    ];
-    const typePath = siteTsconfig.match(
-      /"@dcl\/one-ui\/foundations\.css"\s*:\s*\[\s*"([^"]+)"\s*\]/,
-    )?.[1];
+    const viteAliases = config.resolve?.alias as Record<string, string>;
+    const uiAlias = viteAliases["@dcl/one-ui"];
+    const uiRoot = resolve(import.meta.dirname, "../../../library/ui");
+    const sitesRoot = resolve(import.meta.dirname, "..");
 
-    expect(publicExport).toBe("./foundations/foundations.css");
-    expect(viteAlias).toBe(sourceFile);
-    expect(typePath).toBe("../../library/ui/foundations/foundations.css");
-    expect(resolve(import.meta.dirname, "../", typePath ?? "")).toBe(
-      sourceFile,
+    expect(uiAlias).toBe(uiRoot);
+    expect(resolve(uiAlias, uiPackage.exports["."].slice(2))).toBe(
+      resolve(uiRoot, uiPackage.exports["."]),
     );
+    expect(resolve(uiAlias, "foundations/index.ts")).toBe(
+      resolve(uiRoot, uiPackage.exports["./foundations"]),
+    );
+
+    for (const [subpath, target] of Object.entries(uiPackage.exports).filter(
+      ([, target]) => target.endsWith(".css"),
+    )) {
+      const specifier = `@dcl/one-ui/${subpath.slice(2)}`;
+      const expectedSource = resolve(uiRoot, target);
+      const escapedSpecifier = specifier.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const typePath = siteTsconfig.match(
+        new RegExp(`"${escapedSpecifier}"\\s*:\\s*\\[\\s*"([^"]+)"\\s*\\]`),
+      )?.[1];
+
+      expect(viteAliases[specifier]).toBe(expectedSource);
+      expect(typePath).toBeDefined();
+      expect(resolve(sitesRoot, typePath ?? "")).toBe(expectedSource);
+    }
   });
 });
