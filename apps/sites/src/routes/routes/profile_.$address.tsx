@@ -1,3 +1,4 @@
+import "@dcl/one-ui/foundations/foundations.css";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 
 import { profileLoader } from "../lib/profile-loader.server";
