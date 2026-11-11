@@ -157,11 +157,11 @@ impl PlacesComponent {
         let Some(land) = self.land_authz.get() else {
             return Ok(vec![]);
         };
-        if land.ready().await.is_none() {
+        let Some(mut snapshot) = land.ready_snapshot().await else {
             return Ok(vec![]);
-        }
+        };
         Ok(query::operated_positions_in_catalogue(
-            &land.pool,
+            &mut *snapshot.tx,
             &land.settings.land_registry,
             &land.settings.estate_registry,
             owner,

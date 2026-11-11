@@ -94,6 +94,20 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
   members without unity-explorer's paging.
+  The Communities page's browse grid is unity-explorer's: 20 communities a page, the next read as
+  the grid's end comes into view, the name searched on the server a second after typing stops (at
+  once on Enter), and each card's Public or Private, Join, Request to Join or Cancel, its
+  description on hover, and the first three of the user's friends in it. Whether a join request is
+  pending comes from the user's own join requests, read when the grid's first page loads and when a
+  closed community's card opens, and kept from the request's answer, as unity-explorer's. The
+  card always shows its member count; unity-explorer shows it only behind its members-counter
+  flag. The Voice
+  Streaming section is left out until community voice exists, and a card offers no accept or
+  reject for an invite until the invites task. A failed read shows unity-explorer's error toast
+  and leaves the grid empty, with no count, where unity-explorer leaves its spinner running. A
+  card shows no spinner while its join or request runs. My Communities is every membership, read
+  apart from the grid; when that read fails the list stays as it was and the page asks again the
+  next time it opens, without unity-explorer's "error loading My Communities" toast.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.
@@ -133,6 +147,15 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   waiting to authenticate, 32 per address, so the excess is refused (codes 8 and 7), and the 10 s
   floor would send every refused client back together again. The Pulse server's documentation
   calls jitter mandatory for those codes.
+- **Scene raycasts are capped only outside the scenes the player is in.** The system scene, every
+  portable and the scenes the player stands in run all their raycasts every frame, with no cap;
+  every other scene shares a tenth of the target frame (1.67 ms at 60 fps, 0.69 ms at 144),
+  nearest scene first, and what does not fit waits for a later frame. unity-explorer instead caps
+  the current scene at 3 ms and runs no other scene's raycasts. We differ because scenes drive
+  frame-sensitive logic from ray results: `movement-scene`, the default avatar movement driver,
+  runs its ground and wall checks on continuous `RS_AVATAR` rays, and for it a slower frame is
+  better than a late answer. A share of the target frame, not a fixed time, keeps the cap the same
+  part of the main thread at any frame rate. See [Interaction](interaction.md#scene-raycasts).
 
 - **Photo mode follows the engine's cursor convention.** unity-explorer's in-world camera has its
   own Lock/Unlock cursor actions. Here right-click toggles the lock as everywhere else, left-drag

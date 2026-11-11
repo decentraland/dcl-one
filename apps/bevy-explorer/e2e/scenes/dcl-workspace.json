@@ -50,6 +50,12 @@
     },
     {
       "path": "ui"
+    },
+    {
+      "path": "pointer-targets"
+    },
+    {
+      "path": "raycast-storm"
     }
   ]
 }

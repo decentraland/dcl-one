@@ -87,6 +87,10 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
+lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
+it). Its contract is tier-1: `src/test/integratedGpuGuide.test.tsx`, `src/lib/integratedGpu.test.ts`.
+
 **Updating baselines** (only when the change is intentional):
 ```bash
 npm run test:visual:update      # regenerates the PNGs
@@ -135,7 +139,7 @@ from the communities the account is a member of; `src/test/communityChat*.test.t
 `apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
 and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
 that owns a LAND or a World with a deployed scene; `src/test/communities.clicks.test.tsx` covers the
-form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, and the member row and menu; acting on a member needs a second account in a community the first owns or moderates) — these need seeded
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; acting on a member needs a second account in a community the first owns or moderates, and finding a community past the first browse page needs a service with more than 20) — these need seeded
 data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.

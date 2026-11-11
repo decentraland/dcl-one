@@ -1632,3 +1632,95 @@ async fn the_retired_hook_tables_release_adopts_the_pending_rows_then_drops_the_
     );
     old.drop().await;
 }
+
+const LOGS_PERMISSIONS_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/worlds-logs-permissions-retired.sql"
+));
+
+/// Runs a release that drops indexes concurrently as psql does: each
+/// blank-line-separated statement on its own, outside a transaction,
+/// stopping at the first error.
+async fn release_statements(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    for statement in sql.split("\n\n").filter(|s| !s.trim().is_empty()) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.to_owned()))
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_the_old_one() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(LOGS_PERMISSIONS_RETIRED.matches(stop_on_error).count(), 1);
+    let release = LOGS_PERMISSIONS_RETIRED.replace(stop_on_error, "");
+    let has_function = |signature: &'static str| async move {
+        sqlx::query_scalar::<_, bool>("SELECT to_regprocedure($1) IS NOT NULL")
+            .bind(signature)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let old_objects = [
+        "worlds.world_scenes_logs_permissions_idx",
+        "content.deployments_scene_logs_permissions_idx",
+    ];
+    for index in old_objects {
+        assert!(
+            has_relation(pool, index).await,
+            "the fixture carries {index}"
+        );
+    }
+    // Before the object pass creates the decoded function it refuses and changes nothing.
+    assert!(release_statements(pool, &release).await.is_err());
+    assert!(has_function("worlds.logs_permissions(text)").await);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    for index in old_objects {
+        assert!(
+            has_relation(pool, index).await,
+            "the object pass keeps {index}"
+        );
+    }
+    // An invalid decoded index, as a failed concurrent build leaves, is refused.
+    let set_valid = |valid: bool| async move {
+        sqlx::query(
+            "UPDATE pg_index SET indisvalid = $1
+             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+        )
+        .bind(valid)
+        .execute(pool)
+        .await
+        .unwrap();
+    };
+    set_valid(false).await;
+    assert!(release_statements(pool, &release).await.is_err());
+    assert!(has_function("worlds.logs_permissions(text)").await);
+    set_valid(true).await;
+    release_statements(pool, &release).await.unwrap();
+    assert!(!has_function("worlds.logs_permissions(text)").await);
+    for index in old_objects {
+        assert!(!has_relation(pool, index).await, "{index} is dropped");
+    }
+    assert!(has_function("worlds.logs_permissions_decoded(text)").await);
+    assert!(has_relation(pool, "worlds.world_scenes_logs_permissions_decoded_idx").await);
+    assert!(
+        has_relation(
+            pool,
+            "content.deployments_scene_logs_permissions_decoded_idx"
+        )
+        .await
+    );
+    release_statements(pool, &release)
+        .await
+        .expect("a second run notes the function is gone");
+    old.drop().await;
+}
