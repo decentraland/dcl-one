@@ -51,6 +51,8 @@ const INTERNAL_PARAMS = [
   'bundled',
   'simerror',
   'simhover',
+  'mockcall',
+  'mockstream',
   'previousLogin',
   'perm',
   'worldpw',

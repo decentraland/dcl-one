@@ -34,6 +34,7 @@ type CommunityRaw = {
   pendingActionType?: string
   pendingInviteOrRequestId?: string
   thumbnailUrl?: string
+  voiceChatStatus?: { isActive?: boolean; participantCount?: number; moderatorCount?: number }
   /** The signed user's friends who are members, by address (only on a signed list read). */
   friends?: string[]
 }
@@ -119,6 +120,11 @@ async function communities(raw: CommunityRaw[]): Promise<Community[]> {
     privacy: c.privacy,
     visibility: c.visibility,
     pendingRequestId: pendingRequestId(c),
+    voiceChatStatus: c.voiceChatStatus == null ? undefined : {
+      isActive: c.voiceChatStatus.isActive === true,
+      participantCount: c.voiceChatStatus.participantCount ?? 0,
+      moderatorCount: c.voiceChatStatus.moderatorCount ?? 0
+    },
     // a read without the friends list (the GET by id) leaves them unset, so the card keeps its own
     friends: Array.isArray(c.friends) ? friendsOf(c).map((address) => ({ address, ...identity(address) })) : undefined
   }))

@@ -132,3 +132,17 @@ describe('notificationsNew in the session', () => {
     expect(ids).not.toContain(`old${NOTIFICATIONS_KEPT - 1}`)
   })
 })
+
+describe('a stream-started toast', () => {
+  it('joins the stream and opens the community chat', () => {
+    const s = fakeSession()
+    const voiceChat = { ...s.voiceChat, act: vi.fn() }
+    const chat = { ...s.chat, openCommunity: vi.fn() }
+    render(<NotificationToastHost notifications={s.notifications} voiceChat={voiceChat} chat={chat} />)
+    act(() => queueNotificationToasts([notif('v', { type: 'community_voice_chat_started', metadata: { communityId: 'c5', communityName: 'Toxic Events', thumbnailUrl: 'https://example.com/t.png' } })]))
+    act(() => screen.getByRole('button').click())
+    expect(voiceChat.act).toHaveBeenCalledWith({ op: 'joinCommunityCall', communityId: 'c5' })
+    expect(chat.openCommunity).toHaveBeenCalledWith({ id: 'c5', name: 'Toxic Events', thumbnail: 'https://example.com/t.png', role: 'member' })
+    expect(s.notifications.toggle).not.toHaveBeenCalled()
+  })
+})

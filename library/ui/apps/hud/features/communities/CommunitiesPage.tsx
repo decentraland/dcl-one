@@ -6,13 +6,14 @@
 // offers Join, Request to Join or Cancel, the user's friends in it, and its description on hover.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, SearchField, Spinner, Tooltip } from '../../design'
+import { Avatar, Button, Chip, SearchField, Spinner, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { openCommunityModal } from './CommunityModal'
 import { openCommunityCreateModal } from './CommunityCreateModal'
 import type { Community } from '@explorer-core/engine/protocol'
-import type { CommunitiesState, ProfileState } from '../session/useEngineSession'
+import type { CommunitiesState, ProfileState, VoiceChatSession } from '../session/useEngineSession'
+import { streamLive } from '../voiceChat/callGate'
 import styles from './CommunitiesPage.module.css'
 
 /** The wait after the last keystroke before searching, so typing sends one read. */
@@ -70,7 +71,7 @@ function CardButton({ c, onOpen, onJoin, onRequestToJoin, onCancelRequest }: Car
   return <Button size="sm" className={styles.cardBtn} onClick={act(() => onRequestToJoin(c.id))}>Request to Join</Button>
 }
 
-function CommunityCard({ c, onOpen, ...actions }: CardActions & { c: Community; onOpen: () => void }): React.JSX.Element {
+function CommunityCard({ c, live, onOpen, ...actions }: CardActions & { c: Community; live: boolean; onOpen: () => void }): React.JSX.Element {
   const [failed, setFailed] = useState(false)
   const showImg = c.thumbnail != null && c.thumbnail !== '' && !failed
   const isPrivate = c.privacy === 'private'
@@ -79,6 +80,7 @@ function CommunityCard({ c, onOpen, ...actions }: CardActions & { c: Community; 
     // named by its whole text, as the e2e suite reads it (apps/bevy-explorer/e2e/specs/communities.test.ts)
     <div className={styles.card} onClick={onOpen} role="button" tabIndex={0}>
       <div className={styles.cover} style={{ background: showImg ? undefined : nameColor(c.id) }}>
+        {live && <span className={styles.live} role="img" aria-label="Live stream">● LIVE</span>}
         {showImg ? (
           <img className={styles.coverImg} src={c.thumbnail} alt="" onError={() => setFailed(true)} />
         ) : (
@@ -131,10 +133,13 @@ function LoadMore({ count, onVisible }: { count: number; onVisible: () => void }
 export function CommunitiesPage({
   communities,
   profile,
+  voiceChat,
   onNavigate
 }: {
   communities: CommunitiesState
   profile: ProfileState
+  /** The live streams; without them the communities' own snapshot says what is live. */
+  voiceChat?: VoiceChatSession
   onNavigate: (page: string) => void
 }): React.JSX.Element | null {
   // The search field's text; the grid shows the search last run (communities.browse.search).
@@ -142,6 +147,8 @@ export function CommunitiesPage({
   const [openId, setOpenId] = useState<string | null>(null)
   // Main area shows the browse grid, or all of "My Communities" (via VIEW ALL).
   const [tab, setTab] = useState<'browse' | 'mine'>('browse')
+  // The "Streaming" filter: only the communities with a live voice stream.
+  const [streaming, setStreaming] = useState(false)
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { loadBrowse, loadMoreBrowse, browse } = communities
   // what a delayed search compares with: the grid as it is when the delay ends
@@ -198,11 +205,13 @@ export function CommunitiesPage({
   const mine = communities.list.filter((c) => isMember(c.role))
   const showingMine = tab === 'mine'
   const searching = !showingMine && browse.search !== ''
-  const gridList = showingMine ? mine : browse.items
+  const live = (c: Community): boolean => streamLive(voiceChat, c.id, c.voiceChatStatus?.isActive)
+  // The Streaming filter narrows the communities already read to the live ones
+  const gridList = (showingMine ? mine : browse.items).filter((c) => !streaming || live(c))
   const actions: CardActions = { onJoin: communities.join, onRequestToJoin: communities.requestToJoin, onCancelRequest: communities.cancelRequest }
-  // The count is the service's total, blank while the first page loads
+  // The count is the service's total, blank while the first page loads; filtered, the cards shown
   const title = showingMine ? 'My Communities' : searching ? `Results for '${browse.search}'` : 'Browse Communities'
-  const count = showingMine ? `(${mine.length})` : browse.loading || browse.failed === true ? '' : `(${browse.total})`
+  const count = showingMine || streaming ? `(${gridList.length})` : browse.loading || browse.failed === true ? '' : `(${browse.total})`
 
   const p = profile.data
   return (
@@ -220,6 +229,7 @@ export function CommunitiesPage({
         <div className={styles.search}>
           <SearchField value={query} onChange={onQuery} onSubmit={runSearch} clearable onClear={clearSearch} placeholder="Search" />
         </div>
+        <Chip label="Streaming" selected={streaming} onClick={() => setStreaming((s) => !s)} />
       </div>
 
       <div className={styles.layout}>
@@ -270,7 +280,7 @@ export function CommunitiesPage({
             <>
               <div className={styles.grid}>
                 {gridList.map((c) => (
-                  <CommunityCard key={c.id} c={c} onOpen={() => setOpenId(c.id)} {...actions} />
+                  <CommunityCard key={c.id} c={c} live={live(c)} onOpen={() => setOpenId(c.id)} {...actions} />
                 ))}
               </div>
               {!showingMine && browse.items.length < browse.total && <LoadMore count={browse.items.length} onVisible={loadMoreBrowse} />}

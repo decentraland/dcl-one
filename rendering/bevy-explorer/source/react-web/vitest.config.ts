@@ -8,9 +8,9 @@ import { SHARED_ALIASES, SHARED_DEDUPE, SHARED_TREES } from './vite.shared'
 // The real-engine e2e (tier 2) lives under e2e/ and runs via Playwright, not Vitest.
 export default defineConfig({
   plugins: [react(), {
-    name: 'scene-restricted-actions',
-    // The scene runtime supplies this virtual module. Tests provide its methods with vi.mock.
-    resolveId(id) { return id === '~system/RestrictedActions' ? id : null }
+    name: 'scene-system-modules',
+    // The scene runtime supplies the `~system/*` virtual modules. Tests provide their methods with vi.mock.
+    resolveId(id) { return id.startsWith('~system/') ? id : null }
   }],
   resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
   // The shared sources live outside this app (vite.shared.ts), like in vite.config.ts.

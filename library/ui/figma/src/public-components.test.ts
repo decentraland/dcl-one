@@ -466,7 +466,8 @@ describe('when the offline component guard checks a staged internal plan', () =>
       git('add', '--', scope + 'generation.json')
       expect(publicComponentsProblems(root, lock)).toEqual(['changed public file: generation.json'])
     })
-    it('should reject a stale table after a module and its metadata change', () => {
+    // Stops at the table digest, like the tamper case above: a real module change still needs the table resealed.
+    it('should refuse a module change whose regenerated generation.json the table does not pin', () => {
       put(installer, '// changed implementation\n')
       source.files[installer] = { sha256: hash('// changed implementation\n') }
       git('add', '--', installer)

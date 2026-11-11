@@ -163,6 +163,14 @@
           "kind": "regular"
         },
         {
+          "name": "CommunityVoiceStatus.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "CommunityVoiceUpdate.ts",
+          "kind": "regular"
+        },
+        {
           "name": "Delivery.ts",
           "kind": "regular"
         },
@@ -316,6 +324,34 @@
         },
         {
           "name": "Vector3.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatAction.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatConnection.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatKind.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatParticipant.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatRole.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatState.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatStatus.ts",
           "kind": "regular"
         },
         {
@@ -1968,7 +2004,71 @@
       "path": "library/ui/apps/hud/assets/voice",
       "entries": [
         {
+          "name": "accept-request.png",
+          "kind": "regular"
+        },
+        {
+          "name": "call-blocked.png",
+          "kind": "regular"
+        },
+        {
+          "name": "call-error.png",
+          "kind": "regular"
+        },
+        {
+          "name": "call.png",
+          "kind": "regular"
+        },
+        {
+          "name": "end-call.png",
+          "kind": "regular"
+        },
+        {
+          "name": "end-stream.png",
+          "kind": "regular"
+        },
+        {
+          "name": "hand-notification.png",
+          "kind": "regular"
+        },
+        {
+          "name": "hand.png",
+          "kind": "regular"
+        },
+        {
           "name": "hear.webp",
+          "kind": "regular"
+        },
+        {
+          "name": "join-stream.png",
+          "kind": "regular"
+        },
+        {
+          "name": "leave-stage.png",
+          "kind": "regular"
+        },
+        {
+          "name": "mic-off.png",
+          "kind": "regular"
+        },
+        {
+          "name": "mic-on.png",
+          "kind": "regular"
+        },
+        {
+          "name": "people.png",
+          "kind": "regular"
+        },
+        {
+          "name": "raise-hand.png",
+          "kind": "regular"
+        },
+        {
+          "name": "reject-call.png",
+          "kind": "regular"
+        },
+        {
+          "name": "reject-request.png",
           "kind": "regular"
         },
         {
@@ -1984,7 +2084,31 @@
           "kind": "regular"
         },
         {
+          "name": "speaking-feedback.png",
+          "kind": "regular"
+        },
+        {
           "name": "speaking.webp",
+          "kind": "regular"
+        },
+        {
+          "name": "stream-active.png",
+          "kind": "regular"
+        },
+        {
+          "name": "stream-badge.png",
+          "kind": "regular"
+        },
+        {
+          "name": "stream-large.png",
+          "kind": "regular"
+        },
+        {
+          "name": "stream-listening.png",
+          "kind": "regular"
+        },
+        {
+          "name": "stream-small.png",
           "kind": "regular"
         }
       ]
@@ -2163,6 +2287,14 @@
         },
         {
           "name": "IconButton.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "KebabMenu.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "KebabMenu.tsx",
           "kind": "regular"
         },
         {
@@ -2479,6 +2611,10 @@
           "kind": "directory"
         },
         {
+          "name": "voiceChat",
+          "kind": "directory"
+        },
+        {
           "name": "welcome",
           "kind": "directory"
         },
@@ -2533,6 +2669,10 @@
           "kind": "regular"
         },
         {
+          "name": "CommunityStreamBanner.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "ConversationMenu.tsx",
           "kind": "regular"
         },
@@ -2562,6 +2702,10 @@
         },
         {
           "name": "chatText.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "dmStateCopy.ts",
           "kind": "regular"
         },
         {
@@ -3264,6 +3408,35 @@
       ]
     },
     {
+      "path": "library/ui/apps/hud/features/voiceChat",
+      "entries": [
+        {
+          "name": "SceneVoiceChatBanner.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatPanel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "VoiceChatPanel.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "callGate.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "streamHere.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "voiceChatToasts.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/apps/hud/features/welcome",
       "entries": [
         {
@@ -3740,6 +3913,14 @@
           "kind": "regular"
         },
         {
+          "name": "voiceChat.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "voiceChatToasts.test.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "voiceSpeaking.test.tsx",
           "kind": "regular"
         },
@@ -3983,7 +4164,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "5bce742e42c3bbec2c98f6ccf8b309703c4fbd7ea60bd20e2262d56b2d537c97"
+      "sha256": "bf0997044aea94b0fb26d4b8ad9aed0d2b4bf7852ca7ff7fc395af22688287b3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -3995,7 +4176,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "4e25ff03b2f0a50a14bfcbc2bc1c75ca317cf5dbb1534f9de74c3e0cff6f2747"
+      "sha256": "fa451d27179d36b87de2d9e0f019cfd1f32fc70fee97b769cb6ed1bd0b865747"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -4032,6 +4213,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
       "sha256": "7ac89d5678a8529be8f254d085258633d6323c7ef027f85e5017455929d816ab"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
+      "sha256": "c22272b9225d0651dc02904950adc86c8080e74c450d56a3c04dec20cffe766f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/wearables.ts",
@@ -4107,7 +4292,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "fd51991b5896ca8d7ec17dccdcf308078c7bafed01c648f495ae48b381e74c90"
+      "sha256": "305495d569ecf8f6e77434e7edbb190ce3eb51803b481292c05b7b72ce13ccc6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
@@ -4204,6 +4389,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
       "sha256": "4b376514a743d34c422d953ccd5bf44d0da275d754640c3df2544d920a2ac358"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
+      "sha256": "012d587a425705d13ed1ef9876c6c6a0d32f5b5918033f3d849f26ffe9712ca7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
@@ -4307,7 +4496,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "a41cfe5094200a3f995295947b5266ab86d658ce4e397b4eaeb04e4b4de5dde1"
+      "sha256": "929a58b7ee9df1afd0ab9620423f9b2ed7edc7c09ebee9004e722a4a600c43be"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -4319,7 +4508,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vitest.config.ts",
-      "sha256": "674b9f0ddec08f8d8bcef98f97870750c4352876a001ff6c678037173c619a4a"
+      "sha256": "561ceb698b125489346e96c96bec4c8a88c8e721196e777724b4a8f2f269fd35"
     }
   ],
   "roots": [
@@ -4357,6 +4546,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRandomizerTokens.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorHostSigning.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/editorScene.test.ts",
@@ -4463,6 +4653,14 @@
     {
       "path": "library/explorer-core/engine/generated/CommunityMemberConnectivityData.ts",
       "sha256": "b8cc122239dc9a2e7f319cb86b2d68326e96b27839f5e9031ad94729edc8384a"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/CommunityVoiceStatus.ts",
+      "sha256": "767085569b5885395a61cbd41a78b2a051e6997914b1e0a28f5836f6400a7572"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/CommunityVoiceUpdate.ts",
+      "sha256": "e3683b15bd8e0fb4f2c868a4481e768d3b37045e386b7ec2655f2fd534ccd7db"
     },
     {
       "path": "library/explorer-core/engine/generated/Delivery.ts",
@@ -4621,6 +4819,34 @@
       "sha256": "009477cc0fe832905e3e1c39918ee7c3557a8285fdfe2053d314245900cffb52"
     },
     {
+      "path": "library/explorer-core/engine/generated/VoiceChatAction.ts",
+      "sha256": "d49024d119c062848ddb97985323bca1081c7c30b5e5e4a84d67ea0dcad39423"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/VoiceChatConnection.ts",
+      "sha256": "e3d9f8ff9134d01c267ca381520090e5f0acf6ab0132f9c9bed8455da5e44800"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/VoiceChatKind.ts",
+      "sha256": "32fd9da8ce6ae0f7f5ce8d90660597630095f8bb192b98da30c8397eb1f7bf9a"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/VoiceChatParticipant.ts",
+      "sha256": "6af2666184fc5b090ed3e9e3628cf32448e63054cc6200f98d92a3f222e44315"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/VoiceChatRole.ts",
+      "sha256": "f2fa8b20f486cf6f15e4169b67e1596d224011fc0083b5558e81aeafa8f0c879"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/VoiceChatState.ts",
+      "sha256": "643b607cb799190e78622be27e2bfc496fcb417cff76e05fcdabbe3576063dbb"
+    },
+    {
+      "path": "library/explorer-core/engine/generated/VoiceChatStatus.ts",
+      "sha256": "8537d546093dde004220c315320a334d2e37a60aa47346086d7d25c5ce8811fc"
+    },
+    {
       "path": "library/explorer-core/engine/generated/VoiceMessage.ts",
       "sha256": "fe9cb8b3e502977533e2f562a7f193965b2c913dff3f13654904de38b9d0a16b"
     },
@@ -4642,7 +4868,7 @@
     },
     {
       "path": "library/explorer-core/engine/generated/index.ts",
-      "sha256": "43bb385252569932078920cecfb158dc9605fc307540d34ca9561aa6b24bc3ef"
+      "sha256": "872a92f9f4166e371a54d673ec22f02f86aa654f49f5c4bd2d5f88547159feff"
     },
     {
       "path": "library/explorer-core/engine/generated/languageTable.ts",
@@ -4670,7 +4896,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "5281385262a8c31de5266699eaa908b9a1872ff7c19baced1ae4b951a31de0a0"
+      "sha256": "32eff693c1aca39707028825ad22950a9906ff776afbd4570fdb3d0046a50c12"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4694,7 +4920,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "51cc0524a73e33a1e80de36988bfd3fd502de05e5d0eec3ae13aadae9381610f"
+      "sha256": "edde6e3dc8a13d1370460382028e901711dcaffd33652267524c9ce393e1072e"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5066,7 +5292,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "d983c072392e570b14fffd80ca3b1abb71413ced9c4f23c20b3677d53f51e74e"
+      "sha256": "b1ed494cc3933a47bfc6070b3e6f6184233fd5197bf945ec80caf207b953fada"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -5813,8 +6039,72 @@
       "sha256": "c6dc0e68a48f20d3be726d729e7173ce41b9d393bee91387c4e0a731ae567236"
     },
     {
+      "path": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "sha256": "f3ac7a99385a9b2ef0a7bae0b8a4c2e10bcba622c37576b97308f8b7ce7e6fb0"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "sha256": "7c715603d67a318949cebf07de8b550a3fc502e80f7c1050fea768ddba547855"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/call-error.png",
+      "sha256": "fe84a1c9f28defba5bedc349d2f768db31a96f14c9385f53be8caf181949829b"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/call.png",
+      "sha256": "4cf3380283225d1c8e6a64ecdb5db6ca38fbf0a43c488625d6536f467df9e3a7"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/end-call.png",
+      "sha256": "42ff54c676d81a481b7ed16098a5bda87dcb8509cd79f6a896ea2d600f27e771"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "sha256": "dd70e05a8db6b552a0c541a42e65ceaf5d83f74dddcb323aac3fc8e942eaca2c"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "sha256": "ac6c7419212ad7daa95d11df01688d2fdd73b228b15a7805fa525769871fb66a"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/hand.png",
+      "sha256": "4b66dff3da0c3564ce3222c00c780fd339278bf5ed5682ebf889d21e284f08ab"
+    },
+    {
       "path": "library/ui/apps/hud/assets/voice/hear.webp",
       "sha256": "7a2a8a46f1d8c23f525ba102a7310b47b1fe1d381095ef80884eb8fb4ff84b18"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "sha256": "d79ba7a841b5a6d2d517e5b86ac7a121b4cb339aad182dd8ccd2a10ff76cc79b"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "sha256": "fbd452122327ec5fb71e522b358ff9004a7caf6bd3cc8c6117541aec3c8a1fc2"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "sha256": "55c5e4661f8fc824f0d1a349aeea895350a7107782c316d8eac2d32f2c9421a1"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "sha256": "1a860d1b55f6148b19693e5f378250bfbd4a33edf760bcb241a68ffbffd3b958"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/people.png",
+      "sha256": "6ffdc6a82c1942ac0d82c6cdad133597ea55a72b5fded2b9c04bf844c1ad769e"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "sha256": "ef3eae03a2ee005355d46ddfccd08ec206904ac617e23d61b2986667ed154dc5"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "sha256": "afcc9d9196c280ac55665ff1b265ef9b42643e0ac692cf787cf5e9a5200f38c5"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/reject-request.png",
+      "sha256": "3bd26a3b4bc53a13244d8a7353f773c0f75d5ff8b705056c0f2f853fb4ae6492"
     },
     {
       "path": "library/ui/apps/hud/assets/voice/slider-handle.webp",
@@ -5829,8 +6119,32 @@
       "sha256": "e7f8089e8529db8082a86dd4a9c77e19720a4c3e2de52e50b01c38ebed35c24b"
     },
     {
+      "path": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "sha256": "085bf4945c76062a8869e68bf6f6199a13512414838a1ca68a69b538c2a73846"
+    },
+    {
       "path": "library/ui/apps/hud/assets/voice/speaking.webp",
       "sha256": "f4d022536aafae6128058771c48245c3c675a9bf7dcef7b971001270cb4cfe0f"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/stream-active.png",
+      "sha256": "efa82a240869962ba6fbd353defbbce9bd0f0e412d5b924292e6ad52273eaed1"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "sha256": "b01bda7af41795fbb4da281067c9c02af5f67403731de5d16d3ecbf314173a8d"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/stream-large.png",
+      "sha256": "41bdad4fc8e918ebdf6d142919d31f19101fed1306ca003c735d5106d3b49f28"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/stream-listening.png",
+      "sha256": "9cc2403ef8334298ca2322a99cf45aa9a262a99452c587c7a24b1f38f2264417"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "sha256": "026a73cc4faee6f2980ad7f2a31d5098e02ebf1513e7c2d86eb6bc2def31a61d"
     },
     {
       "path": "library/ui/apps/hud/components/CatalystImg.tsx",
@@ -5994,11 +6308,19 @@
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.module.css",
-      "sha256": "802d66d596848d2fea6d966f293e45b103abe13a5a3287884eb67901d39bf006"
+      "sha256": "1ada78b91b6910c7bc0f5e9da5686ed0e8a3b0668a4867f2934a4097076d933a"
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.tsx",
-      "sha256": "81d8ca41230bf1514cb34ab55ba4dfb6f43e73ecafaebe1e6b906e2427237691"
+      "sha256": "3b63633997507f3a152b7ca55fd8e1f60ef251ffde2dbb7f94c2308752d507ec"
+    },
+    {
+      "path": "library/ui/apps/hud/design/KebabMenu.module.css",
+      "sha256": "14b2fc4765524f28fac9e32ed78697b99341265e7faa745af704b375d7407313"
+    },
+    {
+      "path": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "sha256": "f1b2712b9942d1fecf45de47a6973a7e453818a5e251c1563dfffc33ec2105ef"
     },
     {
       "path": "library/ui/apps/hud/design/MaskIcon.module.css",
@@ -6082,7 +6404,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "92c1459fe09bdf4592f439db57fa6666cf8b27c99885dfda70b66dbe947192d1"
+      "sha256": "0046f5c48af305bee2706d393382897b9cc33569bc8c7daf86bc5f2e8bf505e1"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -6170,7 +6492,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "9b6cdc2724df880e04dc7360652325b8a64e3040a648fe942c4f05d919e455c0"
+      "sha256": "8ed7cc66e152786c3c4ec4f0f40a74c6f37e2b65c1c73fe22ad038472665d51c"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -6210,23 +6532,27 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "sha256": "27b2a2aa54c30f9ac698b0356a32b7442ef337e42e009910158cc1009167d836"
+      "sha256": "5e3a8edc55d7e376fcded5904dcd0fd410c2a27fd9e4da0c0ca72b3346c71533"
     },
     {
       "path": "library/ui/apps/hud/features/chat/Chat.tsx",
-      "sha256": "3b86ca57e7647c7dc47a5b23035a268ac6023071806f2981d3a1a893e27a0784"
+      "sha256": "3b666dfbfabeec74fa8b605dd16a0e968d942315f4f7175364af8c6e62f5d67a"
     },
     {
       "path": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
       "sha256": "77e4eb7af536d9217d5ef796fae90b60ea8a4fd814f4e1a31abdf2298598961c"
     },
     {
+      "path": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "sha256": "e610151b7056138a0e9d386677a51b8558a94a4c8d72e6f2ad5cfe672cf4906c"
+    },
+    {
       "path": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "sha256": "b80c49268b592fefb9da1d86ddcbbddce9bc4b5aa867170a97d7458fbf1a9286"
+      "sha256": "7c180e8373a643fbef576119b266a95f5231d7fda4da1a785a828c7077d28c01"
     },
     {
       "path": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
-      "sha256": "1f31a5370051ef0bc211c7780200ada3239e2b3b39c9c0174a6b440d0d900134"
+      "sha256": "c791278aa218750954d6b147cf16390c413d564d4f1b5ec6f85a4c6693af27a8"
     },
     {
       "path": "library/ui/apps/hud/features/chat/EmojiPicker.module.css",
@@ -6242,7 +6568,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "06a0fc4e9eb71aa0fc2f1aa7e057af646ad58a5be269a9a99296bf2e947b7384"
+      "sha256": "4c3bbb361f652a302d983c8256801b54e228b09db9c30187cf89983885e0eb80"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -6251,6 +6577,10 @@
     {
       "path": "library/ui/apps/hud/features/chat/chatText.tsx",
       "sha256": "d36b255137604cc2c16a4b74e8ba9aec3b4236836b7acc9175aecafef5bfdce2"
+    },
+    {
+      "path": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "sha256": "ff772edd72209a888e6cf4878c0f7f88ab8ce0384b301a0588e57b87f2a24715"
     },
     {
       "path": "library/ui/apps/hud/features/chat/emojiData.ts",
@@ -6274,11 +6604,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "bf2fd905a479e4f994377c014384708fd06382d0e9b79cfcc0fcd9edf17479a1"
+      "sha256": "c96225142fe960d33a868e5904b384fb02629035f7326782b9c8b51e6e151a40"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "19d907d146cb509b0e343ac441be525a21ec490a940cc0e84085fd7ebccc07c5"
+      "sha256": "eb7d1b5faea158a9974e7dda127d93e790a2c3d5eaa066f8fd37d83506183d7a"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -6294,7 +6624,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "a1104be6b42efabf69a109d7698a28c8385bd4c8ed900542e00969f823b3726c"
+      "sha256": "2991e7b05212a0f4975049073ccc14a6d4f4b5644e7f4ce57b1b8aac5fd68d50"
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.module.css",
@@ -6582,7 +6912,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
-      "sha256": "df8b157d4e3572c507807ccfd51a96dde7843824acfb242ffc11269b40c40dc9"
+      "sha256": "3443c2a721972dbec572326d3500220e1cae2131b158fbadfe99be940b91230d"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationsPanel.module.css",
@@ -6590,11 +6920,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationsPanel.tsx",
-      "sha256": "ae87130df3c7961c8ffa1d14f3cf69c249d383e6c2c906ab6b4438f3c065190c"
+      "sha256": "33cbb884edb655738789634a4f13009028f47c68c80c064753b2fdcffdd0bde3"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/summary.ts",
-      "sha256": "ab6430d856879221a88551000a689a8108062e6c582b463e81710349abf8a093"
+      "sha256": "00897800b3d28a01b71ea1f26b56bea6581432e1d9a4d70897013627f14731a3"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.module.css",
@@ -6682,7 +7012,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/Passport.tsx",
-      "sha256": "cbc42e4bdad7ddd75766c6dca6eedf5db00242807a6e3c5d8119d938525be137"
+      "sha256": "d26961eebbd607f12a56b2c001f660c10efc4238edf9331b35c2167aa165f021"
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfileEditForm.module.css",
@@ -6706,11 +7036,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/profile/ProfilePassport.tsx",
-      "sha256": "c5006a255723c2e2a5971037320493484e3a9600f34078ad841f2df2f84b8863"
+      "sha256": "ded3b7b7f0f4dbaccce33ad3d367b08a9dd7ffa732c3e35fb33bc5f019853b10"
     },
     {
       "path": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
-      "sha256": "4460c1d24ee7f92db81248b88effd09b2fc37e157014aeedec0f5c5f71bf12a2"
+      "sha256": "c787a57915ff37740dd8b62e984c61949a8aa4ecf3297d5f874a562d06da9402"
     },
     {
       "path": "library/ui/apps/hud/features/rewards/RewardPopup.module.css",
@@ -6730,7 +7060,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/SessionContext.tsx",
-      "sha256": "bbde0014b1f2a3f1119c013f17564d8d8e42ca933790dc1704b8e356b9b625e4"
+      "sha256": "fa5b7614bff920adbb574dbff830fec8a87cdf17adcd67280f90550093c73480"
     },
     {
       "path": "library/ui/apps/hud/features/session/TravelError.tsx",
@@ -6746,7 +7076,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "35b149286f491819bab6cd8e1701b0df947e460a5fcad1ccc2698786e7322cdd"
+      "sha256": "dd95f4f457fed9710012ab71d0be759b038ea783dee0889ad38b76ae61102c7f"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6778,7 +7108,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "a399ac653e203497f8476f773f00e61dc08533d84c2542ab07b63507a56d1bb3"
+      "sha256": "c9681aaa3f3c4f86661b5e1c7b20f21ff5a919ab57b8685b07c5645fb204a806"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
@@ -6802,7 +7132,31 @@
     },
     {
       "path": "library/ui/apps/hud/features/voice/useNearbyVoice.ts",
-      "sha256": "a63fc92ee1ccb4d29844503f487c62e04a58f701fe866b7b4c126d204c5bf5e2"
+      "sha256": "1c1234a700a5061319808c0c05ec94094168e88908e13abd5a7c6f44b7cdc657"
+    },
+    {
+      "path": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "sha256": "fc4d0225d095b30b7024a03083d5615638b87815de4fac336a3c68704b73e2f2"
+    },
+    {
+      "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "sha256": "cc14cd256543882d801d7ed82a132cec7d8bdad1542732f8b32269229283190c"
+    },
+    {
+      "path": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "sha256": "09f74a0329b440f9d408972ad90bab603a9d36857c2f86f054f4458b79d5de03"
+    },
+    {
+      "path": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "sha256": "cd23cdfe2a18a82e3e512faf69f78c50dc07a5502efa9980911dcfa308205ccb"
+    },
+    {
+      "path": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
+      "sha256": "95a464a879740ae07e1b1d8e37fdccb597dfb412f919152eccf2beeab33317d7"
+    },
+    {
+      "path": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "sha256": "015ddedbede7da948777ebcb522f1ed28bb9688e59e9962acb502177babc5bda"
     },
     {
       "path": "library/ui/apps/hud/features/welcome/WelcomePage.module.css",
@@ -6842,7 +7196,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "ec35a9be691519ca3b456b5d8074101e9f257ef1be672fbf0bbcbbb368301424"
+      "sha256": "9841f47f557007cecc54f7208e86f45ff61263bba8936e0d5ad9e1b0263ebc0a"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -6886,7 +7240,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "b7db64c744106313cab8006ae56b900388b6c678a01d13c2c22ca69f7c6e12a0"
+      "sha256": "6046be4e7f744dc9d7758db4eff096ad1e7894ef0f7aed412bbedfc58b95c212"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -6986,7 +7340,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
-      "sha256": "d8961392fb53276c7bea120a235d34b574d010c01b0ca0dcd0b7647df861b950"
+      "sha256": "027806a59a95bff0fa4097f662dc74dec1a929d52b2c6edad8e6726d3e2d1b64"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communityChat.test.tsx",
@@ -7082,7 +7436,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/nearbyVoice.test.tsx",
-      "sha256": "6dab4bd51f82692529e75091ad8d78d234a7c7261746c388886420b018f6d6d0"
+      "sha256": "4e127ce17275325573854841912b53133f621b2e42d4e1b81fbca9fc466b898e"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.clicks.test.tsx",
@@ -7098,7 +7452,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/notifications.toast.test.tsx",
-      "sha256": "34815b6efeef0dc551c9499fe672e4bef4ae83178cb6ad2ec1263d4f9132897c"
+      "sha256": "808ed34ecca30eb41500bf5904ea6f982323b8e03bca7fba02c900a02c11a890"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/passport.container.test.tsx",
@@ -7162,7 +7516,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebar.test.tsx",
-      "sha256": "c93ab31e5354cd8d21def21f0376857dd12781ec46b65dd5662cbaa684c201d3"
+      "sha256": "a8bf719e9da1395d410fd80a16a0b89d1fc7bc76db43d8118940d1199e805803"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/sidebarAutoHide.test.tsx",
@@ -7175,6 +7529,14 @@
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "sha256": "410094c5575dbbab792f775142cea4b3051957ecab6786823ed098d2113d7d50"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "sha256": "a6759fad03eea59719d2b064d0f2a7a875ac80f931b5988b83e166b52354bd21"
+    },
+    {
+      "path": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",
+      "sha256": "b95d3adc81a300ef491e2730eed01e0b999b6775f8354e318878e97eafbf48f9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceSpeaking.test.tsx",
@@ -7706,6 +8068,36 @@
     },
     {
       "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceStatus.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceStatus.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceStatus.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceUpdate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceUpdate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceUpdate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
       "to": "library/explorer-core/engine/generated/Delivery.ts",
       "kind": "native:runtime"
     },
@@ -8287,6 +8679,111 @@
     {
       "from": "library/explorer-core/engine/generated/index.ts",
       "to": "library/explorer-core/engine/generated/Vector3.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatAction.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatAction.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatAction.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatConnection.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatConnection.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatConnection.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatKind.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatKind.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatKind.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatParticipant.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatParticipant.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatParticipant.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatRole.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatRole.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatRole.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatState.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatState.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatState.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatStatus.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatStatus.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/engine/generated/index.ts",
+      "to": "library/explorer-core/engine/generated/VoiceChatStatus.ts",
       "kind": "test:runtime"
     },
     {
@@ -10496,6 +10993,51 @@
     },
     {
       "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/welcome/WelcomePage.tsx",
       "kind": "native:runtime"
     },
@@ -11140,6 +11682,81 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/Glyphs.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/Glyphs.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/Glyphs.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/KebabMenu.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/KebabMenu.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "to": "library/ui/apps/hud/design/KebabMenu.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/design/MaskIcon.tsx",
       "to": "library/ui/apps/hud/design/MaskIcon.module.css",
       "kind": "native:runtime"
@@ -11426,6 +12043,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/Avatar.tsx",
       "kind": "native:runtime"
     },
@@ -11617,6 +12249,21 @@
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/IconButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -12712,6 +13359,21 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/IconButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -14621,6 +15283,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -14677,6 +15369,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/CommunityHeader.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
       "kind": "test:runtime"
     },
     {
@@ -14756,6 +15463,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/chat/emojiData.ts",
       "kind": "native:runtime"
     },
@@ -14816,6 +15538,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "native:runtime"
     },
@@ -14827,6 +15564,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/Chat.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/Chat.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
       "kind": "test:runtime"
     },
     {
@@ -14950,18 +15702,108 @@
       "kind": "test:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/chat/players.png",
       "kind": "native:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/chat/players.png",
       "kind": "production:runtime"
     },
     {
-      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/chat/players.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-large.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-large.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-large.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/chat/Chat.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/chat/Chat.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/chat/Chat.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
       "kind": "test:runtime"
     },
     {
@@ -14977,21 +15819,6 @@
     {
       "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "to": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "to": "library/ui/apps/hud/features/chat/Chat.module.css",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
-      "to": "library/ui/apps/hud/features/chat/Chat.module.css",
       "kind": "test:runtime"
     },
     {
@@ -15022,6 +15849,36 @@
     {
       "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
       "to": "library/ui/apps/hud/assets/chat/close-thin.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-active.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-active.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-active.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-listening.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-listening.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-listening.png",
       "kind": "test:runtime"
     },
     {
@@ -15067,6 +15924,36 @@
     {
       "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
       "to": "library/ui/apps/hud/features/chat/chatIdentity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ConversationRail.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
       "kind": "test:runtime"
     },
     {
@@ -15277,6 +16164,21 @@
     {
       "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
       "to": "library/explorer-core/lib/identity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
       "kind": "test:runtime"
     },
     {
@@ -15550,6 +16452,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/communities/CommunityCreateModal.tsx",
       "to": "library/ui/apps/hud/assets/backpack/icon-close.webp",
       "kind": "native:runtime"
@@ -15652,6 +16569,51 @@
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/explorer-core/lib/relationship.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
       "kind": "test:runtime"
     },
     {
@@ -15787,6 +16749,21 @@
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
       "kind": "test:runtime"
     },
     {
@@ -18851,6 +19828,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
       "to": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
       "kind": "native:runtime"
     },
@@ -18877,6 +19869,21 @@
     {
       "from": "library/ui/apps/hud/features/notifications/summary.ts",
       "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
       "kind": "test:runtime"
     },
     {
@@ -19765,6 +20772,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/profile/ProfileEditForm.tsx",
       "to": "library/explorer-core/features/profile/profileFieldOptions.ts",
       "kind": "native:runtime"
@@ -20137,6 +21159,21 @@
     {
       "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
       "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
       "kind": "test:runtime"
     },
     {
@@ -21086,6 +22123,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
       "kind": "native:runtime"
     },
@@ -21686,6 +22738,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -22012,6 +23079,531 @@
     {
       "from": "library/ui/apps/hud/features/voice/useNearbyVoice.ts",
       "to": "library/explorer-core/features/voice/nearbyVoicePrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/explorer-core/lib/identity.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call-error.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call-error.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call-error.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-call.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-call.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-call.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/hand.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/hand.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/hand.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/people.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/people.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/people.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/reject-request.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/reject-request.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/reject-request.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "to": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "kind": "test:runtime"
     },
     {
@@ -23572,6 +25164,21 @@
     {
       "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
       "to": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/communityChat.render.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
       "kind": "test:runtime"
     },
     {
@@ -25538,6 +27145,126 @@
       "from": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
       "to": "library/ui/apps/hud/test/harness.tsx",
       "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "kind": "native:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "kind": "production:dynamic"
+    },
+    {
+      "from": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
+      "kind": "test:dynamic"
     },
     {
       "from": "library/ui/apps/hud/test/hosted/voiceSpeaking.test.tsx",
@@ -26955,6 +28682,11 @@
       "kind": "test:runtime"
     },
     {
+      "from": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
+      "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
+      "kind": "test:dynamic"
+    },
+    {
       "from": "rendering/bevy-explorer/source/react-web/src/test/editorHost.test.tsx",
       "to": "library/explorer-core/engine/protocol.ts",
       "kind": "test:runtime"
@@ -27296,6 +29028,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceStatus.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/CommunityVoiceUpdate.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/engine/generated/Delivery.ts",
       "kind": "type"
     },
@@ -27487,6 +29229,41 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/engine/generated/Vector3.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatAction.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatConnection.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatKind.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatParticipant.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatRole.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatState.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/engine/generated/VoiceChatStatus.ts",
       "kind": "type"
     },
     {
@@ -28161,6 +29938,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/KebabMenu.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/MaskIcon.tsx",
       "kind": "type"
     },
@@ -28316,6 +30098,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/CommunityStreamBanner.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/ConversationMenu.tsx",
       "kind": "type"
     },
@@ -28342,6 +30129,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/chat/chatText.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/chat/dmStateCopy.ts",
       "kind": "type"
     },
     {
@@ -28772,6 +30564,31 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/voice/useNearbyVoice.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voiceChat/SceneVoiceChatBanner.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voiceChat/VoiceChatPanel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voiceChat/callGate.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voiceChat/streamHere.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/voiceChat/voiceChatToasts.tsx",
       "kind": "type"
     },
     {
@@ -29222,6 +31039,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/hosted/voiceChatToasts.test.tsx",
       "kind": "type"
     },
     {
@@ -32236,6 +34063,126 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/accept-request.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call-blocked.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call-error.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call-error.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call-error.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/call.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/end-call.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/end-call.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/end-call.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/end-stream.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/hand-notification.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/hand.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/hand.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/hand.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/hear.webp",
       "kind": "native:asset"
     },
@@ -32247,6 +34194,126 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/hear.webp",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/join-stream.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/leave-stage.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/mic-off.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/mic-on.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/people.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/people.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/people.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/raise-hand.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/reject-call.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/reject-request.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/reject-request.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/reject-request.png",
       "kind": "test:asset"
     },
     {
@@ -32296,6 +34363,21 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/speaking-feedback.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/speaking.webp",
       "kind": "native:asset"
     },
@@ -32311,353 +34393,78 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-active.png",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/chat/EmojiPicker.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-active.png",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-active.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/editorHost/CreatePage.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-badge.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/stream-large.png",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/editorHost/CreatePage.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-large.png",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/editorHost/DeployConfirm.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-large.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/stream-listening.png",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/editorHost/DeployConfirm.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-listening.png",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-listening.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
       "kind": "native:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/emotes/EmoteSlot.tsx",
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
       "kind": "production:asset"
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/emotes/EmotesWheel.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/emotes/EmotesWheel.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/engine/BootProgress.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/engine/BootProgress.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/CrashModal.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/CrashModal.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/RealmErrorModal.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/error/RealmErrorModal.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/friends/FriendsPanel.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/EntryParamsDialog.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/EntryParamsDialog.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/FlagStep.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/FlagStep.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/IntegratedGpuGuide.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/IntegratedGpuGuide.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/MobileGate.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/MobileGate.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/lobby/LobbyCards.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/lobby/LobbyHome.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/login/GuestStartPage.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/login/GuestStartPage.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/login/LoadingAndLogin.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/login/LoadingAndLogin.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/minimap/MinimapSettings.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/minimap/MinimapTiles.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/notifications/NotificationsPanel.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/notifications/NotificationsPanel.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/pointer/Pointer.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/pointer/Pointer.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/profile/ProfilePanel.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/profile/ProfilePanel.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/session/SceneLoadingOverlay.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/session/SceneLoadingOverlay.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/settings/KeyBindingsTab.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/settings/KeyBindingsTab.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/settings/SettingsPanel.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/shop/ShopPage.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/shop/ShopPage.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/skybox/SkyboxMenu.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/voice/NearbyVoiceWidget.tsx",
-      "kind": "production:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/worldAccess/WorldPasswordDialog.tsx",
-      "kind": "native:asset"
-    },
-    {
-      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "to": "library/ui/apps/hud/features/worldAccess/WorldPasswordDialog.tsx",
-      "kind": "production:asset"
+      "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "test:asset"
     }
   ]
 }

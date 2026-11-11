@@ -1,6 +1,6 @@
 ---
 name: maintain-figma-library
-description: Use when porting a figma-design-system capture into library/ui, refreshing the generated foundations or components, acting on a "Missing library mapping" report from the implement-figma-design skill, adding a public component mapping, or answering why a component is needs-manual. Triggers on "port the capture", "refresh library/ui from Figma", "port prepare", "port verify", "port-verification.json", "needs-manual", "add this component to the library".
+description: Use when porting a figma-design-system capture into library/ui, refreshing the generated foundations or components, acting on an "Unresolved component" report from the implement-figma-design skill, adding a public component mapping, or answering why a component is needs-manual. Triggers on "port the capture", "refresh library/ui from Figma", "port prepare", "port verify", "port-verification.json", "needs-manual", "add this component to the library".
 ---
 
 # Maintain the Figma-generated library
@@ -9,7 +9,7 @@ You change `library/ui` from the capture that figma-design-system (FDS) owns. Yo
 
 ## 1. Intake
 
-- **A consumer report** ("Missing library mapping": component, code, variant properties, library version, capture revision). A `mapping-missing` component is a known library component without a public mapping. An identity code (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) is not a missing mapping: check the name and the capture first.
+- **A consumer report** ("Unresolved component": component, code, variant properties, library version, capture revision). A `mapping-missing` component is a known library component without a public mapping. An identity code (`identity-not-found`, `identity-ambiguous`, `identity-uncertain`) is not a missing mapping: check the name and the capture first.
 - **A capture refresh**: the new FDS commit to pin.
 
 Before any work, report the `needs-manual` flags and their reasons for the components involved (`pnpm --silent figma diff` and the sync report list them; `figma/MAINTENANCE.md` explains each reason). Never clear a flag to make a count look better. Extractor limits behind a flag (a truncated capture, an unresolved instance) belong to FDS: report them there instead of patching around them here. When generation cannot express a component, start from the hand-written template in `library/ui/templates/component/` and follow `docs/ui-standards.md`.
@@ -22,7 +22,7 @@ For a capture refresh, first point the lock at the new capture: set `revision` a
 pnpm figma port prepare
 ```
 
-It runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write` (it stages `library/ui` first, because lock-digests reads the index), in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), stage `library/ui` again (`git add -A -- library/ui`), rerun `node figma/lock-digests.mjs --write` (it reads the index), and commit.
+It refuses a `library/ui` with changes other than `upstream.lock.json` (commit or remove them first), then runs fetch-source, diff, sync, a second sync that must change nothing, install foundations, install components and `lock-digests --write` (it stages `library/ui` first, because lock-digests reads the index), in that order, and stops at the first stage that fails, naming it. Then record a deviation code for every changed file under `figma/` in `upstream.lock.json` (`sources[0].deviationCodes`, a stable id mapped to its reason, listed in that file's `deviation`), stage `library/ui` again (`git add -A -- library/ui`), rerun `node figma/lock-digests.mjs --write` (it reads the index), and commit.
 
 ## 3. Verify
 
@@ -30,7 +30,7 @@ It runs fetch-source, diff, sync, a second sync that must change nothing, instal
 pnpm figma port verify
 ```
 
-It refuses a tree with uncommitted changes, runs the seven checks (fetch-source, deviations, diff, check-mappings, review-manifest, navbar-bounds, install) against the verified capture, and only when all pass writes `library/ui/port-verification.json` with each check's own counts. A failed check writes nothing and leaves an existing record as it was. Commit the record. `node figma/port-verification.mjs --print-hash` prints the hash the record must name.
+It refuses a tree with uncommitted changes, runs the seven checks (fetch-source, deviations, diff, check-mappings, review-manifest, navbar-bounds, install) against the verified capture, and only when all pass writes `library/ui/port-verification.json` with each check's own counts. A failed check writes no record, leaves an existing one as it was and puts back the files the checks regenerated (the Review catalog, the installs), so the tree stays clean for the next run. The record is written only when HEAD did not move during the checks and the head passes the exemption scan CI runs. Commit the record. `node figma/port-verification.mjs --print-hash` prints the hash the record must name.
 
 The record states what your local run reported. CI checks that it names the head's port inputs and that every result is `pass`; it is not proof that the checks ran, an independent review, an attestation or evidence of live Figma parity. Say so in the pull request, and ask for review of the exact commit proposed for merge.
 
@@ -40,4 +40,4 @@ The privileged key scan reads the URL allowlist from the default branch. A publi
 
 ## 5. Hand back
 
-Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components now resolve (`pnpm --silent figma resolve --mapping-only --name <set name> --variant ...`) so they can rerun the consumer skill.
+Push, read CI, and get CODEOWNERS review at the exact SHA. Then tell the contributor which components now resolve (`pnpm --silent figma resolve --mapping-only --name '<set name>' --variant 'Prop=Value'`; a set name and its values come from the design, so keep them in single quotes and write a `'` inside as `'\''`) so they can rerun the consumer skill.

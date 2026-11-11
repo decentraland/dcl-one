@@ -1,11 +1,27 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { screen } from '@testing-library/react'
+import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../../features/sidebar/Sidebar'
 import { renderSettled, fakeSession } from '../harness'
 
 // The nav rail: its buttons, their order and art, and the voice state.
 describe('sidebar parity', () => {
+  it.each([
+    [true, true],
+    [false, false]
+  ])('Communities carries the live badge when a member community streams (member %s)', async (isMember, shown) => {
+    const s = fakeSession()
+    s.voiceChat = { ...s.voiceChat, active: [{ communityId: 'c1', communityName: 'C', isMember, positions: [], worlds: [], participantCount: 3, moderatorCount: 1 }] }
+    await renderSettled(<Sidebar session={s} />)
+    const badge = within(screen.getByRole('button', { name: 'Communities' })).queryByRole('img', { name: 'A community stream is live' })
+    expect(badge != null).toBe(shown)
+  })
+
+  it('Communities has no live badge while nothing streams', async () => {
+    await renderSettled(<Sidebar session={fakeSession()} />)
+    expect(within(screen.getByRole('button', { name: 'Communities' })).queryByRole('img', { name: 'A community stream is live' })).toBeNull()
+  })
+
   it.each(['Gallery', 'Places'])('%s uses the rail\'s mask art, not a Material glyph', async (name) => {
     await renderSettled(<Sidebar session={fakeSession()} />)
     const button = screen.getByRole('button', { name })

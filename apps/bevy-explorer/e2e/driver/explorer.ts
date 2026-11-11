@@ -153,6 +153,48 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** `/voice`'s actions: ring (`call`), answer (`accept` / `reject`), hang up or leave (`end`), open,
+ *  join or close a community stream, raise the hand, the call mic, and moderation (`deny` turns
+ *  down a raised hand). */
+export type VoiceAction =
+  | ['call', string]
+  | ['accept' | 'reject' | 'end' | 'close']
+  | ['start' | 'join', string]
+  | ['hand', 'up' | 'down']
+  | ['mic', 'on' | 'off']
+  | ['promote' | 'demote' | 'kick' | 'deny', string]
+
+/** The private call or community stream as the HUD sees it: its status
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+  /** `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure. */
+  errorIsNotice: boolean
+}
+
 /** `/community_state`: community chat's routing and counters (no message bodies). */
 export interface CommunityState {
   routerIdentity: string
@@ -174,6 +216,8 @@ export interface VoiceState {
   connected: boolean | null
   rooms: { scene: boolean; state: string }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
 }
 
 export interface ScreenPosition {
@@ -549,6 +593,12 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and
+   *  refusals). Only queues the request: `/voice_state` `call` follows. */
+  async voice(...action: VoiceAction): Promise<void> {
+    await this.run(['/voice', ...action].join(' '))
   }
 
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */

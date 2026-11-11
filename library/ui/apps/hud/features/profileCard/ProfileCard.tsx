@@ -11,6 +11,7 @@ import { ProfileCardPresentation, type CardAction, type ChatUser, type MenuConte
 import { confirmBlock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { splitName } from '@explorer-core/lib/identity'
+import { startCallWith } from '../voiceChat/callGate'
 
 export function ProfileCard({
   userId,
@@ -55,6 +56,7 @@ export function ProfileCard({
       onReport={(u) => void reportUser(session.profile.data?.address, u.address)}
       onMention={session.chat.mention}
       onMessage={(u) => (onMessage != null ? onMessage(u.address) : session.chat.openConversation(u.address))}
+      onCall={(u) => startCallWith(session, u.address)}
       onViewProfile={() => openPassport(userId)}
       onClose={onClose}
     />

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from 'react'
 import type { EngineSession } from '../session/useEngineSession'
 import { hearOthers, markVoiceUsed, savedVolume, saveVolume, setHearOthers } from '@explorer-core/features/voice/nearbyVoicePrefs'
 
-const VOICE_SETTING = 'Voice'
+const VOICE_SETTING = 'Voice Volume'
 
 export interface NearbyVoice {
   hearing: boolean

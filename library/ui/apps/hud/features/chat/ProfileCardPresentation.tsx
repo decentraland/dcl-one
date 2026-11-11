@@ -7,7 +7,8 @@
 // moderators' actions, then Block · Report.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
+import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, Tooltip, VerifiedBadge } from '../../design'
+import callIcon from '../../assets/voice/call.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
 import { looksClaimed, mentionName } from '@explorer-core/engine/mention'
 import { peekProfile } from '../session/profileStore'
@@ -95,6 +96,7 @@ export function ProfileCardPresentation({
   onReport,
   onMention,
   onMessage,
+  onCall,
   onViewProfile,
   onClose
 }: {
@@ -121,6 +123,8 @@ export function ProfileCardPresentation({
   onMention?: (name: string) => void
   /** Open a DM with the user. */
   onMessage?: (user: ChatUser) => void
+  /** Ring the user (a private voice call). */
+  onCall?: (user: ChatUser) => void
   onViewProfile?: (user: ChatUser) => void
   onClose: () => void
 }): React.JSX.Element {
@@ -168,6 +172,7 @@ export function ProfileCardPresentation({
   const showMention = context !== 'request' && context !== 'blocked' && !community && !!onMention
   // unity-explorer's member menu offers Chat to every other member
   const showMessage = other && (community || (relationship !== 'blocked' && context !== 'blocked')) && !!onMessage
+  const showCall = other && relationship !== 'blocked' && context !== 'blocked' && !!onCall
 
   let cta: React.ReactNode = null
   // the member menu's header button only shows a friendship (to remove it): the row carries the rest
@@ -220,7 +225,7 @@ export function ProfileCardPresentation({
     </button>
   )
   const hasDestructive = !!block || !!report
-  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || hasDestructive || communityActions.length > 0)
+  const hasMenu = !isMe && (!!viewProfile || showMention || showMessage || showCall || hasDestructive || communityActions.length > 0)
   const message = showMessage && (
     <button type="button" className={styles.row} onClick={run(onMessage)}>
       <MessageIcon />
@@ -294,6 +299,12 @@ export function ProfileCardPresentation({
           ) : (
             <>
               {message}
+              {showCall && (
+                <button type="button" className={styles.row} onClick={run(onCall)}>
+                  <MaskIcon src={callIcon} size={16} />
+                  <span>Call</span>
+                </button>
+              )}
               {showMention && (
                 <button type="button" className={styles.row} onClick={() => { onMention?.(mentionName(user.name, user.address, peekProfile(user.address)?.hasClaimedName)); onClose() }}>
                   <MentionIcon />
