@@ -3,7 +3,7 @@
 // Static: nothing on it is interactive.
 
 import { useState } from 'react'
-import { rarityTile } from '../../../design'
+import { rarityTile } from '@hud/design'
 import styles from './ShopItemTile.module.css'
 
 export interface ShopItemTileProps {

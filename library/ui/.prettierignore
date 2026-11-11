@@ -19,3 +19,5 @@ foundations/*
 !foundations/index.ts
 !foundations/foundations.css
 foundations/typography/inter.css
+# The Explorer HUD UI keeps the formatting of the HUD it moved from (react-web).
+apps/hud
