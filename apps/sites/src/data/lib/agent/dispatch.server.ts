@@ -1,7 +1,7 @@
 import type { EntryContext } from "react-router";
 
-import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
-import { toAgentLegalDoc } from "@/data/legal/agent";
+import { LEGAL_DOCS, type LegalKey } from "../../legal";
+import { toAgentLegalDoc } from "../../legal/agent";
 
 import { emptyProfile, type ProfileVM } from "../catalyst/social/profile";
 import { profileKeys } from "../profile/queries";

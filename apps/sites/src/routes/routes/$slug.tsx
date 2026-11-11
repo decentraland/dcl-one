@@ -37,12 +37,19 @@ const ICONS: Record<LegalKey, LegalIconName> = {
 };
 const FALLBACK: PageDefaults = { variant: "config_driven" };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
-  if (params.slug === "seasons") throw redirect("/shop/credits");
+export async function loader({ request, context, params }: Route.LoaderArgs) {
+  if ((params.slug ?? "") === "seasons") {
+    throw redirect("/shop/credits");
+  }
   const key = resolveLegalKey(params.slug ?? "");
-  if (!key) throw new Response(null, { status: 404, statusText: "Not Found" });
-  const { sid, wrap } = await pageLoader(request, FALLBACK);
-  return wrap({ doc: key, sid });
+  if (!key) {
+    throw new Response(null, { status: 404, statusText: "Not Found" });
+  }
+
+  const { sid, wrap } = await pageLoader(request, context, FALLBACK);
+
+  const payload = { doc: key, sid };
+  return wrap(payload);
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
