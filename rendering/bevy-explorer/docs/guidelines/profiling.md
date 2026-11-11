@@ -28,6 +28,13 @@ numbers.
   `inProgressSample.sampledSeconds` counts up to the next one. The snapshot also carries the
   engine memory and its peak during the sample, the scenes' JavaScript heaps summed, the nearby
   player count, the entity count and, with the profiler on, the top 30 scopes.
+- **HUD main thread (web).** The React HUD's cost on the page's main thread over the page's
+  last second: the HUD root's React commits (count and their time; the web HUD is React's
+  profiling build, which reports them) and, where the browser has Long Animation Frame timing
+  (Chromium), the page's frames over 50 ms: their count, the HUD bundle's script time in them and
+  their style and layout time. The commit time is part of the HUD script time, not additional to
+  it. `-` on native and before the first window. A snapshot carries the windows of its sampled
+  time summed (`snapshot.hudMainThreadCost`, `null` when none arrived).
 - **Hiccup threshold.** The larger of 50 ms and two target frame times: 50 ms at 60 FPS and
   above, 66.7 ms at a 30 FPS cap, 50 ms with vsync or uncapped. The target is the session
   override (`/session_graphics fps`), else the configured one.

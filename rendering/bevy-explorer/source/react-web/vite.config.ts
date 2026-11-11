@@ -166,7 +166,12 @@ export default defineConfig(({ command, mode }) => ({
   // The editor host's signing script's own deps: it is outside the page's import graph, so they
   // would be found when it first loads, and a late find reloads the page.
   optimizeDeps: { include: ['@noble/curves/secp256k1.js', '@noble/hashes/sha3.js'] },
-  resolve: { alias: SHARED_ALIASES, dedupe: SHARED_DEDUPE },
+  resolve: {
+    // Web builds resolve react-dom/client to React's profiling build, the production build in
+    // which <Profiler> reports commits.
+    alias: mode === 'native' ? SHARED_ALIASES : [...SHARED_ALIASES, { find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }],
+    dedupe: SHARED_DEDUPE
+  },
   plugins: [
     react(),
     bridgeScenePreview(),

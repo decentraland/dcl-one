@@ -124,6 +124,10 @@ pub(super) fn register(app: &mut App) {
                     "frameTimeBreakdown",
                 ),
                 ("Bottleneck", "bottleneck"),
+                (
+                    "HUD main thread, last window (React commits / commit ms / long frames / HUD script ms / style+layout ms)",
+                    "hudMainThreadCost",
+                ),
                 ("Entities", "entityCount"),
                 ("CPU usage (system % / process %)", "system.cpuUsage"),
                 ("System (OS / CPU / cores / RAM)", "system.info"),
@@ -194,10 +198,26 @@ fn performance_state(
     #[cfg(any(windows, target_os = "linux"))] system_info: Option<
         Res<bevy::diagnostic::SystemInfo>,
     >,
+    #[cfg(target_arch = "wasm32")] hud_cost: Res<crate::web::LatestHudMainThreadCostWindow>,
 ) {
     if input.take().is_none_or(|parsed| parsed.is_err()) {
         return;
     }
+    #[cfg(target_arch = "wasm32")]
+    let hud_main_thread_cost = hud_cost.0;
+    #[cfg(not(target_arch = "wasm32"))]
+    let hud_main_thread_cost: Option<common::perf::HudMainThreadCostDataPoint> = None;
+    let hundredths = |ms: f32| (f64::from(ms) * 100.0).round() / 100.0;
+    let hud_main_thread_cost_cells = hud_main_thread_cost.map(|window| {
+        let frames = window.long_animation_frames;
+        [
+            Some(f64::from(window.react_commit_count)),
+            Some(hundredths(window.react_commit_time_sum_ms)),
+            frames.map(|frames| f64::from(frames.frame_count)),
+            frames.map(|frames| hundredths(frames.hud_script_time_sum_ms)),
+            frames.map(|frames| hundredths(frames.style_and_layout_time_sum_ms)),
+        ]
+    });
     let smoothed = |path: &DiagnosticPath| diagnostics.get(path).and_then(Diagnostic::smoothed);
     let tenths = |ms: f64| (ms * 10.0).round() / 10.0;
     let fps = smoothed(&FrameTimeDiagnosticsPlugin::FPS).or_else(|| {
@@ -275,11 +295,13 @@ fn performance_state(
             "snapshot": snapshot.map(|snapshot| json!({
                 "durationSeconds": tenths(snapshot.snapshot_duration_seconds),
                 "takenAtRealSeconds": tenths(snapshot.taken_at_real_seconds),
+                "hudMainThreadCost": snapshot.hud_main_thread_cost,
             })),
             "cpuFrameTimes": snapshot.map(|snapshot| frame_time_summary_json(&snapshot.cpu_frame_times)),
             "gpuFrameTimes": snapshot.and_then(|snapshot| snapshot.gpu_frame_times.as_ref()).map(frame_time_summary_json),
             "frameTimeBreakdown": breakdown_smoothed,
             "bottleneck": breakdown.bottleneck,
+            "hudMainThreadCost": hud_main_thread_cost_cells,
             "entityCount": latest_entity_count(&diagnostics),
             "system": system,
             "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes / BYTES_PER_MIB),
@@ -291,6 +313,7 @@ fn performance_state(
                 "gpuFrameTimes": if gpu.is_some() { WAITING_FOR_FIRST_SNAPSHOT } else { "GPU timestamps are unavailable on this renderer." },
                 "gpuFrameMs": if gpu.is_some() { "Waiting for a GPU timestamp sample." } else { "GPU timestamps are unavailable on this renderer." },
                 "bottleneck": "Waiting for the GPU and present readings the classification needs.",
+                "hudMainThreadCost": "-",
                 "entityCount": "Waiting for the first entity count.",
                 "system": "No system information on this platform.",
                 "engineMemoryMiB": "No platform memory sample.",

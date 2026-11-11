@@ -9,7 +9,7 @@ use bevy::{
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
-    perf::SamplingPausedReason,
+    perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, SamplingPausedReason},
     rpc::RpcResultSender,
     structs::{
         AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
@@ -23,7 +23,10 @@ use input_manager::InputPriorities;
 use once_cell::sync::OnceCell;
 use perf_output::{layer::PerfLogLayer, stream::Stream};
 use scene_runner::vec3_to_parcel;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use system_bridge::{SystemApi, SystemBridge};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::js_sys;
@@ -56,6 +59,36 @@ static PAGE_HAS_FOCUS: AtomicBool = AtomicBool::new(true);
 #[wasm_bindgen]
 pub fn engine_set_page_focus(has_focus: bool) {
     PAGE_HAS_FOCUS.store(has_focus, Ordering::Relaxed);
+}
+
+/// The HUD cost window the page stored and the engine has not taken.
+static HUD_MAIN_THREAD_COST_WINDOW: Mutex<Option<HudMainThreadCostDataPoint>> = Mutex::new(None);
+
+/// Stores the page's HUD cost window; a window arriving while the engine holds the lock is
+/// dropped (the page thread must not block).
+#[wasm_bindgen]
+pub fn engine_set_hud_main_thread_cost(
+    covered_seconds: f32,
+    react_commit_count: u32,
+    react_commit_time_sum_ms: f32,
+    long_animation_frames_supported: bool,
+    long_animation_frame_count: u32,
+    hud_script_time_sum_ms: f32,
+    style_and_layout_time_sum_ms: f32,
+) {
+    let window = HudMainThreadCostDataPoint {
+        covered_seconds,
+        react_commit_count,
+        react_commit_time_sum_ms,
+        long_animation_frames: long_animation_frames_supported.then_some(LongAnimationFrameSums {
+            frame_count: long_animation_frame_count,
+            hud_script_time_sum_ms,
+            style_and_layout_time_sum_ms,
+        }),
+    };
+    if let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() {
+        *stored = Some(window);
+    }
 }
 
 /// The harness's browser leg: `perfStream`, the same-origin path the benchmark log (and, with
@@ -596,7 +629,14 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
         .insert_resource(BrowserPageFocus::current())
-        .add_systems(First, update_browser_page_focus_system)
+        .insert_resource(LatestHudMainThreadCostWindow(None))
+        .add_systems(
+            First,
+            (
+                update_browser_page_focus_system,
+                update_latest_hud_main_thread_cost_window_system,
+            ),
+        )
         .add_systems(Last, engine_heartbeat_system);
     if perf_output::stream::started() {
         app.add_systems(Update, perf_stream_drain)
@@ -813,6 +853,24 @@ impl BrowserPageFocus {
 /// Copies the page's focus and the viewport's activity into [`BrowserPageFocus`].
 fn update_browser_page_focus_system(mut focus: ResMut<BrowserPageFocus>) {
     focus.set_if_neq(BrowserPageFocus::current());
+}
+
+/// The last HUD cost window the page stored; written only when a window arrives, so
+/// `is_changed` marks that frame.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub(crate) struct LatestHudMainThreadCostWindow(pub(crate) Option<HudMainThreadCostDataPoint>);
+
+/// Takes the stored window, if any, into [`LatestHudMainThreadCostWindow`].
+fn update_latest_hud_main_thread_cost_window_system(
+    mut latest: ResMut<LatestHudMainThreadCostWindow>,
+) {
+    let taken = HUD_MAIN_THREAD_COST_WINDOW
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .take();
+    if let Some(window) = taken {
+        latest.0 = Some(window);
+    }
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {

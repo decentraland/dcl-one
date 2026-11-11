@@ -165,6 +165,52 @@ pub struct JsHeapDataPoint {
     pub reporting_scene_count: u32,
 }
 
+/// The web React HUD's page main-thread cost over a span of page time.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HudMainThreadCostDataPoint {
+    /// Page seconds the readings cover.
+    pub covered_seconds: f32,
+    /// React commits of the HUD root.
+    pub react_commit_count: u32,
+    /// Sum of the commits' `actualDuration`. Part of the long frames' HUD script time, not
+    /// additional to it.
+    pub react_commit_time_sum_ms: f32,
+    /// `None` when the browser has no Long Animation Frame timing.
+    pub long_animation_frames: Option<LongAnimationFrameSums>,
+}
+
+/// Sums over the page's long animation frames (over 50 ms each).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LongAnimationFrameSums {
+    pub frame_count: u32,
+    /// Scripts whose `sourceURL` starts with the HUD bundle's asset directory.
+    pub hud_script_time_sum_ms: f32,
+    /// `startTime + duration − styleAndLayoutStart`; 0 for a frame whose `styleAndLayoutStart`
+    /// is 0.
+    pub style_and_layout_time_sum_ms: f32,
+}
+
+impl HudMainThreadCostDataPoint {
+    /// Field-wise sum; `long_animation_frames` is `None` when either side's is.
+    pub fn add(&mut self, other: &HudMainThreadCostDataPoint) {
+        self.covered_seconds += other.covered_seconds;
+        self.react_commit_count += other.react_commit_count;
+        self.react_commit_time_sum_ms += other.react_commit_time_sum_ms;
+        self.long_animation_frames = match (self.long_animation_frames, other.long_animation_frames)
+        {
+            (Some(mine), Some(theirs)) => Some(LongAnimationFrameSums {
+                frame_count: mine.frame_count + theirs.frame_count,
+                hud_script_time_sum_ms: mine.hud_script_time_sum_ms + theirs.hud_script_time_sum_ms,
+                style_and_layout_time_sum_ms: mine.style_and_layout_time_sum_ms
+                    + theirs.style_and_layout_time_sum_ms,
+            }),
+            _ => None,
+        };
+    }
+}
+
 /// Top scopes a snapshot carries.
 pub const SNAPSHOT_TOP_PROFILED_SCOPE_COUNT: usize = 30;
 
@@ -187,6 +233,9 @@ pub struct PerformanceSnapshot {
     /// Top [`SNAPSHOT_TOP_PROFILED_SCOPE_COUNT`] scopes by self time over the sample; `None` without a
     /// recorded profiler table.
     pub top_profiled_scope_summaries: Option<Vec<ProfiledScopeSummary>>,
+    /// The web HUD's main-thread cost windows that arrived while sampling, summed; `None` on
+    /// native or when none arrived.
+    pub hud_main_thread_cost: Option<HudMainThreadCostDataPoint>,
     /// `Time<Real>` elapsed seconds when the sample completed.
     pub taken_at_real_seconds: f64,
 }
@@ -395,6 +444,39 @@ mod tests {
             classify_frame_bottleneck(20.0, 1.0, Some(18.0), None),
             Some(CpuAndGpuBalanced)
         );
+    }
+
+    #[test]
+    fn hud_cost_windows_sum_and_lose_the_long_frames_when_one_side_lacks_them() {
+        let frames = |frame_count, hud_script_time_sum_ms, style_and_layout_time_sum_ms| {
+            LongAnimationFrameSums {
+                frame_count,
+                hud_script_time_sum_ms,
+                style_and_layout_time_sum_ms,
+            }
+        };
+        let window = |react_commit_count, long_animation_frames| HudMainThreadCostDataPoint {
+            covered_seconds: 1.0,
+            react_commit_count,
+            react_commit_time_sum_ms: 2.5,
+            long_animation_frames,
+        };
+        let mut sum = window(3, Some(frames(1, 60.0, 10.0)));
+        sum.add(&window(4, Some(frames(2, 30.0, 5.0))));
+        assert_eq!(
+            sum,
+            HudMainThreadCostDataPoint {
+                covered_seconds: 2.0,
+                react_commit_count: 7,
+                react_commit_time_sum_ms: 5.0,
+                long_animation_frames: Some(frames(3, 90.0, 15.0)),
+            }
+        );
+        sum.add(&window(1, None));
+        assert_eq!(sum.react_commit_count, 8);
+        assert_eq!(sum.long_animation_frames, None);
+        sum.add(&window(1, Some(frames(1, 1.0, 1.0))));
+        assert_eq!(sum.long_animation_frames, None);
     }
 
     #[test]

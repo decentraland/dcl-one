@@ -33,6 +33,9 @@ pub struct InProgressSampleMeasurements {
     gpu_frame_times_ms: Vec<f32>,
     pub used_peak_bytes_in_sample: u64,
     last_gpu_frame_time_measured_at: Option<Instant>,
+    /// The HUD cost windows that arrived while sampling, summed.
+    #[cfg(target_arch = "wasm32")]
+    hud_main_thread_cost_sum: Option<common::perf::HudMainThreadCostDataPoint>,
 }
 
 impl InProgressSampleMeasurements {
@@ -44,6 +47,8 @@ impl InProgressSampleMeasurements {
             gpu_frame_times_ms: Vec::new(),
             used_peak_bytes_in_sample: 0,
             last_gpu_frame_time_measured_at: None,
+            #[cfg(target_arch = "wasm32")]
+            hud_main_thread_cost_sum: None,
         }
     }
 
@@ -51,6 +56,10 @@ impl InProgressSampleMeasurements {
         self.cpu_frame_times_ms.clear();
         self.gpu_frame_times_ms.clear();
         self.used_peak_bytes_in_sample = 0;
+        #[cfg(target_arch = "wasm32")]
+        {
+            self.hud_main_thread_cost_sum = None;
+        }
     }
 }
 
@@ -143,6 +152,7 @@ pub fn sample_frame_times_system(
     mut profiled_scopes: ResMut<ProfiledScopesTable>,
     mut snapshots: EventWriter<PerformanceSnapshot>,
     mut commands: Commands,
+    #[cfg(target_arch = "wasm32")] hud_cost: Res<crate::web::LatestHudMainThreadCostWindow>,
 ) {
     // taken every frame, so a GPU reading from the pause is consumed before sampling resumes
     let frame_times = &mut *frame_times;
@@ -159,6 +169,16 @@ pub fn sample_frame_times_system(
         .push(time.delta_secs_f64() as f32 * 1000.0);
     if let Some(gpu_ms) = new_gpu_ms {
         frame_times.gpu_frame_times_ms.push(gpu_ms);
+    }
+    // `is_changed` on the frame a window arrived
+    #[cfg(target_arch = "wasm32")]
+    if hud_cost.is_changed() {
+        if let Some(window) = hud_cost.0 {
+            match &mut frame_times.hud_main_thread_cost_sum {
+                Some(sum) => sum.add(&window),
+                None => frame_times.hud_main_thread_cost_sum = Some(window),
+            }
+        }
     }
     let memory_reading = memory.reading();
     if let Some(reading) = memory_reading {
@@ -200,6 +220,10 @@ pub fn sample_frame_times_system(
             profiled_scopes.reset();
             top
         }),
+        #[cfg(target_arch = "wasm32")]
+        hud_main_thread_cost: frame_times.hud_main_thread_cost_sum,
+        #[cfg(not(target_arch = "wasm32"))]
+        hud_main_thread_cost: None,
         taken_at_real_seconds: time.elapsed_secs_f64(),
     };
     snapshots.write(snapshot.clone());

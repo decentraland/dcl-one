@@ -1,7 +1,7 @@
 // Engine logic - ES module
 // Handles WASM/WebGPU initialization and game execution
 
-import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus } from "./pkg/webgpu_build.js";
+import init, { engine_init, engine_start, engine_spawn_worker, engine_console_command, engine_home_scene, engine_terms_accepted, engine_crash_event, engine_set_pulse_certificate_hash, engine_set_perf_stream, engine_perf_take, gpu_cache_hash, report_pointer_lock, media_host_main, audio_host_main, livekit_host_main, engine_prepare_render, engine_set_viewport_active, engine_set_page_focus, engine_set_hud_main_thread_cost } from "./pkg/webgpu_build.js";
 import { createSandboxHost } from "./sandbox_host.js";
 
 // Re-export for main.js
@@ -510,6 +510,21 @@ export function start(options = {}) {
   window.addEventListener("blur", updatePageFocus);
   document.addEventListener("visibilitychange", updatePageFocus);
   updatePageFocus();
+
+  // the HUD's main-thread cost window, every second; what accumulated while the tab was hidden
+  // is discarded when it shows again
+  setInterval(() => {
+    const cost = window.__bevyTakeHudMainThreadCost?.();
+    if (!cost) return;
+    const frames = cost.longAnimationFrames;
+    engine_set_hud_main_thread_cost(
+      cost.coveredSeconds, cost.reactCommitCount, cost.reactCommitTimeSumMs,
+      frames !== null, frames?.frameCount ?? 0, frames?.hudScriptTimeSumMs ?? 0, frames?.styleAndLayoutTimeSumMs ?? 0,
+    );
+  }, 1000);
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) window.__bevyDiscardHudMainThreadCost?.();
+  });
 
   // The engine worker cannot see the document's pointer-lock state (Escape, a refused request):
   // report it through the shared wasm memory (src/web.rs report_pointer_lock).

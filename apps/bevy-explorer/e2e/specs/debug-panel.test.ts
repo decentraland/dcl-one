@@ -126,6 +126,7 @@ type PerformanceState = {
   cpuFrameTimes: { hiccupThresholdMs: number; sampleCount: number; p99Ms: number } | null
   frameTimeBreakdown: (number | null)[]
   bottleneck: string | null
+  hudMainThreadCost: (number | null)[] | null
   entityCount: number | null
   unavailable: Record<string, string>
 }
@@ -139,6 +140,15 @@ scenario('the performance sampler samples in world and scales the hiccup thresho
   assert.ok(state.frameTimeBreakdown.slice(0, 4).every((ms) => typeof ms === 'number' && ms >= 0), JSON.stringify(state.frameTimeBreakdown))
   assert.ok(state.bottleneck === null || ['main_thread_cpu', 'gpu', 'swapchain_present_wait', 'frame_rate_limiter', 'cpu_and_gpu_balanced'].includes(state.bottleneck), String(state.bottleneck))
   assert.ok((state.entityCount ?? 0) > 0)
+  if (explorer.console.kind === 'native') {
+    assert.equal(state.hudMainThreadCost, null)
+    assert.equal(state.unavailable.hudMainThreadCost, '-')
+  } else {
+    const withHud = await until(() => explorer.json<PerformanceState>('/performance_state'),
+      (reading) => (reading.hudMainThreadCost?.[0] ?? 0) > 0,
+      { timeoutMs: 10_000, what: 'a HUD main-thread cost window with React commits' })
+    assert.equal(withHud.hudMainThreadCost!.length, 5, JSON.stringify(withHud.hudMainThreadCost))
+  }
   if (state.cpuFrameTimes == null) assert.match(String(state.unavailable.cpuFrameTimes), /sampled time/)
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')
   try {
