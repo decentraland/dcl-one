@@ -6,6 +6,8 @@ edition = "2021"
 [features]
 livekit = ["dep:livekit", "media/html"]
 room_debug = []
+# test rooms for other crates' tests of systems that use scene rooms
+test-support = []
 transport_debug = ["bevy/bevy_picking"]
 
 [dependencies]

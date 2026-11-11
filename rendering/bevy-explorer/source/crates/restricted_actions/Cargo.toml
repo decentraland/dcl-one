@@ -42,4 +42,5 @@ rand = { workspace = true }
 wasm-bindgen = { workspace = true }
 
 [dev-dependencies]
+comms = { workspace = true, features = ["test-support"] }
 dcl_types = { workspace = true }

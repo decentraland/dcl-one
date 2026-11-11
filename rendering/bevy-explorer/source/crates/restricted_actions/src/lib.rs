@@ -34,7 +34,9 @@ use comms::{
     global_crdt::{CrdtContexts, ForeignPlayer},
     preview::handle_preview_socket,
     profile::{CurrentUserProfile, ProfileManager, UserProfile},
-    NetworkMessage, NetworkMessageRecipient, SceneRoom, Transport,
+    scene_rooms::SceneRooms,
+    scene_topics::{is_topic_frame, SceneTopicTraffic},
+    NetworkMessage, NetworkMessageRecipient,
 };
 use console::DoAddConsoleCommand;
 use copypwasmta::{ClipboardContext, ClipboardProvider};
@@ -1656,59 +1658,63 @@ fn event_scene_ready(
     *previously_unready = now_unready;
 }
 
+/// A server is the auth server: it keeps the scene's own recipient, or it would address the
+/// message to itself.
+fn message_bus_recipient(
+    peer: Option<Address>,
+    authoritative: bool,
+    server: bool,
+) -> NetworkMessageRecipient {
+    if authoritative && !server {
+        NetworkMessageRecipient::AuthServer
+    } else {
+        peer.map(NetworkMessageRecipient::Peer)
+            .unwrap_or(NetworkMessageRecipient::All)
+    }
+}
+
+/// Sends a scene's message bus and topic messages on the running room that carries the scene;
+/// with no such room they are dropped. A client routes an authoritative scene's message bus to
+/// the auth server. Topic messages are always broadcast: every subscriber is a peer in the room.
 fn send_scene_messages(
     mut events: EventReader<RpcCallEvent>,
-    transports: Query<(&Transport, Option<&SceneRoom>)>,
+    scene_rooms: SceneRooms,
     scenes: Query<&RendererSceneContext>,
+    mut topic_traffic: ResMut<SceneTopicTraffic>,
 ) {
-    for (scene, data, recipient) in events.read().filter_map(|c| match (&c.origin, &c.call) {
-        (RpcOrigin::Scene { entity: scene, .. }, RpcCall::SendMessageBus { data, recipient }) => {
-            Some((scene, data, recipient))
-        }
-        _ => None,
-    }) {
-        let Ok(ctx) = scenes.get(*scene) else {
+    for ev in events.read() {
+        let RpcOrigin::Scene { entity, hash } = &ev.origin else {
             continue;
         };
-        let hash = &ctx.hash;
-
-        debug!(
-            "messagebus sent from scene {}: {:?} (auth = {})",
-            &hash, data, ctx.authoritative_multiplayer
-        );
-        let message = rfc4::Packet {
-            message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
-                scene_id: hash.to_string(),
-                data: data.clone(),
-            })),
-            protocol_version: 100,
+        let (data, recipient, topic) = match &ev.call {
+            RpcCall::SendMessageBus { data, recipient } => {
+                let authoritative = scenes
+                    .get(*entity)
+                    .is_ok_and(|ctx| ctx.authoritative_multiplayer);
+                debug!("messagebus sent from scene {hash}: {data:?} (auth = {authoritative})");
+                let recipient = message_bus_recipient(*recipient, authoritative, server_mode());
+                (data, recipient, false)
+            }
+            RpcCall::PublishSceneTopic { data } => (data, NetworkMessageRecipient::All, true),
+            _ => continue,
         };
 
-        let mut recipient = recipient
-            .map(NetworkMessageRecipient::Peer)
-            .unwrap_or(NetworkMessageRecipient::All);
-
-        // A client routes authoritative-scene traffic to the auth server. WE are the
-        // auth server, so keep the scene's intended recipient (targeted peer or broadcast)
-        // — otherwise the server would address messages to itself and clients never receive them.
-        if ctx.authoritative_multiplayer && !server_mode() {
-            recipient = NetworkMessageRecipient::AuthServer;
-        }
-
-        for (transport, scene_room) in transports.iter() {
-            // Client (prod) path unchanged: send to any scene room. When serving, also
-            // require the room to belong to this scene so N scenes in one engine don't
-            // cross-talk (a server may hold several scene rooms; a client holds one).
-            let send = if server_mode() {
-                scene_room.is_some_and(|r| *r.0 == **hash)
-            } else {
-                scene_room.is_some()
-            };
-            if send {
-                let _ = transport
+        let sent = (!topic || is_topic_frame(data))
+            && scene_rooms.transport(hash).is_some_and(|transport| {
+                let message = rfc4::Packet {
+                    message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
+                        scene_id: hash.to_string(),
+                        data: data.clone(),
+                    })),
+                    protocol_version: 100,
+                };
+                transport
                     .sender
-                    .try_send(NetworkMessage::targetted_reliable(&message, recipient));
-            }
+                    .try_send(NetworkMessage::targetted_reliable(&message, recipient))
+                    .is_ok()
+            });
+        if topic {
+            topic_traffic.record_publish(sent);
         }
     }
 }
@@ -2662,6 +2668,160 @@ pub fn process_startup_scenes(
 
     if tasks.is_empty() {
         *done = true;
+    }
+}
+
+#[cfg(test)]
+mod scene_message_tests {
+    use super::*;
+    use comms::scene_rooms::test_support::{
+        init_scene_rooms, local_preview, set_running, spawn_client_room, spawn_server_room,
+    };
+    use dcl_types::{CommsMessageType, MAX_TOPIC_MESSAGE_BYTES};
+
+    const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
+    const BUS_MESSAGE: [u8; 3] = [1, b'h', b'i'];
+
+    fn sending_app() -> App {
+        let mut app = App::new();
+        app.add_event::<RpcCallEvent>();
+        init_scene_rooms(&mut app);
+        app.init_resource::<SceneTopicTraffic>();
+        app.add_systems(Update, send_scene_messages);
+        app
+    }
+
+    fn send(app: &mut App, hash: &str, messages: impl IntoIterator<Item = Vec<u8>>) {
+        let scene = app.world_mut().spawn_empty().id();
+        for data in messages {
+            let call = if data.first() == Some(&(CommsMessageType::String as u8)) {
+                RpcCall::SendMessageBus {
+                    data,
+                    recipient: None,
+                }
+            } else {
+                RpcCall::PublishSceneTopic { data }
+            };
+            app.world_mut().send_event(RpcCallEvent {
+                origin: RpcOrigin::Scene {
+                    entity: scene,
+                    hash: hash.into(),
+                },
+                call,
+            });
+        }
+        app.update();
+    }
+
+    fn sent(
+        room: &mut tokio::sync::mpsc::Receiver<NetworkMessage>,
+    ) -> Vec<NetworkMessageRecipient> {
+        std::iter::from_fn(|| room.try_recv().ok())
+            .map(|message| message.recipient)
+            .collect()
+    }
+
+    fn topic_publishes(app: &App) -> (u64, u64) {
+        app.world().resource::<SceneTopicTraffic>().publishes()
+    }
+
+    #[test]
+    fn scene_messages_go_to_the_scene_room_only() {
+        let mut app = sending_app();
+        let context = app.world_mut().spawn_empty().id();
+        let (own, mut own_rx) = spawn_server_room(&mut app, "bafyscene", context);
+        let (other, mut other_rx) = spawn_server_room(&mut app, "bafyother", context);
+        set_running(&mut app, own);
+        set_running(&mut app, other);
+        send(
+            &mut app,
+            "bafyscene",
+            [TOPIC_MESSAGE.to_vec(), BUS_MESSAGE.to_vec()],
+        );
+        assert!(matches!(
+            sent(&mut own_rx)[..],
+            [NetworkMessageRecipient::All, NetworkMessageRecipient::All]
+        ));
+        assert!(sent(&mut other_rx).is_empty(), "another scene's room");
+        assert_eq!(topic_publishes(&app), (1, 0));
+    }
+
+    #[test]
+    fn scene_messages_are_dropped_until_the_scene_room_runs() {
+        let mut app = sending_app();
+        let context = app.world_mut().spawn_empty().id();
+        let (room, mut room_rx) = spawn_client_room(&mut app, "bafyscene", context);
+        let messages = || [TOPIC_MESSAGE.to_vec(), BUS_MESSAGE.to_vec()];
+        send(&mut app, "bafyscene", messages());
+        assert!(sent(&mut room_rx).is_empty(), "dialed, not connected");
+        assert_eq!(topic_publishes(&app), (0, 1));
+
+        set_running(&mut app, room);
+        send(&mut app, "bafyscene", messages());
+        assert_eq!(sent(&mut room_rx).len(), 2);
+        assert_eq!(topic_publishes(&app), (1, 1));
+    }
+
+    #[test]
+    fn a_shared_room_carries_messages_from_a_scene_it_was_not_dialed_for() {
+        let mut app = sending_app();
+        let context = app.world_mut().spawn_empty().id();
+        let (room, mut room_rx) = spawn_client_room(&mut app, "bafyroom", context);
+        set_running(&mut app, room);
+        let messages = || [TOPIC_MESSAGE.to_vec(), BUS_MESSAGE.to_vec()];
+        send(&mut app, "bafyscene", messages());
+        assert!(
+            sent(&mut room_rx).is_empty(),
+            "isolated rooms carry only their own scene"
+        );
+
+        local_preview(&mut app);
+        send(&mut app, "bafyscene", messages());
+        assert_eq!(sent(&mut room_rx).len(), 2);
+        assert_eq!(topic_publishes(&app), (1, 1));
+    }
+
+    #[test]
+    fn a_publish_that_is_not_a_topic_message_is_dropped() {
+        let mut app = sending_app();
+        let context = app.world_mut().spawn_empty().id();
+        let (room, mut room_rx) = spawn_client_room(&mut app, "bafyscene", context);
+        set_running(&mut app, room);
+        let topic = CommsMessageType::CommsData as u8;
+        send(
+            &mut app,
+            "bafyscene",
+            [
+                vec![topic; MAX_TOPIC_MESSAGE_BYTES],
+                // a binary bus frame, an oversized frame and an empty one
+                vec![CommsMessageType::Binary as u8, b'h', b'i'],
+                vec![topic; MAX_TOPIC_MESSAGE_BYTES + 1],
+                vec![],
+            ],
+        );
+        assert_eq!(sent(&mut room_rx).len(), 1);
+        assert_eq!(topic_publishes(&app), (1, 3));
+    }
+
+    #[test]
+    fn only_a_clients_message_bus_goes_to_the_auth_server() {
+        let peer = Address::repeat_byte(0xab);
+        assert!(matches!(
+            message_bus_recipient(Some(peer), true, false),
+            NetworkMessageRecipient::AuthServer
+        ));
+        assert!(matches!(
+            message_bus_recipient(None, true, true),
+            NetworkMessageRecipient::All
+        ));
+        assert!(matches!(
+            message_bus_recipient(Some(peer), true, true),
+            NetworkMessageRecipient::Peer(to) if to == peer
+        ));
+        assert!(matches!(
+            message_bus_recipient(None, false, false),
+            NetworkMessageRecipient::All
+        ));
     }
 }
 

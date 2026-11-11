@@ -1,17 +1,16 @@
-//! Scene topic messages (`~system/CommsApi`) on the scene room, in both directions.
+//! Scene topic messages (`~system/CommsApi`): each scene's inbox, delivery of received messages
+//! and the traffic counts. `restricted_actions` sends them, with the message bus.
 
 use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{
     rpc::{RpcCall, RpcCallEvent, RpcOrigin, RpcStreamSender},
     sets::SceneSets,
-    structs::{server_mode, CurrentRealm},
 };
 use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
-use dcl_component::proto_components::kernel::comms::rfc4;
 use dcl_types::{CommsMessageType, MAX_TOPIC_MESSAGE_BYTES};
 
-use crate::{NetworkMessage, NetworkMessageRecipient, SceneRoom, Transport};
+use crate::{scene_rooms::SceneRooms, SceneRoom};
 
 pub struct SceneTopicsPlugin;
 
@@ -51,7 +50,7 @@ impl Plugin for SceneTopicsRoutingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SceneTopicTraffic>().add_systems(
             Update,
-            (subscribe_scene_topics, publish_scene_topics).in_set(SceneSets::RestrictedActions),
+            subscribe_scene_topics.in_set(SceneSets::RestrictedActions),
         );
     }
 }
@@ -66,54 +65,35 @@ struct SceneTopicInbox {
 /// A message dropped because a scene's inbox is full is only logged: the engine can't see a
 /// remote scene's channel fill up.
 #[derive(Resource, Default)]
-struct SceneTopicTraffic {
+pub struct SceneTopicTraffic {
     published: u64,
     publish_dropped: u64,
     received: u64,
     receive_dropped: u64,
 }
 
-/// In a local preview and a single-scene world, any of the realm's scenes may use the room.
-fn scene_rooms_isolated(realm: &CurrentRealm) -> bool {
-    if server_mode() {
-        return true;
+impl SceneTopicTraffic {
+    /// Topic publishes (sent, dropped).
+    pub fn publishes(&self) -> (u64, u64) {
+        (self.published, self.publish_dropped)
     }
-    let single_scene_world = realm
-        .config
-        .scenes_urn
-        .as_ref()
-        .is_some_and(|urns| urns.len() == 1);
-    !(realm.is_local() || single_scene_world)
+
+    /// Counts a scene's topic publish as sent or dropped.
+    pub fn record_publish(&mut self, sent: bool) {
+        if sent {
+            self.published += 1;
+        } else {
+            self.publish_dropped += 1;
+        }
+    }
 }
 
-fn room_carries_scene_topics(
-    room: &SceneRoom,
-    running: bool,
-    scene_hash: &str,
-    isolated: bool,
-) -> bool {
-    running && (!isolated || room.0.eq_ignore_ascii_case(scene_hash))
-}
-
-#[cfg(all(feature = "livekit", not(test)))]
-type RoomRunning = Has<crate::livekit::room::Connected>;
-// `Connected` can only be added to a real LiveKit room, so tests mark a running room with this.
-#[cfg(test)]
-type RoomRunning = Has<TestRoomRunning>;
-#[cfg(not(any(feature = "livekit", test)))]
-type RoomRunning = ();
-
-#[cfg(test)]
-#[derive(Component)]
-pub(crate) struct TestRoomRunning;
-
-#[cfg(any(feature = "livekit", test))]
-fn is_running(running: bool) -> bool {
-    running
-}
-#[cfg(not(any(feature = "livekit", test)))]
-fn is_running(_: ()) -> bool {
-    false
+/// Whether a scene's publish is a topic message within the size limit. The scene runtime is
+/// untrusted (on web its memory is reachable by scene code), so the engine checks the frame
+/// again before sending it.
+pub fn is_topic_frame(data: &[u8]) -> bool {
+    data.first() == Some(&(CommsMessageType::CommsData as u8))
+        && data.len() <= MAX_TOPIC_MESSAGE_BYTES
 }
 
 fn subscribe_scene_topics(mut commands: Commands, mut events: EventReader<RpcCallEvent>) {
@@ -129,76 +109,20 @@ fn subscribe_scene_topics(mut commands: Commands, mut events: EventReader<RpcCal
     }
 }
 
-/// The scene runtime is untrusted (on web its memory is reachable by scene code), so the frame
-/// is checked again here: only a topic message within the size limit goes out. Topic messages
-/// are broadcast even for an authoritative scene, as unity-explorer's `CommsApiWrap` does; only
-/// the message bus is routed to the auth server.
-fn publish_scene_topics(
-    mut events: EventReader<RpcCallEvent>,
-    rooms: Query<(&Transport, &SceneRoom, RoomRunning)>,
-    realm: Res<CurrentRealm>,
-    mut traffic: ResMut<SceneTopicTraffic>,
-) {
-    let isolated = scene_rooms_isolated(&realm);
-    for (hash, data) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
-        (RpcOrigin::Scene { hash, .. }, RpcCall::PublishSceneTopic { data }) => Some((hash, data)),
-        _ => None,
-    }) {
-        if data.first() != Some(&(CommsMessageType::CommsData as u8))
-            || data.len() > MAX_TOPIC_MESSAGE_BYTES
-        {
-            traffic.publish_dropped += 1;
-            continue;
-        }
-        let room = rooms.iter().find(|(_, room, running)| {
-            room_carries_scene_topics(room, is_running(*running), hash, isolated)
-        });
-        let Some((transport, ..)) = room else {
-            traffic.publish_dropped += 1;
-            continue;
-        };
-        let packet = rfc4::Packet {
-            message: Some(rfc4::packet::Message::Scene(rfc4::Scene {
-                scene_id: hash.to_string(),
-                data: data.clone(),
-            })),
-            protocol_version: 100,
-        };
-        let message = NetworkMessage::targetted_reliable(&packet, NetworkMessageRecipient::All);
-        if transport.sender.try_send(message).is_ok() {
-            traffic.published += 1;
-        } else {
-            traffic.publish_dropped += 1;
-        }
-    }
-}
-
 #[derive(SystemParam)]
 pub struct SceneTopicRouter<'w, 's> {
     inboxes: Query<'w, 's, &'static SceneTopicInbox>,
-    rooms: Query<'w, 's, (&'static SceneRoom, RoomRunning)>,
-    realm: Res<'w, CurrentRealm>,
     traffic: ResMut<'w, SceneTopicTraffic>,
 }
 
 impl SceneTopicRouter<'_, '_> {
-    /// `payload` is the scene message after its type byte. A payload larger than any conforming
-    /// publisher sends is dropped. Only the first live inbox for the hash gets the message.
-    pub fn deliver(
-        &mut self,
-        transport: Entity,
-        scene_hash: &str,
-        sender: String,
-        payload: Vec<u8>,
-    ) {
+    /// For a message that arrived on the room carrying its scene. `payload` is the scene
+    /// message after its type byte. A payload larger than any conforming publisher sends is
+    /// dropped. Only the first live inbox for the hash gets the message.
+    pub fn deliver(&mut self, scene_hash: &str, sender: String, payload: Vec<u8>) {
         self.traffic.received += 1;
-        let isolated = scene_rooms_isolated(&self.realm);
-        let carried = self.rooms.get(transport).is_ok_and(|(room, running)| {
-            room_carries_scene_topics(room, is_running(running), scene_hash, isolated)
-        });
-        let delivered = carried
-            // the type byte, already taken off, counts toward the limit
-            && payload.len() < MAX_TOPIC_MESSAGE_BYTES
+        // the type byte, already taken off, counts toward the limit
+        let delivered = payload.len() < MAX_TOPIC_MESSAGE_BYTES
             && self
                 .inboxes
                 .iter()
@@ -207,6 +131,12 @@ impl SceneTopicRouter<'_, '_> {
         if !delivered {
             self.traffic.receive_dropped += 1;
         }
+    }
+
+    /// Counts a message that arrived on a room that does not carry its scene.
+    pub fn drop_without_room(&mut self) {
+        self.traffic.received += 1;
+        self.traffic.receive_dropped += 1;
     }
 }
 
@@ -217,8 +147,8 @@ struct SceneTopicsCommand;
 
 fn scene_topics_command(
     mut input: ConsoleCommand<SceneTopicsCommand>,
-    rooms: Query<(&SceneRoom, RoomRunning)>,
-    realm: Res<CurrentRealm>,
+    rooms: Query<(Entity, &SceneRoom)>,
+    scene_rooms: SceneRooms,
     inboxes: Query<&SceneTopicInbox>,
     traffic: Res<SceneTopicTraffic>,
 ) {
@@ -228,9 +158,9 @@ fn scene_topics_command(
         input.reply_ok(
             serde_json::json!({
                 "sceneRooms": rooms.iter().count(),
-                "room": room.map(|(room, _)| room.0.clone()),
-                "running": room.map(|(_, running)| is_running(running)),
-                "isolated": scene_rooms_isolated(&realm),
+                "room": room.map(|(_, room)| room.0.clone()),
+                "running": room.map(|(entity, room)| scene_rooms.carries(entity, &room.0)),
+                "isolated": scene_rooms.isolated(),
                 "subscribedScenes": inboxes.iter().count(),
                 "published": traffic.published,
                 "publishDropped": traffic.publish_dropped,
@@ -246,41 +176,13 @@ fn scene_topics_command(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TransportType;
     use bevy::ecs::system::RunSystemOnce;
 
     fn routing_app() -> App {
         let mut app = App::new();
         app.add_event::<RpcCallEvent>();
-        app.init_resource::<CurrentRealm>();
         app.add_plugins(SceneTopicsRoutingPlugin);
         app
-    }
-
-    fn spawn_running_room(
-        app: &mut App,
-        hash: &str,
-    ) -> tokio::sync::mpsc::Receiver<NetworkMessage> {
-        spawn_running_room_entity(app, hash).1
-    }
-
-    fn spawn_running_room_entity(
-        app: &mut App,
-        hash: &str,
-    ) -> (Entity, tokio::sync::mpsc::Receiver<NetworkMessage>) {
-        let (sender, receiver) = tokio::sync::mpsc::channel(8);
-        let context = app.world_mut().spawn_empty().id();
-        let room = app.world_mut().spawn((
-            Transport {
-                transport_type: TransportType::Livekit,
-                sender,
-                control: None,
-                context,
-            },
-            SceneRoom(hash.to_owned()),
-            TestRoomRunning,
-        ));
-        (room.id(), receiver)
     }
 
     fn spawn_inbox(app: &mut App, hash: &str) -> common::rpc::RpcStreamReceiver<(String, Vec<u8>)> {
@@ -292,30 +194,22 @@ mod tests {
         receiver
     }
 
-    fn deliver(app: &mut App, transport: Entity, scene_hash: &str) {
+    fn deliver(app: &mut App, scene_hash: &str, payload: Vec<u8>) {
         let scene_hash = scene_hash.to_owned();
         app.world_mut()
             .run_system_once(move |mut router: SceneTopicRouter| {
-                router.deliver(transport, &scene_hash, "0x1".to_owned(), vec![1, 0, b't']);
+                router.deliver(&scene_hash, "0x1".to_owned(), payload.clone());
             })
             .unwrap();
-    }
-
-    fn local_preview(app: &mut App) {
-        app.world_mut()
-            .resource_mut::<CurrentRealm>()
-            .config
-            .local_scene_parcels = Some(vec!["0,0".to_owned()]);
     }
 
     #[test]
     fn delivery_skips_a_closed_inbox_for_the_same_scene() {
         let mut app = routing_app();
-        let (room, _) = spawn_running_room_entity(&mut app, "bafyscene");
         // a scene with this hash being torn down, ahead of the live one in the query
         drop(spawn_inbox(&mut app, "bafyscene"));
         let mut live = spawn_inbox(&mut app, "bafyscene");
-        deliver(&mut app, room, "bafyscene");
+        deliver(&mut app, "bafyscene", vec![1, 0, b't']);
         assert_eq!(
             live.try_recv().unwrap(),
             ("0x1".to_owned(), vec![1, 0, b't'])
@@ -325,130 +219,22 @@ mod tests {
     }
 
     #[test]
-    fn a_shared_room_delivers_to_a_scene_other_than_the_room_name() {
+    fn delivery_reaches_only_the_addressed_scene() {
         let mut app = routing_app();
-        let (room, _) = spawn_running_room_entity(&mut app, "bafyroom");
-        let mut inbox = spawn_inbox(&mut app, "bafyscene");
-        deliver(&mut app, room, "bafyscene");
-        assert!(
-            inbox.try_recv().is_err(),
-            "isolated rooms carry only their own scene"
-        );
-        local_preview(&mut app);
-        deliver(&mut app, room, "bafyscene");
-        assert!(inbox.try_recv().is_ok());
+        let mut other = spawn_inbox(&mut app, "bafyother");
+        deliver(&mut app, "bafyscene", vec![1, 0, b't']);
+        assert!(other.try_recv().is_err());
         let traffic = app.world().resource::<SceneTopicTraffic>();
-        assert_eq!((traffic.received, traffic.receive_dropped), (2, 1));
+        assert_eq!((traffic.received, traffic.receive_dropped), (1, 1));
     }
 
     #[test]
-    fn a_shared_room_carries_a_publish_from_a_scene_other_than_the_room_name() {
-        let mut app = routing_app();
-        let mut room = spawn_running_room(&mut app, "bafyroom");
-        local_preview(&mut app);
-        let scene = app.world_mut().spawn_empty().id();
-        app.world_mut().send_event(RpcCallEvent {
-            origin: RpcOrigin::Scene {
-                entity: scene,
-                hash: "bafyscene".into(),
-            },
-            call: RpcCall::PublishSceneTopic {
-                data: vec![3, 1, 0, b't', b'x'],
-            },
-        });
-        app.update();
-        assert!(room.try_recv().is_ok());
-        assert_eq!(app.world().resource::<SceneTopicTraffic>().published, 1);
-    }
-
-    #[test]
-    fn publish_goes_to_the_scene_room_and_drops_what_is_not_a_topic_message() {
-        let mut app = routing_app();
-        let mut own = spawn_running_room(&mut app, "bafyscene");
-        let mut other = spawn_running_room(&mut app, "bafyother");
-        let scene = app.world_mut().spawn_empty().id();
-        let at_limit = vec![CommsMessageType::CommsData as u8; MAX_TOPIC_MESSAGE_BYTES];
-        let over_limit = vec![CommsMessageType::CommsData as u8; MAX_TOPIC_MESSAGE_BYTES + 1];
-        for data in [
-            vec![3, 1, 0, b't', b'x'],
-            at_limit,
-            // a message bus frame, an oversized frame and an empty one
-            vec![1, b'h', b'i'],
-            over_limit,
-            vec![],
-        ] {
-            app.world_mut().send_event(RpcCallEvent {
-                origin: RpcOrigin::Scene {
-                    entity: scene,
-                    hash: "bafyscene".into(),
-                },
-                call: RpcCall::PublishSceneTopic { data },
-            });
-        }
-        app.update();
-        assert!(own.try_recv().is_ok());
-        assert!(own.try_recv().is_ok());
-        assert!(own.try_recv().is_err());
-        assert!(other.try_recv().is_err(), "another scene's room");
-        let traffic = app.world().resource::<SceneTopicTraffic>();
-        assert_eq!((traffic.published, traffic.publish_dropped), (2, 3));
-    }
-
-    fn room(hash: &str) -> SceneRoom {
-        SceneRoom(hash.to_owned())
-    }
-
-    #[test]
-    fn an_isolated_room_carries_only_its_own_scene() {
-        assert!(room_carries_scene_topics(
-            &room("bafyA"),
-            true,
-            "bafya",
-            true
-        ));
-        assert!(!room_carries_scene_topics(
-            &room("bafyA"),
-            true,
-            "bafyB",
-            true
-        ));
-    }
-
-    #[test]
-    fn a_shared_room_carries_every_scene() {
-        assert!(room_carries_scene_topics(
-            &room("bafyA"),
-            true,
-            "bafyB",
-            false
-        ));
-    }
-
-    #[test]
-    fn a_room_that_is_not_running_carries_nothing() {
-        assert!(!room_carries_scene_topics(
-            &room("bafyA"),
-            false,
-            "bafyA",
-            true
-        ));
-        assert!(!room_carries_scene_topics(
-            &room("bafyA"),
-            false,
-            "bafyA",
-            false
-        ));
-    }
-
-    #[test]
-    fn rooms_are_shared_in_a_preview_and_a_single_scene_world() {
-        let mut realm = CurrentRealm::default();
-        assert!(scene_rooms_isolated(&realm), "Genesis City");
-        realm.config.scenes_urn = Some(vec!["urn:a".to_owned()]);
-        assert!(!scene_rooms_isolated(&realm), "single-scene world");
-        realm.config.scenes_urn = Some(vec!["urn:a".to_owned(), "urn:b".to_owned()]);
-        assert!(scene_rooms_isolated(&realm), "multi-scene world");
-        realm.config.local_scene_parcels = Some(vec!["0,0".to_owned()]);
-        assert!(!scene_rooms_isolated(&realm), "local preview");
+    fn only_a_topic_message_within_the_size_limit_is_a_topic_frame() {
+        let topic = CommsMessageType::CommsData as u8;
+        assert!(is_topic_frame(&[topic, 1, 0, b't', b'x']));
+        assert!(is_topic_frame(&vec![topic; MAX_TOPIC_MESSAGE_BYTES]));
+        assert!(!is_topic_frame(&vec![topic; MAX_TOPIC_MESSAGE_BYTES + 1]));
+        assert!(!is_topic_frame(&[1, b'h', b'i']), "a message bus frame");
+        assert!(!is_topic_frame(&[]));
     }
 }

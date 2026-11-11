@@ -37,6 +37,7 @@ use dcl_types::{
 
 use crate::{
     chat_reaction::{canonical_message_id, received_emoji, ChatReactionEvent},
+    scene_rooms::SceneRooms,
     scene_topics::SceneTopicRouter,
     Transport,
 };
@@ -829,9 +830,10 @@ pub fn process_transport_updates(
     mut subscribers: EventReader<RpcCallEvent>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    (discard_player_updates, transports, mut scene_topics): (
+    (discard_player_updates, transports, scene_rooms, mut scene_topics): (
         Res<DiscardPlayerUpdates>,
         Query<(), With<Transport>>,
+        SceneRooms,
         SceneTopicRouter,
     ),
 ) {
@@ -1034,6 +1036,7 @@ pub fn process_transport_updates(
                                 update.transport_id,
                                 &mut string_senders,
                                 &mut binary_senders,
+                                &scene_rooms,
                                 &mut scene_topics,
                             );
                         }
@@ -1190,6 +1193,7 @@ pub fn process_transport_updates(
                                 update.transport_id,
                                 &mut string_senders,
                                 &mut binary_senders,
+                                &scene_rooms,
                                 &mut scene_topics,
                             );
                         }
@@ -1337,6 +1341,7 @@ fn process_messagebus(
     transport: Entity,
     string_senders: &mut HashMap<String, RpcStreamSender<String>>,
     binary_senders: &mut HashMap<String, RpcStreamSender<(String, Vec<u8>)>>,
+    scene_rooms: &SceneRooms,
     scene_topics: &mut SceneTopicRouter,
 ) {
     if scene.data.is_empty() {
@@ -1365,6 +1370,18 @@ fn process_messagebus(
         address, scene.scene_id, comms_type, scene.data
     );
 
+    // a scene's messages count only on the running room that carries the scene
+    if !scene_rooms.carries(transport, &scene.scene_id) {
+        debug!(
+            "dropping message for scene {} from {address}: not its scene room",
+            scene.scene_id
+        );
+        if matches!(comms_type, CommsMessageType::CommsData) {
+            scene_topics.drop_without_room();
+        }
+        return;
+    }
+
     match comms_type {
         CommsMessageType::String => {
             if let Some(sender) = string_senders.get(&scene.scene_id) {
@@ -1383,7 +1400,7 @@ fn process_messagebus(
             }
         }
         CommsMessageType::CommsData => {
-            scene_topics.deliver(transport, &scene.scene_id, address, scene.data);
+            scene_topics.deliver(&scene.scene_id, address, scene.data);
         }
     }
 }
@@ -1610,7 +1627,7 @@ mod tests {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_event::<ChatEvent>();
         app.add_event::<ChatReactionEvent>();
-        app.init_resource::<common::structs::CurrentRealm>();
+        crate::scene_rooms::test_support::init_scene_rooms(&mut app);
         app.add_plugins(crate::scene_topics::SceneTopicsRoutingPlugin);
         app.add_systems(Update, (process_transport_updates, despawn_players).chain());
         app.add_observer(remove_transport_from_foreign_players);
@@ -1671,72 +1688,136 @@ mod tests {
             .unwrap();
     }
 
-    fn spawn_running_scene_room(app: &mut App, context: Entity, hash: &str) -> Entity {
-        let (sender, _receiver) = mpsc::channel(1);
-        app.world_mut()
-            .spawn((
-                Transport {
-                    transport_type: crate::TransportType::Livekit,
-                    sender,
-                    control: None,
-                    context,
-                },
-                crate::SceneRoom(hash.to_owned()),
-                crate::scene_topics::TestRoomRunning,
-            ))
-            .id()
-    }
-
-    /// Subscribes a scene with `hash` to topic messages and returns its inbox.
-    fn subscribe_scene_topics(
+    /// Subscribes a scene with `hash` to the message bus and to topic messages.
+    fn subscribe_scene(
         app: &mut App,
         hash: &str,
-    ) -> common::rpc::RpcStreamReceiver<(String, Vec<u8>)> {
+    ) -> (
+        common::rpc::RpcStreamReceiver<String>,
+        common::rpc::RpcStreamReceiver<(String, Vec<u8>)>,
+    ) {
+        let (bus, bus_rx) = RpcStreamSender::<String>::channel();
         let (topics, topics_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
         let scene = app.world_mut().spawn_empty().id();
+        let origin = || RpcOrigin::Scene {
+            entity: scene,
+            hash: hash.into(),
+        };
         app.world_mut().send_event(RpcCallEvent {
-            origin: RpcOrigin::Scene {
-                entity: scene,
-                hash: hash.into(),
-            },
+            origin: origin(),
+            call: RpcCall::SubscribeMessageBus { sender: bus },
+        });
+        app.world_mut().send_event(RpcCallEvent {
+            origin: origin(),
             call: RpcCall::SubscribeSceneTopics { sender: topics },
         });
         app.update();
-        topics_rx
+        (bus_rx, topics_rx)
     }
 
+    const TOPIC_MESSAGE: [u8; 5] = [3, 1, 0, b't', b'x'];
+    const BUS_MESSAGE: [u8; 3] = [1, b'h', b'i'];
+
     #[test]
-    fn topic_messages_reach_the_scene_on_its_own_room_only() {
+    fn scene_messages_reach_the_scene_on_its_own_room_only() {
+        use crate::scene_rooms::test_support::{set_running, spawn_server_room};
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
-        let own = spawn_running_scene_room(&mut app, context, "bafyscene");
-        let other = spawn_running_scene_room(&mut app, context, "bafyother");
-        queue_joined(&mut app, context, own, peer);
-        queue_joined(&mut app, context, other, peer);
+        let (own, _) = spawn_server_room(&mut app, "bafyscene", context);
+        let (other, _) = spawn_server_room(&mut app, "bafyother", context);
+        for room in [own, other] {
+            set_running(&mut app, room);
+            queue_joined(&mut app, context, room, peer);
+        }
         app.update();
-        let mut topics_rx = subscribe_scene_topics(&mut app, "bafyscene");
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
 
-        queue_scene_message(&mut app, context, own, peer, vec![3, 1, 0, b't', b'x']);
+        // another scene's room carries nothing for this scene
+        queue_scene_message(&mut app, context, other, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, other, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        queue_scene_message(&mut app, context, own, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, own, peer, BUS_MESSAGE.to_vec());
         app.update();
         assert_eq!(
             topics_rx.try_recv().unwrap(),
             (format!("{peer:#x}"), vec![1, 0, b't', b'x'])
         );
+        assert!(topics_rx.try_recv().is_err());
+        // the topic message is not taken for a message bus string
+        assert!(bus_rx.try_recv().unwrap().contains("hi"));
+        assert!(bus_rx.try_recv().is_err());
+    }
 
-        // rooms are isolated per scene in Genesis City: another scene's room carries nothing
-        queue_scene_message(&mut app, context, other, peer, vec![3, 1, 0, b't', b'x']);
+    #[test]
+    fn scene_messages_need_a_running_scene_room() {
+        use crate::scene_rooms::test_support::{set_running, spawn_client_room};
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let island = spawn_transport(&mut app, context);
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        queue_joined(&mut app, context, island, peer);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        // the scene room is dialed but not connected, and the other transport is no scene room
+        for transport in [island, room] {
+            queue_scene_message(&mut app, context, transport, peer, TOPIC_MESSAGE.to_vec());
+            queue_scene_message(&mut app, context, transport, peer, BUS_MESSAGE.to_vec());
+        }
         app.update();
         assert!(topics_rx.try_recv().is_err());
+        assert!(bus_rx.try_recv().is_err());
+
+        set_running(&mut app, room);
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_ok());
+        assert!(bus_rx.try_recv().is_ok());
+    }
+
+    #[test]
+    fn a_shared_room_delivers_to_a_scene_other_than_the_one_it_was_dialed_for() {
+        use crate::scene_rooms::test_support::{local_preview, set_running, spawn_client_room};
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+        let (room, _) = spawn_client_room(&mut app, "bafyroom", context);
+        set_running(&mut app, room);
+        queue_joined(&mut app, context, room, peer);
+        app.update();
+        let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
+
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(
+            topics_rx.try_recv().is_err() && bus_rx.try_recv().is_err(),
+            "isolated rooms carry only their own scene"
+        );
+
+        local_preview(&mut app);
+        queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
+        app.update();
+        assert!(topics_rx.try_recv().is_ok());
+        assert!(bus_rx.try_recv().is_ok());
     }
 
     #[test]
     fn topic_messages_over_the_size_limit_are_dropped() {
+        use crate::scene_rooms::test_support::{set_running, spawn_client_room};
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
-        let room = spawn_running_scene_room(&mut app, context, "bafyscene");
+        let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
+        set_running(&mut app, room);
         queue_joined(&mut app, context, room, peer);
         app.update();
-        let mut topics_rx = subscribe_scene_topics(&mut app, "bafyscene");
+        let (_bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
 
         let mut at_limit = vec![3, 1, 0, b't'];
         at_limit.resize(dcl_types::MAX_TOPIC_MESSAGE_BYTES, b'd');
@@ -1748,49 +1829,6 @@ mod tests {
         let (_, payload) = topics_rx.try_recv().unwrap();
         assert_eq!(payload.len(), dcl_types::MAX_TOPIC_MESSAGE_BYTES - 1);
         assert!(topics_rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn topic_messages_reach_neither_message_bus_nor_a_scene_without_its_room() {
-        let (mut app, context) = presence_app();
-        let peer = Address::repeat_byte(0xab);
-        let transport = spawn_transport(&mut app, context);
-        queue_joined(&mut app, context, transport, peer);
-        app.update();
-
-        let (bus, mut bus_rx) = RpcStreamSender::<String>::channel();
-        let (topics, mut topics_rx) = RpcStreamSender::<(String, Vec<u8>)>::channel();
-        let scene = app.world_mut().spawn_empty().id();
-        let origin = || RpcOrigin::Scene {
-            entity: scene,
-            hash: "bafyscene".into(),
-        };
-        app.world_mut().send_event(RpcCallEvent {
-            origin: origin(),
-            call: RpcCall::SubscribeMessageBus { sender: bus },
-        });
-        app.world_mut().send_event(RpcCallEvent {
-            origin: origin(),
-            call: RpcCall::SubscribeSceneTopics { sender: topics },
-        });
-        app.update();
-
-        // not a scene room: dropped, and not taken for a message bus string
-        queue_scene_message(
-            &mut app,
-            context,
-            transport,
-            peer,
-            vec![3, 1, 0, b't', b'x'],
-        );
-        app.update();
-        assert!(bus_rx.try_recv().is_err());
-        assert!(topics_rx.try_recv().is_err());
-
-        // a message bus string on the same path still arrives
-        queue_scene_message(&mut app, context, transport, peer, vec![1, b'h', b'i']);
-        app.update();
-        assert!(bus_rx.try_recv().is_ok());
     }
 
     /// Each foreign player's presence set.

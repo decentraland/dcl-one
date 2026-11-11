@@ -12,6 +12,7 @@ pub mod preview;
 pub mod private_chat;
 pub mod profile;
 pub mod pulse;
+pub mod scene_rooms;
 pub mod scene_topics;
 pub mod signed_login;
 #[cfg(test)]
