@@ -125,6 +125,12 @@ describe('BlogArticlePage', () => {
     expect(screen.queryByRole('region')).not.toBeInTheDocument()
   })
 
+  it('shows no related section when the related posts could not be read', () => {
+    renderArticle({ related: null })
+    expect(screen.queryByRole('region')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('A post')
+  })
+
   it('omits the author when the post has none, and names one without a page without a link', () => {
     const { unmount } = renderArticle({
       post: article({ author: { slug: '', name: '', image: '' } })

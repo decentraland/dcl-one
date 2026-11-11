@@ -33,7 +33,8 @@ export type BlogListData = {
 export type BlogPostData = {
   state: "ok";
   post: BlogArticle;
-  related: BlogRelatedCard[];
+  /** Null when the related posts could not be read in time: the page shows no related section. */
+  related: BlogRelatedCard[] | null;
   shareUrl: string;
   categories: BlogCategory[];
 };

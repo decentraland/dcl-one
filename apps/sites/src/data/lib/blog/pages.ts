@@ -1,6 +1,7 @@
 // What each blog route loads: the list pages (home, category, author, search) and a post, as a status
 // and payload the route hands to its view. A CMS failure or the loader deadline is a 503; an unknown
-// slug is a 404; a post reached under another category redirects to its own URL.
+// slug is a 404; a post reached under another category redirects to its own URL, and an old
+// `/blog/<post-slug>` link (no category) redirects to the post's URL.
 import {
   BLOG_HOME,
   BLOG_SEARCH,
@@ -29,6 +30,8 @@ import type { BlogListData, BlogListPayload, BlogMissing, BlogPostPayload } from
 
 /** The whole loader, every CMS read included; past it the page answers 503. */
 export const BLOG_LOADER_TIMEOUT_MS = 8_000;
+/** Related posts' own budget inside the loader: past it the post renders without them. */
+export const BLOG_RELATED_TIMEOUT_MS = 1_500;
 
 export type BlogOutcome<T> =
   | { status: 200; payload: T }
@@ -99,7 +102,11 @@ export function loadBlogCategory(request: Request, slug: string, env?: BaseEnv) 
   return guarded<BlogListPayload>(request, env, async (cms) => {
     const categories = await cms.categories();
     const category = categories.find((c) => c.slug === slug);
-    if (!category) return notFound("category");
+    if (!category) {
+      // `/blog/<post-slug>` was a post's URL before posts moved under their category.
+      const found = await cms.post(slug);
+      return found?.categoryKnown ? { status: 301, location: blogPostHref(found.post.category.slug, found.post.slug) } : notFound("category");
+    }
     return scopedList(cms, new URL(request.url), blogCategoryHref(slug), { category: slug }, {
       kind: "category",
       viewKey: `category:${slug}`,
@@ -132,12 +139,12 @@ export function loadBlogSearch(request: Request, env?: BaseEnv) {
   const url = new URL(request.url);
   const q = parseBlogQuery(url.searchParams.get("q"));
   if (!q) return Promise.resolve({ status: 302, location: BLOG_HOME } as const);
-  return guarded<BlogListPayload>(request, env, async (cms, signal) => {
+  return guarded<BlogListPayload>(request, env, async (cms) => {
     const page = parseBlogPage(url.searchParams.get("page"));
     const short = q.length < SEARCH_MIN_LENGTH;
     const [categories, found] = await Promise.all([
       cms.categories(),
-      short ? Promise.resolve({ posts: [] as BlogCmsPost[], total: 0 }) : cms.search(q, page, signal),
+      short ? Promise.resolve({ posts: [] as BlogCmsPost[], total: 0 }) : cms.search(q, page),
     ]);
     return {
       status: 200,
@@ -169,18 +176,34 @@ const related = (post: BlogCmsPost, pool: BlogCmsPost[]): BlogRelatedCard[] =>
     .slice(0, RELATED)
     .map(({ slug, title, publishedAt, category, image, hue }) => ({ slug, title, publishedAt, category, image, hue }));
 
+/**
+ * Up to RELATED posts (the category's newest, then the blog's), within their own budget; null when
+ * they fail or run past it, so a slow list never turns a loaded post into a 503.
+ */
+async function loadRelated(cms: BlogCms, post: BlogCmsPost, category: string | null, signal: AbortSignal): Promise<BlogRelatedCard[] | null> {
+  try {
+    const lists = await withDeadline(
+      () => Promise.all(category ? [cms.list({ category }, 1), cms.list({}, 1)] : [cms.list({}, 1)]),
+      BLOG_RELATED_TIMEOUT_MS,
+      signal,
+    );
+    return related(post, lists.flatMap((list) => list.posts));
+  } catch {
+    signal.throwIfAborted();
+    return null;
+  }
+}
+
 export function loadBlogPost(request: Request, categorySlug: string, postSlug: string, env?: BaseEnv) {
   return guarded<BlogPostPayload>(request, env, async (cms, signal) => {
-    const [found, categories] = await Promise.all([cms.post(postSlug, signal), cms.categories()]);
+    const [found, categories] = await Promise.all([cms.post(postSlug), cms.categories()]);
     if (!found) return notFound("post");
-    const { post, assets } = found;
-    const href = blogPostHref(post.category.slug, post.slug);
-    if (post.category.slug !== categorySlug) return { status: 301, location: href };
-    // Related posts are optional: without them the post still renders.
-    const [sameCategory, latest] = await Promise.all([
-      cms.list({ category: post.category.slug }, 1).catch(() => ({ posts: [] })),
-      cms.list({}, 1).catch(() => ({ posts: [] })),
-    ]);
+    const { post, assets, categoryKnown } = found;
+    // A category the CMS does not list (even after a reload) has no URL to send anyone to: the post
+    // stays at the URL it was asked for. A permanent redirect is only ever to the post's own category.
+    const href = blogPostHref(categoryKnown ? post.category.slug : categorySlug, post.slug);
+    if (categoryKnown && post.category.slug !== categorySlug) return { status: 301, location: href };
+    const relatedCards = await loadRelated(cms, post, categoryKnown ? post.category.slug : null, signal);
     const images: Record<string, BlogImage> = {};
     for (const [id, image] of assets) if (image) images[id] = image;
     return {
@@ -188,7 +211,7 @@ export function loadBlogPost(request: Request, categorySlug: string, postSlug: s
       payload: {
         state: "ok",
         post: { ...toCard(post), body: post.body, assets: images },
-        related: related(post, [...sameCategory.posts, ...latest.posts]),
+        related: relatedCards,
         shareUrl: publicPageUrl(request, href, env),
         categories: menu(categories),
       },

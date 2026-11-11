@@ -24,7 +24,8 @@ export type BlogArticlePageProps = {
   post: BlogArticle
   /** The post's absolute public URL, for sharing. */
   shareUrl: string
-  related: readonly BlogRelatedCard[]
+  /** Null when they could not be read: like an empty list, no related section. */
+  related: readonly BlogRelatedCard[] | null
   categories: readonly BlogCategory[]
 }
 
@@ -32,7 +33,7 @@ export type BlogArticlePageProps = {
 export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArticlePageProps) {
   const relatedId = useId()
   const date = formatBlogDate(post.publishedAt)
-  const sameCategory = related.every((r) => r.category.slug === post.category.slug)
+  const sameCategory = related?.every((r) => r.category.slug === post.category.slug)
   return (
     <BlogShell>
       <BlogTabsMenu
@@ -79,7 +80,7 @@ export function BlogArticlePage({ post, shareUrl, related, categories }: BlogArt
         <p className={styles.lead}>{post.description}</p>
         <BlogRichText body={post.body} assets={post.assets} />
       </article>
-      {related.length ? (
+      {related?.length ? (
         <section className={styles.related} aria-labelledby={relatedId}>
           <h2 className={styles.relatedTitle} id={relatedId}>
             {sameCategory ? `More on ${post.category.title}` : 'More from the blog'}

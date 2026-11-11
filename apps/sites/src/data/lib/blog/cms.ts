@@ -10,6 +10,7 @@ import {
   asCmsList,
   bodyAssetIds,
   FIRST_PAGE_SIZE,
+  linkId,
   mapAsset,
   mapAuthor,
   mapCategory,
@@ -37,6 +38,36 @@ export const CMS_REQUEST_TIMEOUT_MS = 6_000;
 // cms-server serves en-US, es and zh; the blog is English only, as decentraland.org's.
 const LOCALE = "en-US";
 const MEMO_TTL_MS = 5 * 60_000;
+/** How long an expired list page is still served while one reload runs behind it (/create's 1s budget). */
+const LIST_STALE_MS = 60 * 60_000;
+/** Slugs that miss (no such post) and search results: short-lived and bounded, they cap anonymous load. */
+const MISS_TTL_MS = 60_000;
+const MISS_MAX = 500;
+const SEARCH_TTL_MS = 60_000;
+const SEARCH_MAX = 200;
+/** At most one forced category reload per base in this window, when a post names an unknown category. */
+const CATEGORY_REFRESH_MS = 60_000;
+
+/**
+ * Category slugs the static routes `/blog/search` and `/blog/author/*` shadow: a CMS category with
+ * one of these slugs could never be reached, so it is left out of the categories (and logged once).
+ */
+export const RESERVED_CATEGORY_SLUGS: ReadonlySet<string> = new Set(["search", "author"]);
+const reservedLogged = new Set<string>();
+
+function withoutReserved(categories: BlogCmsCategory[]): BlogCmsCategory[] {
+  return categories.filter((c) => {
+    if (!RESERVED_CATEGORY_SLUGS.has(c.slug)) return true;
+    if (!reservedLogged.has(c.slug)) {
+      reservedLogged.add(c.slug);
+      console.warn(`[blog] CMS category "${c.slug}" is shadowed by a static /blog route and is not shown`);
+    }
+    return false;
+  });
+}
+
+/** The search memo's key: the query as the CMS matches it (case and spacing do not change results). */
+export const normalizeSearchQuery = (q: string): string => q.trim().replace(/\s+/g, " ").toLowerCase();
 
 type Params = Record<string, string | number | undefined>;
 
@@ -55,8 +86,12 @@ async function cmsGet(url: string, signal: AbortSignal, allowMissing = false): P
   } catch (cause) {
     throw new BlogUnavailableError({ cause });
   }
-  if (allowMissing && response.status === 404) return null;
-  if (!response.ok) throw new BlogUnavailableError({ cause: response.status });
+  if (!response.ok) {
+    // An unread body keeps its connection busy; during an outage every 404 or 5xx would hold one.
+    await response.body?.cancel().catch(() => {});
+    if (allowMissing && response.status === 404) return null;
+    throw new BlogUnavailableError({ cause: response.status });
+  }
   try {
     return await response.json();
   } catch (cause) {
@@ -80,9 +115,11 @@ const categoriesMemo = ttlMemo({
   ttlMs: MEMO_TTL_MS,
   keyOf: (base: string) => base,
   load: async (base: string) =>
-    (await cmsList(cmsUrl(base, "/blog/categories", { locale: LOCALE, limit: 100 }), ownSignal())).items
-      .map(mapCategory)
-      .filter((c): c is BlogCmsCategory => c !== null),
+    withoutReserved(
+      (await cmsList(cmsUrl(base, "/blog/categories", { locale: LOCALE, limit: 100 }), ownSignal())).items
+        .map(mapCategory)
+        .filter((c): c is BlogCmsCategory => c !== null),
+    ),
 });
 
 const authorsMemo = ttlMemo({
@@ -121,6 +158,7 @@ export function searchPageWindow(n: number): { skip: number; limit: number } {
 export type BlogCms = ReturnType<typeof createBlogCms>;
 
 export function createBlogCms(base: string) {
+  let categoriesRefreshedAt = -Infinity;
   const lookups = async () => {
     const [categories, authors] = await Promise.all([categoriesMemo(base), authorsMemo(base)]);
     return {
@@ -142,11 +180,12 @@ export function createBlogCms(base: string) {
     const posts = list.items
       .map((entry) => mapPost(entry, { categories, authors, assets: resolved }))
       .filter((p): p is BlogCmsPost => p !== null);
-    return { posts, total: list.total, assets: resolved };
+    return { posts, total: list.total, assets: resolved, categories };
   };
 
   const listPage = ttlMemo({
     ttlMs: MEMO_TTL_MS,
+    staleMs: LIST_STALE_MS,
     keyOf: (scope: BlogScope, page: number) => `${base}\n${scope.category ?? ""}\n${scope.author ?? ""}\n${page}`,
     load: async (scope: BlogScope, page: number): Promise<BlogPage> => {
       const { skip, limit } = listPageWindow(page);
@@ -157,6 +196,31 @@ export function createBlogCms(base: string) {
       const mapped = await mapPage(list);
       // Lists keep cards only: the bodies are what makes a page of posts heavy.
       return { total: mapped.total, posts: mapped.posts.map((p) => ({ ...p, body: null })) };
+    },
+  });
+
+  const searchMemo = ttlMemo({
+    ttlMs: SEARCH_TTL_MS,
+    maxEntries: SEARCH_MAX,
+    keyOf: (q: string, pages: number) => `${q}\n${pages}`,
+    load: async (q: string, pages: number): Promise<BlogPage> => {
+      const last = searchPageWindow(pages);
+      const page = await mapPage(
+        await cmsList(cmsUrl(base, "/blog/posts", { q, locale: LOCALE, limit: last.skip + last.limit, skip: 0 }), ownSignal()),
+      );
+      return { posts: uniqueBySlug(page.posts).map((p) => ({ ...p, body: null })), total: page.total };
+    },
+  });
+
+  // Only misses are kept: an unknown slug (an old link, a typo, a scanner) asks the CMS once a minute.
+  const postEntry = ttlMemo({
+    ttlMs: MISS_TTL_MS,
+    maxEntries: MISS_MAX,
+    keyOf: (slug: string) => slug,
+    keep: (entry: CmsEntry | null) => entry === null,
+    load: async (slug: string): Promise<CmsEntry | null> => {
+      const list = await cmsList(cmsUrl(base, "/blog/posts", { locale: LOCALE, slug, limit: 1 }), ownSignal());
+      return list.items.find((item) => item.fields?.id === slug) ?? null;
     },
   });
 
@@ -171,28 +235,40 @@ export function createBlogCms(base: string) {
     },
 
     /**
-     * Pages 1..`pages` of the full-text search (cms-server's `q`), best match first. Not memoized
-     * (any `q`), so it is one upstream request whatever the page: the visible results in a single
-     * read, capped at cms-server's 100-item limit (SEARCH_MAX_PAGES).
+     * Pages 1..`pages` of the full-text search (cms-server's `q`), best match first: one upstream
+     * request whatever the page (the visible results in a single read, capped at cms-server's
+     * 100-item limit, SEARCH_MAX_PAGES), kept briefly in a bounded memo keyed by the normalized query.
      */
-    async search(q: string, pages: number, signal: AbortSignal): Promise<{ posts: BlogCmsPost[]; total: number }> {
-      const last = searchPageWindow(Math.min(Math.max(pages, 1), SEARCH_MAX_PAGES));
-      const page = await mapPage(
-        await cmsList(cmsUrl(base, "/blog/posts", { q, locale: LOCALE, limit: last.skip + last.limit, skip: 0 }), signal),
-      );
-      return { posts: uniqueBySlug(page.posts), total: page.total };
+    search(q: string, pages: number): Promise<BlogPage> {
+      return searchMemo(normalizeSearchQuery(q), Math.min(Math.max(pages, 1), SEARCH_MAX_PAGES));
     },
 
-    /** A post by its slug with the pictures its body embeds, or null when there is none. */
-    async post(slug: string, signal: AbortSignal): Promise<{ post: BlogCmsPost; assets: Map<string, BlogImage | null> } | null> {
-      const list = await cmsList(cmsUrl(base, "/blog/posts", { locale: LOCALE, slug, limit: 1 }), signal);
-      const entry = list.items.find((item) => item.fields?.id === slug);
+    /**
+     * A post by its slug with the pictures its body embeds, or null when there is none.
+     * `categoryKnown` is false when the post's category is not among the CMS's categories even after
+     * one reload: its `category` is then a placeholder, not a URL to send anyone to.
+     */
+    async post(slug: string): Promise<{ post: BlogCmsPost; assets: Map<string, BlogImage | null>; categoryKnown: boolean } | null> {
+      const entry = await postEntry(slug);
       if (!entry) return null;
+      const categoryId = linkId(entry.fields?.category);
+      // Categories are memoized: a category created after the last read is not in them yet.
+      if (categoryId && Date.now() - categoriesRefreshedAt >= CATEGORY_REFRESH_MS) {
+        const known = (await categoriesMemo(base)).some((c) => c.id === categoryId);
+        if (!known) {
+          categoriesRefreshedAt = Date.now();
+          categoriesMemo.forget(base);
+        }
+      }
       const embedded = bodyAssetIds((entry.fields?.body ?? null) as BlogCmsPost["body"]);
       const page = await mapPage({ items: [entry], total: 1 }, embedded);
       const post = page.posts[0];
       if (!post) return null;
-      return { post, assets: new Map(embedded.map((id) => [id, page.assets.get(id) ?? null])) };
+      return {
+        post,
+        assets: new Map(embedded.map((id) => [id, page.assets.get(id) ?? null])),
+        categoryKnown: page.categories.has(categoryId),
+      };
     },
   };
 }
@@ -225,4 +301,5 @@ export function resetBlogCms() {
   authorsMemo.reset();
   assetMemo.reset();
   instances.clear();
+  reservedLogged.clear();
 }

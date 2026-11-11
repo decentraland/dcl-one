@@ -7,6 +7,10 @@ import { blogHeaders, blogListMeta, blogResponse } from "../lib/blog";
 
 import type { Route } from "./+types/blog.$category";
 
+// `/blog/search` and `/blog/author/*` are static routes and win over this one, so a CMS category with
+// the slug `search` or `author` could never be reached here: the CMS reads leave those categories out
+// (RESERVED_CATEGORY_SLUGS in data/lib/blog/cms.ts) and the tabs never link to them. A slug that is no
+// category is looked up as a post, for the `/blog/<post-slug>` links that predate categories in URLs.
 export const handle = { agentMarkdown: "blogIndex" } satisfies AgentMarkdownHandle;
 
 export const headers = blogHeaders;

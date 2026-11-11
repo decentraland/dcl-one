@@ -14,7 +14,7 @@ const asset = (id: string, title: string, width = 1200, height = 600): CmsEntry 
   fields: { title, file: { url: `//images.example/${id}.png`, contentType: "image/png", details: { image: { width, height } } } },
 });
 
-const category = (id: string, slug: string, title: string, isShownInMenu = true): CmsEntry => ({
+export const category = (id: string, slug: string, title: string, isShownInMenu = true): CmsEntry => ({
   sys: { id },
   fields: { id: slug, title, description: `About ${title}`, isShownInMenu, image: link("Asset", "cat-image") },
 });
@@ -45,7 +45,7 @@ export const FIRST_POST_BODY = {
 
 type PostSeed = { id: string; slug: string; title: string; category: string; author?: string; image?: string; date: string; body?: unknown };
 
-const post = (seed: PostSeed): CmsEntry => ({
+export const post = (seed: PostSeed): CmsEntry => ({
   sys: { id: seed.id },
   fields: {
     id: seed.slug,
@@ -88,17 +88,29 @@ export const CMS_POSTS: CmsEntry[] = [
 
 export type FakeCmsFailure = "status" | "json" | "network" | "hang";
 
+/** What a test changes in the fake CMS: its content (read on every request) and which requests hang. */
+export type FakeCmsOptions = {
+  posts?: () => CmsEntry[];
+  categories?: () => CmsEntry[];
+  hang?: (url: URL) => boolean;
+  fail?: (url: URL) => Response | undefined;
+};
+
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
 
 const slugOf = (entries: CmsEntry[], id: string) => entries.find((e) => e.sys.id === id)?.fields?.id;
 
 /** Answers a cms-server request, or fails it as `fail` says. */
-export function fakeCmsFetch(fail?: FakeCmsFailure) {
+export function fakeCmsFetch(fail?: FakeCmsFailure, options: FakeCmsOptions = {}) {
+  const posts = options.posts ?? (() => CMS_POSTS);
+  const categories = options.categories ?? (() => CMS_CATEGORIES);
   return vi.fn(async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url);
     if (fail === "network") throw new TypeError("fetch failed");
-    if (fail === "hang")
+    if (fail === "hang" || options.hang?.(url))
       return new Promise((_, reject) => init?.signal?.addEventListener("abort", () => reject(init.signal!.reason), { once: true }));
+    const failed = options.fail?.(url);
+    if (failed) return failed;
     if (fail === "status") return new Response("upstream down", { status: 502 });
     if (fail === "json") return new Response("<html>not json</html>", { status: 200 });
     if (!url.href.startsWith(`${CMS_BASE}/`)) return new Response("unknown", { status: 404 });
@@ -107,14 +119,14 @@ export function fakeCmsFetch(fail?: FakeCmsFailure) {
     const limit = Number(p.get("limit") ?? 20);
     const skip = Number(p.get("skip") ?? 0);
     const page = (items: CmsEntry[]) => json({ items: items.slice(skip, skip + limit), total: items.length, skip, limit });
-    if (path === "/blog/categories") return page(CMS_CATEGORIES);
+    if (path === "/blog/categories") return page(categories());
     if (path === "/blog/authors") return page(CMS_AUTHORS);
     if (path === "/blog/posts") {
       const q = p.get("q")?.toLowerCase();
-      const items = CMS_POSTS.filter((e) => {
+      const items = posts().filter((e) => {
         const f = e.fields ?? {};
         if (p.get("slug") && f.id !== p.get("slug")) return false;
-        if (p.get("category") && slugOf(CMS_CATEGORIES, (f.category as { sys: { id: string } }).sys.id) !== p.get("category")) return false;
+        if (p.get("category") && slugOf(categories(), (f.category as { sys: { id: string } }).sys.id) !== p.get("category")) return false;
         if (p.get("author")) {
           const authorId = (f.author as { sys: { id: string } } | undefined)?.sys.id ?? "";
           const author = CMS_AUTHORS.find((a) => a.sys.id === authorId);
@@ -134,10 +146,10 @@ export function fakeCmsFetch(fail?: FakeCmsFailure) {
 }
 
 /** Points BLOG_CMS_URL at the fake CMS and stubs fetch; returns the fetch mock. Clears the CMS memos. */
-export function installFakeCms(fail?: FakeCmsFailure) {
+export function installFakeCms(fail?: FakeCmsFailure, options?: FakeCmsOptions) {
   resetBlogCms();
   vi.stubEnv("BLOG_CMS_URL", CMS_BASE);
-  const fetchMock = fakeCmsFetch(fail);
+  const fetchMock = fakeCmsFetch(fail, options);
   vi.stubGlobal("fetch", fetchMock);
   return fetchMock;
 }
