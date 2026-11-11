@@ -377,7 +377,8 @@ enum Switch {
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/nearby_mute")]
 struct NearbyMuteCommand {
-    switch: Switch,
+    // not `switch`: the web page builds a JS function with the argument names as its parameters
+    state: Switch,
     address: String,
 }
 
@@ -390,7 +391,7 @@ fn nearby_mute_command(
     let Some(Ok(command)) = input.take() else {
         return;
     };
-    let muted = command.switch == Switch::On;
+    let muted = command.state == Switch::On;
     match apply(&mut mutes, &command.address, muted, &wallet, &ipfs) {
         Ok(()) => input.reply_ok(if muted { "Muted" } else { "Unmuted" }),
         Err(e) => input.reply_failed(e),
