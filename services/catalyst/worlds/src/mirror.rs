@@ -19,9 +19,9 @@
 //! are ever retired: those of a refused world at once, since the mirror never
 //! refreshes them again.
 //!
-//! A read-through fill ([`mirror_one`]) takes the same path with [`Verify`]: it also asks
-//! `{source}/world/{name}/scenes?entity_id=<id>` for each listed scene's deployment auth chain
-//! (one bounded body, the chain at most [`MAX_CHAIN_BYTES`]), and stores nothing until
+//! A read-through fill ([`mirror_one`]) takes the same path with [`Verify`]: it takes each
+//! scene's deployment auth chain from its row of that listing (the chain at most
+//! [`MAX_CHAIN_BYTES`]), and stores nothing until
 //! every scene is signed (ECDSA links only, as the upstream worlds server accepts) by an address
 //! the policy says may have published the world, or (`WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS`,
 //! on the upstream's word) one its `/permissions` lists as a deployer of a world whose owner it
@@ -981,12 +981,11 @@ fn world_url(source: &str, name: &str, tail: &str) -> Result<String> {
     Ok(url.into())
 }
 
-/// Who published each scene of the world a read-through fills, asked of the upstream one scene
-/// at a time.
+/// Who published each scene of the world a read-through fills, by the chain its listing row
+/// carries.
 struct Signatures<'a> {
     verify: &'a Verify<'a>,
     world: WorldName,
-    scenes_url: url::Url,
     /// `{source}/world/{name}/permissions` when upstream grants are trusted.
     permissions_url: Option<url::Url>,
     /// That answer, asked at most once per fill.
@@ -1042,7 +1041,6 @@ impl<'a> Signatures<'a> {
         Ok(Self {
             verify,
             world: WorldName::parse(name)?,
-            scenes_url: url::Url::parse(&world_url(source, name, "scenes")?)?,
             permissions_url,
             grant: tokio::sync::OnceCell::new(),
         })
@@ -1100,47 +1098,19 @@ impl<'a> Signatures<'a> {
         }
     }
 
-    /// The chain the upstream lists for `cid` (`?entity_id=<cid>&limit=1`: one body of at most
-    /// [`MAX_SCENE_ROW_BYTES`], the chain itself at most [`MAX_CHAIN_BYTES`], nothing else of it
-    /// kept) and its signer, refused unless the policy says the signer may have published this
-    /// world. Asked before the entity is fetched.
-    async fn signer(&self, client: &crate::http::Outbound, cid: &str) -> Result<Signed> {
-        if !is_canonical_cid(cid) {
-            bail!("{cid:?} is not a canonical content id");
+    /// The chain the listing carries for the scene and its signer, refused unless the policy says
+    /// the signer may have published this world. Asked before the entity is fetched.
+    async fn signer(&self, client: &crate::http::Outbound, scene: ListedScene) -> Result<Signed> {
+        let ListedScene {
+            id,
+            chain: json,
+            chain_bytes,
+            size,
+        } = scene;
+        let cid = id.as_str();
+        if chain_bytes > MAX_CHAIN_BYTES {
+            bail!("the auth chain of scene {cid} is {chain_bytes} bytes, over {MAX_CHAIN_BYTES}");
         }
-        let mut url = self.scenes_url.clone();
-        url.query_pairs_mut()
-            .append_pair("entity_id", cid)
-            .append_pair("limit", "1");
-        let resp = client
-            .get(url.as_str())
-            .send()
-            .await
-            .with_context(|| format!("GET {url}"))?;
-        if !resp.status().is_success() {
-            bail!("GET {url} answered {}", resp.status());
-        }
-        let (json, size) = {
-            let listing: Value =
-                serde_json::from_slice(&read_body_capped(resp, MAX_SCENE_ROW_BYTES).await?)
-                    .with_context(|| format!("parsing {url}"))?;
-            let row = listing["scenes"]
-                .as_array()
-                .and_then(|rows| rows.iter().find(|row| row["entityId"] == cid))
-                .with_context(|| format!("{} lists no deployment of scene {cid}", self.world))?;
-            let size = serde_json::to_vec(&row["deploymentAuthChain"])?.len();
-            if size > MAX_CHAIN_BYTES {
-                bail!("the auth chain of scene {cid} is {size} bytes, over {MAX_CHAIN_BYTES}");
-            }
-            let listed_size = match &row["size"] {
-                Value::String(s) => s.parse().ok(),
-                other => other.as_i64(),
-            };
-            (
-                row["deploymentAuthChain"].clone(),
-                listed_size.unwrap_or(0).max(0),
-            )
-        };
         let chain: AuthChain = serde_json::from_value(json.clone())
             .with_context(|| format!("the auth chain of scene {cid} is malformed"))?;
         let signer = chain
@@ -1303,19 +1273,22 @@ async fn mirror_world(
     };
     // `/about` lists the newest scene only; `/scenes` lists them all, under the same `baseUrl`.
     // The listing decides what is retired below, so any doubt about it stops this world's sync.
-    let ids = listed_scene_ids(client, source, name).await?;
-    if ids.is_empty() {
+    let listed = listed_scenes(client, source, name).await?;
+    if listed.is_empty() {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
     }
     // A scene held here and missing from the listing is retired, with its storage identity. One
     // the source still lists by id means the listing moved under the pages (a redeploy shifts
     // every later row), so the world waits for the next pass instead.
-    for cid in held.iter().filter(|cid| !ids.contains(cid)) {
+    for cid in held
+        .iter()
+        .filter(|cid| !listed.iter().any(|scene| scene.id == **cid))
+    {
         if source_lists_scene(client, source, name, cid).await? {
             bail!("the scene listing of {name} changed while it was read ({cid} is still listed)");
         }
     }
-    let refs: Vec<(String, String)> = ids.into_iter().map(|id| (id, base.clone())).collect();
+    let refs: Vec<(ListedScene, String)> = listed.into_iter().map(|s| (s, base.clone())).collect();
 
     let skybox_time = about["configurations"]["skybox"]["fixedHour"]
         .as_f64()
@@ -1335,12 +1308,13 @@ async fn mirror_world(
     // Every scene entity fetched and, on a read-through, its signature and signer checked
     // before any file of the world is stored; the bytes checked are the bytes stored.
     let mut scenes = Vec::with_capacity(refs.len());
-    for (cid, base) in refs {
+    for (scene, base) in refs {
+        let cid = scene.id.clone();
         if !settings.base_url_allowed(&base) {
             bail!("scene {cid} of {name} names a baseUrl this node will not fetch: {base}");
         }
         let signed = match &signatures {
-            Some(signatures) => Some(signatures.signer(client, &cid).await?),
+            Some(signatures) => Some(signatures.signer(client, scene).await?),
             None => None,
         };
         // The slot ends with this scene's checks: holding it to the store could wait on itself
@@ -1558,16 +1532,27 @@ async fn mirror_world(
     })
 }
 
-/// Every scene id `{source}/world/{name}/scenes` lists, newest first by publication (it pages
+/// One row of a world's `/scenes` listing, as much of it as a fill reads.
+struct ListedScene {
+    id: String,
+    /// The `deploymentAuthChain`; `Null` when its JSON is over [`MAX_CHAIN_BYTES`].
+    chain: Value,
+    /// The size of the chain's JSON.
+    chain_bytes: usize,
+    /// The scene's size as the upstream lists it (a string upstream; 0 when absent).
+    size: i64,
+}
+
+/// Every scene `{source}/world/{name}/scenes` lists, newest first by publication (it pages
 /// oldest first; scenes a source wrote together come in entity-id order). Any refusal, a page
 /// without its `scenes`, a repeated id or a count other than the listing's `total` is an error.
-async fn listed_scene_ids(
+async fn listed_scenes(
     client: &crate::http::Outbound,
     source: &str,
     name: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ListedScene>> {
     let listing = url::Url::parse(&world_url(source, name, "scenes")?)?;
-    let mut ids: Vec<String> = Vec::new();
+    let mut ids: Vec<ListedScene> = Vec::new();
     let mut offset = 0usize;
     let mut total;
     loop {
@@ -1601,10 +1586,24 @@ async fn listed_scene_ids(
                 .as_str()
                 .filter(|id| is_canonical_cid(id))
                 .with_context(|| format!("{url} lists a scene without a canonical entityId"))?;
-            if ids.iter().any(|listed| listed == id) {
+            if ids.iter().any(|listed| listed.id == id) {
                 bail!("{url} lists scene {id} twice");
             }
-            ids.push(id.to_string());
+            let chain_bytes = serde_json::to_vec(&row["deploymentAuthChain"])?.len();
+            let chain = match chain_bytes <= MAX_CHAIN_BYTES {
+                true => row["deploymentAuthChain"].clone(),
+                false => Value::Null,
+            };
+            let size = match &row["size"] {
+                Value::String(s) => s.parse().ok(),
+                other => other.as_i64(),
+            };
+            ids.push(ListedScene {
+                id: id.to_string(),
+                chain,
+                chain_bytes,
+                size: size.unwrap_or(0).max(0),
+            });
         }
         offset += rows.len();
         if rows.is_empty() || offset >= total {
