@@ -103,6 +103,31 @@ function identities(values, expected, label) {
 
 const LIMIT_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/
 const LIMIT_TEXT_MAX = 300
+// Each limit is repeated verbatim into a consumer agent's report, so a component carries only a few.
+const LIMITS_MAX = 10
+const COMPONENT_NAME = /^[A-Za-z_$][\w$]*$/
+// A link in any spelling the text could carry: a scheme with or without //, a bare www. host or a Figma address.
+const LINK = /:\/\/|figma\.com|www\.|\b(?:javascript|mailto|data|vbscript|file|tel):/i
+
+/**
+ * Plain committed text an agent may repeat verbatim: non-empty, at most `max` characters, with no control,
+ * format (bidi, zero-width) or line/paragraph separator character, no `<` or `>` and no link. The rule the
+ * retirement ledger and the accepted limits share.
+ * @param {unknown} text
+ * @param {number} max
+ * @returns {boolean}
+ */
+export function isPlainText(text, max) {
+  return (
+    typeof text === 'string' &&
+    text.length > 0 &&
+    text.length <= max &&
+    !/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}<>]/u.test(text) &&
+    !LINK.test(text)
+  )
+}
+
+/** @typedef {{ id: string, text: string }} AcceptedLimit */
 
 // A public entry is a name, or { name, limits } where limits are the owner-accepted gaps the resolver repeats to
 // consumers: unique kebab-case ids and short plain sentences, never a link. Internal entries are names only.
@@ -111,8 +136,12 @@ function accepted(entry) {
   if (!record(entry) || Object.keys(entry).some((key) => key !== 'name' && key !== 'limits'))
     throw new Error('Invalid component registry entry')
   const { name, limits } = entry
-  if (!Array.isArray(limits) || !limits.length)
-    throw new Error('A component registry entry object needs a non-empty limits list')
+  if (typeof name !== 'string' || !COMPONENT_NAME.test(name))
+    throw new Error('A component registry entry object needs a component name')
+  if (!Array.isArray(limits) || !limits.length || limits.length > LIMITS_MAX)
+    throw new Error(
+      `A component registry entry object needs between 1 and ${LIMITS_MAX} limits: ${name}`
+    )
   const ids = new Set()
   for (const limit of limits) {
     if (
@@ -122,14 +151,8 @@ function accepted(entry) {
       !LIMIT_ID.test(limit.id) ||
       limit.id.length > 48 ||
       ids.has(limit.id) ||
-      typeof limit.text !== 'string' ||
-      !limit.text.trim() ||
-      limit.text !== limit.text.trim() ||
-      limit.text.length > LIMIT_TEXT_MAX ||
-      limit.text.includes('://') ||
-      [...limit.text].some(
-        (character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127
-      )
+      !isPlainText(limit.text, LIMIT_TEXT_MAX) ||
+      limit.text !== limit.text.trim()
     )
       throw new Error('Invalid or duplicate accepted limit of component ' + String(name))
     ids.add(limit.id)
@@ -144,7 +167,9 @@ export function componentRegistryEntryName(entry) {
 
 /**
  * Names and accepted limits of a component registry (components/promotion.json), validated once for the
- * installer, the guard and the generation record.
+ * installer, the guard, the resolver and the generation record.
+ * @param {unknown} registry
+ * @returns {{ components: string[], internal: string[], limits: Record<string, AcceptedLimit[]> }}
  */
 export function componentRegistryEntries(registry) {
   if (
@@ -176,32 +201,21 @@ function visibility(registry) {
     new Set(all.map((name) => name.normalize('NFC').toLowerCase())).size !== all.length
   )
     throw new Error('Invalid or duplicate component visibility name')
-  return {
-    components: [...entries.components].sort(),
-    internal: [...entries.internal].sort(),
-    limits: Object.fromEntries(
-      Object.entries(entries.limits).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    )
-  }
+  return { components: [...entries.components].sort(), internal: [...entries.internal].sort() }
 }
 
-// The visibility a generation record states, rebuilt into registry form so the same validation applies.
+// The visibility a generation record states, validated as a registry of names.
 function recordedVisibility(recorded) {
-  if (!record(recorded.limits)) throw new Error('Invalid component generation registry limits')
-  const limited = new Map(Object.entries(recorded.limits))
   if (
     !Array.isArray(recorded.components) ||
-    [...limited.keys()].some((name) => !recorded.components.includes(name))
+    recorded.components.some((name) => typeof name !== 'string')
   )
-    throw new Error('Component generation limits name a component that is not public')
-  return visibility({
-    components: recorded.components.map((name) =>
-      limited.has(name) ? { name, limits: limited.get(name) } : name
-    ),
-    internal: recorded.internal
-  })
+    throw new Error('Invalid component generation registry names')
+  return visibility({ components: recorded.components, internal: recorded.internal })
 }
 
+// The generation record names the registry's public and internal components; the accepted limits stay in the
+// registry itself, which the record pins by sha256.
 export function componentRegistryIdentity(bytes) {
   return {
     path: 'promotion.json',
@@ -374,7 +388,7 @@ export function validateComponentGeneration(bytes, source, expected = {}) {
   }
   if (JSON.stringify(parsed.transform) !== JSON.stringify(transform))
     throw new Error('Invalid component generation transform')
-  exactKeys(parsed.registry, ['path', 'sha256', 'components', 'internal', 'limits'], 'registry')
+  exactKeys(parsed.registry, ['path', 'sha256', 'components', 'internal'], 'registry')
   if (parsed.registry.path !== 'promotion.json' || !digest(parsed.registry.sha256))
     throw new Error('Invalid component generation registry identity')
   const registry = {

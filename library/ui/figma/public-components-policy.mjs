@@ -56,7 +56,6 @@ export function publicComponentProblems(context = {}) {
   if (typeof source !== 'string' || !source.trim())
     problems.push('missing component source identity')
   if (!record(sourceFiles)) problems.push('missing locked component source files')
-  // Origins never repeat the module map; its single pin is the caller's validated generation.json.
   const modulesValid =
     transformModules instanceof Map &&
     transformModules.size > 0 &&
