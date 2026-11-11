@@ -7,7 +7,16 @@
 // Domain types mirror scene/src/bevy-api/interface.ts so the bridge scene can
 // forward SystemApi results verbatim.
 
-import type { Color3, HomeScene, SatelliteView, SceneLoadingUi, WelcomeState } from './generated'
+import type {
+  Color3,
+  CommunityVoiceStatus,
+  HomeScene,
+  SatelliteView,
+  SceneLoadingUi,
+  VoiceChatAction,
+  VoiceChatState,
+  WelcomeState,
+} from './generated'
 import type { AvatarLook } from './avatarEquip'
 
 export const BRIDGE_CHANNEL = 'bevy-ui-bridge'
@@ -155,6 +164,7 @@ export interface BridgeUnavailableMessage {
 
 export type PageToScene =
   | HelloRequest
+  | VoiceChatActionRequest
   | RpcRequest
   | SendChatRequest
   | SendChatReactionRequest
@@ -347,6 +357,60 @@ export interface VoiceActivityMessage {
   kind: 'voiceActivity'
   address: string
   active: boolean
+}
+
+// ---- voice chat: private calls and community streams ----------------------
+
+export type { VoiceChatParticipant, VoiceChatRole, VoiceChatState } from './generated'
+
+export interface VoiceChatStateMessage {
+  kind: 'voiceChatState'
+  state: VoiceChatState
+}
+
+/** A voice chat command (page → scene → engine), the engine's own shape; its outcome shows on
+ *  `voiceChatState`. */
+export type VoiceChatActionWire = VoiceChatAction
+
+export interface VoiceChatActionRequest {
+  kind: 'voiceChatAction'
+  action: VoiceChatActionWire
+}
+
+/** A community stream started or ended, as the social service broadcasts it (scene → page). */
+export interface CommunityVoiceUpdateMessage {
+  kind: 'communityVoiceUpdate'
+  communityId: string
+  status: CommunityVoiceStatus
+  createdAt: number
+  endedAt: number | null
+  /** Parcels ('x,y') of the community's places, sent to non-members. */
+  positions: string[]
+  /** World names of the community's places, sent to non-members. */
+  worlds: string[]
+  isMember: boolean
+  communityName: string
+  communityImage: string | null
+}
+
+/** A live community stream the local user may see (social-api `/v1/community-voice-chats/active`). */
+export interface ActiveCommunityVoiceChat {
+  communityId: string
+  communityName: string
+  communityImage?: string
+  isMember: boolean
+  positions: string[]
+  worlds: string[]
+  participantCount: number
+  moderatorCount: number
+}
+
+/** Every live community stream, re-read on start and on each broadcast (scene → page). */
+export interface ActiveCommunityVoiceChatsMessage {
+  kind: 'activeCommunityVoiceChats'
+  chats: ActiveCommunityVoiceChat[]
+  /** False when the list was cleared (no account), not read: it says nothing about what is live. */
+  loaded?: boolean
 }
 
 /** Nearby members + count, polled by the scene (chat header "Nearby · N"). */
@@ -1104,6 +1168,8 @@ export interface Community {
   visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
+  /** The community's voice stream, as the social-api reports it. */
+  voiceChatStatus?: { isActive: boolean; participantCount: number; moderatorCount: number }
   /** The first three of the user's friends who are members, for the browse card. Only the paged
    *  browse read carries them. */
   friends?: CommunityFriend[]
@@ -1945,6 +2011,9 @@ export interface AvatarClickMessage {
 export type SceneToPage =
   | BridgeReadyMessage
   | BridgeUnavailableMessage
+  | VoiceChatStateMessage
+  | CommunityVoiceUpdateMessage
+  | ActiveCommunityVoiceChatsMessage
   | RpcResponse
   | HoverMessage
   | CursorLockMessage
