@@ -3366,4 +3366,22 @@ flex-shrink: 0;
 height: 48px;
 background: linear-gradient(var(--dcl-image-placeholder, #8080803d), var(--dcl-image-placeholder, #8080803d)) center / contain no-repeat;
 }
+
+@media (min-width: 1024px) {
+  .responsiveMobile {
+    display: none !important;
+  }
+}
+
+@media not all and (min-width: 1024px), (min-width: 1536px) {
+  .responsiveDesktop {
+    display: none !important;
+  }
+}
+
+@media not all and (min-width: 1536px) {
+  .responsiveLargeDesktop {
+    display: none !important;
+  }
+}
 }

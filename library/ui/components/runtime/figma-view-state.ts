@@ -3,7 +3,8 @@ import type { ComponentType } from 'react'
 type ForcedState = 'hover' | 'pressed'
 
 type Selection = {
-  values: Record<string, string>
+  // Undefined only for a responsive axis the caller left unset, which FigmaView resolves before picking a view.
+  values: Record<string, string | undefined>
   booleans: Record<string, boolean>
   flags: { selected?: boolean; disabled?: boolean; loading?: boolean }
 }

@@ -242,12 +242,8 @@ describe('NavBar', () => {
 })
 
 function selectionError(selection: Record<string, unknown>): Error {
-  const {
-    viewport = 'largeDesktop',
-    balances = 'none',
-    theme = 'dark',
-    signedIn = false
-  } = selection
+  // An omitted viewport renders every viewport's view, narrowest first, so mobile is the one that throws.
+  const { viewport = 'mobile', balances = 'none', theme = 'dark', signedIn = false } = selection
   return new Error(
     `NavBar has no captured view for viewport=${JSON.stringify(viewport)}, balances=${JSON.stringify(balances)}, theme=${JSON.stringify(theme)}, signedIn=${JSON.stringify(signedIn)}`
   )
@@ -315,6 +311,7 @@ describe('when JavaScript spreads suppressed text and public action props', () =
     onNotifications = vi.fn()
     user = userEvent.setup()
     props = {
+      viewport: 'largeDesktop',
       signedIn: true,
       label: 'Injected1',
       label2: 'Injected2',
@@ -361,5 +358,39 @@ describe('when JavaScript spreads suppressed text and public action props', () =
     screen.getByRole('button', { name: 'Notifications' }).focus()
     await user.keyboard('{Enter}')
     expect(onNotifications).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('when the installed NavBar is rendered without a viewport', () => {
+  it('should server-render one navigation per viewport, narrowest first, and hydrate it unchanged', async () => {
+    const { hydrateRoot } = await import('react-dom/client')
+    const { act } = await import('@testing-library/react')
+    const element = <NavBar signedIn />
+    const container = document.createElement('div')
+    container.innerHTML = renderToString(element)
+    const server = container.innerHTML
+    document.body.append(container)
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const recoverable: unknown[] = []
+    const root = await act(async () =>
+      hydrateRoot(container, element, { onRecoverableError: (error) => recoverable.push(error) })
+    )
+    const errors = log.mock.calls
+    log.mockRestore()
+
+    expect(
+      [...container.querySelectorAll('nav')].map((nav) =>
+        [...nav.classList].find((name) => /responsive/.test(name))
+      )
+    ).toEqual([
+      expect.stringMatching(/responsiveMobile/),
+      expect.stringMatching(/responsiveDesktop/),
+      expect.stringMatching(/responsiveLargeDesktop/)
+    ])
+    expect(errors).toEqual([])
+    expect(recoverable).toEqual([])
+    expect(container.innerHTML).toBe(server)
+    act(() => root.unmount())
+    container.remove()
   })
 })

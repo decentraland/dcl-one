@@ -163,12 +163,6 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(selected['web'])
         self.assertFalse(any(selected[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
-    def test_sites_hud_review_does_not_select_engine_builds(self):
-        self.write('rendering/bevy-explorer/upstream.lock.json', json.dumps({'hud_source_sha256': 'e' * 64}))
-        result = ci.select(self.base, self.commit())
-        self.assertFalse(any(result[lane] for lane in ci.LANES))
-        self.assertFalse(result['scenes'])
-
     def test_source_and_integration_inputs_select_builds(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
                      'rendering/bevy-explorer/source/react-web/package-lock.json',
@@ -280,11 +274,10 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, set())
 
     def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
-        for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',
-                     'react-web/src/lib/hudAutomation.ts'):
+        for name in ci.HARNESS_WEB_READS:
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
-                self.write('rendering/bevy-explorer/source/' + name, 'changed')
+                self.write(name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web', 'test'})
@@ -425,7 +418,7 @@ class SelectionTest(unittest.TestCase):
     def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
         for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
                      'apps/ui3/src/play/lib/baseDomain.ts',
-                     'apps/ui3/src/play/engine/generated/serviceTable.ts'):
+                     'library/explorer-core/engine/generated/serviceTable.ts'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

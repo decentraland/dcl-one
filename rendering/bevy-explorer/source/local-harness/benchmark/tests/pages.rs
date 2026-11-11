@@ -303,7 +303,7 @@ fn quoted_after(text: &str, after: &str) -> Option<String> {
 }
 
 /// The reset page keeps one local storage key, the local guest's root key, and the web app names it
-/// in `sso.ts`; a rename there that the reset page does not follow would make it delete the guest in
+/// in `shell/localGuest.ts`; a rename there that the reset page does not follow would make it delete the guest in
 /// every run. (The fake app holds the name too, to look for the guest.) Needs no node.
 #[test]
 fn the_reset_page_keeps_the_key_the_web_app_stores_the_guest_under() {
@@ -311,10 +311,10 @@ fn the_reset_page_keeps_the_key_the_web_app_stores_the_guest_under() {
         std::fs::read_to_string(here().join(path)).unwrap_or_else(|error| panic!("{path}: {error}"))
     };
     let app = quoted_after(
-        &read("../../react-web/src/features/auth/sso.ts"),
+        &read("../../react-web/src/shell/localGuest.ts"),
         "const LOCAL_GUEST_ROOT_KEY = ",
     )
-    .expect("sso.ts names the guest's root key in LOCAL_GUEST_ROOT_KEY");
+    .expect("shell/localGuest.ts names the guest's root key in LOCAL_GUEST_ROOT_KEY");
     assert!(!app.is_empty());
 
     assert_eq!(

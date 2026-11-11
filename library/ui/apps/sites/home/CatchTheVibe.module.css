@@ -9,7 +9,7 @@
   overflow: hidden;
   padding: var(--dcl-layout-section-padding-y) 0;
   /* Source paint: decentraland/sites@5aabce35, CatchTheVibeContainer. */
-  background: #570f88;
+  background: var(--dcl-bg-surface-brand);
   color: var(--dcl-text-primary);
 }
 
