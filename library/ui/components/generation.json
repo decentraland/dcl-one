@@ -55,8 +55,8 @@
     },
     {
       "path": "library/ui/figma/module-graph.mjs",
-      "sha256": "1e452ea11e005dde0a5ff93a6d41310124bc311c919145e35e3c641bb05991db",
-      "indexBlobSha": "85f290697324fb9015756071f606f078ee0ffbfc"
+      "sha256": "dfb828b5234140d7501be68374beea2204af5a61b288f3b49a8f140a1108434b",
+      "indexBlobSha": "b2935d16eb7640fe44bb2aa3b920e6d45043c62d"
     },
     {
       "path": "library/ui/figma/review/src/components/figma-interactions.tsx",
@@ -195,8 +195,8 @@
     },
     {
       "path": "library/ui/figma/src/install-main.ts",
-      "sha256": "4a6c9554b87b19ca4a674d6fe15eba3239facf8e825b65b631201a4dcb7bc44e",
-      "indexBlobSha": "11499682af4f5d3f10248db858a891ba86c554ca"
+      "sha256": "82e05ef7a18043735d1aaf5ac59ef41e25dd2d5d981b9039ef78c8d4be29d585",
+      "indexBlobSha": "847c497811fd2b7d1376076caed3f62ea09882d8"
     },
     {
       "path": "library/ui/figma/src/install.ts",
