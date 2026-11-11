@@ -608,6 +608,10 @@ describe('bridge community invites and requests', () => {
     // the service still lists it (a stale read): the card shows no invite
     await h.req({ kind: 'getCommunity', id: 'c3' })
     expect(last(h.sent, 'community')?.community.pendingInviteId).toBeUndefined()
+    // nor does the Invites list show it
+    serve({ [invitesRead]: { results: [{ id: 'inv1', communityId: 'c3', name: 'c3', description: '', membersCount: 1, role: 'none' }] }, [requestsRead]: { results: [] }, [memberOf]: { results: [], total: 0 } })
+    await h.req({ kind: 'getCommunityInvites' })
+    expect(last(h.sent, 'communityInvites')?.invites).toEqual([])
   })
 
   it("does not read the user's invites when a member opens the card", async () => {

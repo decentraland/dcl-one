@@ -382,7 +382,8 @@ async function invitesAndRequests(): Promise<CommunityInvitesMessage> {
       failed.push(list)
       return []
     })
-    const raw = rows.filter((r) => typeof r.communityId === 'string').map((r): CommunityRaw => ({ ...r, id: r.communityId ?? '' }))
+    // a request answered here is gone, whatever an older read still lists
+    const raw = rows.filter((r) => typeof r.communityId === 'string' && !answered.has(r.id ?? '')).map((r): CommunityRaw => ({ ...r, id: r.communityId ?? '' }))
     return await communities(raw)
   }
   const received = async (): Promise<CommunityRequestsGroup[]> => {

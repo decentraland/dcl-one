@@ -19,12 +19,12 @@
   min-width: 18px;
   height: 18px;
   padding: 0 5px;
-  font-size: 11px;
+  font-size: var(--type-11);
 }
 /* a count in an equal-width (fill) tab strip */
 .xs {
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  font-size: 11px;
+  font-size: var(--type-11);
 }
