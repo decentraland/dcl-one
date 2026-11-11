@@ -24,7 +24,8 @@ import {
   BackpackUpperBody,
   GeneralMana,
   GeneralPolygonMana,
-  GeneralSmartItem
+  GeneralSmartItem,
+  ShopCredits
 } from '../../../../foundations/icons'
 import type { IconProps } from '../../../../foundations/icons/types'
 import { useBrokenImage } from '../useBrokenImage'
@@ -47,7 +48,10 @@ type CatalogCardProps = {
   rarity?: CatalogCardRarity
   /** The line under the title, e.g. "By Alice". */
   byline?: ReactNode
-  price?: { amount: string; network: 'ethereum' | 'polygon' }
+  /** In MANA on its network, or in credits. */
+  price?:
+    | { currency: 'mana'; amount: string; network: 'ethereum' | 'polygon' }
+    | { currency: 'credits'; amount: string }
   /** Shown where the price goes when there is none, e.g. "Not for sale". */
   priceFallback?: string
   /** Glyphs next to the rarity tag; see `CollectibleBadges`. */
@@ -91,7 +95,12 @@ function CatalogCard({
   LinkComponent = AnchorLink
 }: CatalogCardProps) {
   const { broken, ref, onError } = useBrokenImage(imageUrl)
-  const Mana = price?.network === 'ethereum' ? GeneralMana : GeneralPolygonMana
+  const PriceMark =
+    price?.currency === 'credits'
+      ? ShopCredits
+      : price?.network === 'ethereum'
+        ? GeneralMana
+        : GeneralPolygonMana
   const rootClass = [styles.root, rarity && styles[rarity], action && styles.withAction]
     .filter(Boolean)
     .join(' ')
@@ -124,11 +133,13 @@ function CatalogCard({
         {byline ? <div className={styles.byline}>{byline}</div> : null}
         {price ? (
           <p className={styles.price}>
-            <Mana size={32} aria-hidden="true" />
+            <PriceMark size={32} aria-hidden="true" />
             <span>
               <span className={styles.visuallyHidden}>Price: </span>
               {price.amount}
-              <span className={styles.visuallyHidden}> MANA</span>
+              <span className={styles.visuallyHidden}>
+                {price.currency === 'credits' ? ' credits' : ' MANA'}
+              </span>
             </span>
           </p>
         ) : priceFallback ? (

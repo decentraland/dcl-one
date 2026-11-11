@@ -13,11 +13,12 @@ vi.hoisted(() => {
   });
 });
 const net = vi.hoisted(() => ({ fetchProfileCreations: vi.fn() }));
+const auth = vi.hoisted(() => ({ state: { identity: null as unknown, isConnected: false, address: null as string | null } }));
 vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
   fetchProfileCreations: net.fetchProfileCreations,
 }));
-vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => ({ identity: null, isConnected: false, address: null }) }));
+vi.mock("@/data/lib/auth/index", () => ({ useAuth: () => auth.state }));
 
 import type { ProfileCreation } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import { emptyProfile, type ProfileVM } from "@/data/lib/catalyst/social/profile";
@@ -40,7 +41,7 @@ function creation(n: number, over: Partial<ProfileCreation> = {}): ProfileCreati
     thumbnail: "https://example.com/hat.png",
     rarity: "legendary",
     network: "polygon",
-    price: "369",
+    payment: { kind: "mana", mana: "369" },
     traits: { category: "hat", bodyShapes: ["BaseMale", "BaseFemale"], isSmart: true },
     ...over,
   };
@@ -69,6 +70,7 @@ function show(vm: ProfileVM = profile(), { own = false } = {}) {
 const card = (name: string) => screen.getByRole("link", { name }).closest("article") as HTMLElement;
 
 afterEach(() => {
+  auth.state = { identity: null, isConnected: false, address: null };
   cleanup();
   vi.resetAllMocks();
 });
@@ -97,14 +99,50 @@ describe("profile creations", () => {
   });
 
   it("says an item is not for sale and offers the Shop page instead of Buy", async () => {
-    net.fetchProfileCreations.mockResolvedValue(page([creation(0, { price: undefined })]));
+    net.fetchProfileCreations.mockResolvedValue(page([creation(0, { payment: { kind: "none" } })]));
 
     show();
 
     const hat = await screen.findByRole("link", { name: "Hat 0" }).then(() => card("Hat 0"));
     expect(within(hat).getByText("Not for sale")).toBeTruthy();
     expect(within(hat).queryByRole("link", { name: "Buy Hat 0" })).toBeNull();
-    expect(within(hat).getByRole("link", { name: "View Hat 0 in Shop" }).getAttribute("href")).toBe("/shop/item/0xabc/0");
+    expect(within(hat).getByRole("link", { name: "View in Shop: Hat 0" }).getAttribute("href")).toBe("/shop/item/0xabc/0");
+  });
+
+  it.each([
+    ["signed out", false],
+    ["signed in", true],
+  ])("prices a credit-eligible item in credits, as its Shop card does, %s", async (_session, signedIn) => {
+    if (signedIn) auth.state = { identity: { signer: A }, isConnected: true, address: "0x2222222222222222222222222222222222222222" };
+    net.fetchProfileCreations.mockResolvedValue(page([creation(0, { payment: { kind: "credits", credits: "12" } })]));
+
+    show();
+
+    const hat = await screen.findByRole("link", { name: "Hat 0" }).then(() => card("Hat 0"));
+    expect(within(hat).getByText((_, node) => node?.tagName === "P" && node.textContent === "Price: 12 credits")).toBeTruthy();
+    expect(within(hat).queryByText(/MANA/)).toBeNull();
+    expect(within(hat).getByRole("link", { name: "Buy Hat 0" })).toBeTruthy();
+  });
+
+  it("says the credit price is unavailable instead of showing MANA when the quote failed", async () => {
+    net.fetchProfileCreations.mockResolvedValue(page([creation(0, { payment: { kind: "creditsUnavailable" } })]));
+
+    show();
+
+    const hat = await screen.findByRole("link", { name: "Hat 0" }).then(() => card("Hat 0"));
+    expect(within(hat).getByText("Credits price unavailable")).toBeTruthy();
+    expect(within(hat).queryByText(/MANA/)).toBeNull();
+    expect(within(hat).queryByText("Not for sale")).toBeNull();
+  });
+
+  it("says a page whose every row failed to read could not be read, not that nothing exists", async () => {
+    net.fetchProfileCreations.mockResolvedValue({ items: [], received: PROFILE_COLLECTIBLES_PAGE, total: 30 });
+
+    show();
+
+    expect(await screen.findByText("These creations could not be read right now.")).toBeTruthy();
+    expect(screen.queryByText("This account has not created anything yet.")).toBeNull();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   });
 
   it("shows a card whose image, rarity and traits are missing without inventing them", async () => {
@@ -172,6 +210,24 @@ describe("profile creations", () => {
     await waitFor(() => expect(document.activeElement).toBe(screen.getByRole("link", { name: "Hat 0" })));
   });
 
+  it("shows the retry loading, and focuses the panel when it ends empty", async () => {
+    const user = userEvent.setup();
+    let release!: (value: unknown) => void;
+    net.fetchProfileCreations
+      .mockRejectedValueOnce(new Error("503"))
+      .mockReturnValueOnce(new Promise((resolve) => (release = resolve)));
+    show();
+    await screen.findByText("Creations are unavailable right now.");
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Loading creations")).toBeTruthy();
+    expect(screen.queryByText("Creations are unavailable right now.")).toBeNull();
+    await act(async () => release(page([])));
+    expect(await screen.findByText("This account has not created anything yet.")).toBeTruthy();
+    await waitFor(() => expect(document.activeElement?.contains(screen.getByText("This account has not created anything yet."))).toBe(true));
+  });
+
   it("keeps the list on screen when a background re-read fails", async () => {
     net.fetchProfileCreations.mockResolvedValueOnce(page([creation(0)])).mockRejectedValueOnce(new Error("503"));
     const client = show();
@@ -230,6 +286,20 @@ describe("profile creations", () => {
     expect(await screen.findByRole("link", { name: "Hat 24" })).toBeTruthy();
     // More remain, so the button stays and keeps the focus.
     expect(document.activeElement).toBe(button);
+  });
+
+  it("focuses the panel when the last Load more brings only rows already shown", async () => {
+    const user = userEvent.setup();
+    const first = Array.from({ length: PROFILE_COLLECTIBLES_PAGE }, (_, n) => creation(n));
+    net.fetchProfileCreations.mockResolvedValueOnce(page(first, 25)).mockResolvedValueOnce(page([creation(23)], 25));
+    show();
+    await screen.findByRole("link", { name: "Hat 0" });
+
+    await user.click(screen.getByRole("button", { name: "Load more" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Load more" })).toBeNull());
+    await waitFor(() => expect(document.activeElement).not.toBe(document.body));
+    expect(document.activeElement?.contains(screen.getByRole("link", { name: "Hat 0" }))).toBe(true);
   });
 
   it("keeps the loaded rows when the next page fails, and retries it", async () => {

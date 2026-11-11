@@ -1,14 +1,16 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../client", async (original) => ({
   ...(await original<typeof import("../client")>()),
   getJSON: vi.fn(),
 }));
 vi.mock("../warn", () => ({ warnInvalid: vi.fn() }));
+vi.mock("./credit-quotes", () => ({ tryQuoteCreditItems: vi.fn() }));
 
 import { CatalystError, getJSON } from "../client";
 import { warnInvalid } from "../warn";
-import { fetchProfileAssets, fetchProfileCreations, manaPrice } from "./profile-collectibles";
+import { tryQuoteCreditItems } from "./credit-quotes";
+import { CREATIONS_QUOTES_TIMEOUT_MS, fetchProfileAssets, fetchProfileCreations, manaPrice } from "./profile-collectibles";
 
 const CREATOR = "0x09BC69A986E1B37FB01EF36124F4C2E14FA0AB6B";
 const CONTRACT = "0x242E85D51F975E0FD3C6208E3E7BE852BC8A11A0";
@@ -23,6 +25,8 @@ function item(over: Record<string, unknown> = {}) {
     contractAddress: CONTRACT,
     rarity: "legendary",
     network: "MATIC",
+    chainId: 137,
+    category: "wearable",
     price: MANA(369),
     minListingPrice: null,
     isOnSale: true,
@@ -51,7 +55,12 @@ function token(nft: Record<string, unknown> = {}, order: unknown = null) {
 }
 
 const json = vi.mocked(getJSON);
-afterEach(() => vi.resetAllMocks());
+const quotes = vi.mocked(tryQuoteCreditItems);
+beforeEach(() => quotes.mockImplementation(async (refs) => refs.map(() => "12")));
+afterEach(() => {
+  vi.useRealTimers();
+  vi.resetAllMocks();
+});
 
 describe("fetchProfileCreations", () => {
   it("reads one category of the lowercased creator's items, newest first, and maps each card", async () => {
@@ -74,19 +83,68 @@ describe("fetchProfileCreations", () => {
           thumbnail: "https://peer.example/thumbnail",
           rarity: "legendary",
           network: "polygon",
-          price: "369",
+          // A primary Polygon wearable is credit-eligible: priced in credits, as on its Shop card.
+          payment: { kind: "credits", credits: "12" },
           traits: { category: "upper_body", bodyShapes: ["BaseMale", "BaseFemale"], isSmart: false },
         },
       ],
     });
+    expect(quotes).toHaveBeenCalledWith([{ itemId: "0", collection: CONTRACT.toLowerCase() }], expect.anything());
   });
 
-  it("prices a sold-out item at its cheapest listing", async () => {
+  it("asks for no quote when the page brings no item", async () => {
+    json.mockResolvedValue({ data: [], total: 0 });
+
+    await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(quotes).not.toHaveBeenCalled();
+  });
+
+  it("says the credit price is unavailable when the quote fails, never falling back to MANA", async () => {
+    quotes.mockResolvedValue([null]);
+    json.mockResolvedValue({ data: [item()], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(items[0]?.payment).toEqual({ kind: "creditsUnavailable" });
+  });
+
+  it("treats a quote that outlasts its deadline as unavailable", async () => {
+    vi.useFakeTimers();
+    quotes.mockImplementation(() => new Promise(() => {}));
+    json.mockResolvedValue({ data: [item()], total: 1 });
+
+    const read = fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+    await vi.advanceTimersByTimeAsync(CREATIONS_QUOTES_TIMEOUT_MS + 1);
+
+    expect((await read).items[0]?.payment).toEqual({ kind: "creditsUnavailable" });
+  });
+
+  it("stops when the visitor leaves while the quote runs", async () => {
+    const leave = new AbortController();
+    quotes.mockImplementation(() => new Promise(() => {}));
+    json.mockResolvedValue({ data: [item()], total: 1 });
+
+    const read = fetchProfileCreations(CREATOR, { category: "wearable", first: 24 }, { signal: leave.signal });
+    leave.abort(new Error("left"));
+
+    await expect(read).rejects.toThrow("left");
+  });
+
+  it("prices an item that mints on Ethereum in MANA, which credits cannot buy", async () => {
+    json.mockResolvedValue({ data: [item({ network: "ETHEREUM", chainId: 1 })], total: 1 });
+
+    const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
+
+    expect(items[0]?.payment).toEqual({ kind: "mana", mana: "369" });
+  });
+
+  it("falls back to the cheapest listing when the primary price is zero", async () => {
     json.mockResolvedValue({ data: [item({ price: "0", minListingPrice: MANA(1500) })], total: 1 });
 
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
-    expect(items[0]?.price).toBe("1,500");
+    expect(items[0]?.payment).toEqual({ kind: "mana", mana: "1,500" });
   });
 
   it("prices a sold-out item at its listing, not its stale primary price", async () => {
@@ -94,7 +152,7 @@ describe("fetchProfileCreations", () => {
 
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
-    expect(items[0]?.price).toBe("80");
+    expect(items[0]?.payment).toEqual({ kind: "mana", mana: "80" });
   });
 
   it("gives a delisted item with no listing no price, though the catalogue keeps its old one", async () => {
@@ -102,7 +160,7 @@ describe("fetchProfileCreations", () => {
 
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
-    expect(items[0]?.price).toBeUndefined();
+    expect(items[0]?.payment).toEqual({ kind: "none" });
   });
 
   it("names an item with a blank name Untitled", async () => {
@@ -118,12 +176,12 @@ describe("fetchProfileCreations", () => {
 
     const { items } = await fetchProfileCreations(CREATOR, { category: "wearable", first: 24 });
 
-    expect(items[0]?.price).toBeUndefined();
+    expect(items[0]?.payment).toEqual({ kind: "none" });
   });
 
   it("keeps an item whose optional facts are missing, without inventing them", async () => {
     json.mockResolvedValue({
-      data: [item({ thumbnail: "", rarity: "legendaryish", network: "ETHEREUM", data: null })],
+      data: [item({ thumbnail: "", rarity: "legendaryish", network: "ETHEREUM", chainId: 1, data: null })],
       total: 1,
     });
 

@@ -181,6 +181,27 @@ describe("profile assets", () => {
     expect(screen.queryByText("No assets yet")).toBeNull();
   });
 
+  it("says a page whose every row failed to read could not be read, not that there are none", async () => {
+    net.fetchProfileAssets.mockResolvedValue({ items: [], received: 3, total: 3 });
+
+    show();
+
+    expect(await screen.findByText("These assets could not be read right now.")).toBeTruthy();
+    expect(screen.queryByText("No assets yet")).toBeNull();
+  });
+
+  it("shows the retry loading instead of the stale error", async () => {
+    const user = userEvent.setup();
+    net.fetchProfileAssets.mockRejectedValueOnce(new Error("503")).mockReturnValueOnce(new Promise(() => {}));
+    show();
+    await screen.findByText("Assets are unavailable right now.");
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Loading assets")).toBeTruthy();
+    expect(screen.queryByText("Assets are unavailable right now.")).toBeNull();
+  });
+
   it("sends an owner with nothing to the Shop", async () => {
     net.fetchProfileAssets.mockResolvedValue(page([]));
 

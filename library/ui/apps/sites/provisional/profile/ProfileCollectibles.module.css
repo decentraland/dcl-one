@@ -8,6 +8,17 @@
   width: 100%;
 }
 
+/* Focus lands on the panel only from script, after a control it held went away. */
+.root:focus {
+  outline: none;
+}
+
+/* The Load more the page keeps mounted (and focused) while it loads: it reads as unavailable. */
+.more [aria-disabled='true'] {
+  cursor: progress;
+  opacity: 0.5;
+}
+
 .header {
   display: flex;
   flex-wrap: wrap;

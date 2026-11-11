@@ -3,6 +3,9 @@ import { z } from "zod";
 import { formatManaPrice, parseManaWei } from "@shop/model/money";
 
 import { CatalystError, getJSON, type GetOptions } from "../client";
+import { withDeadline } from "../../request-deadline";
+import { tryQuoteCreditItems } from "./credit-quotes";
+import { cardPayment, type CardPayment, type CardSaleFacts } from "./index";
 import { dataTotalOf } from "../envelope";
 import { CatalogItemSchema, NftSchema, OrderSchema } from "../generated-schemas/market";
 import { warnInvalid } from "../warn";
@@ -12,8 +15,6 @@ export type CreationsCategory = "wearable" | "emote";
 
 /** What a profile's Assets tab filters by; no category is every asset. */
 export type AssetCategory = "wearable" | "emote" | "ens" | "parcel" | "estate";
-
-export const ASSET_CATEGORIES: readonly AssetCategory[] = ["wearable", "emote", "ens", "parcel", "estate"];
 
 export type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "exotic" | "mythic" | "unique";
 
@@ -38,10 +39,17 @@ export type ProfileCreation = {
   /** Absent when the catalogue sends a rarity this list does not know. */
   rarity?: Rarity;
   network: "ethereum" | "polygon";
-  /** The primary sale price, else the cheapest listing, formatted ("1,500"); absent when not for sale. */
-  price?: string;
+  /**
+   * What the card may show, by the Shop's own card rule (`cardPayment`): a credit-eligible primary
+   * sale is priced in credits (or says the quote is unavailable, never a MANA fallback); anything
+   * else is MANA, or nothing when it is not for sale.
+   */
+  payment: CardPayment;
   traits: CollectibleTraits;
 };
+
+/** How long a page waits for its credit prices, as the Shop's cards do, before showing them unavailable. */
+export const CREATIONS_QUOTES_TIMEOUT_MS = 1_000;
 
 /** One token a wallet owns, as the Assets tab shows it. */
 export type ProfileAsset = {
@@ -79,6 +87,8 @@ const CreationRowSchema = CatalogItemSchema.pick({
   minListingPrice: true,
   isOnSale: true,
   available: true,
+  chainId: true,
+  category: true,
 }).extend({ data: z.record(z.string(), z.unknown()).nullish() });
 
 const AssetRowSchema = z.object({
@@ -151,14 +161,16 @@ function traitsOf(block: Record<string, unknown> | undefined): CollectibleTraits
   };
 }
 
-function toCreation(raw: unknown): ProfileCreation | null {
+type ParsedCreation = { card: Omit<ProfileCreation, "payment">; sale: CardSaleFacts };
+
+function toCreation(raw: unknown): ParsedCreation | null {
   const row = CreationRowSchema.safeParse(raw);
   if (!row.success) {
     warnInvalid("ProfileCreation", row.error.issues);
     return null;
   }
   const item = row.data;
-  return {
+  const card = {
     id: item.id,
     contractAddress: item.contractAddress.toLowerCase(),
     itemId: item.itemId,
@@ -167,11 +179,21 @@ function toCreation(raw: unknown): ProfileCreation | null {
     thumbnail: httpsUrl(item.thumbnail),
     rarity: rarityOf(item.rarity),
     network: networkOf(item.network),
-    // The catalogue keeps `price` after a delisting or a sell-out, so it counts only while the
-    // creator still sells; otherwise the item trades at its cheapest listing, if any.
-    price: (item.isOnSale && item.available > 0 ? manaPrice(item.price) : undefined) ?? manaPrice(item.minListingPrice),
     traits: traitsOf(traitsBlock(item.data)),
   };
+  return { card, sale: item };
+}
+
+/** Each row's credit price, quoted as the Shop's cards are; a failed or slow quote reads as unavailable. */
+async function creditPrices(rows: ParsedCreation[], signal?: AbortSignal): Promise<(string | null)[]> {
+  const refs = rows.map(({ card }) => ({ itemId: card.itemId, collection: card.contractAddress }));
+  try {
+    return await withDeadline((deadline) => tryQuoteCreditItems(refs, { signal: deadline }), CREATIONS_QUOTES_TIMEOUT_MS, signal);
+  } catch {
+    // A visitor who left aborts the read; anything else (the deadline) only loses the quotes.
+    signal?.throwIfAborted();
+    return rows.map(() => null);
+  }
 }
 
 /**
@@ -230,7 +252,13 @@ export async function fetchProfileCreations(
     }),
     path,
   );
-  return { items: collect(page.data, toCreation), received: page.data.length, total: page.total };
+  const rows = collect(page.data, toCreation);
+  const credits = rows.length > 0 ? await creditPrices(rows, opts.signal) : [];
+  return {
+    items: rows.map(({ card, sale }, index) => ({ ...card, payment: cardPayment(sale, credits[index] ?? null) })),
+    received: page.data.length,
+    total: page.total,
+  };
 }
 
 /** The tokens a wallet owns, newest first, optionally of one category. */

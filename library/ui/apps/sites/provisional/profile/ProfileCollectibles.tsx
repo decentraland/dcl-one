@@ -30,15 +30,17 @@ type ProfileCollectiblesProps = {
   /** Beside the filters, e.g. a "View all" link. */
   aside?: ReactNode
   state: ProfileCollectiblesState
+  /** Makes the panel focusable from script, so focus has somewhere to go when a control leaves. */
+  panelRef?: Ref<HTMLDivElement>
 }
 
 /** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
-function ProfileCollectibles({ filters, aside, state }: ProfileCollectiblesProps) {
+function ProfileCollectibles({ filters, aside, state, panelRef }: ProfileCollectiblesProps) {
   const list = state.kind === 'list' ? state : null
   const countShown = list !== null && list.showCount !== false
 
   return (
-    <div className={styles.root}>
+    <div ref={panelRef} className={styles.root} tabIndex={panelRef ? -1 : undefined}>
       {filters || aside ? (
         <div className={styles.header}>
           {filters}

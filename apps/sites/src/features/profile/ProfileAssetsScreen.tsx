@@ -22,7 +22,7 @@ import { assetPage } from "@/core/lib/shop/redirects";
 import type { AssetCategory, ProfileAsset } from "@/data/lib/catalyst/marketplace/profile-collectibles";
 import type { ProfileVM } from "@/data/lib/catalyst/social/profile";
 
-import { catalogueTotal, CollectibleLink, loadedRows, loadMore, useFocusNewRows } from "./collectibles";
+import { catalogueTotal, CollectibleLink, loadedRows, loadMore, receivedAny, useFocusNewRows } from "./collectibles";
 import { useProfileAssets } from "./hooks";
 import { ProfileShell, type ProfileShellTab } from "./ProfileShell";
 
@@ -78,7 +78,7 @@ function AssetCard({ asset }: { asset: ProfileAsset }) {
       placeholder={asset.category === "ens" ? <GeneralName size={64} /> : undefined}
       href={href}
       rarity={asset.rarity}
-      price={asset.price ? { amount: asset.price, network: asset.network } : undefined}
+      price={asset.price ? { currency: "mana", amount: asset.price, network: asset.network } : undefined}
       badges={<CollectibleBadges {...asset.traits} />}
       action={
         asset.category === "ens" ? (
@@ -99,7 +99,7 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
   const [category, setCategory] = useState<AssetCategory | null>(null);
   const query = useProfileAssets(profile.address, category);
   const rows = query.data ? loadedRows(query.data) : [];
-  const focus = useFocusNewRows(rows.length);
+  const focus = useFocusNewRows(rows.length, query.dataUpdatedAt + query.errorUpdatedAt);
 
   const filters = (
     <FilterChipGroup label="Assets shown">
@@ -117,6 +117,7 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
   );
 
   let state: ProfileCollectiblesState;
+  // With no data yet, a Try again refetch puts the query back to pending, so it shows as loading.
   if (query.isError && !query.data) {
     state = {
       kind: "error",
@@ -136,7 +137,14 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
   } else if (!query.data) {
     state = { kind: "loading", label: "Loading assets" };
   } else {
-    if (rows.length === 0) {
+    if (rows.length === 0 && receivedAny(query.data)) {
+      // Every row of the page failed to read: not an empty list, and later pages may still read.
+      state = {
+        kind: "error",
+        message: "These assets could not be read right now.",
+        action: loadMore(query, "assets", () => focus.expectRowsFrom(0)),
+      };
+    } else if (rows.length === 0) {
       state =
         category !== null
           ? { kind: "empty-note", message: countLabel(0) }
@@ -170,14 +178,14 @@ export function ProfileAssetsScreen({ profile, own, tabs, onTab }: ProfileAssets
           </ProfileCollectiblesItem>
         )),
         listRef: focus.listRef,
-            more: loadMore(query, "assets", () => focus.expectRowsFrom(rows.length)),
+        more: loadMore(query, "assets", () => focus.expectRowsFrom(rows.length)),
       };
     }
   }
 
   return (
     <ProfileShell profile={profile} own={own} tabs={tabs} active="assets" onTab={onTab}>
-      <ProfileCollectibles filters={filters} state={state} />
+      <ProfileCollectibles filters={filters} state={state} panelRef={focus.panelRef} />
     </ProfileShell>
   );
 }
