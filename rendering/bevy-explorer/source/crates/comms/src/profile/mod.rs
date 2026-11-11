@@ -90,6 +90,7 @@ impl Plugin for UserProfilePlugin {
                     ("Mean batch size", "meanBatch"),
                     ("Batches in flight", "inFlight"),
                     ("Compact POSTs", "compact"),
+                    ("Compact source", "compactSource"),
                     ("Compact route missing", "compactUnsupported"),
                     ("Unresolved cached profiles", "unresolved"),
                     ("Own profile version", "ownVersion"),
@@ -320,8 +321,8 @@ pub struct ProfileCache {
     requests: ProfileRequestCounts,
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
-    /// the catalyst answered a compact POST as an unknown route: compact readers are served
-    /// from full profiles for the rest of the session
+    /// the compact source answered a compact POST as an unknown route: compact readers are
+    /// served from full profiles for the rest of the session
     compact_unsupported: bool,
 }
 
@@ -350,7 +351,8 @@ fn profile_requests(
         input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
             "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
             "unavailable": {"meanBatch": "No profile requests yet", "ownVersion": "Not signed in", "peerVersion": "Not signed in"},
-            "compact": counts.compact, "compactUnsupported": cache.compact_unsupported,
+            "compact": counts.compact, "compactSource": compact_source(&lambdas_url()),
+            "compactUnsupported": cache.compact_unsupported,
             "inFlight": cache.batches.len() + cache.compact_batches.len(),
             "unresolved": cache.entries.values().filter(|entry| entry.data.is_none() && entry.compact.is_none()).count(),
             "ownVersion": current.profile.as_ref().map(|profile| profile.version),
@@ -998,6 +1000,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         return;
     }
     let lambdas = lambdas_url();
+    let compact_base = compact_source(&lambdas);
     let ProfileCache {
         batches,
         compact_batches,
@@ -1023,7 +1026,7 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
         compact_batches.push(CompactBatch {
             addresses: chunk.to_vec(),
             task: IoTaskPool::get().spawn_compat(fetch_compact_profiles(
-                lambdas.clone(),
+                compact_base.clone(),
                 chunk.to_vec(),
                 ipfs.ipfs().clone(),
             )),
@@ -1460,7 +1463,7 @@ async fn deploy_profile(
             .body(prepared_data)
     };
 
-    let response = post.send().await?;
+    let response = send_deployment(post).await?;
 
     match response.status() {
         StatusCode::OK => Ok(()),
@@ -1472,9 +1475,63 @@ async fn deploy_profile(
     }
 }
 
-/// The lambdas of the base domain's catalyst, where every profile is read.
+/// Send a deployment, and send it once more when the catalyst refuses it for now with its word on
+/// when to come back (`Retry-After` on a 429 or a 503, up to `platform::http::MAX_RETRY_AFTER`):
+/// the server's own instruction, where reporting the save as failed would leave the user a change
+/// a moment's wait makes (a client's burst of deployments past the catalyst's limit).
+async fn send_deployment(
+    post: reqwest::RequestBuilder,
+) -> Result<reqwest::Response, anyhow::Error> {
+    let again = post.try_clone();
+    let response = post.send().await?;
+    let delay = matches!(
+        response.status(),
+        StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+    )
+    .then(|| response.headers().get(reqwest::header::RETRY_AFTER))
+    .flatten()
+    .and_then(|value| value.to_str().ok())
+    .and_then(|value| {
+        let now = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .ok()?;
+        platform::http::parse_retry_after(value, std::time::UNIX_EPOCH + now)
+    })
+    .filter(|delay| *delay <= platform::http::MAX_RETRY_AFTER);
+    match (delay, again) {
+        (Some(delay), Some(again)) => {
+            warn!(
+                "the catalyst refused the profile deployment for now ({}): sending it again in {delay:?}",
+                response.status()
+            );
+            async_std::task::sleep(delay).await;
+            Ok(again.send().await?)
+        }
+        _ => Ok(response),
+    }
+}
+
+/// The lambdas of the base domain's catalyst: where full profiles are read, and compact ones
+/// off Decentraland's own deployments ([`compact_source`]).
 fn lambdas_url() -> String {
     common::base_domain::url(common::base_domain::Service::Catalyst, "/lambdas")
+}
+
+/// Where compact profiles are read (`POST {source}/profiles/metadata`): the catalyst's lambdas,
+/// except when that catalyst is one of Decentraland's own deployments
+/// ([`common::base_domain::decentraland_domain`]), whose catalysts have no compact route. There
+/// the same deployment's asset-bundle registry serves the tier, as for unity-explorer with
+/// `USE_CENTRALIZED_PROFILES`. The decision follows the resolved catalyst, not the base domain:
+/// a dcl-one page or a `--gateway` launch keeps the default base domain with its own catalyst.
+///
+/// Temporary: the registry branch is to be removed once Decentraland's catalysts answer
+/// `POST /lambdas/profiles/metadata` (docs/adr/2026-11-04-explorer-profiles-from-the-catalyst.md,
+/// "Follow-ups"); compact reads then go to the catalyst everywhere.
+fn compact_source(lambdas: &str) -> String {
+    match common::base_domain::decentraland_domain(lambdas) {
+        Some(domain) => format!("https://asset-bundle-registry.{domain}"),
+        None => lambdas.trim_end_matches('/').to_owned(),
+    }
 }
 
 /// The content endpoint of the catalyst serving `lambdas`, which carries the profile's files.
@@ -1565,16 +1622,15 @@ fn profiles_from_lambdas(
         .collect()
 }
 
-/// One catalyst POST of the compact tier for a chunk of ids: the asked addresses, in
-/// order, each with what the catalyst holds for it. A catalyst without the route
-/// (Decentraland's answer 404; one whose `/profiles/{id}` takes the path, 405) is
-/// `Unsupported`.
+/// One POST of the compact tier to the [`compact_source`] for a chunk of ids: the asked
+/// addresses, in order, each with what the source holds for it. A source without the route
+/// (a catalyst answers 404, or 405 when its `/profiles/{id}` takes the path) is `Unsupported`.
 async fn fetch_compact_profiles(
-    lambdas: String,
+    source: String,
     addresses: Vec<Address>,
     ipfs: Arc<IpfsIo>,
 ) -> CompactAnswer {
-    let url = format!("{}/profiles/metadata", lambdas.trim_end_matches('/'));
+    let url = format!("{}/profiles/metadata", source.trim_end_matches('/'));
     let ids = addresses
         .iter()
         .map(|address| format!("{address:#x}"))
@@ -1701,17 +1757,14 @@ pub async fn get_default_look(
     fetch_catalyst_profile_by_id(lambdas_url(), format!("default{index}"), ipfs).await
 }
 
-/// Resolve one profile from the catalyst without the engine cache (used at login, before
-/// any player entities exist): `lambdas` is the sign-in's catalyst, else the centralized
-/// one. Ok(None) means the catalyst authoritatively has no profile, so callers can tell
-/// "no profile" from "couldn't fetch".
+/// Resolve one profile from the centralized catalyst without the engine cache (used at login,
+/// before any player entities exist). Ok(None) means the catalyst authoritatively has no
+/// profile, so callers can tell "no profile" from "couldn't fetch".
 pub async fn get_remote_profile(
     address: Address,
     ipfs: Arc<IpfsIo>,
-    lambdas: Option<String>,
 ) -> Result<Option<UserProfile>, anyhow::Error> {
-    let lambdas = lambdas.unwrap_or_else(lambdas_url);
-    fetch_profiles(lambdas, vec![address], ipfs)
+    fetch_profiles(lambdas_url(), vec![address], ipfs)
         .await
         .pop()
         .map_or(Ok(None), |(_, result)| result)
@@ -1918,6 +1971,82 @@ fn process_profile(
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod deploy_tests {
+    use std::io::{Read, Write};
+
+    use super::*;
+
+    const OK: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+
+    fn refused(retry_after: Option<&str>) -> Vec<u8> {
+        let header = retry_after
+            .map(|s| format!("Retry-After: {s}\r\n"))
+            .unwrap_or_default();
+        format!("HTTP/1.1 429 Too Many Requests\r\n{header}Content-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+    }
+
+    /// A server answering `answers` in turn; it returns the bodies it was sent.
+    fn serve(answers: Vec<Vec<u8>>) -> (String, std::thread::JoinHandle<Vec<Vec<u8>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/content/entities", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let mut bodies = Vec::new();
+            for answer in answers {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut request = Vec::new();
+                let mut chunk = [0u8; 1024];
+                let body = loop {
+                    let n = socket.read(&mut chunk).unwrap();
+                    request.extend_from_slice(&chunk[..n]);
+                    let Some(end) = request.windows(4).position(|w| w == b"\r\n\r\n") else {
+                        continue;
+                    };
+                    let head = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                    let length: usize = head
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .map(|value| value.trim().parse().unwrap())
+                        .unwrap_or(0);
+                    while request.len() < end + 4 + length {
+                        let n = socket.read(&mut chunk).unwrap();
+                        request.extend_from_slice(&chunk[..n]);
+                    }
+                    break request[end + 4..end + 4 + length].to_vec();
+                };
+                bodies.push(body);
+                socket.write_all(&answer).unwrap();
+            }
+            bodies
+        });
+        (url, server)
+    }
+
+    fn deployment(url: &str) -> reqwest::RequestBuilder {
+        reqwest::Client::new()
+            .post(url)
+            .body(b"the deployment".to_vec())
+    }
+
+    #[tokio::test]
+    async fn a_deployment_refused_for_now_is_sent_again_once_the_server_says() {
+        let (url, server) = serve(vec![refused(Some("0")), OK.to_vec()]);
+        let response = send_deployment(deployment(&url)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(server.join().unwrap(), vec![b"the deployment".to_vec(); 2]);
+    }
+
+    #[tokio::test]
+    async fn a_refusal_without_a_wait_or_past_the_bound_is_the_answer() {
+        for retry_after in [None, Some("3600")] {
+            let (url, server) = serve(vec![refused(retry_after)]);
+            let response = send_deployment(deployment(&url)).await.unwrap();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(server.join().unwrap().len(), 1);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2072,6 +2201,48 @@ mod tests {
             Some("https://peer.example/content/contents/")
         );
         assert_eq!(content_base("https://peer.example/other"), None);
+    }
+
+    /// Full profiles come from the catalyst everywhere; compact ones from the same catalyst
+    /// except on Decentraland's own deployments, whose catalysts lack the route: there from the
+    /// same deployment's asset-bundle registry (temporary, see `compact_source`).
+    #[test]
+    fn compact_reads_use_the_registry_only_for_decentraland_catalysts() {
+        // the engine's own resolution: nothing overridden, so Decentraland's catalyst
+        assert_eq!(lambdas_url(), "https://peer.decentraland.org/lambdas");
+        assert_eq!(
+            compact_source(&lambdas_url()),
+            "https://asset-bundle-registry.decentraland.org"
+        );
+        for (lambdas, compact) in [
+            (
+                "https://peer.decentraland.zone/lambdas",
+                "https://asset-bundle-registry.decentraland.zone",
+            ),
+            (
+                "https://peer-ec1.decentraland.org/lambdas",
+                "https://asset-bundle-registry.decentraland.org",
+            ),
+            // a dcl-one node, a gateway or a local catalyst serves its own compact tier
+            (
+                "https://play.example.test/lambdas",
+                "https://play.example.test/lambdas",
+            ),
+            (
+                "https://gateway.example.test/mount/peer/lambdas/",
+                "https://gateway.example.test/mount/peer/lambdas",
+            ),
+            (
+                "http://127.0.0.1:5222/lambdas",
+                "http://127.0.0.1:5222/lambdas",
+            ),
+            (
+                "https://peer.decentraland.org.example.test/lambdas",
+                "https://peer.decentraland.org.example.test/lambdas",
+            ),
+        ] {
+            assert_eq!(compact_source(lambdas), compact, "{lambdas}");
+        }
     }
 
     fn compact(name: &str) -> CompactProfile {

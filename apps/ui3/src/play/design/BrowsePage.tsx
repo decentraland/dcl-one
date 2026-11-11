@@ -20,8 +20,14 @@ export function BrowseControl({ size, children }: { size: 'search' | 'select'; c
   return <div className={styles[size]}>{children}</div>
 }
 
-export function BrowsePanel({ children }: { children: ReactNode }): React.JSX.Element {
-  return <div className={styles.panel}>{children}</div>
+/** The results panel. `label` names it as a region; `busy` marks it loading (`aria-busy`) while the
+ *  results it shows do not yet answer the current query. */
+export function BrowsePanel({ children, label, busy }: { children: ReactNode; label?: string; busy?: boolean }): React.JSX.Element {
+  return (
+    <div className={styles.panel} role={label != null ? 'region' : undefined} aria-label={label} aria-busy={busy}>
+      {children}
+    </div>
+  )
 }
 
 export function BrowseLoading(): React.JSX.Element {

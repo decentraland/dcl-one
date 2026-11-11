@@ -1,4 +1,4 @@
-use bevy::{ecs::system::RunSystemOnce, prelude::*};
+use bevy::ecs::system::RunSystemOnce;
 use common::structs::PrimaryUser;
 use dcl_types::SceneId;
 use scene_material::SceneBounds;

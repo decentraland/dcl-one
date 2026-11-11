@@ -3,18 +3,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
-import { partitionCart, type CartGroup, type CartPartition, type LineRefusal } from "../cart/partition";
+import { partitionCart, type CartGroup, type CartPartition, type LineRefusal } from "@shop/cart/partition";
 import { useCartRevalidation, type LineChange, type OfferFetcher } from "../cart/revalidate";
-import { checkoutSummary, type CheckoutSummary } from "../cart/machine";
+import { checkoutSummary, type CheckoutSummary } from "@shop/cart/machine";
 import { useCart } from "../cart/store";
-import type { CartLine, PurchaseOffer, PurchaseState } from "../model/purchase";
-import { PAYMENT_METHODS, type Eligibility, type PaymentMethod, type Session } from "../model/settlement";
-import { outageText } from "../payment/copy";
-import { presentPayment, presentUnpriced, type PaymentPresentation } from "../payment/present";
-import { ruleFor } from "../payment/rule";
-import { assetKindOf } from "../discovery/cardPrice";
+import type { CartLine, PurchaseOffer, PurchaseState } from "@shop/model/purchase";
+import { PAYMENT_METHODS, type Eligibility, type PaymentMethod, type Session } from "@shop/model/settlement";
+import { outageText } from "@shop/payment/copy";
+import { presentPayment, presentUnpriced, type PaymentPresentation } from "@shop/payment/present";
+import { ruleFor } from "@shop/payment/rule";
+import { assetKindOf } from "@shop/discovery/cardPrice";
 import { useShopWallet, type ShopWalletState } from "../wallet/context";
-import { cancelUsdIntents, type UsdBalance } from "../credits/credits";
+import { cancelUsdIntents, type UsdBalance } from "@shop/credits/credits";
 import { useBalance, useManaBalance } from "../credits/hooks";
 import { bindTopUpReturn, stashTopUpReturn } from "../credits/returns";
 import { settlementChainId } from "./chain/config";
@@ -24,12 +24,12 @@ import { setAuthorization, type ShopAuthorization } from "./lib/authorizations";
 import { RESUME_CART_KEY, reviewCart, type CartReview, type ResolvedLine } from "./purchase/cart";
 import { releaseAuthorizing, resumeCheckout, runGroup, watchGroup, type ApprovalRequest, type CheckoutDeps, type GroupResult } from "./purchase/executor";
 import type { RailContext } from "./purchase/rail";
-import { createSpendGuard } from "./purchase/spend-guard";
+import { createSpendGuard } from "@shop/checkout/purchase/spend-guard";
 import { useShopServices } from "./services";
 import { cartOfferFetcher, useOfferSource } from "../detail/offers";
 import { needsMarketplace, useMarketplaceAccess } from "../market/access";
-import type { ManaWei, UsdCents } from "../model/money";
-import { creditsCeil } from "../model/money";
+import type { ManaWei, UsdCents } from "@shop/model/money";
+import { creditsCeil } from "@shop/model/money";
 
 /** The blocker of a cart the credit balance does not cover: the summary offers a top-up instead of stating it. */
 export const CREDITS_SHORT = "Your Credits balance doesn't cover the Credits part of this cart.";

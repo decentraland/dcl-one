@@ -11,7 +11,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use catalyst::schema_migrate::{self, MigrateError};
 
 /// The steps a prepared version-2 database has not recorded.
-const PREPARED_PENDING_STEPS: [&str; 14] = [
+const PREPARED_PENDING_STEPS: [&str; 17] = [
     "0018_event_hook_compatibility",
     "0019_event_hook_admin_priority",
     "0023_social_referral_pending_reward",
@@ -26,8 +26,20 @@ const PREPARED_PENDING_STEPS: [&str; 14] = [
     "0033_explore_recurrence_one_pass",
     "0034_shop_bid_invalidated",
     "0035_explore_mirror_adopted_at",
+    "0036_credits_authorization_request_digest",
+    "0037_social_badges_catalog_parity",
+    "0038_social_badge_processor",
 ];
 type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
+/// id, category, is_tier, criteria_steps, published, created_at
+type BadgeDefinitionRow = (
+    String,
+    Option<String>,
+    bool,
+    Option<i32>,
+    bool,
+    chrono::NaiveDateTime,
+);
 
 async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
     sqlx::query_as(
@@ -179,6 +191,216 @@ async fn has_column(pool: &PgPool, table: &str, column: &str) -> bool {
         .fetch_one(pool)
         .await
         .unwrap()
+}
+
+/// The placeholder catalog a stamped database carries from the earlier seed,
+/// with a wallet holding two of its badges and emotionista holders the old
+/// console grant completed (one tier row each, old targets as steps).
+const PLACEHOLDER_BADGES: &str = "
+INSERT INTO social.badge_definitions (id, name, description, category, is_tier) VALUES
+  ('open_for_business', 'Open for Business', 'Set up a store and publish a collection.', 'Builder', false),
+  ('decentraland_citizen', 'Decentraland Citizen', 'Log in to Decentraland for the first time.', 'Explorer', false),
+  ('walkabout', 'Walkabout', 'Walk a cumulative distance across Decentraland.', 'Explorer', true),
+  ('emotionista', 'Emotionista', 'Play emotes in-world.', 'Socializer', true);
+INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, description, criteria_steps, ordinal) VALUES
+  ('walkabout', 'walkabout-starter', 'Starter', 'Walk 1,000 meters.', 1000, 0),
+  ('emotionista', 'emotionista-bronze', 'Bronze', 'Play 10 emotes.', 10, 0),
+  ('emotionista', 'emotionista-silver', 'Silver', 'Play 100 emotes.', 100, 1),
+  ('emotionista', 'emotionista-gold', 'Gold', 'Play 1000 emotes.', 1000, 2);
+INSERT INTO social.user_badge_progress (address, badge_id, steps_done, completed_at, last_completed_tier_id) VALUES
+  ('0x' || repeat('c', 40), 'walkabout', 1000, NULL, 'walkabout-starter'),
+  ('0x' || repeat('c', 40), 'open_for_business', 1, '2026-01-01', NULL),
+  ('0x' || repeat('d', 40), 'emotionista', 10, '2026-01-01', 'emotionista-bronze'),
+  ('0x' || repeat('e', 40), 'emotionista', 100, '2026-01-01', 'emotionista-silver'),
+  ('0x' || repeat('f', 40), 'emotionista', 1000, '2026-01-01', 'emotionista-gold');
+INSERT INTO social.user_achieved_tiers (address, badge_id, tier_id) VALUES
+  ('0x' || repeat('c', 40), 'walkabout', 'walkabout-starter'),
+  ('0x' || repeat('d', 40), 'emotionista', 'emotionista-bronze'),
+  ('0x' || repeat('e', 40), 'emotionista', 'emotionista-silver'),
+  ('0x' || repeat('f', 40), 'emotionista', 'emotionista-gold');
+";
+
+/// `0037_social_badges_catalog_parity`: no row is inserted or deleted; the
+/// ids upstream shares take its content, the two it names differently stay
+/// unpublished, and the wallets keep every row: a completed single badge
+/// reads its new target, a tiered one stops at its held tier's new target
+/// and stays completed only at its last tier.
+async fn assert_placeholder_badges_upgraded(pool: &PgPool) {
+    let defs: Vec<BadgeDefinitionRow> = sqlx::query_as(
+        "SELECT id, category, is_tier, criteria_steps, published_at IS NOT NULL, created_at \
+             FROM social.badge_definitions ORDER BY created_at, id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let published: Vec<_> = defs
+        .iter()
+        .map(|d| (d.0.as_str(), d.1.as_deref(), d.2, d.3, d.4))
+        .collect();
+    assert_eq!(
+        published,
+        [
+            ("open_for_business", Some("Creator"), false, Some(2), true),
+            ("emotionista", Some("Collector"), true, None, true),
+            (
+                "decentraland_citizen",
+                Some("Explorer"),
+                false,
+                Some(1),
+                false
+            ),
+            ("walkabout", Some("Explorer"), true, None, false),
+        ],
+        "upstream's creation order first, then the unpublished placeholders"
+    );
+    let tiers: Vec<(String, i32, i32)> = sqlx::query_as(
+        "SELECT tier_id, criteria_steps, ordinal FROM social.badge_tiers \
+         WHERE badge_id = 'emotionista' ORDER BY ordinal",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tiers,
+        [
+            ("emotionista-bronze".into(), 10, 1),
+            ("emotionista-silver".into(), 25, 2),
+            ("emotionista-gold".into(), 50, 3)
+        ]
+    );
+    let held: Vec<(String, String, i32, bool, serde_json::Value)> = sqlx::query_as(
+        "SELECT substr(address, 3, 1), badge_id, steps_done, completed_at IS NOT NULL, progress \
+         FROM social.user_badge_progress ORDER BY address, badge_id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    let empty = serde_json::json!({});
+    assert_eq!(
+        held,
+        [
+            (
+                "c".into(),
+                "open_for_business".into(),
+                2,
+                true,
+                empty.clone()
+            ),
+            ("c".into(), "walkabout".into(), 1000, false, empty.clone()),
+            ("d".into(), "emotionista".into(), 10, false, empty.clone()),
+            ("e".into(), "emotionista".into(), 25, false, empty.clone()),
+            ("f".into(), "emotionista".into(), 50, true, empty)
+        ]
+    );
+    let presence: bool =
+        sqlx::query_scalar("SELECT to_regclass('social.presence_badges') IS NOT NULL")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert!(
+        presence,
+        "the object pass creates the presence configuration"
+    );
+    // The presence flow's runtime tables are new, so they need no step either.
+    for relation in [
+        "social.presence_events",
+        "social.presence_events_seq_idx",
+        "social.presence_visits",
+        "social.presence_visits_wallet_realm_idx",
+        "social.presence_visits_opened_at_idx",
+        "social.presence_visits_last_checked_at_opened_at_idx",
+        "social.presence_applied_events",
+        "social.presence_applied_events_applied_at_idx",
+        "social.presence_pending_leaves",
+        "social.presence_pending_leaves_recorded_at_idx",
+        "social.presence_absence_facts",
+        "social.presence_absence_facts_recorded_at_idx",
+    ] {
+        assert!(has_relation(pool, relation).await, "{relation}");
+    }
+    let open_visit = sqlx::query(
+        "INSERT INTO social.presence_visits (badge_id, wallet, room, opened_at, joins, sessions, \
+           realm_name, is_world) VALUES ('no_such_badge', '0x', 'r', 1, '{1}', '{s}', 'main', false)",
+    )
+    .execute(pool)
+    .await;
+    assert!(open_visit.is_err(), "a visit counts for a configured badge");
+    let refused = sqlx::query(
+        "INSERT INTO social.badge_tiers (badge_id, tier_id, tier_name, criteria_steps, ordinal) \
+         VALUES ('emotionista', 'emotionista-zero', 'Zero', 0, 9)",
+    )
+    .execute(pool)
+    .await;
+    assert!(refused.is_err(), "a tier target is positive");
+}
+
+/// `social.client_events` as a database that kept explorer events before
+/// `0038_social_badge_processor` holds it: no `seq`, two rows.
+const CLIENT_EVENTS_BEFORE_SEQ: &str = "
+CREATE TABLE social.client_events (
+    key text NOT NULL,
+    source text NOT NULL,
+    sub_type text NOT NULL,
+    address text NOT NULL,
+    session_id text,
+    anonymous_id text,
+    realm text,
+    ip text,
+    reported_at timestamp(3) without time zone NOT NULL,
+    received_at timestamp(3) without time zone NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+    CONSTRAINT client_events_pkey PRIMARY KEY (key)
+);
+INSERT INTO social.client_events (key, source, sub_type, address, reported_at, received_at) VALUES
+  ('m1', 'client', 'used-emote', '0x' || repeat('c', 40), '2026-11-01', '2026-11-01'),
+  ('m2', 'client', 'used-emote', '0x' || repeat('c', 40), '2026-11-02', '2026-11-02');
+";
+
+/// `social.client_events`' storage file: a table rewrite gives it a new one.
+async fn client_events_filenode(pool: &PgPool) -> i64 {
+    sqlx::query_scalar("SELECT pg_relation_filenode('social.client_events')::bigint")
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// `0038_social_badge_processor`: the table is not rewritten, the kept events
+/// keep a NULL `seq` (they precede every cursor), a new one takes the
+/// sequence's first number, and the object pass adds the sequence, the
+/// cursor tables and both partial indexes.
+async fn assert_client_events_sequenced(pool: &PgPool, filenode_before: i64) {
+    assert_eq!(
+        client_events_filenode(pool).await,
+        filenode_before,
+        "adding seq rewrites no row"
+    );
+    let seqs: Vec<(String, Option<i64>)> =
+        sqlx::query_as("SELECT key, seq FROM social.client_events ORDER BY key")
+            .fetch_all(pool)
+            .await
+            .unwrap();
+    assert_eq!(seqs, [("m1".to_string(), None), ("m2".to_string(), None)]);
+    let next: i64 = sqlx::query_scalar(
+        "INSERT INTO social.client_events (key, source, sub_type, address, reported_at, received_at) \
+         VALUES ('m3', 'client', 'used-emote', '0x' || repeat('c', 40), now(), now()) RETURNING seq",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(next, 1);
+    let (cursors, gaps, seq_idx, moves_idx, owned): (bool, bool, bool, bool, bool) =
+        sqlx::query_as(
+            "SELECT to_regclass('social.badge_cursors') IS NOT NULL, \
+                to_regclass('social.badge_cursor_gaps') IS NOT NULL, \
+                to_regclass('social.client_events_seq_idx') IS NOT NULL, \
+                to_regclass('social.client_events_session_moves_idx') IS NOT NULL, \
+                pg_get_serial_sequence('social.client_events', 'seq') = 'social.client_events_seq'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert!(cursors && gaps && seq_idx && moves_idx && owned);
 }
 
 #[tokio::test]
@@ -340,6 +562,15 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         private_indexes, 2,
         "both address access paths exist before migrate"
     );
+    sqlx::raw_sql(PLACEHOLDER_BADGES)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::raw_sql(CLIENT_EVENTS_BEFORE_SEQ)
+        .execute(pool)
+        .await
+        .unwrap();
+    let client_events_before = client_events_filenode(pool).await;
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -382,6 +613,9 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         vec!["place_world_local_owner_idx", "place_world_owner_idx"],
         "the prepared owner access paths survive the v3 release"
     );
+
+    assert_placeholder_badges_upgraded(pool).await;
+    assert_client_events_sequenced(pool, client_events_before).await;
 
     let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
         "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"
@@ -1396,5 +1630,97 @@ async fn the_retired_hook_tables_release_adopts_the_pending_rows_then_drops_the_
             .unwrap()
             .is_empty()
     );
+    old.drop().await;
+}
+
+const LOGS_PERMISSIONS_RETIRED: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/releases/worlds-logs-permissions-retired.sql"
+));
+
+/// Runs a release that drops indexes concurrently as psql does: each
+/// blank-line-separated statement on its own, outside a transaction,
+/// stopping at the first error.
+async fn release_statements(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    for statement in sql.split("\n\n").filter(|s| !s.trim().is_empty()) {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.to_owned()))
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_logs_permissions_release_waits_for_the_decoded_function_then_drops_the_old_one() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    let stop_on_error = "\\set ON_ERROR_STOP on\n";
+    assert_eq!(LOGS_PERMISSIONS_RETIRED.matches(stop_on_error).count(), 1);
+    let release = LOGS_PERMISSIONS_RETIRED.replace(stop_on_error, "");
+    let has_function = |signature: &'static str| async move {
+        sqlx::query_scalar::<_, bool>("SELECT to_regprocedure($1) IS NOT NULL")
+            .bind(signature)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    };
+    let old_objects = [
+        "worlds.world_scenes_logs_permissions_idx",
+        "content.deployments_scene_logs_permissions_idx",
+    ];
+    for index in old_objects {
+        assert!(
+            has_relation(pool, index).await,
+            "the fixture carries {index}"
+        );
+    }
+    // Before the object pass creates the decoded function it refuses and changes nothing.
+    assert!(release_statements(pool, &release).await.is_err());
+    assert!(has_function("worlds.logs_permissions(text)").await);
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    for index in old_objects {
+        assert!(
+            has_relation(pool, index).await,
+            "the object pass keeps {index}"
+        );
+    }
+    // An invalid decoded index, as a failed concurrent build leaves, is refused.
+    let set_valid = |valid: bool| async move {
+        sqlx::query(
+            "UPDATE pg_index SET indisvalid = $1
+             WHERE indexrelid = 'content.deployments_scene_logs_permissions_decoded_idx'::regclass",
+        )
+        .bind(valid)
+        .execute(pool)
+        .await
+        .unwrap();
+    };
+    set_valid(false).await;
+    assert!(release_statements(pool, &release).await.is_err());
+    assert!(has_function("worlds.logs_permissions(text)").await);
+    set_valid(true).await;
+    release_statements(pool, &release).await.unwrap();
+    assert!(!has_function("worlds.logs_permissions(text)").await);
+    for index in old_objects {
+        assert!(!has_relation(pool, index).await, "{index} is dropped");
+    }
+    assert!(has_function("worlds.logs_permissions_decoded(text)").await);
+    assert!(has_relation(pool, "worlds.world_scenes_logs_permissions_decoded_idx").await);
+    assert!(
+        has_relation(
+            pool,
+            "content.deployments_scene_logs_permissions_decoded_idx"
+        )
+        .await
+    );
+    release_statements(pool, &release)
+        .await
+        .expect("a second run notes the function is gone");
     old.drop().await;
 }

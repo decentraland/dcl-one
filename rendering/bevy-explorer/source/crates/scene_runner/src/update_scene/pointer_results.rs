@@ -5,7 +5,10 @@ use bevy::{
     math::FloatOrd,
     platform::collections::{HashMap, HashSet},
     prelude::*,
-    render::mesh::{Indices, VertexAttributeValues},
+    render::{
+        mesh::{Indices, VertexAttributeValues},
+        primitives::Aabb,
+    },
     ui::{CameraCursorPosition, RelativeCursorPosition, UiSystem},
 };
 use bevy_console::ConsoleCommand;
@@ -13,6 +16,10 @@ use comms::global_crdt::ForeignPlayer;
 use console::DoAddConsoleCommand;
 use system_bridge::{HoverAction, HoverEvent, ProximityEvent, SystemApi};
 
+use super::synthetic_pointer::{
+    aim_ray, anchor_point, cursor_entries, expire_synthetic_aim, ui_gate_passes,
+    LoggedPointerEvent, PointerEventLog, SyntheticPointer,
+};
 use crate::{
     gltf_resolver::GltfMeshResolver,
     update_world::{
@@ -110,11 +117,14 @@ impl Plugin for PointerResultPlugin {
             .init_resource::<WorldPointerTarget>()
             .init_resource::<DebugPointers>()
             .init_resource::<ProximityCandidates>()
-            .init_resource::<MonotonicTimestamp<PbPointerEventsResult>>();
+            .init_resource::<MonotonicTimestamp<PbPointerEventsResult>>()
+            .init_resource::<SyntheticPointer>()
+            .init_resource::<PointerEventLog>();
 
         app.add_systems(
             PreUpdate,
             (
+                expire_synthetic_aim,
                 update_pointer_target,
                 update_manual_cursor,
                 collect_proximity_candidates,
@@ -338,6 +348,10 @@ fn update_pointer_target(
     mut avatar_colliders: ResMut<AvatarColliders>,
     mut world_target: ResMut<WorldPointerTarget>,
     mut pointer_ray: ResMut<PointerRay>,
+    synthetic: Res<SyntheticPointer>,
+    transforms: Query<&GlobalTransform>,
+    meshes: Query<(&Aabb, &GlobalTransform, &InheritedVisibility)>,
+    children: Query<&Children>,
 ) {
     pointer_ray.0 = None;
 
@@ -350,25 +364,37 @@ fn update_pointer_target(
     };
     let player_translation = player_transform.translation();
 
-    // get new 3d hover target
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let cursor_position = if window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Locked
-    {
-        // if pointer locked, just middle
-        Vec2::new(window.width(), window.height()) / 2.0
-    } else {
-        let Some(cursor_position) = window.cursor_position() else {
-            // outside window
+    // get new 3d hover target: along the synthetic aim when one is active, else the cursor
+    let ray = if let Some(aim) = synthetic.0.as_ref() {
+        // an aimed entity that is gone or not placed yet has no target
+        let Some(ray) = anchor_point(aim.target, aim.anchor, &transforms, &meshes, &children)
+            .and_then(|point| aim_ray(camera_position.translation(), point))
+        else {
+            world_target.0 = None;
             return;
         };
-        cursor_position
-    };
+        ray
+    } else {
+        let Ok(window) = windows.single() else {
+            return;
+        };
+        let cursor_position =
+            if window.cursor_options.grab_mode == bevy::window::CursorGrabMode::Locked {
+                // if pointer locked, just middle
+                Vec2::new(window.width(), window.height()) / 2.0
+            } else {
+                let Some(cursor_position) = window.cursor_position() else {
+                    // outside window
+                    return;
+                };
+                cursor_position
+            };
 
-    let Ok(ray) = camera.viewport_to_world(camera_position, cursor_position) else {
-        error!("no ray, not sure why that would happen");
-        return;
+        let Ok(ray) = camera.viewport_to_world(camera_position, cursor_position) else {
+            error!("no ray, not sure why that would happen");
+            return;
+        };
+        ray
     };
 
     pointer_ray.0 = Some(ray);
@@ -837,11 +863,12 @@ fn resolve_pointer_target(
     mut target: ResMut<PointerTarget>,
     mut prev: Local<Option<Entity>>,
     tick: Res<FrameCount>,
+    synthetic: Res<SyntheticPointer>,
 ) {
-    if !ui_roots
+    let any_root_interacting = ui_roots
         .iter()
-        .any(|root| !matches!(root, Interaction::None))
-    {
+        .any(|root| !matches!(root, Interaction::None));
+    if !ui_gate_passes(any_root_interacting, synthetic.0.is_some()) {
         target.0 = None;
         if prev.is_some() {
             debug!("[{}] {prev:?} -> None", tick.0);
@@ -979,6 +1006,7 @@ fn debug_pointer(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn send_hover_events(
     new_target: Res<PointerTarget>,
     pointer_requests: Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
@@ -988,6 +1016,9 @@ fn send_hover_events(
     mut previously_entered: Local<HashSet<(Entity, Option<String>, PointerTargetType)>>,
     scene_ui_ent: Query<&UiLink>,
     linked: Query<(&ChildOf, &DespawnWith, Option<&RelativeCursorPosition>)>,
+    synthetic: Res<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+    frame: Res<FrameCount>,
 ) {
     debug!("hover target : {:?}", new_target);
 
@@ -1033,6 +1064,9 @@ fn send_hover_events(
                 ty: *ty,
             },
             PointerEventType::PetHoverLeave,
+            &synthetic,
+            &mut log,
+            frame.0,
         );
     }
 
@@ -1049,6 +1083,9 @@ fn send_hover_events(
                     ..info.clone()
                 },
                 PointerEventType::PetHoverEnter,
+                &synthetic,
+                &mut log,
+                frame.0,
             ) {
                 input_manager.priorities().reserve(
                     InputType::Action(Action::Scene(action.to_common())),
@@ -1193,8 +1230,21 @@ fn write_pointer_result(
     ev_type: PointerEventType,
     direction: Option<Vec2>,
     timestamp: &MonotonicTimestamp<PbPointerEventsResult>,
+    synthetic: &SyntheticPointer,
+    log: &mut PointerEventLog,
+    frame: u32,
 ) {
     let tick_number = context.tick_number;
+    if synthetic.0.is_some() {
+        log.0.push(LoggedPointerEvent {
+            container: info.container,
+            entity: scene_entity_id,
+            event: ev_type,
+            button,
+            tick: tick_number,
+            frame,
+        });
+    }
     context.update_crdt(
         SceneComponentId::POINTER_RESULT,
         CrdtType::GO_ENT,
@@ -1233,12 +1283,16 @@ fn resolve_scene_entity_id(
 /// Walks all pointer-event entries on the target. Returns the first in-range
 /// configured button (used by the caller to reserve scene input priorities),
 /// and emits a hover CRDT for each entry whose `event_type` matches `ev_type`.
+#[allow(clippy::too_many_arguments)]
 fn send_hover_event(
     pointer_requests: &Query<(Option<&SceneEntity>, Option<&ForeignPlayer>, &PointerEvents)>,
     scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>,
     timestamp: &MonotonicTimestamp<PbPointerEventsResult>,
     info: &PointerTargetInfo,
     ev_type: PointerEventType,
+    synthetic: &SyntheticPointer,
+    log: &mut PointerEventLog,
+    frame: u32,
 ) -> Option<InputAction> {
     let mut action = None;
     let Ok((maybe_scene_entity, maybe_foreign_player, pe)) = pointer_requests.get(info.container)
@@ -1275,6 +1329,9 @@ fn send_hover_event(
             ev_type,
             None,
             timestamp,
+            synthetic,
+            log,
+            frame,
         );
     }
 
@@ -1296,6 +1353,9 @@ fn send_action_event(
     ev_type: PointerEventType,
     action: InputAction,
     direction: Option<Vec2>,
+    synthetic: &SyntheticPointer,
+    log: &mut PointerEventLog,
+    frame: u32,
 ) -> Option<Entity> {
     let Ok((maybe_scene_entity, maybe_foreign_player, _)) = pointer_requests.get(info.container)
     else {
@@ -1333,6 +1393,9 @@ fn send_action_event(
             ev_type,
             direction,
             timestamp,
+            synthetic,
+            log,
+            frame,
         );
         context.last_action_event = Some(time.elapsed_secs_f64());
         consumer = Some(scene);
@@ -1472,16 +1535,19 @@ fn send_proximity_events(
     mut scenes: Query<(&mut RendererSceneContext, &GlobalTransform)>,
     timestamp: Res<MonotonicTimestamp<PbPointerEventsResult>>,
     mut prev_in_range: Local<HashSet<Entity>>,
+    synthetic: Res<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+    frame: Res<FrameCount>,
 ) {
     let candidate_by_entity: HashMap<Entity, &ProximityCandidate> =
         candidates.0.iter().map(|c| (c.entity, c)).collect();
     let new_in_range: HashSet<Entity> = candidate_by_entity.keys().copied().collect();
 
-    let emit = |entity: Entity,
-                pet: PointerEventType,
-                dist: f32,
-                position: Option<Vec3>,
-                scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>|
+    let mut emit = |entity: Entity,
+                    pet: PointerEventType,
+                    dist: f32,
+                    position: Option<Vec3>,
+                    scenes: &mut Query<(&mut RendererSceneContext, &GlobalTransform)>|
      -> Option<()> {
         let (scene_entity, pe) = pointer_events.get(entity).ok()?;
         let pb_pe = pe.msg.get(&None)?;
@@ -1531,6 +1597,9 @@ fn send_proximity_events(
                 pet,
                 None,
                 &timestamp,
+                &synthetic,
+                &mut log,
+                frame.0,
             );
         }
         Some(())
@@ -1575,6 +1644,9 @@ fn send_action_events(
     mut locks: ResMut<CursorLocks>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scenes: ContainingScene,
+    synthetic: Res<SyntheticPointer>,
+    mut log: ResMut<PointerEventLog>,
+    frame: Res<FrameCount>,
 ) {
     let mut events_and_consumers = Vec::default(); // (event type, button, option<consuming scene>)
 
@@ -1601,6 +1673,9 @@ fn send_action_events(
                     PointerEventType::PetDown,
                     down,
                     None,
+                    &synthetic,
+                    &mut log,
+                    frame.0,
                 );
                 // Capture the press winner so subsequent PetDrag/Locked CRDTs
                 // fire on the same entity even if cursor / proximity state
@@ -1674,6 +1749,9 @@ fn send_action_events(
                 PointerEventType::PetUp,
                 up,
                 None,
+                &synthetic,
+                &mut log,
+                frame.0,
             ),
             None => None,
         };
@@ -1700,6 +1778,9 @@ fn send_action_events(
                 },
                 *input,
                 Some(frame_delta),
+                &synthetic,
+                &mut log,
+                frame.0,
             );
         }
         any_drag_lock |= cap.lock;
@@ -1719,6 +1800,9 @@ fn send_action_events(
                 PointerEventType::PetDragEnd,
                 up,
                 None,
+                &synthetic,
+                &mut log,
+                frame.0,
             );
         }
     }
@@ -1806,11 +1890,10 @@ fn handle_hover_stream(
                 // surface separately on GetProximityStream. Filter so the same
                 // entity's proximity tooltips don't double-fire on the cursor
                 // stream when the player happens to be aiming at it.
-                pe.iter()
-                    .filter(|event| ActionCandidateMode::Cursor.matches_entry(event))
-                    .map(|event| HoverAction {
+                cursor_entries(t, pe)
+                    .map(|(event, reaches)| HoverAction {
                         event: event.clone(),
-                        enabled: t.cursor_reaches(event),
+                        enabled: reaches,
                     })
                     .collect()
             })

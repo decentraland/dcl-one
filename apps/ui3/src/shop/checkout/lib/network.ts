@@ -3,7 +3,7 @@
 // read the chain, require it before a gas-paying leg, switch only from the buyer's own click. Adds the
 // unauthorized-request classifier, which the foundation left to this area.
 
-export { chainLabel } from "../../model/chain";
+export { chainLabel } from "@shop/model/chain";
 export {
   AMOY_ADD_PARAMS,
   isWrongNetworkError,

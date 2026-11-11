@@ -8,7 +8,6 @@
 import { encodeIdentity, getLogin, rootAddress, type AuthIdentity, type StoredLogin } from '../features/auth/sso'
 import { trackGuestWalletCreation } from '../features/auth/guestWalletEvent'
 import { attachEngine, launchAnalytics } from '../lib/analytics'
-import { serviceUrl } from '../lib/baseDomain'
 import { inShell, shellRequest } from '../lib/shell'
 import { autopilotFailCommand, newAccountFlags, type LoginDriver, type NewAccountPick } from './driver'
 import type { EngineRpc, LaunchHostOptions } from './engineRpc'
@@ -83,15 +82,13 @@ export class EngineDriver implements LoginDriver {
     await this.rpc.command('/logout')
   }
 
-  // The profile is fetched from this page's catalyst: the one the auth site deploys a new
-  // account's to, and the one the page asks before signing in (useStoredProfile), rather than the
-  // realm's node, which can lag behind it.
+  // The engine fetches the profile from the catalyst it boots with, the one the auth site deploys a
+  // new account's to and the page asks before signing in (useStoredProfile).
   async loginWithIdentity(identity: AuthIdentity, defaultOnError?: boolean, guest?: boolean, pick?: NewAccountPick): Promise<void> {
     const flag =
       (defaultOnError === true ? ' --default-on-error' : '') +
       (guest === true ? ' --guest' : '') +
-      newAccountFlags(pick) +
-      ` --profiles ${serviceUrl('catalyst')}/lambdas`
+      newAccountFlags(pick)
     await this.rpc.command(`/login_identity ${encodeIdentity(identity)}${flag}`)
   }
 

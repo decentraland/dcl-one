@@ -85,15 +85,12 @@ pub enum SystemApi {
     /// JSON read from localStorage) — no auth-server round-trip. The identity is the same
     /// regardless of how the user signed in (wallet, social, OTP, magic).
     /// bools: as for LoginPrevious; the identity is a guest account (see
-    /// `Wallet::is_guest_account`). The pick names and dresses the profile a first login builds;
-    /// the string is the lambdas endpoint to fetch the account's profile from (the catalyst the
-    /// sign-in deployed it to), else the realm's.
+    /// `Wallet::is_guest_account`). The pick names and dresses the profile a first login builds.
     LoginWithIdentity(
         String,
         bool,
         bool,
         Option<NewAccountPick>,
-        Option<String>,
         RpcResultSender<Result<(), String>>,
     ),
     LoginGuest,
