@@ -6,7 +6,7 @@ import type { Route } from "./+types/legal.$doc";
 export async function loader({ params }: Route.LoaderArgs) {
   const doc = params.doc ?? "";
   const key = doc === "credits" ? "credits" : resolveLegalKey(doc);
-  throw redirect(key ? legalPath(key) : doc ? `/${doc}` : "/", 301);
+  throw redirect(key ? legalPath(key) : "/", 301);
 }
 
 export default function LegalDocRedirect() {
