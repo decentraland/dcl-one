@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { STORES } from "@/features/download/actions";
+import { STORES } from "../download/actions";
 import { androidIntentUrl, jumpInFor, mobileDeepLink, mobileLaunch, openOnIos } from "./mobileLaunch";
 
 const ANDROID = { kind: "mobile", os: "android" } as const;

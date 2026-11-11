@@ -1,5 +1,5 @@
-import { STORES } from "@/features/download/actions";
-import type { DetectedPlatform } from "@/features/download/options";
+import { STORES } from "../download/actions";
+import type { DetectedPlatform } from "../download/options";
 import { parsePosition } from "@/data/lib/catalyst/jump/jump";
 
 /** Play Store id of the mobile explorer (its `package/unique_name`). */
