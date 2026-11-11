@@ -266,7 +266,7 @@ class SelectionTest(unittest.TestCase):
     def test_library_ui_outside_the_hud_entries_selects_nothing(self):
         for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
                      'library/ui/components/NavBar/NavBar.tsx',
-                     'library/ui/components/runtime/figma-module-runtime.module.css', 'library/ui/upstream.lock.json'):
+                     'library/ui/components/NavBar/NavBar.module.css', 'library/ui/upstream.lock.json'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')

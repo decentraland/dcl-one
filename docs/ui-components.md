@@ -4,11 +4,11 @@ This is dcl-one’s adoption tracker. Check the local runtime contract before im
 
 ## Available contracts
 
-The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts), with accepted limitations in the [promotion registry](../library/ui/components/promotion.json). This table records adoption work rather than duplicating the generated component manifest.
+The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts). Public components are hand-written, and this table records their open limitations and adoption.
 
-| Component | Runtime contract                                         | Limitations                                                                                                                                  | Verified app adoption |
-| --------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| NavBar    | [NavBar.tsx](../library/ui/components/NavBar/NavBar.tsx) | Signed-in placeholders, empty signed-in mobile variants, pending semantic/data contracts and logo sizing. See the registry for exact limits. | Not recorded          |
+| Component | Runtime contract                                         | Limitations                                                                                                                                                                                                                                                                        | Verified app adoption |
+| --------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| NavBar    | [NavBar.tsx](../library/ui/components/NavBar/NavBar.tsx) | Hand-written. No light theme (theme selection is undecided). The app supplies the notifications panel, account data and balances; NavBar renders only what it is given. Below 768px balances show only in the menu drawer. Not verified with a screen reader or on a touch device. | Not recorded          |
 
 ## Review-only components
 
