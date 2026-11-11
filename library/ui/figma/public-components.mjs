@@ -61,6 +61,31 @@ export function componentExpectedFiles(manifest, metadataDigest) {
   )
 }
 
+/**
+ * The public component table the staged generation record implies, for lock-digests --write: its emitted outputs and
+ * the record itself, with origins from componentExpectedFiles. `readStaged` returns a path's staged bytes. The record
+ * is validated against the (already resealed) source lock first, so a stale record throws instead of being pinned.
+ */
+export function publicComponentTable(lock, readStaged) {
+  const source = lock.sources?.find(
+    (entry) => entry.repository === 'https://github.com/decentraland/figma-design-system'
+  )
+  if (!source) throw new Error('missing component source pin')
+  const bytes = readStaged(SCOPE + '/' + componentGenerationFile)
+  const read = (file) => {
+    const content = readStaged(file)
+    if (sha256(content) !== source.files?.[file]?.sha256)
+      throw new Error('staged component input differs from the source lock: ' + file)
+    return content
+  }
+  const manifest = validateComponentGeneration(bytes, source, read)
+  return Object.fromEntries(
+    [...componentExpectedFiles(manifest, sha256(bytes))].sort(([a], [b]) =>
+      a < b ? -1 : a > b ? 1 : 0
+    )
+  )
+}
+
 /** Offline byte/module consistency, not an attestation of live Figma parity. */
 export function publicComponentsProblems(root, lock) {
   const directory = path.join(root, SCOPE)
