@@ -114,7 +114,7 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
 
 // Dev-only: the scene editor package (a dcl-editor checkout's packages/web/dist, named by
 // WEB_EDITOR_DIR) served same-origin under /editor/, where `?editor` loads it from on localhost
-// (src/features/editorHost). Without the variable nothing is mounted.
+// (library/ui/apps/hud/features/editorHost). Without the variable nothing is mounted.
 function editorPackage(): Plugin[] {
   const checkout = process.env.WEB_EDITOR_DIR
   if (!checkout) return []

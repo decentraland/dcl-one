@@ -16,7 +16,6 @@ let
   contract = lib.fileset.toSource {
     inherit root;
     fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
-      /rendering/bevy-explorer/upstream.lock.json
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/bevy
       /library/protocol/proto

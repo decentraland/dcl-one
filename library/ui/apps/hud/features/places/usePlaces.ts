@@ -95,9 +95,12 @@ export function usePlaces(account?: string | null): UsePlaces {
     const legacySort = async (): Promise<{ data: DiscoverPlace[]; more: boolean }> => {
       const args = { limit: BROWSE_ARGS.limit, offset, order_by: effectiveSort as PlacesOrderBy, order: 'desc' as const, search: q || undefined }
       if (q) {
-        // Each source on its own: one that is down leaves the other's results, as an empty page.
-        const orEmpty = (pr: Promise<PlacesResponse>): Promise<PlacesResponse> => pr.catch(() => ({ ok: false, data: [], total: 0 }))
-        const [p, w] = await Promise.all([orEmpty(fetchPlaces(args)), orEmpty(fetchWorlds(args))])
+        // Each source on its own: one that is down leaves the other's results, as an empty page. Both
+        // down is an error, so the player gets Retry rather than an empty list.
+        const [ps, ws] = await Promise.allSettled([fetchPlaces(args), fetchWorlds(args)])
+        if (ps.status === 'rejected' && ws.status === 'rejected') throw ps.reason
+        const orEmpty = (r: PromiseSettledResult<PlacesResponse>): PlacesResponse => (r.status === 'fulfilled' ? r.value : { ok: false, data: [], total: 0 })
+        const [p, w] = [orEmpty(ps), orEmpty(ws)]
         return { data: [...p.data, ...w.data], more: offset + p.data.length < p.total || offset + w.data.length < w.total }
       }
       const response = await fetchPlaces({ ...args, only_pois: category === 'featured' ? true : undefined, categories })

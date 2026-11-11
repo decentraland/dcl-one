@@ -163,12 +163,6 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(selected['web'])
         self.assertFalse(any(selected[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
-    def test_sites_hud_review_does_not_select_engine_builds(self):
-        self.write('rendering/bevy-explorer/upstream.lock.json', json.dumps({'hud_source_sha256': 'e' * 64}))
-        result = ci.select(self.base, self.commit())
-        self.assertFalse(any(result[lane] for lane in ci.LANES))
-        self.assertFalse(result['scenes'])
-
     def test_source_and_integration_inputs_select_builds(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
                      'rendering/bevy-explorer/source/react-web/package-lock.json',

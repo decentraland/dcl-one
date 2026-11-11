@@ -51,6 +51,20 @@ describe('places browser', () => {
     expect(await screen.findByRole('button', { name: /Other Scene/ })).toBeInTheDocument()
     expect(screen.queryByText(/Couldn't load/)).toBeNull()
   })
+  it('offers Retry when a search finds neither places nor worlds because both are down', async () => {
+    const fetchMock = vi.fn((url: string) =>
+      url.includes('search=')
+        ? Promise.reject(new Error('down'))
+        : Promise.resolve(new Response(JSON.stringify({ ok: true, total: 1, data: [busy] })))
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    render(<PlacesBrowser onPick={vi.fn()} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Most active' }))
+    await userEvent.click(await screen.findByRole('option', { name: 'Most liked' }))
+    fireEvent.change(screen.getByPlaceholderText('Search places'), { target: { value: 'other' } })
+    expect(await screen.findByText("Couldn't load places")).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
   it('keeps loaded cards visible while Retry requests the failed next page', async () => {
     let failed = false
     vi.stubGlobal('fetch', vi.fn(async (input: string) => {

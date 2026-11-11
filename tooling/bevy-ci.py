@@ -45,7 +45,6 @@ IMAGES_INPUTS = (
     'flake.*',
     'rendering/bevy-explorer/source/**',
     'rendering/bevy-explorer/bevy/**',
-    'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*',
     '.github/workflows/bevy-explorer-ci.yml',

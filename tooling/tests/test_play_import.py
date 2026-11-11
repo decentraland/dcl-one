@@ -151,14 +151,12 @@ class PlayImportTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.build = self.root / 'build'
-        self.write('.gitignore', '/rendering/bevy-explorer/source/react-web/src/engine/generated/\n')
         for name in contract.INPUTS:
             self.write(name, 'build input')
         self.write(contract.BINDINGS + '/Example.ts', 'export type Example = string;\n')
         self.write(contract.HUD + 'App.tsx', 'export {}\n')
         self.write(contract.SOURCE + 'src/lib.rs', 'fn engine() {}\n')
         seal(self.root)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         for name in contract.REQUIRED:
             self.write('build/' + name, b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else b'fixture')
         self.write('build/build-info.json', json.dumps({'revision': SHA, 'engine': {
@@ -214,7 +212,7 @@ class PlayImportTests(unittest.TestCase):
         extra.unlink()
         target = self.build / 'service_worker.js'
         target.unlink()
-        target.symlink_to(self.root / contract.LOCK)
+        target.symlink_to(self.root / contract.BINDINGS / 'Example.ts')
         with self.assertRaisesRegex(ValueError, 'linked'):
             play.install(self.build)
 
@@ -273,11 +271,7 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_hud_adaptation_and_generated_bindings_must_match(self):
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': 'b' * 64}))
-        with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
-            play.install(self.build)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
+    def test_generated_bindings_must_match(self):
         self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
@@ -317,16 +311,15 @@ class PlayImportTests(unittest.TestCase):
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
-    def test_shared_hud_sources_rebuild_the_artifact_but_neither_the_engine_nor_the_sites_review(self):
+    def test_shared_hud_sources_rebuild_the_artifact_but_not_the_engine(self):
         # react-web compiles these through its aliases (react-web/vite.shared.ts).
-        engine, hud = contract.engine_inputs(self.root), contract.hud_inputs(self.root)
+        engine = contract.engine_inputs(self.root)
         for shared in SHARED:
             with self.subTest(shared=shared):
                 self.write(shared + 'changed.ts' if shared.endswith('/') else shared, 'export const changed = true;\n')
                 with self.assertRaisesRegex(ValueError, 'inputs differ'):
                     play.install(self.build)
                 self.assertEqual(engine, contract.engine_inputs(self.root))
-                self.assertEqual(hud, contract.hud_inputs(self.root))
                 contract.pack(self.build, self.root)
                 play.install(self.build)
 
@@ -391,20 +384,15 @@ class PlayImportTests(unittest.TestCase):
         self.write(names[0], 'export const zero = 1n;\n')
         self.assertNotEqual(key, contract.inputs(self.root))
 
-    def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
+    def test_rebuilt_hud_changes_install_once_packed(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)
-        with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
-            play.install(self.build)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         play.install(self.build)
 
-    def test_producer_build_does_not_require_the_sites_lock(self):
-        (self.root / contract.LOCK).unlink()
+    def test_producer_build_records_the_bindings_sites_compares(self):
         meta = contract.pack(self.build, self.root)
         self.assertEqual(meta['files']['bindings/Example.ts'],
                          contract.digest(b'export type Example = string;\n'))
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
@@ -465,12 +453,10 @@ class PlayImportTests(unittest.TestCase):
     def test_tooling_only_async_edits_do_not_invalidate_shipped_web_inputs(self):
         artifact = contract.inputs(self.root)
         engine = contract.engine_inputs(self.root)
-        hud = contract.hud_inputs(self.root)
         for source in ('export const retry = 1;', 'export const retry = 2;'):
             self.write('library/async/index.ts', source)
             self.assertEqual(contract.inputs(self.root), artifact)
             self.assertEqual(contract.engine_inputs(self.root), engine)
-            self.assertEqual(contract.hud_inputs(self.root), hud)
             play.install(self.build, production=True)
 
     def test_removed_source_input_invalidates_the_artifact(self):
@@ -683,11 +669,11 @@ class PlayImportTests(unittest.TestCase):
                     patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
                     self.assertRaisesRegex(ValueError, 'inputs differ'):
                 contract.verify(destination, self.root, trust_inputs=True)
-        # HUD review and bindings are still the tree's, whatever built the engine.
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': 'stale'}))
+        # The bindings are still the tree's, whatever built the engine.
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with patch.object(contract, 'inputs', side_effect=inputs), \
                 patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
-                self.assertRaisesRegex(ValueError, 'HUD adaptation'):
+                self.assertRaisesRegex(ValueError, 'bindings differ'):
             contract.verify(destination, self.root, producer=SHA)
 
     def test_trust_inputs_passes_a_build_of_the_trees_own_inputs_without_a_record(self):

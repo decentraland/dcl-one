@@ -25,7 +25,6 @@ class EngineCacheTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.cache = self.root / '.cache/bevy-engine'
         self.source = self.root / artifact.SOURCE
-        self.write('.gitignore', '/rendering/bevy-explorer/source/react-web/src/engine/generated/\n')
         for name in (*artifact.INPUTS, 'rust-toolchain.toml', 'apps/bevy-explorer/build-headless.py',
                      artifact.SOURCE + 'src/lib.rs', artifact.SOURCE + 'Cargo.lock',
                      artifact.PROTO + 'decentraland/example.proto',
@@ -186,7 +185,6 @@ class EngineCacheTests(unittest.TestCase):
             self.write(artifact.SOURCE + 'deploy/web/' + name, 'fixture')
         self.write(artifact.SOURCE + 'LICENSE', 'fixture')
         self.write(artifact.BINDINGS + '/Example.ts', 'export type Example = string;')
-        self.write(artifact.LOCK, json.dumps({'hud_source_sha256': artifact.hud_inputs(self.root)}))
 
         def command(*args, **kwargs):
             calls.append(args)

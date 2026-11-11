@@ -13,7 +13,6 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCK = 'rendering/bevy-explorer/upstream.lock.json'
 SOURCE = 'rendering/bevy-explorer/source/'
 # The vendored Bevy the engine compiles (rendering/bevy-explorer/docs/guidelines/bevy-fork.md).
 BEVY = 'rendering/bevy-explorer/bevy/'
@@ -68,11 +67,9 @@ def read_json(path):
     return json.loads(path.read_text())
 
 
-def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
-    shared = shared_inputs.input_hashes(root, revision) if not hud_only and not engine_only else {}
+def input_files(root=ROOT, revision=None, engine_only=False):
+    shared = shared_inputs.input_hashes(root, revision) if not engine_only else {}
     def selected(path):
-        if hud_only:
-            return path.startswith(HUD)
         # Native npm packaging is not consumed by the web builder or WASM. The tracked bindings are not
         # either: the build regenerates them from crates/system_api_types, and verify() compares the
         # tracked copy with the ones it built.
@@ -97,7 +94,7 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
                     raise ValueError(f'Unsupported Explorer source input: {path}')
                 entries.append((path, oid))
         names = {path for path, _ in entries}
-        if not hud_only and not set(INPUTS).issubset(names):
+        if not set(INPUTS).issubset(names):
             # Historical runs before this contract cannot supply an artifact;
             # reject them before loading the full Explorer source.
             raise ValueError('Incomplete Explorer source inputs')
@@ -130,9 +127,8 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
             if source.is_symlink() or not source.is_file():
                 raise ValueError(f'Missing or linked Explorer source input: {path}')
             hashes[path] = digest(source.read_bytes())
-    required = () if hud_only else INPUTS
-    if not any(path.startswith(HUD if hud_only else SOURCE) for path in hashes) or any(
-            path not in hashes for path in required):
+    if not any(path.startswith(SOURCE) for path in hashes) or any(
+            path not in hashes for path in INPUTS):
         raise ValueError('Incomplete Explorer source inputs')
     hashes.update(shared)
     return hashes
@@ -141,10 +137,6 @@ def input_files(root=ROOT, revision=None, hud_only=False, engine_only=False):
 def inputs(root=ROOT, revision=None):
     """Identical files give identical keys across commits; no timestamp or branch key."""
     return digest(json.dumps(input_files(root, revision), sort_keys=True).encode())
-
-
-def hud_inputs(root=ROOT):
-    return digest(json.dumps(input_files(root, hud_only=True), sort_keys=True).encode())
 
 
 def engine_inputs(root=ROOT, revision=None):
@@ -236,7 +228,7 @@ def restore_engine(directory, root=ROOT, allow_unoptimized=True):
 
 
 def verify_build(directory, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
-    """Validate producer bytes independently of the Sites HUD adaptation.
+    """Validate producer bytes independently of the Sites bindings check.
 
     The build's inputs must be the tree's, or, for a change that touches no engine
     input, those of `producer` (the main commit that built it). `trust_inputs` also
@@ -272,11 +264,8 @@ def record_producer_validation(directory, producer, root=ROOT):
 
 
 def verify(directory, root=ROOT, allow_unoptimized=True, producer=None, trust_inputs=False):
-    """Sites additionally requires its reviewed HUD and bindings to match the tree, whatever built the engine."""
+    """Sites additionally requires the build's bindings to match the tracked ones, whatever built the engine."""
     meta = verify_build(directory, root, allow_unoptimized, producer, trust_inputs)
-    lock = read_json(root / LOCK)
-    if lock.get('hud_source_sha256') != hud_inputs(root):
-        raise ValueError('Sites HUD adaptation must be reviewed against the current Explorer HUD source')
     bindings = root / BINDINGS
     expected = {p.relative_to(bindings).as_posix(): digest(p.read_bytes())
                 for p in bindings.rglob('*.ts')}
@@ -304,7 +293,7 @@ def pack(directory, root=ROOT, optimized=True):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('pack', 'verify', 'inputs', 'hud-inputs',
+    parser.add_argument('command', choices=('pack', 'verify', 'inputs',
                                            'engine-inputs', 'engine-cache-key', 'verify-engine'))
     parser.add_argument('directory', type=Path, nargs='?')
     parser.add_argument('--root', type=Path, default=ROOT)
@@ -317,8 +306,6 @@ def main():
         parser.error('--trust-inputs is never allowed with --production')
     if args.command == 'inputs':
         print(inputs(args.root))
-    elif args.command == 'hud-inputs':
-        print(hud_inputs(args.root))
     elif args.command == 'engine-inputs':
         print(engine_inputs(args.root))
     elif args.command == 'engine-cache-key':

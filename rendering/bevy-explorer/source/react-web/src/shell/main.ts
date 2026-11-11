@@ -114,7 +114,7 @@ addEventListener('message', async (e: MessageEvent) => {
     case 'bevy-shell:in-world':
       if (f.contentWindow) onInWorld(m, f.contentWindow)
       break
-    // the untrusted-link gate's exit (see src/features/gate/UntrustedLaunchGate.tsx)
+    // the untrusted-link gate's exit (see library/ui/apps/hud/features/gate/UntrustedLaunchGate.tsx)
     case 'bevy-shell:exit':
       window.close()
       location.replace(exitUrl())

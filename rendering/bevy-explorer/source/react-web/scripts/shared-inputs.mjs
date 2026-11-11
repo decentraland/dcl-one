@@ -14,6 +14,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const OWNED_SOURCE = 'rendering/bevy-explorer/source/'
 export const WEB = OWNED_SOURCE + 'react-web'
+// The bindings generated from the engine's Rust types: the engine build produces them and the Sites
+// import compares the tracked copy with its own, so they are not HUD inputs.
+export const BINDINGS = 'library/explorer-core/engine/generated'
 export const MANIFEST = WEB + '/shared-inputs.json'
 const GENERATOR = WEB + '/scripts/shared-inputs.mjs'
 const GENERATING = Symbol.for('dcl.hud.shared-inputs.generating')
@@ -109,7 +112,7 @@ function sourceInventory(root, declared = []) {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       if (
         entry.name === 'node_modules' ||
-        relative + '/' + entry.name === WEB + '/src/engine/generated'
+        relative + '/' + entry.name === BINDINGS
       )
         continue
       const file = relative + '/' + entry.name
@@ -481,7 +484,7 @@ export async function generateSharedInputs({ root = REPOSITORY, filteredSource =
     edges = new Map()
   const edge = (from, to, kind) => edges.set([from, to, kind].join('\0'), { from, to, kind })
   const generated = [
-    WEB + '/src/engine/generated/',
+    BINDINGS + '/',
     'rendering/bevy-explorer/source/deploy/web/engine/pkg/',
     'rendering/bevy-explorer/source/deploy/web/engine/pkg-scene/'
   ]

@@ -9,7 +9,7 @@
 //   host's own alias, needs adding here on purpose.
 
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
+import { dirname, join, relative, resolve, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const ROOT = __dirname
@@ -17,7 +17,8 @@ const ROOT = __dirname
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name)
-    return statSync(path).isDirectory() ? walk(path) : [relative(ROOT, path)]
+    // Forward slashes on every platform, so the `test/` match below holds on Windows too.
+    return statSync(path).isDirectory() ? walk(path) : [relative(ROOT, path).split(sep).join('/')]
   })
 }
 
@@ -48,7 +49,7 @@ describe('library/explorer-core', () => {
     const testCode = isTest(file) || file.startsWith('test/')
     const allowed = testCode ? [...PACKAGES, ...TEST_PACKAGES] : PACKAGES
     const wrong = specifiers(readFileSync(join(ROOT, file), 'utf8')).filter((spec) => {
-      if (spec.startsWith('.')) return !resolve(dirname(join(ROOT, file)), spec).startsWith(ROOT + '/')
+      if (spec.startsWith('.')) return !resolve(dirname(join(ROOT, file)), spec).startsWith(ROOT + sep)
       return !allowed.some((pattern) => pattern.test(spec))
     })
     expect(wrong).toEqual([])

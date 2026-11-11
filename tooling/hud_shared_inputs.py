@@ -11,6 +11,9 @@ import subprocess
 
 WEB = 'rendering/bevy-explorer/source/react-web/'
 MANIFEST = WEB + 'shared-inputs.json'
+# The bindings generated from the engine's Rust types: an engine output, not a HUD input
+# (shared-inputs.mjs BINDINGS).
+BINDINGS = 'library/explorer-core/engine/generated'
 REGENERATE_COMMAND = 'npm --prefix ' + WEB.rstrip('/') + ' run gen:shared-inputs'
 DOMAINS = ('library/ui/', 'library/shop/', 'library/catalyst-api/', 'library/explorer-core/')
 RESOLVER_FILES = ('package.json', 'tsconfig.json', 'jsconfig.json')
@@ -92,7 +95,7 @@ class Tree:
         else:
             self.entries = {p.relative_to(self.root).as_posix(): None
                             for p in self.root.rglob('*') if (not p.is_dir() or p.is_symlink())
-                            and not p.relative_to(self.root).as_posix().startswith(WEB + 'src/engine/generated/')
+                            and not p.relative_to(self.root).as_posix().startswith(BINDINGS + '/')
                             and 'node_modules' not in p.relative_to(self.root).parts}
 
     def command(self, *args):

@@ -67,7 +67,8 @@ rules do not apply.
 
 Changing shared code changes both hosts. `react-web` type-checks both layers, and both hosts run their tests;
 the HUD artifact's inputs and CI selection include both (the computed
-`rendering/bevy-explorer/source/react-web/shared-inputs.json` contract).
+`rendering/bevy-explorer/source/react-web/shared-inputs.json` contract). Sites runs this same HUD, so
+the separate review of a Sites copy against the Explorer's, and its lock hash, are retired.
 The Explorer client team owns both folders. Server reads live in the core and their React hooks in the
 UI (for example `features/events/eventsApi.ts` and `useLiveEventCount.ts`); two components still
 fetch directly (`components/WorldVisitModal.tsx`, `features/map/MapPage.tsx`); the in-world Shop's UI imports `apps/ui3/src/shop`, so it

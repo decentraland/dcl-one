@@ -94,7 +94,7 @@ let
     let entries = readDir (fsPath directory);
     in concatLists (map (name:
       let path = directory + "/${name}"; kind = entries.${name};
-      in if name == "node_modules" || path == web + "src/engine/generated" then []
+      in if name == "node_modules" then []
         else if kind == "directory" then scanRoots path
         else if kind == "regular" then [ path ]
         else throw "Unsafe HUD root inventory entry") (attrNames entries));

@@ -6,9 +6,8 @@ Apache-2.0, building in `source/target`. App builds, workflows and the
 ([npm packages](../../apps/bevy-explorer/README.md#npm-packages)). Support links point at
 [public Decentraland support](https://decentraland.org/help/).
 
-Pins: `upstream.lock.json` `hud_source_sha256` fingerprints the source HUD reviewed for Sites
-(required by the Sites importer and Nix package, not by Explorer builds or npm); the engine artifact
-is identified by its producer commit in `/play/sites-play.json` (no npm engine pin).
+Pins: the engine artifact is identified by its producer commit in `/play/sites-play.json` (no npm
+engine pin). Sites runs the same shared HUD as the Explorer, so it has no separate HUD review pin.
 
 ## What runs where
 
@@ -89,10 +88,10 @@ Build from `rendering/bevy-explorer/source` per its README (`just wasm` for the 
 or `python3 tooling/fetch-play.py` (main CI artifact); see the
 [container build contract](../../infra/containers/README.md#sites-explorer-build-input).
 
-When the source HUD changes: review it against `apps/ui3/src/play`, keep every adaptation listed in
-"The HUD", regenerate bindings, run UI3 tests and typechecks, then record
-`python3 tooling/play-artifact.py hud-inputs` as `hud_source_sha256`, rebuild the engine and repeat
-the UI3 tests and typechecks. Record browser and multiplayer acceptance evidence for the target
+When the HUD changes: regenerate the bindings and the shared inputs
+(`npm --prefix rendering/bevy-explorer/source/react-web run gen:shared-inputs`), then run both hosts'
+tests and typechecks (`npm test` in react-web, `pnpm test` in `apps/ui3`, whose `play-shared`
+project runs the shared HUD against `/play`'s host). Record browser and multiplayer acceptance evidence for the target
 revision in the task report; a matching fingerprint alone does not establish acceptance.
 
 ## Benchmark
