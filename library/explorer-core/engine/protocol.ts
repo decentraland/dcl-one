@@ -229,6 +229,7 @@ export type PageToScene =
   | RequestToJoinCommunityRequest
   | CancelJoinRequestRequest
   | ManageCommunityRequestRequest
+  | UnbanCommunityMemberRequest
   | GetCommunityInvitesRequest
   | GetCommunityInvitesCountRequest
   | GetCommunityMemberSectionRequest
@@ -1369,7 +1370,7 @@ export interface CancelJoinRequestRequest {
 
 /** What an owner or moderator can do to a member from the card's member menu (unity-explorer's
  *  MembersListView): promote to moderator, demote to member, hand over ownership, remove, ban. */
-export type CommunityMemberAction = 'promote' | 'demote' | 'transfer' | 'kick' | 'ban' | 'unban'
+export type CommunityMemberAction = 'promote' | 'demote' | 'transfer' | 'kick' | 'ban'
 
 /** A member action from the card's member menu (page → scene → signed social-api write). */
 export interface CommunityMemberActionRequest {
@@ -1389,7 +1390,16 @@ export type CommunityAction =
   | 'delete'
   | 'removePlace'
   | CommunityMemberAction
+  | 'unban'
   | CommunityRequestAction
+
+/** Lift a member's ban, from the card's Banned section (page → scene → signed DELETE
+ *  /v1/communities/{id}/members/{address}/bans). */
+export interface UnbanCommunityMemberRequest {
+  kind: 'unbanCommunityMember'
+  id: string
+  address: string
+}
 
 /** The answers to an invite or a request, each with its own error text: accepting or rejecting the user's own invite, and an owner's or
  *  moderator's accept, reject or cancel on a member's request or invite. */

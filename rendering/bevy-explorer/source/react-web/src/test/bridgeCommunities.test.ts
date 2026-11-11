@@ -386,7 +386,7 @@ describe('bridge community invites and requests', () => {
     serve({
       [invitesRead]: { results: [{ id: 'inv1', communityId: 'c3', name: 'VTATV', description: '', membersCount: 4, role: 'none', privacy: 'public' }] },
       [requestsRead]: { results: [{ id: 'rq1', communityId: 'c2', name: 'Chiri', description: '', membersCount: 9, role: 'none', privacy: 'private' }] },
-      [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' }), raw('c9', { role: 'moderator' }), raw('c1', { role: 'member' })], total: 3 },
+      [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' }), raw('c9', { role: 'moderator', privacy: 'private' }), raw('c1', { role: 'member' })], total: 3 },
       [`GET ${v2}/c8/requests?type=request_to_join&limit=100&offset=0`]: { results: [{ id: 'r-a', memberAddress: '0xa' }, { id: 'r-b', memberAddress: '0xb' }], total: 2 },
       [`GET ${v2}/c9/requests?type=request_to_join&limit=100&offset=0`]: { results: [], total: 0 }
     })
@@ -405,14 +405,43 @@ describe('bridge community invites and requests', () => {
   it("counts the sidebar's invites and requests received from each read's total", async () => {
     serve({
       [`${invitesRead}&limit=1`]: { results: [{ id: 'i' }], total: 2 },
-      [memberOf]: { results: [raw('c8', { role: 'owner' }), raw('c1', { role: 'member' })], total: 2 },
+      [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' }), raw('c9', { role: 'owner', privacy: 'public' }), raw('c1', { role: 'member', privacy: 'private' })], total: 3 },
       [`GET ${v2}/c8/requests?type=request_to_join&limit=1&offset=0`]: { results: [{ id: 'r' }], total: 5 }
     })
     const h = fakeCtx()
     await h.req({ kind: 'getCommunityInvitesCount' })
     expect(h.sent).toEqual([{ kind: 'communityInvitesCount', count: 7 }])
-    // a plain member's community is never read
-    expect(signed.mock.calls.some((c) => String(c[0]).includes('/c1/requests'))).toBe(false)
+    // neither a plain member's community nor a public one (which takes no join requests) is read
+    expect(signed.mock.calls.some((c) => /\/(c1|c9)\/requests/.test(String(c[0])))).toBe(false)
+  })
+
+  it("keeps the communities whose requests were read when another's read fails", async () => {
+    serve({
+      [invitesRead]: { results: [] },
+      [requestsRead]: { results: [] },
+      [memberOf]: { results: [raw('c8', { role: 'owner', privacy: 'private' }), raw('c7', { role: 'moderator', privacy: 'private' })], total: 2 },
+      [`GET ${v2}/c8/requests?type=request_to_join&limit=100&offset=0`]: { results: [{ id: 'r-a', memberAddress: '0xa' }], total: 1 },
+      [`GET ${v2}/c7/requests?type=request_to_join&limit=100&offset=0`]: new Error('HTTP 403')
+    })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityInvites' })
+    expect(last(h.sent, 'communityInvites')).toMatchObject({ failed: [], requestsReceived: [{ community: { id: 'c8' }, total: 1 }] })
+  })
+
+  it('answers even when the whole read throws, so the section stops loading', async () => {
+    serve({ [invitesRead]: { results: [{ id: 'i1', communityId: 'c3' }] }, [requestsRead]: { results: [] }, [memberOf]: { results: [], total: 0 } })
+    // the invited community's picture cannot be located, so building its card throws
+    serviceBase.mockImplementation(async (name: string) => {
+      if (name === 'assetsCdn') throw new Error('no assets service')
+      return `https://${name}.example`
+    })
+    const h = fakeCtx()
+    try {
+      await h.req({ kind: 'getCommunityInvites' })
+    } finally {
+      serviceBase.mockImplementation(async (name: string) => `https://${name}.example`)
+    }
+    expect(last(h.sent, 'communityInvites')).toMatchObject({ invites: [], failed: ['invites', 'requestsReceived', 'requestsSent'] })
   })
 
   it('names the lists it could not read', async () => {
@@ -512,7 +541,7 @@ describe('bridge community invites and requests', () => {
     const h = fakeCtx()
     await h.req({ kind: 'getCommunityMemberSection', id: 'c8', section: 'banned' })
     expect(last(h.sent, 'communityMemberSection')).toMatchObject({ section: 'banned', total: 1, members: [{ address: '0xbad', requestId: '' }] })
-    await h.req({ kind: 'communityMemberAction', id: 'c8', address: '0xbad', action: 'unban' })
+    await h.req({ kind: 'unbanCommunityMember', id: 'c8', address: '0xbad' })
     expect(signed).toHaveBeenCalledWith(`${s}/v1/communities/c8/members/0xbad/bans`, 'DELETE')
     expect(h.sent.at(-1)).toMatchObject({ kind: 'communityMemberSection', section: 'banned' })
   })
@@ -535,6 +564,8 @@ describe('bridge community invites and requests', () => {
     await h.req({ kind: 'inviteToCommunity', id: 'c8', address: '0xfriend' })
     expect(signed).toHaveBeenCalledWith(`${s}/v1/communities/c8/requests`, 'POST', { targetedAddress: '0xfriend', type: 'invite' })
     expect(last(h.sent, 'communityInviteSent')).toEqual({ kind: 'communityInviteSent', id: 'c8', address: '0xfriend', ok: true })
+    // the list is read again after the invite, so the community just used is no longer offered
+    expect(h.sent.at(-1)).toMatchObject({ kind: 'invitableCommunities', address: '0xfriend' })
   })
 
   it('a cancelled join request leaves the Invites & Requests section', async () => {

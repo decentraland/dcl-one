@@ -86,7 +86,11 @@ export function ContextMenu({ items, scroll = false }: ContextMenuProps): React.
         }
 
         if (it.kind === 'submenu' && it.items != null) {
-          return <Submenu key={i} label={it.label} icon={it.icon} items={it.items} className={styles.item} />
+          return (
+            <Submenu key={i} label={it.label} icon={it.icon} className={styles.item}>
+              <ContextMenu items={it.items} scroll />
+            </Submenu>
+          )
         }
 
         return (

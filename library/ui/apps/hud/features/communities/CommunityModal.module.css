@@ -601,12 +601,6 @@
   margin-bottom: 12px;
 }
 
-.emptyBody {
-  display: block;
-  margin-top: 4px;
-  font-weight: 400;
-}
-
 /* A section's rows carry two buttons each: one row per line, so the names keep their room. */
 .sectionGrid {
   grid-template-columns: 1fr;

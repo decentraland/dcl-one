@@ -370,6 +370,8 @@ export interface CommunitiesState {
   loadInvitable: (address: string) => void
   /** Invite someone to a community; its outcome is toasted. */
   invite: (id: string, address: string) => void
+  /** Lift a member's ban (the card's Banned section); the section is read again after it. */
+  unban: (id: string, address: string) => void
 }
 
 export interface MapState {
@@ -3427,6 +3429,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setInvitable(null)
     driverRef.current?.send({ kind: 'getInvitableCommunities', address })
   }, [])
+  const unbanCommunityMember = useCallback((id: string, address: string) => {
+    driverRef.current?.send({ kind: 'unbanCommunityMember', id, address })
+  }, [])
   const inviteToCommunity = useCallback((id: string, address: string) => {
     driverRef.current?.send({ kind: 'inviteToCommunity', id, address })
   }, [])
@@ -4427,7 +4432,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

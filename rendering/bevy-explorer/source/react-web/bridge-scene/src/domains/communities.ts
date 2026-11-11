@@ -344,19 +344,26 @@ async function sectionRows(url: string): Promise<{ members: CommunityRequestMemb
   return { members, total: typeof res?.total === 'number' ? res.total : rows.length }
 }
 
-// The Members tab's sections beyond Members, read 100 at a time as the Members list is.
+// The Members tab's sections beyond Members, read 100 at a time (the service's page cap), as the
+// Members list is.
 const SECTION_LIMIT = 100
-async function memberSection(id: string, section: CommunityMemberSection): Promise<{ members: CommunityRequestMember[]; total: number }> {
+async function sectionUrl(id: string, section: CommunityMemberSection, limit = SECTION_LIMIT): Promise<string> {
   const b = `${await base('v2')}/${encodeURIComponent(id)}`
-  if (section === 'banned') return await sectionRows(`${b}/bans?limit=${SECTION_LIMIT}&offset=0`)
-  const type = section === 'requests' ? 'request_to_join' : 'invite'
-  return await sectionRows(`${b}/requests?type=${type}&limit=${SECTION_LIMIT}&offset=0`)
+  if (section === 'banned') return `${b}/bans?limit=${limit}&offset=0`
+  return `${b}/requests?type=${section === 'requests' ? 'request_to_join' : 'invite'}&limit=${limit}&offset=0`
+}
+async function memberSection(id: string, section: CommunityMemberSection): Promise<{ members: CommunityRequestMember[]; total: number }> {
+  return await sectionRows(await sectionUrl(id, section))
 }
 
-// The browser's Invites & Requests section: the user's invites, the join requests each community
-// they own or moderate received (the first 100 each, the service's page cap), and their own join
-// requests. A list that cannot be read is named in `failed`.
-const REQUESTS_RECEIVED_LIMIT = 100
+/** The communities whose join requests the user answers: those they own or moderate. Only a
+ *  private community takes join requests, so a public one is never read. */
+const answersRequests = (c: CommunityRaw): boolean => (c.role === 'owner' || c.role === 'moderator') && c.privacy === 'private'
+
+// The browser's Invites & Requests section: the user's invites, the join requests each private
+// community they own or moderate received (the first 100 each), and their own join requests. A list
+// that cannot be read is named in `failed`; a community whose requests cannot be read is left out,
+// and the list is failed only when none could be read.
 async function invitesAndRequests(): Promise<CommunityInvitesMessage> {
   const failed: CommunityInvitesMessage['failed'] = []
   const asCommunities = async (type: PendingType, list: 'invites' | 'requestsSent'): Promise<Community[]> => {
@@ -369,14 +376,10 @@ async function invitesAndRequests(): Promise<CommunityInvitesMessage> {
     return await communities(raw)
   }
   const received = async (): Promise<CommunityRequestsGroup[]> => {
-    const managed = (await memberOfRaw()).filter((c) => c.role === 'owner' || c.role === 'moderator')
-    const b = await base('v2')
-    const groups = await Promise.all(
-      managed.map(async (c) => {
-        const { members, total } = await sectionRows(`${b}/${encodeURIComponent(c.id)}/requests?type=request_to_join&limit=${REQUESTS_RECEIVED_LIMIT}&offset=0`)
-        return { raw: c, requests: members, total }
-      })
-    )
+    const managed = (await memberOfRaw()).filter(answersRequests)
+    const reads = await Promise.allSettled(managed.map(async (c) => ({ raw: c, ...(await memberSection(c.id, 'requests')) })))
+    const groups = reads.flatMap((r) => (r.status === 'fulfilled' ? [{ raw: r.value.raw, requests: r.value.members, total: r.value.total }] : []))
+    if (managed.length > 0 && groups.length === 0) throw new Error('no community’s requests could be read')
     const withRequests = groups.filter((g) => g.total > 0)
     const listed = await communities(withRequests.map((g) => g.raw))
     return withRequests.map((g, i) => ({ community: listed[i], requests: g.requests, total: g.total }))
@@ -407,9 +410,8 @@ async function invitesCount(): Promise<number> {
     return typeof res?.total === 'number' ? res.total : 0
   }
   const invites = total(`${await serviceBase('socialApi')}/v2/members/${encodeURIComponent(owner)}/requests?type=invite&limit=1`)
-  const managed = (await memberOfRaw().catch(() => [])).filter((c) => c.role === 'owner' || c.role === 'moderator')
-  const b = await base('v2')
-  const received = managed.map(async (c) => await total(`${b}/${encodeURIComponent(c.id)}/requests?type=request_to_join&limit=1&offset=0`))
+  const managed = (await memberOfRaw().catch(() => [])).filter(answersRequests)
+  const received = managed.map(async (c) => await total(await sectionUrl(c.id, 'requests', 1)))
   return (await Promise.all([invites, ...received])).reduce((n, t) => n + t, 0)
 }
 
@@ -753,8 +755,13 @@ export function registerCommunities(ctx: Ctx): void {
     await sendInvites()
   })
   // The browser's Invites & Requests section and its counter.
+  // Answers even when the read throws, so the section never waits on a reply that will not come.
   const sendInvites = async (): Promise<void> => {
-    ctx.send(await invitesAndRequests())
+    const message = await invitesAndRequests().catch((e: unknown): CommunityInvitesMessage => {
+      console.error('[communities] invites and requests failed', e)
+      return { kind: 'communityInvites', invites: [], requestsReceived: [], requestsSent: [], failed: ['invites', 'requestsReceived', 'requestsSent'] }
+    })
+    ctx.send(message)
   }
   ctx.on('getCommunityInvites', sendInvites)
   ctx.on('getCommunityInvitesCount', async () => {
@@ -809,9 +816,9 @@ export function registerCommunities(ctx: Ctx): void {
   })
   // The Invite to Community submenu: the communities the user owns or moderates that the person is
   // not in, and the invite itself.
-  ctx.on('getInvitableCommunities', async (msg) => {
+  const sendInvitable = async (address: string): Promise<void> => {
     const list = await serviceBase('socialApi')
-      .then((b) => signed<Array<{ id?: string; name?: string }>>(`${b}/v1/members/${encodeURIComponent(msg.address)}/invites`))
+      .then((b) => signed<Array<{ id?: string; name?: string }>>(`${b}/v1/members/${encodeURIComponent(address)}/invites`))
       .then(
         (rows) => {
           if (!Array.isArray(rows)) throw new Error('invites answer is not a list')
@@ -822,7 +829,10 @@ export function registerCommunities(ctx: Ctx): void {
         console.error('[communities] invitable communities failed', e)
         return undefined
       })
-    ctx.send({ kind: 'invitableCommunities', address: msg.address, communities: list ?? [], ...(list == null ? { failed: true } : {}) })
+    ctx.send({ kind: 'invitableCommunities', address, communities: list ?? [], ...(list == null ? { failed: true } : {}) })
+  }
+  ctx.on('getInvitableCommunities', async (msg) => {
+    await sendInvitable(msg.address)
   })
   ctx.on('inviteToCommunity', async (msg) => {
     const ok = await base('v1')
@@ -835,6 +845,8 @@ export function registerCommunities(ctx: Ctx): void {
         }
       )
     ctx.send({ kind: 'communityInviteSent', id: msg.id, address: msg.address, ok })
+    // the community just used is no longer offered for that person
+    if (ok) await sendInvitable(msg.address)
   })
   ctx.on('leaveCommunity', async (msg) => {
     await write(msg.id, 'leave', async () => {
@@ -880,8 +892,6 @@ export function registerCommunities(ctx: Ctx): void {
           return await signed(member, 'DELETE')
         case 'ban':
           return await signed(`${member}/bans`, 'POST')
-        case 'unban':
-          return await signed(`${member}/bans`, 'DELETE')
         default: {
           const unknown: never = msg.action
           throw new Error(`unknown member action ${String(unknown)}`)
@@ -896,22 +906,25 @@ export function registerCommunities(ctx: Ctx): void {
         return false
       }
     )
-    if (!done) {
-      // a failed unban is toasted, not shown on the card: the section is read again to release its row
-      if (msg.action === 'unban') await sendSection(msg.id, 'banned')
-      return
-    }
-    // an unban changes only the Banned section; a ban adds to it
-    if (msg.action === 'unban') {
-      await sendSection(msg.id, 'banned')
-      return
-    }
+    if (!done) return
+    // a ban adds the member to the Banned section
     const fresh = await detail(msg.id).catch(() => undefined)
     if (fresh != null) ctx.send({ kind: 'communityDetail', id: msg.id, ...fresh })
     if (msg.action === 'ban') await sendSection(msg.id, 'banned')
     if (msg.action === 'promote' || msg.action === 'demote') return
     await sendOne(msg.id)
     await refreshLists()
+  })
+  // The Banned section's UNBAN. A failure is toasted, not shown on the card; either way the section
+  // is read again, which releases the row.
+  ctx.on('unbanCommunityMember', async (msg) => {
+    await base('v1')
+      .then((b) => signed(`${b}/${encodeURIComponent(msg.id)}/members/${encodeURIComponent(msg.address)}/bans`, 'DELETE'))
+      .catch((e: unknown) => {
+        console.error('[communities] unban failed', e)
+        ctx.send({ kind: 'communityActionFailed', id: msg.id, action: 'unban', message: e instanceof Error ? e.message : String(e) })
+      })
+    await sendSection(msg.id, 'banned')
   })
   ctx.on('getCommunityPlaceOptions', async (msg) => {
     const options = await placeOptionsFor(msg.communityId).catch((e: unknown): CommunityPlaceOptionsMessage => {

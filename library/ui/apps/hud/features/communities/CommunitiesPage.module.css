@@ -300,28 +300,21 @@
   border-top: none;
   border-left: none;
   border-right: none;
-  color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
+  color: var(--ink-6);
 }
-.invitesBtn .sideHead {
-  margin-bottom: 0;
-}
-.invitesBtn:hover .sideHead,
-.invitesBtn[aria-pressed='true'] .sideHead {
+.invitesBtn:hover,
+.invitesBtn[aria-pressed='true'] {
   color: var(--text);
 }
-.invitesCount {
-  min-width: 20px;
-  padding: 0 6px;
-  border-radius: var(--r-pill);
-  background: var(--brand);
-  color: var(--text);
-  font-size: var(--fs-xs);
+/* the column's heading style, its colour the button's */
+.invitesLabel {
+  font-size: 13px;
   font-weight: 700;
-  line-height: 20px;
-  text-align: center;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 /* An invited card's Accept and Reject. */
@@ -339,11 +332,6 @@
   font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text);
-}
-.invitesEmpty {
-  padding: 16px 0 24px;
-  font-size: var(--fs-sm);
-  color: var(--ink-45);
 }
 
 /* One community's requests received: its header (opens the card), then its members. */

@@ -8,10 +8,11 @@
 // join requests their communities received and their own requests.
 
 import { useEffect, useRef, useState } from 'react'
-import { Avatar, Button, Chip, SearchField, Spinner, Tooltip } from '../../design'
+import { Avatar, Button, Chip, CountBadge, EmptyState, SearchField, Spinner, Tooltip } from '../../design'
 import { nameColor } from '@explorer-core/lib/identity'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { confirmRejectInvite, MemberRow, openCommunityModal } from './CommunityModal'
+import { RequestRowActions, type RequestAnswer } from './RequestRowActions'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { openPassport } from '../profile/Passport'
 import { openCommunityCreateModal } from './CommunityCreateModal'
@@ -169,17 +170,17 @@ function RequestsGroup({
   group: CommunityRequestsGroup
   me: string | undefined
   onOpen: () => void
-  onManage: (member: CommunityRequestMember, intention: 'accepted' | 'rejected') => void
+  onManage: (member: CommunityRequestMember, intention: RequestAnswer) => void
 }): React.JSX.Element {
   const [acting, setActing] = useState<ReadonlySet<string>>(new Set())
   const [menuFor, setMenuFor] = useState<string | null>(null)
   // released when the group is read again (after any answer)
   useEffect(() => setActing(new Set()), [group])
-  const manage = (m: CommunityRequestMember, intention: 'accepted' | 'rejected'): void => {
+  const manage = (m: CommunityRequestMember, intention: RequestAnswer): void => {
     setActing((prev) => new Set(prev).add(m.address))
     onManage(m, intention)
   }
-  const n = group.requests.length
+  const n = group.total
   return (
     <div className={styles.requestsGroup}>
       <button type="button" className={styles.requestsGroupHead} onClick={onOpen}>
@@ -195,12 +196,7 @@ function RequestsGroup({
             self={me == null || me.toLowerCase() === m.address.toLowerCase()}
             busy={acting.has(m.address)}
             menuOpen={menuFor === m.address}
-            actions={
-              <>
-                <Button size="sm" disabled={acting.has(m.address)} onClick={() => manage(m, 'accepted')}>ACCEPT</Button>
-                <Button size="sm" variant="secondary" disabled={acting.has(m.address)} onClick={() => manage(m, 'rejected')}>REJECT</Button>
-              </>
-            }
+            actions={<RequestRowActions section="requests" busy={acting.has(m.address)} onAnswer={(intention) => manage(m, intention)} />}
             onView={() => openPassport(m.address)}
             onMenu={(anchor) => {
               setMenuFor(m.address)
@@ -231,12 +227,13 @@ function InvitesAndRequests({
   live: (c: Community) => boolean
   actions: CardActions
   onOpen: (id: string) => void
-  onManage: (communityId: string, member: CommunityRequestMember, intention: 'accepted' | 'rejected') => void
+  onManage: (communityId: string, member: CommunityRequestMember, intention: RequestAnswer) => void
 }): React.JSX.Element {
   if (invites == null) return <div className={styles.loading}><Spinner /></div>
-  const received = invites.requestsReceived.reduce((n, g) => n + g.requests.length, 0)
+  // the service's totals, as the sidebar's counter counts them
+  const received = invites.requestsReceived.reduce((n, g) => n + g.total, 0)
   if (invites.invites.length === 0 && received === 0 && invites.requestsSent.length === 0) {
-    return <div className={styles.empty}>No pending invites or requests.</div>
+    return <EmptyState variant="inline" title="No pending invites or requests." />
   }
   const cards = (list: Community[]): React.JSX.Element => (
     <div className={styles.grid}>
@@ -246,7 +243,7 @@ function InvitesAndRequests({
   return (
     <div className={styles.invitesSection}>
       <h2 className={styles.invitesHead}>{`Invites (${invites.invites.length})`}</h2>
-      {invites.invites.length > 0 ? cards(invites.invites) : <div className={styles.invitesEmpty}>No Invites</div>}
+      {invites.invites.length > 0 ? cards(invites.invites) : <EmptyState variant="inline" title="No Invites" />}
       {canManage && (
         <>
           <h2 className={styles.invitesHead}>{`Requests Received (${received})`}</h2>
@@ -255,12 +252,12 @@ function InvitesAndRequests({
               <RequestsGroup key={g.community.id} group={g} me={me} onOpen={() => onOpen(g.community.id)} onManage={(m, intention) => onManage(g.community.id, m, intention)} />
             ))
           ) : (
-            <div className={styles.invitesEmpty}>No Requests</div>
+            <EmptyState variant="inline" title="No Requests" />
           )}
         </>
       )}
       <h2 className={styles.invitesHead}>{`Requests Sent (${invites.requestsSent.length})`}</h2>
-      {invites.requestsSent.length > 0 ? cards(invites.requestsSent) : <div className={styles.invitesEmpty}>No Requests</div>}
+      {invites.requestsSent.length > 0 ? cards(invites.requestsSent) : <EmptyState variant="inline" title="No Requests" />}
     </div>
   )
 }
@@ -398,8 +395,8 @@ export function CommunitiesPage({
             aria-label={pendingCount > 0 ? `Invites & Requests, ${pendingCount} pending` : 'Invites & Requests'}
             onClick={openInvites}
           >
-            <span className={styles.sideHead}>Invites &amp; Requests</span>
-            {pendingCount > 0 && <span className={styles.invitesCount} aria-hidden="true">{pendingCount}</span>}
+            <span className={styles.invitesLabel}>Invites &amp; Requests</span>
+            <CountBadge count={pendingCount} />
           </button>
           <div className={styles.myHead}>
             <span className={styles.sideHead}>My Communities</span>

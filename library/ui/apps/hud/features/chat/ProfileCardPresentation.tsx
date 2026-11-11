@@ -2,12 +2,12 @@
 // sender's name/avatar, an @mention, or a nearby avatar in the world. Header with
 // avatar / name+copy / address+copy, a relationship-driven friend CTA (Add / Accept +
 // Reject / Requested), then the action list — mirroring bevy-ui-scene's profile-menu:
-// View Passport · Mention · Block/Unblock. A community card's member row opens it as
-// The member menu (context 'community'): View Profile · Chat · Call, the owner's and
-// moderators' actions, then Block · Report, then Invite to Community.
+// View Passport · Mention · Block/Unblock. A community card's member row opens it as the member
+// menu (context 'community'): View Profile · Chat · Call, the owner's and moderators' actions,
+// then Block · Report, then Invite to Community.
 
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
-import { Avatar, BlockUserIcon, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
+import { Avatar, BlockUserIcon, ContextMenu, MaskIcon, ReportFlag, Submenu, Tooltip, VerifiedBadge, type ContextMenuItem } from '../../design'
 import { closingFirst, INVITE_TO_COMMUNITY, InviteToCommunityIcon } from '../communities/InviteToCommunity'
 import callIcon from '../../assets/voice/call.png'
 import { shortAddr, splitName, userColor } from '@explorer-core/lib/identity'
@@ -233,12 +233,9 @@ export function ProfileCardPresentation({
   const hasDestructive = !!block || !!report
   // picking a community invites and closes the card, as any other row does
   const invite = other && inviteItems.length > 0 && (
-    <Submenu
-      className={styles.row}
-      label={INVITE_TO_COMMUNITY}
-      icon={<InviteToCommunityIcon />}
-      items={closingFirst(inviteItems, onClose)}
-    />
+    <Submenu className={styles.row} label={INVITE_TO_COMMUNITY} icon={<InviteToCommunityIcon />}>
+      <ContextMenu items={closingFirst(inviteItems, onClose)} scroll />
+    </Submenu>
   )
   const call = showCall && (
     <button type="button" className={styles.row} onClick={run(onCall)}>

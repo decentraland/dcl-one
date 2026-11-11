@@ -71,15 +71,16 @@ describe('the browser’s Invites & Requests', () => {
       list: [community({ id: 'c8', name: 'Mine', role: 'owner' })],
       invites: invites({
         invites: [community({ id: 'c3', name: 'Invited', pendingInviteId: 'i3' })],
-        requestsReceived: [{ community: community({ id: 'c8', name: 'Mine', role: 'owner' }), requests: [person(1)], total: 1 }],
+        // more requests than were read: the title counts the service's total, as the sidebar does
+        requestsReceived: [{ community: community({ id: 'c8', name: 'Mine', role: 'owner' }), requests: [person(1)], total: 140 }],
         requestsSent: [community({ id: 'c2', name: 'Asked', privacy: 'private', pendingRequestId: 'r2' })]
       })
     })
     await userEvent.click(screen.getByRole('button', { name: /Invites & Requests/ }))
     expect(screen.getByRole('heading', { name: 'Invites (1)' })).toBeInTheDocument()
-    expect(screen.getByRole('heading', { name: 'Requests Received (1)' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Requests Received (140)' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Requests Sent (1)' })).toBeInTheDocument()
-    expect(screen.getByText('1 Request Received')).toBeInTheDocument()
+    expect(screen.getByText('140 Requests Received')).toBeInTheDocument()
     // the section is read on opening it
     expect(vi.mocked(c.loadInvites)).toHaveBeenCalledTimes(1)
   })
@@ -198,6 +199,17 @@ describe("the community card's invite and Members sections", () => {
     expect(p.onUnban).toHaveBeenCalledWith(expect.objectContaining({ address: person(3).address }))
   })
 
+  it('a section that could not be read says so and reads it again on RETRY', async () => {
+    const p = renderCard(community({ id: 'c8', role: 'owner', privacy: 'private' }), { banned: { ...section('banned', []), failed: true } })
+    await userEvent.click(screen.getByRole('tab', { name: 'MEMBERS' }))
+    await userEvent.click(screen.getByRole('tab', { name: 'BANNED' }))
+    expect(screen.getByText('There was an error loading this list. Please try again.')).toBeInTheDocument()
+    expect(screen.queryByText('No Banned Accounts')).toBeNull()
+    p.onLoadSection.mockClear()
+    await userEvent.click(screen.getByRole('button', { name: 'RETRY' }))
+    expect(p.onLoadSection).toHaveBeenCalledWith('banned')
+  })
+
   it('shows the empty text for each section', async () => {
     renderCard(community({ id: 'c8', role: 'owner', privacy: 'private' }), { banned: section('banned', []) })
     await userEvent.click(screen.getByRole('tab', { name: 'MEMBERS' }))
@@ -244,6 +256,21 @@ describe('the Invite to Community submenu', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: /Invite to Community/ }))
     await userEvent.click(screen.getByRole('menuitem', { name: 'Builders' }))
     expect(vi.mocked(s.communities.invite)).toHaveBeenCalledWith('c8', '0xfriend')
+  })
+
+  it('opens from the keyboard, moves through its communities and closes on Escape', async () => {
+    renderProfileCard((s) => {
+      s.communities.invitable = { kind: 'invitableCommunities', address: '0xfriend', communities: [{ id: 'c8', name: 'Builders' }, { id: 'c9', name: 'Crafters' }] }
+    })
+    const row = screen.getByRole('menuitem', { name: /Invite to Community/ })
+    row.focus()
+    await userEvent.keyboard('{ArrowRight}')
+    expect(screen.getByRole('menuitem', { name: 'Builders' })).toHaveFocus()
+    await userEvent.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: 'Crafters' })).toHaveFocus()
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('menuitem', { name: 'Builders' })).toBeNull()
+    expect(row).toHaveFocus()
   })
 
   it('is hidden when there is no community to invite them to', () => {

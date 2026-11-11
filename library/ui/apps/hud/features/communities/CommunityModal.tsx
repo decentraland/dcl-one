@@ -4,7 +4,7 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, Button, ControlButton, EmptyState, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
@@ -14,6 +14,7 @@ import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, memberActions, roleLabel } from '@explorer-core/features/communities/roles'
 import { useSession } from '../session/SessionContext'
 import { openCommunityEditModal } from './CommunityCreateModal'
+import { RequestRowActions } from './RequestRowActions'
 import { openPassport } from '../profile/Passport'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { confirmUnblock } from '../friends/friendDialogs'
@@ -295,17 +296,14 @@ const MEMBER_ACTION_LABEL: Record<CommunityMemberAction, string> = {
   promote: 'Promote Moderator',
   transfer: 'Make Community Owner',
   kick: 'Remove Member',
-  ban: 'Ban',
-  // the Banned section's row button, never in the menu
-  unban: 'Unban'
+  ban: 'Ban'
 }
 const MEMBER_ACTION_ICON: Record<CommunityMemberAction, React.ReactNode> = {
   demote: <DemoteModeratorIcon />,
   promote: <PromoteModeratorIcon />,
   transfer: <TransferIcon />,
   kick: <RemoveMemberIcon />,
-  ban: <BanIcon />,
-  unban: <BanIcon />
+  ban: <BanIcon />
 }
 const TRANSFER_NEEDS_NAME = 'Community ownership can only be transferred to users who own a NAME.'
 
@@ -318,6 +316,7 @@ const SECTION_EMPTY: Record<CommunityMemberSection, { title: string; body?: stri
   requests: { title: 'No Requests' },
   invites: { title: 'No Invites' }
 }
+export const SECTION_LOAD_ERROR = 'There was an error loading this list. Please try again.'
 
 // one object, so a card without sections keeps the same props between renders
 const NO_SECTIONS: Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>> = {}
@@ -443,17 +442,14 @@ export function CommunityModal({
     setActing((prev) => new Set(prev).add(row.address))
     run()
   }
-  const rowActions = (section: CommunityMemberSection, row: CommunityRequestMember): React.ReactNode =>
-    section === 'requests' ? (
-      <>
-        <Button size="sm" disabled={acting.has(row.address)} onClick={() => runRowAction(row, () => onManageRequest?.(row, 'accepted'))}>ACCEPT</Button>
-        <Button size="sm" variant="secondary" disabled={acting.has(row.address)} onClick={() => runRowAction(row, () => onManageRequest?.(row, 'rejected'))}>REJECT</Button>
-      </>
-    ) : section === 'invites' ? (
-      <Button size="sm" variant="secondary" disabled={acting.has(row.address)} onClick={() => runRowAction(row, () => onManageRequest?.(row, 'cancelled'))}>CANCEL</Button>
-    ) : (
-      <Button size="sm" variant="secondary" disabled={acting.has(row.address)} onClick={() => runRowAction(row, () => onUnban?.(row))}>UNBAN</Button>
-    )
+  const rowActions = (section: CommunityMemberSection, row: CommunityRequestMember): React.ReactNode => (
+    <RequestRowActions
+      section={section}
+      busy={acting.has(row.address)}
+      onAnswer={(intention) => runRowAction(row, () => onManageRequest?.(row, intention))}
+      onUnban={() => runRowAction(row, () => onUnban?.(row))}
+    />
+  )
   const showCover = community.thumbnail != null && !coverFailed
   const loading = detail == null
 
@@ -628,14 +624,20 @@ export function CommunityModal({
               {(() => {
                 const read = sections[shownTab]
                 if (read == null) return <div className={styles.empty}>Loading…</div>
+                // a list that could not be read says so, rather than claiming there is nothing in it
+                if (read.failed === true) {
+                  return (
+                    <EmptyState
+                      variant="inline"
+                      tone="error"
+                      title={SECTION_LOAD_ERROR}
+                      actions={[{ label: 'RETRY', variant: 'outline', onClick: () => onLoadSection?.(shownTab) }]}
+                    />
+                  )
+                }
                 if (read.members.length === 0) {
                   const empty = SECTION_EMPTY[shownTab]
-                  return (
-                    <div className={styles.empty}>
-                      <b>{empty.title}</b>
-                      {empty.body != null && <span className={styles.emptyBody}>{empty.body}</span>}
-                    </div>
-                  )
+                  return <EmptyState variant="inline" title={empty.title} subtitle={empty.body} />
                 }
                 return (
                   <div className={`${styles.memberGrid} ${styles.sectionGrid}`}>
@@ -823,7 +825,7 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       sections={communities.memberSections}
       onLoadSection={(section) => communities.loadMemberSection(communityId, section)}
       onManageRequest={(m, intention) => communities.manageRequest(communityId, m.requestId, intention, m.address)}
-      onUnban={(m) => communities.memberAction(communityId, m.address, 'unban')}
+      onUnban={(m) => communities.unban(communityId, m.address)}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })

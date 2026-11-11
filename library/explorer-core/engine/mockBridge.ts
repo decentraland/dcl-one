@@ -1168,11 +1168,6 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     if (msg.kind === 'communityMemberAction') {
       // the member's new role (null: removed); a transfer also makes the user a moderator
       const changes = mockMemberChanges.get(msg.id) ?? new Map<string, string | null>()
-      if (msg.action === 'unban') {
-        mockSections.banned.set(msg.id, mockSection('banned', msg.id).filter((m) => m.address !== msg.address))
-        reply({ kind: 'communityMemberSection', id: msg.id, section: 'banned', members: mockSection('banned', msg.id), total: mockSection('banned', msg.id).length })
-        return
-      }
       const role = { promote: 'moderator', demote: 'member', transfer: 'owner', kick: null, ban: null }[msg.action]
       changes.set(msg.address, role)
       // as the bridge, a ban adds the member to the Banned section and sends it again
@@ -1202,6 +1197,11 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         requestsSent: mockCommunities.filter((c) => c.pendingRequestId != null).map((c) => ({ ...c })),
         failed: []
       })
+    }
+    if (msg.kind === 'unbanCommunityMember') {
+      mockSections.banned.set(msg.id, mockSection('banned', msg.id).filter((m) => m.address !== msg.address))
+      reply({ kind: 'communityMemberSection', id: msg.id, section: 'banned', members: mockSection('banned', msg.id), total: mockSection('banned', msg.id).length })
+      return
     }
     if (msg.kind === 'getCommunityInvitesCount') {
       const invites = mockCommunities.filter((c) => c.pendingInviteId != null).length
@@ -1236,6 +1236,13 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
         for (const section of ['requests', 'invites'] as const) {
           mockSections[section].set(msg.id, mockSection(section, msg.id).filter((m) => m.requestId !== msg.requestId))
           reply({ kind: 'communityMemberSection', id: msg.id, section, members: mockSection(section, msg.id), total: mockSection(section, msg.id).length })
+        }
+        // as the bridge, an accepted request reads the card's members and the community again
+        if (msg.intention === 'accepted' && c != null) {
+          c.membersCount += 1
+          reply({ kind: 'community', community: { ...c } })
+          const reread: Envelope = { to: 'scene', msg: { kind: 'getCommunityDetail', id: msg.id } }
+          setTimeout(() => void ch.onmessage?.(new MessageEvent('message', { data: reread })), 300)
         }
       }
       sendInvites()
