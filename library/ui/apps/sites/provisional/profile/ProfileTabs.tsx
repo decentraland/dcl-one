@@ -5,7 +5,13 @@ import styles from './ProfileTabs.module.css'
 type ProfileTabLink = { id: string; label: string; href: string }
 
 /** The app's router link, so a tab change is a client navigation; a plain anchor otherwise. */
-type TabLinkProps = { to: string; className: string; 'aria-current'?: 'page'; onClick?: () => void; children: ReactNode }
+type TabLinkProps = {
+  to: string
+  className: string
+  'aria-current'?: 'page'
+  onClick?: () => void
+  children: ReactNode
+}
 
 type ProfileTabsProps = {
   tabs: readonly ProfileTabLink[]
@@ -21,7 +27,13 @@ function AnchorLink({ to, ...props }: TabLinkProps) {
 }
 
 /** Each tab is a link to its own path; the active one is underlined in the primary color. */
-function ProfileTabs({ tabs, active, onSelect, LinkComponent = AnchorLink, label = 'Profile sections' }: ProfileTabsProps) {
+function ProfileTabs({
+  tabs,
+  active,
+  onSelect,
+  LinkComponent = AnchorLink,
+  label = 'Profile sections'
+}: ProfileTabsProps) {
   return (
     <nav className={styles.root} aria-label={label}>
       <ul className={styles.list}>

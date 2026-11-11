@@ -47,12 +47,24 @@ function CopyAddress({ address }: { address: string }) {
 }
 
 /** Avatar, name and address on the left, actions on the right; stacked on narrow screens. */
-function ProfileHeader({ address, name, nameColor, hasClaimedName, avatarUrl, actions }: ProfileHeaderProps) {
+function ProfileHeader({
+  address,
+  name,
+  nameColor,
+  hasClaimedName,
+  avatarUrl,
+  actions
+}: ProfileHeaderProps) {
   const style = { '--name-color': nameColor } as CSSProperties
   return (
     <header className={styles.root} style={style}>
       <div className={styles.identity}>
-        <ProfileAvatar imageUrl={avatarUrl} name={name} color={nameColor} className={styles.avatar} />
+        <ProfileAvatar
+          imageUrl={avatarUrl}
+          name={name}
+          color={nameColor}
+          className={styles.avatar}
+        />
         <div className={styles.nameBlock}>
           <div className={styles.nameRow}>
             <h1 className={styles.name}>{name}</h1>

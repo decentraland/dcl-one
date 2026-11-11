@@ -26,7 +26,7 @@ function ProfileAvatar({ imageUrl, name, color, size, className }: ProfileAvatar
   const showImage = Boolean(imageUrl) && !failed
   const style = {
     ...(size === undefined ? {} : { '--avatar-size': `${size}px` }),
-    '--avatar-color': color,
+    '--avatar-color': color
   } as CSSProperties
 
   return (
