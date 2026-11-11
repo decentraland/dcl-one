@@ -50,7 +50,7 @@ describe('NavBar', () => {
       expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveAttribute('href', '/')
     })
 
-    it('should render the section links', () => {
+    it('should render the Shop section link', () => {
       expect(screen.getByRole('link', { name: 'Shop' })).toHaveAttribute('href', '/shop')
     })
 
@@ -241,9 +241,14 @@ describe('NavBar', () => {
       expect(trigger.querySelector('img')).toHaveAttribute('src', '/face.png')
     })
 
-    it('should fall back to the Decentraland mark when the image fails', () => {
-      fireEvent.error(trigger.querySelector('img')!)
-      expect(trigger.querySelector('img')).toBeNull()
+    describe('and the image fails to load', () => {
+      beforeEach(() => {
+        fireEvent.error(trigger.querySelector('img')!)
+      })
+
+      it('should show the Decentraland mark instead of the image', () => {
+        expect(trigger.querySelector('svg')).toBeInTheDocument()
+      })
     })
   })
 
@@ -472,7 +477,7 @@ describe('NavBar', () => {
       expect(document.body.style.overflow).toBe('hidden')
     })
 
-    it('should list every section item', () => {
+    it('should list the dropdown items as links', () => {
       expect(within(dialog).getByRole('link', { name: 'Blog' })).toHaveAttribute('href', '/blog')
     })
 
@@ -552,10 +557,10 @@ describe('NavBar', () => {
 
   describe('when the mobile menu backdrop is pressed', () => {
     beforeEach(async () => {
-      const { container } = render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
+      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       // The backdrop is aria-hidden, so it has no role to query by.
-      fireEvent.click(container.querySelector('[aria-hidden="true"]:not(svg):not(span)')!)
+      fireEvent.click(screen.getByTestId('navbar-backdrop'))
     })
 
     it('should close the dialog', () => {
@@ -585,6 +590,10 @@ describe('NavBar', () => {
 
     it('should close the dialog', () => {
       expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should move focus to the logo link, since the menu button is hidden on desktop', () => {
+      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveFocus()
     })
   })
 
@@ -646,6 +655,25 @@ describe('NavBar', () => {
 
     it('should format balances for it', () => {
       expect(screen.getByText(/MANA/).parentElement).toHaveTextContent('MANA: 1.234,5')
+    })
+  })
+
+  describe('when label overrides are undefined', () => {
+    beforeEach(() => {
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          notifications={{ count: 2, onSelect: () => {} }}
+          labels={{ account: undefined, unreadNotifications: undefined, navigation: undefined }}
+        />
+      )
+    })
+
+    it('should keep the default labels', () => {
+      expect(screen.getByRole('navigation', { name: 'Main' })).toContainElement(
+        screen.getByRole('button', { name: 'Account: Ada' })
+      )
     })
   })
 

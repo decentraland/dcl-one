@@ -216,8 +216,8 @@ function SectionDropdown({
         <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
       </button>
       <ul id={listId} className={styles.dropdown} hidden={!open}>
-        {section.items.map((item) => (
-          <li key={item.href + item.label}>
+        {section.items.map((item, index) => (
+          <li key={index}>
             {renderLink({
               href: item.href,
               className: styles.dropdownLink,
@@ -313,8 +313,8 @@ function AccountActionList({
 }) {
   return (
     <ul className={className}>
-      {actions.map((action) => (
-        <li key={`${action.href ?? ''}${action.label}`}>
+      {actions.map((action, index) => (
+        <li key={index}>
           {action.href !== undefined ? (
             renderLink({ href: action.href, className: styles.menuItem, onClick: onDone, children: action.label })
           ) : (
@@ -388,12 +388,15 @@ function Drawer({
   id,
   titleId,
   onClose,
+  onDesktop,
   labels,
   children
 }: {
   id: string
   titleId: string
   onClose: () => void
+  /** The viewport reached desktop, where the menu button that would take focus back is hidden. */
+  onDesktop: () => void
   labels: NavBarLabels
   children: ReactNode
 }) {
@@ -404,8 +407,8 @@ function Drawer({
     const { overflow } = document.body.style
     document.body.style.overflow = 'hidden'
     const desktop = typeof window.matchMedia === 'function' ? window.matchMedia(DESKTOP_QUERY) : undefined
-    const onDesktop = (event: MediaQueryListEvent) => event.matches && onClose()
-    desktop?.addEventListener('change', onDesktop)
+    const onChange = (event: MediaQueryListEvent) => event.matches && onDesktop()
+    desktop?.addEventListener('change', onChange)
     // On the document, so Escape and the Tab wrap still work when focus has fallen out of the panel to <body>.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
@@ -430,13 +433,13 @@ function Drawer({
     document.addEventListener('keydown', onKeyDown)
     return () => {
       document.body.style.overflow = overflow
-      desktop?.removeEventListener('change', onDesktop)
+      desktop?.removeEventListener('change', onChange)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [onClose])
+  }, [onClose, onDesktop])
   return (
     <div className={styles.drawerLayer}>
-      <div className={styles.backdrop} aria-hidden="true" onClick={onClose} />
+      <div className={styles.backdrop} aria-hidden="true" data-testid="navbar-backdrop" onClick={onClose} />
       <div
         ref={panelRef}
         id={id}
@@ -473,7 +476,11 @@ export function NavBar({
   locale = 'en-US',
   className
 }: NavBarProps) {
-  const labels = { ...defaultLabels, ...labelOverrides }
+  // An override set to undefined (an i18n map with a missing key) keeps the default instead of replacing it.
+  const labels = {
+    ...defaultLabels,
+    ...Object.fromEntries(Object.entries(labelOverrides ?? {}).filter(([, value]) => value !== undefined))
+  } as NavBarLabels
   const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -481,9 +488,14 @@ export function NavBar({
   const drawerId = useId()
   const drawerTitleId = useId()
   const count = unreadCount(notifications?.count)
+  const navRef = useRef<HTMLElement>(null)
   const closeDrawer = useCallback(() => {
     setDrawerOpen(false)
     menuButtonRef.current?.focus()
+  }, [])
+  const closeDrawerOnDesktop = useCallback(() => {
+    setDrawerOpen(false)
+    navRef.current?.querySelector<HTMLElement>('a[href]')?.focus()
   }, [])
 
   const renderSignIn = (onDone?: () => void) =>
@@ -503,7 +515,7 @@ export function NavBar({
     )
 
   return (
-    <nav className={className ? `${styles.root} ${className}` : styles.root} aria-label={labels.navigation}>
+    <nav ref={navRef} className={className ? `${styles.root} ${className}` : styles.root} aria-label={labels.navigation}>
       <div className={styles.start}>
         {renderLink({
           href: logoHref,
@@ -512,11 +524,11 @@ export function NavBar({
           children: <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
         })}
         <ul className={styles.sections}>
-          {sections.map((section) =>
+          {sections.map((section, index) =>
             section.items ? (
-              <SectionDropdown key={`d${section.label}`} section={section} renderLink={renderLink} />
+              <SectionDropdown key={index} section={section} renderLink={renderLink} />
             ) : (
-              <li key={`${section.href}${section.label}`} className={styles.section}>
+              <li key={index} className={styles.section}>
                 {renderLink({
                   href: section.href,
                   className: styles.tab,
@@ -558,16 +570,22 @@ export function NavBar({
         </button>
       </div>
       {drawerOpen ? (
-        <Drawer id={drawerId} titleId={drawerTitleId} onClose={closeDrawer} labels={labels}>
+        <Drawer
+          id={drawerId}
+          titleId={drawerTitleId}
+          onClose={closeDrawer}
+          onDesktop={closeDrawerOnDesktop}
+          labels={labels}
+        >
           <ul className={styles.drawerSections}>
-            {sections.map((section) => (
-              <li key={`${section.href ?? 'd'}${section.label}`}>
+            {sections.map((section, index) => (
+              <li key={index}>
                 {section.items ? (
                   <>
                     <p className={styles.drawerGroup}>{section.label}</p>
                     <ul className={styles.drawerItems}>
-                      {section.items.map((item) => (
-                        <li key={item.href + item.label}>
+                      {section.items.map((item, itemIndex) => (
+                        <li key={itemIndex}>
                           {renderLink({
                             href: item.href,
                             className: styles.drawerLink,
