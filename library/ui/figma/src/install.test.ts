@@ -711,7 +711,7 @@ describe('when component installation owns its verified input read-set and trans
         return plan
       })
       await expect(runInstall(app, options)).rejects.toThrow(
-        'Component install would overwrite a hand-written component: Badge'
+        'Component install would write a generated component next to a file it does not own: Badge/Badge.figma.ts'
       )
       expect(await readdir(path.join(root, 'components'), { recursive: true })).toEqual(before)
       expect(await handWrittenOnDisk()).toEqual(handWritten)
@@ -724,6 +724,111 @@ describe('when component installation owns its verified input read-set and trans
       await writeFile(path.join(root, 'components/Badge/Badge.tsx'), edited)
       await expect(runInstall(app, options)).rejects.toThrow('Install target is dirty')
       expect(await readFile(path.join(root, 'components/Badge/Badge.tsx'))).toEqual(edited)
+    })
+  })
+
+  describe('and a generated component directory holds a file its record does not list', () => {
+    const testFile = 'DemoNav/DemoNav.test.tsx'
+    const testBytes = Buffer.from("import { it } from 'vitest'\n\nit('renders', () => {})\n")
+    const componentFiles = async () =>
+      (await readdir(path.join(root, 'components'), { recursive: true })).sort()
+    beforeEach(async () => {
+      await runInstall(app, options)
+      await writeFile(path.join(root, 'components', testFile), testBytes)
+      await fixtureCommit(repository)
+    })
+
+    it('should keep the hand-written file and remove the listed generated files when the registry empties', async () => {
+      const record = JSON.parse(
+        await readFile(path.join(root, 'components/generation.json'), 'utf8')
+      )
+      const generated = (record.output as { path: string }[])
+        .map((entry) => entry.path)
+        .filter((file) => file.startsWith('DemoNav/'))
+      expect(generated).toContain('DemoNav/DemoNav.tsx')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+
+      const retired = await runInstall(app, options)
+
+      expect(retired.changed).toBe(true)
+      expect(retired.files.map((file) => file.path)).toEqual(['generation.json', 'promotion.json'])
+      expect(await componentFiles()).toEqual([
+        'DemoNav',
+        testFile,
+        'generation.json',
+        'promotion.json'
+      ])
+      expect(await readFile(path.join(root, 'components', testFile))).toEqual(testBytes)
+      expect((await runInstall(app, options)).changed).toBe(false)
+    })
+
+    it('should remove a stale output the lock table pins even when the record no longer lists it', async () => {
+      await writeFile(path.join(root, 'components/DemoNav/Stale.tsx'), 'export const Stale = 1\n')
+      const lock = JSON.parse(await readFile(lockPath, 'utf8'))
+      lock.publicComponents = { files: { 'DemoNav/Stale.tsx': { sha256: '0'.repeat(64) } } }
+      await writeFile(lockPath, JSON.stringify(lock))
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+
+      await runInstall(app, options)
+
+      expect(await componentFiles()).toEqual([
+        'DemoNav',
+        testFile,
+        'generation.json',
+        'promotion.json'
+      ])
+    })
+
+    it('should refuse to keep generating the component next to it and leave the target unchanged', async () => {
+      const before = await componentFiles()
+      await writeFile(registryPath, '{"components":[],"internal":["DemoNav"]}')
+      await fixtureCommit(repository)
+
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would write a generated component next to a file it does not own: ' +
+          testFile
+      )
+      expect(await componentFiles()).toEqual(before)
+      expect(await readFile(path.join(root, 'components', testFile))).toEqual(testBytes)
+    })
+
+    it('should refuse a plan that would overwrite the file and leave it unchanged', async () => {
+      vi.mocked(planComponents).mockImplementationOnce(async (context) => {
+        const plan = await actualPlan(context)
+        plan.files.set('readme.md', Buffer.from('generated\n'))
+        return plan
+      })
+      await writeFile(path.join(root, 'components/README.md'), 'maintained\n')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+
+      await expect(runInstall(app, options)).rejects.toThrow(
+        'Component install would overwrite a file it does not own: README.md'
+      )
+      expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
+    })
+
+    it('should keep an unowned top-level file when the registry empties', async () => {
+      await writeFile(path.join(root, 'components/README.md'), 'maintained\n')
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+
+      await runInstall(app, options)
+
+      expect(await readFile(path.join(root, 'components/README.md'), 'utf8')).toBe('maintained\n')
+    })
+
+    it('should refuse an uncommitted edit to the file instead of publishing it', async () => {
+      await writeFile(registryPath, '{"components":[]}')
+      await fixtureCommit(repository)
+      const edited = Buffer.from("import { it } from 'vitest'\n")
+      await writeFile(path.join(root, 'components', testFile), edited)
+
+      await expect(runInstall(app, options)).rejects.toThrow('Install target is dirty')
+      expect(await readFile(path.join(root, 'components', testFile))).toEqual(edited)
+      expect(await componentFiles()).toContain('DemoNav/DemoNav.tsx')
     })
   })
 

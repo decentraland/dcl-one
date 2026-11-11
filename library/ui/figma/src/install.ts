@@ -30,7 +30,6 @@ import {
   componentModulePaths,
   componentPackages,
   createComponentGeneration,
-  handWrittenComponentDirectories,
   isComponentModulePath
 } from '../component-generation.mjs'
 
@@ -631,23 +630,26 @@ async function installComponents(
   }
   await verifyInputs()
   return publishInstall(root, 'components', outDir, planned, verifyInputs, (current) =>
-    handWrittenComponents(current, lock.publicComponents?.files, planned)
+    unownedComponentFiles(current, lock.publicComponents?.files, planned)
   )
 }
 
 /**
- * Hand-written components in the current target: directories that hold none of the outputs the lock's public table
- * pins or the current generation record lists, read from the same snapshot the transaction publishes over. They are carried into the published tree byte for byte, never
- * planned, regenerated or deleted, and a plan that would write into one is refused.
+ * Files in the current target that the install does not own, read from the same snapshot the transaction publishes
+ * over. Ownership is per file: the install owns its record and registry, the outputs the lock's public table pins and
+ * the outputs the current generation record lists, and only those may be removed or overwritten. Every other file is
+ * carried into the published tree byte for byte, so a hand-written file survives a component moving from generated to
+ * hand-written. A plan that would write over one, or into a component directory that holds one, is refused, so a
+ * generated component never mixes with files its record does not pin.
  */
-function handWrittenComponents(
+function unownedComponentFiles(
   current: Map<string, Buffer> | undefined,
   table: Record<string, unknown> | undefined,
   planned: ReadonlyMap<string, Buffer>
 ): Map<string, Buffer> {
   const kept = new Map<string, Buffer>()
   if (!current) return kept
-  const owned = new Set(Object.keys(table ?? {}))
+  const owned = new Set(['generation.json', 'promotion.json', ...Object.keys(table ?? {})])
   // The installed record also names outputs a lock not yet resealed does not; an unreadable record adds nothing,
   // which can only keep more, never delete a hand-written file.
   try {
@@ -660,18 +662,24 @@ function handWrittenComponents(
   } catch {
     // The lock table alone decides.
   }
-  const directories = new Set(handWrittenComponentDirectories(current.keys(), owned))
   const fold = (name: string) => name.normalize('NFC').toLowerCase()
+  const plannedFiles = new Set([...planned.keys()].map(fold))
   const plannedDirectories = new Set(
     [...planned.keys()]
       .filter((file) => file.includes('/'))
       .map((file) => fold(file.split('/')[0]!))
   )
-  for (const directory of directories)
-    if (plannedDirectories.has(fold(directory)))
-      throw new Error('Component install would overwrite a hand-written component: ' + directory)
-  for (const [file, bytes] of current)
-    if (file.includes('/') && directories.has(file.split('/')[0]!)) kept.set(file, bytes)
+  for (const file of [...current.keys()].sort()) {
+    if (owned.has(file)) continue
+    if (plannedFiles.has(fold(file)))
+      throw new Error('Component install would overwrite a file it does not own: ' + file)
+    if (file.includes('/') && plannedDirectories.has(fold(file.split('/')[0]!)))
+      throw new Error(
+        'Component install would write a generated component next to a file it does not own: ' +
+          file
+      )
+    kept.set(file, current.get(file)!)
+  }
   return kept
 }
 
