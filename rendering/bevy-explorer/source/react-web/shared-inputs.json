@@ -316,7 +316,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "d0613be7218c2eec238eaca140400ec110dc50c59f205020ea73c6c7fe339db7"
+      "sha256": "09711cd8909cf772b8a26b252b4b474c6ea7191866b054db7b19e9bc07c7fe91"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -365,6 +365,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/urns.ts",
       "sha256": "7ac89d5678a8529be8f254d085258633d6323c7ef027f85e5017455929d816ab"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voice.ts",
+      "sha256": "55e157d3e740b2aa8a1cdc03a725407014cfabea9a3bec1430b01c00eab53ac2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/voiceChat.ts",
@@ -1704,7 +1708,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/protocol.ts",
-      "sha256": "ca38b05083aef244744c046612f40512ebb19c6c77deac807f9bbb2835d9e36b"
+      "sha256": "c6d80f038301ead1c0079a63fd8fe647c8603631d4f63dd85b852b1ab1768961"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/auth/guest.ts",
@@ -2184,7 +2188,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/minimap/Minimap.tsx",
-      "sha256": "96dbc1e5f6b7c58b4cd3dfab32a8115131683d2d6f06d3667e100ff8ab59062e"
+      "sha256": "248cd631fd983752a44c5a744425042783d24cdd7b4e3013a64fc385afb22f38"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/minimap/MinimapSettings.module.css",
@@ -2197,6 +2201,14 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/minimap/MinimapTiles.tsx",
       "sha256": "4f8228529738e0a65c676553d37ee81ceee5d9cc98c62c40d90084e13276a26e"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/minimap/SceneRestrictions.module.css",
+      "sha256": "7db8b252b71265bcaeb99c039c2c75a4c9d1f872f9a00ccf619a186910d9ce11"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/minimap/SceneRestrictions.tsx",
+      "sha256": "20b10c2a7d2df7a2a082e58b7c5c009bbb35a728705765b4c36c21889393cbff"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/minimap/minimapPlaces.ts",
@@ -2404,7 +2416,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/useEngineSession.ts",
-      "sha256": "ec4e31afbbbfbf42d3d7f18dc5eb577bc6edc7746ce08d6faec7ebf7d7d65179"
+      "sha256": "76fb5cd17a0a794125bfb4d8f963eb2b611f1be3a1550cb112358e69e02fe058"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/KeyBindingsTab.module.css",
@@ -2444,7 +2456,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/sidebar/Sidebar.tsx",
-      "sha256": "bb994a29dd45bf41423c90796d71c74b36850a7b631a3fe5a7b7a6457b3b7c26"
+      "sha256": "2e40208c0b5593142c1106c443c298cbcca9dd1f9338377eecce42a9b49a98a6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/sidebar/useAutoHide.ts",
@@ -2472,7 +2484,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/voice/useNearbyVoice.ts",
-      "sha256": "f45baaaad9f28da4c26cf143336818af7615ab458f3f270e334c5c87e45bba01"
+      "sha256": "0e17232c53b872c628ccc2363c71213a315ba90e0856cbdf5f53a3cd146ec680"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/voiceChat/SceneVoiceChatBanner.tsx",
@@ -2855,6 +2867,10 @@
       "sha256": "65804da1c612e8cb60f3502816011a35e9a031941ced6c182db48f2fd1ed9a95"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
+      "sha256": "1641019460b1d7ae9745d4022af1400160492c9a61a20f0047e58d7d257537fd"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
       "sha256": "d3670fa22ead3103209990411881bee6aae2d6370020a9bc7ce41ba2587a840c"
     },
@@ -3020,7 +3036,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/harness.tsx",
-      "sha256": "28df21eb274fc02adb453f7f8e82d8cdbdfbd4a4dd7c8710f45354496a75a7b1"
+      "sha256": "4d7d7b811825a7e2605a9a07df775ce2809b8cb233f31e63d1ad25f5422277a5"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/hudInset.test.tsx",
@@ -3084,7 +3100,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/minimap.render.test.tsx",
-      "sha256": "674c82aed86533f2a704a70a46eb1c5759b2b2c9b72058938511c4d04d8fb7ac"
+      "sha256": "314ee67f1ef59fbb7c0ce9b3ffd71eaf17173e9aa75c0d5e866445e50a291c40"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/minimap.test.ts",
@@ -3104,7 +3120,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/nearbyVoice.test.tsx",
-      "sha256": "8d4f7bd59830132dbe97fb513df95de59bf4afdfe76d26c257f3e187958835ba"
+      "sha256": "3839f45bf2a6da7ca149aff3d763d9094ada42a71fdce557a41f802c77963ebd"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/notifications.clicks.test.tsx",
@@ -3344,7 +3360,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "e2ed3557654375089d9158c40c8c97d03be55ce6f475f3b277291c873f55b893"
+      "sha256": "902b87cff4afb7e80f715910742b67d57378d44e225a57367a63fc474b0eeff0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -3808,6 +3824,8 @@
     "rendering/bevy-explorer/source/react-web/src/features/minimap/MinimapSettings.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/minimap/MinimapSettings.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/minimap/MinimapTiles.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/minimap/SceneRestrictions.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/minimap/SceneRestrictions.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/minimap/minimapPlaces.ts",
     "rendering/bevy-explorer/source/react-web/src/features/minimap/minimapPrefs.ts",
     "rendering/bevy-explorer/source/react-web/src/features/notifications/NotificationToast.module.css",
@@ -3972,6 +3990,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeReadiness.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeRelay.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeSession.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeVoice.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeVoiceChat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/cancelKey.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/chat.clicks.test.tsx",
