@@ -309,6 +309,30 @@ describe('when the offline component guard checks a staged internal plan', () =>
         ).toBe(false)
       })
 
+      it('should accept a hand-written mapping that follows the mapping contract', () => {
+        put(
+          scope + 'Badge/Badge.figma.ts',
+          [
+            '// url=<DCL_FIGMA_FILE>?node-id=1-2',
+            '// source=components/Badge/Badge.tsx',
+            '// component=Badge',
+            '// contract=1',
+            '',
+            "import figma from 'figma'",
+            'export default {',
+            '  example: figma.tsx`<Badge>Example</Badge>`,',
+            '  imports: ["import { Badge } from \'@dcl/one-ui\'"],',
+            "  id: 'Badge',",
+            '  metadata: { nestable: true }',
+            '}',
+            ''
+          ].join('\n')
+        )
+        git('add', '--', 'library/ui/components')
+        expect(publicComponentsProblems(root, lock)).toEqual([])
+        expect(run()).toMatchObject({ status: 0 })
+      })
+
       it.each([
         [
           'a Figma-key-shaped value',
@@ -351,12 +375,6 @@ describe('when the offline component guard checks a staged internal plan', () =>
           'Badge/Badge.tsx',
           "import * as runtime from './../runtime'\nexport { runtime }\n",
           'generated or captured output in hand-written component file: Badge/Badge.tsx'
-        ],
-        [
-          'the generated mapping header',
-          'Badge/Badge.figma.ts',
-          '// url=<DCL_FIGMA_FILE>?node-id=1-2\n// source=components/Badge/Badge.tsx\n// component=Badge\nexport {}\n',
-          'generated or captured output in hand-written component file: Badge/Badge.figma.ts'
         ],
         [
           'a capture file',
