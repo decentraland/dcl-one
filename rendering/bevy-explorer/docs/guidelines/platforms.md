@@ -42,9 +42,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   starts the page dev server and the bridge. If a stale dev server is already on the port it
   gets reused; kill it first. The distributable is `make web` from repository-root
   `apps/bevy-explorer`, which builds the wasm package, sandbox worker and HUD into `dist/web`
-  without serving them (see [Running](running.md#web)). Build the wasm on
-  Linux (CI does): built on Windows, `file!()` keeps backslashes and the fork's
-  `embedded_asset!` panics at start (`Failed to find src_prefix "src"`).
+  without serving them (see [Running](running.md#web)). `just wasm` also runs from Git Bash on
+  Windows: a wasm build there gets `file!()` paths with backslashes, which the fork's
+  `embedded_asset!` normalizes.
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
   (`comms`), so on web a system in `Last` may never run again. Anything that must reach the page
   at exit, such as the benchmark stream's final bytes, runs in `Update`.

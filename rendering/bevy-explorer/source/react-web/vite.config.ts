@@ -1,7 +1,7 @@
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createReadStream, existsSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { extname, join, normalize } from 'node:path'
+import { extname, isAbsolute, join, normalize, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -26,15 +26,20 @@ function bridgeScenePreview(): Plugin {
         console.log('[bridge-scene] starting live preview on :8100')
         // --no-install: only run the locally-installed @dcl/sdk-commands bin. Without it, a stale
         // bridge-scene/node_modules makes npx fetch the UNRELATED registry package "sdk-commands".
+        // Windows: npx is npx.cmd, which Node starts only through a shell, and there is no process
+        // group to signal, so the tree is stopped with taskkill.
+        const windows = process.platform === 'win32'
         const child = spawn('npx', ['--no-install', 'sdk-commands', 'start', '--no-client', '--port', '8100'], {
           cwd: fileURLToPath(new URL('./bridge-scene', import.meta.url)),
           stdio: ['ignore', 'inherit', 'inherit'],
-          detached: true
+          detached: !windows,
+          shell: windows
         })
         const stop = (): void => {
           if (child.pid != null) {
             try {
-              process.kill(-child.pid, 'SIGTERM')
+              if (windows) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+              else process.kill(-child.pid, 'SIGTERM')
             } catch {
               /* already gone */
             }
@@ -87,7 +92,9 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
         if (!req.url || !req.url.startsWith(prefix)) return next()
         const rel = decodeURIComponent(req.url.slice(prefix.length).split('?')[0])
         let file = normalize(join(root, rel))
-        if (file !== root && !file.startsWith(root + '/')) {
+        // relative(), not a '/' prefix check: on Windows the joined path uses '\'
+        const inside = relative(root, file)
+        if (inside.startsWith('..') || isAbsolute(inside)) {
           res.statusCode = 403
           return res.end('forbidden')
         }
