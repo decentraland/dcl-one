@@ -1924,6 +1924,14 @@
           "kind": "regular"
         },
         {
+          "name": "CountBadge.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "CountBadge.tsx",
+          "kind": "regular"
+        },
+        {
           "name": "DateField.module.css",
           "kind": "regular"
         },
@@ -2485,6 +2493,10 @@
         },
         {
           "name": "InviteToCommunity.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "RequestRowActions.tsx",
           "kind": "regular"
         }
       ]
@@ -3910,7 +3922,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/communities.ts",
-      "sha256": "03d8cfdb18b4bdbf81811512c2a35467b81de59770050987959fbc4e8cd92c60"
+      "sha256": "7cbdcd7cd32ee05015df5a16c450d06fc2b2d6c47d7596a4c3467709aa423141"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/editor.ts",
@@ -4086,7 +4098,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
-      "sha256": "816acb8d31e5ffece516eb653c8657bb5aae1da381c1ad4efa1bea33371e4d47"
+      "sha256": "c2ccc3d135409ea8da34259591a06116671644b777b89ac42dfc7493fb8e0efe"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
@@ -4358,7 +4370,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "ab07c5213329173daded385a64a9f44bd54c9ee45ed24d8cf9bfad0faf49f255"
+      "sha256": "f71de2d436df28299fdb6aff3947ef783db38ef28aff9e5f803c5f72e28771a8"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4382,7 +4394,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "020cebe3baa58386d410d2d8efe63da30474b940a61bccad5ad7781c8d0f1821"
+      "sha256": "aa2a0524039672f163ede46d068a076c736c1f5d9d7555d79ff6fe1664dd541b"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5686,7 +5698,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "sha256": "316769873e4462581602d103fb8a7112346172e3d29eaa13c873ea571f7cc672"
+      "sha256": "4035eb716df052d3aa67ae6cd6db6ca58ba7f8d275c01417c06fb13a881bf724"
     },
     {
       "path": "library/ui/apps/hud/design/ControlButton.module.css",
@@ -5695,6 +5707,14 @@
     {
       "path": "library/ui/apps/hud/design/ControlButton.tsx",
       "sha256": "e06ce47a6769168893f4dfac224b6a7d12daa2b1ea37bab3be318228ff9199e7"
+    },
+    {
+      "path": "library/ui/apps/hud/design/CountBadge.module.css",
+      "sha256": "5732efa422d022742860a33959685fca2731fe57e56da3781773faec4e455e18"
+    },
+    {
+      "path": "library/ui/apps/hud/design/CountBadge.tsx",
+      "sha256": "589d96217857e9d1f630f8af3375b14455b6573d609a9d3afd97f71278f61c8d"
     },
     {
       "path": "library/ui/apps/hud/design/DateField.module.css",
@@ -5870,7 +5890,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "242ba26763c4306b896d5f7677e23ee042cda867b002fc0c0318bc5f2b4e2ec8"
+      "sha256": "368386f9fef92a729e737c57f3ab54a2bc009bb88873fa6e999d8220373fe79f"
     },
     {
       "path": "library/ui/apps/hud/design/Slider.module.css",
@@ -5894,7 +5914,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/Submenu.tsx",
-      "sha256": "57dc65bf9e8697a8a462ef7ac4968c1eaba26530e41198608a0b88c141f43a65"
+      "sha256": "e2fabe09e70287751ac5c5725e6139f46e1f64fbba53b5c4063b7f6a873ac0f6"
     },
     {
       "path": "library/ui/apps/hud/design/Tabs.module.css",
@@ -5966,7 +5986,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
-      "sha256": "9ac3a3b42bc9ac6efa7ecd2a8d52fdf5b09f68fa886d763c8a1496fe691f9708"
+      "sha256": "9aa1368b4c620f51b470d5bed97bf2e8f648512b7be07d185ec46c93226c1bb1"
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
@@ -6042,7 +6062,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/chat/ProfileCardPresentation.tsx",
-      "sha256": "ae6bc486515685edf7549fef999cc277b95447844e1fdb2414ba373de2fe6a97"
+      "sha256": "70242a9c637dc36a2736ddc74077b996e03746219eeb68b7834a7b2a473ce383"
     },
     {
       "path": "library/ui/apps/hud/features/chat/chatIdentity.ts",
@@ -6078,11 +6098,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.module.css",
-      "sha256": "55c0d13ddafe93a7d9318633ae6543c12340b3074a17d12f4250e5e28a1d6c79"
+      "sha256": "49cc28e3b35195c3bc9c2625344f338aef704f3e7929f8877fb1addf1216109e"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
-      "sha256": "eb144e6ae290b7e79a90683151784cfa49b348acce0dc4ba4ffbd8f361c2d1ca"
+      "sha256": "be75e27bf3d52cee2182084417a4eddf0e21b3a6b270a02e42f6e8eb4af1c2d1"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityCreateModal.module.css",
@@ -6094,15 +6114,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.module.css",
-      "sha256": "88ff1aa40b8486a13e272f64e18f4d9100d41f35dbb0424ba478b2f390441120"
+      "sha256": "8043bc6b64dba1ec68b3f5914c4e454d62c08dc6340c6d5da0b8b8ac211ae184"
     },
     {
       "path": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
-      "sha256": "c5874109f21f7e37cfa5c9b2ae49eb5b0a04be82ee504cda30df2acb27dfd327"
+      "sha256": "d07e74a52a76f194df47483db6062750fa130fc9b15271263f9ef9f01d90ffbd"
     },
     {
       "path": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
       "sha256": "8b0aa71a41ca4ce2d284817d5c2ee7295dd3c3f7c0f42e0cd0a96b84e003d6ac"
+    },
+    {
+      "path": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "sha256": "e5736eef779d7156cb172e26a5725cb2e7ad2120f68ab1bbfdbf64340310348a"
     },
     {
       "path": "library/ui/apps/hud/features/debug/DebugPanel.module.css",
@@ -6554,7 +6578,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "54a39772f6955c9dfc97c2f5a7d4fc0f0f1cfd14a54fb3e4d4094418fa402892"
+      "sha256": "fdca73fdab1ab9a3f5449e90dfab39fae891ad0976450897aa9bcacb93390900"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6718,7 +6742,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "9e78b2860ffd987a0f1990d707c2bd819eb61899bccd6d64f55b2e7b669b6df6"
+      "sha256": "60612d479f22233640bc32251c758a3fe7843f61729c4b03af1cb3411f90c9ba"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -6810,7 +6834,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.invites.test.tsx",
-      "sha256": "00f1f3250301501d490d0c6fed6dd915e69d5f44544ba0720691963ba74431bd"
+      "sha256": "8f2528584f5477236cc20a2d06ca6cd7b588a5559e9a365c9c0fd81c43b2b190"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/communities.join.test.tsx",
@@ -9844,6 +9868,21 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/design/CountBadge.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/CountBadge.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/CountBadge.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.module.css",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/design/DateField.tsx",
       "to": "library/ui/apps/hud/design/DateField.module.css",
       "kind": "native:runtime"
@@ -10625,6 +10664,21 @@
     },
     {
       "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/Showcase.tsx",
       "to": "library/ui/apps/hud/design/DateField.tsx",
       "kind": "native:runtime"
     },
@@ -11056,21 +11110,6 @@
     {
       "from": "library/ui/apps/hud/design/Spinner.tsx",
       "to": "library/ui/apps/hud/design/Spinner.module.css",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Submenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Submenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/design/Submenu.tsx",
-      "to": "library/ui/apps/hud/design/ContextMenu.tsx",
       "kind": "test:runtime"
     },
     {
@@ -11701,6 +11740,21 @@
     {
       "from": "library/ui/apps/hud/design/index.ts",
       "to": "library/ui/apps/hud/design/ControlButton.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/design/index.ts",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
       "kind": "test:runtime"
     },
     {
@@ -14975,6 +15029,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunitiesPage.tsx",
       "to": "library/ui/apps/hud/features/menu/MainMenuShell.tsx",
       "kind": "native:runtime"
     },
@@ -15230,6 +15299,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/CommunityModal.tsx",
       "to": "library/ui/apps/hud/features/friends/FriendRequestPopup.tsx",
       "kind": "native:runtime"
     },
@@ -15346,6 +15430,21 @@
     {
       "from": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
       "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -28285,6 +28384,11 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/design/CountBadge.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/design/DateField.tsx",
       "kind": "type"
     },
@@ -28586,6 +28690,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/communities/InviteToCommunity.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/communities/RequestRowActions.tsx",
       "kind": "type"
     },
     {
