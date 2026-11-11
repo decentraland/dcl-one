@@ -5,10 +5,12 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use common::{
     gpu_time::GPU_FRAME_TIME,
-    memory::{GpuMemoryBudget, MemoryStatus},
+    memory::{GpuMemoryBudget, LoadRefusal, MemoryStatus},
     structs::{AppConfig, SessionGraphics},
 };
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
+use ipfs::IpfsResource;
+use scene_runner::initialize_scene::RefusedScenes;
 
 pub(super) fn register(app: &mut App) {
     app.add_console_command::<MemoryCommand, _>(debug_memory)
@@ -21,6 +23,9 @@ pub(super) fn register(app: &mut App) {
                 ("Effective cap (MiB)", "cap"),
                 ("Memory pressure", "pressure"),
                 ("Thresholds (MiB)", "thresholds"),
+                ("Refusing new loads", "refusal.refusing"),
+                ("Scenes in range not spawned", "refusal.refusedScenes"),
+                ("Downloads held from tier", "refusal.heldFrom"),
                 ("GPU memory pools", "gpu"),
             ],
             actions: &[("Restore platform limit", "/debug_memory 0")],
@@ -122,6 +127,9 @@ fn debug_memory(
     mut cmd: ConsoleCommand<MemoryCommand>,
     mut memory: ResMut<MemoryStatus>,
     gpu: Option<Res<GpuMemoryBudget>>,
+    refusal: Option<Res<LoadRefusal>>,
+    refused_scenes: Option<Res<RefusedScenes>>,
+    ipfs: Option<Res<IpfsResource>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let Some(limit) = args.limit_mib {
@@ -144,6 +152,11 @@ fn debug_memory(
         "thresholds": reading.map(|r| { let t = r.thresholds(); serde_json::json!({
             "abundance": t.abundance_mib.round(), "warning": t.warning_mib.round(), "full": t.full_mib.round()
         }) }),
+        "refusal": {
+            "refusing": refusal.is_some_and(|r| r.refusing),
+            "refusedScenes": refused_scenes.map_or(0, |n| n.0),
+            "heldFrom": ipfs.and_then(|ipfs| ipfs.downloads_held_from()).map_or("none".to_owned(), |tier| format!("{tier:?}")),
+        },
         "unavailable": {
             "used":ram_reason, "capacity":ram_reason, "cap":ram_reason,
             "pressure":ram_reason, "thresholds":ram_reason,

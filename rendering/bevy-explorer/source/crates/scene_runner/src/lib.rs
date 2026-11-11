@@ -55,7 +55,8 @@ use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
     initialize_scene::SuperUserScene,
     scene_partition::{
-        publish_download_priorities, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
+        hold_low_priority_downloads, publish_download_priorities, update_scene_partitions,
+        Partition, BEHIND_SCENE_TICK_PENALTY,
     },
 };
 use common::partition::PartitionData;
@@ -403,6 +404,7 @@ impl Plugin for SceneRunnerPlugin {
             Update,
             (
                 update_scene_partitions,
+                hold_low_priority_downloads,
                 publish_download_priorities,
                 update_scene_priority,
                 run_scene_loop,

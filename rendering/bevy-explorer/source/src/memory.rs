@@ -1,8 +1,24 @@
 use bevy::prelude::*;
-use common::memory::{MemorySample, MemoryStatus};
+use common::memory::{LoadRefusal, MemorySample, MemoryStatus};
 use std::time::Duration;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
+
+/// Refuse new loads while engine memory is full; see [`LoadRefusal::next`].
+fn update_load_refusal(status: Res<MemoryStatus>, mut refusal: ResMut<LoadRefusal>) {
+    let next = refusal.next(status.reading());
+    if next != *refusal {
+        match status.reading() {
+            Some(reading) if next.refusing => warn!(
+                "engine memory full ({} of {} MiB): refusing new scenes and low-priority downloads",
+                reading.used_bytes >> 20,
+                reading.cap_mib
+            ),
+            _ => info!("engine memory below the warning threshold: admitting loads again"),
+        }
+        *refusal = next;
+    }
+}
 
 pub(crate) struct MemoryStatusPlugin;
 
@@ -11,7 +27,8 @@ impl Plugin for MemoryStatusPlugin {
         #[cfg(not(target_arch = "wasm32"))]
         app.init_resource::<NativeSampler>();
         app.init_resource::<MemoryStatus>()
-            .add_systems(PreUpdate, sample_memory);
+            .init_resource::<LoadRefusal>()
+            .add_systems(PreUpdate, (sample_memory, update_load_refusal).chain());
     }
 }
 

@@ -125,3 +125,25 @@ impl MemoryStatus {
         })
     }
 }
+
+/// Whether new loads are refused because engine memory is full. Consumers that admit work (the
+/// scene lifecycle, the download slots) read it; it never stops what is already running.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Resource)]
+pub struct LoadRefusal {
+    pub refusing: bool,
+}
+
+impl LoadRefusal {
+    /// The state after `reading`. Refusal starts when the reading is `Full` and holds through
+    /// `Warning`, so that a reading hovering at the full threshold does not admit and refuse on
+    /// alternate samples; it ends once the reading is back to `Normal` or `Abundance`. With no
+    /// reading nothing is refused.
+    pub fn next(self, reading: Option<MemoryReading>) -> Self {
+        let refusing = match reading.map(|reading| reading.pressure()) {
+            Some(MemoryPressure::Full) => true,
+            Some(MemoryPressure::Warning) => self.refusing,
+            Some(MemoryPressure::Normal | MemoryPressure::Abundance) | None => false,
+        };
+        Self { refusing }
+    }
+}

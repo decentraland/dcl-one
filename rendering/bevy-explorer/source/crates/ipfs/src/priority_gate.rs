@@ -13,7 +13,7 @@ use std::{
 };
 
 use bevy::log::error;
-use common::partition::LoadPriority;
+use common::partition::{LoadPriority, Tier};
 use tokio::sync::oneshot;
 
 /// A request's place in the queue, taken when a read decides to download and awaited by the
@@ -65,6 +65,8 @@ struct GateState {
     /// hashes whose holders all left while a request of theirs was alive: they rank last until
     /// that request ends or the hash is registered again
     departed: HashSet<String>,
+    /// while set, requests ranked in this tier or a later one wait even when a slot is free
+    held_from: Option<Tier>,
 }
 
 /// The live readers of one logical download, including while it is between attempts.
@@ -275,6 +277,7 @@ impl PriorityGate {
                 waiting: HashMap::new(),
                 scenes: HashMap::new(),
                 departed: HashSet::new(),
+                held_from: None,
             }),
         })
     }
@@ -444,6 +447,23 @@ impl PriorityGate {
         self.state().keys.get(scene).map(|entry| entry.key)
     }
 
+    /// Hold every request ranked in `tier` or a later one: they keep their place in the queue
+    /// but are not granted a slot, even a free one, until the hold is lifted (`None`). Requests
+    /// in earlier tiers are granted as before. Downloads already holding a slot are not stopped.
+    pub fn hold_from(self: &Arc<Self>, tier: Option<Tier>) {
+        let mut state = self.state();
+        if state.held_from == tier {
+            return;
+        }
+        state.held_from = tier;
+        drop(state);
+        self.grant();
+    }
+
+    pub fn held_from(&self) -> Option<Tier> {
+        self.state().held_from
+    }
+
     #[cfg(test)]
     pub fn waiting(&self) -> usize {
         self.state().waiting()
@@ -575,8 +595,11 @@ impl GateState {
         self.no_scene.len() + self.scenes.values().map(BTreeSet::len).sum::<usize>()
     }
 
-    /// The oldest ticket of the best-ranked queue: best key first, then the oldest head.
+    /// The oldest ticket of the best-ranked queue: best key first, then the oldest head. A queue
+    /// ranked in a held tier is passed over; a ticket queued under several owners is granted
+    /// through any of them that is not held.
     fn best(&self) -> Option<u64> {
+        let held = |key: &LoadPriority| self.held_from.is_some_and(|tier| key.tier >= tier);
         self.no_scene
             .first()
             .map(|seq| (LoadPriority::OTHER, *seq))
@@ -586,6 +609,7 @@ impl GateState {
                     .iter()
                     .filter_map(|(hash, queue)| Some((self.rank(hash), *queue.first()?))),
             )
+            .filter(|(key, _)| !held(key))
             .min()
             .map(|(_, seq)| seq)
     }

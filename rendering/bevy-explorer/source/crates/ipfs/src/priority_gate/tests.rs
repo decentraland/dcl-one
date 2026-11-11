@@ -139,6 +139,29 @@ async fn an_unregistered_hash_ranks_after_the_registered_ones() {
 }
 
 #[tokio::test]
+async fn a_held_tier_waits_while_live_scenes_are_granted() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("live", key(5, true, 6400.0))]);
+    gate.hold_from(Some(Tier::Other));
+    let log = Log::default();
+
+    // the slot is free, but the imposter request ranks in the held tier
+    let imposter = reader(&gate, "imposter", gate.ticket(None), &log);
+    settle(&gate, 1).await;
+    // a live scene's request is granted past it
+    reader(&gate, "live", gate.ticket(scene("live")), &log)
+        .await
+        .unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["live"]);
+    assert_eq!(gate.waiting(), 1);
+
+    // lifting the hold grants what waited
+    gate.hold_from(None);
+    imposter.await.unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["live", "imposter"]);
+}
+
+#[tokio::test]
 async fn requests_without_a_scene_rank_after_live_scenes_and_before_departed_ones() {
     let gate = PriorityGate::new(1);
     register(

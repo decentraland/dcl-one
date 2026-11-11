@@ -17,6 +17,7 @@ use bevy::{
 };
 
 use common::{
+    memory::LoadRefusal,
     sets::RealmLifecycle,
     structs::{
         server_mode, AppConfig, AppError, CurrentRealm, EditorMode, GlobalCrdtStateUpdate,
@@ -91,6 +92,7 @@ impl Plugin for SceneLifecyclePlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentImposterScene>();
         app.init_resource::<CurrentSceneLoading>();
+        app.init_resource::<RefusedScenes>();
         app.init_resource::<LiveScenes>();
         app.init_resource::<ScenePointers>();
         app.init_resource::<PortableScenes>();
@@ -1580,6 +1582,11 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
+/// How many scenes in range the lifecycle did not spawn this frame because engine memory is full
+/// ([`LoadRefusal`]); zero while loads are admitted.
+#[derive(Resource, Default)]
+pub struct RefusedScenes(pub usize);
+
 #[expect(clippy::type_complexity, clippy::too_many_arguments)]
 pub fn process_scene_lifecycle(
     mut commands: Commands,
@@ -1603,6 +1610,8 @@ pub fn process_scene_lifecycle(
     preview_mode: Res<PreviewMode>,
     mut current_scene_loading_res: ResMut<CurrentSceneLoading>,
     startup_scenes: Option<Res<StartupScenes>>,
+    load_refusal: Option<Res<LoadRefusal>>,
+    mut refused_scenes: ResMut<RefusedScenes>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
 
@@ -1768,6 +1777,21 @@ pub fn process_scene_lifecycle(
     // would otherwise swamp them for the whole of the load
     if startup_loading {
         required_scene_ids.retain(|scene, super_user| *super_user || portable_ids.contains(scene));
+    }
+
+    // while engine memory is full, admit no new world scene: the player's own scene, portables
+    // and system scenes still spawn. Scenes already spawned are kept and keep loading.
+    refused_scenes.0 = 0;
+    if load_refusal.is_some_and(|refusal| refusal.refusing) {
+        required_scene_ids.retain(|scene, super_user| {
+            let admitted = *super_user
+                || current_scene.as_ref() == Some(scene)
+                || portable_ids.contains(scene);
+            if !admitted && !existing_ids.contains(&scene.0) {
+                refused_scenes.0 += 1;
+            }
+            admitted
+        });
     }
 
     let mut defer_to_current_scene = false;

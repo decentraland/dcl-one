@@ -15,6 +15,7 @@ fn setup_lifecycle(world: &mut World) {
     world.init_resource::<CurrentImposterScene>();
     world.init_resource::<PreviewMode>();
     world.init_resource::<CurrentSceneLoading>();
+    world.init_resource::<RefusedScenes>();
     world.insert_resource(SceneLoadDistance {
         load: 20.0,
         unload: 10.0,
@@ -91,6 +92,38 @@ fn loading_current_scene_defers_other_scenes() {
 
     assert!(world.resource::<CurrentSceneLoading>().0);
     assert!(spawned_hashes(&world).is_empty());
+}
+
+#[test]
+fn full_memory_still_admits_the_players_own_scene() {
+    let mut world = lifecycle_world();
+    world.insert_resource(LoadRefusal { refusing: true });
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    assert_eq!(spawned_hashes(&world), vec!["current".to_owned()]);
+    assert_eq!(world.resource::<RefusedScenes>().0, 1);
+}
+
+#[test]
+fn full_memory_refuses_new_neighbours_until_it_is_lifted() {
+    let mut world = lifecycle_world();
+    // a terminal current scene does not defer its neighbour, so only the refusal holds it
+    let current = spawn_current_scene(&mut world, SceneLoading::Failed);
+    world.insert_resource(LoadRefusal { refusing: true });
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    assert!(spawned_hashes(&world).is_empty());
+    assert_eq!(world.resource::<RefusedScenes>().0, 1);
+    // the scene already spawned is kept
+    assert!(world.get_entity(current).is_ok());
+
+    world.insert_resource(LoadRefusal { refusing: false });
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    assert_eq!(spawned_hashes(&world), vec!["neighbour".to_owned()]);
+    assert_eq!(world.resource::<RefusedScenes>().0, 0);
 }
 
 #[test]

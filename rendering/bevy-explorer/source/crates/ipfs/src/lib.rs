@@ -1166,6 +1166,16 @@ impl IpfsIo {
         self.request_slots.scene_priority(scene)
     }
 
+    /// Hold downloads ranked in `tier` or later (`None` lifts the hold): they keep their place
+    /// but get no request slot until the hold is lifted.
+    pub fn hold_downloads_from(&self, tier: Option<common::partition::Tier>) {
+        self.request_slots.hold_from(tier);
+    }
+
+    pub fn downloads_held_from(&self) -> Option<common::partition::Tier> {
+        self.request_slots.held_from()
+    }
+
     /// Whether a grant before the next frame may read the download priorities: a download
     /// waits for a request slot, or holds one whose release can go to a newcomer.
     pub fn reads_download_priorities(&self) -> bool {
