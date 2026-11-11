@@ -525,6 +525,9 @@ describe('when deciding which files are port inputs', () => {
     ["import notes from './notes.md?raw'", 'a Markdown import with a query'],
     ["import a from './a.md#top'", 'a Markdown import with a fragment'],
     ["glob('./**/*.{md,tsx}')", 'a glob that matches Markdown'],
+    ["globSync('*.md', { cwd: figmaDir })", 'a bare Markdown glob'],
+    ["glob('*.MD')", 'a bare Markdown glob in another case'],
+    ["glob('*.{mdx,md}')", 'a bare brace glob with Markdown'],
     ["await import('./src/a.test.ts')", 'a dynamic import of a test']
   ])('should flag %s as %s', (code) => {
     expect(exemptReferences('library/ui/figma/tool.mjs', code)).not.toEqual([])
@@ -565,6 +568,34 @@ describe('when deciding which files are port inputs', () => {
       'library/ui/figma/figma.config.json names the exempt path "./test/fixtures/lock.json"',
       'library/ui/figma/review/a.css names the exempt path "./../test/x.css"'
     ])
+  })
+
+  it('should catch the validator importing with a space before the parenthesis or after a semicolon', () => {
+    const self = 'library/ui/figma/port-verification.mjs'
+    const problems = (code: string) => scanProblems({ [self]: Buffer.from(code) })
+    expect(problems("const r = await import ('./rule.mjs')\n")).toContain(
+      `${self} imports ./rule.mjs`
+    )
+    expect(problems("const a = 1; import './rule.mjs'\n")).toContain(`${self} imports ./rule.mjs`)
+    expect(problems("  import './rule.mjs'\n")).toContain(`${self} imports ./rule.mjs`)
+  })
+
+  it('should not treat require named in a validator comment as a load', () => {
+    const self = 'library/ui/figma/port-verification.mjs'
+    expect(scanProblems({ [self]: Buffer.from('// never require (x) here\n') })).toEqual([])
+  })
+
+  it('should scan SVG, both ledgers and the Review catalog', () => {
+    const named = (file: string) => ({
+      [file]: Buffer.from('<a href="./test/x.svg"/> "./test/x.json"')
+    })
+    for (const file of [
+      'library/ui/figma/review/src/a.svg',
+      'library/ui/figma/ledger/orphaned-assets.json',
+      'library/ui/figma/ledger/retirements.json',
+      'library/ui/figma/review/src/review/catalog.json'
+    ])
+      expect(scanProblems(named(file))).not.toEqual([])
   })
 
   it('should refuse a validator that loads code or reads an exempt path some other way', () => {

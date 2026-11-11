@@ -69,10 +69,10 @@ const SCANNED_FILES = [
 const STATIC_LITERAL = /(['"`])((?:(?!\1)[^\\\n$])*)\1/g
 // A single-, double- or back-quoted literal on one line; escapes and interpolations stay inside it.
 const LITERAL = /(['"`])((?:\\.|(?!\1)[^\\\n])*)\1/g
-// A regular expression literal after an operator or keyword. A second pass removes it so a quote inside it cannot pair
-// with a later literal; the raw passes still run, so a false match here can only add candidates, never hide one.
-// Comments, removed in the same pass so an apostrophe in one cannot pair with a later quote.
+// Comments, removed in the second pass so an apostrophe in one cannot pair with a later quote.
 const COMMENTS = /\/\*[\s\S]*?\*\/|(^|[^:\\])\/\/[^\n]*/g
+// A regular expression literal after an operator or keyword. The second pass removes it so a quote inside it cannot pair
+// with a later literal; the raw passes still run, so a false match here can only add candidates, never hide one.
 const REGEX_LITERAL =
   /(^|[=(,:[!&|?;>)}]|\b(?:return|typeof))(\s*)\/(?![/*])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[dgimsuyv]*/gm
 
@@ -92,6 +92,13 @@ export function isRecordExempt(file) {
   )
 }
 
+/** Whether a glob token has a brace alternative that is Markdown; linear in the token's length. */
+function braceHasMarkdown(token) {
+  for (const group of token.matchAll(/\{([^{}]*)\}/g))
+    if (group[1].split(',').some((choice) => /^\.?md$/i.test(choice.trim()))) return true
+  return false
+}
+
 /** Whether one token (a piece with no whitespace) names an exempt file, seen from `file`. */
 function tokenNamesExempt(file, token, exemptNames, markdown) {
   const bare = token.replace(/[?#].*$/, '')
@@ -106,7 +113,8 @@ function tokenNamesExempt(file, token, exemptNames, markdown) {
     /\.(?:test|spec)\.[^/]+$/i.test(base) ||
     exemptNames.has(base) ||
     (markdown && pathLike && /\.md$/i.test(bare)) ||
-    (/\*\*|\*\.[\w{]/.test(bare) && (pathLike || /\{[^}]*\bmd\b[^}]*\}/i.test(bare))) ||
+    (/\*\*|\*\.[\w{]/.test(bare) &&
+      (pathLike || /\*\.md$/i.test(bare) || braceHasMarkdown(bare))) ||
     /^(?:test|fixtures|__tests__)$/.test(bare) ||
     (bare.includes('/') && /(?:^|\/)(?:test|fixtures|__tests__)(?:\/|$)/i.test(bare))
   )
@@ -130,8 +138,8 @@ function namesExempt(file, piece, exemptNames) {
  * The string literals in `text` (the source of `file`) that name an exempt file: a relative path into one, a test or
  * spec basename, the basename of a tracked exempt Markdown file, a path-like Markdown name, a path-like glob, or a test
  * directory segment. Query strings and fragments are ignored; each static piece of a template literal is checked on its
- * own. Literals are extracted four ways (with and without interpolations, each on the raw text and with regex literals
- * removed) and every way only adds candidates. This is a tripwire, not a proof: a path built by concatenation or at run
+ * own. Literals are extracted four ways (with and without interpolations, each on the raw text and with comments and
+ * regex literals removed) and every way only adds candidates. This is a tripwire, not a proof: a path built by concatenation or at run
  * time is not seen, and an apostrophe in JSX text can still pair with a later quote on the same line.
  */
 export function exemptReferences(file, text, exemptNames = new Set()) {
@@ -171,10 +179,14 @@ export function scanProblems(blobs) {
     const text = content.toString('utf8')
     if (file === SELF) {
       for (const match of text.matchAll(
-        /(?:\bfrom\s*['"]|^import\s*['"]|\bimport\(\s*['"`])([^'"`]+)['"`]/gm
+        /(?:\bfrom\s*['"]|(?:^|[;{}])\s*import\s*['"]|\bimport\s*\(\s*['"`])([^'"`]+)['"`]/gm
       ))
         if (!SELF_IMPORTS.includes(match[1])) problems.push(`${file} imports ${match[1]}`)
-      if (/\b(?:createRequire|require)\s*\(/.test(text))
+      if (
+        /\b(?:createRequire|require)\s*\(/.test(
+          text.replace(COMMENTS, (comment, before = '') => before)
+        )
+      )
         problems.push(`${file} loads modules with require`)
     }
     for (const literal of exemptReferences(file, text, exemptNames))
