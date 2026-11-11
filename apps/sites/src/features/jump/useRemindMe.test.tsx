@@ -72,6 +72,24 @@ describe("useRemindMe", () => {
     expect(hook.result.current.active).toBe(true);
   });
 
+  it("should remove the reminder with a DELETE and re-read the flag after it settles", async () => {
+    attendingReply(true);
+    http.postJSON.mockResolvedValue(undefined);
+    const { hook } = setup(identity);
+    await waitFor(() => expect(hook.result.current.active).toBe(true));
+    const readsBefore = http.signedGetJSON.mock.calls.length;
+    attendingReply(false);
+    act(() => hook.result.current.toggle());
+    await waitFor(() => expect(hook.result.current.pending).toBe(false));
+    expect(http.postJSON).toHaveBeenCalledWith("/events/api/events/e1/attendees", undefined, {
+      identity,
+      method: "DELETE",
+      signal: undefined,
+    });
+    await waitFor(() => expect(http.signedGetJSON.mock.calls.length).toBeGreaterThan(readsBefore));
+    expect(hook.result.current.active).toBe(false);
+  });
+
   it("should restore the previous flag when the save fails", async () => {
     attendingReply(true);
     http.postJSON.mockRejectedValue(new Error("401"));

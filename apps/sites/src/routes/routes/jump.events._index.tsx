@@ -13,6 +13,8 @@ import { loadCreator, loadJumpEvent, loadJumpPlace } from "@/data/lib/catalyst/j
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { useLocalWhen } from "@/features/jump/useLocalWhen";
 import { useRemindMe } from "@/features/jump/useRemindMe";
+import { detectPlatform } from "@/features/download/options";
+import { jumpInFor, mobileLaunch } from "@/features/jump/mobileLaunch";
 import { cardProps, eventActionState } from "@/features/jump/view";
 
 import type { Route } from "./+types/jump.events._index";
@@ -24,12 +26,14 @@ export function meta() {
 const INVALID = "/jump/events/invalid";
 const EVENTS_HREF = "/whats-on";
 
-/** An unknown id, a malformed position, no event at the target or a failed read lands on the invalid page. */
+/** An unknown id, a malformed position or no event at the target lands on the invalid page; a failed read is a 503. */
 export async function loader({ request }: Route.LoaderArgs) {
   const target = readJumpTarget(new URL(request.url).searchParams);
   if (!target.id && !target.validPosition) throw redirect(INVALID);
   const opts = { signal: request.signal };
-  const event = await loadJumpEvent(target, opts).catch(() => null);
+  const event = await loadJumpEvent(target, opts).catch(() => {
+    throw new Response("Events are temporarily unavailable", { status: 503 });
+  });
   if (!event) throw redirect(INVALID);
   let card = toEventCard(event);
   const [creator, place] = await Promise.all([
@@ -42,7 +46,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   if (place?.user_count) card = { ...card, userCount: place.user_count };
   // The public site origin when configured, else the origin this request reached.
   const configured = siteUrl("/");
-  const shareUrl = eventShareUrl(/^https?:\/\//.test(configured) ? configured : new URL(request.url).origin, card);
+  const shareUrl = eventShareUrl(/^https?:\/\//.test(configured) ? configured : new URL(request.url).origin, event.id, card);
   return {
     eventId: event.id,
     card: cardProps(card, creator),
@@ -55,11 +59,17 @@ export async function loader({ request }: Route.LoaderArgs) {
         )
       : null,
     shareText: { title: card.title, text: card.description },
+    launch: mobileLaunch(detectPlatform(request.headers.get("user-agent")), card),
   };
 }
 
+/** The launch target depends on the visitor's device. */
+export function headers() {
+  return { Vary: "User-Agent" };
+}
+
 export default function JumpEvents({ loaderData }: Route.ComponentProps) {
-  const { eventId, card, state, shareUrl, calendarHref, shareText } = loaderData;
+  const { eventId, card, state, shareUrl, calendarHref, shareText, launch } = loaderData;
   const { identity } = useAuth();
   const remind = useRemindMe(identity, eventId, () => openSignIn({ inPlace: true }));
   const [shareNotice, setShareNotice] = useState<string>();
@@ -84,7 +94,7 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
   const when = useLocalWhen(card.when);
 
   const actions =
-    state === "live" ? undefined : state === "none" ? null : state === "deleted" || state === "ended" ? (
+    state === "live" || state === "none" ? undefined : state === "deleted" || state === "ended" ? (
       <JumpEventActions state={state} eventsHref={EVENTS_HREF} />
     ) : (
       <JumpEventActions
@@ -92,14 +102,14 @@ export default function JumpEvents({ loaderData }: Route.ComponentProps) {
         calendarHref={calendarHref ?? undefined}
         remind={{ active: remind.active, pending: remind.pending, onToggle: remind.toggle }}
         onShare={share}
-        shareNotice={remind.failed ? "Couldn't update your reminder. Try again." : shareNotice}
+        shareNotice={[remind.failed ? "Couldn't update your reminder. Try again." : null, shareNotice].filter(Boolean).join(" ") || undefined}
       />
     );
 
   return (
     <SitesChrome active="play">
       <JumpPage>
-        <JumpCard {...card} when={when} actions={actions} />
+        <JumpCard {...card} {...jumpInFor(card.jumpInHref, launch)} when={when} actions={actions} />
       </JumpPage>
     </SitesChrome>
   );

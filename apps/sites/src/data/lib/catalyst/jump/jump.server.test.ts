@@ -56,7 +56,7 @@ describe("loadJumpPlace", () => {
 
   it("should read the World-level record when a World link has no position", async () => {
     const { opts, urls } = stub([["/places/api/worlds", json({ data: [placeRow()] })]]);
-    await loadJumpPlace({ lookup: undefined, realm: "Foo.dcl.eth" }, opts);
+    await loadJumpPlace({ lookup: undefined, realm: "foo.dcl.eth" }, opts);
     expect(urls).toEqual(["https://node.example/places/api/worlds?names=foo.dcl.eth"]);
   });
 
@@ -153,11 +153,19 @@ describe("loadJumpEvent", () => {
     await expect(loadJumpEvent({ id: "e1", coordinates: [0, 0], realm: undefined }, opts)).rejects.toThrow();
   });
 
-  it("should pick the first valid event at a World parcel", async () => {
+  it("should look up a World's events by its name", async () => {
     const { opts, urls } = stub([["/events/v1/events?", json({ ok: true, data: [{ id: "broken" }, eventRow] })]]);
     await expect(loadJumpEvent({ id: null, coordinates: [5, -3], realm: "foo.dcl.eth" }, opts)).resolves.toMatchObject({ id: "e1" });
     expect(urls[0]).toContain("position=5%2C-3");
     expect(urls[0]).toContain("world_names=foo.dcl.eth");
+    expect(urls[0]).not.toContain("world=false");
+  });
+
+  it("should keep World events out of a Genesis City parcel", async () => {
+    const { opts, urls } = stub([["/events/v1/events?", json({ ok: true, data: [eventRow] })]]);
+    await loadJumpEvent({ id: null, coordinates: [0, 0], realm: undefined }, opts);
+    expect(urls[0]).toContain("world=false");
+    expect(urls[0]).not.toContain("world_names");
   });
 
   it("should return null when no event is at the parcel", async () => {

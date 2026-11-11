@@ -1,7 +1,8 @@
 import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
-import { attendingQuery, jumpKeys, JUMP_STALE_MS, saveAttending } from "@/data/lib/catalyst/jump/attendance";
+import { attendingQuery, jumpKeys, JUMP_STALE_MS } from "@/data/lib/catalyst/jump/attendance";
+import { writeAttendance } from "@/data/lib/catalyst/places/attendance";
 
 type Toggle = { identity: AuthIdentity; eventId: string; attending: boolean };
 
@@ -18,7 +19,7 @@ export function useRemindMe(identity: AuthIdentity | null, eventId: string, onSi
       : { queryKey: jumpKeys.attending("", eventId), queryFn: skipToken, staleTime: JUMP_STALE_MS },
   );
   const mutation = useMutation({
-    mutationFn: ({ identity, eventId, attending }: Toggle) => saveAttending(identity, eventId, attending),
+    mutationFn: ({ identity, eventId, attending }: Toggle) => writeAttendance(identity, eventId, attending),
     onMutate: async ({ identity, eventId, attending }: Toggle) => {
       const key = jumpKeys.attending(identity.signer, eventId);
       await client.cancelQueries({ queryKey: key });

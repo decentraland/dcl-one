@@ -6,7 +6,3 @@ import type { Route } from "./+types/jump.event";
 export function loader({ request }: Route.LoaderArgs) {
   return redirect(`/jump/events${new URL(request.url).search}`, 308);
 }
-
-export default function JumpEventMoved() {
-  return null;
-}

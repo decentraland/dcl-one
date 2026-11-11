@@ -1,7 +1,7 @@
 import { sceneTravelHref } from "../places/world-scenes";
 
-export const DEFAULT_POSITION = "0,0";
-export const DEFAULT_REALM = "main";
+const DEFAULT_POSITION = "0,0";
+const DEFAULT_REALM = "main";
 
 export type ParsedPosition = { coordinates: [number, number]; isValid: boolean };
 
@@ -28,17 +28,21 @@ export type JumpTarget = {
   validPosition: boolean;
   /** The pair to look up, or undefined for a World link without one (the World-level record). */
   lookup: [number, number] | undefined;
-  /** Undefined for Genesis City (`main` or no realm). */
+  /** A lowercase World name, or undefined for Genesis City. */
   realm: string | undefined;
   id: string | null;
 };
 
-/** `?world=` is the alias older clients emit for `?realm=`. */
+/**
+ * `?world=` is the alias older clients emit for `?realm=`. Only a World name is a realm here: anything
+ * else (`main`, a server name, a URL) is Genesis City, so a link can never point the explorer at a
+ * realm of its choosing.
+ */
 export function readJumpTarget(params: URLSearchParams): JumpTarget {
   const rawPosition = params.get("position");
   const parsed = parsePosition(rawPosition ?? DEFAULT_POSITION);
-  const realmParam = params.get("realm") ?? params.get("world") ?? DEFAULT_REALM;
-  const realm = realmParam === DEFAULT_REALM ? undefined : realmParam;
+  const realmParam = (params.get("realm") ?? params.get("world") ?? DEFAULT_REALM).trim().toLowerCase();
+  const realm = isEnsRealm(realmParam) ? realmParam : undefined;
   return {
     coordinates: parsed.coordinates,
     validPosition: parsed.isValid,
@@ -129,7 +133,7 @@ export type JumpEventRecord = {
 };
 
 /** A World event travels to its server; a Genesis City one to its parcel. */
-export function eventRealm(event: Pick<JumpEventRecord, "world" | "server">): string | undefined {
+function eventRealm(event: Pick<JumpEventRecord, "world" | "server">): string | undefined {
   return event.world && event.server ? event.server : undefined;
 }
 
@@ -188,9 +192,10 @@ export function jumpTravelHref(card: Pick<JumpCard, "coordinates" | "realm">): s
   return sceneTravelHref(card.realm ?? null, card.coordinates.join(","));
 }
 
-/** The link an event is shared and added to calendars with. */
-export function eventShareUrl(origin: string, card: Pick<JumpCard, "coordinates" | "realm">): string {
+/** The link an event is shared and added to calendars with; the id keeps it on this event when others share its parcel. */
+export function eventShareUrl(origin: string, eventId: string, card: Pick<JumpCard, "coordinates" | "realm">): string {
   const url = new URL("/jump/events", origin);
+  url.searchParams.set("id", eventId);
   url.searchParams.set("position", card.coordinates.join(","));
   if (card.realm) url.searchParams.set("realm", card.realm);
   return url.toString();

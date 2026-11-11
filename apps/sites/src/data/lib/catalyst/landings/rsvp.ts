@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { okDataTotalOf } from "../envelope";
-import { writeAttendance } from "../places/events";
+import { writeAttendance } from "../places/attendance";
 import type { AuthIdentity } from "../../auth/types";
 import type {
   CommitFn,

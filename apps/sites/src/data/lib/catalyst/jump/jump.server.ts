@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { CatalystError, catalystBase, getJSON, worldsBase, type GetOptions } from "../client";
+import { CatalystError, catalystBase, errorFromResponse, getJSON, worldsBase, type GetOptions } from "../client";
 import { EventRecordSchema } from "../generated-schemas/events";
 import { fetchEvent, fetchEvents } from "../places/events";
 import { fetchProfile } from "../social/profile";
@@ -16,7 +16,7 @@ const PlaceRow = z.object({
   owner: z.string().nullable().catch(null),
   contact_name: z.string().nullable().catch(null),
   user_count: z.number().nullable().catch(null),
-  world: z.boolean().catch(false),
+  world: z.boolean(),
   world_name: z.string().nullable().catch(null),
 });
 const PlaceList = z.object({ data: z.array(z.unknown()) });
@@ -45,7 +45,7 @@ export async function loadJumpPlace(
   const { lookup, realm } = target;
   const positions = lookup ? lookup.join(",") : undefined;
   if (realm && isEnsRealm(realm)) {
-    const names = realm.toLowerCase();
+    const names = realm;
     if (!positions) return parsePlaces(await getJSON(WORLDS, { ...opts, query: { names } }))[0] ?? null;
     const [scene] = parsePlaces(await getJSON(PLACES, { ...opts, query: { names, positions } }));
     if (!scene) return null;
@@ -60,7 +60,7 @@ export async function loadJumpPlace(
 const ActiveEntities = z.array(
   z.object({ id: z.string(), metadata: z.object({ owner: z.string().optional() }).passthrough().optional() }).passthrough(),
 );
-export type ActiveEntity = z.infer<typeof ActiveEntities>[number];
+type ActiveEntity = z.infer<typeof ActiveEntities>[number];
 
 async function postActiveEntity(url: string, pointer: string, opts: GetOptions): Promise<ActiveEntity | null> {
   const res = await (opts.fetchImpl ?? fetch)(url, {
@@ -69,10 +69,7 @@ async function postActiveEntity(url: string, pointer: string, opts: GetOptions):
     body: JSON.stringify({ pointers: [pointer] }),
     signal: opts.signal,
   });
-  if (!res.ok) {
-    await res.body?.cancel();
-    throw new CatalystError(`Active entity lookup answered ${res.status}`, url, res.status);
-  }
+  if (!res.ok) throw await errorFromResponse(res, url);
   return ActiveEntities.parse(await res.json())[0] ?? null;
 }
 
@@ -124,12 +121,13 @@ const JumpEventRow = EventRecordSchema.pick({
   deleted_by_admin: true,
 });
 
-function toJumpEvent(event: unknown): JumpEventRecord | null {
-  const parsed = JumpEventRow.safeParse(event);
-  return parsed.success ? parsed.data : null;
-}
+/** The events client has already validated the whole record; this keeps only what a card reads. */
+const toJumpEvent = (event: unknown): JumpEventRecord => JumpEventRow.parse(event);
 
-/** The event a link names: by id, else the first one at the link's parcel or World. Null when none. */
+/**
+ * The event a link names: by id, else the first one at the link's World or Genesis City parcel. A
+ * Genesis City lookup excludes World events, which mostly sit at 0,0 too. Null when there is none.
+ */
 export async function loadJumpEvent(
   target: { id: string | null; coordinates: [number, number]; realm: string | undefined },
   opts: GetOptions = {},
@@ -142,10 +140,8 @@ export async function loadJumpEvent(
       throw error;
     }
   }
-  const { data } = await fetchEvents({ position: target.coordinates.join(","), world_names: target.realm }, opts);
-  for (const event of data) {
-    const row = toJumpEvent(event);
-    if (row) return row;
-  }
-  return null;
+  const position = target.coordinates.join(",");
+  const params = target.realm ? { position, world_names: target.realm } : { position, world: false };
+  const [first] = (await fetchEvents(params, opts)).data;
+  return first ? toJumpEvent(first) : null;
 }

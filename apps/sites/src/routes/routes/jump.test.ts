@@ -15,7 +15,8 @@ import { loader as placesLoader } from "./jump.places._index";
 
 const WALLET = "0x" + "ab".repeat(20);
 
-const args = (path: string) => ({ request: new Request(`https://site.example${path}`) }) as never;
+const args = (path: string, userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0)") =>
+  ({ request: new Request(`https://site.example${path}`, { headers: { "user-agent": userAgent } }) }) as never;
 
 async function redirectOf(load: Promise<unknown>) {
   const thrown = await load.then(
@@ -99,11 +100,17 @@ describe("/jump/places loader", () => {
     expect(server.loadParcelCreator).not.toHaveBeenCalled();
   });
 
-  it("should send a failed catalogue read to the invalid page", async () => {
+  it("should answer a failed catalogue read with 503, not the invalid page", async () => {
     server.loadJumpPlace.mockRejectedValue(new Error("500"));
-    await expect(redirectOf(placesLoader(args("/jump/places?position=1,2")))).resolves.toMatchObject({
-      location: "/jump/places/invalid",
-    });
+    await expect(redirectOf(placesLoader(args("/jump/places?position=1,2")))).resolves.toEqual({ status: 503, location: null });
+  });
+
+  it("should treat a realm that is not a World name as Genesis City", async () => {
+    server.loadJumpPlace.mockResolvedValue(null);
+    const data = await placesLoader(args("/jump?realm=https://evil.example&position=1,2"));
+    expect(server.loadWorldEntity).not.toHaveBeenCalled();
+    expect(data.card.location).toEqual({ world: undefined, parcel: "1, 2" });
+    expect(data.card.jumpInHref).not.toContain("evil");
   });
 
   it("should render a generic card for an uncatalogued parcel", async () => {
@@ -119,6 +126,15 @@ describe("/jump/places loader", () => {
     const data = await placesLoader(args("/jump/places?position=10,20"));
     expect(data.card.creator).toMatchObject({ name: "builder", href: `/profile/${WALLET}` });
     expect(data.card.badge).toEqual({ kind: "players", count: 3 });
+  });
+
+  it("should open the web explorer on desktop and the app on a phone", async () => {
+    server.loadJumpPlace.mockResolvedValue(placeRow);
+    await expect(placesLoader(args("/jump/places?position=10,20"))).resolves.toMatchObject({ launch: null });
+    const android = await placesLoader(args("/jump/places?position=10,20", "Mozilla/5.0 (Linux; Android 15; Pixel 9)"));
+    expect(android.launch).toMatchObject({ android: true, href: expect.stringMatching(/^intent:\/\/open\?position=10%2C20#Intent;/) });
+    const ios = await placesLoader(args("/jump/places?position=10,20", "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"));
+    expect(ios.launch).toMatchObject({ android: false, href: "decentraland://open?position=10%2C20" });
   });
 
   it("should keep the catalogue contact when the deployer lookup fails", async () => {
@@ -143,11 +159,21 @@ describe("/jump/events loader", () => {
     });
   });
 
-  it("should send a failed events read to the invalid page", async () => {
+  it("should answer a failed events read with 503, not the invalid page", async () => {
     server.loadJumpEvent.mockRejectedValue(new Error("500"));
-    await expect(redirectOf(eventsLoader(args("/jump/events?id=e1")))).resolves.toMatchObject({
-      location: "/jump/events/invalid",
-    });
+    await expect(redirectOf(eventsLoader(args("/jump/events?id=e1")))).resolves.toEqual({ status: 503, location: null });
+  });
+
+  it("should share and calendar the event by its id", async () => {
+    server.loadJumpEvent.mockResolvedValue(eventRow);
+    const data = await eventsLoader(args("/jump/events?position=5,-3"));
+    expect(new URL(data.shareUrl).searchParams.get("id")).toBe("e1");
+    expect(data.calendarHref).toContain(encodeURIComponent("id=e1"));
+  });
+
+  it("should still show a deleted event's notice when it has no start", async () => {
+    server.loadJumpEvent.mockResolvedValue({ ...eventRow, next_start_at: null, deleted_by_admin: true });
+    await expect(eventsLoader(args("/jump/events?id=e1"))).resolves.toMatchObject({ state: "deleted" });
   });
 
   it("should offer the upcoming actions with a calendar link", async () => {

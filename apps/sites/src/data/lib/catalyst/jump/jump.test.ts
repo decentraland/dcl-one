@@ -76,6 +76,12 @@ describe("readJumpTarget", () => {
     expect(readJumpTarget(new URLSearchParams("realm=main&position=1,2")).realm).toBeUndefined();
   });
 
+  it("should read only a World name as a realm, lowercased", () => {
+    expect(readJumpTarget(new URLSearchParams("realm=Foo.DCL.eth")).realm).toBe("foo.dcl.eth");
+    expect(readJumpTarget(new URLSearchParams("realm=https://evil.example")).realm).toBeUndefined();
+    expect(readJumpTarget(new URLSearchParams("world=brai")).realm).toBeUndefined();
+  });
+
   it("should accept ?world= as the realm alias", () => {
     expect(readJumpTarget(new URLSearchParams("world=foo.dcl.eth")).realm).toBe("foo.dcl.eth");
   });
@@ -151,9 +157,9 @@ describe("eventHasEnded", () => {
 });
 
 describe("eventShareUrl", () => {
-  it("should link the event's parcel and realm on /jump/events", () => {
-    expect(eventShareUrl("https://site.example", { coordinates: [5, -3], realm: "foo.dcl.eth" })).toBe(
-      "https://site.example/jump/events?position=5%2C-3&realm=foo.dcl.eth",
+  it("should link the event itself, with its parcel and realm, on /jump/events", () => {
+    expect(eventShareUrl("https://site.example", "e1", { coordinates: [5, -3], realm: "foo.dcl.eth" })).toBe(
+      "https://site.example/jump/events?id=e1&position=5%2C-3&realm=foo.dcl.eth",
     );
   });
 });

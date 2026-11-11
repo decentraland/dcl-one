@@ -13,7 +13,7 @@ import type { JumpCreator } from "@/data/lib/catalyst/jump/jump.server";
 /** The serializable part of the card; event actions are added by the page. */
 export type JumpCardView = Omit<JumpCardProps, "actions">;
 
-export function profileHref(address: string): string {
+function profileHref(address: string): string {
   return `/profile/${encodeURIComponent(address.toLowerCase())}`;
 }
 
@@ -23,7 +23,8 @@ export function profileHref(address: string): string {
  */
 export function cardProps(card: JumpCard, creator: JumpCreator | null, now = Date.now()): JumpCardView {
   const address = creator?.address ?? card.creatorAddress;
-  const foundation = card.kind === "place" && card.creatorName === FOUNDATION_CONTACT_NAME;
+  // The Decentraland mark belongs to the catalogue's Foundation credit, not to a deployer that replaced it.
+  const foundation = !creator && card.kind === "place" && card.creatorName === FOUNDATION_CONTACT_NAME;
   const props: JumpCardView = {
     kind: card.kind,
     title: card.title,
@@ -59,8 +60,8 @@ export type EventActionState = "none" | "deleted" | "ended" | "live" | "upcoming
 /** An event without a start offers nothing to plan for: only Jump In while it is live. */
 export function eventActionState(card: JumpCard, now = Date.now()): EventActionState {
   if (!card.event) return "none";
-  if (!card.event.startAt) return card.event.live ? "live" : "none";
   if (card.event.deleted) return "deleted";
+  if (!card.event.startAt) return card.event.live ? "live" : "none";
   if (card.event.live) return "live";
   return eventHasEnded(card.event.finishAt, now) ? "ended" : "upcoming";
 }

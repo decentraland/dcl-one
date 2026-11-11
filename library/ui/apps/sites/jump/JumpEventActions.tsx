@@ -58,7 +58,7 @@ function JumpEventActions(props: JumpEventActionsProps) {
         <GeneralBell size={16} aria-hidden="true" />
         Remind me
       </Button>
-      <Button variant="iconOnly" aria-label="Share" onClick={onShare}>
+      <Button variant="inverse" aria-label="Share" onClick={onShare} className={styles.share}>
         <MenusShare size={16} aria-hidden="true" />
       </Button>
       <span className={styles.status} role="status">

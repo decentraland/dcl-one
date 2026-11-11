@@ -1,3 +1,4 @@
+import { useId } from 'react'
 import { GeneralHome, GeneralJumpIn } from '../../../foundations/icons'
 import { Button } from '../shared/Button/Button'
 import styles from './JumpInvalid.module.css'
@@ -11,9 +12,10 @@ type JumpInvalidProps = {
 
 /** The landing for a jump link that resolves to nothing. */
 function JumpInvalid({ kind, jumpInHref, eventsHref, homeHref }: JumpInvalidProps) {
+  const titleId = useId()
   return (
-    <section className={styles.root} aria-labelledby="jump-invalid-title">
-      <h1 className={styles.title} id="jump-invalid-title">
+    <section className={styles.root} aria-labelledby={titleId}>
+      <h1 className={styles.title} id={titleId}>
         Oops!
       </h1>
       <p className={`${styles.message} ${styles.desktopOnly}`}>

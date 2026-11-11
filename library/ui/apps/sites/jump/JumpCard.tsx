@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useId, type MouseEvent, type ReactNode } from 'react'
 import {
   GeneralBell,
   GeneralJumpIn,
@@ -6,7 +6,7 @@ import {
   GeneralMapPin,
   GeneralPlayers,
   GeneralTime,
-  GeneralWorldsColor
+  GeneralPublic
 } from '../../../foundations/icons'
 import creatorPlaceholder from '../assets/jump/card-creator-placeholder.webp'
 import decentralandLogo from '../assets/dcl-logo.svg'
@@ -34,6 +34,8 @@ type JumpCardProps = {
   badge?: JumpCardBadge
   /** Where Jump In travels to; omitted when the card shows no Jump In. */
   jumpInHref?: string
+  /** Runs on Jump In before the link navigates, for launches the link alone cannot complete. */
+  onJumpIn?: (event: MouseEvent<HTMLAnchorElement>) => void
   /** Replaces Jump In, for event actions. */
   actions?: ReactNode
 }
@@ -79,31 +81,38 @@ function JumpCard({
   when,
   badge,
   jumpInHref,
+  onJumpIn,
   actions
 }: JumpCardProps) {
+  const titleId = useId()
   const imageSrc = image || (kind === 'event' ? eventPlaceholder : placePlaceholder)
+  const imageKind = kind === 'event' ? 'event' : 'place'
   const bottom =
     actions ??
     (jumpInHref ? (
-      <Button href={jumpInHref} className={styles.jumpIn}>
+      <Button href={jumpInHref} onClick={onJumpIn} className={styles.jumpIn}>
         Jump In
         <GeneralJumpIn size={20} aria-hidden="true" />
       </Button>
     ) : null)
 
   return (
-    <article className={styles.root} aria-labelledby="jump-card-title">
+    <article className={styles.root} aria-labelledby={titleId}>
       <div className={styles.media}>
         <img
           className={styles.image}
           src={imageSrc}
-          alt={`${title} ${kind === 'event' ? 'event' : 'place'} image`}
+          alt={
+            title
+              ? `${title} ${imageKind} image`
+              : `${imageKind === 'event' ? 'Event' : 'Place'} image`
+          }
         />
         {badge ? <Badge badge={badge} /> : null}
       </div>
       <div className={styles.body}>
         <div className={styles.content}>
-          <h1 className={styles.title} id="jump-card-title">
+          <h1 className={styles.title} id={titleId}>
             {title}
           </h1>
           <p className={styles.creator}>
@@ -129,21 +138,25 @@ function JumpCard({
           </p>
           <div className={styles.meta}>
             {when ? (
-              <span className={when.ended ? styles.ended : styles.metaItem}>
+              <span className={when.ended ? styles.ended : styles.chip}>
                 <GeneralTime size={16} aria-hidden="true" />
                 {when.dateTime ? <time dateTime={when.dateTime}>{when.label}</time> : when.label}
               </span>
             ) : null}
-            <span
-              className={styles.metaItem}
-              aria-label={location.world ? `World: ${location.world}` : undefined}
-            >
+            <span className={styles.chip}>
               {location.world ? (
-                <GeneralWorldsColor size={16} aria-hidden="true" />
+                <>
+                  <GeneralPublic size={16} aria-hidden="true" />
+                  <span className={styles.visuallyHidden}>World: </span>
+                  {location.world}
+                </>
               ) : (
-                <GeneralMapPin size={16} aria-hidden="true" />
+                <>
+                  <GeneralMapPin size={16} aria-hidden="true" />
+                  <span className={styles.visuallyHidden}>Parcel: </span>
+                  {location.parcel}
+                </>
               )}
-              {location.world ?? location.parcel}
             </span>
           </div>
           <p className={styles.description}>{description || DEFAULT_DESCRIPTION}</p>

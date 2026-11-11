@@ -1,10 +1,12 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { JumpCard } from "@dcl/one-ui/apps/sites/jump/JumpCard";
 import { JumpEventActions } from "@dcl/one-ui/apps/sites/jump/JumpEventActions";
 import { JumpInvalid } from "@dcl/one-ui/apps/sites/jump/JumpInvalid";
+import { JumpPage } from "@dcl/one-ui/apps/sites/jump/JumpPage";
 
 vi.hoisted(() =>
   Object.assign(window, {
@@ -30,11 +32,23 @@ describe("JumpCard", () => {
     expect(screen.getByRole("link", { name: /Jump In/ }).getAttribute("href")).toBe("/play/?position=10%2C20");
   });
 
+  it("should run the Jump In handler on click", async () => {
+    const onJumpIn = vi.fn((event: { preventDefault(): void }) => event.preventDefault());
+    render(<JumpCard {...base} jumpInHref="decentraland://open" onJumpIn={onJumpIn} />);
+    await userEvent.setup().click(screen.getByRole("link", { name: /Jump In/ }));
+    expect(onJumpIn).toHaveBeenCalledOnce();
+  });
+
   it("should link the creator to their profile only when an address is known", () => {
     const { rerender } = render(<JumpCard {...base} creator={{ name: "Studio", href: "/profile/0xab" }} />);
     expect(screen.getByRole("link", { name: "View Studio's profile" }).getAttribute("href")).toBe("/profile/0xab");
     rerender(<JumpCard {...base} />);
     expect(screen.queryByRole("link", { name: /profile/ })).toBeNull();
+  });
+
+  it("should describe the placeholder image when the title is empty", () => {
+    render(<JumpCard {...base} title="" />);
+    expect(screen.getByRole("img", { name: "Place image" })).toBeTruthy();
   });
 
   it("should fall back to the default description", () => {
@@ -44,7 +58,7 @@ describe("JumpCard", () => {
 
   it("should label a World location", () => {
     render(<JumpCard {...base} location={{ world: "foo.dcl.eth", parcel: "0, 0" }} />);
-    expect(screen.getByLabelText("World: foo.dcl.eth")).toBeTruthy();
+    expect(screen.getByText("World:", { exact: false }).parentElement?.textContent).toBe("World: foo.dcl.eth");
   });
 
   it("should render the actions instead of Jump In", () => {
@@ -64,7 +78,7 @@ describe("JumpCard", () => {
 });
 
 describe("JumpEventActions", () => {
-  it("should toggle Remind me and expose its pressed state", () => {
+  it("should toggle Remind me and expose its pressed state", async () => {
     const onToggle = vi.fn();
     render(
       <JumpEventActions
@@ -76,7 +90,7 @@ describe("JumpEventActions", () => {
     );
     const remind = screen.getByRole("button", { name: "Remind me" });
     expect(remind.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(remind);
+    await userEvent.setup().click(remind);
     expect(onToggle).toHaveBeenCalledOnce();
     expect(screen.getByRole("link", { name: "Add to calendar" }).getAttribute("target")).toBe("_blank");
   });
@@ -87,7 +101,7 @@ describe("JumpEventActions", () => {
     expect(screen.queryByRole("link", { name: "Add to calendar" })).toBeNull();
   });
 
-  it("should share and announce the notice", () => {
+  it("should share and announce the notice", async () => {
     const onShare = vi.fn();
     render(
       <JumpEventActions
@@ -97,7 +111,7 @@ describe("JumpEventActions", () => {
         shareNotice="Link copied to clipboard."
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: "Share" }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Share" }));
     expect(onShare).toHaveBeenCalledOnce();
     expect(screen.getByRole("status").textContent).toBe("Link copied to clipboard.");
   });
@@ -129,5 +143,35 @@ describe("JumpInvalid", () => {
     expect(screen.getByRole("heading", { name: "Oops!" })).toBeTruthy();
     expect(screen.getByRole("link", { name: /Jump into Decentraland/ }).getAttribute("href")).toBe("/play/");
     expect(screen.getByRole("link", { name: /Go to Homepage/ }).getAttribute("href")).toBe("/");
+  });
+});
+
+describe("JumpPage", () => {
+  it("should render its content over a decorative background that stays still without WebGL", () => {
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
+    const { container } = render(
+      <JumpPage>
+        <p>Card</p>
+      </JumpPage>,
+    );
+    expect(screen.getByRole("main").textContent).toBe("Card");
+    expect(container.querySelector("[aria-hidden] canvas")).toBeTruthy();
+    expect(getContext).toHaveBeenCalledWith("webgl", { alpha: false, antialias: false });
+    getContext.mockRestore();
+  });
+
+  it("should skip the animation when the visitor prefers reduced motion", () => {
+    const matchMedia = vi.fn().mockReturnValue({ matches: true });
+    Object.assign(window, { matchMedia });
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, "getContext");
+    render(
+      <JumpPage>
+        <p>Card</p>
+      </JumpPage>,
+    );
+    expect(matchMedia).toHaveBeenCalledWith("(prefers-reduced-motion: reduce)");
+    expect(getContext).not.toHaveBeenCalled();
+    getContext.mockRestore();
+    Object.assign(window, { matchMedia: undefined });
   });
 });
