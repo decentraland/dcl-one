@@ -45,8 +45,8 @@
   "modules": [
     {
       "path": "library/ui/figma/component-generation.mjs",
-      "sha256": "4aeba8543745dd53637e53ac4fb91bddf5bebfcb766882f5578aa35bf1e7e17f",
-      "indexBlobSha": "23474ea7121ac024d89126d4e7365863469bd411"
+      "sha256": "3410e9530daf2c43331cef8f6148a4c7c7001474f752b2f900b58ffb4c69353c",
+      "indexBlobSha": "4279597f95c2adea3dcd41c781c548e7181c78e0"
     },
     {
       "path": "library/ui/figma/key-guard.d.mts",
@@ -210,8 +210,8 @@
     },
     {
       "path": "library/ui/figma/src/contract/resolve.ts",
-      "sha256": "4711d7d0e40efe2a08692b6579f0a349d6b53641b06508799a88470f448b945b",
-      "indexBlobSha": "1c3d756300db615ab4058c35efcbc805ac92b804"
+      "sha256": "bc2127ff71d76d06f9f55a4906fa54ff238eb679b8401e4fad2af383efd7f2ad",
+      "indexBlobSha": "b72d97322d8b0c31082f62824fa293546b615969"
     },
     {
       "path": "library/ui/figma/src/contract/test-fixtures.ts",
