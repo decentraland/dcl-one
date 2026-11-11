@@ -1,6 +1,6 @@
 use bevy::{
     core_pipeline::prepass::{DeferredPrepass, DepthPrepass},
-    pbr::{CascadeShadowConfig, RenderMeshInstances},
+    pbr::{CascadeShadowConfig, DirectionalLightShadowMap, RenderMeshInstances},
     prelude::*,
     render::{
         batching::gpu_preprocessing::GpuPreprocessingSupport,
@@ -8,9 +8,7 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{
-    sun_shadow_bias, AppConfig, PrimaryCamera, SceneLoadDistance, TimeOfDay, SUN_SHADOW_MAP_SIZE,
-};
+use common::structs::{sun_shadow_bias, AppConfig, PrimaryCamera, SceneLoadDistance, TimeOfDay};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
@@ -59,6 +57,7 @@ pub(super) fn register(app: &mut App) {
     .add_console_command::<SkyState, _>(sky_state)
     .add_console_command::<RenderView, _>(render_view)
     .add_console_command::<SunShadows, _>(sun_shadows)
+    .add_console_command::<SunShadowMap, _>(sun_shadow_map)
     .add_preview_debug_inputs(DebugSection {
         title: "Landscape",
         query: "/landscape",
@@ -80,7 +79,6 @@ pub(super) fn register(app: &mut App) {
         fields: &[
             ("Shadow quality", "quality"),
             ("Shadow distance (m)", "distance"),
-            ("Shadow map size (texels)", "mapSize"),
             ("Cascade far bounds (m)", "cascades"),
             ("Bias overridden", "overridden"),
             (
@@ -88,8 +86,23 @@ pub(super) fn register(app: &mut App) {
                 "presetBias",
             ),
         ],
-        actions: &[("Restore quality bias", "/shadowbias --reset")],
+        actions: &[
+            ("Restore quality bias", "/shadowbias --reset"),
+            // bevy's default biases, which main uses on a 4096 map
+            ("Main's bias", "/shadowbias --depth 0.02 --normal 1.8"),
+        ],
         inputs: &[
+            DebugInput {
+                label: "Shadow map size (texels)",
+                field: "mapSize",
+                command: "/shadow_map {value}",
+                kind: DebugInputKind::Select(&[
+                    ("512", "512"),
+                    ("1024 (this branch)", "1024"),
+                    ("2048", "2048"),
+                    ("4096 (main)", "4096"),
+                ]),
+            },
             slider(
                 "Depth bias (m)",
                 "depthBias",
@@ -270,6 +283,7 @@ fn sun_shadows(
     mut cmd: ConsoleCommand<SunShadows>,
     config: Res<AppConfig>,
     bias: Res<ShadowBiasOverride>,
+    map: Res<DirectionalLightShadowMap>,
     sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
@@ -282,11 +296,34 @@ fn sun_shadows(
             .map(|(_, cascades)| cascades.bounds.clone());
         cmd.reply_ok(
             json!({"quality":format!("{:?}", config.graphics.shadow_settings),
-            "distance":config.graphics.shadow_distance, "mapSize":SUN_SHADOW_MAP_SIZE,
+            "distance":config.graphics.shadow_distance, "mapSize":map.size.to_string(),
             "cascades":cascades, "overridden":bias.0.is_some(), "presetBias":[preset.0, preset.1],
             "depthBias":depth, "normalBias":normal})
             .to_string(),
         );
+    }
+}
+
+/// Set the sun's shadow map size in texels per cascade until restart, to compare biases at
+/// another resolution. The normal bias is in texels, so the same value offsets further on a
+/// smaller map.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/shadow_map")]
+struct SunShadowMap {
+    size: usize,
+}
+
+fn sun_shadow_map(
+    mut cmd: ConsoleCommand<SunShadowMap>,
+    mut map: ResMut<DirectionalLightShadowMap>,
+) {
+    if let Some(Ok(SunShadowMap { size })) = cmd.take() {
+        if !(256..=8192).contains(&size) || !size.is_power_of_two() {
+            cmd.reply_failed("shadow map size must be a power of two from 256 to 8192");
+            return;
+        }
+        map.size = size;
+        cmd.reply_ok(format!("sun shadow map {size} texels"));
     }
 }
 
