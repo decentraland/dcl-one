@@ -153,7 +153,10 @@ function usePopup(rootRef: RefObject<HTMLElement | null>, triggerRef: RefObject<
     triggerRef.current?.focus()
   }
   const onBlur = (event: ReactFocusEvent) => {
-    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOpen(false)
+    // Only focus moving elsewhere closes: a null relatedTarget is a click on non-focusable content (or Safari not
+    // focusing a clicked link), and outside presses are the pointerdown handler's.
+    const next = event.relatedTarget as Node | null
+    if (next && !event.currentTarget.contains(next)) setOpen(false)
   }
   return { open, setOpen, onKeyDown, onBlur }
 }
@@ -469,6 +472,26 @@ export function NavBar({
   ) : signInHref !== undefined ? (
     renderLink({ href: signInHref, className: styles.signIn, children: labels.signIn })
   ) : null
+  // The drawer's copy closes the drawer first, so the app's sign-in UI or route is not left under a modal.
+  const drawerSignIn = onSignIn ? (
+    <button
+      type="button"
+      className={styles.signIn}
+      onClick={() => {
+        setDrawerOpen(false)
+        onSignIn()
+      }}
+    >
+      {labels.signIn}
+    </button>
+  ) : signInHref !== undefined ? (
+    renderLink({
+      href: signInHref,
+      className: styles.signIn,
+      onClick: () => setDrawerOpen(false),
+      children: labels.signIn
+    })
+  ) : null
 
   return (
     <nav className={className ? `${styles.root} ${className}` : styles.root} aria-label={labels.navigation}>
@@ -588,8 +611,8 @@ export function NavBar({
                 />
               ) : null}
             </div>
-          ) : signIn ? (
-            <div className={styles.drawerAccount}>{signIn}</div>
+          ) : drawerSignIn ? (
+            <div className={styles.drawerAccount}>{drawerSignIn}</div>
           ) : null}
         </Drawer>
       ) : null}

@@ -393,7 +393,7 @@ describe('when extracting CSS Module declarations through the in-memory styleshe
       'runtime/figma-module-runtime.module.css',
       '../review/src/components/figma-module-runtime.module.css'
     ]
-  ])('and reading the committed %s stylesheet', (file, source) => {
+  ])('and reading the committed %s stylesheet from %s', (file, source) => {
     let absolute: string
     let content: string
     beforeEach(async () => {

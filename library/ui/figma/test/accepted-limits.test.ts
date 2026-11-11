@@ -6,27 +6,6 @@ import { componentRegistryEntries } from '../component-generation.mjs'
 const ui = path.resolve(import.meta.dirname, '../..')
 const MARKER = '<!-- navbar-accepted-limits -->'
 
-// The bullet list right after the marker: "- `id`: text", with only blank lines before it. Any other line before
-// the first bullet is refused, so a broken list never picks up a later bullet elsewhere in the README.
-function readmeLimits(markdown: string): { id: string; text: string }[] {
-  const lines = markdown.split(/\r?\n/)
-  const start = lines.findIndex((line) => line.trim() === MARKER)
-  if (start < 0) throw new Error('README has no accepted-limits marker')
-  const limits: { id: string; text: string }[] = []
-  for (const line of lines.slice(start + 1)) {
-    const match = /^- `([^`]+)`: (.+)$/.exec(line)
-    if (match) limits.push({ id: match[1]!, text: match[2]! })
-    else if (limits.length) break
-    else if (line.trim()) throw new Error(`README accepted-limits list starts with: ${line}`)
-  }
-  return limits
-}
-
-const sample = [
-  { id: 'logo-size', text: 'The logo is pending.' },
-  { id: 'avatar', text: 'The avatar is a placeholder.' }
-]
-
 describe('the accepted limits of generated public components', () => {
   // NavBar, the last generated public component, is hand-written: its limits live in docs/ui-components.md.
   it('should record no limits in the component registry', () => {
@@ -38,49 +17,6 @@ describe('the accepted limits of generated public components', () => {
 
   it('should keep no accepted-limits list in the README', () => {
     expect(readFileSync(path.join(ui, 'README.md'), 'utf8')).not.toContain(MARKER)
-  })
-
-  it.each([
-    ['drops', (list: { id: string; text: string }[]) => list.slice(1)],
-    [
-      'rewords',
-      (list: { id: string; text: string }[]) =>
-        list.map((l, i) => (i ? l : { ...l, text: 'Reworded.' }))
-    ]
-  ])('should fail the comparison when the README %s a limit', (_label, change) => {
-    const readme = `${MARKER}\n\n${change(sample)
-      .map((l) => `- \`${l.id}\`: ${l.text}`)
-      .join('\n')}\n`
-    expect(readmeLimits(readme)).not.toEqual(sample)
-  })
-
-  it('should read back an unchanged list', () => {
-    const readme = `${MARKER}\n\n${sample.map((l) => `- \`${l.id}\`: ${l.text}`).join('\n')}\n`
-    expect(readmeLimits(readme)).toEqual(sample)
-  })
-
-  it('should refuse a README without the marker', () => {
-    expect(() => readmeLimits('no marker')).toThrow('no accepted-limits marker')
-  })
-
-  it('should read a CRLF checkout of the list', () => {
-    expect(readmeLimits(`${MARKER}\r\n\r\n- \`a\`: One.\r\n- \`b\`: Two.\r\n\r\nAfter.`)).toEqual([
-      { id: 'a', text: 'One.' },
-      { id: 'b', text: 'Two.' }
-    ])
-  })
-
-  it('should refuse prose between the marker and the list, instead of reading a later bullet', () => {
-    expect(() => readmeLimits(`${MARKER}\n\nSome prose.\n\n- \`a\`: Elsewhere.`)).toThrow(
-      'list starts with: Some prose.'
-    )
-  })
-
-  // The nearest false positive: a list ends at its first non-bullet line, blank or not.
-  it('should stop at the end of the list without reading later bullets', () => {
-    expect(readmeLimits(`${MARKER}\n- \`a\`: One.\n\n- \`b\`: Later list.`)).toEqual([
-      { id: 'a', text: 'One.' }
-    ])
   })
 })
 

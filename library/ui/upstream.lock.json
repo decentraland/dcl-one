@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "c3ee9df26299e35f36b7044455a3fa993b2bcac685e188906aae2fed85ee4dac",
+          "sha256": "aad38c51f636631db4deb88d0c41fc95c1732128930f2ba4f6aedb6bb97da5ea",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -3374,7 +3374,7 @@
         },
         "library/ui/figma/src/install-components.test.ts": {
           "fds": null,
-          "sha256": "d3ceb29f0024b815dce488d10a835bc86372a17ca0fdcad064b84396d8cfba80",
+          "sha256": "a9400b5d755c2e295db95b934200ab09e6fa8e4db80cd02008119e0871cad662",
           "deviation": [
             "local-components-plan",
             "internal-components",
@@ -4021,7 +4021,7 @@
           "deviation": "live-read-restored"
         },
         "library/ui/figma/test/accepted-limits.test.ts": {
-          "sha256": "d7300094f702a2baf30bdcb9119e631a1dc07891c28593e57baebda6c3dcc37a",
+          "sha256": "38f98d15fee068c7f4be769d3ae6821aeff3a5aa14e5d46ea3c36ece74940f7f",
           "fds": null,
           "deviation": [
             "accepted-limits",

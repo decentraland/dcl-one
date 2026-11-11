@@ -339,6 +339,20 @@ describe('NavBar', () => {
     })
   })
 
+  describe('when focus leaves an open dropdown without a new focus target', () => {
+    let trigger: HTMLElement
+    beforeEach(async () => {
+      render(<NavBar sections={sections} onSignIn={() => {}} />)
+      trigger = screen.getByRole('button', { name: 'Discover' })
+      await user.click(trigger)
+      fireEvent.blur(trigger, { relatedTarget: null })
+    })
+
+    it('should keep the dropdown open', () => {
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+    })
+  })
+
   describe('when a dropdown section is closed', () => {
     let trigger: HTMLElement
     beforeEach(() => {
@@ -663,6 +677,36 @@ describe('NavBar', () => {
 
     it('should name the trigger with it', () => {
       expect(screen.getByRole('button', { name: 'Cuenta de Ada' })).toBeInTheDocument()
+    })
+  })
+
+  describe('when Sign in is pressed in the mobile menu', () => {
+    let onSignIn: Mock<() => void>
+    beforeEach(async () => {
+      onSignIn = vi.fn<() => void>()
+      render(<NavBar sections={sections} onSignIn={onSignIn} />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign in' }))
+    })
+
+    it('should close the dialog', () => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    it('should call onSignIn', () => {
+      expect(onSignIn).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('when a Sign in link is followed in the mobile menu', () => {
+    beforeEach(async () => {
+      render(<NavBar sections={sections} signInHref="/sign-in" />)
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      fireEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Sign in' }))
+    })
+
+    it('should close the dialog', () => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
   })
 
