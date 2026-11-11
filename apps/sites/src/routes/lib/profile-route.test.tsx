@@ -41,6 +41,7 @@ vi.mock("@ui/web/pages/StProfilePhotosTab", () => stub("photos"));
 vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
 vi.mock("@ui/web/pages/StProfileMyAssetsTab", () => stub("assets"));
 
+import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile } from "@/data/lib/catalyst/social/profile";
 import { profileKeys } from "@/data/lib/profile/queries";
 
@@ -65,11 +66,18 @@ function mount(path: string, loader: () => unknown = profileClientLoader) {
     Component: () => <ProfileRoute loaderData={null} />,
     ErrorBoundary: ProfileErrorBoundary,
   };
+  // Under a root route with its own boundary, as Sites' root.tsx has.
   const router = createMemoryRouter(
     [
-      { path: "/profile/:address", ...route },
-      { path: "/profile/:address/:tab", ...route },
-      { path: "/other", Component: Other },
+      {
+        path: "/",
+        ErrorBoundary: () => <h1>Something went wrong</h1>,
+        children: [
+          { path: "profile/:address", ...route },
+          { path: "profile/:address/:tab", ...route },
+          { path: "other", Component: Other },
+        ],
+      },
     ],
     { initialEntries: [path] },
   );
@@ -107,7 +115,7 @@ function mountDocument(path: string, data: ProfileLoaderData) {
 function serverState(name: string): ProfileLoaderData {
   const server = new QueryClient();
   server.setQueryData(profileKeys.profile(A), mapProfile(avatar(name) as never, A));
-  return { sid: "sid-1", address: A, tab: "overview", own: false, dehydratedState: dehydrate(server) };
+  return { sid: "sid-1", address: A, own: false, dehydratedState: dehydrate(server) };
 }
 
 beforeEach(() => {
@@ -132,7 +140,7 @@ describe("profile route, first hydration", () => {
   it("keeps the profile on screen when a background re-read fails", async () => {
     mountDocument(`/profile/${A}`, serverState("Alice"));
     await screen.findByRole("heading", { name: "Alice" });
-    net.fetchProfile.mockRejectedValue(new Error("offline"));
+    net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0));
 
     await act(async () => {
       await client.refetchQueries({ queryKey: profileKeys.profile(A) });
@@ -154,7 +162,7 @@ describe("profile route, client navigation", () => {
   });
 
   it("shows the unavailable screen when the profile cannot be read, and Retry reads it again", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(avatar("Alice"));
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
 
     mount(`/profile/${A}`);
 
@@ -165,7 +173,7 @@ describe("profile route, client navigation", () => {
   });
 
   it("reads the profile afresh after leaving a failed profile and coming back", async () => {
-    net.fetchProfile.mockRejectedValueOnce(new Error("offline")).mockResolvedValueOnce(avatar("Alice"));
+    net.fetchProfile.mockRejectedValueOnce(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)).mockResolvedValueOnce(avatar("Alice"));
     const router = mount(`/profile/${A}`);
     await screen.findByRole("heading", { name: "Profile unavailable" });
 
@@ -176,6 +184,23 @@ describe("profile route, client navigation", () => {
 
     expect(await screen.findByRole("heading", { name: "Alice" })).toBeTruthy();
     expect(net.fetchProfile).toHaveBeenCalledTimes(2);
+  });
+
+  it("hands a bug in the profile read to the root boundary, not the profile screen", async () => {
+    net.fetchProfile.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'name')"));
+
+    mount(`/profile/${A}`);
+
+    expect(await screen.findByRole("heading", { name: "Something went wrong" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Profile unavailable" })).toBeNull();
+  });
+
+  it("shows unavailable, not \"invalid address\", when the node answers 404 for a wallet", async () => {
+    net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst returned 404", "/lambdas/profile", 404));
+
+    mount(`/profile/${A}`);
+
+    expect(await screen.findByRole("heading", { name: "Profile unavailable" })).toBeTruthy();
   });
 
   it("shows not found for an address that cannot be a wallet, without reading anything", async () => {

@@ -42,9 +42,11 @@ const avatar = (name: string) => ({
   avatar: { snapshots: { face256: "" } },
 });
 
-function request(path: string, wallet?: string) {
+/** `wallet` sets the wallet cookie every sign-in method sets (`dcl_wallet`), as a browser wallet leaves it. */
+function request(path: string, wallet?: string, init: RequestInit = {}) {
   return new Request(`http://localhost${path}`, {
-    headers: wallet ? { cookie: `dcl_wallet_verified=${wallet}` } : {},
+    ...init,
+    headers: wallet ? { cookie: `dcl_wallet=${wallet}` } : {},
   });
 }
 
@@ -94,6 +96,15 @@ describe("profile loader, required data", () => {
 
     expect(out.ok).toBe(false);
     expect(statusOf(out.ok ? null : out.thrown)).toBe(503);
+  });
+
+  it("lets a bug in the profile read become a 500, not a 503", async () => {
+    net.fetchProfile.mockRejectedValue(new TypeError("Cannot read properties of undefined (reading 'name')"));
+
+    const out = await run(`/profile/${A}`, { address: A });
+
+    expect(out.ok).toBe(false);
+    expect(out.ok ? null : out.thrown).toBeInstanceOf(TypeError);
   });
 
   it("renders a wallet with no profile yet as an empty profile, not an error", async () => {
@@ -178,6 +189,9 @@ describe("profile loader, canonical paths", () => {
     [`/profile/${A}?own=1`, { address: A }, `/profile/${A}`],
     [`/profile/${A.toUpperCase().replace("0X", "0x")}/photos`, { address: A.toUpperCase().replace("0X", "0x"), tab: "photos" }, `/profile/${A}/photos`],
     [`/profile/${A}/unknown`, { address: A, tab: "unknown" }, `/profile/${A}`],
+    [`/profile/${A}/Places`, { address: A, tab: "Places" }, `/profile/${A}/places`],
+    [`/profile/${A}?tab=places&utm_source=mail`, { address: A }, `/profile/${A}/places?utm_source=mail`],
+    [`/profile/${A}/unknown?utm_source=mail&own=1`, { address: A, tab: "unknown" }, `/profile/${A}?utm_source=mail`],
   ])("redirects %s", async (path, params, location) => {
     const out = await run(path, params);
 
@@ -203,10 +217,84 @@ describe("profile loader, canonical paths", () => {
     );
   });
 
-  it("sends the old /profile/accounts paths to the profile", () => {
+  it("sends the old /profile/accounts paths to the profile, keeping the query", () => {
     expect(
-      locationOf(thrownBy(() => legacyAccountsRedirect({ address: A.toUpperCase().replace("0X", "0x"), tab: "places" }))),
-    ).toBe(`/profile/${A}/places`);
+      locationOf(
+        thrownBy(() =>
+          legacyAccountsRedirect(request("/profile/accounts/x/Places?utm_source=mail"), {
+            address: A.toUpperCase().replace("0X", "0x"),
+            tab: "Places",
+          }),
+        ),
+      ),
+    ).toBe(`/profile/${A}/places?utm_source=mail`);
+  });
+
+  it("keeps the tab of the old /profile/me?tab= links", () => {
+    expect(locationOf(thrownBy(() => ownProfileRedirect(request("/profile/me?tab=places&utm_source=mail", A))))).toBe(
+      `/profile/${A}/places?utm_source=mail`,
+    );
+  });
+
+  it("sends a browser-wallet member (no verified cookie) on /profile/me to their profile, not to sign-in", () => {
+    expect(locationOf(thrownBy(() => ownProfileRedirect(request("/profile/me", A))))).toBe(`/profile/${A}`);
+  });
+
+  it("does not take the thirdweb-only verified cookie as a sign-in", () => {
+    const verifiedOnly = new Request("http://localhost/profile/me", { headers: { cookie: `dcl_wallet_verified=${A}` } });
+
+    expect(locationOf(thrownBy(() => ownProfileRedirect(verifiedOnly)))).toBe(
+      `/auth/login?redirectTo=${encodeURIComponent("/profile/me")}`,
+    );
+  });
+
+  it("opens a browser-wallet member's own-only tab from a deep link", async () => {
+    net.fetchOwnedWearables.mockResolvedValue({ elements: [], total: 0 });
+    net.fetchOwnedNames.mockResolvedValue({ elements: [], total: 0 });
+
+    const out = await run(`/profile/${A}/assets`, { address: A, tab: "assets" }, A);
+
+    expect(out.ok && out.data.own).toBe(true);
+  });
+});
+
+describe("profile loader, a visitor who leaves", () => {
+  it("does not read a profile for a request already aborted when the loader starts", async () => {
+    let seen: AbortSignal | undefined;
+    net.fetchProfile.mockImplementation((_address: string, opts: { signal?: AbortSignal }) => {
+      seen = opts.signal;
+      return new Promise((_resolve, reject) => {
+        if (opts.signal?.aborted) reject(new DOMException("aborted", "AbortError"));
+        opts.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+      });
+    });
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      profileLoader(request(`/profile/${A}`, undefined, { signal: controller.signal }), { address: A }),
+    ).rejects.toBeTruthy();
+    expect(seen).toBeUndefined();
+    expect(net.fetchProfile).not.toHaveBeenCalled();
+  });
+
+  it("cancels the profile read when the request is aborted", async () => {
+    let seen: AbortSignal | undefined;
+    net.fetchProfile.mockImplementation(
+      (_address: string, opts: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          seen = opts.signal;
+          opts.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    const controller = new AbortController();
+
+    const pending = profileLoader(request(`/profile/${A}`, undefined, { signal: controller.signal }), { address: A });
+    await vi.waitFor(() => expect(seen).toBeDefined());
+    controller.abort();
+
+    await expect(pending).rejects.toBeTruthy();
+    expect(seen?.aborted).toBe(true);
   });
 });
 
@@ -222,7 +310,12 @@ describe("profile document request, through the router's handler", () => {
 
   it.each([
     ["an address that cannot be a wallet", "/profile/not-a-wallet", () => undefined, 404],
-    ["a failing profile service", `/profile/${A}`, () => net.fetchProfile.mockRejectedValue(new Error("offline")), 503],
+    [
+      "a failing profile service",
+      `/profile/${A}`,
+      () => net.fetchProfile.mockRejectedValue(new CatalystError("Catalyst unreachable", "/lambdas/profile", 0)),
+      503,
+    ],
   ])("answers %s with the loader's status", async (_case, path, arrange, status) => {
     arrange();
 
