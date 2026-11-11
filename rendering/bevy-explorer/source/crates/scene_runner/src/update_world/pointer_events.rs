@@ -19,15 +19,13 @@ use dcl_component::{
     SceneComponentId,
 };
 use dcl_types::interface::ComponentPosition;
-use scene_material::highlight::{
-    Highlight, HIGHLIGHT_INVALID, HIGHLIGHT_VALID, HIGHLIGHT_WIDTH_PX,
-};
+use scene_material::highlight::{Highlight, HIGHLIGHT_INVALID, HIGHLIGHT_VALID, HIGHLIGHT_WIDTH};
 
 use crate::{
     renderer_context::RendererSceneContext,
     update_scene::pointer_results::{
-        event_category, passes_distance_check, resolve_action_winner, ActionCandidateMode,
-        ActionCategory, IaToCommon, PointerTarget, PointerTargetInfo, ProximityCandidates,
+        event_category, resolve_action_winner, ActionCandidateMode, ActionCategory, IaToCommon,
+        PointerTarget, PointerTargetInfo, ProximityCandidates,
     },
     SceneEntity,
 };
@@ -295,14 +293,14 @@ pub fn hover_highlight(target: Option<&PointerTargetInfo>, in_range: bool) -> Op
             HIGHLIGHT_INVALID
         }
         .into(),
-        width_px: HIGHLIGHT_WIDTH_PX,
+        width: HIGHLIGHT_WIDTH,
     })
 }
 
 fn valid_highlight() -> Highlight {
     Highlight {
         color: HIGHLIGHT_VALID.into(),
-        width_px: HIGHLIGHT_WIDTH_PX,
+        width: HIGHLIGHT_WIDTH,
     }
 }
 
@@ -330,19 +328,15 @@ fn entity_highlighting(
     };
 
     if let Some(ref hover_target) = hover_target.0 {
-        let mut entries =
-            highlit_entries(hover_target.container, ActionCandidateMode::Cursor).peekable();
-        if entries.peek().is_some() {
-            // green only when a click would act: the action gate wants the target in a scene and
-            // a cursor entry within reach
-            let in_range = hover_target.in_scene
-                && entries.any(|entry| {
-                    passes_distance_check(
-                        entry.event_info.as_ref(),
-                        hover_target.camera_distance.0,
-                        hover_target.distance.0,
-                    )
-                });
+        if highlit_entries(hover_target.container, ActionCandidateMode::Cursor)
+            .next()
+            .is_some()
+        {
+            // green when the cursor reaches any of the target's entries, highlit or not: the same
+            // gate as the hover CRDT and the hover stream's `enabled`
+            let in_range = pointer_events
+                .get(hover_target.container)
+                .is_ok_and(|pe| pe.iter().any(|entry| hover_target.cursor_reaches(entry)));
             if let Some(highlight) = hover_highlight(Some(hover_target), in_range) {
                 highlight_pass.insert(hover_target.container, highlight);
             }
@@ -424,8 +418,8 @@ mod test {
             HIGHLIGHT_VALID.into()
         );
         assert_eq!(
-            hover_highlight(Some(&info), true).unwrap().width_px,
-            HIGHLIGHT_WIDTH_PX
+            hover_highlight(Some(&info), true).unwrap().width,
+            HIGHLIGHT_WIDTH
         );
         assert!(hover_highlight(None, true).is_none());
     }
@@ -496,7 +490,7 @@ mod test {
         app.update();
         let invalid = Highlight {
             color: HIGHLIGHT_INVALID.into(),
-            width_px: HIGHLIGHT_WIDTH_PX,
+            width: HIGHLIGHT_WIDTH,
         };
         assert_eq!(
             app.world().get::<Propagate<Highlight>>(target).map(|p| p.0),
@@ -589,5 +583,35 @@ mod test {
         hover(&mut app, Some(near), 12.0);
         app.update();
         assert_eq!(glow(&mut app, near), Some(HIGHLIGHT_INVALID.into()));
+    }
+
+    /// An entry that hides its highlight still counts for the colour: the glow comes from the
+    /// highlit entries, its colour from every entry the cursor reaches.
+    #[test]
+    fn hidden_entry_in_reach_turns_the_glow_valid() {
+        let entry = |max_distance: f32, show_highlight: bool| Entry {
+            event_type: PointerEventType::PetDown as i32,
+            event_info: Some(Info {
+                max_distance: Some(max_distance),
+                show_highlight: Some(show_highlight),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut app = highlight_app();
+        let target = app
+            .world_mut()
+            .spawn(PointerEvents::from(PbPointerEvents {
+                pointer_events: vec![entry(5.0, true), entry(20.0, false)],
+            }))
+            .id();
+
+        hover(&mut app, Some(target), 12.0);
+        app.update();
+        assert_eq!(glow(&mut app, target), Some(HIGHLIGHT_VALID.into()));
+
+        hover(&mut app, Some(target), 25.0);
+        app.update();
+        assert_eq!(glow(&mut app, target), Some(HIGHLIGHT_INVALID.into()));
     }
 }

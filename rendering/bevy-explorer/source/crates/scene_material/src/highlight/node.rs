@@ -1,4 +1,4 @@
-//! The glow from the mask: blurred into a target sized from the canvas, then blended over the
+//! The glow from the mask: blurred into a target of fixed height, then blended over the
 //! frame with no depth test, except where the meshes themselves are (highlight_blur.wgsl,
 //! highlight_composite.wgsl).
 
@@ -28,23 +28,25 @@ use bevy::{
 
 use super::{
     phase::{DrawHighlightPunch, HighlightMaskItem, MASK_FORMAT},
-    HighlightCanvasScale, BLUR_OFFSETS, BLUR_WEIGHTS, GLOW_RESOLUTION,
+    BLUR_OFFSETS, BLUR_WEIGHTS, GLOW_HEIGHT,
 };
 
-/// The view's mask, at the view's size, and the blurred glow, at `GLOW_RESOLUTION` of the canvas.
+/// The view's mask, at the view's size, and the blurred glow, `GLOW_HEIGHT` tall.
 #[derive(Component)]
 pub struct HighlightTextures {
     mask: CachedTexture,
     glow: CachedTexture,
 }
 
-/// The glow target's size for a view of `viewport` render pixels: a share of the canvas, not of
-/// the render target, so the blur spreads as far on screen at every render scale.
-fn glow_size(viewport: UVec2, canvas_scale: f32) -> UVec2 {
-    (viewport.as_vec2() * GLOW_RESOLUTION / canvas_scale.max(0.01))
-        .ceil()
-        .as_uvec2()
-        .max(UVec2::ONE)
+/// The glow target's size for a view of `viewport` pixels: `GLOW_HEIGHT` tall, at the view's
+/// aspect, so the blur spreads the same share of the view at every resolution.
+fn glow_size(viewport: UVec2) -> UVec2 {
+    let viewport = viewport.max(UVec2::ONE).as_vec2();
+    UVec2::new(
+        (GLOW_HEIGHT as f32 * viewport.x / viewport.y).ceil() as u32,
+        GLOW_HEIGHT,
+    )
+    .max(UVec2::ONE)
 }
 
 /// Masks for the views with something highlighted; none for the rest.
@@ -52,7 +54,6 @@ pub fn prepare_highlight_textures(
     mut commands: Commands,
     mut texture_cache: ResMut<TextureCache>,
     device: Res<RenderDevice>,
-    canvas_scale: Res<HighlightCanvasScale>,
     phases: Res<ViewSortedRenderPhases<HighlightMaskItem>>,
     views: Query<(Entity, &ExtractedView, Has<HighlightTextures>), With<ViewTarget>>,
 ) {
@@ -88,7 +89,7 @@ pub fn prepare_highlight_textures(
         };
         let textures = HighlightTextures {
             mask: texture("highlight mask", viewport),
-            glow: texture("highlight glow", glow_size(viewport, canvas_scale.0)),
+            glow: texture("highlight glow", glow_size(viewport)),
         };
         commands.entity(entity).insert(textures);
     }
@@ -426,11 +427,13 @@ mod test {
     use super::*;
 
     #[test]
-    fn glow_target_follows_the_canvas() {
-        // full render scale: half the view
-        assert_eq!(glow_size(UVec2::new(1920, 1081), 1.0), UVec2::new(960, 541));
-        // half render scale: the view is half the canvas, so the glow is the view's size
-        assert_eq!(glow_size(UVec2::new(960, 540), 0.5), UVec2::new(960, 540));
-        assert_eq!(glow_size(UVec2::ZERO, 1.0), UVec2::ONE);
+    fn glow_target_has_a_fixed_height() {
+        // 1080p, 4K and 1080p at half render scale all blur into the same target
+        assert_eq!(glow_size(UVec2::new(1920, 1080)), UVec2::new(960, 540));
+        assert_eq!(glow_size(UVec2::new(3840, 2160)), UVec2::new(960, 540));
+        assert_eq!(glow_size(UVec2::new(960, 540)), UVec2::new(960, 540));
+        // the width follows the view's aspect
+        assert_eq!(glow_size(UVec2::new(1000, 1080)), UVec2::new(500, 540));
+        assert_eq!(glow_size(UVec2::ZERO), UVec2::new(540, 540));
     }
 }

@@ -1,5 +1,5 @@
-// A highlighted mesh's silhouette in its highlight colour, widened along its normals by a width
-// in screen pixels, for the hover glow (scene_material/src/highlight). The vertex stage follows
+// A highlighted mesh's silhouette in its highlight colour, widened along its normals by a share of
+// the view's height, for the hover glow (scene_material/src/highlight). The vertex stage follows
 // bevy_pbr's mesh.wgsl, so skinned and morphed meshes outline their animated pose.
 
 #import bevy_pbr::{
@@ -14,7 +14,7 @@
 
 struct HighlightItem {
     color: vec4<f32>,
-    width_px: f32,
+    width: f32,
 }
 
 @group(2) @binding(0) var<uniform> item: HighlightItem;
@@ -74,11 +74,12 @@ fn vertex(vertex_no_morph: Vertex) -> @builtin(position) vec4<f32> {
         vertex_no_morph.instance_index
     );
 #endif
-    // the offset in pixels across the screen
+    // the offset across the screen: the width is a share of the view's height
+    let width_px = item.width * view.viewport.w;
     let clip_normal = (view.clip_from_world * vec4<f32>(world_normal, 0.0)).xy;
     if any(clip_normal != vec2<f32>(0.0)) {
         clip += vec4<f32>(
-            normalize(clip_normal) / view.viewport.zw * item.width_px * clip.w * 2.0,
+            normalize(clip_normal) / view.viewport.zw * width_px * clip.w * 2.0,
             0.0,
             0.0
         );

@@ -158,6 +158,21 @@ pub struct PointerTargetInfo {
     pub ty: PointerTargetType,
 }
 
+impl PointerTargetInfo {
+    /// Whether the cursor reaches `entry` on this target: the target is in a scene and `entry` is
+    /// a cursor entry within its distance limits. The hover CRDT, the hover stream's `enabled`
+    /// and the hover glow's colour all use this one gate.
+    pub fn cursor_reaches(&self, entry: &Entry) -> bool {
+        self.in_scene
+            && ActionCandidateMode::Cursor.matches_entry(entry)
+            && passes_distance_check(
+                entry.event_info.as_ref(),
+                self.camera_distance.0,
+                self.distance.0,
+            )
+    }
+}
+
 /// Returns true if the pointer-event entry's distance restrictions are satisfied.
 ///
 /// Per protocol:
@@ -1232,18 +1247,8 @@ fn send_hover_event(
     };
 
     for (scene, ev) in pe.iter_with_scene(maybe_scene_entity.map(|se| se.root)) {
-        if !info.in_scene {
-            continue;
-        }
-        // Hover is cursor-domain — skip entries flagged as proximity.
-        if !ActionCandidateMode::Cursor.matches_entry(ev) {
-            continue;
-        }
-        if !passes_distance_check(
-            ev.event_info.as_ref(),
-            info.camera_distance.0,
-            info.distance.0,
-        ) {
+        // Hover is cursor-domain: proximity entries never pass.
+        if !info.cursor_reaches(ev) {
             continue;
         }
         action = Some(
@@ -1805,12 +1810,7 @@ fn handle_hover_stream(
                     .filter(|event| ActionCandidateMode::Cursor.matches_entry(event))
                     .map(|event| HoverAction {
                         event: event.clone(),
-                        enabled: t.in_scene
-                            && passes_distance_check(
-                                event.event_info.as_ref(),
-                                t.camera_distance.0,
-                                t.distance.0,
-                            ),
+                        enabled: t.cursor_reaches(event),
                     })
                     .collect()
             })

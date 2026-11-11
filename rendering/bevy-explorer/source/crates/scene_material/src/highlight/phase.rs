@@ -40,7 +40,9 @@ use bevy::{
 };
 use nonmax::NonMaxU32;
 
-use super::{Highlight, HighlightCanvasScale};
+use common::structs::PrimaryCamera;
+
+use super::Highlight;
 
 /// The masks the silhouettes are drawn into and the glow is blurred into.
 pub const MASK_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
@@ -181,7 +183,7 @@ mod uniform {
     #[derive(ShaderType, Clone, Copy, Default)]
     pub struct HighlightItemUniform {
         pub color: Vec4,
-        pub width_px: f32,
+        pub width: f32,
     }
 }
 use uniform::HighlightItemUniform;
@@ -338,10 +340,11 @@ impl SpecializedMeshPipeline for HighlightMaskPipeline {
     }
 }
 
-/// A mask phase for every active 3d camera.
+/// A mask phase for the player's camera only: the glow is feedback for the player, so scene
+/// texture cameras (mirrors and the like) never show it.
 pub fn extract_highlight_phases(
     mut phases: ResMut<ViewSortedRenderPhases<HighlightMaskItem>>,
-    cameras: Extract<Query<(Entity, &Camera), With<Camera3d>>>,
+    cameras: Extract<Query<(Entity, &Camera), (With<Camera3d>, With<PrimaryCamera>)>>,
 ) {
     let mut live = HashSet::new();
     for (entity, camera) in &cameras {
@@ -368,7 +371,6 @@ pub fn queue_highlight_meshes(
     mut uniforms: ResMut<HighlightItemUniforms>,
     views: Query<(&ExtractedView, &RenderVisibleEntities)>,
     highlighted: Query<&Highlight>,
-    canvas_scale: Res<HighlightCanvasScale>,
 ) {
     uniforms.buffer.clear();
     if highlighted.is_empty() {
@@ -412,7 +414,7 @@ pub fn queue_highlight_meshes(
                 };
             let uniform_offset = uniforms.buffer.push(&HighlightItemUniform {
                 color: highlight.color.to_vec4(),
-                width_px: highlight.width_px * canvas_scale.0,
+                width: highlight.width,
             });
             phase.add(HighlightMaskItem {
                 sort_key: FloatOrd(rangefinder.distance_translation(&mesh_instance.translation)),
