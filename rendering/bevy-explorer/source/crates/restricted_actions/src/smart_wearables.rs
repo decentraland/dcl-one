@@ -29,6 +29,7 @@ use collectibles::{
     CollectibleError, CollectibleManager,
 };
 use common::{
+    sets::SceneSets,
     structs::{server_mode, CurrentRealm, PrimaryUser},
     util::{TaskCompat, TaskExt},
 };
@@ -36,9 +37,7 @@ use comms::profile::UserProfile;
 use console::DoAddConsoleCommand;
 use ipfs::{ContentMap, IpfsAssetServer, IpfsModifier, SceneIpfsLocation};
 use reqwest::StatusCode;
-use scene_runner::initialize_scene::{
-    KilledSmartWearables, PortableKind, PortableScenes, PortableSource,
-};
+use scene_runner::initialize_scene::{PortableKind, PortableScenes, PortableSource};
 use serde::Deserialize;
 use system_bridge::{PortableState, SmartWearableSource};
 
@@ -47,8 +46,7 @@ pub struct SmartWearablesPlugin;
 impl Plugin for SmartWearablesPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<SmartWearables>();
-        // a scene kill/exit records the urn here; scene_runner normally owns it
-        app.init_resource::<KilledSmartWearables>();
+        // `reconcile` writes `PortableScenes`, which the scene lifecycle reads in `Init`
         app.add_systems(
             Update,
             (
@@ -58,6 +56,7 @@ impl Plugin for SmartWearablesPlugin {
                 reconcile,
             )
                 .chain()
+                .in_set(SceneSets::RestrictedActions)
                 .after(request_collectibles::<Wearable>)
                 .run_if(|| !server_mode()),
         );
@@ -72,13 +71,14 @@ const FEMALE: &str = "female";
 /// The key every smart wearable state is held under: a parsed wearable urn (lowercase, without a
 /// token id), else the lowercased string (a preview wearable's id need not be a catalyst urn: a
 /// `dcl-scene-cli start` preview lists its `wearable.json` uuid, which must not become a
-/// bare-name urn).
+/// bare-name urn). Parsed quietly: this runs on every profile change and command, and an
+/// off-chain preview id is not a failure worth a log line.
 pub fn normalize_urn(urn: &str) -> String {
     let urn = urn.trim();
     if !urn.contains(':') {
         return urn.to_lowercase();
     }
-    WearableUrn::new(urn)
+    WearableUrn::new_quiet(urn)
         .map(String::from)
         .unwrap_or_else(|_| urn.to_lowercase())
 }
@@ -439,7 +439,7 @@ fn equipped_set(profile: &UserProfile) -> EquippedSet {
             .iter()
             // base wearables never carry a scene
             .filter(|urn| {
-                WearableUrn::new(urn)
+                WearableUrn::new_quiet(urn)
                     .ok()
                     .is_none_or(|urn| urn.collection_type() != Some("base-avatars"))
             })
@@ -493,6 +493,9 @@ fn preview_wearables(
         }
     }
 
+    if sw.preview_task.is_none() {
+        return;
+    }
     let Some(result) = sw.preview_task.as_mut().and_then(|task| task.complete()) else {
         return;
     };
@@ -591,19 +594,10 @@ fn resolve_entries(
     }
 }
 
-fn reconcile(
-    mut commands: Commands,
-    mut sw: ResMut<SmartWearables>,
-    killed_by_scenes: Option<ResMut<KilledSmartWearables>>,
-    portables: Res<PortableScenes>,
-) {
-    if let Some(mut killed) = killed_by_scenes {
-        if !killed.0.is_empty() {
-            let drained: Vec<String> = killed.0.drain().map(|urn| normalize_urn(&urn)).collect();
-            sw.model.stopped.extend(drained);
-        }
-    }
-
+/// Keep the smart-wearable entries of `PortableScenes` equal to the scenes that should run. A
+/// stop from a scene (`kill`, `exit`) or the console is a [`crate::portables::StopPortable`]
+/// event, whose handler removes the scene and records the wearable as stopped.
+fn reconcile(mut commands: Commands, sw: Res<SmartWearables>, portables: Res<PortableScenes>) {
     let effective = sw.model.effective();
     let running: HashSet<&String> = portables
         .iter()
@@ -673,7 +667,7 @@ fn smart_wearable_command(
     let urn = normalize_urn(&given);
     match command.action {
         SmartWearableAction::Run => {
-            if WearableUrn::new(&urn).is_err() && !sw.model.forced.contains_key(&urn) {
+            if !sw.model.forced.contains_key(&urn) && WearableUrn::new_quiet(&urn).is_err() {
                 input.reply_failed(format!("invalid wearable urn: {given}"));
                 return;
             }

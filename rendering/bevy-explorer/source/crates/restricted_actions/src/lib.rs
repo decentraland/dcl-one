@@ -49,11 +49,12 @@ use ipfs::{
     ChangeRealmEvent, EntityDefinition, IpfsAssetServer, IpfsIo, RealmInitialLocation, ServerAbout,
 };
 use nft::asset_source::Nft;
+use portables::StopPortable;
 use reqwest::StatusCode;
 use scene_runner::{
     initialize_scene::{
-        KilledSmartWearables, LiveScenes, PortableKind, PortableScenes, PortableSource,
-        SceneLoading, SuperUserScene, PARCEL_SIZE,
+        LiveScenes, PortableKind, PortableScenes, PortableSource, SceneLoading, SuperUserScene,
+        PARCEL_SIZE,
     },
     permissions::Permission,
     realm_base_url_and_name,
@@ -1104,36 +1105,28 @@ fn portable_matches_location(
     }
 }
 
-/// The smart wearables among `killed` (portable hashes), by urn.
-fn killed_smart_wearables<'a>(
-    portables: &PortableScenes,
-    killed: impl IntoIterator<Item = &'a String>,
-) -> HashSet<String> {
-    killed
-        .into_iter()
-        .filter_map(|hash| portables.get(hash))
-        .filter(|source| source.is_smart_wearable())
-        .map(|source| source.pid.clone())
-        .collect()
-}
-
+/// `PortableExperiences.kill`: a scene stops a portable it spawned, or one it did not spawn
+/// while the player stands in it. Refused in server mode, where every hosted scene is a portable
+/// the server re-inserts.
 fn kill_portable(
-    mut commands: Commands,
     portables: Res<PortableScenes>,
     mut events: EventReader<RpcCallEvent>,
+    mut stops: EventWriter<StopPortable>,
     scenes: Query<&RendererSceneContext>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     mut perms: Permission<(PortableLocation, RpcResultSender<bool>)>,
 ) {
-    let mut kill_portables = HashSet::new();
-
     for (scene, location, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
         (RpcOrigin::Scene { entity: scene, .. }, RpcCall::KillPortable { location, response }) => {
             Some((scene, location, response))
         }
         _ => None,
     }) {
+        if server_mode() {
+            response.send(false);
+            continue;
+        }
         // requesting scene may kill a portable only if it spawned the portable,
         // or if some other scene spawned it (or it is a smart wearable) and the player
         // is currently within the requesting scene's bounds. startup / system portables
@@ -1177,7 +1170,7 @@ fn kill_portable(
                     {
                         Some((hash, _)) => {
                             response.send(true);
-                            kill_portables.insert(hash.clone());
+                            stops.write(StopPortable { hash: hash.clone() });
                         }
                         None => response.send(false),
                     }
@@ -1198,7 +1191,7 @@ fn kill_portable(
 
                 if portables.contains_key(&hash) {
                     response.send(true);
-                    kill_portables.insert(hash.clone());
+                    stops.write(StopPortable { hash });
                 } else {
                     response.send(false);
                 }
@@ -1213,31 +1206,15 @@ fn kill_portable(
     for (_, response) in perms.drain_fail(PermissionType::KillPortables) {
         response.send(false);
     }
-
-    // deferred write to avoid resource conflict
-    if !kill_portables.is_empty() {
-        let killed_wearables = killed_smart_wearables(&portables, &kill_portables);
-        commands.queue(|world: &mut World| {
-            let mut portables = world.resource_mut::<PortableScenes>();
-            for killed in kill_portables {
-                portables.remove(&killed);
-            }
-            world
-                .resource_mut::<KilledSmartWearables>()
-                .0
-                .extend(killed_wearables);
-        })
-    }
 }
 
 /// `PortableExperiences.exit`: the calling scene unloads itself if it is a portable. Refused in
 /// server mode, where every hosted scene is a portable the server re-inserts.
 fn exit_portable(
-    mut commands: Commands,
     portables: Res<PortableScenes>,
     mut events: EventReader<RpcCallEvent>,
+    mut stops: EventWriter<StopPortable>,
 ) {
-    let mut exiting = HashSet::new();
     for (hash, response) in events.read().filter_map(|ev| match (&ev.origin, &ev.call) {
         (RpcOrigin::Scene { hash, .. }, RpcCall::ExitPortable { response }) => {
             Some((hash, response))
@@ -1250,24 +1227,11 @@ fn exit_portable(
         }
         let is_portable = portables.contains_key(hash);
         if is_portable {
-            exiting.insert(hash.to_string());
+            stops.write(StopPortable {
+                hash: hash.to_string(),
+            });
         }
         response.send(is_portable);
-    }
-
-    // deferred write to avoid resource conflict
-    if !exiting.is_empty() {
-        let killed_wearables = killed_smart_wearables(&portables, &exiting);
-        commands.queue(|world: &mut World| {
-            let mut portables = world.resource_mut::<PortableScenes>();
-            for hash in exiting {
-                portables.remove(&hash);
-            }
-            world
-                .resource_mut::<KilledSmartWearables>()
-                .0
-                .extend(killed_wearables);
-        })
     }
 }
 

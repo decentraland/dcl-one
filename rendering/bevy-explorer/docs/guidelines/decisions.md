@@ -144,8 +144,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   `requiredPermissions` declares, and refuses what it did not declare. Here a smart wearable is a
   portable like any other: each restricted action goes through the stored rules and the per-use
   prompt, which shows what is being done (the URL to open, the realm to change to). So
-  `requiredPermissions` is ignored, and nothing is asked before the scene starts. `fetch` and
-  WebSocket are not permission-gated for any scene (scene code can reach raw `fetch`), so a
+  `requiredPermissions` is ignored, and nothing is asked before the scene starts. On native,
+  `fetch` and WebSocket are asked per use like the rest (`dcl_deno`); on web they are not
+  permission-gated for any scene (scene code can reach the page's raw `fetch`), so a
   declared-permission check on them would be bypassable.
 - **`portableExperiences: disabled` pauses every listed portable.** unity-explorer unloads smart
   wearables while the player stands in a scene that disables portable experiences and loads them

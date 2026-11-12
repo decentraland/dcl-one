@@ -165,7 +165,10 @@ but the startup ones and the HUD's own scene) and hides its UI while the player 
 `hideUi` keeps them running with their UI hidden. The HUD follows the listed portables through
 `getPortablesStream` (`PortableInfo`: each one's kind, `loading`, `running`, `failed`, `blocked` or
 `stopped`) and shows them in the sidebar's `Portable experiences` popover, each with `Stop`; a
-stopped smart wearable stays equipped and offers `Restart`.
+stopped smart wearable stays equipped and offers `Restart`. A smart wearable is listed once its
+wearable data says it is one (its scene resolved); while an equipped wearable's data is still
+loading, or when it has no scene or could not be resolved, it is not a portable and does not
+appear (`/smart_wearables` shows those phases).
 
 Console commands:
 
@@ -177,8 +180,10 @@ Console commands:
 - `/smart_wearable run <urn>` runs a wearable's scene without equipping it (ownership is not
   checked); `/smart_wearable kill <urn>` stops one; `/smart_wearable restart <urn>` clears a stop or
   retries a failure.
-- `/live_scenes` marks their scenes `, portable, smart wearable`; `/list_portables` prints each
-  portable's kind (`scene`, `startup` or `smart wearable`).
+- `/live_scenes` marks their scenes `, portable, smart wearable`; `/list_portables` prints every
+  entry of `PortableScenes` with its kind (`scene`, `startup` or `smart wearable`), startup
+  portables included: a debug listing, where `/portables` and the scenes' own
+  `getPortableExperiencesLoaded` hide them.
 
 ## Testing
 

@@ -149,6 +149,9 @@ fn player_position_cmd(
 
 // --- /list_portables ---
 
+/// Every entry of `PortableScenes`, startup portables included: a debug listing, unlike the
+/// scene-facing `getPortableExperiencesLoaded` and the player-facing `/portables`, which hide
+/// them.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/list_portables")]
 struct ListPortablesCommand;

@@ -76,8 +76,10 @@ in a loop on the shared engine.
 **Every scene asks through one permission path: the stored rules, then the per-use prompt.**
 A new kind of scene or portable (a smart wearable, say) resolves there too, with no gate that
 answers first from a manifest or an up-front grant; the per-use prompt shows the player what is
-asked each time. Fetch and WebSocket are deliberately ungated for every scene: scene code can
-always reach raw `fetch`, so a check on them would be bypassable.
+asked each time. Fetch and WebSocket go through that path on native, where `dcl_deno` asks
+`Fetch` and `Websocket` per use (`crates/dcl_deno/src/js/fetch/mod.rs`,
+`crates/dcl_deno/src/js/websocket.rs`); on web they are deliberately ungated, because scene code
+there can always reach the page's raw `fetch`, so a check on them would be bypassable.
 
 ## Network capabilities
 
