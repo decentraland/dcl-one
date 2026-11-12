@@ -24,7 +24,7 @@ impl Plugin for SceneTopicsPlugin {
                 fields: &[
                     ("Scene rooms", "sceneRooms"),
                     ("First scene room", "room"),
-                    ("First scene room running", "running"),
+                    ("First scene room connected", "running"),
                     ("Rooms isolated per scene", "isolated"),
                     ("Subscribed scenes", "subscribedScenes"),
                     ("Published", "published"),
@@ -74,7 +74,6 @@ pub struct SceneTopicTraffic {
 
 impl SceneTopicTraffic {
     /// Topic publishes (sent, dropped).
-    #[cfg(any(test, feature = "test-support"))]
     pub fn publishes(&self) -> (u64, u64) {
         (self.published, self.publish_dropped)
     }
@@ -158,7 +157,9 @@ fn scene_topics_command(
             serde_json::json!({
                 "sceneRooms": rooms.iter().count(),
                 "room": room.map(|(_, room)| room.0.clone()),
-                "running": room.map(|(entity, room)| scene_rooms.carries(entity, &room.0)),
+                "running": room.map(|(entity, room)| {
+                    scene_rooms.carries(entity, &room.0) && scene_rooms.connected(&room.0)
+                }),
                 "isolated": scene_rooms.isolated(),
                 "subscribedScenes": inboxes.iter().count(),
                 "published": traffic.published,

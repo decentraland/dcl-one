@@ -1742,13 +1742,12 @@ mod tests {
 
     #[test]
     fn scene_messages_reach_the_scene_on_its_own_room_only() {
-        use crate::scene_rooms::test_support::{set_running, spawn_server_room};
+        use crate::scene_rooms::test_support::spawn_server_room;
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
         let (own, _) = spawn_server_room(&mut app, "bafyscene", context);
         let (other, _) = spawn_server_room(&mut app, "bafyother", context);
         for room in [own, other] {
-            set_running(&mut app, room);
             queue_joined(&mut app, context, room, peer);
         }
         app.update();
@@ -1775,8 +1774,8 @@ mod tests {
     }
 
     #[test]
-    fn scene_messages_need_a_running_scene_room() {
-        use crate::scene_rooms::test_support::{set_running, spawn_client_room};
+    fn a_transport_that_is_not_the_scene_room_delivers_no_scene_messages() {
+        use crate::scene_rooms::test_support::spawn_client_room;
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
         let island = spawn_transport(&mut app, context);
@@ -1786,16 +1785,12 @@ mod tests {
         app.update();
         let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
 
-        // the scene room is dialed but not connected, and the other transport is no scene room
-        for transport in [island, room] {
-            queue_scene_message(&mut app, context, transport, peer, TOPIC_MESSAGE.to_vec());
-            queue_scene_message(&mut app, context, transport, peer, BUS_MESSAGE.to_vec());
-        }
+        queue_scene_message(&mut app, context, island, peer, TOPIC_MESSAGE.to_vec());
+        queue_scene_message(&mut app, context, island, peer, BUS_MESSAGE.to_vec());
         app.update();
         assert!(topics_rx.try_recv().is_err());
         assert!(bus_rx.try_recv().is_err());
 
-        set_running(&mut app, room);
         queue_scene_message(&mut app, context, room, peer, TOPIC_MESSAGE.to_vec());
         queue_scene_message(&mut app, context, room, peer, BUS_MESSAGE.to_vec());
         app.update();
@@ -1805,11 +1800,10 @@ mod tests {
 
     #[test]
     fn a_shared_room_delivers_to_a_scene_other_than_the_one_it_was_dialed_for() {
-        use crate::scene_rooms::test_support::{local_preview, set_running, spawn_client_room};
+        use crate::scene_rooms::test_support::{local_preview, spawn_client_room};
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
         let (room, _) = spawn_client_room(&mut app, "bafyroom", context);
-        set_running(&mut app, room);
         queue_joined(&mut app, context, room, peer);
         app.update();
         let (mut bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");
@@ -1832,11 +1826,10 @@ mod tests {
 
     #[test]
     fn topic_messages_over_the_size_limit_are_dropped() {
-        use crate::scene_rooms::test_support::{set_running, spawn_client_room};
+        use crate::scene_rooms::test_support::spawn_client_room;
         let (mut app, context) = presence_app();
         let peer = Address::repeat_byte(0xab);
         let (room, _) = spawn_client_room(&mut app, "bafyscene", context);
-        set_running(&mut app, room);
         queue_joined(&mut app, context, room, peer);
         app.update();
         let (_bus_rx, mut topics_rx) = subscribe_scene(&mut app, "bafyscene");

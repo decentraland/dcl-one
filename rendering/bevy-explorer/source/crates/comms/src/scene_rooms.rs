@@ -1,5 +1,6 @@
-//! Which running scene room carries a scene's messages: the one rule for scene topic messages,
-//! the message bus (both directions) and the `isConnectedSceneRoom` flag scenes read.
+//! Which scene room carries a scene's messages, and whether it is connected: the one rule for
+//! scene topic messages, the message bus (both directions) and the `isConnectedSceneRoom` flag
+//! scenes read.
 
 use bevy::{ecs::system::SystemParam, prelude::*};
 use common::structs::{server_mode, CurrentRealm};
@@ -8,20 +9,10 @@ use crate::{SceneRoomConnection, ServerSceneRooms, Transport};
 
 #[cfg(feature = "livekit")]
 use crate::livekit::room::Connected;
-/// Never inserted: without LiveKit no scene room runs.
+/// Never inserted: without LiveKit no scene room connects.
 #[cfg(not(feature = "livekit"))]
 #[derive(Component)]
 struct Connected;
-
-/// Marks a scene room as running in tests, where no LiveKit room can connect.
-#[cfg(any(test, feature = "test-support"))]
-#[derive(Component)]
-pub struct TestRoomRunning;
-
-#[cfg(not(any(test, feature = "test-support")))]
-type Running = With<Connected>;
-#[cfg(any(test, feature = "test-support"))]
-type Running = Or<(With<Connected>, With<TestRoomRunning>)>;
 
 /// In a local preview and a single-scene world, any of the realm's scenes may use the room.
 pub(crate) fn scene_rooms_isolated(realm: &CurrentRealm) -> bool {
@@ -36,7 +27,7 @@ pub(crate) fn scene_rooms_isolated(realm: &CurrentRealm) -> bool {
     !(realm.is_local() || single_scene_world)
 }
 
-/// The room carrying `scene_hash`, if it is running. A server holds one room per hosted scene;
+/// The room carrying `scene_hash`, connected or not. A server holds one room per hosted scene;
 /// a client holds the room of the scene the player is in, which carries only that scene when
 /// rooms are `isolated`.
 fn scene_room(
@@ -44,17 +35,15 @@ fn scene_room(
     connection: &SceneRoomConnection,
     server_rooms: &ServerSceneRooms,
     isolated: bool,
-    running: impl Fn(Entity) -> bool,
 ) -> Option<Entity> {
-    let room = match server_rooms.0.get(scene_hash) {
+    match server_rooms.0.get(scene_hash) {
         Some((_, room)) => Some(*room),
         None => connection
             .0
             .as_ref()
             .filter(|(scene, ..)| !isolated || scene.scene_id.eq_ignore_ascii_case(scene_hash))
             .map(|(.., room)| *room),
-    };
-    room.filter(|room| running(*room))
+    }
 }
 
 #[derive(SystemParam)]
@@ -62,23 +51,31 @@ pub struct SceneRooms<'w, 's> {
     connection: Res<'w, SceneRoomConnection>,
     server_rooms: Res<'w, ServerSceneRooms>,
     realm: Res<'w, CurrentRealm>,
-    running: Query<'w, 's, &'static Transport, Running>,
+    rooms: Query<'w, 's, (&'static Transport, Has<Connected>)>,
 }
 
 impl SceneRooms<'_, '_> {
-    /// The running room that carries the scene's messages.
+    /// The room that carries the scene's messages, connected or not: a message sent before the
+    /// room connects waits in the room's channel.
     pub fn room(&self, scene_hash: &str) -> Option<Entity> {
         scene_room(
             scene_hash,
             &self.connection,
             &self.server_rooms,
             self.isolated(),
-            |room| self.running.contains(room),
         )
     }
 
     pub fn transport(&self, scene_hash: &str) -> Option<&Transport> {
-        self.running.get(self.room(scene_hash)?).ok()
+        let (transport, _) = self.rooms.get(self.room(scene_hash)?).ok()?;
+        Some(transport)
+    }
+
+    /// Whether the room that carries the scene is connected: `isConnectedSceneRoom`.
+    pub fn connected(&self, scene_hash: &str) -> bool {
+        self.room(scene_hash)
+            .and_then(|room| self.rooms.get(room).ok())
+            .is_some_and(|(_, connected)| connected)
     }
 
     pub(crate) fn carries(&self, transport: Entity, scene_hash: &str) -> bool {
@@ -91,12 +88,11 @@ impl SceneRooms<'_, '_> {
 }
 
 /// Test rooms for the systems that send and receive on scene rooms.
-#[cfg(any(test, feature = "test-support"))]
-pub mod test_support {
+#[cfg(test)]
+pub(crate) mod test_support {
     use bevy::prelude::*;
     use tokio::sync::mpsc;
 
-    use super::TestRoomRunning;
     use crate::{
         NetworkMessage, SceneRoom, SceneRoomConnection, ServerSceneRooms, SetCurrentScene,
         Transport, TransportType,
@@ -108,7 +104,7 @@ pub mod test_support {
             .init_resource::<common::structs::CurrentRealm>();
     }
 
-    /// A scene room entity that is not connected yet.
+    /// A scene room entity. It is not connected: no LiveKit room connects in tests.
     pub fn spawn_scene_room(
         app: &mut App,
         hash: &str,
@@ -125,10 +121,6 @@ pub mod test_support {
             SceneRoom(hash.to_owned()),
         ));
         (room.id(), receiver)
-    }
-
-    pub fn set_running(app: &mut App, room: Entity) {
-        app.world_mut().entity_mut(room).insert(TestRoomRunning);
     }
 
     /// The room a client holds for the scene the player is in.
@@ -193,44 +185,22 @@ mod tests {
         ServerSceneRooms([(hash.to_owned(), ("livekit:test".to_owned(), ROOM))].into())
     }
 
-    fn room(
-        hash: &str,
-        connection: &SceneRoomConnection,
-        server_rooms: &ServerSceneRooms,
-        isolated: bool,
-        running: bool,
-    ) -> Option<Entity> {
-        scene_room(hash, connection, server_rooms, isolated, |_| running)
-    }
-
     #[test]
     fn an_isolated_room_carries_only_its_own_scene() {
         let none = ServerSceneRooms::default();
         assert_eq!(
-            room("bafya", &client("bafyA"), &none, true, true),
+            scene_room("bafya", &client("bafyA"), &none, true),
             Some(ROOM)
         );
-        assert_eq!(room("bafyB", &client("bafyA"), &none, true, true), None);
+        assert_eq!(scene_room("bafyB", &client("bafyA"), &none, true), None);
     }
 
     #[test]
     fn a_shared_room_carries_every_scene() {
         let none = ServerSceneRooms::default();
         assert_eq!(
-            room("bafyB", &client("bafyA"), &none, false, true),
+            scene_room("bafyB", &client("bafyA"), &none, false),
             Some(ROOM)
-        );
-    }
-
-    #[test]
-    fn a_room_that_is_not_running_carries_nothing() {
-        let none = ServerSceneRooms::default();
-        assert_eq!(room("bafyA", &client("bafyA"), &none, true, false), None);
-        assert_eq!(room("bafyA", &client("bafyA"), &none, false, false), None);
-        let no_client = SceneRoomConnection::default();
-        assert_eq!(
-            room("bafyA", &no_client, &server("bafyA"), true, false),
-            None
         );
     }
 
@@ -238,11 +208,11 @@ mod tests {
     fn a_server_room_carries_only_its_own_scene() {
         let no_client = SceneRoomConnection::default();
         assert_eq!(
-            room("bafyA", &no_client, &server("bafyA"), true, true),
+            scene_room("bafyA", &no_client, &server("bafyA"), true),
             Some(ROOM)
         );
         assert_eq!(
-            room("bafyB", &no_client, &server("bafyA"), true, true),
+            scene_room("bafyB", &no_client, &server("bafyA"), true),
             None
         );
     }
@@ -250,7 +220,7 @@ mod tests {
     #[test]
     fn no_room_carries_nothing() {
         let (no_client, none) = (SceneRoomConnection::default(), ServerSceneRooms::default());
-        assert_eq!(room("bafyA", &no_client, &none, false, true), None);
+        assert_eq!(scene_room("bafyA", &no_client, &none, false), None);
     }
 
     #[test]

@@ -319,11 +319,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **`CommsApi.consumeMessages` resolves to a bare array** of `{ sender, data }`, not the
   protocol's `{ messages }`, because unity-explorer, the client scenes are tested on, returns
   the array. Changing it to the protocol's shape would break those scenes here.
-- **A scene's messages need a connected scene room that carries the scene.** The message bus and
-  topic messages, sent and received, and the `isConnectedSceneRoom` flag in `RealmInfo` all ask
-  `comms::scene_rooms::SceneRooms`. A message sent before the room connects is dropped, not
-  queued; the flag turns true when sending starts to work. A client's room carries the scene the
-  player is in. In a local preview or a world with one scene it carries every scene of the realm.
+- **A scene's messages use the scene room that carries the scene.** The message bus and topic
+  messages, sent and received, and the `isConnectedSceneRoom` flag in `RealmInfo` all ask
+  `comms::scene_rooms::SceneRooms`. A message sent while that room is connecting or reconnecting
+  waits in the room's channel and goes out once it is connected; with no room that carries the
+  scene it is dropped. The flag is true only while that room is connected. A client's room carries
+  the scene the player is in. In a local preview or a world with one scene it carries every scene
+  of the realm.
 - **Native HUD preferences are persisted by the engine** (`hud-prefs.json`), because CEF's
   `localStorage` does not survive.
 - **Web is Chrome only.**

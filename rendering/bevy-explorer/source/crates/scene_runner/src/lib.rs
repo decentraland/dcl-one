@@ -1083,8 +1083,8 @@ struct RealmInfoCache {
 }
 
 impl RealmInfoCache {
-    /// The realm info a scene reads. `connected` is whether a running scene room carries the
-    /// scene: until then `isConnectedSceneRoom` is false, and the scene's messages are dropped.
+    /// The realm info a scene reads. `connected` is whether the scene room that carries the
+    /// scene is connected: until then `isConnectedSceneRoom` is false.
     fn for_scene(&self, hash: &str, connected: bool) -> &[u8] {
         connected
             .then(|| self.server.get(hash).or(self.connected.as_ref()))
@@ -1329,7 +1329,7 @@ fn send_scene_updates(
     }
 
     // add realm info
-    let connected = scene_rooms.room(&context.hash).is_some();
+    let connected = scene_rooms.connected(&context.hash);
     let realm_bytes = realm_info_cache.for_scene(&context.hash, connected);
     context.crdt_store.update_if_different(
         SceneComponentId::REALM_INFO,
