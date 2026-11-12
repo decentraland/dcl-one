@@ -4254,7 +4254,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
-      "sha256": "4ad58e33d5e40e37875d130347d7dbd254d76cfe06cf8121abf6e01fd8047023"
+      "sha256": "c43f9d926f65d29636d84fac50bfbd06689acc0af14492e0ca0c25046513bee9"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.shared.ts",

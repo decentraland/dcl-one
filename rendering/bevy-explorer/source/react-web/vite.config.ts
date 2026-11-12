@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readFileSync, statSync } from 'node:fs'
 import { createConnection } from 'node:net'
-import { extname, isAbsolute, join, normalize, relative } from 'node:path'
+import { extname, isAbsolute, join, normalize, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { defineConfig, searchForWorkspaceRoot, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
@@ -24,25 +24,34 @@ function bridgeScenePreview(): Plugin {
       probe.once('connect', () => probe.destroy()) // already running — reuse it
       probe.once('error', () => {
         console.log('[bridge-scene] starting live preview on :8100')
-        // --no-install: only run the locally-installed @dcl/sdk-commands bin. Without it, a stale
-        // bridge-scene/node_modules makes npx fetch the UNRELATED registry package "sdk-commands".
-        // Windows: npx is npx.cmd, which Node starts only through a shell, and there is no process
-        // group to signal, so the tree is stopped with taskkill.
+        // Run the locally-installed @dcl/sdk-commands bin with this node, not through npx: npx would
+        // fetch the UNRELATED registry package "sdk-commands" when bridge-scene/node_modules is stale,
+        // and on Windows npx is npx.cmd, which Node starts only through a shell.
+        const cwd = fileURLToPath(new URL('./bridge-scene', import.meta.url))
+        const pkgDir = join(cwd, 'node_modules/@dcl/sdk-commands')
+        if (!existsSync(join(pkgDir, 'package.json'))) {
+          console.warn('[bridge-scene] @dcl/sdk-commands is not installed: run npm install in react-web/bridge-scene')
+          return
+        }
+        const { bin } = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { bin: Record<string, string> }
+        // Windows has no process group to signal, so the tree is stopped with taskkill.
         const windows = process.platform === 'win32'
-        const child = spawn('npx', ['--no-install', 'sdk-commands', 'start', '--no-client', '--port', '8100'], {
-          cwd: fileURLToPath(new URL('./bridge-scene', import.meta.url)),
+        const child = spawn(process.execPath, [join(pkgDir, bin['sdk-commands']), 'start', '--no-client', '--port', '8100'], {
+          cwd,
           stdio: ['ignore', 'inherit', 'inherit'],
-          detached: !windows,
-          shell: windows
+          detached: !windows
         })
+        // Runs on both the server's close and process exit; once the child is gone its pid may
+        // belong to another process, which taskkill /T /F would kill with its tree.
+        let stopped = false
         const stop = (): void => {
-          if (child.pid != null) {
-            try {
-              if (windows) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
-              else process.kill(-child.pid, 'SIGTERM')
-            } catch {
-              /* already gone */
-            }
+          if (stopped || child.pid == null || child.exitCode !== null || child.signalCode !== null) return
+          stopped = true
+          try {
+            if (windows) spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' })
+            else process.kill(-child.pid, 'SIGTERM')
+          } catch {
+            /* already gone */
           }
         }
         server.httpServer?.once('close', stop)
@@ -84,7 +93,8 @@ const MIME: Record<string, string> = {
 // bundle (../deploy/web) and the built bridge scene in a same-origin iframe —
 // no npm download needed.
 export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
-  const root = fileURLToPath(new URL(dirFromConfig, import.meta.url))
+  // an absolute directory as is: `new URL` reads a Windows drive letter as a URL scheme
+  const root = isAbsolute(dirFromConfig) ? dirFromConfig : fileURLToPath(new URL(dirFromConfig, import.meta.url))
   return {
     name: `serve-static:${prefix}`,
     configureServer(server) {
@@ -94,7 +104,7 @@ export function serveStatic(prefix: string, dirFromConfig: string): Plugin {
         let file = normalize(join(root, rel))
         // relative(), not a '/' prefix check: on Windows the joined path uses '\'
         const inside = relative(root, file)
-        if (inside.startsWith('..') || isAbsolute(inside)) {
+        if (inside === '..' || inside.startsWith(`..${sep}`) || isAbsolute(inside)) {
           res.statusCode = 403
           return res.end('forbidden')
         }
