@@ -41,7 +41,7 @@ const StyledLabelButton = styled(Button)(({ theme }) => ({
     },
   },
   '&&&&&&:hover': {
-    backgroundColor: 'var(--dcl-hover)',
+    backgroundColor: 'var(--primary-hover)',
     boxShadow: 'none',
   },
   '&&&:focus-visible': focusRingInset,
@@ -74,7 +74,7 @@ const StyledToggleButton = styled(Button)(({ theme }) => ({
     boxShadow: 'none',
   },
   '&&&&&&:hover': {
-    backgroundColor: 'var(--dcl-hover)',
+    backgroundColor: 'var(--primary-hover)',
     boxShadow: 'none',
   },
   '&&&:focus-visible': focusRingInset,
