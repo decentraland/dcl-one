@@ -9,7 +9,7 @@ const Color3Schema = z
 const nullableStr = z.string().nullish();
 
 // Lambdas sends these unset Avatar fields as an explicit null;
-// reading null as absent keeps their optional types.
+// reading null as undefined keeps their optional types. The key stays present.
 const absentWhenNull = <T extends z.ZodType>(schema: T) =>
   schema.nullish().transform((v) => v ?? undefined).optional();
 
