@@ -137,6 +137,7 @@ type SitesChromeProps = {
   account?: string;
   onSignIn?: () => void;
   overlayNav?: boolean;
+  headerSurface?: "solid" | "overlay";
   hideNav?: boolean;
   secondaryNavigation?: { title: string; active?: string; items: readonly { id: string; label: string; href: string }[] };
 };
@@ -154,6 +155,7 @@ export default function SitesChrome({
   account,
   onSignIn,
   overlayNav = false,
+  headerSurface = "solid",
   hideNav = false,
   secondaryNavigation,
 }: SitesChromeProps) {
@@ -236,8 +238,8 @@ export default function SitesChrome({
   };
 
   return (
-    <SiteLayout overlayNavigation={overlayNav} navigation={!hideNav ? <DclTopBar
-      variant="sites" active={ACTIVE_MAP[active]} signedIn={isIn} account={acct}
+    <SiteLayout overlayNavigation={headerSurface === "overlay"} navigation={!hideNav ? <DclTopBar
+      variant="sites" transparent={headerSurface === "overlay"} active={ACTIVE_MAP[active]} signedIn={isIn} account={acct}
       onSignIn={signIn} fetchNotifications={auth.fetchNotifications}
     /> : null} sections={profileNav ? closeMenu => <SiteSectionNavigation
       title="Profile" label="Profile sections" items={profileNav.tabs} active={profileNav.active}
