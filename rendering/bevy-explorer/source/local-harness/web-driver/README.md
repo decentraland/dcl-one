@@ -24,8 +24,9 @@ node driver.mjs --url <url> [--chrome <path>] [--headed] [--arg <flag>]... [comm
 ```
 
 One JSON line per command, `{"command", "ok", "output"}` or `{"command", "ok": false, "error"}`,
-with the credential of a `/login_identity` or `/hud_login` line (an identity valid for days, found
-by its shape, base64 of its JSON, wherever the line puts it) replaced by `<redacted>` wherever it appears;
+with the credentials of a `/login_identity` or `/hud_login` line (an identity valid for days, found
+by its shape wherever the line puts it: base64 of its JSON, every one on the line, or the JSON
+itself) replaced by `<redacted>` wherever they appear;
 without commands it reads them from stdin, one per line. Exit code 1 if a command failed, 2 for
 a bad command line. On Git Bash for Windows, pass commands on stdin: it rewrites an argument that
 starts with `/`.

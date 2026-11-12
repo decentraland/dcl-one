@@ -560,6 +560,43 @@ describe('/hud_logout', () => {
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
   })
 
+  it('a sign-in the engine lands after /hud_logout is signed out again, and the start page stays as it is', async () => {
+    const driver = new IdentityDriver()
+    driver.hold = true
+    driver.welcome = { terms: true, newProfile: false }
+    const h = await ready(driver)
+    const first = login(ENCODED)
+    const ended = expect(first).rejects.toThrow('signed out')
+    await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+    await act(async () => expect(await logout()).toBe('signed out'))
+    await ended
+    const welcomes = driver.sentOf('getWelcome').length
+    driver.hold = false
+    driver.release()
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    expect(driver.calls.filter((call) => call === 'logout')).toHaveLength(2)
+    expect(driver.sentOf('getWelcome')).toHaveLength(welcomes)
+    expect(h.session().phase).toBe('login')
+    expect(h.session().login.account).toBeNull()
+  })
+
+  it('a sign-in the engine refuses after /hud_logout puts no error on the start page', async () => {
+    const driver = new IdentityDriver()
+    driver.hold = true
+    driver.failWith = 'profile fetch failed: 503'
+    const h = await ready(driver)
+    const first = login(ENCODED)
+    const ended = expect(first).rejects.toThrow('signed out')
+    await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+    await act(async () => expect(await logout()).toBe('signed out'))
+    await ended
+    driver.release()
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    expect(h.session().login.error).toBeNull()
+    expect(h.session().phase).toBe('login')
+    expect(driver.calls.filter((call) => call === 'logout')).toHaveLength(1)
+  })
+
   it('fails with no session mounted, without a test runner driving the browser, and with arguments', async () => {
     await expect(logout()).rejects.toThrow('no HUD session to sign out of here')
     await ready(new IdentityDriver())

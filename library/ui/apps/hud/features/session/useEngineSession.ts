@@ -1132,6 +1132,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   // The login captured on Jump in, run once the engine is launched (for the lobby, or straight at a
   // ?position/?realm destination).
   const pendingLogin = useRef<((driver: LoginDriver) => Promise<unknown>) | null>(null)
+  // Counts sign-outs, so a sign-in the engine answers after one (runPendingLogin) is known stale.
+  const signOuts = useRef(0)
   // The sign-in `/hud_login` runs (lib/hudAutomation.ts, a test runner's), answered once it has
   // landed (`landed`: the engine took it) and the welcome page is done, or failed. The destination
   // it then goes to from the lobby, as a link's would.
@@ -2996,8 +2998,20 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     pendingLogin.current = null
     const type = pendingLoginType.current
     pendingLoginType.current = null
+    const signOut = signOuts.current
+    // A sign-out came while the engine held the sign-in: the HUD is back on its start page, so the
+    // answer only ends the wait (`busy`), and a sign-in that landed is signed out again.
+    const stale = (): boolean => {
+      if (signOuts.current === signOut) return false
+      setBusy(false)
+      return true
+    }
     Promise.resolve(login?.(driver))
       .then(() => {
+        if (stale()) {
+          if (login != null) driver.logout().catch((e: Error) => console.error('[session] logout failed', e))
+          return
+        }
         if (type != null) {
           lastLoginType.current = type === 'stored' ? storedLoginType(storedRef.current) : type
           screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
@@ -3017,6 +3031,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       })
       .catch((e: unknown) => {
         console.error('[login] post-launch login failed:', e)
+        if (stale()) return
         restoreHudSignIn()
         // The engine driver rejects with a RAW STRING (wasm-bindgen JsValue), not an Error —
         // e.message would be undefined and the login screen would show no error at all.
@@ -3611,6 +3626,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [])
 
   const logout = useCallback(() => {
+    signOuts.current += 1
     driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
     clearLogins() // drop the same-domain SSO identity for this origin
     setStored(null)

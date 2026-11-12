@@ -6594,7 +6594,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "cf4eb803d2f866bf190ab0e86e880f74d285d067e8af23ba9370f73cbb5a4f6f"
+      "sha256": "c11d02125ff8f80f6edeb485713e6b015baa4d5dd5c67a8c43a8a6ef216e1ea9"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6914,7 +6914,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
-      "sha256": "280ca3af3c75101d0dd7f4b3145d7431eda7165885b7f14776dbb7d04fde664d"
+      "sha256": "ff85ab4d313f87316013088306715382901992b40b580013ca9594e8e7a16ef9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",

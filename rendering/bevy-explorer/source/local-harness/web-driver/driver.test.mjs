@@ -19,7 +19,7 @@ import * as nodeModule from 'node:module';
 import path from 'node:path';
 import { after, before, beforeEach, describe, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { acceptsBinding, findChrome, launch, redact, secretOf } from './driver.mjs';
+import { acceptsBinding, findChrome, launch, redact, secretsOf } from './driver.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
@@ -57,28 +57,40 @@ describe('acceptsBinding', () => {
 });
 
 describe('redact', () => {
+  const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=';
+
   test("keeps a sign-in line's credential out of what the command line prints", () => {
-    assert.equal(secretOf('/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
-    assert.equal(secretOf('login_identity eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --name tester'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
-    assert.equal(secretOf('/teleport 1 2'), undefined);
-    assert.equal(secretOf('/hud_login --guest eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --look 1'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
-    assert.equal(secretOf('/hud_login --name tester --look 1 eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
-    assert.equal(secretOf('/login_identity --look 3 eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
-    assert.equal(secretOf('/hud_login "eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=" --guest'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
-    assert.equal(redact('/hud_login "eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0="', 'said eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= and "eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0="'), 'said <redacted> and "<redacted>"');
-    assert.equal(redact('/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest', '/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest did not finish: eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='), '/hud_login <redacted> --guest did not finish: <redacted>');
+    assert.deepEqual(secretsOf(`/hud_login ${id} --guest`), [id]);
+    assert.deepEqual(secretsOf(`login_identity ${id} --name tester`), [id]);
+    assert.deepEqual(secretsOf('/teleport 1 2'), []);
+    assert.deepEqual(secretsOf(`/hud_login --guest ${id} --look 1`), [id]);
+    assert.deepEqual(secretsOf(`/hud_login --name tester --look 1 ${id} --guest`), [id]);
+    assert.deepEqual(secretsOf(`/login_identity --look 3 ${id}`), [id]);
+    assert.deepEqual(secretsOf(`/hud_login "${id}" --guest`), [id]);
+    assert.equal(redact(`/hud_login "${id}"`, `said ${id} and "${id}"`), 'said <redacted> and "<redacted>"');
+    assert.equal(redact(`/hud_login ${id} --guest`, `/hud_login ${id} --guest did not finish: ${id}`), '/hud_login <redacted> --guest did not finish: <redacted>');
     assert.equal(redact('/teleport 1 2', 'failed to set location'), 'failed to set location');
   });
 
   test('takes nothing that is not shaped as an identity, so no line is split between its characters', () => {
-    for (const line of ['/hud_login ""', "/hud_login ''", '/hud_login "', '/hud_login --look 1', '/hud_login eyJhIjoxfQ==']) {
-      assert.equal(secretOf(line), undefined, line);
+    for (const line of ['/hud_login ""', "/hud_login ''", '/hud_login "', '/hud_login --look 1', '/hud_login eyJhIjoxfQ==', '/hud_login {}']) {
+      assert.deepEqual(secretsOf(line), [], line);
       assert.equal(redact(line, 'the line 1 failed'), 'the line 1 failed', line);
     }
     // an identity in a flag's value slot is the secret, not the word the flags leave over
-    const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=';
-    assert.equal(secretOf(`/hud_login --name ${id} --look 1`), id);
+    assert.deepEqual(secretsOf(`/hud_login --name ${id} --look 1`), [id]);
     assert.equal(redact(`/hud_login --name ${id} --look 1`, `look 1 for ${id}`), 'look 1 for <redacted>');
+  });
+
+  test('takes every identity on the line, in whatever JSON spacing, and a raw JSON payload', () => {
+    const spaced = 'eyAiZXBoZW1lcmFsSWRlbnRpdHkiOjF9';
+    const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9';
+    const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}';
+    assert.deepEqual(secretsOf(`/hud_login ${spaced}`), [spaced]);
+    assert.deepEqual(secretsOf(`/hud_login ${id} ${pretty}`), [id, pretty]);
+    assert.equal(redact(`/hud_login ${id} ${pretty}`, `${pretty} then ${id}`), '<redacted> then <redacted>');
+    assert.deepEqual(secretsOf(`/hud_login ${raw} --guest`), [raw]);
+    assert.equal(redact(`/hud_login ${raw} --guest`, `/hud_login ${raw} --guest failed`), '/hud_login <redacted> --guest failed');
   });
 });
 

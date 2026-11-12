@@ -1,4 +1,4 @@
-export { type Console, ConsoleError, FakeConsole, normalizeLine, commandOf, redact, redactLine, secretOf } from './console.ts'
+export { type Console, ConsoleError, FakeConsole, normalizeLine, commandOf, redact, redactLine, replaceSecrets, secretsOf } from './console.ts'
 export { Explorer, Hud } from './explorer.ts'
 export type { WorldState, Control, NotFound, HudRead, HudInput, HudEntry, HudState, UserData, AvatarReport, ChatHistory, ChatMessage, CommunityState, VoiceState, ScreenPosition, Position, PointerReport, RaycastStats, CommandRecord, HudLoginReply } from './explorer.ts'
 export { type Selector, type SelectorObject, selectorArg } from './selectors.ts'

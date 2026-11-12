@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, scrubCredentials, secretOf } from '../driver/console.ts'
+import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, scrubCredentials, secretsOf } from '../driver/console.ts'
 import { WEB_DRIVER } from '../driver/paths.ts'
 
 describe('normalizeLine', () => {
@@ -57,41 +57,54 @@ describe('ConsoleError', () => {
     assert.equal(error.message, '`/login_identity <redacted> --name tester` failed: the identity <redacted> is not base64 JSON')
   })
 
-  test('the credential is the word shaped as an encoded identity, wherever it is, as the web driver has it', async () => {
+  test('the credentials are what is shaped as an encoded identity, wherever it is, as the web driver has it', async () => {
     const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='
-    const cases: [string, string | undefined][] = [
-      [`/hud_login ${id} --guest`, id],
-      [`/hud_login --guest ${id} --look 1`, id],
-      [`/hud_login --name tester --look 1 ${id} --guest`, id],
-      [`/login_identity --look 3 ${id}`, id],
-      [`login_identity ${id}`, id],
-      [`/hud_login "${id}" --guest`, id],
-      [`/hud_login '${id}'`, id],
+    // `{ "` and pretty-printed JSON, which the commands decode as well
+    const spaced = 'eyAiZXBoZW1lcmFsSWRlbnRpdHkiOjF9'
+    const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9'
+    const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}'
+    const cases: [string, string[]][] = [
+      [`/hud_login ${id} --guest`, [id]],
+      [`/hud_login --guest ${id} --look 1`, [id]],
+      [`/hud_login --name tester --look 1 ${id} --guest`, [id]],
+      [`/login_identity --look 3 ${id}`, [id]],
+      [`login_identity ${id}`, [id]],
+      [`/hud_login "${id}" --guest`, [id]],
+      [`/hud_login '${id}'`, [id]],
+      [`/hud_login ${spaced}`, [spaced]],
+      [`/login_identity ${pretty} --guest`, [pretty]],
       // in a flag's value slot: the identity, never the word the flags leave over
-      [`/hud_login --name ${id} --look 1`, id],
+      [`/hud_login --name ${id} --look 1`, [id]],
+      // pasted twice: both
+      [`/hud_login ${id} ${pretty}`, [id, pretty]],
+      // raw JSON, which the commands refuse after it was logged
+      [`/hud_login ${raw} --guest`, [raw]],
       // an empty or short word is no identity: nothing would be safe to replace
-      ['/hud_login ""', undefined],
-      ["/hud_login ''", undefined],
-      ['/hud_login "', undefined],
-      ['/hud_login --look 1', undefined],
-      ['/hud_login eyJhIjoxfQ==', undefined],
+      ['/hud_login ""', []],
+      ["/hud_login ''", []],
+      ['/hud_login "', []],
+      ['/hud_login --look 1', []],
+      ['/hud_login eyJhIjoxfQ==', []],
+      ['/hud_login {}', []],
       // the shape inside a longer base64 run is not where an identity starts
-      [`/hud_login x${id}`, undefined],
-      [`/teleport ${id}`, undefined],
-      ['/teleport 1 2', undefined],
-      ['/hud_login', undefined]
+      [`/hud_login x${id}`, []],
+      [`/teleport ${id}`, []],
+      ['/teleport 1 2', []],
+      ['/hud_login', []]
     ]
     const lines = cases.map(([line]) => line)
-    const expected = cases.map(([, secret]) => secret)
-    assert.deepEqual(lines.map(secretOf), expected)
+    const expected = cases.map(([, secrets]) => secrets)
+    assert.deepEqual(lines.map(secretsOf), expected)
     assert.equal(redactLine(`/hud_login --guest ${id}`), '/hud_login --guest <redacted>')
     assert.equal(redactLine(`/hud_login --name tester --look 1 ${id}`), '/hud_login --name tester --look 1 <redacted>')
     assert.equal(redactLine(`/hud_login --name ${id} --look 1`), '/hud_login --name <redacted> --look 1')
+    assert.equal(redactLine(`/hud_login ${id} ${pretty}`), '/hud_login <redacted> <redacted>')
+    assert.equal(redactLine(`/hud_login ${raw} --guest`), '/hud_login <redacted> --guest')
     // a line with no identity is left as it was, not split between every character
     assert.equal(redactLine('/hud_login ""'), '/hud_login ""')
     // the web driver's command line redacts by the same rule
-    const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretOf: (line: string) => string | undefined }
-    assert.deepEqual(lines.map(driver.secretOf), expected)
+    const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretsOf: (line: string) => string[] }
+    assert.deepEqual(lines.map(driver.secretsOf), expected)
   })
 
   test('keeps a /hud_login payload out as well', () => {

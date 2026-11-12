@@ -83,27 +83,41 @@ function noChromeMessage(env) {
   return `Google Chrome is not installed (looked in ${looked}); install it, or point CHROME_PATH at it`;
 }
 
-/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON,
- *  which starts `{"` (`eyJ`), as a whole run of base64 characters; one this short or shorter
- *  could be part of other text, and an identity's is hundreds of characters long. */
-const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])eyJ[A-Za-z0-9+/_-]{13,}={0,2}/;
+/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON.
+ *  Its `{` encodes as `e` and one of `w`-`z`, a digit, `+` or `/` (`-` or `_` in base64url),
+ *  whatever follows it (`eyJ` for `{"`, `eyAi` for `{ "`, `ewog` for pretty-printed JSON), as a
+ *  whole run of base64 characters; one shorter than this could be part of other text, and an
+ *  identity's is hundreds of characters long. */
+const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])e[w-z0-9+/_-][A-Za-z0-9+/_-]{14,}={0,2}/g;
+/** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
+ *  `{` to its last `}`. */
+const RAW_JSON = /\{.*\}/s;
+const MIN_SECRET = 16;
 
-/** The credential a console line carries: the payload of `/login_identity` or `/hud_login`, an
+/** The credentials a console line carries: the payload of `/login_identity` or `/hud_login`, an
  *  AuthIdentity (an ephemeral private key and a signed delegation valid for days), found by its
- *  shape wherever a hand-typed line puts it (after flags, as a flag's value, quoted), or
- *  undefined. Nothing else is one, so an empty or short word never becomes a secret that matches
+ *  shape wherever a hand-typed line puts it (after flags, as a flag's value, quoted, twice, or as
+ *  raw JSON). Nothing else is one, so an empty or short word never becomes a secret that matches
  *  everywhere. The e2e suite's `driver/console.ts` has the same rule, which its tests keep in
  *  step. */
-export function secretOf(line) {
-  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return undefined;
-  return ENCODED_IDENTITY.exec(line)?.[0];
+export function secretsOf(line) {
+  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return [];
+  const secrets = [...(line.match(ENCODED_IDENTITY) ?? [])];
+  const raw = RAW_JSON.exec(line)?.[0];
+  if (raw !== undefined && raw.length >= MIN_SECRET) secrets.push(raw);
+  return secrets;
 }
 
-/** `text` with the line's credential replaced wherever it appears, for what the command line
+/** `text` with each of `secrets` replaced wherever it appears, the longest first, so one that
+ *  holds another is never left in part. */
+function replaceSecrets(secrets, text) {
+  return [...secrets].sort((a, b) => b.length - a.length).reduce((out, secret) => out.split(secret).join('<redacted>'), text);
+}
+
+/** `text` with the line's credentials replaced wherever they appear, for what the command line
  *  prints: a reply, an error or a timeout may quote the line. */
 export function redact(line, text) {
-  const secret = secretOf(line);
-  return secret === undefined ? text : text.split(secret).join('<redacted>');
+  return replaceSecrets(secretsOf(line), text);
 }
 
 /** Does a call of the binding from this execution context count? Only from a default (not an
@@ -211,7 +225,7 @@ class Driver {
   #held = new Set();
   #shown = new WeakSet();
   #console = [];
-  // the credentials the lines run so far carried (`secretOf`): a page may quote one
+  // the credentials the lines run so far carried (`secretsOf`): a page may quote one
   #secrets = new Set();
   #queue = Promise.resolve();
   #closing = null;
@@ -391,9 +405,7 @@ class Driver {
 
   // a credential a line carried is replaced before the cut, so a cut cannot leave a part of it
   #redactSecrets(text) {
-    let out = text;
-    for (const secret of this.#secrets) out = out.split(secret).join('<redacted>');
-    return out;
+    return replaceSecrets(this.#secrets, text);
   }
 
   #log(sessionId, kind, text) {
@@ -464,8 +476,7 @@ class Driver {
    *  rejection with the message the page failed with. */
   async console(line, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
     const started = Date.now();
-    const secret = secretOf(line);
-    if (secret !== undefined) this.#secrets.add(secret);
+    for (const secret of secretsOf(line)) this.#secrets.add(secret);
     await this.ready({ timeout });
     const context = await this.#findApp();
     if (!context) throw new Error('the app frame went away');

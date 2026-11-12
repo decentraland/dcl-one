@@ -79,7 +79,7 @@ describes the gateway layouts and service overrides.
 
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` and `/hud_login` payloads
-redacted wherever the line puts them, found by the shape of an encoded identity) and
+redacted wherever the line puts them, found by the shape of an identity, encoded or raw JSON) and
 `final.png` (the engine's frame as the scenario left it). A failed scenario adds `page.jpg`, the
 page as it looked, the HUD included (on the web the engine's frame has none), and `console.txt`,
 the page's last 200 console lines; a failed restore adds the same as `restore-page.jpg` and

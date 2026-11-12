@@ -11,27 +11,41 @@ export interface Console {
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
 }
 
-/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON,
- *  which starts `{"` (`eyJ`), as a whole run of base64 characters; one this short or shorter
- *  could be part of other text, and an identity's is hundreds of characters long. */
-const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])eyJ[A-Za-z0-9+/_-]{13,}={0,2}/
+/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON.
+ *  Its `{` encodes as `e` and one of `w`-`z`, a digit, `+` or `/` (`-` or `_` in base64url),
+ *  whatever follows it (`eyJ` for `{"`, `eyAi` for `{ "`, `ewog` for pretty-printed JSON), as a
+ *  whole run of base64 characters; one shorter than this could be part of other text, and an
+ *  identity's is hundreds of characters long. */
+const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])e[w-z0-9+/_-][A-Za-z0-9+/_-]{14,}={0,2}/g
+/** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
+ *  `{` to its last `}`. */
+const RAW_JSON = /\{.*\}/s
+const MIN_SECRET = 16
 
-/** The credential a line carries: the payload of `/login_identity` or `/hud_login`, an
+/** The credentials a line carries: the payload of `/login_identity` or `/hud_login`, an
  *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
- *  found by its shape wherever a hand-typed line puts it: after flags, as a flag's value, or
- *  quoted (the commands refuse such a line, but after it was logged). Nothing else is one, so an
- *  empty or short word never turns every line into `<redacted>`. The web driver's `driver.mjs`
- *  has the same rule, which a test keeps in step. */
-export function secretOf(line: string): string | undefined {
-  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return undefined
-  return ENCODED_IDENTITY.exec(line)?.[0]
+ *  found by its shape wherever a hand-typed line puts it: after flags, as a flag's value, quoted,
+ *  twice, or as raw JSON (the commands refuse such a line, but after it was logged). Nothing else
+ *  is one, so an empty or short word never turns every line into `<redacted>`. The web driver's
+ *  `driver.mjs` has the same rule, which a test keeps in step. */
+export function secretsOf(line: string): string[] {
+  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return []
+  const secrets: string[] = [...(line.match(ENCODED_IDENTITY) ?? [])]
+  const raw = RAW_JSON.exec(line)?.[0]
+  if (raw !== undefined && raw.length >= MIN_SECRET) secrets.push(raw)
+  return secrets
 }
 
-/** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout
- *  may quote the line. */
+/** `text` with each of `secrets` replaced wherever it appears, the longest first, so one that
+ *  holds another is never left in part. */
+export function replaceSecrets(secrets: Iterable<string>, text: string): string {
+  return [...secrets].sort((a, b) => b.length - a.length).reduce((out, secret) => out.split(secret).join('<redacted>'), text)
+}
+
+/** `text` with the line's credentials replaced wherever they appear: a reply, an error or a
+ *  timeout may quote the line. */
 export function redact(line: string, text: string): string {
-  const secret = secretOf(line)
-  return secret === undefined ? text : text.split(secret).join('<redacted>')
+  return replaceSecrets(secretsOf(line), text)
 }
 
 /** The line as it may be logged. */
