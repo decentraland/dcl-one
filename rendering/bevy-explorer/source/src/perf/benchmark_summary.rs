@@ -11,7 +11,8 @@
 //! `cpu_p99_ms cpu_frames_over_hiccup_threshold_count cpu_hiccup_threshold_ms gpu_p99_ms
 //! gpu_frames_over_hiccup_threshold_count used_peak_mib js_heap_used_mib entity_count
 //! sample_count snapshot_duration_seconds`; a GPU value is `n/a` without timestamp queries, the
-//! heap `n/a` without a reporting scene.
+//! peak `n/a` without a memory reading during the phase, the heap `n/a` without a reporting
+//! scene, the entity count `n/a` without its diagnostic.
 //! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first; a name has its
 //! commas, colons and equals signs replaced by spaces.
 
@@ -42,7 +43,8 @@ pub struct BenchmarkMeasuredPhaseAccumulator {
     cpu_frame_times_ms: Vec<f32>,
     gpu_frame_times_ms: Vec<f32>,
     last_gpu_frame_time_measured_at: Option<Instant>,
-    used_peak_bytes: u64,
+    /// `None` until a memory reading is taken during the phase.
+    used_peak_bytes: Option<u64>,
     sampled_seconds: f64,
     perf_summary_logged: bool,
 }
@@ -84,7 +86,10 @@ pub fn accumulate_benchmark_measured_phase_system(
                 run.gpu_frame_times_ms.push(gpu_ms);
             }
             if let Some(reading) = memory.reading() {
-                run.used_peak_bytes = run.used_peak_bytes.max(reading.used_bytes);
+                run.used_peak_bytes = Some(
+                    run.used_peak_bytes
+                        .map_or(reading.used_bytes, |peak| peak.max(reading.used_bytes)),
+                );
             }
         }
         AutopilotPhase::Ending { exit_code } => {
@@ -111,7 +116,7 @@ pub fn accumulate_benchmark_measured_phase_system(
                 gpu.as_ref(),
                 run.used_peak_bytes,
                 sum_scene_js_heaps(scenes.iter()).map(|heap| heap.used_bytes_sum),
-                u64::from(latest_entity_count(&diagnostics).unwrap_or(0)),
+                latest_entity_count(&diagnostics).map(u64::from),
                 run.sampled_seconds,
                 &top_scopes,
             );
@@ -127,14 +132,17 @@ const BYTES_PER_MIB: u64 = 1 << 20;
 pub fn perf_summary_log_lines(
     cpu: Option<&FrameTimeSampleSummary>,
     gpu: Option<&FrameTimeSampleSummary>,
-    used_peak_bytes: u64,
+    used_peak_bytes: Option<u64>,
     js_heap_used_bytes: Option<u64>,
-    entity_count: u64,
+    entity_count: Option<u64>,
     sampled_seconds: f64,
     top_scopes: &[ProfiledScopeSummary],
 ) -> (String, String) {
     let ms = |value: Option<f32>| value.map_or("n/a".to_owned(), |ms| format!("{ms:.2}"));
     let count = |value: Option<u32>| value.map_or("n/a".to_owned(), |count| count.to_string());
+    let mib = |bytes: Option<u64>| {
+        bytes.map_or("n/a".to_owned(), |bytes| (bytes / BYTES_PER_MIB).to_string())
+    };
     let values_line = format!(
         "cpu_p99_ms={} cpu_frames_over_hiccup_threshold_count={} cpu_hiccup_threshold_ms={} gpu_p99_ms={} gpu_frames_over_hiccup_threshold_count={} used_peak_mib={} js_heap_used_mib={} entity_count={} sample_count={} snapshot_duration_seconds={:.1}",
         ms(cpu.map(|cpu| cpu.p99_ms)),
@@ -142,9 +150,9 @@ pub fn perf_summary_log_lines(
         ms(cpu.map(|cpu| cpu.hiccup_threshold_ms)),
         ms(gpu.map(|gpu| gpu.p99_ms)),
         count(gpu.map(|gpu| gpu.frames_over_hiccup_threshold_count)),
-        used_peak_bytes / BYTES_PER_MIB,
-        js_heap_used_bytes.map_or("n/a".to_owned(), |bytes| (bytes / BYTES_PER_MIB).to_string()),
-        entity_count,
+        mib(used_peak_bytes),
+        mib(js_heap_used_bytes),
+        entity_count.map_or("n/a".to_owned(), |count| count.to_string()),
         count(cpu.map(|cpu| cpu.sample_count)),
         sampled_seconds,
     );
@@ -190,9 +198,9 @@ mod tests {
         let (values_line, top_scopes_line) = perf_summary_log_lines(
             Some(&cpu),
             None,
-            300 * BYTES_PER_MIB,
+            Some(300 * BYTES_PER_MIB),
             Some(64 * BYTES_PER_MIB),
-            1234,
+            Some(1234),
             90.04,
             &scopes,
         );
@@ -203,6 +211,15 @@ mod tests {
         assert_eq!(
             top_scopes_line,
             "top_scopes=x  y  z w:9.00,a::b:1.50".replace("a::b", "a  b")
+        );
+    }
+
+    #[test]
+    fn an_unmeasured_value_is_n_a_never_zero() {
+        let (values_line, _) = perf_summary_log_lines(None, None, None, None, None, 0.0, &[]);
+        assert_eq!(
+            values_line,
+            "cpu_p99_ms=n/a cpu_frames_over_hiccup_threshold_count=n/a cpu_hiccup_threshold_ms=n/a gpu_p99_ms=n/a gpu_frames_over_hiccup_threshold_count=n/a used_peak_mib=n/a js_heap_used_mib=n/a entity_count=n/a sample_count=n/a snapshot_duration_seconds=0.0"
         );
     }
 }

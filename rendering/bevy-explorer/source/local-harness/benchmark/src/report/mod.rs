@@ -80,12 +80,14 @@ struct BuildBenchmarkRunsStatistics {
     /// Per run, not in total: after a crash or an exclusion the builds have different run counts.
     exceptions_per_run: f64,
     exception_kinds: ExceptionKindCounts,
-    /// The runs that wrote a summary, which the rows below come from.
-    perf_summary_run_count: usize,
+    /// The runs whose summary measured the hiccup count, which its row comes from.
+    cpu_hiccup_count_run_count: usize,
     /// Frames over the hiccup threshold per run, across those runs.
     cpu_hiccups_per_run: MedianAndRange,
     /// The threshold in effect, the median across those runs.
     cpu_hiccup_threshold_ms: Option<f32>,
+    /// The runs whose summary measured the peak memory, which its row comes from.
+    peak_memory_run_count: usize,
     /// Peak engine memory per run, MiB, across those runs.
     peak_memory_mib: MedianAndRange,
     /// Self time per run, ms, of the scopes the summaries name, over the runs that name each,
@@ -321,9 +323,9 @@ fn read_runs(folder: &Path, build: &str) -> Result<Vec<BuildBenchmarkRun>, Strin
         .collect()
 }
 
-/// Runs with the summary lines a build needs for a hiccup or memory verdict.
-const MIN_PERF_SUMMARY_RUNS: usize = 2;
-const TOO_FEW_PERF_SUMMARIES: &str = "fewer than 2 summaries";
+/// Runs whose summary measured the value a build needs for its hiccup or memory verdict.
+const MIN_MEASURED_RUNS: usize = 2;
+const TOO_FEW_MEASURED_RUNS: &str = "fewer than 2 runs measured it";
 
 /// The section's numbers, verdicts and caveats, as `ProduceSummary.cs` works them out.
 fn compare_builds(
@@ -387,22 +389,31 @@ fn compare_builds(
             base.exceptions_per_run,
             incomparable,
         );
-        let perf_summaries_comparable = change.perf_summary_run_count >= MIN_PERF_SUMMARY_RUNS
-            && base.perf_summary_run_count >= MIN_PERF_SUMMARY_RUNS;
-        let cpu_hiccups_per_run_verdict = if perf_summaries_comparable {
+        let measured_by_both = |change_runs: usize, base_runs: usize| {
+            change_runs >= MIN_MEASURED_RUNS && base_runs >= MIN_MEASURED_RUNS
+        };
+        let cpu_hiccups_per_run_verdict = if measured_by_both(
+            change.cpu_hiccup_count_run_count,
+            base.cpu_hiccup_count_run_count,
+        ) {
             stats::incidents_per_run_verdict(
                 f64::from(change.cpu_hiccups_per_run.median),
                 f64::from(base.cpu_hiccups_per_run.median),
                 incomparable,
             )
         } else {
-            IncidentsPerRunVerdict::Withheld(TOO_FEW_PERF_SUMMARIES)
+            IncidentsPerRunVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
         };
-        let peak_memory_verdict = if perf_summaries_comparable {
-            stats::peak_memory_verdict(&change.peak_memory_mib, &base.peak_memory_mib, incomparable)
-        } else {
-            PeakMemoryVerdict::Withheld(TOO_FEW_PERF_SUMMARIES)
-        };
+        let peak_memory_verdict =
+            if measured_by_both(change.peak_memory_run_count, base.peak_memory_run_count) {
+                stats::peak_memory_verdict(
+                    &change.peak_memory_mib,
+                    &base.peak_memory_mib,
+                    incomparable,
+                )
+            } else {
+                PeakMemoryVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
+            };
         BaselineComparison {
             base,
             frame_time_verdicts,
@@ -471,6 +482,17 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
         .map(|(name, (sum, runs))| (name.to_owned(), sum / runs as f32))
         .collect();
     scope_self_ms_per_run.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    // a summary measures a value or writes `n/a`, which is left out
+    let cpu_hiccup_counts: Vec<f32> = summaries
+        .iter()
+        .filter_map(|summary| summary.cpu_frames_over_hiccup_threshold_count)
+        .map(|count| count as f32)
+        .collect();
+    let peak_memories_mib: Vec<f32> = summaries
+        .iter()
+        .filter_map(|summary| summary.used_peak_mib)
+        .map(|mib| mib as f32)
+        .collect();
     BuildBenchmarkRunsStatistics {
         run_count: runs.len(),
         median_sample_count: stats::median_int(runs.iter().map(|run| run.sample_count)),
@@ -483,13 +505,8 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
             exceptions as f64 / runs.len() as f64
         },
         exception_kinds: ExceptionKindCounts::combine(runs.iter().map(|run| &run.exception_kinds)),
-        perf_summary_run_count: summaries.len(),
-        cpu_hiccups_per_run: stats::median_and_range(
-            summaries
-                .iter()
-                .filter_map(|summary| summary.cpu_frames_over_hiccup_threshold_count)
-                .map(|count| count as f32),
-        ),
+        cpu_hiccup_count_run_count: cpu_hiccup_counts.len(),
+        cpu_hiccups_per_run: stats::median_and_range(cpu_hiccup_counts),
         cpu_hiccup_threshold_ms: {
             let thresholds: Vec<f32> = summaries
                 .iter()
@@ -497,12 +514,8 @@ fn build_benchmark_runs_statistics(runs: &[BuildBenchmarkRun]) -> BuildBenchmark
                 .collect();
             (!thresholds.is_empty()).then(|| stats::median_and_range(thresholds).median)
         },
-        peak_memory_mib: stats::median_and_range(
-            summaries
-                .iter()
-                .filter_map(|summary| summary.used_peak_mib)
-                .map(|mib| mib as f32),
-        ),
+        peak_memory_run_count: peak_memories_mib.len(),
+        peak_memory_mib: stats::median_and_range(peak_memories_mib),
         scope_self_ms_per_run,
     }
 }
@@ -578,7 +591,7 @@ mod tests {
     }
 
     #[test]
-    fn the_hiccup_and_memory_verdicts_need_two_summaries_a_build() {
+    fn the_hiccup_and_memory_verdicts_each_need_two_runs_a_build_that_measured_the_value() {
         let run = |summary: Option<ExplorerPerfSummary>| BuildBenchmarkRun {
             sample_count: 1000,
             frame_time_ms: [10.0; 6],
@@ -586,31 +599,70 @@ mod tests {
             exception_kinds: ExceptionKindCounts::default(),
             perf_summary: summary,
         };
-        let summary = |hiccups, mib| {
+        let summary = |hiccups: Option<u64>, mib: Option<u64>| {
             Some(ExplorerPerfSummary {
-                cpu_frames_over_hiccup_threshold_count: Some(hiccups),
-                used_peak_mib: Some(mib),
+                cpu_frames_over_hiccup_threshold_count: hiccups,
+                used_peak_mib: mib,
                 ..Default::default()
             })
         };
+        let compare = |change, base| {
+            compare_builds("apple-m1".to_owned(), change, base, 3)
+                .baseline_comparison
+                .unwrap()
+        };
         // three runs a build, the summary in one change run only
-        let change = vec![run(summary(9, 400)), run(None), run(None)];
-        let base = vec![run(summary(1, 300)), run(summary(1, 300)), run(None)];
-        let section = compare_builds("apple-m1".to_owned(), change, base, 3);
-        let comparison = section.baseline_comparison.unwrap();
+        let comparison = compare(
+            vec![run(summary(Some(9), Some(400))), run(None), run(None)],
+            vec![
+                run(summary(Some(1), Some(300))),
+                run(summary(Some(1), Some(300))),
+                run(None),
+            ],
+        );
         assert_eq!(
             comparison.cpu_hiccups_per_run_verdict,
-            IncidentsPerRunVerdict::Withheld(TOO_FEW_PERF_SUMMARIES)
+            IncidentsPerRunVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
         );
         assert_eq!(
             comparison.peak_memory_verdict,
-            PeakMemoryVerdict::Withheld(TOO_FEW_PERF_SUMMARIES)
+            PeakMemoryVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
         );
 
-        let change = vec![run(summary(9, 400)), run(summary(9, 400)), run(None)];
-        let base = vec![run(summary(1, 300)), run(summary(1, 300)), run(None)];
-        let section = compare_builds("apple-m1".to_owned(), change, base, 3);
-        let comparison = section.baseline_comparison.unwrap();
+        // two summaries a build, the change's hiccup counts `n/a`: no hiccup verdict
+        let comparison = compare(
+            vec![
+                run(summary(None, Some(400))),
+                run(summary(None, Some(400))),
+                run(None),
+            ],
+            vec![
+                run(summary(Some(1), Some(300))),
+                run(summary(Some(1), Some(300))),
+                run(None),
+            ],
+        );
+        assert_eq!(
+            comparison.cpu_hiccups_per_run_verdict,
+            IncidentsPerRunVerdict::Withheld(TOO_FEW_MEASURED_RUNS)
+        );
+        assert!(matches!(
+            comparison.peak_memory_verdict,
+            PeakMemoryVerdict::MoreMemory(_)
+        ));
+
+        let comparison = compare(
+            vec![
+                run(summary(Some(9), Some(400))),
+                run(summary(Some(9), Some(400))),
+                run(None),
+            ],
+            vec![
+                run(summary(Some(1), Some(300))),
+                run(summary(Some(1), Some(300))),
+                run(None),
+            ],
+        );
         assert_eq!(
             comparison.cpu_hiccups_per_run_verdict,
             IncidentsPerRunVerdict::More

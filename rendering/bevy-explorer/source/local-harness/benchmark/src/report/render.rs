@@ -146,14 +146,16 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 signed_hundredths(change.exceptions_per_run - base.exceptions_per_run),
                 exceptions_verdict_text(comparison.exceptions_per_run_verdict)
             );
-            if change.perf_summary_run_count > 0 || base.perf_summary_run_count > 0 {
+            if change.cpu_hiccup_count_run_count > 0 || base.cpu_hiccup_count_run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     CPU_HICCUPS_METRIC,
                     cpu_hiccups_cell(base),
                     cpu_hiccups_cell(change),
-                    if change.perf_summary_run_count > 0 && base.perf_summary_run_count > 0 {
+                    if change.cpu_hiccup_count_run_count > 0
+                        && base.cpu_hiccup_count_run_count > 0
+                    {
                         signed_hundredths(f64::from(
                             change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median,
                         ))
@@ -162,13 +164,15 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     },
                     hiccups_verdict_text(comparison.cpu_hiccups_per_run_verdict)
                 );
+            }
+            if change.peak_memory_run_count > 0 || base.peak_memory_run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {} | {} | {} | {} | {} |",
                     PEAK_MEMORY_METRIC,
                     peak_memory_cell(base),
                     peak_memory_cell(change),
-                    if change.perf_summary_run_count > 0 && base.perf_summary_run_count > 0 {
+                    if change.peak_memory_run_count > 0 && base.peak_memory_run_count > 0 {
                         signed_mib(change.peak_memory_mib.median - base.peak_memory_mib.median)
                     } else {
                         "-".to_owned()
@@ -193,12 +197,14 @@ pub fn runner_section(section: &RunnerSection) -> String {
                 "| {EXCEPTIONS_METRIC} | {} |",
                 hundredths(change.exceptions_per_run)
             );
-            if change.perf_summary_run_count > 0 {
+            if change.cpu_hiccup_count_run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {CPU_HICCUPS_METRIC} | {} |",
                     cpu_hiccups_cell(change)
                 );
+            }
+            if change.peak_memory_run_count > 0 {
                 let _ = writeln!(
                     out,
                     "| {PEAK_MEMORY_METRIC} | {} |",
@@ -401,7 +407,7 @@ fn top_scope_names<'a>(change: &'a [(String, f32)], base: &'a [(String, f32)]) -
 
 /// The hiccup count's median and range, with the threshold in effect.
 fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
-    if build.perf_summary_run_count == 0 {
+    if build.cpu_hiccup_count_run_count == 0 {
         return "-".to_owned();
     }
     let MedianAndRange { median, min, max } = build.cpu_hiccups_per_run;
@@ -416,7 +422,7 @@ fn cpu_hiccups_cell(build: &BuildBenchmarkRunsStatistics) -> String {
 }
 
 fn peak_memory_cell(build: &BuildBenchmarkRunsStatistics) -> String {
-    if build.perf_summary_run_count == 0 {
+    if build.peak_memory_run_count == 0 {
         return "-".to_owned();
     }
     let MedianAndRange { median, min, max } = build.peak_memory_mib;

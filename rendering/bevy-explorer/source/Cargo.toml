@@ -23,7 +23,15 @@ required-features = ["headless"]
 # - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote", "profiler"]
+default = [
+  "livekit",
+  "ffmpeg",
+  "inspect",
+  "social",
+  "react-hud-cef",
+  "remote",
+  "profiler",
+]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]

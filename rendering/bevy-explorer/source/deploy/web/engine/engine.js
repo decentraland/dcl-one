@@ -511,18 +511,20 @@ export function start(options = {}) {
   document.addEventListener("visibilitychange", updatePageFocus);
   updatePageFocus();
 
-  // the HUD's main-thread cost window, every second; what accumulated while the tab was hidden
-  // is discarded when it shows again
+  // the HUD's main-thread cost window, every second: the window ends only once the engine
+  // stored it, so one refused while the engine holds its lock stays and grows until the next
+  // tick; what accumulated while the tab was hidden is discarded when it shows again
   setInterval(() => {
-    const cost = window.__bevyTakeHudMainThreadCost?.();
+    const cost = window.__bevyPeekHudMainThreadCost?.();
     if (!cost) return;
     const commits = cost.reactCommits;
     const frames = cost.longAnimationFrames;
-    engine_set_hud_main_thread_cost(
+    const stored = engine_set_hud_main_thread_cost(
       cost.coveredSeconds,
       commits !== null, commits?.commitCount ?? 0, commits?.commitTimeSumMs ?? 0,
       frames !== null, frames?.frameCount ?? 0, frames?.hudScriptTimeSumMs ?? 0, frames?.styleAndLayoutTimeSumMs ?? 0,
     );
+    if (stored) window.__bevyTakeHudMainThreadCost();
   }, 1000);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) window.__bevyDiscardHudMainThreadCost?.();

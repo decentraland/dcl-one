@@ -63,12 +63,12 @@ pub fn engine_set_page_focus(has_focus: bool) {
     PAGE_HAS_FOCUS.store(has_focus, Ordering::Relaxed);
 }
 
-/// The HUD cost window the page stored and the engine has not taken.
+/// The HUD cost windows the page stored and the engine has not taken, summed into one.
 static HUD_MAIN_THREAD_COST_WINDOW: Mutex<Option<HudMainThreadCostDataPoint>> = Mutex::new(None);
 
-/// Stores the page's HUD cost window; a window arriving while the engine holds the lock is
-/// dropped (the page thread must not block). With `react_commits_reported` false, the window
-/// holds no React commits.
+/// Adds the page's HUD cost window to the stored one and returns true; returns false, storing
+/// nothing, while the engine holds the lock (the page thread must not block). With
+/// `react_commits_reported` false, the window holds no React commits.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn engine_set_hud_main_thread_cost(
@@ -80,7 +80,7 @@ pub fn engine_set_hud_main_thread_cost(
     long_animation_frame_count: u32,
     hud_script_time_sum_ms: f32,
     style_and_layout_time_sum_ms: f32,
-) {
+) -> bool {
     let window = HudMainThreadCostDataPoint {
         covered_seconds,
         react_commits: react_commits_reported.then_some(ReactCommitSums {
@@ -93,9 +93,14 @@ pub fn engine_set_hud_main_thread_cost(
             style_and_layout_time_sum_ms,
         }),
     };
-    if let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() {
-        *stored = Some(window);
+    let Ok(mut stored) = HUD_MAIN_THREAD_COST_WINDOW.try_lock() else {
+        return false;
+    };
+    match stored.as_mut() {
+        Some(stored) => stored.add(&window),
+        None => *stored = Some(window),
     }
+    true
 }
 
 /// The harness's browser leg: `perfStream`, the same-origin path the benchmark log (and, with
@@ -862,8 +867,8 @@ fn update_browser_page_focus_system(mut focus: ResMut<BrowserPageFocus>) {
     focus.set_if_neq(BrowserPageFocus::current());
 }
 
-/// The last HUD cost window the page stored; written only when a window arrives, so
-/// `is_changed` marks that frame.
+/// The HUD cost windows the page stored since the engine last took them, summed; written only
+/// when one is taken, so `is_changed` marks that frame.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub(crate) struct LatestHudMainThreadCostWindow(pub(crate) Option<HudMainThreadCostDataPoint>);
 

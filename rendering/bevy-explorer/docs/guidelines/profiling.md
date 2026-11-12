@@ -32,7 +32,8 @@ numbers.
   player count, the entity count and, with the profiler on, the top 30 scopes of the sample (its
   sampled frames only; the Profiler section's table is untouched).
 - **HUD main thread (web).** The React HUD's cost on the page's main thread over the page's
-  last second: the HUD root's React commits (count and their time) and, where the browser has
+  last window, one second, or several summed when the engine's frame spanned them: the HUD
+  root's React commits (count and their time) and, where the browser has
   Long Animation Frame timing (Chromium), the page's frames over 50 ms: their count, the HUD
   bundle's script time in them and their style and layout time. The HUD bundle is the whole of
   `assets/` (the HUD's own chunks and its vendor, shell and crypto chunks); on the Vite dev
@@ -43,8 +44,10 @@ numbers.
   build, slower on every commit than the production build the players load; otherwise their two
   cells are `-`. React measures every commit, in a long frame or not, so the commit time is a
   separate measure and can exceed the HUD script time. `-` on native and before the first
-  window. Frames that began before the window are not counted. A snapshot carries the windows of its sampled
-  time summed (`snapshot.hudMainThreadCost`, `null` when none arrived).
+  window. A long frame counts in the window its entry arrives in, after the frame ends; one that
+  began before the meter's install or while the tab was hidden is not counted. A snapshot
+  carries the windows of its sampled time summed (`snapshot.hudMainThreadCost`, `null` when none
+  arrived).
 - **Hiccup threshold.** The larger of 50 ms and two target frame times: 50 ms at 60 FPS and
   above, 66.7 ms at a 30 FPS cap, 50 ms with vsync or uncapped. The target is the session
   override (`/session_graphics fps`), else the configured one.

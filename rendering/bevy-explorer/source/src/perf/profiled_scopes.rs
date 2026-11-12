@@ -150,9 +150,20 @@ where
         let Some(span) = ctx.span(id) else {
             return;
         };
-        let mut visitor = SpanNameFieldVisitor::default();
-        attrs.record(&mut visitor);
-        let name = visitor.0.unwrap_or_else(|| metadata.name().to_owned());
+        // only Bevy's system, schedule and node spans are keyed by their `name` field; any
+        // other span is keyed by its static name, whatever fields it carries
+        let name = match kind {
+            ProfiledScopeKind::EcsSystem
+            | ProfiledScopeKind::Schedule
+            | ProfiledScopeKind::RenderGraphNode => {
+                let mut visitor = SpanNameFieldVisitor::default();
+                attrs.record(&mut visitor);
+                visitor.0.unwrap_or_else(|| metadata.name().to_owned())
+            }
+            ProfiledScopeKind::BevyInternal | ProfiledScopeKind::ExplorerSpan => {
+                metadata.name().to_owned()
+            }
+        };
         span.extensions_mut().insert(ProfiledScopeKey {
             kind,
             name: name.into(),
@@ -548,5 +559,39 @@ mod tests {
         table.fold_frame_accumulations(take_current_frame_accumulations(), true);
         let rows = table.top_scope_summaries(10, ProfiledScopeSortMetric::SelfTime);
         assert!(rows.is_empty(), "{rows:?}");
+    }
+
+    /// A span that is not a system, schedule or node is one row however its `name` field varies.
+    #[test]
+    fn only_bevys_system_schedule_and_node_spans_are_keyed_by_their_name_field() {
+        use bevy::log::tracing::{info_span, subscriber::with_default};
+        use bevy::log::tracing_subscriber::{layer::SubscriberExt, registry};
+
+        let _shared = SHARED_PROFILER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let subscriber = registry().with(profiled_scopes_layer());
+        let mut table = ProfiledScopesTable::new();
+        with_default(subscriber, || {
+            table.set_recording_enabled(true);
+            for file_name in ["a.glb", "b.glb"] {
+                let _span = info_span!("generate_tangents", name = file_name).entered();
+            }
+            for node_name in ["main_pass", "ui_pass"] {
+                let _span = info_span!("node", name = node_name).entered();
+            }
+            table.set_recording_enabled(false);
+        });
+        table.fold_frame_accumulations(take_current_frame_accumulations(), true);
+        let mut rows = table.top_scope_summaries(10, ProfiledScopeSortMetric::CallCount);
+        rows.sort_by(|a, b| a.scope_name.cmp(&b.scope_name));
+        let keys: Vec<(&str, u32)> = rows
+            .iter()
+            .map(|row| (row.scope_name.as_str(), row.call_count))
+            .collect();
+        assert_eq!(
+            keys,
+            [("generate_tangents", 2), ("main_pass", 1), ("ui_pass", 1)]
+        );
     }
 }

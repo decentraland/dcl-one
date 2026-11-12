@@ -3890,7 +3890,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/engine.js",
-      "sha256": "2b760a572bbc83a41679591883dc4ea097b4408a9f49cf1a7a5d0600e56bbf5c"
+      "sha256": "7c0a1895aee57f8dad3a6ade0415745c77a46c394146fc28d45acb156a2abe46"
     },
     {
       "path": "rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js",
@@ -4050,7 +4050,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/hudMainThreadCost.ts",
-      "sha256": "f5d44dd81b9b717dcca91ef54566ebff639892b2e2aacb271cb417f0ff7c4711"
+      "sha256": "58cd29de4d6bc44d1074f2a6c23f2b205cc23799cfb223a7abb14e084dc1a461"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
@@ -4178,7 +4178,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/hudMainThreadCost.test.ts",
-      "sha256": "7797170a559345dc6f23db49d9255e4da2f84480182a436c17c39440925afca4"
+      "sha256": "0595a9c3782283a37b80132ed2a26e6c21dbab70ee700484ebdba214cbe6708b"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/lobbySession.test.tsx",

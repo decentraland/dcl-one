@@ -134,8 +134,9 @@ larger of the two builds' values, so a scope that fell out of one build's top ro
   - **⚪ within noise:** the runs overlap or the difference is small. Treat it as no change.
   - **🟢 fewer / 🔴 more hiccups:** the exceptions rule applied to the hiccup medians; **🟢 _N_%
     less / 🔴 _N_% more memory:** the frame-time rule applied to the peak memory medians, with an
-    absolute floor of 32 MiB. Both need 2 runs with the summary lines per build; with fewer the
-    row reads *⚠️ no verdict — fewer than 2 summaries*.
+    absolute floor of 32 MiB. Each needs 2 runs per build whose summary line measured the value
+    (an `n/a` does not count); with fewer the row reads *⚠️ no verdict — fewer than 2 runs
+    measured it*.
   - **— informational:** the 0.1% worst rows. They average the two or three worst frames of a run,
     so one OS hiccup moves them by tens of percent; they never get a verdict.
   - **⚠️ no verdict — _reason_:** the sessions cannot be compared. *too few runs*: a build has
