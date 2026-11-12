@@ -369,3 +369,29 @@ fn waiting_primitives_are_left_alone_once_the_slice_is_spent() {
         before[still_waiting]
     );
 }
+
+#[test]
+fn a_waiting_primitive_removed_and_added_in_one_tick_keeps_waiting() {
+    let (mut app, root) = test_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let boxes = spawn_boxes(&mut app, root, 3);
+    app.update();
+    let waiting_boxes: Vec<_> = boxes
+        .iter()
+        .copied()
+        .filter(|e| app.world().get::<PendingPrimitive>(*e).is_some())
+        .collect();
+    assert_eq!(waiting_boxes.len(), 2);
+
+    // both renderers are deleted and put again before `update_mesh` runs, with the slice spent
+    for entity in &waiting_boxes {
+        let mut entity = app.world_mut().entity_mut(*entity);
+        entity.remove::<MeshDefinition>();
+        entity.insert(a_box());
+    }
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+    app.update();
+
+    assert_eq!(attached(&app, &waiting_boxes), 2);
+}

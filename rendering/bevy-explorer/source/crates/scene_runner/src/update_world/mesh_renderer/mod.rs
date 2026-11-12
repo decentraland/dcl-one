@@ -248,6 +248,7 @@ pub fn update_mesh(
         ),
     >,
     mut removed_primitives: RemovedComponents<MeshDefinition>,
+    has_definition: Query<(), With<MeshDefinition>>,
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<MeshPrimitiveDefaults>,
     mut default_material: Local<HashMap<Entity, Handle<SceneMaterial>>>,
@@ -257,10 +258,14 @@ pub fn update_mesh(
     mut gltf_mesh_resolver: GltfMeshResolver,
     mut budget: InstantiationBudget,
 ) {
-    // removals first: a renderer removed and added again in one tick is attached below
+    // removals first: a renderer removed and added again in one tick is attached below, and
+    // keeps its place if it was waiting
     for ent in removed_primitives.read() {
         if let Ok(mut e) = commands.get_entity(ent) {
-            e.remove::<(Mesh3d, PendingPrimitive)>();
+            e.remove::<Mesh3d>();
+            if !has_definition.contains(ent) {
+                e.remove::<PendingPrimitive>();
+            }
         }
     }
 

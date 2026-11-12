@@ -553,6 +553,7 @@ pub fn update_materials(
         ),
     >,
     mut removed_materials: RemovedComponents<PbMaterialComponent>,
+    has_material: Query<(), With<PbMaterialComponent>>,
     mut materials: ResMut<Assets<SceneMaterial>>,
     sourced: Query<(Entity, &MeshMaterial3d<SceneMaterial>, &MaterialSource)>,
     // ui-canvas atlas slot changes are applied to the material in place by
@@ -568,7 +569,11 @@ pub fn update_materials(
 ) {
     gltf_resolver.begin_frame();
 
+    // a material removed and added again in one tick keeps its place if it was waiting
     for ent in removed_materials.read() {
+        if has_material.contains(ent) {
+            continue;
+        }
         if let Ok(mut e) = commands.get_entity(ent) {
             e.remove::<(PendingMaterial, MaterialPrepaid)>();
         }

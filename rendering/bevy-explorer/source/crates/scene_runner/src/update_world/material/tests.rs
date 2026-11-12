@@ -334,3 +334,30 @@ fn a_material_waiting_for_its_primitive_is_left_alone() {
 
     assert_eq!(marked(&app, entity), before);
 }
+
+#[test]
+fn a_waiting_material_removed_and_added_in_one_tick_keeps_waiting() {
+    let (mut app, root) = material_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let entities = spawn_materials(&mut app, root, 0..3);
+    app.update();
+    let waiting_entities: Vec<_> = entities
+        .iter()
+        .copied()
+        .filter(|e| app.world().get::<PendingMaterial>(*e).is_some())
+        .collect();
+    assert_eq!(waiting_entities.len(), 2);
+
+    // both materials are deleted and put again before `update_materials` runs, with the slice
+    // spent
+    for (index, entity) in waiting_entities.iter().enumerate() {
+        let mut entity = app.world_mut().entity_mut(*entity);
+        entity.remove::<PbMaterialComponent>();
+        entity.insert(material(10 + index));
+    }
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+    app.update();
+
+    assert_eq!(created(&app, &waiting_entities), 2);
+}
