@@ -39,8 +39,8 @@ headless supervisor authority remain explicit connection gates.
 Removal from an island requests a fresh assignment through its owner after
 backoff. Removal from a credentialed scene or private room remains a scoped denial.
 
-All adapter ingress uses one validator. Diagnostics expose safe failure categories
-and connection phases rather than credentials or upstream response bodies. Signed
+All adapter ingress uses one validator. Room recovery diagnostics expose safe failure
+categories and connection phases rather than credentials or upstream response bodies. Signed
 login, scene and private-chat admission include the installation identifier only
 for HTTPS endpoints under decentraland.org or decentraland.zone.
 
@@ -51,6 +51,12 @@ automatic recovery for its scope without declaring a platform-wide ban. An ident
 conflict in private chat stops only that room. World-room identity conflicts retain
 the session gate. Identity changes and explicit access updates reset the applicable
 state.
+
+The credential executor also supplies the current scene's `SceneAdmission` reading.
+Known gatekeeper and worlds-server refusal bodies identify platform, world or scene
+bans; an ordinary 401/403 denial does not. Scene or identity replacement clears this
+reading before pending credentials can finish. `BanBlock` reads that observation and
+the shared room state, so paused or denied rooms do not expose moderation lists as live.
 
 Microphone publication requires an eligible connected room. An active call suppresses
 nearby publication without changing the saved nearby microphone preference. Native and browser

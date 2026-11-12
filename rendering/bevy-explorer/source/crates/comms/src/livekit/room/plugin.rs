@@ -150,8 +150,8 @@ fn poll_connecting_rooms(
                     } else {
                         err
                     };
-                    recovery.fail(time.elapsed_secs_f64(), err);
                     warn!(?entity, kind = ?err.kind, "room connection failed");
+                    recovery.fail(time.elapsed_secs_f64(), err);
                     commands
                         .entity(entity)
                         .try_remove::<(ConnectingLivekitRoom, Connecting)>();
@@ -193,6 +193,27 @@ fn classify_connect_error(error: crate::livekit::web::RoomError) -> AdmissionErr
         })
 }
 
+/// Parses the scene room's metadata into its moderation lists. Unreadable metadata keeps the
+/// lists the room had, or gives it empty ones.
+fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
+    match crate::SceneRoomModeration::from_metadata(metadata) {
+        Ok(moderation) => {
+            debug!(
+                "scene room metadata: {} banned, {} admins",
+                moderation.banned_addresses.len(),
+                moderation.scene_admins.len()
+            );
+            commands.entity(entity).try_insert(moderation);
+        }
+        Err(err) => {
+            warn!("scene room metadata unreadable ({err:?}): {metadata}");
+            commands
+                .entity(entity)
+                .try_insert_if_new(crate::SceneRoomModeration::default());
+        }
+    }
+}
+
 /// Marker for a room that hit a terminal disconnect (kicked / identity conflict) while
 /// running as an authoritative server: no in-process reconnect is possible (the token is
 /// spent); the supervisor must tear the transport down and re-mint.
@@ -203,6 +224,7 @@ pub struct ServerRoomTerminal;
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
+#[expect(clippy::type_complexity)]
 fn process_room_events(
     mut commands: Commands,
     livekit_rooms: Query<(
@@ -212,12 +234,21 @@ fn process_room_events(
         &mut RoomRecovery,
         Option<&RoomAccessScope>,
         Has<crate::archipelago::IslandOwner>,
+        Has<crate::SceneRoom>,
         Has<VoiceRoom>,
     )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced, mut recovery, scope, island, is_voice_room) in
-        livekit_rooms
+    for (
+        entity,
+        mut livekit_room,
+        mut unannounced,
+        mut recovery,
+        scope,
+        island,
+        scene_room,
+        is_voice_room,
+    ) in livekit_rooms
     {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
@@ -226,6 +257,9 @@ fn process_room_events(
                 RoomEvent::Connected {
                     participants_with_tracks,
                 } => {
+                    if scene_room {
+                        apply_scene_room_metadata(&mut commands, entity, &livekit_room.metadata());
+                    }
                     for (participant, publications) in participants_with_tracks {
                         unannounced.remove(participant.identity().as_str());
                         commands.trigger(ParticipantConnected {
@@ -327,6 +361,11 @@ fn process_room_events(
                         room: entity,
                         participant: participant.into(),
                     });
+                }
+                RoomEvent::RoomMetadataChanged { metadata, .. } => {
+                    if scene_room {
+                        apply_scene_room_metadata(&mut commands, entity, &metadata);
+                    }
                 }
                 RoomEvent::TrackPublished {
                     publication,

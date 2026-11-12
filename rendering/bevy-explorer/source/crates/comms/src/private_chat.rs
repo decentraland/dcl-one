@@ -922,6 +922,7 @@ mod tests {
                 .init_resource::<common::structs::PreviewMode>()
                 .init_resource::<ipfs::world_access::WorldCommsSecret>()
                 .init_resource::<crate::SceneRoomConnection>()
+                .init_resource::<crate::SceneAdmission>()
                 .init_resource::<crate::SceneRoomAdapterOverride>()
                 .init_resource::<DisableSceneRoomGatekeeper>()
                 .init_resource::<CommunityChannels>()

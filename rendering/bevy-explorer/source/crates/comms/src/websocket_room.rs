@@ -171,14 +171,14 @@ fn reconnect_websocket(
             transport.receiver = Some(receiver);
             let error = error
                 .downcast_ref::<AdmissionError>()
-                .copied()
+                .cloned()
                 .unwrap_or(AdmissionError::new(FailureKind::Transient));
-            recovery.fail(time.elapsed_secs_f64(), error);
             commands.entity(entity).try_remove::<WebSocketConnection>();
             if refreshable && !error.terminal() {
                 commands.entity(entity).try_insert(NeedsAdapter);
             }
             warn!(?entity, kind = ?error.kind, "websocket room disconnected");
+            recovery.fail(time.elapsed_secs_f64(), error);
         }
     }
 }

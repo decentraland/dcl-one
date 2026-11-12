@@ -9,6 +9,7 @@ pub mod connectivity;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
+pub mod moderation;
 pub mod movement_compressed;
 pub mod preview;
 #[cfg(feature = "livekit")]
@@ -45,6 +46,7 @@ use prost::Message as _;
 use wallet::Wallet;
 
 use crate::global_crdt::ChannelControl;
+pub use moderation::{AdmissionView, BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},
@@ -91,6 +93,7 @@ impl Plugin for CommsPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<SetCurrentScene>()
             .init_resource::<SceneRoomConnection>()
+            .init_resource::<SceneAdmission>()
             .init_resource::<ServerSceneRooms>()
             .init_resource::<DisableSceneRoomGatekeeper>()
             .insert_resource(SceneRoomAdapterOverride(
@@ -128,7 +131,9 @@ impl Plugin for CommsPlugin {
             Update,
             (
                 process_realm_change.run_if(not(resource_exists::<WorldHold>)),
-                (connect_scene_room, update_scene_connection).chain(),
+                (connect_scene_room, update_scene_connection)
+                    .chain()
+                    .before(room_connection::finish_credentials),
             ),
         );
 
@@ -549,7 +554,10 @@ pub struct SetCurrentScene {
 pub struct SceneRoom(pub String);
 
 #[derive(Component)]
-struct SceneRoomTarget(SetCurrentScene);
+pub(crate) struct SceneRoomTarget {
+    scene: SetCurrentScene,
+    is_world: bool,
+}
 
 #[derive(Resource, Default)]
 pub struct SceneRoomConnection(pub Option<(SetCurrentScene, String, Entity)>);
@@ -585,6 +593,7 @@ fn connect_scene_room(
     mut commands: Commands,
     mut manager: AdapterManager,
     mut current: ResMut<SceneRoomConnection>,
+    mut admission: ResMut<SceneAdmission>,
     mut scene: EventReader<SetCurrentScene>,
     wallet: Res<Wallet>,
     config: Res<common::structs::AppConfig>,
@@ -601,18 +610,22 @@ fn connect_scene_room(
         scene.clear();
         return;
     }
+    if wallet.is_changed() {
+        admission.set_if_neq(SceneAdmission::unknown());
+    }
     let event = scene.read().last().cloned();
     if current_realm.is_changed() && event.is_none() {
         for (entity, _) in &rooms {
             commands.entity(entity).despawn();
         }
         current.0 = None;
+        admission.set_if_neq(SceneAdmission::unknown());
         return;
     }
     let desired = event.or_else(|| {
         wallet
             .is_changed()
-            .then(|| rooms.iter().next().map(|(_, target)| target.0.clone()))
+            .then(|| rooms.iter().next().map(|(_, target)| target.scene.clone()))
             .flatten()
     });
     let Some(ev) = desired else {
@@ -620,7 +633,7 @@ fn connect_scene_room(
     };
     if !wallet.is_changed()
         && !current_realm.is_changed()
-        && rooms.iter().any(|(_, target)| target.0 == ev)
+        && rooms.iter().any(|(_, target)| target.scene == ev)
     {
         return;
     }
@@ -628,6 +641,7 @@ fn connect_scene_room(
         commands.entity(entity).despawn();
     }
     current.0 = None;
+    admission.set_if_neq(SceneAdmission::unknown());
     if ev.scene_id.is_empty() || wallet.address().is_none() {
         return;
     }
@@ -647,9 +661,14 @@ fn connect_scene_room(
             return;
         }
         if let Some(entity) = manager.connect_scene(adapter, context) {
-            commands
-                .entity(entity)
-                .insert((SceneRoom(ev.scene_id.clone()), SceneRoomTarget(ev)));
+            admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
+            commands.entity(entity).insert((
+                SceneRoom(ev.scene_id.clone()),
+                SceneRoomTarget {
+                    scene: ev,
+                    is_world: false,
+                },
+            ));
         }
         return;
     }
@@ -685,7 +704,10 @@ fn connect_scene_room(
     }
     commands.spawn((
         SceneRoom(ev.scene_id.clone()),
-        SceneRoomTarget(ev.clone()),
+        SceneRoomTarget {
+            scene: ev.clone(),
+            is_world: world.is_some(),
+        },
         RoomContext(context),
         room_connection::RoomAccessScope(access_status::AccessScope::Scene(ev.scene_id.clone())),
         CredentialRequest {
@@ -707,7 +729,7 @@ fn update_scene_connection(
     #[cfg(feature = "livekit")]
     let next = rooms.iter().next().and_then(|(entity, target, transport)| {
         let (address, _) = adapter::livekit_credentials(&transport.address).ok()?;
-        Some((target.0.clone(), format!("livekit:{address}"), entity))
+        Some((target.scene.clone(), format!("livekit:{address}"), entity))
     });
     #[cfg(not(feature = "livekit"))]
     let next = None;

@@ -220,6 +220,18 @@ State, in every build:
   The HUD receives initial and changed snapshots over the SystemApi bridge stream and sends
   Retry through that bridge; the console commands remain available for diagnostics.
   The [modal reference](connection-lost-modal.md) records Unity assets, dimensions and platform differences.
+- `/ban_block_state [address]`: the ban and block status as JSON: the local user's address, the
+  social blocks (`state` live or unavailable with its `reason`, `blocked`, `blockedBy`), the
+  platform ban (`state` unknown, checked or failed, `isBanned`, `source`, `reason`,
+  `matchedOn` for a record the gatekeeper withheld, `customMessage`, `expiresAt`,
+  `checkedAgoSecs`, `error`), the local user's scene admission
+  (`state` unknown, allowed or refused, `scope` platform, world or scene, `message`, `sceneId`),
+  the scene room's lists (`state`, `sceneId`, `bannedAddresses`, `sceneAdmins`, while the room is
+  connected) and, with an address, its `lookup` (`isBlockedEitherWay`, `direction`,
+  `bannedInScene`, `adminPermissions`). Every `null` reading has its reason in `unavailable`,
+  keyed by field path. `/block_user <address>` and `/unblock_user <address>` change the blocks
+  through the social service and answer once it has; `/ban_block_refresh` re-checks the
+  platform ban now.
 - `/entity_screen_position <entity> [--bounds]`: where a scene entity is on screen, in the
   coordinates `/click_at` takes, `null` behind the camera. The scene is the one `/set_scene`
   picked, else the player's; the entity is as `/scene_entities` lists it. `--bounds` aims at the

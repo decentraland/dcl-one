@@ -29,10 +29,12 @@ pub enum FailureKind {
     CredentialsRequired,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct AdmissionError {
     pub kind: FailureKind,
     pub retry_after: Option<f64>,
+    status: Option<u16>,
+    message: Option<String>,
 }
 
 impl std::fmt::Display for AdmissionError {
@@ -47,6 +49,8 @@ impl AdmissionError {
         Self {
             kind,
             retry_after: None,
+            status: None,
+            message: None,
         }
     }
     pub fn status(status: u16, retry_after: Option<f64>) -> Self {
@@ -57,6 +61,8 @@ impl AdmissionError {
                 FailureKind::Transient
             },
             retry_after,
+            status: Some(status),
+            message: None,
         }
     }
     pub fn terminal(&self) -> bool {
@@ -260,7 +266,7 @@ impl Drop for ConnectionHealthGuard {
 }
 
 #[derive(Component)]
-struct CredentialTask {
+pub(crate) struct CredentialTask {
     task: Task<Result<String, AdmissionError>>,
     identity: alloy_core::primitives::Address,
 }
@@ -386,10 +392,13 @@ async fn request_adapter(
             .get(reqwest::header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.parse().ok());
-        return Err(AdmissionError::status(
-            response.discard().as_u16(),
-            retry_after,
-        ));
+        let mut error = AdmissionError::status(response.status().as_u16(), retry_after);
+        error.message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        return Err(error);
     }
     let response = response
         .json::<AdapterResponse>()
@@ -433,7 +442,7 @@ fn request_credentials(
     }
 }
 
-fn finish_credentials(
+pub(crate) fn finish_credentials(
     mut commands: Commands,
     mut manager: AdapterManager,
     mut requests: Query<(
@@ -441,13 +450,15 @@ fn finish_credentials(
         &mut CredentialTask,
         &mut RoomRecovery,
         Option<&RoomContext>,
+        Option<&crate::SceneRoomTarget>,
         Has<RealmAdapter>,
         Has<RoomSuspended>,
     )>,
     time: Res<Time>,
     wallet: Res<Wallet>,
+    mut admission: ResMut<crate::SceneAdmission>,
 ) {
-    for (entity, mut task, mut recovery, context, realm, suspended) in &mut requests {
+    for (entity, mut task, mut recovery, context, scene, realm, suspended) in &mut requests {
         if suspended || wallet.address() != Some(task.identity) {
             commands.entity(entity).try_remove::<CredentialTask>();
             continue;
@@ -465,14 +476,30 @@ fn finish_credentials(
             Ok(adapter)
         }) {
             Ok(adapter) => {
+                if let Some(scene) = scene {
+                    admission.set_if_neq(crate::SceneAdmission::allowed(&scene.scene.scene_id));
+                }
                 // Admission alone does not establish a stable transport connection.
                 recovery.failure = None;
                 commands.entity(entity).try_remove::<NeedsAdapter>();
                 manager.connect_existing(&adapter, context.map(|context| context.0), entity);
             }
             Err(error) => {
-                recovery.fail(time.elapsed_secs_f64(), error);
+                if let Some(scene) = scene {
+                    admission.set_if_neq(error.status.map_or_else(
+                        crate::SceneAdmission::unknown,
+                        |status| {
+                            crate::SceneAdmission::from_refusal(
+                                status,
+                                error.message.as_deref(),
+                                scene.is_world,
+                                &scene.scene.scene_id,
+                            )
+                        },
+                    ));
+                }
                 warn!(?entity, kind = ?error.kind, "room admission failed");
+                recovery.fail(time.elapsed_secs_f64(), error);
             }
         }
     }
@@ -481,6 +508,55 @@ fn finish_credentials(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn gatekeeper_http_refusal_retains_ban_evidence_and_retry_after() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0; 1024];
+            while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                let count = socket.read(&mut chunk).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&chunk[..count]);
+            }
+            assert!(request.starts_with(b"POST /adapter HTTP/1.1\r\n"));
+            let body = r#"{"error":"User is banned from this scene"}"#;
+            write!(socket, "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nRetry-After: 30\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
+        });
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([7; 32]);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let error = runtime
+            .block_on(request_adapter(
+                CredentialRequest {
+                    method: "POST",
+                    url: format!("http://{address}/adapter"),
+                    metadata: "{}".into(),
+                },
+                wallet,
+                reqwest::Client::new(),
+            ))
+            .unwrap_err();
+        server.join().unwrap();
+        assert_eq!(error.kind, FailureKind::Denied);
+        assert_eq!(error.status, Some(403));
+        assert_eq!(
+            error.message.as_deref(),
+            Some("User is banned from this scene")
+        );
+        assert_eq!(error.retry_after, Some(30.0));
+    }
 
     #[test]
     fn only_continuous_healthy_rooms_reset_their_retry_budget() {
@@ -590,10 +666,11 @@ mod tests {
         app.insert_resource(wallet)
             .init_resource::<Time>()
             .init_resource::<AccessStatus>()
+            .init_resource::<crate::SceneAdmission>()
             .add_event::<crate::websocket_room::StartWsRoom>()
             .add_event::<crate::signed_login::StartSignedLogin>()
             .add_event::<crate::archipelago::StartArchipelago>()
-            .add_systems(Update, finish_credentials);
+            .add_systems(Update, (finish_credentials, publish_access).chain());
         #[cfg(feature = "livekit")]
         app.add_event::<crate::livekit::StartLivekit>();
         app
@@ -643,6 +720,229 @@ mod tests {
         let event = events.iter_current_update_events().next().unwrap();
         assert_eq!(event.entity, entity);
         assert_eq!(event.context, None);
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn scene_credential_results_share_recovery_and_moderation_evidence() {
+        for (status, message, world, scope) in [
+            (
+                403,
+                "Access denied, platform-banned user",
+                false,
+                Some(crate::BanScope::Platform),
+            ),
+            (
+                403,
+                "User is banned from this scene",
+                false,
+                Some(crate::BanScope::Scene),
+            ),
+            (
+                401,
+                "You are banned from world example",
+                true,
+                Some(crate::BanScope::World),
+            ),
+            (401, "You are banned from world example", false, None),
+            (403, "Forbidden", false, None),
+            (503, "Access denied, platform-banned user", false, None),
+        ] {
+            let mut app = completion_app();
+            let mut error = AdmissionError::status(status, Some(15.0));
+            error.message = Some(message.to_owned());
+            let task = completed(&app, Err(error));
+            let entity = app
+                .world_mut()
+                .spawn((
+                    RoomRecovery::default(),
+                    NeedsAdapter,
+                    task,
+                    crate::SceneRoomTarget {
+                        scene: crate::SetCurrentScene {
+                            realm_name: "realm".into(),
+                            scene_id: "scene".into(),
+                        },
+                        is_world: world,
+                    },
+                    RoomAccessScope(AccessScope::Scene("scene".into())),
+                ))
+                .id();
+            app.update();
+            let admission = app.world().resource::<crate::SceneAdmission>();
+            match scope {
+                Some(scope) => assert!(
+                    matches!(admission.view(), crate::AdmissionView::Refused { scope: actual, scene_id: "scene", .. } if actual == scope)
+                ),
+                None => assert_eq!(admission.view(), crate::AdmissionView::Unknown),
+            }
+            let recovery = app.world().get::<RoomRecovery>(entity).unwrap();
+            assert_eq!(
+                recovery.failure,
+                Some(if status == 503 {
+                    FailureKind::Transient
+                } else {
+                    FailureKind::Denied
+                })
+            );
+            assert_eq!(
+                app.world()
+                    .resource::<AccessStatus>()
+                    .is_denied(&AccessScope::Scene("scene".into())),
+                status != 503
+            );
+            if status != 503 {
+                assert!(!recovery.can_retry(100.0));
+            }
+
+            let task = completed(
+                &app,
+                Ok("livekit:wss://rooms.example/?access_token=fresh".into()),
+            );
+            app.world_mut().entity_mut(entity).insert(task);
+            app.update();
+            assert_eq!(
+                app.world().resource::<crate::SceneAdmission>().view(),
+                crate::AdmissionView::Allowed { scene_id: "scene" }
+            );
+            assert!(!app
+                .world()
+                .resource::<AccessStatus>()
+                .is_denied(&AccessScope::Scene("scene".into())));
+        }
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn unrelated_and_cancelled_credentials_cannot_publish_scene_admission() {
+        for cancellation in ["other_room", "paused", "identity", "despawned"] {
+            let mut app = completion_app();
+            app.insert_resource(crate::SceneAdmission::allowed("current"));
+            let mut error = AdmissionError::status(403, None);
+            error.message = Some("Access denied, platform-banned user".into());
+            let task = completed(&app, Err(error));
+            let entity = app
+                .world_mut()
+                .spawn((RoomRecovery::default(), NeedsAdapter, task))
+                .id();
+            if cancellation != "other_room" {
+                app.world_mut()
+                    .entity_mut(entity)
+                    .insert(crate::SceneRoomTarget {
+                        scene: crate::SetCurrentScene {
+                            realm_name: "realm".into(),
+                            scene_id: "old".into(),
+                        },
+                        is_world: false,
+                    });
+            }
+            match cancellation {
+                "paused" => {
+                    app.world_mut().entity_mut(entity).insert(RoomSuspended);
+                }
+                "identity" => {
+                    app.world_mut()
+                        .resource_mut::<Wallet>()
+                        .finalize_as_guest_with_seed([9; 32]);
+                }
+                "despawned" => {
+                    app.world_mut().despawn(entity);
+                }
+                _ => {}
+            }
+            app.update();
+            assert_eq!(
+                app.world().resource::<crate::SceneAdmission>().view(),
+                crate::AdmissionView::Allowed {
+                    scene_id: "current"
+                },
+                "{cancellation}"
+            );
+        }
+    }
+
+    #[cfg(feature = "livekit")]
+    #[test]
+    fn replacing_scene_ownership_clears_admission_before_old_results_finish() {
+        for replacement in [
+            "wallet",
+            "same_wallet",
+            "owner_gone",
+            "realm",
+            "scene",
+            "leave",
+        ] {
+            let mut app = completion_app();
+            app.init_resource::<common::structs::AppConfig>()
+                .init_resource::<common::structs::CurrentRealm>()
+                .init_resource::<common::structs::PreviewMode>()
+                .init_resource::<ipfs::world_access::WorldCommsSecret>()
+                .init_resource::<crate::SceneRoomConnection>()
+                .init_resource::<crate::SceneRoomAdapterOverride>()
+                .init_resource::<crate::DisableSceneRoomGatekeeper>()
+                .add_event::<crate::SetCurrentScene>()
+                .add_systems(Update, crate::connect_scene_room.before(finish_credentials));
+            app.world_mut()
+                .spawn(crate::global_crdt::GlobalCrdtState::new(None));
+            app.world_mut().send_event(crate::SetCurrentScene {
+                realm_name: "realm".into(),
+                scene_id: "old".into(),
+            });
+            app.update();
+            let old = app
+                .world_mut()
+                .query_filtered::<Entity, With<crate::SceneRoomTarget>>()
+                .single(app.world())
+                .unwrap();
+            let mut error = AdmissionError::status(403, None);
+            error.message = Some("Access denied, platform-banned user".into());
+            let task = completed(&app, Err(error));
+            app.world_mut().entity_mut(old).insert(task);
+            app.insert_resource(crate::SceneAdmission::from_refusal(
+                403,
+                Some("Access denied, platform-banned user"),
+                false,
+                "old",
+            ));
+            match replacement {
+                "owner_gone" => {
+                    app.world_mut().despawn(old);
+                    app.world_mut()
+                        .resource_mut::<Wallet>()
+                        .finalize_as_guest_with_seed([9; 32]);
+                }
+                "wallet" => app
+                    .world_mut()
+                    .resource_mut::<Wallet>()
+                    .finalize_as_guest_with_seed([9; 32]),
+                "same_wallet" => app
+                    .world_mut()
+                    .resource_mut::<Wallet>()
+                    .finalize_as_guest_with_seed([7; 32]),
+                "realm" => {
+                    app.world_mut()
+                        .resource_mut::<common::structs::CurrentRealm>()
+                        .about_url = "https://new.example/about".into()
+                }
+                _ => {
+                    app.world_mut().send_event(crate::SetCurrentScene {
+                        realm_name: "realm".into(),
+                        scene_id: if replacement == "leave" { "" } else { "new" }.into(),
+                    });
+                }
+            }
+            app.update();
+            assert!(app.world().get_entity(old).is_err(), "{replacement}");
+            assert_eq!(
+                app.world().resource::<crate::SceneAdmission>().view(),
+                crate::AdmissionView::Unknown,
+                "{replacement}"
+            );
+            assert!(app
+                .world()
+                .resource::<Events<crate::livekit::StartLivekit>>()
+                .is_empty());
+        }
     }
 
     #[cfg(feature = "livekit")]

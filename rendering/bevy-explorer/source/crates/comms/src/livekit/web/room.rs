@@ -1,3 +1,5 @@
+use std::sync::{Arc, Mutex};
+
 use tokio::sync::mpsc;
 
 use crate::livekit::web::{
@@ -10,6 +12,8 @@ use crate::livekit::web::{
 pub struct Room {
     id: RoomId,
     name: String,
+    /// The room's metadata as the page last reported it: at connect, then on every change.
+    metadata: Arc<Mutex<String>>,
     local_participant: LocalParticipant,
 }
 
@@ -35,7 +39,7 @@ impl Room {
 
         let id = NEXT_ROOM_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // registered before the connect so no event is missed
-        let receiver = register_room_events(id);
+        let (receiver, metadata) = register_room_events(id);
         let mut connecting = ConnectingRoom(Some(id));
 
         let reply = request(|request| LivekitCommand::Connect {
@@ -54,6 +58,7 @@ impl Room {
                     Room {
                         id,
                         name: connected.name,
+                        metadata,
                         local_participant: connected.local_participant,
                     },
                     receiver,
@@ -88,6 +93,10 @@ impl Room {
 
     pub fn name(&self) -> String {
         self.name.clone()
+    }
+
+    pub fn metadata(&self) -> String {
+        self.metadata.lock().unwrap().clone()
     }
 
     pub fn local_participant(&self) -> LocalParticipant {
