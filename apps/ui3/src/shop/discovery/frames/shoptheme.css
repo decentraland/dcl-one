@@ -101,7 +101,7 @@
   --font-sans: var(--shop-sans);
   --brand: #ff2d55;
   --on-brand: #fcfcfc;
-  --site-header-h: var(--shop-nav-h);
+  --site-header-h: var(--native-site-header-h, var(--shop-nav-h));
   --site-nav-bg: transparent;
   --site-nav-line: transparent;
 }

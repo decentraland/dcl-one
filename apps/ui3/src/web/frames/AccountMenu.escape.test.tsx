@@ -70,11 +70,22 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
     expect(screen.getByRole("button", { name: "Outside" })).toHaveFocus();
   });
 
-  it("should close on lost focus with no related target without claiming an outer Escape", async () => {
-    render(<AccountMenu>Account</AccountMenu>);
+  it("should retain the menu for null-relatedTarget pointer blur before item activation", async () => {
+    const navigate = vi.fn(() => true);
+    render(
+      <AccountMenu
+        links={[{ label: "Profile", href: "/profile" }]}
+        onNavigate={navigate}
+      >
+        Account
+      </AccountMenu>,
+    );
     const trigger = screen.getByRole("button", { name: "My account" });
     await user.click(trigger);
     fireEvent.blur(trigger, { relatedTarget: null });
+    expect(screen.queryByRole("menu")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Profile" }));
+    expect(navigate).toHaveBeenCalledWith("/profile");
     expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     expect(outerEscape).not.toHaveBeenCalled();
   });
@@ -121,4 +132,14 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     },
   );
+  it("should focus the trigger on pointer opening when the browser does not focus clicked buttons", async () => {
+    render(<AccountMenu>Account</AccountMenu>);
+    const trigger = screen.getByRole("button", { name: "My account" });
+    expect(document.activeElement).not.toBe(trigger);
+    fireEvent.click(trigger);
+    expect(trigger).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(outerEscape).not.toHaveBeenCalled();
+  });
 });

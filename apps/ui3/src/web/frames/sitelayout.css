@@ -39,10 +39,10 @@
   .site-layout__content { flex: 1 1 auto; }
 }
 
-.site-layout[data-header-layout="native"] { --site-header-h: 80px; }
+.site-layout[data-header-layout="native"] { --native-site-header-h: 80px; --site-header-h: var(--native-site-header-h); }
 
 @media (max-width: 1023px) {
-  .site-layout[data-header-layout="native"] { --site-header-h: 64px; display: flex; flex-direction: column; align-items: stretch; }
+  .site-layout[data-header-layout="native"] { --native-site-header-h: 64px; --site-header-h: var(--native-site-header-h); display: flex; flex-direction: column; align-items: stretch; }
   .site-layout[data-header-layout="native"] > .site-layout__navigation { height: 64px; flex: 0 0 64px; }
   .site-layout[data-header-layout="native"] > .site-layout__sidebar { display: none; }
   .site-layout[data-header-layout="native"] > .site-layout__content { flex: 1 1 auto; }

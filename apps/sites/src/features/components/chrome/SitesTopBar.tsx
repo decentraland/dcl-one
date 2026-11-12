@@ -1,3 +1,7 @@
+import {
+  sitesNavigationLinks,
+  sitesNavigationOrder,
+} from "@dcl/one-ui/apps/sites/chrome/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "react-router";
 import { NavBar, type NavBarLinkProps, type NavBarSection } from "@dcl/one-ui";
@@ -21,39 +25,27 @@ export function sitesNavSections(
 ): NavBarSection[] {
   const playActive =
     active === "whatson" || active === "events" || active === "explore";
-  return [
-    {
-      label: "Play",
-      active: playActive,
-      items: [
-        {
-          label: "Jump in",
-          href: "/play/",
-          active: pathname.startsWith("/play"),
-        },
-        { label: "What's on", href: "/whats-on", active: playActive },
-      ],
-    },
-    { label: "Shop", href: "/shop", active: active === "shop" },
-    { label: "Create", href: "/create", active: active === "create" },
-    { label: "Social", href: "/social/", active: active === "social" },
-    {
-      label: "Learn",
-      active: active === "learn",
-      items: [
-        {
-          label: "Docs",
-          href: docsUrl(),
-          active: active === "learn" && pathname.startsWith("/docs"),
-        },
-        {
-          label: "Blog",
-          href: "/blog",
-          active: active === "learn" && pathname.startsWith("/blog"),
-        },
-      ],
-    },
-  ];
+  const links = sitesNavigationLinks(docsUrl());
+  return sitesNavigationOrder.map((id) => {
+    const link = links[id];
+    const selected = id === "whatson" ? playActive : active === id;
+    if (!("menu" in link)) {
+      return { label: link.label, href: link.href, active: selected };
+    }
+    return {
+      label: link.label,
+      active: selected,
+      items: link.menu.map((item, index) => ({
+        ...item,
+        active:
+          id === "whatson"
+            ? item.href === "/play/"
+              ? pathname.startsWith("/play")
+              : playActive
+            : selected && pathname.startsWith(index === 0 ? "/docs" : "/blog"),
+      })),
+    };
+  });
 }
 
 /** The Sites host adapts real chrome state; the shared component owns navigation UI. */

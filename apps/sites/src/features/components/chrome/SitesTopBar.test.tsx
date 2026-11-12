@@ -16,6 +16,7 @@ import SiteLayout from "@ui/web/frames/SiteLayout";
 import { ChromeAuthContext, type ChromeAuth } from "@ui/web/frames/chrome-auth";
 import { ChromeNavContext } from "@ui/web/frames/chrome-nav";
 import ChromeNavBridge from "./ChromeNavBridge";
+import { sitesNavSections } from "./SitesTopBar";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -153,7 +154,7 @@ describe("Sites native chrome integration", () => {
     view.rerender(<Host auth={a} />);
     expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
   });
-  it("closes the mobile drawer before loading notifications and ignores a late reply after closing", async () => {
+  it("closes the mobile drawer before loading notifications and stays closed after the request settles", async () => {
     let release: (value: unknown) => void = () => {};
     const fetchNotifications = vi.fn(
       () =>
@@ -200,5 +201,37 @@ describe("Sites native chrome integration", () => {
     expect(
       screen.getByRole("button", { name: "Toggle navigation menu" }),
     ).toBeTruthy();
+  });
+});
+
+describe("when native navigation uses the shared Sites link definitions", () => {
+  it("should preserve destinations and selected Play children", () => {
+    const sections = sitesNavSections("events", "/whats-on");
+    expect(sections.map(({ label }) => label)).toEqual([
+      "Play",
+      "Shop",
+      "Create",
+      "Social",
+      "Learn",
+    ]);
+    expect(sections[0]?.items).toEqual([
+      { label: "Jump in", href: "/play/", active: false },
+      { label: "What's on", href: "/whats-on", active: true },
+    ]);
+    expect(sections[1]?.href).toBe("/shop");
+    expect(sections[2]?.href).toBe("/create");
+    expect(sections[3]?.href).toBe("/social/");
+  });
+  it("should select Docs or Blog without selecting the other Learn child", () => {
+    for (const [pathname, expected] of [
+      ["/docs/player/", [true, false]],
+      ["/blog/post", [false, true]],
+    ] as const) {
+      const learn = sitesNavSections("learn", pathname)[4];
+      expect(learn?.items?.map(({ active }) => active)).toEqual(expected);
+    }
+    expect(
+      sitesNavSections(undefined, "/").every(({ active }) => !active),
+    ).toBe(true);
   });
 });

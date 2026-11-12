@@ -70,7 +70,11 @@ export default function AccountMenu({
         triggerRef.current?.focus();
       }}
       onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
+        if (
+          event.relatedTarget &&
+          !event.currentTarget.contains(event.relatedTarget)
+        )
+          setOpen(false);
       }}
     >
       <button
@@ -80,7 +84,10 @@ export default function AccountMenu({
         aria-label={triggerLabel}
         aria-haspopup="menu"
         aria-expanded={open}
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => {
+          if (!open) triggerRef.current?.focus();
+          setOpen((v) => !v);
+        }}
       >
         {children}
       </button>
