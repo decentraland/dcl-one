@@ -4,17 +4,17 @@
 //       marketplace@f3956826:webapp/src/modules/activity/actions.ts (FETCH_USER_ACTIVITY_REQUEST),
 //       webapp/src/modules/sagas.ts (the Transak and Wert gateway calls). Marketplace UI: Apache-2.0,
 //       Copyright 2020 Metaverse Holdings Ltd.
-// The Shopping area's slice of upstream's `lib/api.ts`, on the ONE client (api/shop.ts): what the
+// The Shopping area's slice of upstream's `lib/api.ts`, on the ONE client (@shop/api/shop): what the
 // purchase rails, the receipts and the activity feed read. The shared `ui3/src/shop/lib/api.ts`
 // (Discovery's catalogue mappers) can re-export these under the same names.
 
-import { isShopApiError } from "../../api/client";
-import { shopClient, type ShopClient } from "../../api/shop";
+import { isShopApiError } from "@shop/api/client";
+import { type ShopClient } from "@shop/api/shop";
 import type { UnifiedListing } from "@catalyst-api/market/UnifiedListing";
 import { centsFromUsdWeiCeil } from "@shop/model/money";
 import type { SaleRecord } from "../../history/activity";
-import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "../purchase/encoding";
-import { fetchPrimaryListingForItem } from "../../detail/api";
+import { ASSET_TYPE, type ListingCoupon, type SignedTrade } from "./trade";
+import { fetchPrimaryListingForItem } from "@shop/detail/api";
 
 /** Upstream `usdWeiToCents`: a USD-pegged amount (1e18 = $1) in cents, rounded UP; 0 when unparseable. */
 export function usdWeiToCents(amount?: string | null): number {
@@ -44,7 +44,7 @@ function unwrap<T>(body: unknown): T {
 }
 
 /** GET /shop-api/v1/trades/{id}: the signed trade needed to execute a purchase. */
-export async function fetchTrade(tradeId: string, client: ShopClient = shopClient()): Promise<SignedTrade> {
+export async function fetchTrade(tradeId: string, client: ShopClient): Promise<SignedTrade> {
   try {
     return unwrap<SignedTrade>(await client.market.trade<unknown>(tradeId));
   } catch (e) {
@@ -60,7 +60,7 @@ export function pickItemListing(items: UnifiedListing[]): UnifiedListing | null 
 }
 
 /** The unified-feed listing an item page and the cart price from (`/v3/catalog/unified`). */
-export async function fetchUnifiedListingForItem(contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<UnifiedListing | null> {
+export async function fetchUnifiedListingForItem(contractAddress: string, itemId: string, client: ShopClient): Promise<UnifiedListing | null> {
   const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, first: 5 });
   return pickItemListing(body?.data ?? []);
 }
@@ -69,8 +69,9 @@ export async function fetchUnifiedListingForItem(contractAddress: string, itemId
  * The live trade of an item's primary sale, or null when it is not on sale. Asked for primary listings only, and a
  * row naming a token is never taken: an item line buys a mint from its creator, never a resale in its place.
  */
-export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<SignedTrade | null> {
-  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client });
+export async function fetchTradeForItem(contractAddress: string, itemId: string, client: ShopClient): Promise<SignedTrade | null> {
+  // Only the listing's trade id is read here, which the creator-sales switch does not change.
+  const listing = await fetchPrimaryListingForItem(contractAddress, itemId, { client, creatorSales: () => false });
   return listing?.tradeId ? fetchTrade(listing.tradeId, client) : null;
 }
 
@@ -81,7 +82,7 @@ export async function fetchTradeForItem(contractAddress: string, itemId: string,
  */
 export async function resolveLiveTrade(
   item: { tradeId?: string; contractAddress: string; itemId?: string | null },
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<SignedTrade | null> {
   if (item.tradeId) {
     try {
@@ -96,7 +97,7 @@ export async function resolveLiveTrade(
 /** The creator discount on an item's live listing, re-read at checkout; undefined when none (or unreadable). */
 export async function resolveLiveCoupon(
   item: { contractAddress: string; itemId?: string | null },
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<ListingCoupon | undefined> {
   if (!item.itemId) return undefined;
   try {
@@ -107,7 +108,7 @@ export async function resolveLiveCoupon(
 }
 
 /** A mint's LIVE price and remaining supply, or null when it is no longer a store mint. */
-export async function fetchStoreMintState(contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<{ priceWei: string; available: number } | null> {
+export async function fetchStoreMintState(contractAddress: string, itemId: string, client: ShopClient): Promise<{ priceWei: string; available: number } | null> {
   const body = await client.catalog.unified<{ data?: UnifiedListing[] }>({ contractAddress, itemId, first: 1 });
   const row = body?.data?.[0];
   if (!row || row.acquisition !== "store" || !row.manaWei) return null;
@@ -134,7 +135,7 @@ async function nftMeta(contractAddress: string, tokenId: string, client: ShopCli
 export async function fetchAssetDisplay(
   contractAddress: string,
   { tokenId, itemId }: { tokenId?: string | null; itemId?: string | null },
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<PurchaseDisplay | null> {
   if (!contractAddress) return null;
   if (tokenId) {
@@ -149,7 +150,7 @@ export async function fetchAssetDisplay(
 }
 
 /** A purchased trade resolved to something renderable (the sold asset's typed id, never the on-chain `value`). */
-export async function fetchTradeDisplay(tradeId: string, client: ShopClient = shopClient()): Promise<PurchaseDisplay | null> {
+export async function fetchTradeDisplay(tradeId: string, client: ShopClient): Promise<PurchaseDisplay | null> {
   let trade: SignedTrade;
   try {
     trade = await fetchTrade(tradeId, client);
@@ -202,7 +203,7 @@ function toSaleRecord(s: RawSale): SaleRecord {
 export async function fetchUserSales(
   address: string,
   { role = "seller", first = 24, skip = 0 }: { role?: "seller" | "buyer"; first?: number; skip?: number } = {},
-  client: ShopClient = shopClient(),
+  client: ShopClient,
 ): Promise<{ items: SaleRecord[]; total: number }> {
   const body = await client.market.sales<{ data?: RawSale[]; total?: number }>({
     [role]: address.toLowerCase(),
@@ -215,7 +216,7 @@ export async function fetchUserSales(
 }
 
 /** Does `owner` hold a token of this item? (the success page's ownership check). */
-export async function fetchOwnsItem(owner: string, contractAddress: string, itemId: string, client: ShopClient = shopClient()): Promise<boolean> {
+export async function fetchOwnsItem(owner: string, contractAddress: string, itemId: string, client: ShopClient): Promise<boolean> {
   const body = await client.market.nfts<{ total?: number; data?: unknown[] }>({ owner: owner.toLowerCase(), contractAddress, itemId, first: 1 }).catch(() => null);
   return (body?.total ?? body?.data?.length ?? 0) > 0;
 }
@@ -232,14 +233,14 @@ export type WalletActivity = {
 };
 
 /** The connected wallet's activity. Signed with the marketplace signer metadata. */
-export async function fetchUserActivity(query: Record<string, string | number | undefined> = {}, client: ShopClient = shopClient()): Promise<{ items: WalletActivity[]; total: number }> {
+export async function fetchUserActivity(query: Record<string, string | number | undefined>, client: ShopClient): Promise<{ items: WalletActivity[]; total: number }> {
   const body = await client.market.activity<{ data?: WalletActivity[]; total?: number } | WalletActivity[]>(query);
   const items = Array.isArray(body) ? body : (body?.data ?? []);
   return { items, total: Array.isArray(body) ? items.length : (body?.total ?? items.length) };
 }
 
 /** POST /shop-api/v1/transak/widget-url: the widget URL for buying MANA (or an asset) by card. */
-export async function fetchTransakWidgetUrl(params: Record<string, unknown>, client: ShopClient = shopClient()): Promise<string> {
+export async function fetchTransakWidgetUrl(params: Record<string, unknown>, client: ShopClient): Promise<string> {
   const body = await client.onramp.transakWidgetUrl<{ data?: { widgetUrl?: string }; widgetUrl?: string; url?: string }>(params);
   const url = body?.data?.widgetUrl ?? body?.widgetUrl ?? body?.url;
   if (!url || !/^https:\/\//.test(url)) throw new Error("The card provider did not return a page to open");
@@ -249,12 +250,12 @@ export async function fetchTransakWidgetUrl(params: Record<string, unknown>, cli
 export type TransakOrderStatus = { status: string; isNFTOrder?: boolean; transactionHash?: string | null; errorMessage?: string | null };
 
 /** GET /shop-api/v1/transak/orders/{id}: a card order's status. */
-export async function fetchTransakOrder(orderId: string, client: ShopClient = shopClient()): Promise<TransakOrderStatus> {
+export async function fetchTransakOrder(orderId: string, client: ShopClient): Promise<TransakOrderStatus> {
   const body = await client.onramp.transakOrder<{ data?: TransakOrderStatus } | TransakOrderStatus>(orderId);
   return unwrap<TransakOrderStatus>(body);
 }
 
 /** POST /shop-api/v1/wert/sign: a signed Wert session for a card purchase. */
-export async function signWertSession(message: Record<string, unknown>, client: ShopClient = shopClient()): Promise<{ signature: string; sessionId?: string }> {
+export async function signWertSession(message: Record<string, unknown>, client: ShopClient): Promise<{ signature: string; sessionId?: string }> {
   return unwrap<{ signature: string; sessionId?: string }>(await client.onramp.wertSign<unknown>(message));
 }

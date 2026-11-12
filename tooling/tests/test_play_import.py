@@ -13,6 +13,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import zipfile
+from hud_manifest_fixture import seal, SHARED
 
 spec = importlib.util.spec_from_file_location('fetch_play', Path(__file__).resolve().parents[1] / 'fetch-play.py')
 play = importlib.util.module_from_spec(spec)
@@ -152,11 +153,10 @@ class PlayImportTests(unittest.TestCase):
         self.build = self.root / 'build'
         for name in contract.INPUTS:
             self.write(name, 'build input')
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'export type Example = string;\n')
-        self.write('rendering/bevy-explorer/source/react-web/src/engine/generated/Example.ts',
-                   'export type Example = string;\n')
+        self.write(contract.BINDINGS + '/Example.ts', 'export type Example = string;\n')
+        self.write(contract.HUD + 'App.tsx', 'export {}\n')
         self.write(contract.SOURCE + 'src/lib.rs', 'fn engine() {}\n')
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
+        seal(self.root)
         for name in contract.REQUIRED:
             self.write('build/' + name, b'\0asm\x01\0\0\0fixture' if name.endswith('.wasm') else b'fixture')
         self.write('build/build-info.json', json.dumps({'revision': SHA, 'engine': {
@@ -170,6 +170,8 @@ class PlayImportTests(unittest.TestCase):
         path = self.root / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content.encode() if isinstance(content, str) else content)
+        if (self.root / contract.shared_inputs.MANIFEST).exists():
+            seal(self.root)
         return path
 
     def test_import_keeps_only_served_content_and_contract_and_reuses_it(self):
@@ -210,7 +212,7 @@ class PlayImportTests(unittest.TestCase):
         extra.unlink()
         target = self.build / 'service_worker.js'
         target.unlink()
-        target.symlink_to(self.root / contract.LOCK)
+        target.symlink_to(self.root / contract.BINDINGS / 'Example.ts')
         with self.assertRaisesRegex(ValueError, 'linked'):
             play.install(self.build)
 
@@ -269,12 +271,8 @@ class PlayImportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'inputs differ'):
             play.install(self.build)
 
-    def test_hud_adaptation_and_generated_bindings_must_match(self):
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': 'b' * 64}))
-        with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
-            play.install(self.build)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'different protocol')
+    def test_generated_bindings_must_match(self):
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
 
@@ -313,22 +311,54 @@ class PlayImportTests(unittest.TestCase):
         self.write(bevy, 'fn spawn_sliced() {}\n')
         self.assertNotEqual(key, contract.engine_inputs(self.root))
 
-    def test_shared_hud_sources_rebuild_the_artifact_but_neither_the_engine_nor_the_sites_review(self):
+    def test_shared_hud_sources_rebuild_the_artifact_but_not_the_engine(self):
         # react-web compiles these through its aliases (react-web/vite.shared.ts).
-        engine, hud = contract.engine_inputs(self.root), contract.hud_inputs(self.root)
-        for shared in contract.HUD_SHARED:
+        engine = contract.engine_inputs(self.root)
+        for shared in SHARED:
             with self.subTest(shared=shared):
-                self.write(shared + 'changed.ts', 'export const changed = true;\n')
+                self.write(shared + 'changed.ts' if shared.endswith('/') else shared, 'export const changed = true;\n')
                 with self.assertRaisesRegex(ValueError, 'inputs differ'):
                     play.install(self.build)
                 self.assertEqual(engine, contract.engine_inputs(self.root))
-                self.assertEqual(hud, contract.hud_inputs(self.root))
                 contract.pack(self.build, self.root)
                 play.install(self.build)
 
+    def test_root_ui_exports_and_components_are_not_hud_inputs(self):
+        def git(*args):
+            return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
+                                            *args], cwd=self.root, text=True).strip()
+        self.write('library/ui/index.ts', "export * from './foundations'\n")
+        git('init', '-q')
+        git('config', 'maintenance.auto', 'false')
+        git('config', 'gc.auto', '0')
+        git('add', '.')
+        git('commit', '-qm', 'fixture')
+        key = contract.inputs(self.root)
+        for neighbour in ('library/ui/index.ts', 'library/ui/index.tsx', 'library/ui/index.ts.orig',
+                          'library/ui/components/NavBar/NavBar.tsx',
+                          'library/ui/components/NavBar/NavBar.module.css',
+                          'library/ui/figma/src/cli.ts'):
+            self.write(neighbour, 'export {};\n')
+        git('add', '.')
+        git('commit', '-qm', 'neighbours')
+        self.assertEqual(key, contract.inputs(self.root))
+        self.assertEqual(key, contract.inputs(self.root, git('rev-parse', 'HEAD')))
+
+    def test_the_lfs_fonts_under_the_shared_foundations_are_no_input_either_way_they_are_checked_out(self):
+        # A checkout without LFS holds a pointer; Nix's `git+file:.?lfs=1` source holds the font itself.
+        font = 'library/ui/foundations/typography/fonts/inter-latin-wght-normal.woff2'
+        self.write(font, 'version https://git-lfs.github.com/spec/v1\noid sha256:00\nsize 1\n')
+        key = contract.inputs(self.root)
+        self.write(font, b'wOF2 the font itself')
+        self.assertEqual(key, contract.inputs(self.root))
+        self.assertNotIn(font, contract.input_files(self.root))
+        play.install(self.build)
+
     def test_shared_hud_sources_are_inputs_in_git_and_in_the_nix_contract(self):
-        shared = contract.HUD_SHARED[0] + 'model/money.ts'
-        self.write(shared, 'export const zero = 0n;\n')
+        # Each entry, a tree or one file, the same in a checkout, in a commit and in Nix's filtered copy.
+        names = list(SHARED)
+        for name in names:
+            self.write(name, 'export const zero = 0n;\n')
         def git(*args):
             return subprocess.check_output(['git', '-c', 'user.name=CI', '-c', 'user.email=ci@example.invalid',
                                             *args], cwd=self.root, text=True).strip()
@@ -337,8 +367,6 @@ class PlayImportTests(unittest.TestCase):
         git('config', 'gc.auto', '0')
         git('add', '.')
         git('commit', '-qm', 'fixture')
-        self.assertIn(shared, contract.input_files(self.root))
-        self.assertNotIn(shared, contract.input_files(self.root, engine_only=True))
         key = contract.inputs(self.root)
         self.assertEqual(key, contract.inputs(self.root, git('rev-parse', 'HEAD')))
         filtered = self.root / 'nix-contract'
@@ -346,26 +374,26 @@ class PlayImportTests(unittest.TestCase):
             target = filtered / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(self.root / name, target)
+        for name in names:
+            with self.subTest(name=name):
+                for files in (contract.input_files(self.root), contract.input_files(self.root, git('rev-parse', 'HEAD')),
+                              contract.input_files(filtered)):
+                    self.assertIn(name, files)
+                self.assertNotIn(name, contract.input_files(self.root, engine_only=True))
         self.assertEqual(key, contract.inputs(filtered))
-        self.write(shared, 'export const zero = 1n;\n')
+        self.write(names[0], 'export const zero = 1n;\n')
         self.assertNotEqual(key, contract.inputs(self.root))
 
-    def test_rebuilt_hud_changes_require_reviewing_the_sites_adaptation(self):
+    def test_rebuilt_hud_changes_install_once_packed(self):
         self.write(contract.HUD + 'new-screen.ts', 'export const screen = "new";\n')
         contract.pack(self.build, self.root)
-        with self.assertRaisesRegex(ValueError, 'HUD adaptation must be reviewed'):
-            play.install(self.build)
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
         play.install(self.build)
 
-    def test_producer_build_does_not_require_sites_lock_or_bindings(self):
-        (self.root / contract.LOCK).unlink()
-        shutil.rmtree(self.root / 'apps/ui3')
+    def test_producer_build_records_the_bindings_sites_compares(self):
         meta = contract.pack(self.build, self.root)
         self.assertEqual(meta['files']['bindings/Example.ts'],
                          contract.digest(b'export type Example = string;\n'))
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': contract.hud_inputs(self.root)}))
-        self.write('apps/ui3/src/play/engine/generated/Example.ts', 'different protocol')
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with self.assertRaisesRegex(ValueError, 'bindings differ'):
             play.install(self.build)
 
@@ -425,12 +453,10 @@ class PlayImportTests(unittest.TestCase):
     def test_tooling_only_async_edits_do_not_invalidate_shipped_web_inputs(self):
         artifact = contract.inputs(self.root)
         engine = contract.engine_inputs(self.root)
-        hud = contract.hud_inputs(self.root)
         for source in ('export const retry = 1;', 'export const retry = 2;'):
             self.write('library/async/index.ts', source)
             self.assertEqual(contract.inputs(self.root), artifact)
             self.assertEqual(contract.engine_inputs(self.root), engine)
-            self.assertEqual(contract.hud_inputs(self.root), hud)
             play.install(self.build, production=True)
 
     def test_removed_source_input_invalidates_the_artifact(self):
@@ -643,11 +669,11 @@ class PlayImportTests(unittest.TestCase):
                     patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
                     self.assertRaisesRegex(ValueError, 'inputs differ'):
                 contract.verify(destination, self.root, trust_inputs=True)
-        # HUD review and bindings are still the tree's, whatever built the engine.
-        self.write(contract.LOCK, json.dumps({'hud_source_sha256': 'stale'}))
+        # The bindings are still the tree's, whatever built the engine.
+        self.write(contract.BINDINGS + '/Example.ts', 'different protocol')
         with patch.object(contract, 'inputs', side_effect=inputs), \
                 patch.object(contract, 'engine_inputs', side_effect=engine_inputs), \
-                self.assertRaisesRegex(ValueError, 'HUD adaptation'):
+                self.assertRaisesRegex(ValueError, 'bindings differ'):
             contract.verify(destination, self.root, producer=SHA)
 
     def test_trust_inputs_passes_a_build_of_the_trees_own_inputs_without_a_record(self):
@@ -1197,24 +1223,26 @@ class PlayImportTests(unittest.TestCase):
 
 
 class HudSharedSourcesTests(unittest.TestCase):
-    """The libraries the web HUD aliases are inputs everywhere its build is fingerprinted or selected."""
+    """The checked resolver graph supplies all consumers without a second import parser."""
 
-    def test_the_hud_aliases_and_the_build_inputs_name_the_same_libraries(self):
+    def test_checked_graph_contains_only_foundations_for_the_ui_consumer(self):
         root = Path(__file__).resolve().parents[2]
-        web = root / contract.SOURCE / 'react-web'
-        expected = {path.rstrip('/') for path in contract.HUD_SHARED}
-        aliased = set(re.findall(r"'\.\./\.\./\.\./\.\./(library/[^']+)'", (web / 'vite.shared.ts').read_text()))
-        mapped = set(re.findall(r'"\.\./\.\./\.\./\.\./(library/[^"*]+)/\*"', (web / 'tsconfig.json').read_text()))
-        self.assertEqual(aliased, expected, 'react-web/vite.shared.ts aliases a library the build inputs miss')
-        self.assertEqual(mapped, expected, 'react-web/tsconfig.json maps a library the build inputs miss')
+        manifest = contract.shared_inputs.read_manifest(root)
+        paths = {row['path'] for row in manifest['files']}
+        self.assertTrue(any(p.startswith('library/ui/foundations/') for p in paths))
+        self.assertNotIn('library/ui/index.ts', paths)
+        self.assertFalse(any(p.startswith('library/ui/components/') for p in paths))
+
+    def test_native_and_nix_consume_the_checked_graph(self):
+        root = Path(__file__).resolve().parents[2]
+        self.assertIn('hud_shared_inputs.py', (root / contract.SOURCE / 'justfile').read_text())
         nix = (root / 'infra/packages/play.nix').read_text()
-        spec = importlib.util.spec_from_file_location('bevy_ci', root / 'tooling/bevy-ci.py')
-        ci = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(ci)
-        for library in sorted(expected):
-            with self.subTest(library=library):
-                self.assertIn(library, ci.INPUTS)
-                self.assertRegex(nix, rf'/{re.escape(library)}(\s|$)')
+        self.assertIn('shared-inputs.json', nix)
+        self.assertIn('import ./hud-shared-inputs.nix', nix)
+        validator = (root / 'infra/packages/hud-shared-inputs.nix').read_text()
+        self.assertIn('hashFile "sha256"', validator)
+        self.assertLess(nix.index('checked = assert import'), nix.index('sharedFiles ='))
+        self.assertNotIn('/library/ui/foundations', nix)
 
 
 if __name__ == '__main__':

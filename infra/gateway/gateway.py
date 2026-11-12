@@ -16,6 +16,21 @@ WORLDS_SETTINGS_CAP = "12m"
 # count (`max_deployment_body_bytes`: 200 MiB of files and fields plus
 # multipart framing), rounded up, so its own 413 is the one a client meets.
 CONTENT_DEPLOY_CAP = "248m"
+# World storage bodies: the largest storage route maximum at the deployed
+# defaults (config/src/worlds.rs: WORLD_STORAGE_MAX_VALUE_SIZE_BYTES, 512 KiB,
+# plus the 1 KiB envelope slack; the export body's 256 KiB + 1 KiB is below
+# it) and a little headroom, so the service's own 413 is the one a client
+# meets and nginx buffers no more than that. Raising a value cap means raising
+# this; a gateway test pins it against the defaults. The gateway's own 413 has
+# the service's shape without a byte count, which differs per route.
+STORAGE_BODY_HEADROOM_BYTES = 4 * 1024
+STORAGE_BODY_CAP_BYTES = 512 * 1024 + 1024 + STORAGE_BODY_HEADROOM_BYTES
+STORAGE_TOO_LARGE = {"error": "Payload Too Large",
+                     "message": "Request body exceeds the maximum allowed size"}
+# Storage writes one untrusted address may have in flight, keyed like the write
+# budget (reads and trusted callers are not counted): each body is buffered in
+# the gateway's temp space before the service answers.
+STORAGE_UPLOADS_PER_ADDRESS = 10
 # Uploads one address may have in flight on a deploy route: nginx buffers each
 # body before proxying it, and the app's limits only answer after that. Above
 # upstream catalyst's 4 per source, so it stays a coarse guard.
@@ -121,6 +136,10 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     }
 
 
+# First path segments of social's badges router (services/catalyst/social/src/badges/mod.rs).
+BADGES_MOUNTS = ("assets", "badges", "categories", "status", "users")
+
+
 def render(table, cfg, mime):
     if not cfg["apis"] or not cfg["sites"]:
         raise ValueError("Both API and Sites upstreams are required")
@@ -134,6 +153,11 @@ def render(table, cfg, mime):
                     "asset-bundle-registry-abgen": "/asset-bundle-registry",
                     "rpc-social-service-ea": "/social-rpc", "market": "/shop",
                     "storage": "/world-storage", "comms-gatekeeper-local": "/comms-gatekeeper"}
+    # A host whose path already carries its prefix is not prefixed again, except
+    # badges.: upstream's own paths start with /badges (/badges/<id>/tiers), so
+    # only a second segment the badges router mounts counts as prefixed. No
+    # catalog badge id equals one (/badges/status is the mount, not a badge).
+    badges_mounts = "|".join(BADGES_MOUNTS)
     alias_moves, settled = [], []
     for name, target in host_aliases.items():
         alias_moves.extend([f'"~^gateway:/{name}/?$" "{target}/";',
@@ -251,18 +275,32 @@ def render(table, cfg, mime):
     # Matched after host rewrites, so every storage host form shares this budget.
     storage_limits = ("limit_req zone=storage burst=400 nodelay; "
                       "limit_req zone=storage_write burst=60 nodelay; "
-                      "limit_req zone=storage_trusted burst=1000 nodelay;")
+                      "limit_req zone=storage_trusted burst=1000 nodelay; "
+                      f"limit_conn storage_uploads {STORAGE_UPLOADS_PER_ADDRESS};\n"
+                      f"client_max_body_size {STORAGE_BODY_CAP_BYTES}; "
+                      "error_page 413 = @storage_too_large;")
     locations += location("= /world-storage", proxy("apis", storage_limits))
     locations += location("^~ /world-storage/", proxy("apis", storage_limits))
+    # A storage host request, forwarded as the client spelled it under the
+    # /world-storage prefix ($storage_raw_uri), so an encoded `/` or `?` in a
+    # key reaches the service; only the server rewrite reaches it.
+    locations += location("= /__gateway_storage_raw",
+                          "internal;\n" + proxy("apis$storage_raw_uri", storage_limits))
+    locations += location("@storage_too_large", json_error + f"return 413 '{json.dumps(STORAGE_TOO_LARGE, separators=(',', ':'))}';")
     storage = 'return 404;'
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
         # upstream response header as well; client headers cannot supply it.
+        # nginx keeps the app's Content-Type, Accept-Ranges and Cache-Control on
+        # the redirect and drops its other headers, so ETag and the expose list
+        # are copied back. The app answers every Range it supports itself; one it
+        # does not (multi-range, `bytes=-`) gets the whole file, as upstream.
         storage = (f'internal; alias {cfg["storage"]}/contents/; sendfile on; etag off;\n'
+                   'max_ranges 0;\n'
                    'if ($upstream_http_x_accel_redirect = "") { return 404; }\n'
                    'add_header ETag $upstream_http_etag always;\n'
+                   'add_header Access-Control-Expose-Headers $upstream_http_access_control_expose_headers always;\n'
                    'add_header Access-Control-Allow-Origin "*" always;\n'
-                   'add_header Cache-Control "public, max-age=31536000, immutable";\n'
                    + security_headers)
     locations += location("= /__protected_storage", "return 404;")
     locations += location("^~ /__protected_storage/", storage)
@@ -322,9 +360,30 @@ http {{
         {" ".join(alias_moves)}
         "~^gateway:" "";
         {" ".join(settled)}
+        "~^badges:/badges/({badges_mounts})(/|$)" "";
+        "~^badges:(?<badges_own>/badges(/.*)?)$" /badges$badges_own;
         "~^([^:]+):/\\1(/|$)" "";
         "~^[^:]+:/$" $gateway_prefix/;
         "~^[^:]+:(?<gateway_path>/.*)$" $gateway_prefix$gateway_path;
+    }}
+    # The storage hosts' rewrite, from the unnormalized $request_uri: the
+    # decoded $uri would turn an encoded `/` or `?` in a key into a separator.
+    # Dot segments and empty segments keep the normalized rewrite.
+    map "$gateway_subdomain:$request_uri" $storage_raw_uri {{
+        default "";
+        "~*^[^:]*:[^?]*/(\\.|%2e){{1,2}}([/?]|$)" "";
+        "~^[^:]*:[^?]*//" "";
+        "~^(storage|world-storage):/world-storage([/?]|$)" "";
+        "~^(storage|world-storage):(?<storage_raw>/.*)$" /world-storage$storage_raw;
+        "~^gateway:/storage(?<storage_rest>/.*)$" /world-storage$storage_rest;
+    }}
+    # A decoded `?` would split a rewritten path; a /world-storage request
+    # that is not rewritten is forwarded as sent.
+    map "$gateway_uri:$uri" $ambiguous_path {{
+        volatile;
+        default 0;
+        "~^:/world-storage(/|$)" 0;
+        "~[?]" 1;
     }}
     map "$gateway_subdomain:$request_uri" $original_path {{
         default $request_uri;
@@ -373,6 +432,7 @@ http {{
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=5r/s;
     limit_req_status 429;
     limit_conn_zone $binary_remote_addr zone=deploy_uploads:10m;
+    limit_conn_zone $storage_write_key zone=storage_uploads:10m;
     limit_conn_status 429;
     proxy_http_version 1.1;
     proxy_read_timeout 600s;
@@ -400,7 +460,8 @@ http {{
     server {{
         listen 8080;
         server_name {domain_names};
-        if ($uri ~ "[?]") {{ return 400; }}
+        if ($storage_raw_uri) {{ rewrite ^ /__gateway_storage_raw last; }}
+        if ($ambiguous_path) {{ return 400; }}
         if ($gateway_uri) {{ rewrite ^ $gateway_uri; }}
         if ($internal_path) {{ return 404; }}
         if ($operator_denied) {{ return 403; }}

@@ -1,0 +1,47 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "raycast-storm",
+    "description": "200 continuous raycasts against one floor, for the per-frame raycast budget"
+  },
+  "owner": "",
+  "contact": {
+    "name": "bevy-explorer-e2e",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "0,22"
+    ],
+    "base": "0,22"
+  },
+  "requiredPermissions": [],
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1,
+        "z": 12
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

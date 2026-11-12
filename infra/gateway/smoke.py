@@ -43,9 +43,14 @@ class Upstream(BaseHTTPRequestHandler):
         self.rfile.read(int(self.headers.get("Content-Length", "0")))
         if self.path in ("/content/contents/test", "/worlds-content-server/contents/test",
                          "/ipfs/test", "/ab-cdn/content/contents/test"):
+            # The headers content_file_headers() sends beside X-Accel-Redirect.
             self.send_response(200)
             self.send_header("X-Accel-Redirect", "/__protected_storage/0a/blob")
+            self.send_header("Content-Type", "image/png")
             self.send_header("ETag", '"gateway-fixture"')
+            self.send_header("Access-Control-Expose-Headers", "ETag, Content-Range, Accept-Ranges, Content-Length")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Cache-Control", "public,max-age=31536000,s-maxage=31536000,immutable")
             self.send_header("Content-Length", "0")
             self.end_headers()
             return
@@ -77,7 +82,11 @@ def request(host, path, *, vhost="example.test", headers=None, method="GET", bod
     response = conn.getresponse()
     result = response.status, response.read()
     if include_headers:
-        result += ({key.lower(): value for key, value in response.getheaders()},)
+        # Every value of a header, so a duplicate shows.
+        collected = {}
+        for key, value in response.getheaders():
+            collected.setdefault(key.lower(), []).append(value)
+        result += (collected,)
     conn.close()
     return result
 
@@ -235,6 +244,28 @@ def client(args):
             result = request(public, path, vhost=vhost)
             assert result[0] == 400, ("ambiguous path", vhost, path, result)
     hit("/about?x=a%3Fb", "apis")
+    # Encoded `/` and `?` in a storage key reach the service as sent.
+    for path, vhost, target, original in [
+        ("/values/a%2Fb%3Fc?x=1", "storage.example.test", "/world-storage/values/a%2Fb%3Fc?x=1",
+         "/values/a%2Fb%3Fc?x=1"),
+        ("/players/0xa/values/k%2F1%3F2", "world-storage.example.test",
+         "/world-storage/players/0xa/values/k%2F1%3F2", "/players/0xa/values/k%2F1%3F2"),
+        ("/storage/values/a%2Fb", "gateway.example.test", "/world-storage/values/a%2Fb", "/values/a%2Fb"),
+        ("/world-storage/values/a%2Fb%3Fc", "example.test", None, "/world-storage/values/a%2Fb%3Fc"),
+    ]:
+        data = hit(path, "apis", vhost=vhost, target=target)
+        assert data["headers"]["x-original-path"] == original, (vhost, path, data)
+    assert request(public, "/__gateway_storage_raw", vhost="example.test")[0] == 404
+    import gateway
+    too_large = gateway.STORAGE_BODY_CAP_BYTES + 1
+    for path, vhost, body in [
+        ("/world-storage/values/k", "example.test", b"x" * too_large),
+        ("/values/a%2Fb", "storage.example.test", b"x" * too_large),
+        # No Content-Length: http.client sends an iterable body chunked.
+        ("/world-storage/values/k", "example.test", iter([b"x" * too_large])),
+    ]:
+        status, answer = request(public, path, vhost=vhost, method="PUT", body=body)
+        assert (status, json.loads(answer)) == (413, gateway.STORAGE_TOO_LARGE), (path, vhost, status, answer)
     for path, host in [("/", "admin.example.test"), ("/admin/api/jobs", "gateway.example.test")]:
         assert request(public, path, vhost=host, headers=forged)[0] == 403
     for path, host in [("/pulse/x.data", "internal.example.test"),
@@ -258,11 +289,22 @@ def client(args):
     ]:
         status, body, headers = request(accel, path, vhost=vhost, include_headers=True)
         assert (status, body) == (200, b"authorized-blob"), (vhost, path, status, body)
+        # One value each: the app's Cache-Control, Content-Type and expose list reach
+        # the client as upstream sends them, and nginx adds no second copy.
         for key, value in {"x-content-type-options": "nosniff",
                            "referrer-policy": "strict-origin-when-cross-origin",
                            "cross-origin-opener-policy": "same-origin",
-                           "access-control-allow-origin": "*", "etag": '"gateway-fixture"'}.items():
-            assert headers.get(key) == value, (vhost, path, key, headers)
+                           "access-control-allow-origin": "*", "etag": '"gateway-fixture"',
+                           "content-type": "image/png", "accept-ranges": "bytes",
+                           "cache-control": "public,max-age=31536000,s-maxage=31536000,immutable",
+                           "access-control-expose-headers":
+                               "ETag, Content-Range, Accept-Ranges, Content-Length"}.items():
+            assert headers.get(key) == [value], (vhost, path, key, headers)
+        # A Range the app does not support reaches nginx as a whole-file GET; upstream
+        # answers it with the whole file, not nginx's multipart 206 or HTML 416.
+        for byte_range in ["bytes=0-1,3-4", "bytes=-"]:
+            ranged = request(accel, path, vhost=vhost, headers={"Range": byte_range})
+            assert ranged == (200, b"authorized-blob"), (vhost, path, byte_range, ranged)
     assert request(public, "/about", method="POST", body=b"x" * (1024 * 1024 + 1))[0] == 413
     deployed = request(public, "/entities", vhost="worlds-content-server.example.test", method="POST",
                        body=b"x" * (1024 * 1024 + 1))

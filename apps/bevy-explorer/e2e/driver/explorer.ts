@@ -48,6 +48,27 @@ export interface WorldState {
   keyboardClaimed?: boolean | null
 }
 
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
+export interface PointerReport {
+  hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+  events: { event: string; button: string; tick: number }[]
+  diagnosis: string | null
+}
+
+/** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
+export interface RaycastStats {
+  budgetMs: number
+  ran: number
+  deferred: number
+  spentMs: number
+  uncappedRan: number
+  uncappedSpentMs: number
+}
+
 export interface Control {
   found: true
   role: string
@@ -132,6 +153,48 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** `/voice`'s actions: ring (`call`), answer (`accept` / `reject`), hang up or leave (`end`), open,
+ *  join or close a community stream, raise the hand, the call mic, and moderation (`deny` turns
+ *  down a raised hand). */
+export type VoiceAction =
+  | ['call', string]
+  | ['accept' | 'reject' | 'end' | 'close']
+  | ['start' | 'join', string]
+  | ['hand', 'up' | 'down']
+  | ['mic', 'on' | 'off']
+  | ['promote' | 'demote' | 'kick' | 'deny', string]
+
+/** The private call or community stream as the HUD sees it: its status
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+  /** `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure. */
+  errorIsNotice: boolean
+}
+
 /** `/community_state`: community chat's routing and counters (no message bodies). */
 export interface CommunityState {
   routerIdentity: string
@@ -153,6 +216,51 @@ export interface VoiceState {
   connected: boolean | null
   rooms: { scene: boolean; state: string }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
+}
+
+/** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
+ *  `null` reading explained in `unavailable` by its field path. */
+export interface BanBlockState {
+  address: string | null
+  blocks: {
+    state: 'unavailable' | 'live'
+    reason: 'social_feature_off' | 'not_signed_in' | 'social_not_connected' | null
+    blocked: string[]
+    blockedBy: string[]
+  }
+  platformBan: {
+    state: 'unknown' | 'checked' | 'failed'
+    isBanned: boolean | null
+    source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
+    reason: string | null
+    matchedOn: string | null
+    customMessage: string | null
+    expiresAt: string | null
+    checkedAgoSecs: number | null
+    error: string | null
+  }
+  sceneAdmission: {
+    state: 'unknown' | 'allowed' | 'refused'
+    scope: 'platform' | 'world' | 'scene' | null
+    message: string | null
+    sceneId: string | null
+  }
+  sceneRoom: {
+    state: 'not_connected' | 'connected'
+    sceneId: string | null
+    bannedAddresses: string[]
+    sceneAdmins: string[]
+  }
+  lookup: {
+    address: string
+    isBlockedEitherWay: boolean
+    direction: 'none' | 'local_user_blocked_them' | 'they_blocked_local_user' | 'mutual'
+    bannedInScene: boolean
+    adminPermissions: 'admin' | 'not_admin' | 'not_loaded_yet'
+  } | null
+  unavailable: Record<string, string>
 }
 
 export interface ScreenPosition {
@@ -478,14 +586,13 @@ export class Explorer {
 
   /** Sign in with an identity (while the world is held: the lobby, before any realm). `name` and
    *  `look` apply to a first login only. */
-  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; profiles?: string } = {}): Promise<void> {
+  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean } = {}): Promise<void> {
     const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
     const flags: string[] = []
     if (options.defaultOnError) flags.push('--default-on-error')
     if (options.guest) flags.push('--guest')
     if (options.name !== undefined) flags.push(`--name ${options.name}`)
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
-    if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
   }
 
@@ -623,6 +730,27 @@ export class Explorer {
     return this.json<VoiceState>('/voice_state')
   }
 
+  /** The ban and block status; with an address, also that address's standing. */
+  banBlockState(address?: string): Promise<BanBlockState> {
+    return this.json<BanBlockState>(address ? `/ban_block_state ${address}` : '/ban_block_state')
+  }
+
+  /** Block a user through the social service; answers once the service has. */
+  async blockUser(address: string): Promise<void> {
+    await this.run(`/block_user ${address}`)
+  }
+
+  /** Lift a block through the social service; answers once the service has. */
+  async unblockUser(address: string): Promise<void> {
+    await this.run(`/unblock_user ${address}`)
+  }
+
+  /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and
+   *  refusals). Only queues the request: `/voice_state` `call` follows. */
+  async voice(...action: VoiceAction): Promise<void> {
+    await this.run(['/voice', ...action].join(' '))
+  }
+
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */
   async time(hours?: number, speed?: number): Promise<{ before: string; after: string; speed: number }> {
     const reply = await this.run(['/time', hours === undefined ? '' : String(hours), speed === undefined ? '' : String(speed)].join(' '))
@@ -690,16 +818,6 @@ export class Explorer {
     await this.run(hashOrTitle ? `/set_scene ${hashOrTitle}` : '/set_scene')
   }
 
-  /** The target scene's recent log messages, oldest first, without their time and level. */
-  async sceneLogs(count = 20): Promise<string[]> {
-    const reply = await this.run(`/scene_logs ${count}`)
-    if (reply === '(no logs)') return []
-    return reply
-      .split('\n')
-      .filter((line) => !line.startsWith('(+'))
-      .map((line) => line.replace(/^\[[\d.]+\] \w+: /, ''))
-  }
-
   /** The `value` of every `UiText` in the target scene: what its screen-space UI shows. */
   async uiTexts(): Promise<string[]> {
     const entities = await this.sceneEntities('UiText')
@@ -751,6 +869,49 @@ export class Explorer {
 
   entityScreenPosition(entity: string | number, options: { bounds?: boolean } = {}): Promise<ScreenPosition> {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
+  }
+
+  /** Aims the pointer at an entity and reports what it hovers; a blocked outcome resolves with `diagnosis` set; a refusal rejects. */
+  hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
+    let line = `/hover_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.frames !== undefined) line += ` --frames ${options.frames}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  async clearPointer(): Promise<void> {
+    await this.run('/hover_entity --clear')
+  }
+
+  clickEntity(
+    entity: string | number,
+    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+  ): Promise<PointerReport> {
+    let line = `/click_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.button) line += ` --button ${options.button}`
+    if (options.event) line += ` --event ${options.event}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  raycastStats(): Promise<RaycastStats> {
+    return this.json<RaycastStats>('/raycast_stats')
+  }
+
+  /** The capped raycast tier's budget in ms; with `ms`, overrides it first, and `'auto'` returns it to a tenth of the target frame. */
+  async raycastBudget(ms?: number | 'auto'): Promise<number> {
+    const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
+    const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
+    if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
+    return Number(match[1])
+  }
+
+  /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    return reply === '(no logs)' ? [] : reply.split('\n')
   }
 
   async close(): Promise<void> {

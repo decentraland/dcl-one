@@ -59,7 +59,6 @@ No item is P0. The P1 items:
 | id | endpoint | what differs |
 | --- | --- | --- |
 | WR-22 | `POST /reprocess-ab` | Missing: no in-tree hand-off re-converts a world scene (abgen exposes no world-reprocess call). |
-| WW-39 | the worlds mirror | A multi-scene world is mirrored with its newest scene only: the scene set is read from the source's `/about`, which lists one. |
 
 ## Themes that cut across files
 

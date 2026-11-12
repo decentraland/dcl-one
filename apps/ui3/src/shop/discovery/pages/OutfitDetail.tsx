@@ -4,33 +4,34 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "react-router";
 
-import { isShopApiError } from "../../api/client";
+import { isShopApiError } from "@shop/api/client";
 import { shopCart, useCart } from "../../cart/store";
 import { BASE_FEMALE, BASE_MALE, requiredShape } from "@shop/detail/lib/bodyShape";
 import { fetchEmoteClipUrl } from "../../detail/lib/emoteBase64";
-import { itemUrn } from "../../detail/lib/urn";
+import { itemUrn } from "@shop/detail/lib/urn";
 import { assetKey } from "@shop/model/asset";
 import { SHOP_BASE } from "../../routes";
 import { useMarketplace } from "../../market/access";
 import { useShopWallet } from "../../wallet/context";
-import { fetchCatalogByIds, fetchShopItems } from "../api";
+import { fetchCatalogByIds, fetchShopItems } from "@shop/discovery/api";
 import { cardEligibility, cardPrice } from "@shop/discovery/cardPrice";
 import { assetOf, cartInputFor } from "../components/AssetCard";
 import Icon from "../components/Icon";
 import IndexNotice from "../components/IndexNotice";
 import PriceTag, { formatCreditsFull } from "../components/PriceTag";
-import { indexUnavailable } from "../freshness";
+import { indexUnavailable } from "@shop/discovery/freshness";
 import { useCreatorName, useSeo } from "../hooks";
 import { t } from "@shop/discovery/intl";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { categoryIcon, genderIcon } from "../lib/itemIcons";
-import { isWearable, playingEmote } from "../lib/outfit";
+import { isWearable, playingEmote } from "@shop/discovery/lib/outfit";
 import { rarityColor, rarityDescription, rarityLabel } from "@shop/discovery/lib/rarity";
 import { detailRouteFor } from "../lib/routes";
 import { useShopQuery } from "../query";
 import { classifyOutfitItem, fetchOutfit, isListingUnavailable, outfitItemKey, outfitRadialGradient, thumbnailUrl, type Outfit, type OutfitItemState } from "./outfits";
 import "./outfitdetail.css";
 import { listingTypeFor } from "@shop/market/access-rule";
+import { shopReads } from "../reads";
 
 export { fetchOutfit, type Outfit } from "./outfits";
 
@@ -218,7 +219,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
   const marketplace = useMarketplace();
   const lines = useCart((s) => s.lines);
   const keys = useMemo(() => [...new Set(outfit.items.map(outfitItemKey))].sort(), [outfit]);
-  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, { signal }), { staleMs: 60_000 });
+  const itemsQ = useShopQuery(keys.length ? ["outfit-items", ...keys] : null, (signal) => fetchCatalogByIds(keys, shopReads(signal)), { staleMs: 60_000 });
   const byKey = useMemo(() => new Map((itemsQ.data ?? []).map((item) => [item.id.toLowerCase(), item])), [itemsQ.data]);
   const loading = keys.length > 0 && itemsQ.isLoading && !itemsQ.data;
   const cartAssets = useMemo(() => new Set(lines.map((l) => assetKey(l.asset))), [lines]);
@@ -266,7 +267,7 @@ function OutfitContent({ outfit }: { outfit: Outfit }) {
     try {
       const live = await Promise.all(
         purchasable.map(async (item) => {
-          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: listingTypeFor(marketplace) });
+          const page = await fetchShopItems({ contractAddress: item.contractAddress, itemId: item.itemId ?? "", first: 1, listingType: listingTypeFor(marketplace) }, shopReads());
           const fresh = page.items[0];
           return fresh && !isListingUnavailable(fresh) ? fresh : null;
         }),

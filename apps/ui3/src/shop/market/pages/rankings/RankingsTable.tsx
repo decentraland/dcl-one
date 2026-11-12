@@ -19,10 +19,10 @@ import { formatMana, parseManaWei } from "@shop/model/money";
 import { shopPath } from "../../../routes";
 import { fetchRankings, type AnalyticsTimeframe, type CollectorRank, type CreatorRank, type ItemRank, type RankingEntity, type RankingsSortBy } from "../../lib/api";
 import type { CatalogItem } from "@catalyst-api/market/CatalogItem";
-import { shopClient } from "../../../api/shop";
 import { toFavoriteItem, type FavoriteItem } from "../../lib/catalog";
 import { LoadFailure, Loading } from "../../components/kit";
 import infoIcon from "./info.svg?url";
+import { shopClient } from "../../../api/host";
 import "./rankingstable.css";
 
 const ENTITIES: RankingEntity[] = ["wearables", "emotes", "creators", "collectors"];

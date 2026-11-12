@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { beforeEach, expect, it, vi } from "vitest";
 import { loadCreateScreen } from "@/data/lib/screens/create.server";
 import { loader, sdkWorkspaceHandoff } from "./create._index";
@@ -23,7 +24,7 @@ async function thrown(run: () => Promise<unknown>): Promise<unknown> {
 // fragment, would drop the token with no other failing test: this one pins the shape.
 it("hands /create?projectUrl= to the SDK workspace by a fragment-free document redirect", async () => {
   const request = new Request("https://sites.test/create?projectUrl=http%3A%2F%2F127.0.0.1%3A8000%2F&creator=0xabc");
-  const response = await thrown(() => loader({ request } as never));
+  const response = await thrown(() => loader({ request, context: new RouterContextProvider() } as never));
   expect(response).toBeInstanceOf(Response);
   const { status, headers } = response as Response;
   expect(status).toBe(302);

@@ -9,7 +9,7 @@ import Button from "../../atoms/Button";
 import Icon from "../discovery/components/Icon";
 import Rail from "../discovery/components/Rail";
 import SuggestedForYouRow, { useSuggestedForYou } from "../discovery/components/SuggestedForYouRow";
-import { fetchCatalogByIds, fetchListings } from "../discovery/api";
+import { fetchCatalogByIds, fetchListings } from "@shop/discovery/api";
 import type { CatalogItem } from "@shop/discovery/lib/catalogItem";
 import { suggestedHiddenReason } from "../discovery/lib/suggestionEvents";
 import { useShopQuery } from "../discovery/query";
@@ -34,6 +34,7 @@ import { useMarketplace } from "../market/access";
 import { CREDITS_SHORT, useCheckout, type CheckoutView } from "./useCheckout";
 import { useRailCheckout } from "./useRailCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
+import { shopReads } from "../discovery/reads";
 import "./cartpage.css";
 import { listingTypeFor } from "@shop/market/access-rule";
 
@@ -74,7 +75,7 @@ function CartUpsell({ exclude }: { exclude: string[] }) {
   const marketplace = useMarketplace();
   const generic = useShopQuery(
     personalHidden !== null ? ["upsell-listings", marketplace ? "all" : "primary"] : null,
-    (signal) => fetchListings({ first: 40, listingType: listingTypeFor(marketplace) }, { signal }),
+    (signal) => fetchListings({ first: 40, listingType: listingTypeFor(marketplace) }, shopReads(signal)),
     { staleMs: 60_000 },
   );
   const skip = new Set(exclude);
@@ -205,7 +206,7 @@ function CartScreen() {
     if (wearableKeys.length === 0) return;
     setFittingBusy(true);
     try {
-      const items = await fetchCatalogByIds(wearableKeys);
+      const items = await fetchCatalogByIds(wearableKeys, shopReads());
       if (items.length > 0) setFitting(items);
     } catch {
     } finally {

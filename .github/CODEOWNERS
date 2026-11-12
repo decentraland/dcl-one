@@ -102,6 +102,8 @@
 
 # explorer-client
 /rendering/bevy-explorer/ @decentraland/client
+/library/ui/apps/hud/ @decentraland/client
+/library/explorer-core/ @decentraland/client
 /apps/bevy-explorer/ @decentraland/client
 /.github/workflows/bevy-explorer-*.yml @decentraland/client
 /.github/actions/bevy-explorer-*/ @decentraland/client
@@ -132,3 +134,6 @@
 
 # documentation
 /docs/ @decentraland/infra
+
+# ui-library-workflow
+/.github/workflows/ui-library.yml @decentraland/web-applications @decentraland/infra

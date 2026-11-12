@@ -10,9 +10,9 @@
 // two. A HUD built before NAMEs reads `items: []` as no operation at all and drops it.
 
 import { MAX_CREDIT_LINES_PER_GROUP } from '@shop/model/settlement'
-import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '../../shop/names/names'
+import { NAME_MAX_LENGTH, NAME_MIN_LENGTH } from '@shop/names/name'
 import type { WalletKind } from '../../shop/wallet/session'
-import { ShellError } from './shellReply'
+import { ShellError } from '@explorer-core/lib/shellReply'
 
 export const SHOP_PROTOCOL = 1
 

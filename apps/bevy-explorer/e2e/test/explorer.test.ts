@@ -69,6 +69,39 @@ describe('Explorer', () => {
     assert.equal(state.sent, 2)
   })
 
+  test('ban and block commands: the state, the lookup, and the block and unblock lines', async () => {
+    const other = '0x' + '2'.repeat(40)
+    const fake = new FakeConsole({
+      ban_block_state: (line) =>
+        JSON.stringify({
+          address: '0x' + '1'.repeat(40),
+          blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
+          platformBan: { state: 'checked', isBanned: false, source: null, reason: null, matchedOn: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
+          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
+          sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
+          lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,
+          unavailable: line.endsWith(other) ? {} : { lookup: 'no address given' }
+        }),
+      block_user: 'block requested',
+      unblock_user: 'unblock requested'
+    })
+    const explorer = new Explorer(fake)
+    const state = await explorer.banBlockState()
+    assert.equal(state.blocks.state, 'live')
+    assert.deepEqual(state.blocks.blocked, [other])
+    assert.equal(state.platformBan.isBanned, false)
+    assert.equal(state.lookup, null)
+    assert.equal(state.unavailable.lookup, 'no address given')
+    const lookup = await explorer.banBlockState(other)
+    assert.equal(lookup.lookup?.direction, 'local_user_blocked_them')
+    assert.equal(lookup.sceneRoom.state, 'connected')
+    await explorer.blockUser(other)
+    await explorer.unblockUser(other)
+    assert.deepEqual(fake.sent('ban_block_state'), ['/ban_block_state', `/ban_block_state ${other}`])
+    assert.deepEqual(fake.sent('block_user'), [`/block_user ${other}`])
+    assert.deepEqual(fake.sent('unblock_user'), [`/unblock_user ${other}`])
+  })
+
   test('a JSON reply that is text is an error naming the command', async () => {
     const fake = new FakeConsole({ world_state: 'oops' })
     await assert.rejects(new Explorer(fake).worldState(), /`\/world_state` did not reply JSON: oops/)
@@ -83,6 +116,36 @@ describe('Explorer', () => {
     assert.deepEqual(await explorer.userData(), { name: 'Jane Doe', address: '0x1111111111111111111111111111111111111111', version: 7, web3: false })
     assert.equal(await explorer.profileVersion(), 7)
     assert.deepEqual(await explorer.position(), { x: 8, y: 0.5, z: -3 })
+  })
+
+  test('the voice chat actions compose their lines', async () => {
+    const fake = new FakeConsole({ voice: 'queued' })
+    const explorer = new Explorer(fake)
+    await explorer.voice('call', '0xabc')
+    await explorer.voice('accept')
+    await explorer.voice('end')
+    await explorer.voice('join', 'c1')
+    await explorer.voice('close')
+    await explorer.voice('hand', 'up')
+    await explorer.voice('mic', 'off')
+    await explorer.voice('deny', '0xabc')
+    assert.deepEqual(fake.lines, ['/voice call 0xabc', '/voice accept', '/voice end', '/voice join c1', '/voice close', '/voice hand up', '/voice mic off', '/voice deny 0xabc'])
+  })
+
+  test('voiceState carries the call', async () => {
+    const fake = new FakeConsole({
+      voice_state: JSON.stringify({
+        mic: { available: true, enabled: false },
+        livekit: true,
+        connected: true,
+        rooms: [],
+        speakers: [],
+        call: { status: 'receivedCall', kind: 'private', callId: 'c1', communityId: null, peer: '0xabc', connection: 'none', participants: [], micEnabled: false, localSpeaker: false, localRole: 'none', localRequestingToSpeak: false, error: null, errorIsNotice: false }
+      })
+    })
+    const state = await new Explorer(fake).voiceState()
+    assert.equal(state.call?.status, 'receivedCall')
+    assert.equal(state.call?.peer, '0xabc')
   })
 
   test('photoMode and takePhoto parse the JSON replies and wait for the mode', async () => {
@@ -309,6 +372,26 @@ describe('Explorer', () => {
     assert.deepEqual(fake.lines, ['/press_key KeyB', '/press_key ShiftLeft --state down', '/press_key Escape', '/click_at 1 2', '/click_at 1 2 --button right'])
   })
 
+  test('hoverEntity, clickEntity, raycast and scene log commands compose the lines', async () => {
+    const report = JSON.stringify({ hit: null, entries: [], events: [], diagnosis: 'blocked by entity 9' })
+    const fake = new FakeConsole({ hover_entity: report, click_entity: report, raycast_stats: JSON.stringify({ budgetMs: 1.67, ran: 1, deferred: 0, spentMs: 0.1, uncappedRan: 2, uncappedSpentMs: 0.2 }), raycast_budget: 'raycast budget: 0.00 ms (override)', scene_logs: '[1.00] Info: a\n[2.00] Info: b' })
+    const explorer = new Explorer(fake)
+    assert.equal((await explorer.hoverEntity(512, { bounds: true, frames: 10 })).diagnosis, 'blocked by entity 9')
+    await explorer.clickEntity('512', { button: 'primary', event: 'down', timeoutFrames: 60 })
+    await explorer.clearPointer()
+    assert.equal((await explorer.raycastStats()).budgetMs, 1.67)
+    assert.equal(await explorer.raycastBudget(0), 0)
+    assert.deepEqual(await explorer.sceneLogs(50), ['[1.00] Info: a', '[2.00] Info: b'])
+    assert.deepEqual(fake.lines, [
+      '/hover_entity 512 --bounds --frames 10',
+      '/click_entity 512 --button primary --event down --timeout-frames 60',
+      '/hover_entity --clear',
+      '/raycast_stats',
+      '/raycast_budget 0',
+      '/scene_logs 50'
+    ])
+  })
+
   test("profileDeployWindow waits out the catalyst's window after the own profile changed, and only then", async () => {
     let version = 3
     const fake = new FakeConsole({ get_user_data: () => `tester (0x${'a'.repeat(40)}): v${version}, web3=true` })
@@ -425,7 +508,7 @@ describe('smart wearables and live scenes', () => {
     await explorer.setScene('e2e123')
     await explorer.setScene()
     assert.deepEqual(fake.sent('set_scene'), ['/set_scene e2e123', '/set_scene'])
-    assert.deepEqual(await explorer.sceneLogs(50), ['smart wearable fixture started', 'careful'])
+    assert.deepEqual(await explorer.sceneLogs(50), ['(+3 older entries not retained)', '[1.25] Log: smart wearable fixture started', '[1.50] Warn: careful'])
     assert.deepEqual(fake.sent('scene_logs'), ['/scene_logs 50'])
     assert.deepEqual(await explorer.uiTexts(), ['Smart wearable running', 'other'])
     assert.deepEqual(fake.sent('scene_entities'), ['/scene_entities UiText'])

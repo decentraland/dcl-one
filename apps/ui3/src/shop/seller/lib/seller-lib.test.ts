@@ -197,7 +197,7 @@ describe("listing import is restricted to eligible primary inventory", () => {
   it("refuses a secondary token BEFORE touching its live listing: no read, no cancel, no signature", async () => {
     const wallet = fakeWallet();
     const shop = fakeShop([]);
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     setShopClient(shop.client);
     try {
       await expect(importListing(importItem("secondary"), 15, { provider: wallet, wait: noWait })).rejects.toBeInstanceOf(ImportRestrictedError);
@@ -230,7 +230,7 @@ describe("listing import is restricted to eligible primary inventory", () => {
     ]);
     globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, txHash: `0x${"a".repeat(64)}` }))) as typeof fetch;
     const phases: string[] = [];
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     setShopClient(shop.client);
     let created: Trade;
     try {
@@ -253,7 +253,7 @@ describe("listing import is restricted to eligible primary inventory", () => {
     const old = await createPrimaryUsdPeggedListing({ provider: wallet, item: { contractAddress: BOOK.collection, itemId: "7", chainId: CHAIN.POLYGON }, usdCents: 50, expiresAtMs: Date.now() + DAY });
     const shop = fakeShop([{ method: "GET", path: /^\/v1\/trades\/old-1$/, reply: () => ({ body: { ok: true, data: { ...old, id: "old-1", contract: market.address } } }) }]);
     globalThis.fetch = (async () => new Response(JSON.stringify({ ok: true, txHash: `0x${"a".repeat(64)}` }))) as typeof fetch;
-    const { setShopClient } = await import("../../api/shop");
+    const { setShopClient } = await import("../../api/host");
     setShopClient(shop.client);
     try {
       await expect(importListing(importItem("primary"), 15, { provider: wallet, wait: noWait })).rejects.toBeInstanceOf(RelistFailedError);

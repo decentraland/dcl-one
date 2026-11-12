@@ -79,6 +79,17 @@ library/uuav/**/*.sb text eol=lf
 library/uuav/**/*.sh text eol=lf
 tooling/uuav/*.sh text eol=lf
 tooling/uuav/uuav-binaries.lock.json text eol=lf
-
 # The SDK snapshot keeps its upstream bytes (one api-extractor report is CRLF).
 library/js-sdk-toolchain/** -text
+library/ui/foundations/** text eol=lf
+library/ui/foundations/typography/fonts/*.woff2 filter=lfs diff=lfs merge=lfs -text
+library/ui/figma/src/generators/** text eol=lf
+# figma-agent-kit hashes the skills it installs; every checkout keeps them LF.
+library/ui/figma/agent-kit/skills/** text eol=lf
+.claude/skills/** text eol=lf
+library/ui/package.json text eol=lf
+library/ui/tsconfig.json text eol=lf
+
+library/ui/apps/sites/assets/**/*.webp filter=lfs diff=lfs merge=lfs -text
+library/ui/apps/sites/assets/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+library/ui/apps/sites/assets/**/*.webm filter=lfs diff=lfs merge=lfs -text

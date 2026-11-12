@@ -119,12 +119,24 @@ pub async fn quote_wei(
     Ok(row.get::<String, _>("wei"))
 }
 
+/// A trial (`CREDITS_TRIAL_MODE`) takes no MANA for credits: its buyers spend the credits they
+/// were granted, and nothing a top-up would credit is part of it.
+fn refuse_in_a_trial(state: &SharedState) -> Result<(), ApiError> {
+    if state.settings.trial.is_some() {
+        return Err(ApiError::forbidden(
+            "MANA top-ups are disabled in this test (CREDITS_TRIAL_MODE)",
+        ));
+    }
+    Ok(())
+}
+
 pub async fn mana_topup(
     State(state): State<SharedState>,
     original: OriginalUri,
     headers: HeaderMap,
     body: Result<Json<ManaTopupBody>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response, ApiError> {
+    refuse_in_a_trial(&state)?;
     let signer = signer_from(&state, &headers, "post", "/topup/mana", &original).await?;
     let Json(body) = body.map_err(|e| ApiError::bad_request(e.body_text()))?;
     let tx_hash = validate_tx_hash(&body.tx_hash)?;
@@ -215,6 +227,7 @@ pub async fn mana_topup_quote(
     State(state): State<SharedState>,
     Query(params): Query<QuoteParams>,
 ) -> Result<Json<ManaTopupQuoteOut>, ApiError> {
+    refuse_in_a_trial(&state)?;
     let credits = validate_quote_credits(&params.credits)?;
     let mana_usd = state.pricing.fetch_mana_usd().await?;
     let wei_suggested = quote_wei(&state.credits.pool, credits, &mana_usd).await?;

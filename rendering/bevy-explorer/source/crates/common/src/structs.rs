@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -616,7 +617,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 2;
+pub const SETTINGS_GENERATION: u32 = 3;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -708,6 +709,7 @@ impl AppConfig {
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 3: native gpu uploads became capped by default; move configs still uncapped (0).
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -718,6 +720,9 @@ impl AppConfig {
         }
         if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
             self.graphics.bloom = default.graphics.bloom;
+        }
+        if self.settings_generation < 3 && self.graphics.gpu_bytes_per_frame == 0 {
+            self.graphics.gpu_bytes_per_frame = default.graphics.gpu_bytes_per_frame;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -885,6 +890,7 @@ pub struct GraphicsSettings {
     pub avatar_outline: bool,
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
+    /// bytes of throttled asset uploads to the gpu per frame; 0 = unlimited
     pub gpu_bytes_per_frame: usize,
     /// share of the screen's device pixels the web canvas renders at
     pub render_scale: f32,
@@ -913,11 +919,7 @@ impl Default for GraphicsSettings {
             cel_shading: true,
             avatar_outline: true,
             avatar_ghosts: true,
-            gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
-                10_000_000
-            } else {
-                0
-            },
+            gpu_bytes_per_frame: 10_000_000,
             render_scale: 1.0,
         }
     }
@@ -959,10 +961,15 @@ pub enum AudioType {
     Avatar,
 }
 
+// a field missing from a saved config takes its default (a failed parse resets the whole config)
 #[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+#[serde(default)]
 pub struct AudioSettings {
     pub master: i32, // 0-100
+    /// nearby players' voices
     pub voice: i32,
+    /// private calls and community voice streams
+    pub voice_chat: i32,
     pub scene: i32,
     pub system: i32,
     pub avatar: i32,
@@ -973,6 +980,7 @@ impl Default for AudioSettings {
         Self {
             master: 100,
             voice: 100,
+            voice_chat: 100,
             scene: 100,
             system: 100,
             avatar: 100,
@@ -983,6 +991,9 @@ impl Default for AudioSettings {
 impl AudioSettings {
     pub fn voice(&self) -> f32 {
         (self.voice * self.master) as f32 / 10_000.0
+    }
+    pub fn voice_chat(&self) -> f32 {
+        (self.voice_chat * self.master) as f32 / 10_000.0
     }
     pub fn scene(&self) -> f32 {
         (self.scene * self.master) as f32 / 10_000.0
@@ -998,8 +1009,46 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// one cascade, hardware 2x2 filtering
     Low,
+    /// four soft cascades
     High,
+}
+
+/// The far bounds of High's first three cascades, as fractions of the shadow distance.
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// How far from the player a spot light can cast shadows, in metres.
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1961,6 +2010,56 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sun_cascades_split_the_shadow_distance() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
+
+    #[test]
+    fn a_config_saved_before_the_voice_chat_volume_keeps_its_audio() {
+        let config = AppConfig::from_json(
+            br#"{"user_id":"u","audio":{"master":80,"voice":40,"scene":30,"system":20,"avatar":10}}"#,
+        );
+        assert_eq!(config.user_id, "u");
+        assert_eq!(
+            config.audio,
+            AudioSettings {
+                master: 80,
+                voice: 40,
+                voice_chat: 100,
+                scene: 30,
+                system: 20,
+                avatar: 10,
+            }
+        );
+    }
+
+    #[test]
+    fn reset_outdated_settings_caps_uncapped_uploads() {
+        let saved = |gpu_bytes_per_frame| {
+            let mut config = AppConfig {
+                settings_generation: 2,
+                ..Default::default()
+            };
+            config.graphics.gpu_bytes_per_frame = gpu_bytes_per_frame;
+            config.reset_outdated_settings();
+            config
+        };
+        let uncapped = saved(0);
+        assert_eq!(uncapped.graphics.gpu_bytes_per_frame, 10_000_000);
+        assert_eq!(uncapped.settings_generation, SETTINGS_GENERATION);
+        assert_eq!(saved(500_000).graphics.gpu_bytes_per_frame, 500_000);
+    }
 
     #[test]
     fn migrate_inputs_updates_old_tables() {

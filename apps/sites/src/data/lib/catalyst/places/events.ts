@@ -98,6 +98,11 @@ type FetchEventsParams = {
   with_connected_users?: boolean;
   limit?: number;
   offset?: number;
+  /** A parcel as "x,y". */
+  position?: string;
+  world_names?: string;
+  /** False keeps World events out of a Genesis City parcel lookup. */
+  world?: boolean;
 };
 
 const EventListEnvelope = apiOkOf(
@@ -143,6 +148,9 @@ async function fetchEventRows(
       with_connected_users: params.with_connected_users,
       limit: params.limit,
       offset: params.offset,
+      position: params.position,
+      world_names: params.world_names,
+      world: params.world,
     },
   });
   const copy = readCopy(raw);
