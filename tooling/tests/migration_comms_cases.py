@@ -69,3 +69,34 @@ class CommsMigrationCases:
             self.sql(db, 'BEGIN;\n' + stage + load + '\n' + load + '\nCOMMIT;')
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM social.scene_admins;').strip(), '2')
         self.assertEqual(self.sql(db, 'SELECT count(*) FROM social.scene_bans;').strip(), '2')
+
+    def test_comms_alias_precedence_survives_requested_single_row_batches(self):
+        import os
+        from unittest import mock
+        from tooling.tests import test_migration as harness
+        db = self.comms_fixture()
+        src = self.fresh_db('worlds_fix_comms_source')
+        self.sql(db, '''INSERT INTO explore.place(id,base_position,raw) VALUES
+            ('33333333-3333-4333-8333-333333333333','0,0','{"deployment_id":"genesis-entity"}');''')
+        self.sql(src, '''
+            CREATE TABLE scene_admin (id text, place_id text, admin text, added_by text,
+                created_at bigint, active boolean);
+            INSERT INTO scene_admin VALUES
+                ('first','11111111-1111-4111-8111-111111111111','0x' || repeat('a',40),'active',1000,true),
+                ('later','33333333-3333-4333-8333-333333333333','0x' || repeat('a',40),'revoked',2000,false);
+            CREATE TABLE scene_bans (id text, place_id text, banned_address text,
+                banned_by text, banned_at bigint);
+            INSERT INTO scene_bans VALUES
+                ('first','11111111-1111-4111-8111-111111111111','0x' || repeat('a',40),'earliest',1000),
+                ('later','33333333-3333-4333-8333-333333333333','0x' || repeat('a',40),'later',2000);
+        ''')
+        with mock.patch.dict(os.environ, {'COMMS_GATEKEEPER_DATABASE_URL': self.url(src),
+                                         'TARGET_DATABASE_URL': self.url(db)}):
+            for step in ('scene_admin', 'scene_ban'):
+                code, output = self.migrate('run', 'comms-gatekeeper', '--step', step,
+                                            '--batch-size', '1', sources_dir=harness.migrate.SOURCES)
+                self.assertEqual(code, 0, output)
+        self.assertEqual(self.sql(db, 'SELECT place_id, active, added_by FROM social.scene_admins;').strip(),
+                         'genesis-entity\tt\tactive')
+        self.assertEqual(self.sql(db, 'SELECT place_id, banned_by FROM social.scene_bans;').strip(),
+                         'genesis-entity\tearliest')
