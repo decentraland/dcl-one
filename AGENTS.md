@@ -14,7 +14,7 @@
 - Make focused edits; preserve other agents' work.
 
 For formal verification of LiveKit or networking decisions, or maintenance of
-their Rocq proof evidence, use
+their proof evidence, use
 [verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
 
 ## Agentic roles documentation

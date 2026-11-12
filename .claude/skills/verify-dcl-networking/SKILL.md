@@ -1,6 +1,6 @@
 ---
 name: verify-dcl-networking
-description: Use when asked to formally verify or maintain a Rocq proof of dcl-one's LiveKit, room retry, island handoff, microphone lifecycle, voice session ownership, or comms admission/Pulse decisions. Also use when assessing whether networking proof evidence still matches the source. Ordinary networking edits and live connectivity troubleshooting do not require this skill.
+description: Use when asked to formally verify or maintain proof evidence for dcl-one's LiveKit, room retry, island handoff, microphone lifecycle, voice session ownership, or comms admission/Pulse decisions. Also use when assessing whether networking proof evidence still matches the source. Ordinary networking edits and live connectivity troubleshooting do not require this skill.
 ---
 
 # Verify dcl-one networking
@@ -23,7 +23,7 @@ Read [proofgate.md](references/proofgate.md) for the pinned tool, manifest and e
 2. Model the smallest transition system. Give conditional claims a reachable example satisfying their premises. State abstractions such as natural-number time, saturated retry buckets or serialized mutex transitions.
 3. Bind the model with a restricted generator that rejects unrecognized source shapes. A hash detects change; it does not establish correspondence. Review every modeled branch and caller assumption.
 4. Exercise the real decision in an implementation witness. Prefer an unchanged std-only module; an extracted method harness must name its stubs and omitted integration. A second handwritten model is not an implementation witness.
-5. Run fresh compilation, assumption audit, kernel checking, witness and mutations. Mutation evidence identifies its rejecting layer: source grammar, implementation assertion or Rocq claim. Count setup failures separately. A survivor means a missing property, an equivalent mutation, or an explicit scope limit—not automatic success.
+5. Run fresh compilation, assumption audit, kernel checking, witness and mutations. Mutation evidence identifies its rejecting layer: source grammar, implementation assertion or proof claim. Count setup failures separately. A survivor means a missing property, an equivalent mutation, or an explicit scope limit—not automatic success.
 
 ## Report the result
 
