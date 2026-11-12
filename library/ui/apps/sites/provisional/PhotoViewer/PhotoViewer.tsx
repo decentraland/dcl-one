@@ -23,7 +23,7 @@ import { ProfileAvatar } from '../ProfileAvatar/ProfileAvatar'
 import styles from './PhotoViewer.module.css'
 
 /** The app's router link, so following it is a client navigation; a plain anchor otherwise. */
-type PhotoViewerLinkProps = { to: string; className: string; children: ReactNode }
+type PhotoViewerLinkProps = { to: string; className?: string | undefined; children: ReactNode }
 
 type PhotoViewerPerson = {
   name: string
@@ -287,14 +287,14 @@ function StepButton({
   icon
 }: {
   label: string
-  className: string
+  className: string | undefined
   onStep?: () => void
   icon: ReactNode
 }) {
   return (
     <button
       type="button"
-      className={`${styles.step} ${className}`}
+      className={`${styles.step} ${className ?? ''}`}
       aria-label={label}
       aria-disabled={!onStep}
       onClick={onStep}
