@@ -155,6 +155,19 @@ describe('figma-key-guard', () => {
       )
       expect(lines.join('\n')).not.toContain(FAKE_KEY)
       expect(lines.join('\n')).not.toContain('AbC123')
+      expect(lines).toContain(
+        'hint: if this is a public Figma URL, it lands in two pull requests: its key-guard-allow.json entry merged to main first, then the URL; a private file URL is removed instead'
+      )
+    })
+  })
+
+  describe('when only the key leaks', () => {
+    it('should not print the two-PR URL hint', async () => {
+      await put('src/leak.ts', `const k = '${FAKE_KEY}'\n`)
+
+      const { lines } = guard({ key: FAKE_KEY, range: null })
+
+      expect(lines.some((line) => line.startsWith('hint:'))).toBe(false)
     })
   })
 

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { expect, it, vi } from "vitest";
 import { renderToString } from "react-dom/server";
 
@@ -25,9 +26,11 @@ it("reads the bell's inbox from the node's /notifications mount", async () => {
     return null;
   }
   renderToString(
-    <ChromeAuthBridge>
-      <Probe />
-    </ChromeAuthBridge>,
+    <QueryClientProvider client={new QueryClient()}>
+      <ChromeAuthBridge>
+        <Probe />
+      </ChromeAuthBridge>
+    </QueryClientProvider>,
   );
   await expect(auth?.fetchNotifications?.()).resolves.toEqual({ notifications: [] });
   const url = new URL(signedFetch.mock.calls[0][0]);

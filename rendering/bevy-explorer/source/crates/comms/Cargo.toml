@@ -21,6 +21,7 @@ platform = { workspace = true }
 system_bridge = { workspace = true }
 livestream_manager = { workspace = true }
 input_manager = { workspace = true }
+social = { workspace = true }
 
 bevy = { workspace = true }
 bimap = { workspace = true }

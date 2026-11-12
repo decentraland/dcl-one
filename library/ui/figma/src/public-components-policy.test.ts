@@ -30,8 +30,7 @@ describe('when verified identities match an independent emitted component plan',
     generated = {
       kind: 'generated',
       source: 'synthetic-pinned-source',
-      transform: 'public-runtime-imports-v1',
-      modules: { [installer]: moduleHash }
+      transform: 'public-runtime-imports-v1'
     }
     runtimeOrigin = {
       ...generated,
@@ -273,16 +272,7 @@ describe('when verified identities match an independent emitted component plan',
     ['ambiguous metadata', { unexpected: true }],
     ['wrong source', { source: 'wrong-source' }],
     ['wrong transform label', { transform: 'other-transform' }],
-    ['wrong transform digest', { modules: { [installer]: hash } }],
-    [
-      'unbound transform module',
-      {
-        modules: {
-          [installer]: moduleHash,
-          'library/ui/figma/src/extra.ts': hash
-        }
-      }
-    ]
+    ['a stale per-output module map', { modules: { [installer]: moduleHash } }]
   ])('and the output claims %s', (_label, override) => {
     beforeEach(() => {
       context.inspection.outputs.get('Button/Button.tsx')!.origin = {
@@ -391,12 +381,18 @@ describe('when verified identities match an independent emitted component plan',
         sha256: moduleHash,
         indexBlobSha: blob
       })
-      ;(generated.modules as Record<string, string>)[
-        'library/ui/figma/src/generators/components.ts'
-      ] = moduleHash
     })
     it('should accept the additional verified generator binding', () => {
       expect(publicComponentProblems(context)).toEqual([])
+    })
+    it('should reject it when its verified bytes differ from the single module pin', () => {
+      context.inspection.inputs.set('library/ui/figma/src/generators/components.ts', {
+        sha256: hash,
+        indexBlobSha: blob
+      })
+      expect(publicComponentProblems(context)).toContain(
+        'missing or mismatched component transform identities'
+      )
     })
   })
 })

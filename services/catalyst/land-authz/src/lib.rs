@@ -185,7 +185,9 @@ pub struct Settings {
     /// timestamp-header and repair calls per pass, excluding head probes.
     pub requests_per_pass: usize,
     /// `LAND_AUTHZ_REPLAY_FROM_BLOCK`: rewind durably once at the first pass
-    /// (the start block for a full repair).
+    /// (the start block for a full repair, which may also switch registries).
+    /// Held per process: while it stays set, every restart replays again, so
+    /// unset it once the replay has published.
     pub replay_from_block: Option<u64>,
     /// `LAND_AUTHZ_STOP_BLOCK`: index no further (a development bound); an
     /// index held short of the head is never published.
@@ -329,9 +331,39 @@ impl LandAuthzState {
         )
     }
 
-    /// The cursor row when the local index may answer on the database clock.
+    /// The cursor row when the local index of the configured registries may
+    /// answer on the database clock. A yes/no only: a read that depends on
+    /// it runs on [`Self::ready_snapshot`] instead.
     pub async fn ready(&self) -> Option<Cursor> {
-        indexer::ready_cursor(&self.pool, &self.settings.network).await
+        indexer::ready_cursor(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+        )
+        .await
+    }
+
+    /// The configured registries' index when it may answer, as a snapshot
+    /// the dependent reads run on ([`indexer::ReadySnapshot`]): the check and
+    /// the reads see one state, so a rebind between them cannot mix two
+    /// registries' rows. A database error reads as not ready (the fallback,
+    /// never a grant).
+    pub async fn ready_snapshot(&self) -> Option<indexer::ReadySnapshot> {
+        match indexer::ready_snapshot(
+            &self.pool,
+            &self.settings.network,
+            &self.settings.land_registry,
+            &self.settings.estate_registry,
+        )
+        .await
+        {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                tracing::warn!(error = %e, "land-authz: cannot open the index snapshot; using the fallback reader");
+                None
+            }
+        }
     }
 
     /// One indexed coordinate lookup on the caller's connection, including the
@@ -414,11 +446,15 @@ pub async fn can_deploy_batch(
     if parcels.is_empty() {
         return Ok(Vec::new());
     }
-    if let Some(cursor) = state.ready().await {
+    if let Some(mut snapshot) = state.ready_snapshot().await {
+        let cursor = &snapshot.cursor;
         let source = DecisionSource::Index {
             folded_block: cursor.folded_block.unwrap_or(cursor.last_block),
         };
-        let rights = state.store().deploy_rights_batch(parcels).await?;
+        let rights = state
+            .store()
+            .deploy_rights_batch_on(&mut snapshot.tx, parcels)
+            .await?;
         return Ok(rights
             .into_iter()
             .map(|r| match r {
@@ -501,8 +537,11 @@ pub async fn owns_land_at(
     owner: &str,
     coords: &[(i32, i32)],
 ) -> Result<bool, Unavailable> {
-    if state.ready().await.is_some() {
-        return Ok(state.store().owns_land_at(owner, coords).await?);
+    if let Some(mut snapshot) = state.ready_snapshot().await {
+        return Ok(state
+            .store()
+            .owns_land_at_on(&mut snapshot.tx, owner, coords)
+            .await?);
     }
     let Some(market) = state.fallback_reader() else {
         return Err(Unavailable::NoSource);

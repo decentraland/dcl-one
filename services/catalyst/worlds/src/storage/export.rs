@@ -5,8 +5,14 @@
 //! list routes serve them. The limits are per process, as upstream's are per
 //! pod: a slot is held by the producer, so completion, timeout or cancellation
 //! frees it even when a client keeps an unread response open.
+//!
+//! As upstream, admission starts the scene cooldown and the export timer, and
+//! the answer is a 200 before any database work: a connection, snapshot or
+//! query failure afterwards cuts the gzip stream (an HTTP body error, never a
+//! valid trailer). Both row streams read one read-only repeatable-read
+//! snapshot; `PG_COMPONENT_STREAM_QUERY_TIMEOUT` bounds each statement.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::io::Write;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -29,15 +35,16 @@ use crate::shared::identity::Address;
 
 use super::errors::ApiError;
 use super::handlers::validate_key;
-use super::{AuthPolicy, SharedState, resolve_authorized};
+use super::{AuthPolicy, SharedState, resolve_authorized_checking_body};
 
 /// Upstream's body cap (256 KiB) plus its envelope slack.
 pub const MAX_BODY_BYTES: u64 = 256 * 1024 + 1024;
-pub const MAX_TIMEOUT_SECONDS: u64 = 3600;
 const MAX_LIST_ENTRIES: usize = 100;
 const FLUSH_BYTES: usize = 64 * 1024;
 
-/// `EXPORT_*`, upstream's names and defaults.
+/// `EXPORT_*` and `PG_COMPONENT_STREAM_QUERY_TIMEOUT`, upstream's names and
+/// defaults. Any value is accepted, as upstream's: a zero cap refuses every
+/// export 429, a zero timeout or size cap aborts every stream.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ExportSettings {
     pub max_concurrent_per_scene: usize,
@@ -45,6 +52,8 @@ pub struct ExportSettings {
     pub scene_cooldown: Duration,
     pub timeout: Duration,
     pub max_size_bytes: u64,
+    /// Each export statement's `statement_timeout` (0 disables it, as in PostgreSQL).
+    pub stream_query_timeout: Duration,
 }
 
 impl Default for ExportSettings {
@@ -55,6 +64,7 @@ impl Default for ExportSettings {
             scene_cooldown: Duration::from_secs(10),
             timeout: Duration::from_secs(120),
             max_size_bytes: 524_288_000,
+            stream_query_timeout: Duration::from_millis(120_000),
         }
     }
 }
@@ -175,7 +185,7 @@ pub fn parse_selection(body: &[u8]) -> Result<Selection, ApiError> {
     if player_addresses
         .iter()
         .flatten()
-        .any(|a| Address::parse(a).is_err())
+        .any(|a| Address::parse_untrimmed(a).is_err())
     {
         return Err(ApiError::bad_request("Invalid player address"));
     }
@@ -196,7 +206,6 @@ pub fn parse_selection(body: &[u8]) -> Result<Selection, ApiError> {
 struct Counters {
     open_by_scene: HashMap<String, usize>,
     last_start: HashMap<String, Instant>,
-    pending: HashSet<String>,
     open: usize,
 }
 
@@ -214,11 +223,36 @@ pub enum Refusal {
     PodBusy,
 }
 
+impl Refusal {
+    fn log(&self, ns: &SceneNamespace) {
+        let (realm, namespace) = (ns.realm(), ns.scene_namespace());
+        match self {
+            Refusal::Cooldown { retry_after_secs } => tracing::info!(
+                realm,
+                namespace,
+                retry_after_secs,
+                "storage export rejected: scene export cooldown"
+            ),
+            Refusal::SceneBusy | Refusal::PodBusy => tracing::info!(
+                realm,
+                namespace,
+                scope = if *self == Refusal::SceneBusy {
+                    "scene"
+                } else {
+                    "pod"
+                },
+                "storage export rejected: concurrent export cap reached"
+            ),
+        }
+    }
+}
+
 /// A running export's place in the caps, released on drop.
 pub struct Slot {
     limits: Arc<ExportLimits>,
     scene: String,
-    pending: bool,
+    /// Admission: the export timer runs from here, as upstream's.
+    admitted: tokio::time::Instant,
     #[cfg(test)]
     pub(super) test_hooks: TestHooks,
 }
@@ -245,40 +279,10 @@ impl TestPause {
     }
 }
 
-impl Slot {
-    /// Exchange the pending admission for cooldown after database preparation.
-    fn accept(&mut self) -> Result<(), Refusal> {
-        let mut c = self.limits.counters.lock();
-        let now = Instant::now();
-        let cooldown = self.limits.settings.scene_cooldown;
-        if let Some(left) = c
-            .last_start
-            .get(&self.scene)
-            .and_then(|at| cooldown.checked_sub(now.duration_since(*at)))
-            .filter(|left| !left.is_zero())
-        {
-            return Err(Refusal::Cooldown {
-                retry_after_secs: left.as_millis().div_ceil(1000) as u64,
-            });
-        }
-        if !cooldown.is_zero() {
-            c.last_start.insert(self.scene.clone(), now);
-        }
-        if self.pending {
-            c.pending.remove(&self.scene);
-            self.pending = false;
-        }
-        Ok(())
-    }
-}
-
 impl Drop for Slot {
     fn drop(&mut self) {
         let mut c = self.limits.counters.lock();
         c.open -= 1;
-        if self.pending {
-            c.pending.remove(&self.scene);
-        }
         if let Some(n) = c.open_by_scene.get_mut(&self.scene) {
             *n -= 1;
             if *n == 0 {
@@ -301,13 +305,14 @@ impl ExportLimits {
     }
 
     /// Upstream's order: the scene cap, the scene's cooldown, the process cap.
+    /// Admission starts the cooldown, so a concurrent caller gets the cooldown
+    /// 429 and a start that fails later still consumes it.
     pub fn open(self: &Arc<Self>, scene: &str) -> Result<Slot, Refusal> {
         let now = Instant::now();
         let cooldown = self.settings.scene_cooldown;
         let mut c = self.counters.lock();
         if c.open_by_scene.get(scene).copied().unwrap_or(0)
             >= self.settings.max_concurrent_per_scene
-            || c.pending.contains(scene)
         {
             return Err(Refusal::SceneBusy);
         }
@@ -322,16 +327,15 @@ impl ExportLimits {
         if c.open >= self.settings.max_concurrent_per_pod {
             return Err(Refusal::PodBusy);
         }
-        let pending = !cooldown.is_zero();
-        if pending {
-            c.pending.insert(scene.to_string());
+        if !cooldown.is_zero() {
+            c.last_start.insert(scene.to_string(), now);
         }
         c.open += 1;
         *c.open_by_scene.entry(scene.to_string()).or_default() += 1;
         Ok(Slot {
             limits: self.clone(),
             scene: scene.to_string(),
-            pending,
+            admitted: tokio::time::Instant::now(),
             #[cfg(test)]
             test_hooks: TestHooks::default(),
         })
@@ -434,28 +438,69 @@ enum Abort {
 
 /// Counts raw bytes against the cap and gzips them into body chunks.
 struct Gzip {
-    encoder: GzEncoder<Vec<u8>>,
+    /// `None` only while a batch compresses on the blocking pool.
+    encoder: Option<GzEncoder<Vec<u8>>>,
+    pending: Vec<u8>,
     raw: u64,
     max: u64,
     tx: mpsc::Sender<Bytes>,
 }
 
 impl Gzip {
+    fn new(max: u64, tx: mpsc::Sender<Bytes>) -> Self {
+        Self {
+            encoder: Some(GzEncoder::new(Vec::new(), Compression::default())),
+            pending: Vec::new(),
+            raw: 0,
+            max,
+            tx,
+        }
+    }
+
     async fn push(&mut self, text: &str) -> Result<(), Abort> {
         self.raw += text.len() as u64;
         if self.raw > self.max {
             return Err(Abort::TooLarge);
         }
-        self.encoder.write_all(text.as_bytes()).map_err(Abort::Io)?;
-        if self.encoder.get_ref().len() >= FLUSH_BYTES {
-            let chunk = std::mem::take(self.encoder.get_mut());
-            send(&self.tx, chunk).await?;
+        self.pending.extend_from_slice(text.as_bytes());
+        if self.pending.len() >= FLUSH_BYTES {
+            self.compress().await?;
         }
         Ok(())
     }
 
-    async fn finish(self) -> Result<(), Abort> {
-        let rest = self.encoder.finish().map_err(Abort::Io)?;
+    /// Deflates the pending text off the runtime workers, as Node's zlib
+    /// runs on its thread pool, and sends the output once it reaches a chunk.
+    async fn compress(&mut self) -> Result<(), Abort> {
+        let mut encoder = self
+            .encoder
+            .take()
+            .expect("the encoder is back after each batch");
+        let input = std::mem::take(&mut self.pending);
+        let mut encoder =
+            tokio::task::spawn_blocking(move || encoder.write_all(&input).map(|()| encoder))
+                .await
+                .map_err(|e| Abort::Io(std::io::Error::other(e)))?
+                .map_err(Abort::Io)?;
+        let chunk = if encoder.get_ref().len() >= FLUSH_BYTES {
+            std::mem::take(encoder.get_mut())
+        } else {
+            Vec::new()
+        };
+        self.encoder = Some(encoder);
+        send(&self.tx, chunk).await
+    }
+
+    async fn finish(mut self) -> Result<(), Abort> {
+        self.compress().await?;
+        let encoder = self
+            .encoder
+            .take()
+            .expect("the encoder is back after each batch");
+        let rest = tokio::task::spawn_blocking(move || encoder.finish())
+            .await
+            .map_err(|e| Abort::Io(std::io::Error::other(e)))?
+            .map_err(Abort::Io)?;
         send(&self.tx, rest).await
     }
 }
@@ -533,82 +578,69 @@ async fn produce(
     out.push(format.tail()).await
 }
 
-/// One read-only snapshot and one slot live with the producer. The completion
-/// channel distinguishes successful EOF from every failure, including a panic.
-/// Dropping the body cancels the producer; its deadline also bounds stalled clients.
-pub(super) async fn body(
+/// Query timeouts and idle snapshots have different budgets. Disabling the
+/// query timeout must not remove the idle guard; slow readers remain bounded
+/// by the overall export deadline. SET LOCAL restores pool settings on rollback.
+pub(super) async fn configure_timeouts(
+    conn: &mut sqlx::PgConnection,
+    settings: ExportSettings,
+) -> sqlx::Result<()> {
+    let statement_ms = settings
+        .stream_query_timeout
+        .as_millis()
+        .min(i32::MAX as u128)
+        .to_string();
+    let idle_ms = settings
+        .timeout
+        .as_millis()
+        .clamp(1, i32::MAX as u128)
+        .to_string();
+    sqlx::query(
+        "SELECT set_config('statement_timeout', $1, true),
+                set_config('idle_in_transaction_session_timeout', $2, true)",
+    )
+    .bind(statement_ms)
+    .bind(idle_ms)
+    .execute(conn)
+    .await?;
+    Ok(())
+}
+
+/// The admitted export's response body. The producer owns the slot and, once
+/// acquired, one pooled connection holding a read-only snapshot. The
+/// completion channel distinguishes successful EOF from every failure,
+/// including a panic. Dropping the body cancels the producer; the export
+/// timer, running since admission, bounds acquisition, SQL and stalled clients.
+pub(super) fn body(
     pool: PgPool,
     ns: SceneNamespace,
     selection: Selection,
     format: Format,
-    mut slot: Slot,
+    #[allow(unused_mut)] mut slot: Slot,
     settings: ExportSettings,
-) -> Result<Body, ApiError> {
-    let started = Instant::now();
-    let deadline = tokio::time::Instant::now()
-        .checked_add(settings.timeout)
-        .ok_or_else(|| ApiError::Misconfigured("Export timeout is out of range".into()))?;
-    // timeout_at polls a ready future before checking its timer. Refuse an
-    // already expired budget explicitly, even when the pool is immediately ready.
-    if tokio::time::Instant::now() >= deadline {
-        return Err(ApiError::unavailable(
-            "Timed out acquiring an export connection",
-        ));
-    }
-    // Acquire before returning headers: pool exhaustion is a 503.
-    let mut tx_db = tokio::time::timeout_at(deadline, pool.begin())
-        .await
-        .map_err(|_| ApiError::unavailable("Timed out acquiring an export connection"))?
-        .map_err(|e| {
-            tracing::warn!(error = %e, "storage export connection unavailable");
-            ApiError::unavailable("Export database connection unavailable")
-        })?;
-    tokio::time::timeout_at(deadline, async {
-        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
-            .execute(&mut *tx_db)
-            .await?;
-        // SET LOCAL resets on rollback, preserving both pool timeouts.
-        // Backpressure can leave the snapshot idle between row streams.
-        let millis = settings
-            .timeout
-            .as_millis()
-            .clamp(1, i32::MAX as u128)
-            .to_string();
-        sqlx::query(
-            "SELECT set_config('statement_timeout', $1, true),
-                            set_config('idle_in_transaction_session_timeout', $1, true)",
-        )
-        .bind(millis)
-        .execute(&mut *tx_db)
-        .await?;
-        Ok::<_, sqlx::Error>(())
-    })
-    .await
-    .map_err(|_| ApiError::unavailable("Timed out preparing the export"))?
-    .map_err(|e| {
-        tracing::warn!(error = %e, "storage export snapshot unavailable");
-        ApiError::unavailable("Export database snapshot unavailable")
-    })?;
-
-    // Ready database operations can also complete on the deadline's last
-    // poll. Do not accept headers or start cooldown after the total budget.
-    if tokio::time::Instant::now() >= deadline {
-        return Err(ApiError::unavailable("Timed out preparing the export"));
-    }
-    slot.accept().map_err(refusal_to_api)?;
-
+) -> Body {
+    // A timeout past what an Instant can hold sets no deadline.
+    let deadline = slot.admitted.checked_add(settings.timeout);
     let (tx, rx) = mpsc::channel::<Bytes>(4);
     let (completed, completion) = oneshot::channel();
     let cancel = CancellationToken::new();
     let drop_guard = cancel.clone().drop_guard();
     tokio::spawn(async move {
-        let mut out = Gzip {
-            encoder: GzEncoder::new(Vec::new(), Compression::fast()),
-            raw: 0,
-            max: settings.max_size_bytes,
-            tx,
-        };
+        let mut out = Gzip::new(settings.max_size_bytes, tx);
+        #[cfg(test)]
+        let (after_world_rows, before_rollback) = (
+            slot.test_hooks.after_world_rows.take(),
+            slot.test_hooks.before_rollback.take(),
+        );
         let work = async {
+            let mut tx_db = pool.begin().await.map_err(Abort::Db)?;
+            sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+                .execute(&mut *tx_db)
+                .await
+                .map_err(Abort::Db)?;
+            configure_timeouts(&mut tx_db, settings)
+                .await
+                .map_err(Abort::Db)?;
             produce(
                 &mut tx_db,
                 &ns,
@@ -616,11 +648,11 @@ pub(super) async fn body(
                 format,
                 &mut out,
                 #[cfg(test)]
-                slot.test_hooks.after_world_rows.take(),
+                after_world_rows,
             )
             .await?;
             #[cfg(test)]
-            if let Some(pause) = slot.test_hooks.before_rollback.take() {
+            if let Some(pause) = before_rollback {
                 pause.wait().await?;
             }
             let raw = out.raw;
@@ -629,25 +661,23 @@ pub(super) async fn body(
             out.finish().await?;
             Ok(raw)
         };
+        let bounded = async {
+            match deadline {
+                // timeout_at polls a ready future before its timer: an
+                // already spent budget never starts the work.
+                Some(at) if tokio::time::Instant::now() >= at => Err(Abort::Timeout),
+                Some(at) => tokio::time::timeout_at(at, work)
+                    .await
+                    .unwrap_or(Err(Abort::Timeout)),
+                None => work.await,
+            }
+        };
         let outcome = tokio::select! {
             biased;
             _ = cancel.cancelled() => Err(Abort::ClientGone),
-            result = tokio::time::timeout_at(deadline, work) => result.unwrap_or(Err(Abort::Timeout)),
+            result = bounded => result,
         };
-        let (realm, namespace) = (ns.realm(), ns.scene_namespace());
-        let duration_ms = started.elapsed().as_millis() as u64;
-        match &outcome {
-            Ok(raw_bytes) => tracing::info!(
-                realm,
-                namespace,
-                raw_bytes,
-                duration_ms,
-                "storage export finished"
-            ),
-            Err(reason) => {
-                tracing::warn!(realm, namespace, duration_ms, error = %reason, "storage export aborted")
-            }
-        }
+        log_outcome(&ns, format, slot.admitted.elapsed(), &outcome);
         // Completion never blocks behind a full data channel. A producer panic
         // cancels this oneshot, which the reader also reports as a body error.
         drop(slot);
@@ -657,7 +687,57 @@ pub(super) async fn body(
                 .map_err(|_| std::io::Error::other("storage export aborted")),
         );
     });
-    Ok(response_body(rx, completion, drop_guard))
+    response_body(rx, completion, drop_guard)
+}
+
+/// Upstream's outcome lines: finished and cancelled at info, failures at error.
+fn log_outcome(
+    ns: &SceneNamespace,
+    format: Format,
+    elapsed: Duration,
+    outcome: &Result<u64, Abort>,
+) {
+    let (realm, namespace, format) = (ns.realm(), ns.scene_namespace(), format.extension());
+    let duration_ms = elapsed.as_millis() as u64;
+    match outcome {
+        Ok(raw_bytes) => tracing::info!(
+            realm,
+            namespace,
+            format,
+            raw_bytes,
+            duration_ms,
+            "storage export finished"
+        ),
+        Err(Abort::ClientGone) => tracing::info!(
+            realm,
+            namespace,
+            format,
+            duration_ms,
+            "storage export cancelled by client"
+        ),
+        Err(Abort::TooLarge) => tracing::error!(
+            realm,
+            namespace,
+            format,
+            duration_ms,
+            "storage export exceeded the maximum size"
+        ),
+        Err(Abort::Timeout) => tracing::error!(
+            realm,
+            namespace,
+            format,
+            duration_ms,
+            "storage export timed out"
+        ),
+        Err(error) => tracing::error!(
+            realm,
+            namespace,
+            format,
+            duration_ms,
+            %error,
+            "storage export failed"
+        ),
+    }
 }
 
 fn response_body(
@@ -723,19 +803,21 @@ fn refusal_to_api(refusal: Refusal) -> ApiError {
     }
 }
 
+/// Upstream's middleware order: the signed fetch and the scene context, the
+/// body cap, then authorization; the handler parses the format and the body.
 pub async fn create_export(
     State(state): State<SharedState>,
     req: Request,
 ) -> Result<Response, ApiError> {
     let (parts, body_in) = req.into_parts();
-    check_declared_length(&parts.headers)?;
-    let ctx = resolve_authorized(
+    let ctx = resolve_authorized_checking_body(
         &state,
         &parts.headers,
         "post",
         &parts.uri,
         parts.extensions.get::<OriginalUri>().map(|o| &o.0),
         AuthPolicy::EXPORT,
+        &check_declared_length,
     )
     .await?;
     let format = parse_format(parts.uri.query())?;
@@ -752,7 +834,16 @@ pub async fn create_export(
         ctx.namespace.realm(),
         ctx.namespace.scene_namespace()
     );
-    let slot = state.exports.open(&scene).map_err(refusal_to_api)?;
+    let slot = state.exports.open(&scene).map_err(|refusal| {
+        refusal.log(&ctx.namespace);
+        refusal_to_api(refusal)
+    })?;
+    tracing::info!(
+        realm = ctx.namespace.realm(),
+        namespace = ctx.namespace.scene_namespace(),
+        format = format.extension(),
+        "storage export started"
+    );
     let content_type = match format {
         Format::Json => "application/json; charset=utf-8",
         Format::Csv => "text/csv; charset=utf-8",
@@ -778,8 +869,7 @@ pub async fn create_export(
             format,
             slot,
             state.exports.settings(),
-        )
-        .await?,
+        ),
     )
         .into_response())
 }
@@ -789,90 +879,131 @@ mod lifecycle_tests {
     use super::*;
 
     #[test]
-    fn cooldown_reserves_only_one_pending_admission_and_releases_it_on_drop() {
+    fn admission_starts_the_cooldown_even_when_the_export_fails_later() {
         let limits = ExportLimits::new(ExportSettings {
             max_concurrent_per_scene: 3,
             ..ExportSettings::default()
         });
-        let pending = limits.open("scene").unwrap();
-        assert!(matches!(limits.open("scene"), Err(Refusal::SceneBusy)));
-        drop(pending);
-        let mut accepted = limits.open("scene").unwrap();
-        accepted.accept().unwrap();
+        let first = limits.open("scene").unwrap();
+        // A concurrent caller under the scene cap gets the cooldown, as upstream's.
+        match limits.open("scene") {
+            Err(Refusal::Cooldown { retry_after_secs }) => {
+                assert!((1..=10).contains(&retry_after_secs))
+            }
+            Err(other) => panic!("expected the cooldown, got {other:?}"),
+            Ok(_) => panic!("expected the cooldown"),
+        }
+        // A start that failed still consumed it.
+        drop(first);
         assert!(matches!(
             limits.open("scene"),
             Err(Refusal::Cooldown { .. })
         ));
-        // Once cooldown expires, a new pending attempt can coexist with the
-        // old download. Dropping that download must not erase the reservation.
+        assert!(limits.open("other").is_ok());
         limits
             .counters
             .lock()
             .last_start
             .insert("scene".into(), Instant::now() - Duration::from_secs(20));
-        let pending = limits.open("scene").unwrap();
-        drop(accepted);
-        assert!(matches!(limits.open("scene"), Err(Refusal::SceneBusy)));
-        drop(pending);
         assert!(limits.open("scene").is_ok());
     }
 
     #[test]
-    fn disabled_cooldown_allows_concurrent_pending_and_accepted_exports() {
+    fn disabled_cooldown_allows_concurrent_exports_up_to_the_caps() {
         let limits = ExportLimits::new(ExportSettings {
             max_concurrent_per_scene: 2,
             scene_cooldown: Duration::ZERO,
             ..ExportSettings::default()
         });
-        let mut first = limits.open("scene").unwrap();
-        let mut second = limits.open("scene").unwrap();
-        first.accept().unwrap();
-        second.accept().unwrap();
+        let first = limits.open("scene").unwrap();
+        let _second = limits.open("scene").unwrap();
         assert!(matches!(limits.open("scene"), Err(Refusal::SceneBusy)));
         drop(first);
         assert!(limits.open("scene").is_ok());
     }
 
-    #[tokio::test]
-    async fn unrepresentable_deadline_returns_an_error_without_starting_cooldown() {
-        use axum::response::IntoResponse;
-
-        let settings = ExportSettings {
-            timeout: Duration::MAX,
+    #[test]
+    fn zero_caps_refuse_every_export_as_upstream() {
+        let scene = ExportLimits::new(ExportSettings {
+            max_concurrent_per_scene: 0,
             ..ExportSettings::default()
-        };
-        let limits = ExportLimits::new(settings);
-        // No connection is attempted: the deadline is checked first.
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/unused")
-            .unwrap();
-        let result = body(
-            pool,
-            SceneNamespace::new(
-                &crate::comms::world_identity::RealmId::parse("main").unwrap(),
-                crate::comms::world_identity::Parcel::parse("0,0").unwrap(),
-                None,
-            )
-            .unwrap(),
-            Selection::default(),
-            Format::Json,
-            limits.open("scene").unwrap(),
-            settings,
+        });
+        assert!(matches!(scene.open("scene"), Err(Refusal::SceneBusy)));
+        let pod = ExportLimits::new(ExportSettings {
+            max_concurrent_per_pod: 0,
+            ..ExportSettings::default()
+        });
+        assert!(matches!(pod.open("scene"), Err(Refusal::PodBusy)));
+        // Neither refusal started a cooldown.
+        assert!(pod.counters.lock().last_start.is_empty());
+    }
+
+    fn genesis_namespace() -> SceneNamespace {
+        SceneNamespace::new(
+            &crate::comms::world_identity::RealmId::parse("main").unwrap(),
+            crate::comms::world_identity::Parcel::parse("0,0").unwrap(),
+            None,
         )
-        .await;
-        let error = result.expect_err("invalid timeout must refuse the export");
-        assert!(matches!(error, ApiError::Misconfigured(_)));
-        let response = error.into_response();
+        .unwrap()
+    }
+
+    /// Nothing listens on port 1: acquisition fails after the headers.
+    fn unreachable_pool() -> PgPool {
+        sqlx::postgres::PgPoolOptions::new()
+            .acquire_timeout(Duration::from_secs(2))
+            .connect_lazy("postgres://postgres@127.0.0.1:1/unused")
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_database_failure_after_admission_cuts_the_stream_and_keeps_the_cooldown() {
+        // An unrepresentable timeout sets no deadline; the failure is the connection's.
+        for timeout in [Duration::MAX, Duration::ZERO] {
+            let settings = ExportSettings {
+                timeout,
+                ..ExportSettings::default()
+            };
+            let limits = ExportLimits::new(settings);
+            let body = body(
+                unreachable_pool(),
+                genesis_namespace(),
+                Selection::default(),
+                Format::Json,
+                limits.open("scene").unwrap(),
+                settings,
+            );
+            assert!(
+                axum::body::to_bytes(body, 1 << 16).await.is_err(),
+                "{timeout:?}"
+            );
+            assert!(matches!(
+                limits.open("scene"),
+                Err(Refusal::Cooldown { .. })
+            ));
+            assert_eq!(limits.counters.lock().open, 0, "the slot was released");
+        }
+    }
+
+    #[test]
+    fn player_addresses_are_lowercased_but_never_trimmed() {
+        let ok = parse_selection(
+            br#"{"players":{"addresses":["0xABCDEFabcdefABCDEFabcdefABCDEFabcdefABCD"]}}"#,
+        )
+        .unwrap();
         assert_eq!(
-            response.status(),
-            axum::http::StatusCode::SERVICE_UNAVAILABLE
+            ok.player_addresses.unwrap(),
+            ["0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"]
         );
-        assert!(
-            !response
-                .headers()
-                .contains_key(axum::http::header::RETRY_AFTER)
-        );
-        assert!(limits.open("scene").is_ok());
+        for padded in [
+            " 0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd\n",
+        ] {
+            let body = serde_json::json!({ "players": { "addresses": [padded] } }).to_string();
+            match parse_selection(body.as_bytes()) {
+                Err(ApiError::BadRequest(message)) => assert_eq!(message, "Invalid player address"),
+                other => panic!("{padded:?}: {other:?}"),
+            }
+        }
     }
 
     #[tokio::test]

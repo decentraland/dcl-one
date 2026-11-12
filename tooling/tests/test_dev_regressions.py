@@ -62,6 +62,9 @@ class InventoryTests(unittest.TestCase):
                     shutil.copyfile(ROOT / relative, destination)
                     with destination.open("ab") as body:
                         body.write(f"\n-- NESTED_CONTEXT_{marker}_{relative.stem}\n".encode())
+                # build.rs also renders the release `schema migrate --release` embeds.
+                release = Path("schemas/releases/v3-private-voice-pending.sql")
+                shutil.copyfile(ROOT / release, source / release)
                 roots.append((marker, source))
             source_state = {
                 path: (path.read_bytes(), path.stat().st_mtime_ns)

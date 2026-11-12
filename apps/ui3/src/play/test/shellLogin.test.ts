@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { AuthIdentity } from '../features/auth/sso'
-import { personalSign } from '../shell/sign'
+import type { AuthIdentity } from '@explorer-core/features/auth/sso'
+import { personalSign } from '@explorer-core/shell/sign'
 
 // web3.js docs key; its address is 0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
 const KEY = '0x4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318'
@@ -21,7 +21,7 @@ function identity(signer: string, days: number, privateKey = KEY): AuthIdentity 
 const GUEST = '0x1e9a6ddcb5d0b8c2ffd79372e022d63d053ab1bf'
 const ACCOUNT = '0x7e5f4552091a69125d5dfcb7b8c2659029395bdf'
 
-vi.mock('../features/auth/guest', () => ({
+vi.mock('@explorer-core/features/auth/guest', () => ({
   webGuestBackendFor: () => ({}),
   createGuestIdentity: vi.fn(async () => identity(GUEST, 30))
 }))

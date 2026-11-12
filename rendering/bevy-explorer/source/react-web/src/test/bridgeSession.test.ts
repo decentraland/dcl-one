@@ -1,7 +1,7 @@
-import { expectConsoleOutput } from './console'
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 // A frame loop shaped like @dcl/ecs: systems run from the live array, which removal splices.
 const systems: Array<(dt: number) => void> = []
@@ -126,33 +126,31 @@ describe('bridge service URLs', () => {
 })
 
 describe('communities list', () => {
-  it("adds the user's own communities the browse page left out, after it, and keeps the browse list when that read fails", async () => {
+  it('is every community the user is a member of, and nothing when that read fails', async () => {
     const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
     const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
     const { ctx, req, sent } = fakeCtx()
     registerCommunities(ctx)
     const raw = (id: string, role: string) => ({ id, name: `Community ${id}`, description: '', membersCount: 1, role, privacy: 'public', thumbnailUrl: `https://img.example/${id}.png` })
     let memberOfAnswers = true
+    const urls: string[] = []
     vi.mocked(BevyApi.kernelFetch).mockImplementation(async ({ url }: { url: string }) => {
-      if (url.includes('onlyMemberOf=true')) {
-        return memberOfAnswers
-          ? ({ ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('z', 'owner')], total: 2 }) } as never)
-          : ({ ok: false, status: 500, body: 'down' } as never)
-      }
-      return { ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('b', 'none')] }) } as never
+      urls.push(url)
+      return memberOfAnswers
+        ? ({ ok: true, status: 200, body: JSON.stringify({ results: [raw('a', 'member'), raw('z', 'owner')], total: 2 }) } as never)
+        : ({ ok: false, status: 500, body: 'down' } as never)
     })
     try {
       await req({ kind: 'getCommunities' })
       memberOfAnswers = false
-      await req({ kind: 'getCommunities' })
+      // the page's request fails (requestFailed), so it asks again the next time it opens
+      await expect(req({ kind: 'getCommunities' })).rejects.toThrow()
     } finally {
       vi.mocked(BevyApi.kernelFetch).mockReset()
     }
+    expect(urls.every((u) => u.includes('onlyMemberOf=true'))).toBe(true)
     const lists = sent.flatMap((m) => (m.kind === 'communities' ? [m.communities.map((c) => `${c.id}:${c.role}`)] : []))
-    expect(lists).toEqual([
-      ['a:member', 'b:none', 'z:owner'],
-      ['a:member', 'b:none']
-    ])
+    expect(lists).toEqual([['a:member', 'z:owner']])
   })
 })
 

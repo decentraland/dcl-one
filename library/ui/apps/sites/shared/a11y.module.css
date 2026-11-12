@@ -1,0 +1,10 @@
+/* Text for assistive technology only: kept in the accessibility tree and out of sight. Compose it, as
+   `composes: visuallyHidden from '../shared/a11y.module.css'`. */
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}

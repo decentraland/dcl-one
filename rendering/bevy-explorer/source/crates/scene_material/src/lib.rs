@@ -18,6 +18,9 @@ use common::{
     structs::{PreviewMode, ShowOutOfBounds},
     util::InvertedScaleExt,
 };
+use highlight::HighlightPlugin;
+
+pub mod highlight;
 
 pub type SceneMaterial = ExtendedMaterial<SceneBound>;
 
@@ -29,7 +32,6 @@ pub const SCENE_MATERIAL_TOON_MESH_TAG: u32 = 0x08000000;
 pub const SCENE_MATERIAL_OUTLINE_MESH_TAGS: u32 = 0xF0000000;
 pub const SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG: u32 = 0x10000000;
 pub const SCENE_MATERIAL_OUTLINE_RED_MESH_TAG: u32 = 0x20000000;
-pub const SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG: u32 = 0x40000000;
 pub const SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG: u32 = 0x80000000;
 /// an avatar being revealed bottom-up from its ghost: the shaders discard fragments above the
 /// reveal height, carried in the tag's low byte: 0 is no reveal, and 1..=255 span the range from
@@ -470,10 +472,6 @@ impl MaterialExtension for SceneBound {
                 SCENE_MATERIAL_OUTLINE_RED_MESH_TAG,
             ));
             fragment.shader_defs.push(ShaderDefVal::UInt(
-                "OUTLINE_GREEN_MESH_TAG".to_owned(),
-                SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG,
-            ));
-            fragment.shader_defs.push(ShaderDefVal::UInt(
                 "OUTLINE_BLUE_MESH_TAG".to_owned(),
                 SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
             ));
@@ -500,7 +498,10 @@ pub struct SceneBoundPlugin;
 
 impl Plugin for SceneBoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialExtPlugin::<SceneMaterial>::default());
+        app.add_plugins((
+            MaterialExtPlugin::<SceneMaterial>::default(),
+            HighlightPlugin,
+        ));
 
         app.init_resource::<InvertedMaterials>();
         // Default false; the app entry overrides it.

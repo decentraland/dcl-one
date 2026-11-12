@@ -1072,19 +1072,6 @@ mod get_ray_tests {
     }
 }
 
-/// Replace the value of an `access_token` query param with `REDACTED`, preserving
-/// the rest of the adapter string. Used to keep the server-minted LiveKit room
-/// credential out of RealmInfo (which scene JS can read via op_realm_information).
-fn redact_access_token(adapter: &str) -> String {
-    match adapter.split_once("access_token=") {
-        Some((prefix, rest)) => {
-            let tail = rest.find('&').map(|i| &rest[i..]).unwrap_or("");
-            format!("{prefix}access_token=REDACTED{tail}")
-        }
-        None => adapter.to_owned(),
-    }
-}
-
 // serialized realm info, rebuilt only when the realm or a scene room changes
 #[derive(Default)]
 struct RealmInfoCache {
@@ -1252,7 +1239,7 @@ fn send_scene_updates(
             .0
             .iter()
             .map(|(hash, (addr, _))| {
-                realm_info.room = Some(redact_access_token(addr));
+                realm_info.room = Some(common::util::redact_access_token(addr));
                 realm_info.is_connected_scene_room = Some(true);
                 // the realm this scene is in, which an orchestrated engine is told per scene —
                 // it is in none itself, so its own name is no answer for any of them

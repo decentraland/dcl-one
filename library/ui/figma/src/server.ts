@@ -15,7 +15,8 @@ async function main(): Promise<void> {
     options: {
       config: { type: 'string' },
       'mapping-root': { type: 'string' },
-      'library-range': { type: 'string' }
+      'library-range': { type: 'string' },
+      'mapping-only': { type: 'boolean' }
     }
   })
   const runtime = await createRuntime({
@@ -23,11 +24,12 @@ async function main(): Promise<void> {
     env: process.env,
     configPath: values.config,
     mappingRoot: values['mapping-root'],
-    libraryRange: values['library-range']
+    libraryRange: values['library-range'],
+    mappingOnly: values['mapping-only']
   })
   const server = new McpServer({ name: 'figma', version: '0.1.0' })
 
-  // Without a Figma config the server runs in resolve-only mode, which is what a consuming project needs.
+  // Without a Figma config, or with --mapping-only, the server registers only the two contract tools.
   const definitions = [
     ...(runtime.app ? createTools(runtime.app) : []),
     ...createContractTools(runtime)
