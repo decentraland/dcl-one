@@ -7,7 +7,7 @@ Area: the routes that describe a world and edit its settings: `GET /world/:world
 
 Pinned revisions:
 
-- Upstream: `decentraland/worlds-content-server` @ `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21).
+- Upstream: `decentraland/worlds-content-server` @ `ebbf8d41d07973e317892067c765107d3512938e` (2026-11-12).
 - Packages read from their published tarballs, at the versions `yarn.lock` resolves:
   `@dcl/http-commons` 2.0.0 (`errorHandler`, `getPaginationParams`),
   `@dcl/schema-validator-component` 1.0.1, `@dcl/crypto-middleware` 6.3.0, `@dcl/http-server` 2.3.0 (`cors.js`).
@@ -40,6 +40,7 @@ Files read:
 - dcl-one (`services/catalyst/`):
   - `worlds/src/lib.rs` (`router`, `app_router`, `Settings::from_config`, `fill_world`)
   - `worlds/src/about.rs`, `worlds/src/scenes.rs`, `worlds/src/queries.rs` (`world_about`, `push_scene_filters`, `list_scenes_full`)
+  - `worlds/src/mirror.rs` (`mirror_world`, `listed_scenes`, `upstream_settings`): the rows a mirrored world is served from
   - `worlds/src/core/mod.rs` (`router`, `root_router`, `upload_routes`, `timed_routes`)
   - `worlds/src/core/{settings,settings_policy,manifest,limits,wallet,names,quota,http,store}.rs`
   - `worlds/src/writes.rs`
@@ -215,7 +216,8 @@ dcl-one has the same keys and values (`scenes.rs:22-35`), with `status` always `
 live in `worlds.retired_world_scenes`, so `world_scenes` holds deployed rows only), and timestamps as
 RFC 3339 with milliseconds and `Z`, as `Date.toJSON()` writes them. Key order differs (`entityId` after
 `entity`); no client reads key order. Order: upstream `ORDER BY created_at ASC` with no tie-break;
-dcl-one adds `entity_id` (`queries.rs:195`), a deterministic subset of the upstream order. No deny-list
+dcl-one adds `entity_id` (`queries.rs:198`), a deterministic subset of the upstream order. A mirrored
+world's rows carry the times, size, chain and deployer its source lists (WW-40, WW-41). No deny-list
 check in either tree.
 
 ---
@@ -269,7 +271,8 @@ Success fields:
 | `settings_version` | number; bumped by every settings write that sets a column and by every access change, not by a spawn-only write (`world-settings-handler.spec.ts:96-199`) | same (`store.rs:1783`, `core/tests.rs:2308-2390`) | MATCH |
 | `realm_name_override`, `preview_wearable_urns` | not present | dcl-one only, always present | DIVERGENT, superset, intended (WW-18) |
 
-No deny-list check in either tree.
+A mirrored world's settings are the ones its source answers on this route (WW-42). No deny-list check in
+either tree.
 
 ---
 
@@ -387,8 +390,8 @@ deployed_scenes` in both (`worlds-handler.ts:29-47`, `manifest.rs:133-157`).
 
 | field / behaviour | upstream | dcl-one | verdict |
 |---|---|---|---|
-| Deny-listed names | `w.name != ALL(<banned names with .eth/.dcl stripped>)` (`worlds-manager.ts:1409-1413`); since a stored name keeps its suffix, this hides only bare-name worlds, case-sensitively | the same filter on the page and the count (`store.rs` `list_worlds_public`, `BannedNames::banned_names`) | MATCH; the gap is shared (WW-31) |
-| `shape`, `deployed_scenes`, `last_deployed_at` | denormalized columns kept by `recalculateWorldSceneStats`; `null` / `0` / `null` with no scene | computed from `world_scenes` (`store.rs:1894-1905`): the same values | MATCH |
+| Deny-listed names | `w.name != ALL(getBannedNames())` (`worlds-manager.ts:1371,1409-1413`): the `BLOCKED_WORLD_NAMES` entries as configured, then the list entries with .eth/.dcl stripped; since a stored name keeps its suffix, a list entry hides only bare-name worlds, case-sensitively | the same filter on the page and the count (`store.rs` `list_worlds_public`, `BannedNames::banned_names`) | MATCH; the list gap is shared (WW-31) |
+| `shape`, `deployed_scenes`, `last_deployed_at` | denormalized columns kept by `recalculateWorldSceneStats`; `null` / `0` / `null` with no scene | computed from `world_scenes` (`store.rs:2053-2062`): the same values, a mirrored world's from its source's deploy times (WW-40) | MATCH |
 | `blocked_since` | any `blocked` row of the owner, no grace (`worlds-manager.ts:1404`) | `quota_blocks` row only for quota-blockable local DCL NAME and ENS worlds (`store.rs:1907`, `quota.rs:39-45`) | DIVERGENT, intended (WW-33) |
 | `owner` | NOT NULL string | `null` for worlds with no owner (bare names, mirrors) | DIVERGENT, intended (WW-33) |
 | `single_player`, `show_in_places` | `COALESCE(…, false/true)` | NOT NULL columns | MATCH |
@@ -437,7 +440,8 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
      (`test/integration/world-about-handler.spec.ts:500-555`). Runtime metadata (realm name, minimap, skybox,
      `fixedAdapter`) comes from that same scene.
    - dcl-one: `build_about` takes the first of the newest-first rows (`worlds/src/about.rs:192-195`,
-     `worlds/src/queries.rs:78-92`); runtime metadata reads the same scene; `is_locally_published` reads every row.
+     `worlds/src/queries.rs:79-93`, a tie going to the greater entity id); runtime metadata reads the same
+     scene; `is_locally_published` reads every row. A mirrored world's rows carry its source's deploy times (WW-40).
      Pinned by `about.rs` `scenes_urn_names_the_newest_scene_only` and `tests/worlds_mirror.rs`.
    - Severity: none (closed).
 
@@ -652,16 +656,28 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - dcl-one's collector skips blobs younger than its age floor (`services/catalyst/worlds/src/core/admin.rs:7,66-108`), so a just-stored thumbnail cannot be collected before its row lands.
     - Severity: none (closed).
 
-31. **WW-31 · `/worlds` · deny-listed names.** Status: MATCH, no work.
-    - Upstream: `w.name != ALL(getBannedNames())` (`worlds-manager.ts:1409-1413`); `getBannedNames` strips the first
-      `.eth` and `.dcl` of each entry without lowercasing it (`src/adapters/name-deny-list-checker.ts:51-54`), and
-      Postgres compares case-sensitively, so only a bare name equal to a stripped entry is hidden.
-    - dcl-one: `list_worlds_public` adds `w.name <> ALL($5)` to the page and the count
-      (`worlds/src/core/store.rs:1923`) with `BannedNames::banned_names()` (`core/names.rs:38-40`), the same
-      stripping and no lowercasing. Pinned by `core/tests.rs`
+31. **WW-31 · `/about`, `/manifest`, `/limits`, `/worlds` · deny-listed and blocked names.** Status: MATCH, no work.
+    - Upstream: `BLOCKED_WORLD_NAMES` is split on commas, trimmed, lowercased and stripped of empty entries
+      (`src/adapters/name-deny-list-checker.ts:8-13`). `checkNameDenyList` refuses an exact lowercased match before
+      it reads the remote list, so the block holds while that list is unset or failing (`:45-49`). `/about` then
+      answers 404 `World "<n>" has no scene deployed.` (`world-about-handler.ts:22-24`), `/manifest` 404
+      `World "<n>" not found.` (`world-manifest-handler.ts:33-35`) and `/limits` 404 with the lowercased name
+      (`world-limits-handler.ts:54-56`). `GET /worlds` adds `w.name != ALL(getBannedNames())`
+      (`worlds-manager.ts:1371,1409-1413`); `getBannedNames` is the configured names followed by each list entry with
+      its first `.eth` and `.dcl` stripped and not lowercased, deduplicated (`name-deny-list-checker.ts:61-65`).
+      Postgres compares case-sensitively, so a list entry hides only a bare name equal to it.
+    - dcl-one: `NameDenyList::new` parses `BLOCKED_WORLD_NAMES` (`config/src/worlds.rs:449-454`,
+      `worlds/src/core/names.rs:31-39,92-97`); `BannedNames::allows` refuses a configured name first, also when the
+      list read fails (`names.rs:51-54,107-120`), on `/about` (`about.rs:129-137`), `/manifest`
+      (`core/manifest.rs:22-30`) and `/limits` (`core/limits.rs:60-69`). `list_worlds_public` adds
+      `w.name <> ALL($5)` to the page and the count (`worlds/src/core/store.rs:2076`) with
+      `BannedNames::banned_names()` (`names.rs:67-76`), the same order, stripping and no lowercasing. Pinned by
+      `names.rs` `configured_blocks_refuse_exact_names_and_lead_the_banned_names` and
+      `configured_blocks_hold_while_the_list_cannot_be_read`, `core/tests.rs:6336`
+      `configured_world_names_are_hidden_from_the_world_reads` and `core/tests.rs`
       `worlds_listing_reads_the_query_like_url_search_params_and_hides_banned_bare_names`.
-    - Both trees list `<banned>.dcl.eth` while `/about` and the manifest answer 404 for it; recorded as a shared
-      moderation gap in worlds-compatibility.md, "Deny list in world listings".
+    - Both trees list `<banned>.dcl.eth` from the remote list while `/about` and the manifest answer 404 for it;
+      recorded as a shared moderation gap in worlds-compatibility.md, "Deny list in world listings".
     - Severity: none (closed).
 
 32. **WW-32 · `/worlds` · query parsing.** Status: MATCH, no work.
@@ -707,14 +723,59 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
       scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
     - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
-      (`listed_scene_ids`, `worlds/src/mirror.rs:1565`) and keeps `/about` for the world configuration and the
+      (`listed_scenes`, `worlds/src/mirror.rs:1790`) and keeps `/about` for the world's spawn and the
       content `baseUrl`. The listing decides what is retired, so any doubt stops that world's sync until the
       next pass and retires nothing: a refusal (404 and 405 included), a page without `scenes`, a repeated id,
       a count other than `total`, or a held scene missing from the pages that `?entity_id=` still lists (the
       listing moved while it was read). A world over 2,000 scenes is refused on every pass. The read-through
       fill takes the same path and stores the world only when every listed scene verifies. Pinned by
-      `tests/worlds_mirror.rs:1062` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
+      `tests/worlds_mirror.rs:1165` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
       in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
+    - Severity: none (closed).
+
+40. **WW-40 · mirror · `/about`, `/scenes`, `/worlds` · each scene's deploy times.** Status: MATCH, no work.
+    - Upstream: each row keeps its deployment's `created_at`. `/about` takes the newest scene
+      (`getWorldScenes({limit: 1, orderBy: created_at, desc})`, `worlds-manager.ts:403-407`), `/scenes` pages by
+      `created_at` ascending (`:1015-1019`) and serves `createdAt`/`updatedAt` from the row (`toWorldScene`,
+      `:60-73`), and `/worlds` reads `last_deployed_at` as the newest deploy time (`:1366-1404`).
+    - dcl-one: `listed_scenes` keeps each listed row's `createdAt` and `updatedAt`, read as RFC 3339 into UTC
+      (`worlds/src/mirror.rs:1732-1770,1790`), and the world's transaction writes them onto its rows; a row the
+      listing gives no time keeps this node's (`mirror.rs:1673-1690`). `/about` breaks a remaining tie by the greater
+      entity id (`queries.rs:93`). Pinned by `tests/worlds_mirror.rs:1261`
+      `a_mirrored_world_keeps_the_upstream_deploy_times`: three scenes whose newest is the smallest id; `/about`
+      names it, `/scenes` lists the source's order and times, and `/worlds` its `last_deployed_at`.
+    - A world the pass finds unchanged (every listed scene held) is not read again, so its rows keep the times
+      they were written with until its scene set changes upstream.
+    - Severity: none (closed).
+
+41. **WW-41 · mirror · `/scenes` · `deployer`, `deploymentAuthChain`, `size`.** Status: MATCH, no work.
+    - Upstream: each row's `deployer`, `deployment_auth_chain` and `size` are what its deployment stored
+      (`toWorldScene`, `worlds-manager.ts:60-73`); `scenes-handler.ts:73-84` serves them, the size as a string.
+    - dcl-one: a pass keeps the listed size (`mirror.rs:1547`) and stores the listed chain and deployer when the
+      chain's ECDSA links sign the scene id and its first link names the listed deployer, checked with
+      `verify_auth_chain` (`listed_signature`, `mirror.rs:1776-1788`); otherwise the row carries `[]` and the zero
+      address. A read-through stores the chain and signer it checked against the world's publishers. No grant here
+      reads `worlds.world_scenes.deployer`. Pinned by `tests/worlds_mirror.rs:1362`
+      `a_mirror_pass_keeps_the_upstream_deployer_and_chain` (a signed scene; a chain over another id; a chain whose
+      signer is not the listed deployer).
+    - Severity: none (closed).
+
+42. **WW-42 · mirror · `/settings`, `/worlds` · a mirrored world's settings.** Status: MATCH, no work.
+    - Upstream: `GET /world/:world_name/settings` is public (`routes.ts:213`) and answers the stored row
+      (`world-settings-handler.ts:155-178`, `worlds-manager.ts:1222-1262`); its comments (`:1242-1243,1254-1255`)
+      say `skybox_time: null` and the version are exposed so that a mirror can copy them. `/worlds` serves the same
+      columns (`:1381-1404`).
+    - dcl-one: a world the pass syncs also reads `GET {source}/world/{name}/settings` (one body of at most 256 KiB,
+      `upstream_settings`, `mirror.rs:1313-1335`) and writes `title`, `description`, `content_rating` (one of
+      `RP`, `E`, `T`, `A`, `R`), `categories` (the first 20), `show_in_places`, `single_player`, `skybox_time` (`null`
+      clears) and `thumbnail_hash`, and takes `settings_version` from the source (`WorldSettingsCopy`,
+      `mirror.rs:1253-1310`; the upsert at `:1568`). No answer, a refusal or a body that is not an object leaves the
+      stored settings as they are. The fixed hour and offline adapter of the source's `/about` are not copied:
+      they can be the scene's own, which `/about` reads from the scene here too. `access_type` is not copied.
+      Pinned by `mirror.rs:1976` `upstream_settings_are_copied_as_the_columns_accept_them` and
+      `tests/worlds_mirror.rs:1438` `a_mirror_pass_copies_the_upstream_world_settings`.
+    - A thumbnail key the source took from an upload (SHA-256 hex) is kept as it is; worlds-compatibility.md,
+      "Thumbnails". Like WW-40, an unchanged world is not read again.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

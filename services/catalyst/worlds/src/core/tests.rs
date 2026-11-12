@@ -6326,6 +6326,88 @@ async fn active_entities_skip_a_blocked_world_name() {
     assert_eq!(names, vec![allowed.display()]);
 }
 
+/// `BLOCKED_WORLD_NAMES` (`name-deny-list-checker.ts:8-13,45-49,61-65`): a
+/// whole configured name is refused by `/about` (`world-about-handler.ts:22-24`),
+/// `/manifest` (`world-manifest-handler.ts:33-35`) and `/limits`
+/// (`world-limits-handler.ts:54-56`), and `GET /worlds` leaves it out of the
+/// page and the total (`worlds-manager.ts:1371,1409-1413`); the same label
+/// under another suffix is not blocked.
+#[tokio::test]
+async fn configured_world_names_are_hidden_from_the_world_reads() {
+    let Some(f) = fixture().await else { return };
+    let blocked = world_name();
+    let sibling = format!("{}.eth", blocked.label());
+    let owner = Wallet::random();
+    f.names.set(&owner.address, blocked.label());
+    let d = deployment(&owner, &blocked, "Blocked", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(&sibling)
+        .execute(&f.pool)
+        .await
+        .unwrap();
+
+    let configured = format!(" {} , ", blocked.display().to_uppercase());
+    let blocking = fixture_on_pool(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings().with_blocked_world_names(&configured),
+    )
+    .await;
+    let (worlds, blobs) = served_states_with(
+        &blocking,
+        crate::Settings {
+            blocked_world_names: configured.clone(),
+            ..crate::Settings::for_tests("https://worlds.example.org")
+        },
+    );
+    let app = served_app_over(&blocking, worlds, blobs).await;
+    let name = blocked.display();
+
+    let body = expect(&app, Case::new("get", format!("/world/{name}/about")), 404).await;
+    assert_eq!(
+        body,
+        json!({"error": "Not Found", "message": format!("World \"{name}\" has no scene deployed.")})
+    );
+    let body = expect(
+        &app,
+        Case::new("get", format!("/world/{name}/manifest")),
+        404,
+    )
+    .await;
+    assert_eq!(body["message"], format!("World \"{name}\" not found."));
+    let body = expect(&app, Case::new("get", format!("/world/{name}/limits")), 404).await;
+    assert_eq!(
+        body["message"],
+        format!("World \"{}\" not found.", blocked.key())
+    );
+
+    let body = expect(
+        &app,
+        Case::new("get", format!("/worlds?search={}", blocked.label())),
+        200,
+    )
+    .await;
+    let names: Vec<&str> = body["worlds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|w| w["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, vec![sibling.as_str()], "{body}");
+    assert_eq!(body["total"], 1);
+
+    // The unblocked node serves the same world.
+    expect(
+        &f.app,
+        Case::new("get", format!("/world/{name}/manifest")),
+        200,
+    )
+    .await;
+}
+
 /// `JSON.stringify` of `JSON.parse(<jsonb text>)`: an object's members in
 /// `jsonb`'s order (key length, then bytes).
 fn jsonb_js_members(object: &serde_json::Map<String, Value>) -> Vec<(String, String)> {

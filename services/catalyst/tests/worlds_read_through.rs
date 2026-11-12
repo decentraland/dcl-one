@@ -1,5 +1,5 @@
 //! A world's read-through against an in-process worlds content server (`/world/{name}/about`,
-//! `/world/{name}/scenes`, `/contents/{hash}`) and marketplace subgraph (`POST /subgraph`, the
+//! `/world/{name}/scenes`, `/world/{name}/settings`, `/contents/{hash}`) and marketplace subgraph (`POST /subgraph`, the
 //! NAMEs each address holds) on a scratch database and a temp blob store: a world held with no
 //! scene is mirrored on its first read through the mirror's single-world path, with the chain
 //! and signer it was published with and only the files the scene host reads (the rest are left to
@@ -219,6 +219,12 @@ fn permissions(owner: &str, deployers: &[&str]) -> Value {
     })
 }
 
+/// No world here has settings upstream: a fill keeps the defaults.
+async fn fake_settings(State((s, _)): State<(Shared, String)>) -> StatusCode {
+    s.lock().requests += 1;
+    StatusCode::NOT_FOUND
+}
+
 async fn fake_other(State((s, _)): State<(Shared, String)>) -> StatusCode {
     let mut st = s.lock();
     st.requests += 1;
@@ -234,6 +240,7 @@ async fn start_fake() -> (Shared, String) {
         .route("/world/{name}/about", get(fake_about))
         .route("/world/{name}/scenes", get(fake_scenes))
         .route("/world/{name}/permissions", get(fake_permissions))
+        .route("/world/{name}/settings", get(fake_settings))
         .route("/subgraph", post(fake_subgraph))
         .route("/contents/{hash}", get(fake_contents))
         .fallback(fake_other)

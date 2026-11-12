@@ -1,10 +1,11 @@
 //! The worlds mirror: one pass is the catalogue (`GET {source}/index`, one
 //! document listing every world and its scene ids) written to
 //! `worlds.remote_worlds`, then the scenes/files walk over the catalogue in
-//! name order: `GET {source}/world/{name}/about` (the world's configuration and content
-//! `baseUrl`) and its paged `GET {source}/world/{name}/scenes` (every deployed scene: `/about`
-//! lists only the newest) for each world whose
-//! advertised scene set differs from what is held, the scene entities and
+//! name order: `GET {source}/world/{name}/about` (the world's spawn and content
+//! `baseUrl`), its paged `GET {source}/world/{name}/scenes` (every deployed scene with its
+//! deployment's times, size, chain and deployer: `/about` lists only the newest) and
+//! `GET {source}/world/{name}/settings` (the stored world settings and their version) for each
+//! world whose advertised scene set differs from what is held, the scene entities and
 //! every file they reference into the ONE blob store (hash-verified, so a
 //! lying upstream cannot plant bytes under a CID), and the `worlds.worlds` +
 //! `worlds.world_scenes` rows in one transaction per world.
@@ -30,7 +31,9 @@
 //! through, hash-checked, from the same source when first asked for. It also leaves alone a world
 //! this node keeps itself: a `worlds.worlds` row with no `mirror_source` (a local world, scenes or
 //! not) or a `blocked_since`. The scheduled pass keeps the
-//! catalogue's trust: its rows carry no chain and the zero address.
+//! catalogue's trust: a row carries the listed chain and deployer only when that chain's ECDSA
+//! links sign the scene and its signer is the listed deployer, else no chain and the zero
+//! address; no right here is granted from either.
 //! Deletion: a complete catalogue pass that no longer lists a world stamps
 //! `unlisted_at`; the next scenes pass retires its mirrored scenes. A pass
 //! that would unlist more than max(50, 20%) of the catalogue is refused, so
@@ -51,6 +54,7 @@ use super::ZERO_ADDRESS;
 use crate::auth::{AuthChain, is_canonical_cid, verify_auth_chain, verify_hash};
 use crate::comms::world_identity::WorldName;
 use crate::content::read_through::{DownloadSlot, Downloads};
+use crate::core::settings_policy::{MAX_CATEGORIES, VALID_RATINGS, storable_skybox_time};
 use crate::explore::places::scene_identity;
 use crate::http::{is_safe_http_url, read_body_capped};
 use crate::jobs::JobContext;
@@ -75,6 +79,10 @@ const MAX_SCENES_PAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LISTED_SCENES: usize = 2_000;
 /// One `/world/{name}/permissions` answer: the owner and a few allow-lists of addresses.
 const MAX_PERMISSIONS_BYTES: usize = 256 * 1024;
+/// One `/world/{name}/settings` answer: a handful of short columns.
+const MAX_SETTINGS_BYTES: usize = 256 * 1024;
+/// A thumbnail key longer than a CID or a SHA-256 hex is not copied.
+const MAX_THUMBNAIL_HASH_LEN: usize = 128;
 const SWEEP_FUSE_MIN_CANDIDATES: i64 = 50;
 
 pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(6 * 3600);
@@ -1226,6 +1234,106 @@ fn holds_every_scene(upstream: &[String], held: &[String]) -> bool {
         && upstream.iter().all(|cid| held.contains(cid))
 }
 
+/// One scene of a world as it is stored.
+struct SceneRecord {
+    cid: String,
+    entity: Value,
+    parcels: Vec<String>,
+    size: i64,
+    chain: Value,
+    deployer: String,
+    created_at: Option<chrono::NaiveDateTime>,
+    updated_at: Option<chrono::NaiveDateTime>,
+}
+
+/// The settings a source stores for a world (`GET {source}/world/{name}/settings`, public and
+/// shaped for mirrors upstream: `toSnakeCaseSettings` of `getWorldSettings`), as this node can
+/// store them. The default is no answer: every column stays as it is.
+#[derive(Debug, Default, PartialEq)]
+struct WorldSettingsCopy {
+    /// The source answered; the text columns and categories are then written, an absent key
+    /// clearing its column (upstream leaves out an empty text and NULL categories).
+    present: bool,
+    title: Option<String>,
+    description: Option<String>,
+    /// One of the ratings the column accepts, else none.
+    content_rating: Option<String>,
+    /// The first [`MAX_CATEGORIES`] strings.
+    categories: Option<Vec<String>>,
+    /// Verbatim when it is a short alphanumeric key (a CID, or the SHA-256 hex of an upload).
+    thumbnail_hash: Option<String>,
+    /// `Some(None)` clears: upstream answers `null` for no fixed hour.
+    skybox_time: Option<Option<i32>>,
+    single_player: Option<bool>,
+    show_in_places: Option<bool>,
+    settings_version: Option<i64>,
+}
+
+impl WorldSettingsCopy {
+    fn parse(body: &Value) -> Option<Self> {
+        let body = body.as_object()?;
+        let text = |key: &str| {
+            body.get(key)
+                .and_then(Value::as_str)
+                .filter(|t| !t.is_empty())
+                .map(String::from)
+        };
+        Some(Self {
+            present: true,
+            title: text("title"),
+            description: text("description"),
+            content_rating: text("content_rating").filter(|r| VALID_RATINGS.contains(&r.as_str())),
+            categories: body.get("categories").and_then(Value::as_array).map(|c| {
+                c.iter()
+                    .filter_map(Value::as_str)
+                    .take(MAX_CATEGORIES)
+                    .map(String::from)
+                    .collect()
+            }),
+            thumbnail_hash: text("thumbnail_hash").filter(|h| {
+                h.len() <= MAX_THUMBNAIL_HASH_LEN && h.bytes().all(|b| b.is_ascii_alphanumeric())
+            }),
+            skybox_time: match body.get("skybox_time") {
+                None => None,
+                Some(Value::Null) => Some(None),
+                Some(t) => t.as_f64().and_then(storable_skybox_time).map(Some),
+            },
+            single_player: body.get("single_player").and_then(Value::as_bool),
+            show_in_places: body.get("show_in_places").and_then(Value::as_bool),
+            settings_version: body
+                .get("settings_version")
+                .and_then(Value::as_i64)
+                .filter(|v| *v >= 0),
+        })
+    }
+}
+
+/// `{source}/world/{name}/settings`, read once per synced world; `None` (no answer, a refusal or
+/// a body that is not a settings object) leaves the stored settings as they are.
+async fn upstream_settings(
+    client: &crate::http::Outbound,
+    source: &str,
+    name: &str,
+) -> Option<WorldSettingsCopy> {
+    let url = world_url(source, name, "settings").ok()?;
+    let read = async {
+        let resp = client.get(&url).send().await?;
+        if !resp.status().is_success() {
+            bail!("answered {}", resp.status());
+        }
+        let body: Value =
+            serde_json::from_slice(&read_body_capped(resp, MAX_SETTINGS_BYTES).await?)?;
+        WorldSettingsCopy::parse(&body).context("not a settings object")
+    };
+    match read.await {
+        Ok(copy) => Some(copy),
+        Err(e) => {
+            tracing::debug!(world = %name, error = %e, "keeping the stored settings: GET {url}");
+            None
+        }
+    }
+}
+
 async fn mirror_world(
     client: &crate::http::Outbound,
     pool: &PgPool,
@@ -1303,24 +1411,24 @@ async fn mirror_world(
     };
     // `/about` lists the newest scene only; `/scenes` lists them all, under the same `baseUrl`.
     // The listing decides what is retired below, so any doubt about it stops this world's sync.
-    let ids = listed_scene_ids(client, source, name).await?;
-    if ids.is_empty() {
+    let listed = listed_scenes(client, source, name).await?;
+    if listed.is_empty() {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
     }
     // A scene held here and missing from the listing is retired, with its storage identity. One
     // the source still lists by id means the listing moved under the pages (a redeploy shifts
     // every later row), so the world waits for the next pass instead.
-    for cid in held.iter().filter(|cid| !ids.contains(cid)) {
+    for cid in held
+        .iter()
+        .filter(|cid| !listed.iter().any(|scene| &scene.id == *cid))
+    {
         if source_lists_scene(client, source, name, cid).await? {
             bail!("the scene listing of {name} changed while it was read ({cid} is still listed)");
         }
     }
-    let refs: Vec<(String, String)> = ids.into_iter().map(|id| (id, base.clone())).collect();
-
-    let skybox_time = about["configurations"]["skybox"]["fixedHour"]
-        .as_f64()
-        .map(|t| t as i32);
-    let single_player = about["comms"]["adapter"].as_str() == Some("fixed-adapter:offline:offline");
+    // The world's settings as the source stores them, not as its `/about` derives them from the
+    // newest scene: a fixed hour or offline adapter there may be the scene's own.
+    let world_settings = upstream_settings(client, source, name).await;
     let upstream_spawn = about["spawnCoordinates"]
         .as_str()
         .filter(|s| !s.trim().is_empty())
@@ -1334,8 +1442,9 @@ async fn mirror_world(
 
     // Every scene entity fetched and, on a read-through, its signature and signer checked
     // before any file of the world is stored; the bytes checked are the bytes stored.
-    let mut scenes = Vec::with_capacity(refs.len());
-    for (cid, base) in refs {
+    let mut scenes = Vec::with_capacity(listed.len());
+    for listed in listed {
+        let cid = listed.id.clone();
         if !settings.base_url_allowed(&base) {
             bail!("scene {cid} of {name} names a baseUrl this node will not fetch: {base}");
         }
@@ -1357,14 +1466,15 @@ async fn mirror_world(
         } else {
             EntityFile::Stored
         };
-        scenes.push((cid, base, file, entity, signed));
+        scenes.push((listed, file, entity, signed));
     }
 
     let mut new_blobs = 0usize;
     let mut scene_base_spawn: Option<String> = None;
-    let mut records: Vec<(String, Value, Vec<String>, i64, Value, String)> = Vec::new();
+    let mut records: Vec<SceneRecord> = Vec::new();
     let blob_sem = Arc::new(Semaphore::new(settings.blob_concurrency));
-    for (cid, base, file, entity, signed) in scenes {
+    for (listed, file, entity, signed) in scenes {
+        let cid = listed.id.clone();
         match file {
             EntityFile::Stored => {}
             EntityFile::Held(bytes) => {
@@ -1426,41 +1536,73 @@ async fn mirror_world(
                 .as_str()
                 .map(String::from);
         }
+        // The deployment's own size, chain and signer as the source lists them; a pass keeps the
+        // chain only when it signs this scene, a read-through the one it checked.
         let (chain, deployer) = match signed {
             Some(signed) => {
                 size = signed.size;
                 (signed.json, signed.signer.as_str().to_string())
             }
-            None => (Value::Array(Vec::new()), ZERO_ADDRESS.to_string()),
+            None => {
+                size = listed.size.unwrap_or(size);
+                listed_signature(&listed, &entity)
+                    .unwrap_or_else(|| (Value::Array(Vec::new()), ZERO_ADDRESS.to_string()))
+            }
         };
-        records.push((cid, entity, parcels, size, chain, deployer));
+        records.push(SceneRecord {
+            cid,
+            entity,
+            parcels,
+            size,
+            chain,
+            deployer,
+            created_at: listed.created_at,
+            updated_at: listed.updated_at,
+        });
     }
 
     let mut tx = pool.begin().await.context("begin tx")?;
+    // Without a settings answer the stored settings stay as they are (a new row: the defaults).
+    let copied = world_settings.unwrap_or_default();
     let upserted = sqlx::query(
-        r#"INSERT INTO worlds.worlds
-             (name, spawn_coordinates, skybox_time, single_player, blocked_since, mirror_source, updated_at)
-           VALUES ($1, COALESCE($2, $5), $3, $4, NULL, $6, timezone('UTC', now()))
+        r#"INSERT INTO worlds.worlds AS w
+             (name, spawn_coordinates, title, description, content_rating, categories,
+              thumbnail_hash, skybox_time, single_player, show_in_places, settings_version,
+              blocked_since, mirror_source, updated_at)
+           VALUES ($1, COALESCE($2, $3), $6, $7, $8, $9::text[], $10, $11, COALESCE($12, false),
+                   COALESCE($13, true), COALESCE($14, 0), NULL, $4, timezone('UTC', now()))
            ON CONFLICT (name) DO UPDATE
-             SET spawn_coordinates = COALESCE($2, worlds.worlds.spawn_coordinates, $5),
-                 skybox_time = EXCLUDED.skybox_time,
-                 single_player = EXCLUDED.single_player,
-                 settings_version = worlds.worlds.settings_version
-                   + CASE WHEN (worlds.worlds.skybox_time, worlds.worlds.single_player)
-                          IS DISTINCT FROM (EXCLUDED.skybox_time, EXCLUDED.single_player)
-                          THEN 1 ELSE 0 END,
+             SET spawn_coordinates = COALESCE($2, w.spawn_coordinates, $3),
+                 title = CASE WHEN $15 THEN EXCLUDED.title ELSE w.title END,
+                 description = CASE WHEN $15 THEN EXCLUDED.description ELSE w.description END,
+                 content_rating = CASE WHEN $15 THEN EXCLUDED.content_rating ELSE w.content_rating END,
+                 categories = CASE WHEN $15 THEN EXCLUDED.categories ELSE w.categories END,
+                 thumbnail_hash = CASE WHEN $15 THEN EXCLUDED.thumbnail_hash ELSE w.thumbnail_hash END,
+                 skybox_time = CASE WHEN $16 THEN EXCLUDED.skybox_time ELSE w.skybox_time END,
+                 single_player = COALESCE($12, w.single_player),
+                 show_in_places = COALESCE($13, w.show_in_places),
+                 settings_version = COALESCE($14, w.settings_version),
                  mirror_source = EXCLUDED.mirror_source,
                  updated_at = timezone('UTC', now())
-             WHERE NOT $7
-                OR (worlds.worlds.mirror_source IS NOT NULL AND worlds.worlds.blocked_since IS NULL)"#,
+             WHERE NOT $5
+                OR (w.mirror_source IS NOT NULL AND w.blocked_since IS NULL)"#,
     )
     .bind(name)
     .bind(&upstream_spawn)
-    .bind(skybox_time)
-    .bind(single_player)
     .bind(&scene_base_spawn)
     .bind(source)
     .bind(verify.is_some())
+    .bind(&copied.title)
+    .bind(&copied.description)
+    .bind(&copied.content_rating)
+    .bind(&copied.categories)
+    .bind(&copied.thumbnail_hash)
+    .bind(copied.skybox_time.flatten())
+    .bind(copied.single_player)
+    .bind(copied.show_in_places)
+    .bind(copied.settings_version)
+    .bind(copied.present)
+    .bind(copied.skybox_time.is_some())
     .execute(&mut *tx)
     .await
     .with_context(|| format!("upsert world {name}"))?;
@@ -1484,12 +1626,19 @@ async fn mirror_world(
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
 
-    let cids: Vec<&str> = records.iter().map(|r| r.0.as_str()).collect();
-    let entities: Vec<Value> = records.iter().map(|r| r.1.clone()).collect();
-    let parcels: Vec<Value> = records.iter().map(|r| Value::from(r.2.clone())).collect();
-    let sizes: Vec<i64> = records.iter().map(|r| r.3).collect();
-    let chains: Vec<Value> = records.iter().map(|r| r.4.clone()).collect();
-    let deployers: Vec<&str> = records.iter().map(|r| r.5.as_str()).collect();
+    let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();
+    let entities: Vec<Value> = records.iter().map(|r| r.entity.clone()).collect();
+    let parcels: Vec<Value> = records
+        .iter()
+        .map(|r| Value::from(r.parcels.clone()))
+        .collect();
+    let sizes: Vec<i64> = records.iter().map(|r| r.size).collect();
+    let chains: Vec<Value> = records.iter().map(|r| r.chain.clone()).collect();
+    let deployers: Vec<&str> = records.iter().map(|r| r.deployer.as_str()).collect();
+    let created: Vec<Option<chrono::NaiveDateTime>> =
+        records.iter().map(|r| r.created_at).collect();
+    let updated: Vec<Option<chrono::NaiveDateTime>> =
+        records.iter().map(|r| r.updated_at).collect();
     // A pass's unsigned row never replaces the chain and signer a read-through stored.
     sqlx::query(
         r#"INSERT INTO worlds.world_scenes
@@ -1521,6 +1670,23 @@ async fn mirror_world(
     .execute(&mut *tx)
     .await
     .with_context(|| format!("upsert {} scenes of {name}", records.len()))?;
+    // Each row keeps its deployment's times upstream (`/about` takes the newest, `/scenes` pages
+    // by them, `/worlds` sorts by them); a row the listing gave none keeps this node's.
+    sqlx::query(
+        r#"UPDATE worlds.world_scenes s
+           SET created_at = COALESCE(t.created, s.created_at),
+               updated_at = COALESCE(t.updated, t.created, s.updated_at)
+           FROM unnest($2::text[], $3::timestamp[], $4::timestamp[]) AS t(cid, created, updated)
+           WHERE s.world_name = lower($1) AND s.entity_id = t.cid
+             AND (t.created IS NOT NULL OR t.updated IS NOT NULL)"#,
+    )
+    .bind(name)
+    .bind(&cids)
+    .bind(&created)
+    .bind(&updated)
+    .execute(&mut *tx)
+    .await
+    .with_context(|| format!("deploy times of the scenes of {name}"))?;
 
     sqlx::query(
         r#"DELETE FROM worlds.world_scenes
@@ -1540,12 +1706,14 @@ async fn mirror_world(
     chronological.sort_by(|a, b| {
         let ts =
             |entity: &Value| crate::core::store::entity_timestamp_number(entity).unwrap_or(0.0);
-        ts(&a.1).total_cmp(&ts(&b.1)).then_with(|| a.0.cmp(&b.0))
+        ts(&a.entity)
+            .total_cmp(&ts(&b.entity))
+            .then_with(|| a.cid.cmp(&b.cid))
     });
     for record in chronological {
-        scene_identity::assign(&mut tx, &world, &record.0, &record.2)
+        scene_identity::assign(&mut tx, &world, &record.cid, &record.parcels)
             .await
-            .with_context(|| format!("storage identity of {} in {name}", record.0))?;
+            .with_context(|| format!("storage identity of {} in {name}", record.cid))?;
     }
     scene_identity::retire_orphans(&mut tx, std::slice::from_ref(&world))
         .await
@@ -1558,16 +1726,74 @@ async fn mirror_world(
     })
 }
 
-/// Every scene id `{source}/world/{name}/scenes` lists, newest first by publication (it pages
-/// oldest first; scenes a source wrote together come in entity-id order). Any refusal, a page
-/// without its `scenes`, a repeated id or a count other than the listing's `total` is an error.
-async fn listed_scene_ids(
+/// One row of the source's `/world/{name}/scenes` listing: the scene id and what its deployment
+/// stored there (`toWorldScene`). A pass keeps the times, and the chain and deployer once they
+/// check ([`listed_signature`]); a read-through keeps the times and its own checked chain.
+struct ListedScene {
+    id: String,
+    /// `createdAt` and `updatedAt` in UTC; `None` when absent or not RFC 3339.
+    created_at: Option<chrono::NaiveDateTime>,
+    updated_at: Option<chrono::NaiveDateTime>,
+    deployer: Option<String>,
+    /// `deploymentAuthChain`, `Null` when absent or over [`MAX_CHAIN_BYTES`].
+    chain: Value,
+    /// `size` (a decimal string upstream), `None` unless a non-negative integer.
+    size: Option<i64>,
+}
+
+impl ListedScene {
+    fn from_row(id: &str, row: &Value) -> Self {
+        let time = |key: &str| {
+            row[key]
+                .as_str()
+                .and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok())
+                .map(|t| t.naive_utc())
+        };
+        let chain = &row["deploymentAuthChain"];
+        let chain = match serde_json::to_vec(chain) {
+            Ok(bytes) if bytes.len() <= MAX_CHAIN_BYTES => chain.clone(),
+            _ => Value::Null,
+        };
+        let size = match &row["size"] {
+            Value::String(s) => s.parse().ok(),
+            other => other.as_i64(),
+        };
+        Self {
+            id: id.to_string(),
+            created_at: time("createdAt"),
+            updated_at: time("updatedAt"),
+            deployer: row["deployer"].as_str().map(String::from),
+            chain,
+            size: size.filter(|s| *s >= 0),
+        }
+    }
+}
+
+/// The listed chain and deployer of a scene a pass stores, kept only when the chain is ECDSA
+/// links that sign `entity`'s id (ephemeral keys judged at its timestamp) and its signer is the
+/// listed deployer; `None` keeps the pass's empty chain and zero address. Nothing grants rights
+/// from these columns, so a checked copy changes no authority here.
+fn listed_signature(listed: &ListedScene, entity: &Value) -> Option<(Value, String)> {
+    let deployer = Address::parse(listed.deployer.as_deref()?).ok()?;
+    let chain: AuthChain = serde_json::from_value(listed.chain.clone()).ok()?;
+    if Address::parse(&chain.first()?.payload).ok()? != deployer {
+        return None;
+    }
+    let timestamp = crate::core::store::entity_timestamp_ms(entity)?;
+    verify_auth_chain(&chain, &listed.id, Some(timestamp)).ok()?;
+    Some((listed.chain.clone(), deployer.as_str().to_string()))
+}
+
+/// Every scene `{source}/world/{name}/scenes` lists, newest first by publication (it pages
+/// oldest first by `createdAt`). Any refusal, a page without its `scenes`, a repeated id or a
+/// count other than the listing's `total` is an error.
+async fn listed_scenes(
     client: &crate::http::Outbound,
     source: &str,
     name: &str,
-) -> Result<Vec<String>> {
+) -> Result<Vec<ListedScene>> {
     let listing = url::Url::parse(&world_url(source, name, "scenes")?)?;
-    let mut ids: Vec<String> = Vec::new();
+    let mut scenes: Vec<ListedScene> = Vec::new();
     let mut offset = 0usize;
     let mut total;
     loop {
@@ -1601,24 +1827,24 @@ async fn listed_scene_ids(
                 .as_str()
                 .filter(|id| is_canonical_cid(id))
                 .with_context(|| format!("{url} lists a scene without a canonical entityId"))?;
-            if ids.iter().any(|listed| listed == id) {
+            if scenes.iter().any(|listed| listed.id == id) {
                 bail!("{url} lists scene {id} twice");
             }
-            ids.push(id.to_string());
+            scenes.push(ListedScene::from_row(id, row));
         }
         offset += rows.len();
         if rows.is_empty() || offset >= total {
             break;
         }
     }
-    if ids.len() != total {
+    if scenes.len() != total {
         bail!(
             "the scene listing of {name} names {} scenes of its total {total}",
-            ids.len()
+            scenes.len()
         );
     }
-    ids.reverse();
-    Ok(ids)
+    scenes.reverse();
+    Ok(scenes)
 }
 
 /// Whether `{source}/world/{name}/scenes?entity_id=<cid>` still lists the scene.
@@ -1743,6 +1969,41 @@ async fn fetch_checked(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `toSnakeCaseSettings` leaves out empty text and NULL categories and answers
+    /// `skybox_time: null`; only what the columns accept is copied.
+    #[test]
+    fn upstream_settings_are_copied_as_the_columns_accept_them() {
+        let copy = WorldSettingsCopy::parse(&json!({
+            "title": "Globe", "description": "", "content_rating": "X",
+            "categories": ["art", 1, "games"], "skybox_time": null, "single_player": true,
+            "thumbnail_hash": "bafkrei/../x", "access_type": "unrestricted", "settings_version": 7
+        }))
+        .unwrap();
+        assert_eq!(
+            copy,
+            WorldSettingsCopy {
+                present: true,
+                title: Some("Globe".into()),
+                categories: Some(vec!["art".into(), "games".into()]),
+                skybox_time: Some(None),
+                single_player: Some(true),
+                settings_version: Some(7),
+                ..WorldSettingsCopy::default()
+            }
+        );
+        let copy = WorldSettingsCopy::parse(&json!({
+            "content_rating": "T", "skybox_time": 43200.0, "settings_version": -1,
+            "categories": vec!["c"; 25], "thumbnail_hash": "a".repeat(64)
+        }))
+        .unwrap();
+        assert_eq!(copy.content_rating.as_deref(), Some("T"));
+        assert_eq!(copy.skybox_time, Some(Some(43200)));
+        assert_eq!(copy.settings_version, None);
+        assert_eq!(copy.categories.unwrap().len(), MAX_CATEGORIES);
+        assert_eq!(copy.thumbnail_hash, Some("a".repeat(64)));
+        assert_eq!(WorldSettingsCopy::parse(&json!([])), None);
+    }
 
     #[test]
     fn a_world_is_unchanged_only_when_it_holds_exactly_the_upstream_scenes() {

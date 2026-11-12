@@ -1,15 +1,17 @@
 //! The worlds mirror against an in-process upstream (`/index`,
-//! `/world/{name}/about`, `/contents/{hash}`) on a scratch database and a
-//! temp blob store: a complete pass with its marker, the read routes over the
-//! mirrored rows, an unchanged pass making no /about calls, a local publish
-//! refused (never overwritten, also when it lands mid-download), a world
-//! unlisted upstream retired, an interrupted pass resumed from its persisted
-//! cursor, and the loop/hash guards. Needs CATALYST_TEST_DATABASE_URL;
-//! skipped without it.
+//! `/world/{name}/about`, `/world/{name}/scenes`, `/world/{name}/settings`,
+//! `/contents/{hash}`) on a scratch database and a temp blob store: a complete
+//! pass with its marker, the read routes over the mirrored rows, an unchanged
+//! pass making no /about calls, a local publish refused (never overwritten,
+//! also when it lands mid-download), a world unlisted upstream retired, an
+//! interrupted pass resumed from its persisted cursor, the loop/hash guards,
+//! and the deploy times, signed chains and world settings a pass copies.
+//! Needs CATALYST_TEST_DATABASE_URL; skipped without it.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use alloy::signers::{Signer, local::PrivateKeySigner};
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{Request, StatusCode};
@@ -26,7 +28,9 @@ use tower::ServiceExt;
 use catalyst::auth::hash::hash_bytes_v1;
 use catalyst::jobs::{JobContext, Jobs};
 use catalyst::storage::Storage;
+use catalyst::worlds::core::{CoreState, Settings as CoreSettings};
 use catalyst::worlds::mirror::{MirrorSettings, run_pass};
+use catalyst::worlds::policy::{PersonalWorldsPolicy, Policy};
 use catalyst::worlds::{Settings, WorldsState, ZERO_ADDRESS};
 
 #[path = "support/db.rs"]
@@ -37,6 +41,28 @@ mod db;
 struct Scene {
     id: String,
     entity: Value,
+    /// What `/scenes` lists for the deployment: `createdAt`/`updatedAt` (left out when `None`;
+    /// the listing pages by `createdAt`), `deploymentAuthChain`, `deployer` and `size`.
+    created_at: Option<String>,
+    updated_at: Option<String>,
+    chain: Value,
+    deployer: Option<String>,
+    size: String,
+}
+
+impl Scene {
+    /// Listed with no times, an empty chain, no deployer and size `"0"`.
+    fn new(id: String, entity: Value) -> Self {
+        Self {
+            id,
+            entity,
+            created_at: None,
+            updated_at: None,
+            chain: json!([]),
+            deployer: None,
+            size: "0".to_string(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -58,6 +84,8 @@ struct Upstream {
     scenes_ignore_offset: bool,
     scenes_without_rows: bool,
     scenes_hide: Option<String>,
+    /// name -> the `/world/{name}/settings` body; a world without one answers 404.
+    settings: HashMap<String, Value>,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -82,11 +110,23 @@ fn add_scene(
     base: &str,
     files: &[(&str, &[u8])],
 ) -> String {
+    let entity = scene_entity(state, world, title, base, files);
+    push_scene(state, world, entity)
+}
+
+/// A scene entity whose files are stored as blobs on the upstream; the entity itself is not.
+fn scene_entity(
+    state: &mut Upstream,
+    world: &str,
+    title: &str,
+    base: &str,
+    files: &[(&str, &[u8])],
+) -> Value {
     let content: Vec<Value> = files
         .iter()
         .map(|(file, bytes)| json!({"file": file, "hash": blob(state, bytes)}))
         .collect();
-    let entity = json!({
+    json!({
         "version": "v3",
         "type": "scene",
         "pointers": [base],
@@ -98,18 +138,43 @@ fn add_scene(
             "worldConfiguration": {"name": world, "skyboxConfig": {"fixedTime": 36000}},
             "runtimeVersion": "7"
         }
-    });
+    })
+}
+
+/// Stores `entity` as a blob and lists it as the world's newest scene; returns its id.
+fn push_scene(state: &mut Upstream, world: &str, entity: Value) -> String {
     let bytes = serde_json::to_vec(&entity).unwrap();
     let id = blob(state, &bytes);
     state
         .worlds
         .entry(world.to_string())
         .or_default()
-        .push(Scene {
-            id: id.clone(),
-            entity,
-        });
+        .push(Scene::new(id.clone(), entity));
     id
+}
+
+fn scene_mut<'a>(state: &'a mut Upstream, world: &str, id: &str) -> &'a mut Scene {
+    state
+        .worlds
+        .get_mut(world)
+        .and_then(|scenes| scenes.iter_mut().find(|sc| sc.id == id))
+        .unwrap()
+}
+
+const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+fn address(key: &str) -> String {
+    format!("{:#x}", key.parse::<PrivateKeySigner>().unwrap().address())
+}
+
+/// A SIGNER + ECDSA_SIGNED_ENTITY chain naming `entity_id`, signed by `key` over `signed_id`.
+async fn chain(key: &str, entity_id: &str, signed_id: &str) -> Value {
+    let key: PrivateKeySigner = key.parse().unwrap();
+    let signature = key.sign_message(signed_id.as_bytes()).await.unwrap();
+    json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": entity_id, "signature": signature.to_string()}
+    ])
 }
 
 /// title, base parcel, (file, bytes) pairs.
@@ -155,9 +220,10 @@ async fn fake_about(
             .get(&name)
             .cloned()
             .unwrap_or_else(|| format!("{base}/contents/"));
-        // The newest scene only, as upstream's /about answers.
+        // The newest scene only, as upstream's /about answers (the last listed on a tie).
         let urns: Vec<String> = scenes
-            .last()
+            .iter()
+            .max_by_key(|sc| sc.created_at.clone())
             .map(|sc| format!("urn:decentraland:entity:{}?=&baseUrl={content_base}", sc.id))
             .into_iter()
             .collect();
@@ -185,7 +251,8 @@ struct Page {
     entity_id: Option<String>,
 }
 
-/// Every scene of the world, oldest first and paged, as upstream's `/scenes` answers.
+/// Every scene of the world, oldest first by `createdAt` and paged, as upstream's `/scenes`
+/// answers.
 async fn fake_scenes(
     State((s, _)): State<(Shared, String)>,
     Path(name): Path<String>,
@@ -198,7 +265,7 @@ async fn fake_scenes(
     if st.scenes_without_rows {
         return Json(json!({"total": 1})).into_response();
     }
-    let all: Vec<&Scene> = st
+    let mut all: Vec<&Scene> = st
         .worlds
         .get(&name)
         .into_iter()
@@ -208,6 +275,7 @@ async fn fake_scenes(
             None => st.scenes_hide.as_ref() != Some(&sc.id),
         })
         .collect();
+    all.sort_by_key(|sc| sc.created_at.clone());
     let offset = match st.scenes_ignore_offset {
         true => 0,
         false => page.offset.unwrap_or(0),
@@ -217,11 +285,35 @@ async fn fake_scenes(
         .skip(offset)
         .take(page.limit.unwrap_or(100))
         .map(|sc| {
-            json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
-                   "deploymentAuthChain": [], "size": "0", "status": "DEPLOYED"})
+            let mut row = json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
+                   "deploymentAuthChain": sc.chain, "size": sc.size, "status": "DEPLOYED"});
+            for (key, value) in [
+                ("deployer", &sc.deployer),
+                ("createdAt", &sc.created_at),
+                ("updatedAt", &sc.updated_at),
+            ] {
+                if let Some(value) = value {
+                    row[key] = json!(value);
+                }
+            }
+            row
         })
         .collect();
     Json(json!({"scenes": scenes, "total": all.len()})).into_response()
+}
+
+async fn fake_settings(
+    State((s, _)): State<(Shared, String)>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    match s.lock().settings.get(&name) {
+        Some(body) => Json(body.clone()).into_response(),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"error": format!("World \"{name}\" not found.")})),
+        )
+            .into_response(),
+    }
 }
 
 async fn fake_contents(
@@ -243,6 +335,7 @@ async fn start_fake() -> Fake {
         .route("/index", get(fake_index))
         .route("/world/{name}/about", get(fake_about))
         .route("/world/{name}/scenes", get(fake_scenes))
+        .route("/world/{name}/settings", get(fake_settings))
         .route("/contents/{hash}", get(fake_contents))
         .layer(axum::Extension(hold.clone()))
         .with_state((state.clone(), base.clone()));
@@ -310,7 +403,16 @@ impl Node {
             Some(self.settings.clone()),
             self.client.clone(),
         ));
-        catalyst::worlds::router(state)
+        // `/worlds` and `/world/{name}/settings` are the core's routes.
+        let policy = Policy::new(self.pool.clone(), PersonalWorldsPolicy::disabled(), None);
+        let core = Arc::new(CoreState::new(
+            self.pool.clone(),
+            self.storage.clone(),
+            Arc::new(policy),
+            CoreSettings::for_tests(None),
+            None,
+        ));
+        catalyst::worlds::router(state).merge(catalyst::worlds::core::root_router(core))
     }
 
     async fn get(&self, path: &str) -> (StatusCode, Value) {
@@ -472,8 +574,9 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
         "a mirrored world keeps its ENS name"
     );
     assert_eq!(
-        about["configurations"]["skybox"]["fixedHour"], 43200.0,
-        "the upstream about's fixedHour"
+        about["configurations"]["skybox"]["fixedHour"], 36000.0,
+        "the scene's fixedTime: the source answers no world settings, and its /about's \
+         fixedHour is not one"
     );
     assert_eq!(about["spawnCoordinates"], "0,0");
     assert_eq!(
@@ -874,7 +977,7 @@ async fn mirror_assigns_storage_identities_in_entity_timestamp_order() {
                          "worldConfiguration": {"name": world}}
         });
         let id = blob(st, &serde_json::to_vec(&entity).unwrap());
-        Scene { id, entity }
+        Scene::new(id, entity)
     };
     {
         let mut st = fake.state.lock();
@@ -1144,6 +1247,261 @@ async fn a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing() {
     let summary = node.pass(&ctx).await;
     assert_eq!(summary.scenes.synced, 1);
     assert_eq!(node.scene_rows(world).await.len(), 26);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// Each mirrored row keeps its deployment's times upstream (`toWorldScene`,
+/// `worlds-manager.ts:66-77`): `/about` names the newest scene (`getWorldScenes` by `created_at`
+/// descending, `:403-407`), `/scenes` pages by `createdAt` (`:1015-1019`) and `/worlds` sorts by
+/// the newest (`:1366-1404`), not by when this node copied them.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirrored_world_keeps_the_upstream_deploy_times() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "times").await;
+    let world = "times.dcl.eth";
+    let mut ids = set_scenes(
+        &mut fake.state.lock(),
+        world,
+        &[
+            ("T0", "0,0", &[("a.txt", b"t0")]),
+            ("T1", "1,0", &[("b.txt", b"t1")]),
+            ("T2", "2,0", &[("c.txt", b"t2")]),
+        ],
+    );
+    ids.sort();
+    // The smallest id is the newest, so neither the id order nor a tie names it.
+    let times = [
+        (
+            ids[1].clone(),
+            "2026-01-01T00:00:00.000Z",
+            "2026-01-01T01:00:00.000Z",
+        ),
+        (
+            ids[2].clone(),
+            "2026-02-01T00:00:00.000Z",
+            "2026-02-01T01:00:00.000Z",
+        ),
+        (
+            ids[0].clone(),
+            "2026-03-01T00:00:00.000Z",
+            "2026-03-01T01:00:00.000Z",
+        ),
+    ];
+    {
+        let mut st = fake.state.lock();
+        for (id, created, updated) in &times {
+            let scene = scene_mut(&mut st, world, id);
+            scene.created_at = Some(created.to_string());
+            scene.updated_at = Some(updated.to_string());
+        }
+    }
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(
+        (summary.scenes.synced, summary.scenes.scenes),
+        (1, 3),
+        "{summary:?}"
+    );
+
+    let (status, about) = node.get(&format!("/world/{world}/about")).await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    let urns = about["configurations"]["scenesUrn"].as_array().unwrap();
+    assert_eq!(urns.len(), 1, "{about}");
+    assert!(
+        urns[0]
+            .as_str()
+            .unwrap()
+            .starts_with(&format!("urn:decentraland:entity:{}?", ids[0])),
+        "the newest createdAt: {about}"
+    );
+
+    let (status, scenes) = node.get(&format!("/world/{world}/scenes")).await;
+    assert_eq!(status, StatusCode::OK, "{scenes}");
+    let listed: Vec<(String, String, String)> = scenes["scenes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            let text = |key: &str| s[key].as_str().unwrap().to_string();
+            (text("entityId"), text("createdAt"), text("updatedAt"))
+        })
+        .collect();
+    let expected: Vec<(String, String, String)> = times
+        .iter()
+        .map(|(id, created, updated)| (id.clone(), created.to_string(), updated.to_string()))
+        .collect();
+    assert_eq!(listed, expected, "upstream's order and times");
+
+    let (status, worlds) = node.get("/worlds?sort=last_deployed_at").await;
+    assert_eq!(status, StatusCode::OK, "{worlds}");
+    let entry = worlds["worlds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == world)
+        .cloned()
+        .unwrap();
+    assert_eq!(entry["last_deployed_at"], "2026-03-01T00:00:00.000Z");
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A pass keeps each row's `deployer`, `deploymentAuthChain` and `size` as upstream stored them
+/// (`toWorldScene`; `scenes-handler.ts:73-84` serves the size as a string), the chain and
+/// deployer only when the chain signs the scene and its signer is the listed deployer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirror_pass_keeps_the_upstream_deployer_and_chain() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "signed").await;
+    let deployer = address(DEPLOYER_KEY);
+    let (signed_id, forged_id, other_id) = {
+        let mut st = fake.state.lock();
+        (
+            add_scene(
+                &mut st,
+                "signed.dcl.eth",
+                "S",
+                "0,0",
+                &[("s.txt", b"signed")],
+            ),
+            add_scene(
+                &mut st,
+                "forged.dcl.eth",
+                "F",
+                "0,0",
+                &[("f.txt", b"forged")],
+            ),
+            add_scene(&mut st, "other.dcl.eth", "O", "0,0", &[("o.txt", b"other")]),
+        )
+    };
+    let signed_chain = chain(DEPLOYER_KEY, &signed_id, &signed_id).await;
+    // Names its scene but signs another id.
+    let forged_chain = chain(DEPLOYER_KEY, &forged_id, &signed_id).await;
+    // Signs its scene, while the listing names someone else as the deployer.
+    let other_chain = chain(DEPLOYER_KEY, &other_id, &other_id).await;
+    let someone_else = "0x1111111111111111111111111111111111111111".to_string();
+    {
+        let mut st = fake.state.lock();
+        for (world, id, chain, who) in [
+            ("signed.dcl.eth", &signed_id, &signed_chain, &deployer),
+            ("forged.dcl.eth", &forged_id, &forged_chain, &deployer),
+            ("other.dcl.eth", &other_id, &other_chain, &someone_else),
+        ] {
+            let scene = scene_mut(&mut st, world, id);
+            scene.chain = chain.clone();
+            scene.deployer = Some(who.clone());
+            scene.size = "1234".to_string();
+        }
+    }
+
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.synced, 3, "{summary:?}");
+
+    let (status, body) = node.get("/world/signed.dcl.eth/scenes").await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let row = &body["scenes"][0];
+    assert_eq!(row["deployer"], json!(deployer));
+    assert_eq!(row["deploymentAuthChain"], signed_chain);
+    assert_eq!(row["size"], "1234");
+    for world in ["forged.dcl.eth", "other.dcl.eth"] {
+        let (status, body) = node.get(&format!("/world/{world}/scenes")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let row = &body["scenes"][0];
+        assert_eq!(row["deployer"], ZERO_ADDRESS, "{world}");
+        assert_eq!(row["deploymentAuthChain"], json!([]), "{world}");
+        assert_eq!(row["size"], "1234", "{world}");
+    }
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A pass copies the world settings upstream stores (`GET /world/:n/settings`,
+/// `world-settings-handler.ts:155-178`, `worlds-manager.ts:1222-1262`), version included,
+/// instead of deriving them from `/about`, whose fixed hour and offline adapter here are the
+/// scene's own. Without an answer the copied settings stay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirror_pass_copies_the_upstream_world_settings() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "settings").await;
+    let world = "globe.dcl.eth";
+    let upstream = json!({
+        "title": "Globe", "description": "d", "content_rating": "T", "spawn_coordinates": "0,0",
+        "skybox_time": null, "categories": ["art"], "single_player": false,
+        "show_in_places": false, "access_type": "unrestricted", "settings_version": 7
+    });
+    {
+        let mut st = fake.state.lock();
+        let mut entity = scene_entity(&mut st, world, "G", "0,0", &[("g.txt", b"globe")]);
+        let configuration = &mut entity["metadata"]["worldConfiguration"];
+        configuration["skyboxConfig"]["fixedTime"] = json!(43200);
+        configuration["fixedAdapter"] = json!("offline:offline");
+        push_scene(&mut st, world, entity);
+        st.settings.insert(world.to_string(), upstream.clone());
+    }
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+
+    let (status, settings) = node.get(&format!("/world/{world}/settings")).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
+    let mut expected = upstream.clone();
+    expected["realm_name_override"] = Value::Null;
+    expected["preview_wearable_urns"] = Value::Null;
+    assert_eq!(settings, expected);
+
+    let (status, worlds) = node.get("/worlds").await;
+    assert_eq!(status, StatusCode::OK, "{worlds}");
+    let entry = worlds["worlds"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["name"] == world)
+        .cloned()
+        .unwrap();
+    assert_eq!(
+        (
+            &entry["title"],
+            &entry["description"],
+            &entry["content_rating"]
+        ),
+        (&json!("Globe"), &json!("d"), &json!("T"))
+    );
+
+    let (status, about) = node.get(&format!("/world/{world}/about")).await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    assert_eq!(about["configurations"]["skybox"]["fixedHour"], 43200.0);
+    assert_eq!(about["comms"]["adapter"], "fixed-adapter:offline:offline");
+
+    // A new scene and no settings answer: the copied settings stay.
+    {
+        let mut st = fake.state.lock();
+        st.settings.remove(world);
+        add_scene(&mut st, world, "G2", "1,0", &[("g2.txt", b"globe2")]);
+    }
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    let (_, kept) = node.get(&format!("/world/{world}/settings")).await;
+    assert_eq!(kept, expected);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

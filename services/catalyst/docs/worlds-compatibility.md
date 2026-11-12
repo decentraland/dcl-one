@@ -192,7 +192,10 @@ difference not listed here is a gap, not a decision.
   hash-addressed store, so a deployment may reference any blob already in
   it (including Genesis content) without uploading it again. Upstream could
   only reuse files from its own bucket.
-- **Thumbnails** are hashed as CIDv1.
+- **Thumbnails** are hashed as CIDv1. A mirrored world keeps the
+  thumbnail key its source stores. The mirror does not copy the file behind
+  a SHA-256 hex key (a thumbnail uploaded to the source), so `/contents/<key>`
+  answers 404 for it unless this node holds the same bytes.
 - **ENS names.** With `ALLOW_ENS_DOMAINS=true` the holder is read over
   `ETH_RPC_URL` (required then; the process refuses to start without it).
   Only names whose labels the upstream's UTS46 normalization leaves

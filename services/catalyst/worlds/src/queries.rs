@@ -73,7 +73,8 @@ fn world_scene_from_row(r: &PgRow) -> WorldScene {
     }
 }
 
-/// The world row (if any) and its scenes newest-first in one statement;
+/// The world row (if any) and its scenes newest-first in one statement (a
+/// tie goes to the greater entity id, the last row `/scenes` pages);
 /// either side may be absent independently.
 pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbout> {
     let rows = sqlx::query(concat!(
@@ -89,7 +90,7 @@ pub async fn world_about(pool: &PgPool, world_name: &str) -> AppResult<WorldAbou
              SELECT entity_id, entity, parcels, deployer, mirror_source, created_at
              FROM worlds.world_scenes WHERE world_name = lower($1)
            ) s ON true
-           ORDER BY s.created_at DESC NULLS LAST"#,
+           ORDER BY s.created_at DESC NULLS LAST, s.entity_id DESC"#,
     ))
     .bind(world_name)
     .fetch_all(pool)
