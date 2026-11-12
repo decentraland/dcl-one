@@ -1039,3 +1039,43 @@ describe('when native popup chrome must retain keyboard dismissal ownership', ()
     }
   )
 })
+
+describe('when a native popup link owns Escape before its parent', () => {
+  for (const kind of ['section', 'account'] as const) {
+    it(`should preserve the ${kind} popup until Escape is unclaimed`, async () => {
+      const user = userEvent.setup()
+      function ChildLink(props: NavBarLinkProps) {
+        return (
+          <a
+            {...props}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') event.preventDefault()
+              props.onKeyDown?.(event)
+            }}
+          />
+        )
+      }
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          accountActions={[{ label: 'Profile', href: '/profile' }]}
+          linkComponent={ChildLink}
+        />
+      )
+      const trigger = screen.getByRole('button', {
+        name: kind === 'section' ? 'Discover' : /^Account/
+      })
+      await user.click(trigger)
+      const link = screen.getByRole('link', { name: kind === 'section' ? 'Jump in' : 'Profile' })
+      link.focus()
+      await user.keyboard('{Escape}')
+      expect(trigger).toHaveAttribute('aria-expanded', 'true')
+      expect(link).toHaveFocus()
+      trigger.focus()
+      await user.keyboard('{Escape}')
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).toHaveFocus()
+    })
+  }
+})

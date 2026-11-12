@@ -9,7 +9,6 @@ import {
   type ComponentType,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
-  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject
 } from 'react'
@@ -209,7 +208,7 @@ function usePopup(
     return () => document.removeEventListener('pointerdown', onPointerDown)
   }, [open, rootRef])
   const onKeyDown = (event: ReactKeyboardEvent) => {
-    if (event.key !== 'Escape' || !open) return
+    if (event.defaultPrevented || event.key !== 'Escape' || !open) return
     event.stopPropagation()
     setOpen(false)
     triggerRef.current?.focus()
@@ -224,12 +223,7 @@ function usePopup(
     triggerRef.current?.focus({ preventScroll: true })
     setOpen((value) => !value)
   }
-  const onPopupClick = (event: ReactMouseEvent<HTMLElement>) => {
-    if (event.target === event.currentTarget) {
-      event.currentTarget.focus({ preventScroll: true })
-    }
-  }
-  return { open, setOpen, toggle, onKeyDown, onBlur, onPopupClick }
+  return { open, setOpen, toggle, onKeyDown, onBlur }
 }
 
 function SectionDropdown({
@@ -242,7 +236,7 @@ function SectionDropdown({
   const rootRef = useRef<HTMLLIElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const listId = useId()
-  const { open, setOpen, toggle, onKeyDown, onBlur, onPopupClick } = usePopup(rootRef, triggerRef)
+  const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const active = section.active || section.items.some((item) => item.active)
   return (
     <li ref={rootRef} className={styles.section} onKeyDown={onKeyDown} onBlur={onBlur}>
@@ -258,13 +252,7 @@ function SectionDropdown({
         {section.label}
         <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
       </button>
-      <ul
-        id={listId}
-        className={styles.dropdown}
-        hidden={!open}
-        tabIndex={-1}
-        onClick={onPopupClick}
-      >
+      <ul id={listId} className={styles.dropdown} hidden={!open} tabIndex={-1}>
         {section.items.map((item, index) => (
           <li key={index}>
             {renderLink({
@@ -408,7 +396,7 @@ function AccountMenu({
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuId = useId()
-  const { open, setOpen, toggle, onKeyDown, onBlur, onPopupClick } = usePopup(rootRef, triggerRef)
+  const { open, setOpen, toggle, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
   return (
     <div ref={rootRef} className={styles.account} onKeyDown={onKeyDown} onBlur={onBlur}>
@@ -423,13 +411,7 @@ function AccountMenu({
       >
         <Avatar account={account} />
       </button>
-      <div
-        id={menuId}
-        className={styles.accountMenu}
-        hidden={!open}
-        tabIndex={-1}
-        onClick={onPopupClick}
-      >
+      <div id={menuId} className={styles.accountMenu} hidden={!open} tabIndex={-1}>
         <p className={styles.accountName}>{displayName}</p>
         {account.name ? (
           <p className={styles.accountAddress} title={account.address}>
