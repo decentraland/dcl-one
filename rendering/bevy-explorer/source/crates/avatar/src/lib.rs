@@ -57,6 +57,7 @@ mod tests;
 
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
+    memory::LoadRefusal,
     sets::SetupSets,
     structs::{AppConfig, AttachPoints, EmoteCommand, EmoteMask, MonotonicTimestamp, PrimaryUser},
     util::{JoinRelativeExt, SceneSpawnerPlus, TaskExt, TryPushChildrenEx},
@@ -83,6 +84,7 @@ use ipfs::{
 };
 use scene_runner::scene_partition::{PartitionedDownloads, PlayerDownloads};
 use scene_runner::{
+    initialize_scene::SuperUserScene,
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
     util::ConsoleRelay,
@@ -142,6 +144,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(JumpMarkerPlugin);
+        app.init_resource::<RefusedAvatars>();
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
         app.add_systems(
@@ -551,6 +554,11 @@ pub struct AvatarRenderDefinition {
 #[derive(Component)]
 pub struct RetryRenderAvatar;
 
+/// How many avatars (other players' and world scenes' ones) were not started this frame because
+/// engine memory is full ([`LoadRefusal`]); zero while loads are admitted.
+#[derive(Resource, Default)]
+pub struct RefusedAvatars(pub usize);
+
 // when an avatar style setting (cel shading, outline) is toggled, re-render every
 // avatar so their meshes are respawned with the right mesh tags. the tags are set
 // once at mesh creation in process_avatar, so an in-place flip isn't enough.
@@ -630,6 +638,8 @@ fn update_render_avatar(
             Option<&SceneEntity>,
             Option<&PreviousAvatar>,
             Option<&PartitionedDownloads>,
+            Has<ForeignPlayer>,
+            Has<RetryRenderAvatar>,
         ),
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
@@ -641,6 +651,9 @@ fn update_render_avatar(
     ipfas: IpfsAssetServer,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
     config: Res<AppConfig>,
+    load_refusal: Option<Res<LoadRefusal>>,
+    mut refused_avatars: ResMut<RefusedAvatars>,
+    super_user_scenes: Query<(), With<SuperUserScene>>,
 ) {
     // remove renderable entities when avatar selection is removed
     for entity in removed_selections.read() {
@@ -660,6 +673,9 @@ fn update_render_avatar(
         }
     }
 
+    let refusing = load_refusal.is_some_and(|refusal| refusal.refusing);
+    let mut refused = 0;
+
     for (
         entity,
         selection,
@@ -668,8 +684,26 @@ fn update_render_avatar(
         maybe_scene_ent,
         maybe_prev,
         maybe_downloads,
+        is_foreign_player,
+        marked_for_retry,
     ) in &query
     {
+        // while engine memory is full no other player's avatar and no avatar a world scene
+        // places starts: nothing of it is resolved, read from a cache or built, and it is
+        // looked at again every frame until the refusal ends. The request slots alone would
+        // not stop it, since cached files ask for no slot. One that has started (its downloads
+        // are filed) is not sent back. The player's own avatar and previews (a photo booth's,
+        // or one a system scene places, as the Backpack's) are not refused.
+        let refusable = is_foreign_player
+            || maybe_scene_ent.is_some_and(|scene_ent| !super_user_scenes.contains(scene_ent.root));
+        if refusing && refusable && maybe_downloads.is_none() {
+            refused += 1;
+            if !marked_for_retry {
+                commands.entity(entity).try_insert(RetryRenderAvatar);
+            }
+            continue;
+        }
+
         commands.entity(entity).try_remove::<RetryRenderAvatar>();
 
         debug!("updating render avatar");
@@ -1049,6 +1083,10 @@ fn update_render_avatar(
                 }
             }
         }
+    }
+
+    if refused_avatars.0 != refused {
+        refused_avatars.0 = refused;
     }
 }
 

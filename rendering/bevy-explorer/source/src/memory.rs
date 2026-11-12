@@ -25,7 +25,7 @@ fn update_load_refusal(
     }
     match status.reading() {
         Some(reading) if next.refusing => warn!(
-            "engine memory full ({} of {} MiB): refusing new scenes and every download but the player's",
+            "engine memory full ({} of {} MiB): refusing new scenes, new avatars and every download but the player's",
             reading.used_bytes >> 20,
             reading.cap_mib
         ),

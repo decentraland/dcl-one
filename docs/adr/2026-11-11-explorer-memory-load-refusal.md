@@ -22,6 +22,14 @@ download, however close the engine was to running out. On the web that ends in a
   player stands in, portables and system scenes are still admitted. Scenes already spawned are
   kept; how many were held back is published as `RefusedScenes`. An imposter bake's scene is
   refused too, so a bake waits for the refusal to end.
+- **Avatars.** While refusing, no other player's avatar and no avatar a world scene places
+  starts (`update_render_avatar`): its wearables are not resolved, read from a cache or built;
+  how many were held back is published as `RefusedAvatars`. An avatar that had started is kept
+  with what it has loaded. The player's own avatar and avatar previews (a photo booth's, or one
+  a system scene places, as the Backpack's) are still admitted. A refused player keeps the ghost
+  that stands in for a loading avatar, with its name tag above it; a refused scene avatar, and a
+  player when ghosts are switched off, shows nothing. Avatar levels of detail will be
+  implemented, so that every refused avatar is shown by a cheap stand-in.
 - **Downloads.** While refusing, the request slots grant only the `Active` tier: the scenes the
   player stands in, portables and global scenes, the player's own body, wearables and emotes, and
   files every scene runtime needs (the SDK6 adaption layer, queued under a fixed owner registered
@@ -30,8 +38,12 @@ download, however close the engine was to running out. On the web that ends in a
   keeps its place and is granted once the refusal ends, or at once when it rises into the
   `Active` tier: its hash is registered for the player, the player's scene shares its download,
   or the player walks into its scene.
-- **Visibility.** The Memory and limits debug section shows the latch, the number of scenes held
-  back and the first held tier; lowering the session memory limit there triggers it.
+- **Entity resolution is never held.** Requests that resolve pointers to entities
+  (`active_entities`) stay outside the request slots and outside the refusal: the player's own
+  scene and every admitted avatar need them, and a refused avatar asks for none.
+- **Visibility.** The Memory and limits debug section shows the latch, the number of scenes and
+  of avatars held back and the first held tier; lowering the session memory limit there triggers
+  it.
 
 ## Rejected
 
@@ -43,6 +55,9 @@ download, however close the engine was to running out. On the web that ends in a
 - **Giving each URL request its scene as owner.** The owner would become part of the asset path,
   so a file several scenes load by URL would be loaded once per scene. Only the SDK6 adaption
   layer, which the player's scene needs to start, gets a fixed owner that keeps one path.
+- **Leaving new avatars to the held downloads alone.** An avatar whose files are in a cache asks
+  for no request slot, so it would still be resolved, read and built while the engine is full.
+  Refusing it at its start stops the resolution, the cache reads and the build together.
 - **Unloading or shrinking the live radius at Warning.** Stepping scenes down needs something to
   step down to; it is a separate decision.
 - **Per-scene memory estimates.** Fixed per-parcel figures are guesses; the measured reading is
@@ -57,12 +72,16 @@ download, however close the engine was to running out. On the web that ends in a
   threshold.
 - The player's own scene can still load a URL file it needs (an NFT image, a URL font) only once
   the refusal ends.
+- A player who arrives while memory is full stays a ghost until the refusal ends. With ghosts
+  switched off nothing is shown and the name tag sits at the player's feet. An avatar a world
+  scene places in that time is not shown. Avatar levels of detail will replace both gaps with a
+  stand-in.
 - The refusal slows growth; it does not stop it. Still unaffected: the player's own loads, reads
   that hit a cache (the disk cache, the web service-worker cache, locally stored imposters),
-  which never ask for a request slot; instantiating avatars, models and textures from data
-  already downloaded; and entity resolution (`active_entities`), which posts outside the request
-  slots, keeps collectible and scene pointers resolving and stores collectible results that are
-  never evicted.
+  which never ask for a request slot; instantiating models and textures from data already
+  downloaded, and the avatars that had started before the refusal; and entity resolution
+  (`active_entities`), which posts outside the request slots, keeps the pointers of scenes and
+  of admitted avatars resolving and stores collectible results that are never evicted.
 - When the refusal ends, every scene it held back spawns in the same frame, and the latch has
   only the 5 % between 70 % and 75 % to absorb that backlog.
 - On native the reading counts the engine process only, not the scene runtime process or other
