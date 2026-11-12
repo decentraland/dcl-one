@@ -61,7 +61,8 @@ export type NavBarAccountAction =
   | { label: string; onSelect: () => void; href?: undefined }
 
 /** The Sign in action: a link or a callback. */
-export type NavBarSignIn = { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
+export type NavBarSignIn =
+  { href: string; onSelect?: undefined } | { onSelect: () => void; href?: undefined }
 
 export type NavBarNotifications = {
   /** Unread notifications; the badge is hidden when 0, negative or not finite. */
@@ -84,11 +85,18 @@ export type NavBarLabels = {
   polygonMana: string
 }
 
+/** Slot content owns its labels, loading state and events. Controls remount when moved between header and drawer. */
 type NavBarCommonProps = {
   sections: readonly NavBarSection[]
   /** Defaults to `/`. */
   logoHref?: string
   balances?: NavBarBalances
+  /** App-owned balance action beside numeric balances, rendered in the header or open drawer, never both. */
+  balanceAction?: ReactNode
+  /** Additional account control beside the standard account/sign-in control. Rendered in the desktop header or open drawer. */
+  accountControl?: ReactNode
+  /** Secondary navigation rendered only in the open drawer. Supply semantic links and their accessible names. */
+  mobileSecondaryNavigation?: ReactNode
   /** Signed in: the notifications button. */
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
@@ -105,7 +113,10 @@ type NavBarCommonProps = {
 
 /** Signed in with an `account`; signed out without one, which then requires a `signIn` action. */
 export type NavBarProps = NavBarCommonProps &
-  ({ account: NavBarAccount; signIn?: NavBarSignIn } | { account?: undefined; signIn: NavBarSignIn })
+  (
+    | { account: NavBarAccount; signIn?: NavBarSignIn }
+    | { account?: undefined; signIn: NavBarSignIn }
+  )
 
 const defaultLabels: NavBarLabels = {
   navigation: 'Main',
@@ -125,7 +136,29 @@ const defaultLabels: NavBarLabels = {
 const BADGE_MAX = 99
 // Where the section links replace the menu button; the module's media queries use the same value.
 const DESKTOP_QUERY = `(min-width: ${breakpoints.desktop}px)`
-const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])'
+const FOCUSABLE = 'a[href], button, input, select, textarea, [tabindex]'
+const hasSlot = (node: ReactNode) =>
+  node !== null && node !== undefined && typeof node !== 'boolean'
+
+function drawerFocusables(panel: HTMLElement): HTMLElement[] {
+  return Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((element) => {
+    if (
+      element.tabIndex < 0 ||
+      element.matches(':disabled, input[type="hidden"]') ||
+      element.closest('[hidden], [inert]')
+    )
+      return false
+    for (
+      let parent: HTMLElement | null = element;
+      parent && parent !== panel;
+      parent = parent.parentElement
+    ) {
+      const style = window.getComputedStyle(parent)
+      if (style.display === 'none' || style.visibility === 'hidden') return false
+    }
+    return true
+  })
+}
 
 // URL parsing drops tabs and newlines and reads `\\` as `/` in http(s) URLs, so `/\\host` and `/\t/host` are
 // protocol-relative too: only a single `/` followed by anything else is a path on this origin.
@@ -159,7 +192,10 @@ const linkRenderer =
     LinkComponent && isInternalHref(props.href) ? <LinkComponent {...props} /> : <a {...props} />
 
 /** Closes an open popup on Escape (returning focus to its trigger), on an outside press and when focus leaves it. */
-function usePopup(rootRef: RefObject<HTMLElement | null>, triggerRef: RefObject<HTMLButtonElement | null>) {
+function usePopup(
+  rootRef: RefObject<HTMLElement | null>,
+  triggerRef: RefObject<HTMLButtonElement | null>
+) {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!open) return
@@ -197,12 +233,7 @@ function SectionDropdown({
   const { open, setOpen, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
   const active = section.active || section.items.some((item) => item.active)
   return (
-    <li
-      ref={rootRef}
-      className={styles.section}
-      onKeyDown={onKeyDown}
-      onBlur={onBlur}
-    >
+    <li ref={rootRef} className={styles.section} onKeyDown={onKeyDown} onBlur={onBlur}>
       <button
         ref={triggerRef}
         type="button"
@@ -258,7 +289,12 @@ function Balances({
   const entries = [
     { key: 'credits', value: balances.credits, label: labels.credits, Icon: ShopCredits },
     { key: 'mana', value: balances.mana, label: labels.mana, Icon: GeneralManaColour },
-    { key: 'polygonMana', value: balances.polygonMana, label: labels.polygonMana, Icon: GeneralPolygonMana }
+    {
+      key: 'polygonMana',
+      value: balances.polygonMana,
+      label: labels.polygonMana,
+      Icon: GeneralPolygonMana
+    }
   ].filter((entry): entry is typeof entry & { value: number } => hasValue(entry.value))
   if (entries.length === 0) return null
   return (
@@ -316,7 +352,12 @@ function AccountActionList({
       {actions.map((action, index) => (
         <li key={index}>
           {action.href !== undefined ? (
-            renderLink({ href: action.href, className: styles.menuItem, onClick: onDone, children: action.label })
+            renderLink({
+              href: action.href,
+              className: styles.menuItem,
+              onClick: onDone,
+              children: action.label
+            })
           ) : (
             <button
               type="button"
@@ -403,21 +444,24 @@ function Drawer({
   const panelRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const panel = panelRef.current
-    panel?.querySelector<HTMLElement>(FOCUSABLE)?.focus()
+    if (panel) drawerFocusables(panel)[0]?.focus()
     const { overflow } = document.body.style
     document.body.style.overflow = 'hidden'
-    const desktop = typeof window.matchMedia === 'function' ? window.matchMedia(DESKTOP_QUERY) : undefined
+    const desktop =
+      typeof window.matchMedia === 'function' ? window.matchMedia(DESKTOP_QUERY) : undefined
     const onChange = (event: MediaQueryListEvent) => event.matches && onDesktop()
     desktop?.addEventListener('change', onChange)
     // On the document, so Escape and the Tab wrap still work when focus has fallen out of the panel to <body>.
     const onKeyDown = (event: KeyboardEvent) => {
+      // App-owned controls and portaled dialogs may already have handled this key.
+      if (event.defaultPrevented) return
       if (event.key === 'Escape') {
         event.preventDefault()
         onClose()
         return
       }
       if (event.key !== 'Tab' || !panel) return
-      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(FOCUSABLE))
+      const focusable = drawerFocusables(panel)
       const first = focusable[0]
       const last = focusable[focusable.length - 1]
       if (!first || !last) return
@@ -439,7 +483,12 @@ function Drawer({
   }, [onClose, onDesktop])
   return (
     <div className={styles.drawerLayer}>
-      <div className={styles.backdrop} aria-hidden="true" data-testid="navbar-backdrop" onClick={onClose} />
+      <div
+        className={styles.backdrop}
+        aria-hidden="true"
+        data-testid="navbar-backdrop"
+        onClick={onClose}
+      />
       <div
         ref={panelRef}
         id={id}
@@ -453,7 +502,12 @@ function Drawer({
           <h2 id={titleId} className={styles.drawerTitle}>
             {labels.menu}
           </h2>
-          <button type="button" className={styles.iconButton} aria-label={labels.closeMenu} onClick={onClose}>
+          <button
+            type="button"
+            className={styles.iconButton}
+            aria-label={labels.closeMenu}
+            onClick={onClose}
+          >
             <GeneralClose size={24} aria-hidden="true" />
           </button>
         </div>
@@ -469,6 +523,9 @@ export function NavBar({
   account,
   signIn: signInAction,
   balances,
+  balanceAction,
+  accountControl,
+  mobileSecondaryNavigation,
   notifications,
   accountActions = [],
   linkComponent,
@@ -479,7 +536,9 @@ export function NavBar({
   // An override set to undefined (an i18n map with a missing key) keeps the default instead of replacing it.
   const labels = {
     ...defaultLabels,
-    ...Object.fromEntries(Object.entries(labelOverrides ?? {}).filter(([, value]) => value !== undefined))
+    ...Object.fromEntries(
+      Object.entries(labelOverrides ?? {}).filter(([, value]) => value !== undefined)
+    )
   } as NavBarLabels
   const format = useMemo(() => numberFormat(locale), [locale])
   const renderLink = linkRenderer(linkComponent)
@@ -511,11 +570,20 @@ export function NavBar({
         {labels.signIn}
       </button>
     ) : (
-      renderLink({ href: signInAction.href, className: styles.signIn, onClick: onDone, children: labels.signIn })
+      renderLink({
+        href: signInAction.href,
+        className: styles.signIn,
+        onClick: onDone,
+        children: labels.signIn
+      })
     )
 
   return (
-    <nav ref={navRef} className={className ? `${styles.root} ${className}` : styles.root} aria-label={labels.navigation}>
+    <nav
+      ref={navRef}
+      className={className ? `${styles.root} ${className}` : styles.root}
+      aria-label={labels.navigation}
+    >
       <div className={styles.start}>
         {renderLink({
           href: logoHref,
@@ -541,21 +609,34 @@ export function NavBar({
         </ul>
       </div>
       <div className={styles.end}>
+        {(account && balances) || (!drawerOpen && hasSlot(balanceAction)) ? (
+          <div className={styles.barBalances}>
+            {account && balances ? (
+              <Balances balances={balances} labels={labels} format={format} />
+            ) : null}
+            {!drawerOpen && hasSlot(balanceAction) ? (
+              <div className={styles.compositionControl}>{balanceAction}</div>
+            ) : null}
+          </div>
+        ) : null}
         {account ? (
           <>
-            {balances ? (
-              <div className={styles.barBalances}>
-                <Balances balances={balances} labels={labels} format={format} />
-              </div>
-            ) : null}
             {notifications ? (
               <NotificationsButton count={count} labels={labels} onClick={notifications.onSelect} />
             ) : null}
-            <AccountMenu account={account} actions={accountActions} labels={labels} renderLink={renderLink} />
+            <AccountMenu
+              account={account}
+              actions={accountActions}
+              labels={labels}
+              renderLink={renderLink}
+            />
           </>
         ) : (
           renderSignIn()
         )}
+        {!drawerOpen && hasSlot(accountControl) ? (
+          <div className={styles.barAccountControl}>{accountControl}</div>
+        ) : null}
         <button
           ref={menuButtonRef}
           type="button"
@@ -609,37 +690,54 @@ export function NavBar({
               </li>
             ))}
           </ul>
-          {account ? (
-            <div className={styles.drawerAccount}>
+          {hasSlot(mobileSecondaryNavigation) ? (
+            <div className={styles.secondaryNavigation}>{mobileSecondaryNavigation}</div>
+          ) : null}
+          <div className={styles.drawerAccount}>
+            {account ? (
               <div className={styles.drawerIdentity}>
                 <Avatar account={account} />
-                <span className={styles.accountName}>{account.name || shortAddress(account.address)}</span>
+                <span className={styles.accountName}>
+                  {account.name || shortAddress(account.address)}
+                </span>
               </div>
-              {balances ? <Balances balances={balances} labels={labels} format={format} /> : null}
-              {notifications ? (
-                <button
-                  type="button"
-                  className={styles.menuItem}
-                  onClick={() => {
-                    closeDrawer()
-                    notifications.onSelect()
-                  }}
-                >
-                  {count > 0 ? labels.unreadNotifications(count) : labels.notifications}
-                </button>
-              ) : null}
-              {accountActions.length > 0 ? (
-                <AccountActionList
-                  actions={accountActions}
-                  renderLink={renderLink}
-                  onDone={closeDrawer}
-                  className={styles.menuList}
-                />
-              ) : null}
-            </div>
-          ) : (
-            <div className={styles.drawerAccount}>{renderSignIn(closeDrawer)}</div>
-          )}
+            ) : null}
+            {account && balances ? (
+              <Balances balances={balances} labels={labels} format={format} />
+            ) : null}
+            {hasSlot(balanceAction) ? (
+              <div className={styles.compositionControl}>{balanceAction}</div>
+            ) : null}
+            {account ? (
+              <>
+                {notifications ? (
+                  <button
+                    type="button"
+                    className={styles.menuItem}
+                    onClick={() => {
+                      closeDrawer()
+                      notifications.onSelect()
+                    }}
+                  >
+                    {count > 0 ? labels.unreadNotifications(count) : labels.notifications}
+                  </button>
+                ) : null}
+                {accountActions.length > 0 ? (
+                  <AccountActionList
+                    actions={accountActions}
+                    renderLink={renderLink}
+                    onDone={closeDrawer}
+                    className={styles.menuList}
+                  />
+                ) : null}
+              </>
+            ) : (
+              renderSignIn(closeDrawer)
+            )}
+            {hasSlot(accountControl) ? (
+              <div className={styles.compositionControl}>{accountControl}</div>
+            ) : null}
+          </div>
         </Drawer>
       ) : null}
     </nav>

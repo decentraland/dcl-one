@@ -158,8 +158,22 @@
     cursor: pointer;
   }
 
-  .barBalances {
+  .barBalances,
+  .barAccountControl {
     display: none;
+    align-items: center;
+    gap: var(--dcl-space-16);
+  }
+
+  .compositionControl {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  .secondaryNavigation {
+    padding-top: var(--dcl-space-16);
+    border-top: 1px solid var(--dcl-border-subtle);
   }
 
   .balances {
@@ -405,7 +419,7 @@
 
   @media (min-width: 768px) {
     .barBalances {
-      display: block;
+      display: flex;
     }
   }
 
@@ -416,7 +430,8 @@
       background: var(--dcl-bg-navbar);
     }
 
-    .sections {
+    .sections,
+    .barAccountControl {
       display: flex;
     }
 
