@@ -4,7 +4,7 @@
 //! from the `--help` text — joined with the web-only fact this module owns, how the value gets
 //! from the entry url to the engine ([`Delivery`]). Exported to the react page alongside the
 //! ts-rs types (scripts/gen-ts-bindings.sh writes `webParamTable.ts` into
-//! react-web/src/engine/generated), so the host page reads the same table the engine is built
+//! library/explorer-core/engine/generated), so the host page reads the same table the engine is built
 //! from. Whether a LINK may set a param is the front-end's policy, not the engine's (react-web
 //! lib/launchGate.ts — a different host, e.g. the editor, trusts different things).
 

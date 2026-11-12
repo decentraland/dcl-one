@@ -1,3 +1,4 @@
+import type { RouterContextProvider } from "react-router";
 // The /shop route loaders: the page's SSR data (data/lib/shop/pages.server) with the session cookie
 // every sites document keeps. Caching is set by the routes' `headers` (shopHeaders): never public.
 
@@ -7,8 +8,13 @@ import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 import { loadShopPage } from "@/data/lib/shop/pages.server";
 
-export async function shopLoader(page: ShopPageId, request: Request, params: Record<string, string | undefined>) {
-  const session = sidLoader(request);
+export async function shopLoader(
+  page: ShopPageId,
+  request: Request,
+  params: Record<string, string | undefined>,
+  context: Readonly<RouterContextProvider>,
+) {
+  const session = sidLoader(request, context);
   const load = await loadShopPage(page, { request, params });
   const url = new URL(request.url);
   // A friend-first-wear notification links the item page (src=ffw): its landing is that funnel's metric.

@@ -26,7 +26,7 @@ use std::{
     fmt::{Display, Formatter},
     sync::{
         atomic::{AtomicU32, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
 };
 
@@ -342,7 +342,9 @@ pub enum Reply {
 
 #[derive(Debug)]
 pub struct ConnectedRoom {
+    pub room: RoomId,
     pub name: String,
+    pub metadata: String,
     pub local_participant: LocalParticipant,
 }
 
@@ -357,9 +359,14 @@ static NEXT_ROOM_ID: AtomicU32 = AtomicU32::new(1);
 static NEXT_REQUEST_ID: AtomicU32 = AtomicU32::new(1);
 /// Engine-side: requests awaiting their [`Reply`].
 static PENDING: Mutex<Option<HashMap<RequestId, oneshot::Sender<Reply>>>> = Mutex::new(None);
-/// Engine-side: each room's event queue (the receiver is what [`Room::connect`] returns).
-static ROOM_EVENTS: Mutex<Option<HashMap<RoomId, mpsc::UnboundedSender<RoomEvent>>>> =
-    Mutex::new(None);
+/// Engine-side: a room's event queue (the receiver is what [`Room::connect`] returns) and the
+/// metadata the page last reported for it.
+struct RoomChannel {
+    events: mpsc::UnboundedSender<RoomEvent>,
+    metadata: Arc<Mutex<String>>,
+}
+
+static ROOM_EVENTS: Mutex<Option<HashMap<RoomId, RoomChannel>>> = Mutex::new(None);
 
 fn send_command(command: LivekitCommand) {
     match HOST.get() {
@@ -390,14 +397,29 @@ async fn request(command: impl FnOnce(RequestId) -> LivekitCommand) -> RoomResul
         .map_err(|_| RoomError("livekit host dropped the request".to_owned()))
 }
 
-fn register_room_events(room: RoomId) -> mpsc::UnboundedReceiver<RoomEvent> {
+fn register_room_events(room: RoomId) -> (mpsc::UnboundedReceiver<RoomEvent>, Arc<Mutex<String>>) {
     let (sender, receiver) = mpsc::unbounded_channel();
-    ROOM_EVENTS
+    let metadata = Arc::new(Mutex::new(String::new()));
+    ROOM_EVENTS.lock().unwrap().get_or_insert_default().insert(
+        room,
+        RoomChannel {
+            events: sender,
+            metadata: metadata.clone(),
+        },
+    );
+    (receiver, metadata)
+}
+
+/// Records the metadata the page reported for `room` at connect.
+fn set_room_metadata(room: RoomId, metadata: &str) {
+    if let Some(channel) = ROOM_EVENTS
         .lock()
         .unwrap()
-        .get_or_insert_default()
-        .insert(room, sender);
-    receiver
+        .as_ref()
+        .and_then(|rooms| rooms.get(&room))
+    {
+        *channel.metadata.lock().unwrap() = metadata.to_owned();
+    }
 }
 
 fn unregister_room_events(room: RoomId) {
@@ -456,6 +478,9 @@ pub fn dispatch_page_events(
     while let Ok(event) = receiver.try_recv() {
         match event {
             LivekitEvent::Reply { request, reply } => {
+                if let Reply::Connect(Ok(connected)) = &reply {
+                    set_room_metadata(connected.room, &connected.metadata);
+                }
                 let sender = PENDING
                     .lock()
                     .unwrap()
@@ -471,11 +496,15 @@ pub fn dispatch_page_events(
             }
             LivekitEvent::Room { room, event } => {
                 let mut guard = ROOM_EVENTS.lock().unwrap();
-                let Some(sender) = guard.as_mut().and_then(|rooms| rooms.get(&room)) else {
+                let Some(channel) = guard.as_mut().and_then(|rooms| rooms.get(&room)) else {
                     debug!("event for unknown room {room}: {event:?}");
                     continue;
                 };
-                if sender.send(event).is_err() {
+                // the metadata is written before the event that reports it is forwarded
+                if let RoomEvent::RoomMetadataChanged { metadata } = &event {
+                    *channel.metadata.lock().unwrap() = metadata.clone();
+                }
+                if channel.events.send(event).is_err() {
                     // the engine's LivekitRoom is gone
                     guard.as_mut().unwrap().remove(&room);
                 }

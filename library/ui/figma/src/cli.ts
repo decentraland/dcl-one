@@ -2,6 +2,8 @@
 import { componentOwnerById } from './guard/component-identity.js'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { main as keyGuard } from '../key-guard.mjs'
 import { parseArgs } from 'node:util'
 import { createApp, runDiff, runSync, type SourceKind } from './app.js'
@@ -18,7 +20,6 @@ import { EnvTokenProvider, FigmaClient } from './figma/client.js'
 import { probeAccess } from './probe.js'
 import { isEmptyDiff } from './sync.js'
 import { writeReviewManifest } from './review-manifest.js'
-import { runInstall } from './install.js'
 import { portPrepare, portVerify } from './port.js'
 import { fetchFdsSource } from './sources/fds-source.js'
 
@@ -143,14 +144,41 @@ async function main(argv: string[]): Promise<number> {
 
   if (command === 'install') {
     if (positionals.length !== 2) throw new Error(USAGE)
-    print(
-      await runInstall(await createApp(process.cwd(), values.config), {
-        target: positionals[1]!,
-        source: sourceKind(values.source),
-        outDir: values.out
-      })
+    // Install runs in its own process, which loads only the import closure components/generation.json binds.
+    const forwarded = [positionals[1]!, '--source', sourceKind(values.source)]
+    // name=value keeps a value that starts with '-' a value in the child's strict parser.
+    if (values.out !== undefined) forwarded.push(`--out=${values.out}`)
+    if (values.config !== undefined) forwarded.push(`--config=${values.config}`)
+    // Only the tsx loader flags reach the child (install-main.ts refuses any other), and tsx resolves through the
+    // bound figma/tsconfig.json whatever the working directory.
+    const loader: string[] = []
+    for (let index = 0; index < process.execArgv.length; index += 1) {
+      const flag = process.execArgv[index]!
+      if ((flag === '--require' || flag === '--import') && index + 1 < process.execArgv.length)
+        loader.push(flag, process.execArgv[++index]!)
+    }
+    const child = spawn(
+      process.execPath,
+      [...loader, fileURLToPath(new URL('./install-main.ts', import.meta.url)), ...forwarded],
+      {
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          TSX_TSCONFIG_PATH: fileURLToPath(new URL('../tsconfig.json', import.meta.url))
+        }
+      }
     )
-    return 0
+    // A stop sent to the CLI alone (a timeout, an IDE, a CI step) reaches the install too.
+    const forward = (signal: NodeJS.Signals) => child.kill(signal)
+    process.on('SIGINT', forward).on('SIGTERM', forward)
+    const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>(
+      (resolve, reject) => {
+        child.once('error', reject)
+        child.once('exit', (exitCode, exitSignal) => resolve([exitCode, exitSignal]))
+      }
+    ).finally(() => process.off('SIGINT', forward).off('SIGTERM', forward))
+    if (signal) throw new Error(`The install process ended on signal ${signal}`)
+    return code ?? 1
   }
 
   if (command === 'review-manifest') {
@@ -167,7 +195,8 @@ async function main(argv: string[]): Promise<number> {
       booleanProperties: pairs('boolean', values.boolean),
       texts: pairs('text', values.text)
     }
-    // A batch that cannot be read is a broken invocation (exit 2), told apart from an entry that fails (exit 1).
+    // In batch mode exit 1 means only that an entry failed: a batch that cannot be read, a broken invocation and a
+    // configuration or library that cannot be used all exit 2 (see batchMode below).
     let batchEntries: unknown
     if (values.batch !== undefined) {
       let text: string
@@ -209,6 +238,7 @@ async function main(argv: string[]): Promise<number> {
     if (batchEntries !== undefined) {
       const batch = await resolveBatch(context, batchEntries)
       print(batch)
+      if ('errors' in batch) return 2
       return batch.ok ? 0 : 1
     }
     const result = await resolveComponent(context, input)
@@ -318,10 +348,16 @@ async function main(argv: string[]): Promise<number> {
   return 2
 }
 
+// A thrown error in batch mode (a misused flag, an unusable configuration) is a broken invocation, never the
+// exit 1 a caller reads as "an entry failed".
+const batchMode = process.argv
+  .slice(2)
+  .some((arg) => arg === '--batch' || arg.startsWith('--batch='))
+
 main(process.argv.slice(2)).then(
   (code) => process.exit(code),
   (error: unknown) => {
     process.stderr.write(`${errorText(error)}\n`)
-    process.exit(1)
+    process.exit(batchMode ? 2 : 1)
   }
 )

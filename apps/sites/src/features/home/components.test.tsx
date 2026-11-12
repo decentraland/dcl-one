@@ -43,14 +43,17 @@ describe("home sections", () => {
           actions={actions}
           mobile={{ title: "Anywhere", subtitle: "Mobile", store }}
         />
-        <ComeHangOut title="Come Hang Out" actions={actions} />
+        <ComeHangOut title="Come Hang Out" actions={actions} store={store} />
       </>,
     );
     expect(html.match(/Total Downloads: \+438K/g)).toHaveLength(2);
     expect(html.match(/viewBox="0 0 18 18"/g)).toHaveLength(2);
     expect(html).not.toContain("linearGradient");
-    expect(html).not.toContain("/download_success");
-    expect(html).toContain("Decentraland_installer.exe");
+    expect(html).toContain(
+      'href="/download_success?os=windows&amp;arch=amd64"',
+    );
+    expect(html).not.toContain("Decentraland_installer.exe");
+    expect(html).toContain("Download on the App Store");
   });
   it("does not invent event cards when the backend has none", () => {
     expect(

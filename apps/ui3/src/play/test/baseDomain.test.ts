@@ -47,7 +47,7 @@ describe('engineServiceOptions', () => {
 
   it('behind the gateway: every service by its gateway url, and no base domain the engine would refuse', async () => {
     const m = await load(true)
-    const { SERVICES } = await import('../engine/generated')
+    const { SERVICES } = await import('@explorer-core/engine/generated')
     const options = m.engineServiceOptions()
     expect(window.location.host).toContain(':') // a dev host with a port, like 127.0.0.1:5222
     expect(options.baseDomain).toBeUndefined()

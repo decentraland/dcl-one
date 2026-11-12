@@ -1,4 +1,5 @@
-import { rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
@@ -405,6 +406,53 @@ describe('resolveComponent', () => {
   })
 
   describe('when a component is identified by its set name without a capture', () => {
+    // A mapping that reads no variant property: nothing but the name can confirm it.
+    const noVariants = () =>
+      mappingSource()
+        .replace(/const kind = instance\.getEnum\('Kind', \{[\s\S]*?\}\)\n/, '')
+        .replace(/const disabled = [^\n]*\n/, '')
+        .replace('kind="${kind}"${disabled}', '')
+    const byName = async (name: string, componentNames?: Record<string, string>) => {
+      const { mappingRoot } = await library({ mappings: { 'Button.figma.ts': noVariants() } })
+      return resolveComponent(context(mappingRoot, { figmaSets: [], componentNames }), { name })
+    }
+
+    it('should name a mapped variant property the instance did not give', async () => {
+      const result = await named('Button', { Kind: 'Secondary' })
+
+      expect(result.warnings.find((w) => w.code === 'figma-identity-unverified')?.details).toEqual({
+        combinationChecked: false,
+        notGiven: ['Blocked']
+      })
+    })
+
+    // The nearest false positive: every mapped property given leaves nothing to name.
+    it('should name nothing when the instance gives every mapped variant property', async () => {
+      const result = await named('Button', { Kind: 'Primary', Blocked: 'No' })
+
+      expect(result.warnings.find((w) => w.code === 'figma-identity-unverified')?.details).toEqual({
+        combinationChecked: false,
+        notGiven: []
+      })
+    })
+
+    it('should refuse an alias of a mapping that reads no variant property', async () => {
+      const result = await byName('Component 1', { 'Component 1': 'Button' })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+      expect(!result.ok && result.errors[0]!.details).toMatchObject({
+        reason: 'name-unconfirmed',
+        name: 'Component 1'
+      })
+    })
+
+    // The nearest false positive: the mapping's own component name still resolves it.
+    it('should resolve the component name of a mapping that reads no variant property', async () => {
+      const result = await byName('Button', { 'Component 1': 'Button' })
+
+      expect(result.ok && result.resolved.usage).toBe('<Button >Label</Button>')
+    })
+
     const named = (name: string, variantProperties?: Record<string, string>, extra = {}) =>
       library().then(({ mappingRoot }) =>
         resolveComponent(context(mappingRoot, { figmaSets: [], ...extra }), {
@@ -938,15 +986,106 @@ describe('resolveComponent', () => {
       expect(result.warnings.map((w) => w.code)).not.toContain('accepted-limits')
     })
 
-    it('should fail closed on a registry with invalid limits', async () => {
+    it.each([
+      [
+        'invalid limits',
+        JSON.stringify({ components: [{ name: 'Button', limits: [{ id: 'x', text: '' }] }] })
+      ],
+      ['malformed JSON', '{"components": ['],
+      ['an entry object without a name', JSON.stringify({ components: [{ limits }] })]
+    ])(
+      'should fail closed on a registry with %s, with a coded diagnostic',
+      async (_label, text) => {
+        const { mappingRoot } = await library()
+        await writeFile(path.join(mappingRoot, 'promotion.json'), text)
+
+        const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+        expect(codes(result)).toEqual(['contract-incompatible'])
+        expect(!result.ok && result.errors[0]!.details).toMatchObject({
+          reason: 'component-registry'
+        })
+      }
+    )
+
+    it('should keep the identity code when the registry is invalid but the node is not identified', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(path.join(mappingRoot, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(mappingRoot, { figmaSets: [] }), {
+        nodeId: '8:8'
+      })
+
+      expect(codes(result)).toEqual(['identity-uncertain'])
+    })
+
+    it('should find the registry above a mapping root pointed at a subdirectory', async () => {
+      const { mappingRoot } = await library({ mappings: {} })
+      const sub = path.join(mappingRoot, 'Button')
+      await mkdir(sub)
+      await writeFile(path.join(sub, 'Button.figma.ts'), mappingSource())
+      await writeFile(
+        path.join(mappingRoot, 'promotion.json'),
+        JSON.stringify({ components: [{ name: 'Button', limits }] })
+      )
+
+      const result = await resolveComponent(context(sub, { figmaSets: [] }), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual(limits)
+    })
+
+    // The nearest false positive: a registry outside the library package is not the library's.
+    it('should not read a registry outside the library package', async () => {
+      // The package sits inside its own temporary directory, which holds the outside registry.
+      const outer = await mkdtemp(path.join(tmpdir(), 'dcl-figma-outer-'))
+      created.push(outer)
+      const { root } = await library()
+      const pkg = path.join(outer, 'pkg')
+      await rename(root, pkg)
+      await writeFile(path.join(outer, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(path.join(pkg, 'src')), { nodeId: '1:1' })
+
+      expect(result.ok && result.resolved.limits).toEqual([])
+    })
+
+    // The nearest false positive: the same outside registry is read once it is inside the package.
+    it('should read that registry once it is inside the package', async () => {
+      const { root, mappingRoot } = await library()
+      await writeFile(path.join(root, 'promotion.json'), '{')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(!result.ok && result.errors[0]!.message).toContain('promotion.json is not JSON')
+    })
+
+    it('should not quote the input of a registry that is not JSON', async () => {
+      const { mappingRoot } = await library()
+      await writeFile(path.join(mappingRoot, 'promotion.json'), '{"components": [ see https://x')
+
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(!result.ok && result.errors[0]!.message).toMatch(/promotion\.json is not JSON\.$/)
+      expect(JSON.stringify(result)).not.toContain('https://x')
+    })
+
+    it('should refuse a registry that names a component twice instead of keeping the later limits', async () => {
       const { mappingRoot } = await library()
       await writeFile(
         path.join(mappingRoot, 'promotion.json'),
-        JSON.stringify({ components: [{ name: 'Button', limits: [{ id: 'x', text: '' }] }] })
+        JSON.stringify({
+          components: [
+            { name: 'Button', limits: [{ id: 'a', text: 'First.' }] },
+            { name: 'Button', limits: [{ id: 'b', text: 'Second.' }] }
+          ]
+        })
       )
 
-      await expect(resolveComponent(context(mappingRoot), { nodeId: '1:1' })).rejects.toThrow(
-        'Invalid library component registry'
+      const result = await resolveComponent(context(mappingRoot), { nodeId: '1:1' })
+
+      expect(codes(result)).toEqual(['contract-incompatible'])
+      expect(!result.ok && result.errors[0]!.message).toContain(
+        'Duplicate component registry name: Button'
       )
     })
   })

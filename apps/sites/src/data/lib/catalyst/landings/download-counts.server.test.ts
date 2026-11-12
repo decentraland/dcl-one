@@ -95,10 +95,37 @@ describe("download aggregate refresh policy", () => {
     expect(await load()).toBe("+438K");
     now += 600000;
     expect(await load()).toBe("+438K");
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
     now += 29999;
     expect(await load()).toBe("+438K");
     expect(read).toHaveBeenCalledTimes(2);
     now += 1;
-    expect(await load()).toBe("+439K");
+    expect(await load()).toBe("+438K");
+    await vi.waitFor(async () => expect(await load()).toBe("+439K"));
+  });
+
+  it("serves a stale good total immediately while its refresh is pending", async () => {
+    let now = 1000;
+    let resolveRefresh: ((value: number | null) => void) | undefined;
+    const read = vi
+      .fn()
+      .mockResolvedValueOnce(438770)
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveRefresh = resolve;
+          }),
+      );
+    const load = createDownloadsLabelLoader(read, () => now);
+
+    expect(await load()).toBe("+438K");
+    now += 600000;
+    expect(await load()).toBe("+438K");
+    expect(read).toHaveBeenCalledTimes(2);
+
+    resolveRefresh?.(439000);
+    await vi.waitFor(async () => expect(await load()).toBe("+439K"));
   });
 });

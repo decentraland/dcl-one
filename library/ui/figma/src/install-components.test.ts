@@ -68,7 +68,7 @@ describe('when planning public components from verified installer inputs', () =>
     async ({ registry }) => {
       const read = vi.spyOn(context.source, 'getComponentPage')
       context.registry = registry as unknown as ComponentPlanContext['registry']
-      await expect(planComponents(context)).rejects.toThrow('Component registry')
+      await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
       expect(read).not.toHaveBeenCalled()
     }
   )
@@ -122,7 +122,7 @@ describe('when planning public components from verified installer inputs', () =>
     })
     it('should reject a component listed with both public and internal visibility', async () => {
       context.registry = { components: ['DemoNav'], internal: ['DemoNav'] }
-      await expect(planComponents(context)).rejects.toThrow('unique component names')
+      await expect(planComponents(context)).rejects.toThrow('Duplicate component registry name')
     })
     it('should reject an unknown internal component', async () => {
       context.registry = { components: [], internal: ['Missing'] }
@@ -130,7 +130,7 @@ describe('when planning public components from verified installer inputs', () =>
     })
     it('should reject malformed internal names instead of omitting them', async () => {
       context.registry = { components: [], internal: 'DemoNav' as unknown as string[] }
-      await expect(planComponents(context)).rejects.toThrow('public and internal name lists')
+      await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
     })
   })
 
@@ -220,7 +220,7 @@ describe('when planning public components from verified installer inputs', () =>
   it.each([
     {
       components: ['DemoNav', 'DemoNav'],
-      error: 'Component registry must contain unique component names only'
+      error: 'Invalid component registry: Duplicate component registry name: DemoNav'
     },
     { components: ['../DemoNav'], error: 'Invalid generated TypeScript identifier' },
     { components: ['3D Card'], error: 'Invalid generated TypeScript identifier' },
@@ -256,6 +256,32 @@ describe('when planning public components from verified installer inputs', () =>
     })
   })
 
+  // A public component with accepted limits whose spec left the capture: the plan stops instead of writing the
+  // registry back without that component and its limits.
+  it('should refuse, not drop the limits, when a limited component is missing from the capture', async () => {
+    context.registry = {
+      components: ['DemoNav', { name: 'Gone', limits: [{ id: 'a', text: 'Pending.' }] }]
+    }
+
+    await expect(planComponents(context)).rejects.toThrow(
+      'Unknown component or missing dependency: Gone'
+    )
+  })
+
+  it.each([
+    ['a limit text with a bidi override', 'Logo \u202Eis pending.'],
+    ['a limit text with a line separator', 'Logo\u2028pending.'],
+    ['a limit text with a www link', 'See www.example.org.'],
+    ['a limit text with a javascript link', 'Click javascript:alert(1).'],
+    ['a limit text with markup', 'Logo <img> pending.']
+  ])('should report %s under the neutral registry prefix', async (_label, text) => {
+    context.registry = { components: [{ name: 'DemoNav', limits: [{ id: 'a', text }] }] }
+
+    await expect(planComponents(context)).rejects.toThrow(
+      'Invalid component registry: Invalid or duplicate accepted limit of component DemoNav'
+    )
+  })
+
   it('should refuse limits on an internal name', async () => {
     context.registry = {
       components: [],
@@ -269,7 +295,7 @@ describe('when planning public components from verified installer inputs', () =>
       components: ['DemoNav'],
       files: {}
     } as ComponentPlanContext['registry']
-    await expect(planComponents(context)).rejects.toThrow('public and internal name lists only')
+    await expect(planComponents(context)).rejects.toThrow('Invalid component registry: ')
   })
 
   it('should consume a live source supplied by the core without selecting a fallback', async () => {
@@ -360,27 +386,31 @@ describe('when extracting CSS Module declarations through the in-memory styleshe
     config = await resolveConfig({ configFile: false, css: { transformer: 'postcss' } }, 'build')
   })
 
-  describe.each(['NavBar/NavBar.module.css', 'runtime/figma-module-runtime.module.css'])(
-    'and reading the committed %s stylesheet',
-    (file) => {
-      let absolute: string
-      let content: string
-      beforeEach(async () => {
-        absolute = fileURLToPath(new URL('../../components/' + file, import.meta.url))
-        content = await readFile(absolute, 'utf8')
-        files.set(file, Buffer.from(content))
-        foundations = await readFile(
-          new URL('../../foundations/typography/text-styles.module.css', import.meta.url),
-          'utf8'
-        )
-      })
-      it('should declare exactly the keys Vite exports', async () => {
-        expect(keys((await cssDeclarations(files, foundations)).get(file + '.d.ts')!)).toEqual(
-          Object.keys((await preprocessCSS(content, absolute, config)).modules ?? {}).sort()
-        )
-      })
-    }
-  )
+  // The hand-written NavBar module and the generated runtime module, which now ships only with the Review.
+  describe.each([
+    ['NavBar/NavBar.module.css', '../../components/NavBar/NavBar.module.css'],
+    [
+      'runtime/figma-module-runtime.module.css',
+      '../review/src/components/figma-module-runtime.module.css'
+    ]
+  ])('and reading the committed %s stylesheet from %s', (file, source) => {
+    let absolute: string
+    let content: string
+    beforeEach(async () => {
+      absolute = fileURLToPath(new URL(source, import.meta.url))
+      content = await readFile(absolute, 'utf8')
+      files.set(file, Buffer.from(content))
+      foundations = await readFile(
+        new URL('../../foundations/typography/text-styles.module.css', import.meta.url),
+        'utf8'
+      )
+    })
+    it('should declare exactly the keys Vite exports', async () => {
+      expect(keys((await cssDeclarations(files, foundations)).get(file + '.d.ts')!)).toEqual(
+        Object.keys((await preprocessCSS(content, absolute, config)).modules ?? {}).sort()
+      )
+    })
+  })
 
   describe.each([
     ':global(.global) {} .local :global .outside {} :local(.explicit) {}',

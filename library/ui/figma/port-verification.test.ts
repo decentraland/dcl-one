@@ -727,6 +727,45 @@ describe('when printing the port input hash', () => {
     expect(out.trim()).toBe(expected)
   })
 
+  it('should keep stdout for the hash and send scan problems to stderr', async () => {
+    await put(
+      'library/ui/figma/a.ts',
+      "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
+    )
+    commit('reads an exempt file')
+    vi.restoreAllMocks()
+    let stdout = ''
+    let stderr = ''
+    vi.spyOn(process.stdout, 'write').mockImplementation(
+      (chunk) => ((stdout += String(chunk)), true)
+    )
+    vi.spyOn(process.stderr, 'write').mockImplementation(
+      (chunk) => ((stderr += String(chunk)), true)
+    )
+
+    expect(main(['--print-hash'], repo)).toBe(1)
+    expect(stdout).toBe('')
+    expect(stderr).toContain('names the exempt path "helpers.spec.mjs"')
+  })
+
+  // The nearest false positive: without --print-hash the check still reports on stdout, as CI reads it.
+  it('should still report scan problems on stdout for the check itself', async () => {
+    await put(
+      'library/ui/figma/a.ts',
+      "export const notes = new URL('helpers.spec.mjs', import.meta.url)\n"
+    )
+    commit('reads an exempt file')
+    vi.restoreAllMocks()
+    let stdout = ''
+    vi.spyOn(process.stdout, 'write').mockImplementation(
+      (chunk) => ((stdout += String(chunk)), true)
+    )
+    vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+
+    expect(run(base)).toBe(1)
+    expect(stdout).toContain('names the exempt path "helpers.spec.mjs"')
+  })
+
   it('should exit non-zero instead of printing text for a head with no lock', async () => {
     await rm(path.join(repo, LOCK))
     commit('no lock')

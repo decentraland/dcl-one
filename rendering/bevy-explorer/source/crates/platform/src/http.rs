@@ -180,6 +180,10 @@ impl TracedJsonResponse {
         self.response.status()
     }
 
+    pub fn headers(&self) -> &reqwest::header::HeaderMap {
+        self.response.headers()
+    }
+
     /// The caller deliberately stops at the HTTP status, without consuming the body.
     pub fn discard(self) -> reqwest::StatusCode {
         if let Some(mut trace) = self.trace {

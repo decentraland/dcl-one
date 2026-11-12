@@ -31,7 +31,7 @@ gen-tests = []
 tracy = ["bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
-livekit = ["comms/livekit", "system_ui/livekit"]
+livekit = ["comms/livekit", "system_ui/livekit", "ban_block/livekit"]
 ffmpeg = ["av/ffmpeg"]
 social = ["social/social"]
 # The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
@@ -99,6 +99,7 @@ common = { path = "crates/common" }
 assets = { path = "crates/assets" }
 avatar = { path = "crates/avatar" }
 comms = { path = "crates/comms" }
+ban_block = { path = "crates/ban_block" }
 input_manager = { path = "crates/input_manager" }
 ipfs = { path = "crates/ipfs" }
 system_ui = { path = "crates/system_ui" }
@@ -176,6 +177,7 @@ bevy_color = { version = "0.16.1", default-features = false, features = [
 bevy_transform = { version = "0.16.1", default-features = false }
 bevy_ecs = { version = "0.16.1", default-features = false, features = ["std"] }
 disqualified = "1.0"
+nonmax = "0.5"
 wgpu = "24"
 # Match wgpu-hal's ash/windows versions: the GPU memory queries use its native handles.
 ash = { version = "0.38", default-features = false }
@@ -401,6 +403,7 @@ tween = { workspace = true }
 scene_material = { workspace = true }
 world_ui = { workspace = true }
 collectibles = { workspace = true }
+ban_block = { workspace = true }
 social = { workspace = true }
 imposters = { workspace = true }
 system_bridge = { workspace = true }
