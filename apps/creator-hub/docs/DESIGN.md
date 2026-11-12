@@ -2634,7 +2634,7 @@ The assets panel docked under the canvas: a column, Charcoal, padding 10 / 10 / 
 | Rule | — | — | 1px, 314 wide (asset `Div`; its colour is not readable from the export: ✱ White 10 (user decision)) | — | — | — | — | `--palette-whiteTransparent-subtle` | decorative | — |
 | Scrollbar | — | handle Black 40 | 1px White 60 | 100 | — | — | 10 wide, at right 10 / top 10, padding-bottom 300 | `--palette-blackTransparent-blurry`, `--palette-whiteTransparent-backdrop` | border 6.54:1 | — |
 | any tile | ✱ focus | not drawn: the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision) | — | — | — | — | — | `--focus-ring` | — | `:focus-visible` ring |
-| any tile | ✱ pressed | not drawn: awaiting the user (Open items) | — | — | — | — | — | — | — | — |
+| any tile | ✱ pressed | the tile's Hover look: White 10 fill, 1px White 60, Snow glyph and label (user decision) | — | — | — | — | — | `--palette-whiteTransparent-subtle`, `--palette-whiteTransparent-backdrop`, `--palette-neutral-softWhite` | — | — |
 
 Icons: `FullScreen`, `Container`, `Image`, `Label`, `Button`, `Input`, `Dropdown`, `Prefab` in `Icons/figma/svg`.
 
@@ -2688,7 +2688,7 @@ Field states are Input's (UI Editor — Components).
 | On | active chip ("Default") | Blue Dark 3 `#243852` | 6 | Inter 400 12 Snow, centred | none | `ToggleLabel`: h 20, padding 2 / 6, gap 2 | `--palette-system-blueDark3` | Snow 11.61:1 |
 | On | inactive chips ("Hover", "Pressed", "Selected") | none | 6 | Inter 400 12 Silver, centred | none | as above | `--palette-neutral-gray3` | 5.85:1 |
 | On | ✱ chip hover | White 10 fill, as the Design System's button-states set draws Hover (`rounded-button-contained` `20705:12367`; user decision) | — | — | — | — | `--palette-whiteTransparent-subtle` | — |
-| On | ✱ chip focus | not drawn: awaiting the user (Open items) | — | — | — | — | — | — |
+| On | ✱ chip focus | the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision) | — | — | — | — | `--focus-ring` | — |
 | On | ✱ active chip in code (user decision, see UI Editor Buttons) | code paints the active chip Blue Dark 2 and Blue Dark 3 on hover | — | — | — | — | `--palette-system-blueDark2`, `--palette-system-blueDark3` | — |
 
 A11y: the chips are a `role="tablist"` ✱ with `aria-selected` on the active state.
@@ -2706,7 +2706,7 @@ Figma draws the Desktop / Mobile pair as `ToggleLabel` chips (20 tall, 6px radiu
 | On | Desktop chip (selected) | Blue Dark 3 `#243852` | 6 | "Desktop" Inter 400 12 Snow | `Desktop` (small) 16, Snow | row, gap 2, h 20, padding 2 / 6 | `--palette-system-blueDark3` | Snow 11.61:1 |
 | On | Mobile chip | none | 6 | "Mobile" Inter 400 12 Silver | `Mobile` (small) 16, drawn White `#FFFFFF` (the label is Silver) | as Desktop | `--palette-neutral-gray3` | label 5.85:1 |
 | On | ✱ chip hover | White 10 fill, as the Design System's button-states set draws Hover (`20705:12367`; user decision) | — | — | — | — | `--palette-whiteTransparent-subtle` | — |
-| On | ✱ chip focus | not drawn: awaiting the user (Open items) | — | — | — | — | — | — |
+| On | ✱ chip focus | the 1px inset Snow `--focus-ring` on `:focus-visible` (user decision) | — | — | — | — | `--focus-ring` | — |
 
 **Decisions** (user decisions; the record for this set, so grep here before asking again):
 
@@ -2973,7 +2973,7 @@ In the panels the fields take these variants: X / Y (Position), Z-Index, W / H (
 
 **Resize W / H** (Dropdown with a glyph): `Width` / `Height` cells, flex 1 each, gap 6, h 26, padding 6 / 8, gap 8: the "W" / "H" letter glyph (Cloudy Sky, 16 box), the value with its mode word ("100", "100 Fill", "100 Hug") in Gray, `ArrowDown` 10 Silver; the `ScaleToggle` 26 × 26 follows on every node type.
 
-**No units**: the UI Editor has no unit control. Values are px, and a field shows the bare number; sizing modes go through the Resize control (user decision). **Position** (Container panel `I3493:163451;21067:24081;21028:16554`): the "Position" subtitle (Inter 400 12 Gray + `HelpCTA` 12), then one row, gap 6, h 26, of two flex-1 cells `PosX` / `PosY` (Onix, 6px radius, padding 6 / 24 / 6 / 8, gap 8): the "X" / "Y" letter (Inter 400 12 uppercase Cloudy Sky, 16 box) and the value (Inter 400 14 Gray, drawn "100"); nothing follows the cells. **Resize** (`I3493:163451;21067:24247;21028:16579`): the "Resize" subtitle, then `Width` / `Height` cells (flex 1, gap 6) and the `ScaleToggle`; the open list of resize modes is not drawn in either file (awaiting the user, Open items).
+**Units** ✱ (user decision; Figma's cells draw only the bare number, so the unit control is the code's): fields keep the px / % behaviour so existing scenes keep working. The unit control sits right after the number, inside the field: its value ("px" or "%") and its chevron in Silver (`--palette-neutral-gray3`, 4.59:1 on Onix); it hugs its value, and its open list is at least as wide as its widest option. The cell is otherwise as drawn: Onix, 26 tall, the letter in Cloudy Sky, the value Inter 400 14 Gray, padding as drawn. A `%` value shows as typed, with "%" in the unit control, and stays editable; nothing converts it. **Position** (Container panel `I3493:163451;21067:24081;21028:16554`): the "Position" subtitle (Inter 400 12 Gray + `HelpCTA` 12), then one row, gap 6, h 26, of two flex-1 cells `PosX` / `PosY` (Onix, 6px radius, padding 6 / 24 / 6 / 8, gap 8): the "X" / "Y" letter (Inter 400 12 uppercase Cloudy Sky, 16 box), the value (Inter 400 14 Gray, drawn "100"), then the Silver unit control ✱. **Resize** (`I3493:163451;21067:24247;21028:16579`): the "Resize" subtitle, then `Width` / `Height` cells (flex 1, gap 6) and the `ScaleToggle`; a cell keeps its mode word as drawn ("100 Fill"), and a fixed size shows its unit in the same Silver unit control ✱. The open list of resize modes is not drawn in either file; ✱ it is the code's modes in the code's order, restyled to the drawn Dropdown cells: "Fixed", "Percent", "Hug", "Fill" (`packages/inspector/src/components/UIDesigner/RightPanel/PropertyPanel/resize-modes.ts:18`, labels `:20`–`:25`; "Fill" is offered only for an in-flow node, `:65`–`:71`) (user decision).
 
 A11y: numeric fields are `<input inputmode="decimal" aria-label="<field>">`, the letter glyph `aria-hidden`; Dropdown is `role="combobox"` with `aria-expanded` (the ArrowUp look); Blocked is `aria-disabled="true"` with the bound value in a tooltip ✱; the `AddVariant` on hover is also reachable by keyboard (focus within the field shows it) ✱.
 
@@ -2981,7 +2981,7 @@ A11y: numeric fields are `<input inputmode="decimal" aria-label="<field>">`, the
 
 | Topic | Rule |
 | --- | --- |
-| Units | No unit control: values are px; sizing goes through Resize (user decision). |
+| Units | ✱ Fields keep px / %. The unit control sits right after the number inside the field, its value and chevron Silver; it hugs its value, and its open list is at least as wide as its widest option; a `%` value shows as typed and stays editable, never converted (user decision; Figma draws no unit). |
 | Disabled Dropdown | ✱ Takes the Input's Blocked state: value White 20, no border (user decision). |
 
 ### NodeTypeHierarchy (UI Editor — Components)
@@ -3152,7 +3152,7 @@ Section: full width, h 28, row, gap 10, padding 2 / 10, 1px White 10 top and bot
 | Section | Default (open) | none | `ArrowDown` 12, White 40 | `--palette-whiteTransparent-subtle` (rules), `--palette-whiteTransparent-blurry` (arrow) | title 10.07:1; arrow 3.74:1 | `<button aria-expanded="true">` ✱ |
 | Section | Hover | White 5 `rgba(255,255,255,0.05)` | `ArrowDown` 12, White 40 | `--palette-whiteTransparent-faint` | fill vs panel 1.16:1; title 8.71:1 | — |
 | Section | Selected (collapsed) | none | `ArrowRight` 12, White 20 | `--palette-whiteTransparent-soft` | **arrow 1.91:1 misses 3:1** | `aria-expanded="false"` |
-| Section | ✱ collapsed + hover, focus | collapsed + hover not drawn: awaiting the user (Open items); focus is the 1px inset Snow `--focus-ring` (user decision) | — | `--ui-designer-control-accent` | — | — |
+| Section | ✱ collapsed + hover, focus | collapsed + hover: White 5 fill with the collapsed White 20 `ArrowRight`, mirroring AccordionEntry's collapsed + hover (`20932:3943`) (user decision); focus is the 1px inset Snow `--focus-ring` (user decision) | — | `--ui-designer-control-accent` | — | — |
 | Property row | Default | none; label "Property Name" Inter 400 12 Gray + `HelpCTA` 12; `AddCTA` 20 × 20, radius 6, no fill, Silver plus | `Plus` 12 inset 20%, Silver | `--palette-neutral-gray4`, `--palette-neutral-gray3` | label 10.07:1; plus 5.85:1 | the `+` is `<button aria-label="Add <property>">` ✱ |
 | Property row | Hover | the whole row White 10 (no radius); `AddCTA` no fill | Silver plus | `--palette-whiteTransparent-subtle` | label 7.43:1; plus 4.31:1 | — |
 | Property row | Selected Hover (plus hovered) | row White 10; `AddCTA` White 10 on top | Silver plus | `--palette-whiteTransparent-subtle` | plus ≥ 4.31:1 | — |
@@ -3297,7 +3297,7 @@ It sits in the Flow `ToggleTabs`' `Slot2`, after the five direction cells. Singl
 | Off / No / No | none | Silver | 5.85:1; `aria-pressed="false"`, name "Wrap" | `--ui-designer-text-muted` |
 | Off / Yes / No | White 10, radius 6 | Silver | 4.31:1 | `--palette-whiteTransparent-subtle` |
 | On / No / No | Blue Dark 2, radius 6 | Snow | `aria-pressed="true"`; 8.61:1 | `--palette-system-blueDark2` |
-| On / Yes / No | ✱ not drawn: the board's Selected Hover cell `3506:35501` shows the Off / Yes look; On + hover is awaiting the user (Open items) | — | 11.61:1 | `--palette-system-blueDark3` |
+| On / Yes / No | ✱ not drawn: the board's Selected Hover cell `3506:35501` shows the Off / Yes look; On + hover is Blue Dark 3 with a Snow glyph, as ScaleToggle On / Yes `3506:35612` and ViewModeToggle `3897:31503` draw it (user decision) | — | 11.61:1 | `--palette-system-blueDark3` |
 | Off / No / Yes (Blocked) | none | White 20 | 1.91:1 (disabled exemption); `aria-disabled="true"` with the reason (no flex flow) ✱; **✱ Blocked × Selected is not drawn** | `--palette-whiteTransparent-soft` |
 
 ### ToggleTab (UI Editor Buttons)
@@ -4672,7 +4672,6 @@ Code that doesn't follow Figma or these conventions yet. Every row is open: no P
 | LeftPanel2D (UI Editor) | The Search field draws no fill or border at rest, so its hit area is unbounded until hover (see SearchBar). |
 | InputAction (UI Editor) | No focus state; White 40 "None" on White 8 is 3.17:1. |
 | UI Editor contrast | Known contrast misses kept as drawn (user decision), for design to revisit: the White 40 resting tab label 3.84:1 on Shadow; the White 40 search placeholders 3.74:1 in the rail and 3.39:1 in the Nodes menu; the Cloudy Sky empty-list lines 3.09:1; the Cloudy Sky field placeholders 2.43:1 on Onix; the White 20 collapsed section arrow 1.91:1. |
-| UI Editor, undrawn states awaiting the user | Interactions and Devices chip focus; PropertiesSections collapsed + hover; WrapToggle On + hover; node-tile pressed; the Resize control's open list of modes (their labels and order). |
 | Header (UI Editor) | The Toggle checkboxes are SVG assets, not Checkbox instances. |
 | Right Panel (3D Editor Bottom Panel) | Title typo "Select and asset to preview it here"; Cloudy Sky 12px body is 3.09:1 (fails 4.5:1); the set frame is 340 × 1096 while each variant is 300 × 518. |
 | Collapse/Expand Panel (3D Editor Bottom Panel) | Variant names inverted (`Selected` = no fill); two sizes (32 in the header, 24 in the name row) with no variant for the small one. |
