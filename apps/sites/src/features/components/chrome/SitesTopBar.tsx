@@ -69,6 +69,7 @@ export default function SitesTopBar({
   accountControl,
   balances,
   onNavigate,
+  transparent = false,
 }: DclTopBarProps) {
   const NavigationLink = useMemo(
     () =>
@@ -130,6 +131,7 @@ export default function SitesTopBar({
       <header aria-label="Decentraland">
         <NavBar
           sections={sitesNavSections(active, pathname)}
+          surface={transparent ? "overlay" : "solid"}
           linkComponent={NavigationLink}
           {...(identity
             ? {
@@ -170,16 +172,14 @@ export default function SitesTopBar({
                 ? "error"
                 : "ready"
           }
-          rows={(rows ?? [])
-            .slice(0, 10)
-            .map((row) => ({
-              id: row.id,
-              title: notificationTitle(row),
-              description: notificationBody(row),
-              href: notificationLink(row) ?? undefined,
-              time: relativeTime(row.timestamp, Date.now()),
-              unread: !row.read,
-            }))}
+          rows={(rows ?? []).slice(0, 10).map((row) => ({
+            id: row.id,
+            title: notificationTitle(row),
+            description: notificationBody(row),
+            href: notificationLink(row) ?? undefined,
+            time: relativeTime(row.timestamp, Date.now()),
+            unread: !row.read,
+          }))}
           Link={NavigationLink}
         />
       ) : null}

@@ -116,9 +116,11 @@ it("keeps a legacy overlay flag in flow unless the native header surface is expl
     const ordinary = shell(<SitesChrome active={active} overlayNav>Page</SitesChrome>);
     expect(ordinary).toContain('data-header-layout="native"');
     expect(ordinary).not.toContain('data-header-overlay');
+    expect(ordinary).toContain('data-surface="solid"');
   }
   const home = shell(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
   expect(home).toContain('data-header-overlay="true"');
+  expect(home).toContain('data-surface="overlay"');
   const fallback = renderToString(<SitesChrome active="play" overlayNav headerSurface="overlay">Hero</SitesChrome>);
   expect(fallback).not.toContain('data-header-overlay');
 });
