@@ -1,0 +1,124 @@
+import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import AccountMenu from "./AccountMenu";
+
+describe("when AccountMenu shares keyboard dismissal with an outer dialog", () => {
+  let user: ReturnType<typeof userEvent.setup>;
+  let outerEscape: ReturnType<typeof vi.fn<() => void>>;
+  let onDocumentKey: (event: KeyboardEvent) => void;
+  beforeEach(() => {
+    user = userEvent.setup();
+    outerEscape = vi.fn();
+    onDocumentKey = (event) => {
+      if (event.key === "Escape" && !event.defaultPrevented) outerEscape();
+    };
+    document.addEventListener("keydown", onDocumentKey);
+  });
+  afterEach(() => {
+    document.removeEventListener("keydown", onDocumentKey);
+    vi.restoreAllMocks();
+  });
+
+  it.each(["trigger", "item"])(
+    "should consume only the child Escape from the focused %s",
+    async (from) => {
+      render(
+        <AccountMenu links={[{ label: "Profile", href: "/profile" }]}>
+          Account
+        </AccountMenu>,
+      );
+      const trigger = screen.getByRole("button", { name: "My account" });
+      await user.click(trigger);
+      if (from === "item") await user.tab();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+      expect(outerEscape).not.toHaveBeenCalled();
+      await user.keyboard("{Escape}");
+      expect(outerEscape).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("should close after Tab leaves its root without trapping or restoring focus", async () => {
+    render(
+      <>
+        <AccountMenu links={[{ label: "Profile", href: "/profile" }]}>
+          Account
+        </AccountMenu>
+        <button>After menu</button>
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "My account" }));
+    await user.tab();
+    expect(screen.getByRole("menuitem", { name: "Profile" })).toHaveFocus();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "After menu" })).toHaveFocus();
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  });
+
+  it("should close on outside click without stealing the destination focus", async () => {
+    render(
+      <>
+        <AccountMenu>Account</AccountMenu>
+        <button>Outside</button>
+      </>,
+    );
+    await user.click(screen.getByRole("button", { name: "My account" }));
+    await user.click(screen.getByRole("button", { name: "Outside" }));
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Outside" })).toHaveFocus();
+  });
+
+  it("should close on lost focus with no related target without claiming an outer Escape", async () => {
+    render(<AccountMenu>Account</AccountMenu>);
+    const trigger = screen.getByRole("button", { name: "My account" });
+    await user.click(trigger);
+    fireEvent.blur(trigger, { relatedTarget: null });
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(outerEscape).not.toHaveBeenCalled();
+  });
+
+  it("should retain app navigation without restoring the account trigger", async () => {
+    const navigate = vi.fn();
+    render(
+      <AccountMenu
+        onNavigate={navigate}
+        links={[{ label: "Profile", href: "/profile" }]}
+      >
+        Account
+      </AccountMenu>,
+    );
+    const trigger = screen.getByRole("button", { name: "My account" });
+    await user.click(trigger);
+    await user.click(screen.getByRole("menuitem", { name: "Profile" }));
+    expect(navigate).toHaveBeenCalledWith("/profile");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).not.toHaveFocus();
+  });
+
+  it.each(["switch", "signOut"])(
+    "should retain the %s callback without restoring focus",
+    async (action) => {
+      const callback = vi.fn();
+      render(
+        <AccountMenu
+          onSwitchAccount={action === "switch" ? callback : undefined}
+          onSignOut={action === "signOut" ? callback : undefined}
+        >
+          Account
+        </AccountMenu>,
+      );
+      const trigger = screen.getByRole("button", { name: "My account" });
+      await user.click(trigger);
+      await user.click(
+        screen.getByRole("menuitem", {
+          name: action === "switch" ? "Switch account" : "Log out",
+        }),
+      );
+      expect(callback).toHaveBeenCalledOnce();
+      expect(trigger).not.toHaveFocus();
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    },
+  );
+});
