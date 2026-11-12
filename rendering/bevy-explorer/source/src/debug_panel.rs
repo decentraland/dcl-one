@@ -156,14 +156,18 @@ fn debug_memory(
             "abundance": t.abundance_mib.round(), "warning": t.warning_mib.round(), "full": t.full_mib.round()
         }) }),
         "refusal": {
-            "refusing": refusal.is_some_and(|r| r.refusing),
-            "refusedScenes": refused_scenes.map_or(0, |n| n.0),
-            "refusedAvatars": refused_avatars.map_or(0, |n| n.0),
-            "heldFrom": ipfs.and_then(|ipfs| ipfs.downloads_held_from()).map_or("none".to_owned(), |tier| format!("{tier:?}")),
+            "refusing": refusal.map(|r| r.refusing),
+            "refusedScenes": refused_scenes.map(|n| n.0),
+            "refusedAvatars": refused_avatars.map(|n| n.0),
+            "heldFrom": ipfs.map(|ipfs| ipfs.downloads_held_from().map_or("none".to_owned(), |tier| format!("{tier:?}"))),
         },
         "unavailable": {
             "used":ram_reason, "capacity":ram_reason, "cap":ram_reason,
             "pressure":ram_reason, "thresholds":ram_reason,
+            "refusal.refusing": "The memory status plugin is not running.",
+            "refusal.refusedScenes": "The scene lifecycle is not running.",
+            "refusal.refusedAvatars": "The avatar plugin is not running.",
+            "refusal.heldFrom": "The content client is not running.",
             "gpu":match gpu.as_deref() {
                 Some(GpuMemoryBudget::NotApplicable) => "This platform does not expose a GPU memory budget.",
                 _ => "The graphics driver has not provided a GPU memory budget.",

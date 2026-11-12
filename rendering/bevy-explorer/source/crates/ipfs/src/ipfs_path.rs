@@ -410,12 +410,15 @@ where
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
 pub enum IpfsKey {
     BaseUrl,
+    /// the hash a request without a scene of its own queues under in the request slots
+    SlotOwner,
 }
 
 impl AsRef<Path> for IpfsKey {
     fn as_ref(&self) -> &Path {
         match self {
             IpfsKey::BaseUrl => Path::new("&baseUrl"),
+            IpfsKey::SlotOwner => Path::new("&slotOwner"),
         }
     }
 }
@@ -426,6 +429,7 @@ impl TryFrom<&str> for IpfsKey {
     fn try_from(key: &str) -> Result<Self, Self::Error> {
         match key {
             "&baseUrl" => Ok(Self::BaseUrl),
+            "&slotOwner" => Ok(Self::SlotOwner),
             other => anyhow::bail!("unrecognised ipfs key `{other}`"),
         }
     }
@@ -650,6 +654,12 @@ impl IpfsPath {
             | IpfsType::UrlUncached { .. }
             | IpfsType::IndexDb { .. } => None,
         }
+    }
+
+    /// The hash the request queues under in the request slots: the scene the file belongs to,
+    /// else the owner the path names ([`IpfsKey::SlotOwner`]).
+    pub fn slot_owner(&self) -> Option<&str> {
+        self.scene_hash().or_else(|| self.get(&IpfsKey::SlotOwner))
     }
 
     pub fn content_path(&self) -> Option<&str> {

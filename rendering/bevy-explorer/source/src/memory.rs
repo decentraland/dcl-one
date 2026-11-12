@@ -1,23 +1,41 @@
 use bevy::prelude::*;
-use common::memory::{LoadRefusal, MemorySample, MemoryStatus};
+use common::{
+    memory::{LoadRefusal, MemorySample, MemoryStatus},
+    partition::Tier,
+};
+use ipfs::IpfsResource;
 use std::time::Duration;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 
-/// Refuse new loads while engine memory is full; see [`LoadRefusal::next`].
-fn update_load_refusal(status: Res<MemoryStatus>, mut refusal: ResMut<LoadRefusal>) {
+/// The first tier the request slots hold while engine memory is full: only the player's scenes
+/// and the player's own avatar and emotes (`Tier::Active`) keep downloading.
+const HELD_FROM: Tier = Tier::Avatar;
+
+/// Refuse new loads while engine memory is full; see [`LoadRefusal::next`]. The request slots
+/// hold every download but the player's for as long as the refusal lasts.
+fn update_load_refusal(
+    status: Res<MemoryStatus>,
+    mut refusal: ResMut<LoadRefusal>,
+    ipfs: Option<Res<IpfsResource>>,
+) {
     let next = refusal.next(status.reading());
-    if next != *refusal {
-        match status.reading() {
-            Some(reading) if next.refusing => warn!(
-                "engine memory full ({} of {} MiB): refusing new scenes, new avatars and low-priority downloads",
-                reading.used_bytes >> 20,
-                reading.cap_mib
-            ),
-            _ => info!("engine memory below the warning threshold: admitting loads again"),
-        }
-        *refusal = next;
+    if next == *refusal {
+        return;
     }
+    match status.reading() {
+        Some(reading) if next.refusing => warn!(
+            "engine memory full ({} of {} MiB): refusing new scenes, new avatars and every download but the player's",
+            reading.used_bytes >> 20,
+            reading.cap_mib
+        ),
+        Some(_) => info!("engine memory below the warning threshold: admitting loads again"),
+        None => info!("engine memory reading unavailable: admitting loads again"),
+    }
+    if let Some(ipfs) = ipfs {
+        ipfs.hold_downloads_from(next.refusing.then_some(HELD_FROM));
+    }
+    *refusal = next;
 }
 
 pub(crate) struct MemoryStatusPlugin;

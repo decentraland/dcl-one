@@ -144,10 +144,16 @@ impl DownloadReaders {
         let readers = state.readers.get_mut(&self.id)?;
         let count = readers.owners.entry(owner.clone()).or_default();
         *count += 1;
-        if *count == 1 {
+        let joined = *count == 1 && readers.queued.is_some();
+        if joined {
             if let Some(seq) = readers.queued {
                 state.join(seq, owner.clone());
             }
+        }
+        drop(state);
+        // the new owner may rank ahead of a hold the ticket waited behind
+        if joined {
+            self.gate.grant();
         }
         Some(Registration {
             readers: self.clone(),
@@ -371,10 +377,14 @@ impl PriorityGate {
     }
 
     /// An entity that owns `hash` (a scene root, an avatar wearing it) has appeared: the hash
-    /// ranks by `key`, or by the best key of its holders when it is held already.
-    pub fn register(&self, hash: &str, key: LoadPriority) {
+    /// ranks by `key`, or by the best key of its holders when it is held already. Registering
+    /// can lift a waiting request out of a hold (a departed or unregistered hash gains an
+    /// owner, or a better one), so while a hold is on, a hash with requests waiting is offered a
+    /// free slot at once.
+    pub fn register(self: &Arc<Self>, hash: &str, key: LoadPriority) {
         let mut state = self.state();
         state.departed.remove(hash);
+        let released = state.held_from.is_some() && state.scenes.contains_key(hash);
         match state.keys.get_mut(hash) {
             Some(entry) => {
                 entry.holders += 1;
@@ -390,6 +400,10 @@ impl PriorityGate {
                     },
                 );
             }
+        }
+        drop(state);
+        if released {
+            self.grant();
         }
     }
 
@@ -413,19 +427,36 @@ impl PriorityGate {
 
     /// A frame's keys, written in place: the first write of a hash replaces its key, later
     /// writes in the same publish take the best, and a hash nobody registered is ignored.
-    pub fn publish<'a>(&self, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
+    /// A key can leave the held tiers (the player walks into a neighbour, which rises to the
+    /// player's scenes); while a hold is on and requests wait under such a hash, a free slot is
+    /// offered at once.
+    pub fn publish<'a>(self: &Arc<Self>, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
         let mut state = self.state();
         state.generation += 1;
         let generation = state.generation;
+        let held_from = state.held_from;
+        let held = |key: &LoadPriority| held_from.is_some_and(|tier| key.tier >= tier);
+        let mut released = false;
+        let GateState {
+            keys: entries,
+            scenes,
+            ..
+        } = &mut *state;
         for (hash, key) in keys {
-            if let Some(entry) = state.keys.get_mut(hash) {
+            if let Some(entry) = entries.get_mut(hash) {
+                let was_held = held(&entry.key);
                 if entry.generation == generation {
                     entry.key = entry.key.min(key);
                 } else {
                     entry.key = key;
                     entry.generation = generation;
                 }
+                released |= was_held && !held(&entry.key) && scenes.contains_key(hash);
             }
+        }
+        drop(state);
+        if released {
+            self.grant();
         }
     }
 
