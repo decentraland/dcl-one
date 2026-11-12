@@ -70,13 +70,20 @@ CREATE SCHEMA worlds;
 -- refresh, PUT /settings, access edits) under the row lock so a settings
 -- consumer can refuse an out-of-order update. A mirrored row takes its
 -- source's counter, or its own plus one when a copied setting changes and the
--- source's is not ahead, so it never goes back.
+-- source's is not ahead, so it never goes back. `access_set_here` is set by
+-- the owner's access writes on this node (POST /permissions/access and the
+-- allow-list edits, core::store) and never cleared: the worlds mirror copies
+-- its source's access setting only onto a mirrored row without it
+-- (core::store::replace_mirrored_access, which reads it under the row lock it
+-- already takes), so a pass never replaces what the owner set here. No index:
+-- it is read only with the row by its primary key.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,
     owner text,
     access_type text NOT NULL DEFAULT 'unrestricted',
     access_secret_hash text,
     access_nft text,
+    access_set_here boolean NOT NULL DEFAULT false,
     blocked_since timestamp without time zone,
     spawn_coordinates text,
     title text,

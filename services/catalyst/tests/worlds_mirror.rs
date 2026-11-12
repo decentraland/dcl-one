@@ -1712,6 +1712,109 @@ async fn a_mirror_pass_copies_the_upstream_access_setting() {
     scratch.teardown().await;
 }
 
+/// The owner's access writes on this node stick, as upstream's `storeAccess` and
+/// `modifyAccessAtomically` writes do: a world whose owner set its access here before any scene
+/// keeps it when a scheduled pass takes the row over, and an allow-list edit on a mirrored world
+/// is not undone by the next pass, whatever the source then reports.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_access_setting_the_owner_made_here_is_kept_by_the_mirror() {
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::core::store::{
+        AccessCaps, AccessSetting, AllowListEdit, AllowListEditOutcome, modify_allow_list_access,
+        store_access_for_owner,
+    };
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "access-here").await;
+    let owner = Address::parse("0x00000000000000000000000000000000000000ee").unwrap();
+    let (c, d) = (
+        "0x00000000000000000000000000000000000000c3",
+        "0x00000000000000000000000000000000000000d4",
+    );
+    let (early, edited) = ("early.dcl.eth", "edited.dcl.eth");
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, early, "E", "0,0", &[("e.txt", b"early")]);
+        add_scene(&mut st, edited, "F", "0,0", &[("f.txt", b"edited")]);
+        st.permissions.insert(
+            edited.to_string(),
+            json!({"permissions": {"access": {"type": "allow-list", "wallets": [c]}}, "summary": {}}),
+        );
+    }
+    // Set here before the mirror holds anything of the world: the source reports it open.
+    store_access_for_owner(
+        &scratch.pool,
+        &WorldName::parse(early).unwrap(),
+        &owner,
+        &AccessSetting::NftOwnership {
+            nft: "urn:x".into(),
+        },
+    )
+    .await
+    .unwrap();
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 2, "{summary:?}");
+    let mirrored: Option<String> =
+        sqlx::query_scalar("SELECT mirror_source FROM worlds.worlds WHERE name = $1")
+            .bind(early)
+            .fetch_one(&scratch.pool)
+            .await
+            .unwrap();
+    assert!(mirrored.is_some(), "the pass took the row over");
+    let access = |world: &'static str| {
+        let node = &node;
+        async move {
+            let (status, body) = node.get(&format!("/world/{world}/permissions")).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            body["permissions"]["access"].clone()
+        }
+    };
+    assert_eq!(
+        access(early).await,
+        json!({"type": "nft-ownership", "nft": "urn:x"})
+    );
+    assert_eq!(
+        access(edited).await,
+        json!({"type": "allow-list", "wallets": [c], "communities": []})
+    );
+
+    // The owner edits the mirrored allow-list here; the source then opens the world.
+    let added = modify_allow_list_access(
+        &scratch.pool,
+        &WorldName::parse(edited).unwrap(),
+        AccessCaps::default(),
+        AllowListEdit::AddWallet(&Address::parse(d).unwrap()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(added, AllowListEditOutcome::Applied);
+    fake.state.lock().permissions.insert(
+        edited.to_string(),
+        json!({"permissions": {"access": {"type": "unrestricted"}}, "summary": {}}),
+    );
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.unchanged, 2, "{summary:?}");
+    assert_eq!(
+        access(edited).await,
+        json!({"type": "allow-list", "wallets": [c, d], "communities": []})
+    );
+    assert_eq!(
+        access(early).await,
+        json!({"type": "nft-ownership", "nft": "urn:x"})
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
 async fn world_row(pool: &PgPool, world: &str) -> (Option<String>, Option<i32>, i64) {
     sqlx::query_as("SELECT title, skybox_time, settings_version FROM worlds.worlds WHERE name = $1")
         .bind(world)

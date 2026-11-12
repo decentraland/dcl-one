@@ -11,7 +11,8 @@
 //! `worlds.world_scenes` rows in one transaction per world. Every world the walk
 //! reaches, changed or not, also gets the access setting its
 //! `GET {source}/world/{name}/permissions` reports (a shared secret stored as one no secret
-//! matches); an unreadable or unknown setting fails that world's sync, so a world restricted
+//! matches), unless its owner set the access on this node (`access_set_here`, kept then);
+//! an unreadable or unknown setting fails that world's sync, so a world restricted
 //! upstream is never stored open. The deployment and streaming grants it lists are not copied.
 //! A world whose scenes are all held is still read for its settings and its `/scenes` listing,
 //! since upstream edits settings and access without a deployment and its held rows take the

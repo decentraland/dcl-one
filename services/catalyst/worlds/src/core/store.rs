@@ -1679,7 +1679,8 @@ fn access_columns(access: &AccessSetting) -> (Option<&str>, Option<&str>, Vec<Ad
 /// transaction: the typed columns, then the `access` grants and the
 /// communities (deleted on every write, whatever the previous type, so a
 /// list never resurfaces after a round trip through another type). A fresh
-/// row lands at settings_version 1.
+/// row lands at settings_version 1. The row is marked `access_set_here`, so
+/// the worlds mirror never replaces the setting with its source's.
 pub async fn store_access_for_owner(
     pool: &PgPool,
     world: &WorldName,
@@ -1689,12 +1690,13 @@ pub async fn store_access_for_owner(
     let (secret_hash, nft, wallets, communities) = access_columns(access);
     let mut tx = pool.begin().await?;
     sqlx::query(
-        r#"INSERT INTO worlds.worlds AS w (name, owner, access_type, access_secret_hash, access_nft, settings_version)
-           VALUES ($1, $2, $3, $4, $5, 1)
+        r#"INSERT INTO worlds.worlds AS w (name, owner, access_type, access_secret_hash, access_nft, access_set_here, settings_version)
+           VALUES ($1, $2, $3, $4, $5, true, 1)
            ON CONFLICT (name) DO UPDATE SET
              access_type = EXCLUDED.access_type,
              access_secret_hash = EXCLUDED.access_secret_hash,
              access_nft = EXCLUDED.access_nft,
+             access_set_here = true,
              settings_version = w.settings_version + 1,
              updated_at = timezone('UTC', now())"#,
     )
@@ -1738,7 +1740,8 @@ pub async fn store_access_for_owner(
 
 /// The mirror's copy of the source's access setting, in the transaction that
 /// syncs `world`: written only while the row is the mirror's (`mirror_source`
-/// set, not disabled; the row is locked here), and only where it differs, so
+/// set, not disabled; the row is locked here) and its owner has not set its
+/// access on this node (`access_set_here`), and only where it differs, so
 /// an unchanged pass writes nothing. No settings version bump (the mirror
 /// copies the source's) and no notice; a change queues the access recheck,
 /// as an owner's edit does, so a connected wallet the new setting refuses
@@ -1750,7 +1753,8 @@ pub async fn replace_mirrored_access(
 ) -> Result<bool, sqlx::Error> {
     let held: Option<bool> = sqlx::query_scalar(
         "SELECT true FROM worlds.worlds \
-         WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL FOR UPDATE",
+         WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL \
+           AND NOT access_set_here FOR UPDATE",
     )
     .bind(world.key())
     .fetch_optional(&mut *conn)
@@ -1817,7 +1821,8 @@ pub async fn replace_mirrored_access(
 
 /// One allow-list edit under the world row's lock: refused unless the row
 /// exists and is an allow-list, capped at `caps` wallets / communities; the
-/// settings version bumps on every applied edit, as the old upsert did.
+/// settings version bumps on every applied edit, as the old upsert did, and
+/// the row is marked `access_set_here` (see [`store_access_for_owner`]).
 pub async fn modify_allow_list_access(
     pool: &PgPool,
     world: &WorldName,
@@ -1889,7 +1894,7 @@ pub async fn modify_allow_list_access(
                 .await?;
         }
     }
-    sqlx::query("UPDATE worlds.worlds SET settings_version = settings_version + 1, updated_at = timezone('UTC', now()) WHERE name = $1")
+    sqlx::query("UPDATE worlds.worlds SET settings_version = settings_version + 1, access_set_here = true, updated_at = timezone('UTC', now()) WHERE name = $1")
         .bind(world.key())
         .execute(&mut *tx)
         .await?;

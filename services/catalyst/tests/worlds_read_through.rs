@@ -513,6 +513,73 @@ async fn a_world_not_held_is_mirrored_on_first_read_then_served_locally() {
     scratch.teardown().await;
 }
 
+/// A fill stores the access setting the upstream's `/permissions` reports, in the same
+/// transaction as the scenes, so a world restricted upstream is never served open here; an
+/// access type this node does not know fails the fill and stores nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_fill_stores_the_upstream_access_setting() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let (fake, base) = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &base, "access", true).await;
+    let listed = address(INTRUDER_KEY);
+    let community = "6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f";
+    let (guarded, odd) = ("guarded.dcl.eth", "odd.dcl.eth");
+    add_world(&fake, guarded).await;
+    add_world(&fake, odd).await;
+    {
+        let mut st = fake.lock();
+        let mut body = permissions(&address(OWNER_KEY), &[]);
+        body["permissions"]["access"] = json!({"type": "allow-list", "wallets": [listed.to_uppercase().replace("0X", "0x")],
+                   "communities": [community]});
+        st.permissions.insert(guarded.to_string(), body);
+        let mut body = permissions(&address(OWNER_KEY), &[]);
+        body["permissions"]["access"] = json!({"type": "members-only"});
+        st.permissions.insert(odd.to_string(), body);
+    }
+
+    let (status, about) = node.get(&format!("/world/{guarded}/about")).await;
+    assert_eq!(status, StatusCode::OK, "{about}");
+    let access_type: String =
+        sqlx::query_scalar("SELECT access_type FROM worlds.worlds WHERE name = $1")
+            .bind(guarded)
+            .fetch_one(&scratch.pool)
+            .await
+            .unwrap();
+    assert_eq!(access_type, "allow-list");
+    let wallets: Vec<String> = sqlx::query_scalar(
+        "SELECT address FROM worlds.world_permissions WHERE world_name = $1 AND permission = 'access'",
+    )
+    .bind(guarded)
+    .fetch_all(&scratch.pool)
+    .await
+    .unwrap();
+    assert_eq!(wallets, vec![listed]);
+    let communities: Vec<String> = sqlx::query_scalar(
+        "SELECT community_id::text FROM worlds.world_access_communities WHERE world_name = $1",
+    )
+    .bind(guarded)
+    .fetch_all(&scratch.pool)
+    .await
+    .unwrap();
+    assert_eq!(communities, vec![community.to_string()]);
+
+    let (status, _) = node.get(&format!("/world/{odd}/about")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(node.scene_rows(odd).await.is_empty());
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM worlds.worlds WHERE name = $1")
+        .bind(odd)
+        .fetch_one(&scratch.pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+
+    drop(node);
+    scratch.teardown().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_read_through_alone_reads_only_the_world_asked_for_and_runs_no_pass() {
     let Some(scratch) = db::scratch_database().await else {
