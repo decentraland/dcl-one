@@ -7,7 +7,7 @@ import { useBrokenImage } from '../useBrokenImage'
 import styles from './SceneCard.module.css'
 
 /** The app's router link, so opening the scene is a client navigation; a plain anchor otherwise. */
-type SceneCardLinkProps = { to: string; className?: string; children: ReactNode }
+type SceneCardLinkProps = { to: string; className?: string | undefined; children: ReactNode }
 
 type SceneCardCreator = {
   name: string

@@ -11,7 +11,14 @@ vi.hoisted(() => {
     $RefreshReg$: () => {},
   });
 });
-const net = vi.hoisted(() => ({ fetchProfile: vi.fn(), fetchMyCommunities: vi.fn(), fetchProfilePlaces: vi.fn(), track: vi.fn() }));
+const net = vi.hoisted(() => ({
+  fetchProfile: vi.fn(),
+  fetchMyCommunities: vi.fn(),
+  fetchProfilePlaces: vi.fn(),
+  fetchProfileCreations: vi.fn(),
+  fetchProfileAssets: vi.fn(),
+  track: vi.fn(),
+}));
 const auth = vi.hoisted(() => ({
   state: { isConnected: false, address: null as string | null, identity: null as unknown },
 }));
@@ -23,6 +30,11 @@ vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({ fetchMyCommun
 vi.mock("@/data/lib/catalyst/places/profile-places", async (original) => ({
   ...(await original<typeof import("@/data/lib/catalyst/places/profile-places")>()),
   fetchProfilePlaces: net.fetchProfilePlaces,
+}));
+vi.mock("@/data/lib/catalyst/marketplace/profile-collectibles", async (original) => ({
+  ...(await original<typeof import("@/data/lib/catalyst/marketplace/profile-collectibles")>()),
+  fetchProfileCreations: net.fetchProfileCreations,
+  fetchProfileAssets: net.fetchProfileAssets,
 }));
 vi.mock("@/data/lib/catalyst/social/badges", () => ({ fetchUserBadges: () => Promise.resolve([]) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: net.track }));
@@ -40,10 +52,8 @@ const { stub } = vi.hoisted(() => ({
   }),
 }));
 vi.mock("@ui/web/pages/StProfileOverviewTab", () => stub("overview"));
-vi.mock("@ui/web/pages/StProfileCreationsTab", () => stub("creations"));
 vi.mock("@ui/web/pages/StProfilePhotosTab", () => stub("photos"));
 vi.mock("@ui/web/pages/StProfileCommunitiesTab", () => stub("communities"));
-vi.mock("@ui/web/pages/StProfileMyAssetsTab", () => stub("assets"));
 
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { mapProfile } from "@/data/lib/catalyst/social/profile";
@@ -243,6 +253,31 @@ describe("profile route, places", () => {
     expect(client.getQueryState(profileKeys.profile(A))?.status).toBe("error");
     expect(screen.getByText("Nothing here yet, but that's easy to change", { selector: "p" })).toBeTruthy();
     expect(screen.queryByText("Loading places")).toBeNull();
+  });
+});
+
+describe("profile route, creations and assets", () => {
+  const hat = { id: "c-0", contractAddress: "0xabc", itemId: "0", name: "Billyjuice", network: "polygon", payment: { kind: "none" }, traits: { bodyShapes: [], isSmart: false } };
+
+  it("shows a member's creations under their own tab", async () => {
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileCreations.mockResolvedValue({ items: [hat], received: 1, total: 1 });
+
+    mount(`/profile/${A}/creations`);
+
+    expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/item/0xabc/0");
+    expect(screen.getByText("By Alice")).toBeTruthy();
+  });
+
+  it("shows the owner's assets on their own profile", async () => {
+    auth.state = { isConnected: true, address: A, identity };
+    net.fetchProfile.mockResolvedValue(avatar("Alice"));
+    net.fetchProfileAssets.mockResolvedValue({ items: [{ ...hat, id: "t-1", tokenId: "7", category: "wearable" }], received: 1, total: 1 });
+
+    mount(`/profile/${A}/assets`);
+
+    expect((await screen.findByRole("link", { name: "Billyjuice" })).getAttribute("href")).toBe("/shop/token/0xabc/7");
+    expect(screen.getByText("1 asset")).toBeTruthy();
   });
 });
 

@@ -1,0 +1,277 @@
+/* TODO(figma-ds): replace with the Figma-generated catalog card's styles. Sizes follow the
+ * source (decentraland-ui2 CatalogCard, Figma 94:36542): a 360px card whose image flexes above a
+ * 160px minimum info panel, the thumbnail at 68% of the image, a 26px rarity tag, and a 20px
+ * price after a 32px MANA mark (the source's is 35px). The rarity hues are the foundations' rarity tokens, which differ slightly from the
+ * source's `@dcl/schemas` colours. The tag's 20% tint is mixed from the rarity token. The hover
+ * glow (30% white in the source) uses the nearest transparency, 20%. */
+.root {
+  --card-rarity: var(--dcl-transparencies-black-40);
+
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  box-sizing: border-box;
+  flex-direction: column;
+  width: 100%;
+  height: 360px;
+  border-radius: var(--dcl-radius-md);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  transition:
+    transform 200ms ease-in-out,
+    box-shadow 300ms ease-in-out;
+}
+
+.common {
+  --card-rarity: var(--dcl-rarities-common);
+}
+
+.uncommon {
+  --card-rarity: var(--dcl-rarities-uncommon);
+}
+
+.rare {
+  --card-rarity: var(--dcl-rarities-rare);
+}
+
+.epic {
+  --card-rarity: var(--dcl-rarities-epic);
+}
+
+.legendary {
+  --card-rarity: var(--dcl-rarities-legendary);
+}
+
+.exotic {
+  --card-rarity: var(--dcl-rarities-exotic);
+}
+
+.mythic {
+  --card-rarity: var(--dcl-rarities-mythic);
+}
+
+.unique {
+  --card-rarity: var(--dcl-rarities-unique);
+}
+
+.root:hover,
+.root:focus-within {
+  box-shadow: 0 2px 12px 12px var(--dcl-transparencies-white-20);
+  transform: translateY(-4px);
+}
+
+.media {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  border-radius: var(--dcl-radius-md) var(--dcl-radius-md) 0 0;
+  background: var(--card-rarity);
+}
+
+.image {
+  width: 68%;
+  height: 68%;
+  object-fit: contain;
+  filter: drop-shadow(1px 4px 5px var(--dcl-transparencies-black-10));
+}
+
+.placeholder {
+  display: flex;
+  color: var(--dcl-text-secondary);
+}
+
+.content {
+  display: flex;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 160px;
+  padding: var(--dcl-space-16);
+  border: 1px solid var(--dcl-neutrals-cloudy-sky);
+  border-top: none;
+  border-radius: 0 0 var(--dcl-radius-md) var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-40);
+}
+
+.title {
+  overflow: hidden;
+  max-width: 100%;
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  line-height: 1.57;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cardLink {
+  color: inherit;
+  text-decoration: none;
+}
+
+/* The title's link stretches over the whole card; the action sits above it. */
+.cardLink::after {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: var(--dcl-radius-md);
+}
+
+.cardLink:focus-visible {
+  outline: none;
+}
+
+.cardLink:focus-visible::after {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: -2px;
+}
+
+.byline {
+  overflow: hidden;
+  max-width: 100%;
+  color: var(--dcl-text-secondary);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.price {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 400;
+}
+
+.price svg {
+  flex-shrink: 0;
+}
+
+.fallback {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+}
+
+/* Above the title link's overlay, so the badge tooltips can be hovered. */
+.badges {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  margin-top: auto;
+  padding-top: var(--dcl-space-8);
+  transition: opacity 200ms ease-in-out;
+}
+
+.rarity {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  height: 26px;
+  padding: 0 var(--dcl-space-12);
+  border-radius: var(--dcl-radius-xs);
+  background: color-mix(in srgb, var(--card-rarity) 20%, transparent);
+  color: var(--card-rarity);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.badge {
+  display: inline-flex;
+}
+
+/* Slides up from the card's bottom edge and rests over the badge row, which fades out, so the
+ * card never grows. */
+.action {
+  position: absolute;
+  z-index: 2;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  gap: var(--dcl-space-8);
+  padding: 0 var(--dcl-space-16) var(--dcl-space-16);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(100%);
+  transition:
+    opacity 300ms ease-in-out,
+    transform 300ms ease-in-out;
+}
+
+.action > * {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.root:hover .action,
+.root:focus-within .action {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.withAction:hover .badges,
+.withAction:focus-within .badges {
+  opacity: 0;
+}
+
+/* A touch screen has no hover: the action sits under the badges, always shown, and the image
+ * gives up the room. */
+@media (hover: none) {
+  .action {
+    position: static;
+    padding: var(--dcl-space-8) 0 0;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
+  }
+
+  .withAction:hover .badges,
+  .withAction:focus-within .badges {
+    opacity: 1;
+  }
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root,
+  .action,
+  .badges {
+    transition: none;
+  }
+
+  .root:hover,
+  .root:focus-within {
+    transform: none;
+  }
+}

@@ -459,14 +459,6 @@ export function MoreGlyph({ size = 20, className }: IconBase) {
   );
 }
 
-export function SmartGlyph({ size = 16, className }: IconBase) {
-  return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className={className}>
-      <path d="M13 2 4 13h6l-1 9 9-11h-6l1-9Z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 export function GlobeBtnGlyph({ size = 18, className }: IconBase) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true" className={className}>
