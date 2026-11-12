@@ -6,6 +6,7 @@ pub mod community_chat;
 pub mod global_crdt;
 #[cfg(feature = "livekit")]
 pub mod livekit;
+pub mod moderation;
 pub mod movement_compressed;
 pub mod nearby_mutes;
 pub mod preview;
@@ -50,6 +51,7 @@ use prost::Message as _;
 use wallet::{sign_service_request, Wallet};
 
 use crate::global_crdt::ChannelControl;
+pub use moderation::{AdmissionView, BanScope, MetadataError, SceneAdmission, SceneRoomModeration};
 
 use self::{
     archipelago::{ArchipelagoPlugin, StartArchipelago},
@@ -96,6 +98,7 @@ impl Plugin for CommsPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<SetCurrentScene>()
             .init_resource::<SceneRoomConnection>()
+            .init_resource::<SceneAdmission>()
             .init_resource::<ServerSceneRooms>()
             .init_resource::<DisableSceneRoomGatekeeper>()
             .insert_resource(SceneRoomAdapterOverride(
@@ -558,6 +561,43 @@ pub struct GatekeeperResponse {
     adapter: String,
 }
 
+/// A gatekeeper answer other than 200: the status and the body's `error`, when it has one.
+#[derive(Debug)]
+pub struct GatekeeperRefusal {
+    pub status: u16,
+    pub message: Option<String>,
+}
+
+impl std::fmt::Display for GatekeeperRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.message {
+            Some(message) => write!(f, "status: {} ({message})", self.status),
+            None => write!(f, "status: {}", self.status),
+        }
+    }
+}
+
+impl std::error::Error for GatekeeperRefusal {}
+
+/// Why a gatekeeper mint gave no adapter: the gatekeeper refused, or the request never got an
+/// answer to read.
+#[derive(Debug)]
+pub(crate) enum MintError {
+    Refused(GatekeeperRefusal),
+    Transport(anyhow::Error),
+}
+
+impl std::fmt::Display for MintError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MintError::Refused(refusal) => refusal.fmt(f),
+            MintError::Transport(error) => write!(f, "{error:#}"),
+        }
+    }
+}
+
+impl std::error::Error for MintError {}
+
 /// Signed request to a comms-gatekeeper endpoint, returning the adapter string it mints. `meta`
 /// travels in the signed identity headers, not the body.
 pub(crate) async fn mint_gatekeeper_adapter(
@@ -566,23 +606,47 @@ pub(crate) async fn mint_gatekeeper_adapter(
     uri: Uri,
     wallet: &Wallet,
     meta: String,
-) -> Result<String, anyhow::Error> {
-    let headers = sign_service_request(method, &uri.to_string(), wallet, meta).await?;
+) -> Result<String, MintError> {
+    let headers = sign_service_request(method, &uri.to_string(), wallet, meta)
+        .await
+        .map_err(MintError::Transport)?;
 
+    let method = method
+        .parse()
+        .map_err(|e: http::method::InvalidMethod| MintError::Transport(e.into()))?;
     let mut request = client
-        .request(method.parse()?, uri.to_string())
+        .request(method, uri.to_string())
         .timeout(std::time::Duration::from_secs(10))
         .header("Content-Type", "application/json");
     for (k, v) in headers {
         request = request.header(k, v);
     }
-    let response = platform::TracedJsonResponse::send(request).await?;
+    let response = platform::TracedJsonResponse::send(request)
+        .await
+        .map_err(|e| MintError::Transport(e.into()))?;
 
     if response.status() != StatusCode::OK {
-        return Err(anyhow::anyhow!("status: {}", response.discard()));
+        let status = response.status().as_u16();
+        let message = response
+            .json::<serde_json::Value>()
+            .await
+            .ok()
+            .and_then(|body| body.get("error")?.as_str().map(str::to_owned));
+        return Err(MintError::Refused(GatekeeperRefusal { status, message }));
     }
 
-    Ok(response.json::<GatekeeperResponse>().await?.adapter)
+    response
+        .json::<GatekeeperResponse>()
+        .await
+        .map(|answer| answer.adapter)
+        .map_err(MintError::Transport)
+}
+
+/// A finished scene-room mint: which scene it was for and what the gatekeeper gave.
+struct SceneRoomMint {
+    scene: SetCurrentScene,
+    is_world: bool,
+    result: Result<String, MintError>,
 }
 
 #[derive(Component)]
@@ -622,8 +686,9 @@ pub struct SceneRoomAdapterOverride(pub Option<String>);
 fn connect_scene_room(
     mut commands: Commands,
     mut manager: AdapterManager,
-    mut gatekeeper_task: Local<Option<Task<Result<(String, SetCurrentScene), anyhow::Error>>>>,
+    mut gatekeeper_task: Local<Option<Task<SceneRoomMint>>>,
     mut current: ResMut<SceneRoomConnection>,
+    mut admission: ResMut<SceneAdmission>,
     mut scene: EventReader<SetCurrentScene>,
     wallet: Res<Wallet>,
     ipfs: IpfsAssetServer,
@@ -650,6 +715,9 @@ fn connect_scene_room(
                 commands.despawn();
             }
             warn!("disconnected scene channel {ev:?}");
+        }
+        if admission.scene_id() != Some(ev.scene_id.as_str()) {
+            admission.set_if_neq(SceneAdmission::unknown());
         }
         if adapter_override.0.is_some() && !preview_mode.is_preview {
             warn_once!("DCL_SCENE_ROOM_ADAPTER is ignored outside preview mode");
@@ -678,6 +746,7 @@ fn connect_scene_room(
                 commands
                     .entity(ent)
                     .try_insert(SceneRoom(ev.scene_id.clone()));
+                admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
                 current.0 = Some((ev, adapter, ent));
             }
         } else {
@@ -720,20 +789,40 @@ fn connect_scene_room(
             } else {
                 serde_json::to_string(&ev).unwrap()
             };
+            let is_world = world.is_some();
             *gatekeeper_task = Some(IoTaskPool::get().spawn_compat(async move {
-                Ok((
-                    mint_gatekeeper_adapter("POST", client, uri, &wallet, meta).await?,
-                    ev,
-                ))
+                let result = mint_gatekeeper_adapter("POST", client, uri, &wallet, meta).await;
+                SceneRoomMint {
+                    scene: ev,
+                    is_world,
+                    result,
+                }
             }));
         }
     }
 
     if let Some(mut task) = gatekeeper_task.take() {
-        match task.complete() {
-            None => *gatekeeper_task = Some(task),
-            Some(Err(e)) => warn!("failed to get scene room from gatekeeper: {e}"),
-            Some(Ok((adapter, ev))) => {
+        let Some(mint) = task.complete() else {
+            *gatekeeper_task = Some(task);
+            return;
+        };
+        match mint.result {
+            Err(MintError::Refused(refusal)) => {
+                warn!("scene room refused by the gatekeeper: {refusal}");
+                admission.set_if_neq(SceneAdmission::from_refusal(
+                    refusal.status,
+                    refusal.message.as_deref(),
+                    mint.is_world,
+                    &mint.scene.scene_id,
+                ));
+            }
+            Err(MintError::Transport(e)) => {
+                warn!("failed to get scene room from gatekeeper: {e:#}");
+                admission.set_if_neq(SceneAdmission::unknown());
+            }
+            Ok(adapter) => {
+                let ev = mint.scene;
+                admission.set_if_neq(SceneAdmission::allowed(&ev.scene_id));
                 // client-only (gatekeeper is disabled on servers): the client's scene
                 // rooms feed its single shared context, all scenes share one view
                 let Ok(context) = contexts.single() else {

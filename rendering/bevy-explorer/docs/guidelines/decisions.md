@@ -17,6 +17,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
+  is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
+  cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
+  so a bias that clears a metre of slope also draws it over anything that close, and the
+  blob stays flat rather than lying on the ground. Bevy's own decals do not fit either:
+  clustered decals are true box projectors but need bindless textures, so they do not run
+  on WebGPU or macOS, and `ForwardDecal` is a flat quad with a depth fade, so it has the
+  same slope limits in a softer form. The projection reads the primary camera's
+  depth prepass, which the camera therefore keeps; without one the marker draws nothing.
+  Keeping it costs nothing new: the camera already renders it on native and web, and it
+  saves the main pass shading hidden opaque pixels. It also enables later work: decals,
+  soft edges where transparent surfaces meet geometry, and GPU occlusion culling.
+  The box runs from 0.1 m under the feet, so the blob never darkens the avatar, to 1 m
+  below the ground under the player's centre, so ground falling away by up to 45 degrees
+  across the footprint still catches it. The ramps follow the shadergraph, except that
+  grounded means within 0.2 m of the ground, as for the animation, and the opacity rises
+  over the next 0.2 m instead of the last metre: with the projector's 0.5 fade factor,
+  Unity's ramp left the blob nearly invisible before the player landed.
 - **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance from the player to the nearest point of a scene's
@@ -157,29 +175,81 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the card, like the card's other actions, instead of as a toast. unity-explorer's variant of the
   PLACES tab button for owners and moderators is not ported.
   On the card's Members tab, a row opens the member's passport and carries unity-explorer's
-  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, the owner's
-  and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove Member, Ban)
-  with unity-explorer's rules and confirmations, then Block and Report. Call, Gift and Invite to
-  Community are left out until private calls, gifting and invites exist (unity-explorer shows
-  Gift only behind its gifting flag). Chat is always offered in-world: unity-explorer greys it
+  friendship buttons; its ⋮ opens unity-explorer's member menu: View Profile, Chat, Call, the
+  owner's and moderators' actions (Demote or Promote Moderator, Make Community Owner, Remove
+  Member, Ban) with unity-explorer's rules and confirmations, then Block and Report, then Invite
+  to Community. Gift is left out until gifting exists (unity-explorer shows it only behind its
+  gifting flag). Chat is always offered in-world: unity-explorer greys it
   only while its chat area is down. unity-explorer's row shows no presence, so neither does
   this one; "N Mutual Friends" is not shown because no members API returns the count. A failed
   action shows its message on the card instead of as a toast, and the tab lists the first 100
   members without unity-explorer's paging.
   The Communities page's browse grid is unity-explorer's: 20 communities a page, the next read as
   the grid's end comes into view, the name searched on the server a second after typing stops (at
-  once on Enter), and each card's Public or Private, Join, Request to Join or Cancel, its
-  description on hover, and the first three of the user's friends in it. Whether a join request is
+  once on Enter), and each card's Public or Private, Join, Request to Join or Request Sent (Cancel
+  Request on hover, on the card too), its description on hover, and the first three of the user's
+  friends in it. A sent or cancelled request shows at once, before the community is read again,
+  and a failed join or request from the grid is toasted. Whether a join request is
   pending comes from the user's own join requests, read when the grid's first page loads and when a
   closed community's card opens, and kept from the request's answer, as unity-explorer's. The
   card always shows its member count; unity-explorer shows it only behind its members-counter
-  flag. The Voice
-  Streaming section is left out until community voice exists, and a card offers no accept or
-  reject for an invite until the invites task. A failed read shows unity-explorer's error toast
+  flag. Live streams show as a card's LIVE chip and the grid's Streaming filter, not as
+  unity-explorer's separate Voice Streaming section (for an invited card, see Community invites
+  below). A failed read shows unity-explorer's error toast
   and leaves the grid empty, with no count, where unity-explorer leaves its spinner running. A
   card shows no spinner while its join or request runs. My Communities is every membership, read
   apart from the grid; when that read fails the list stays as it was and the page asks again the
   next time it opens, without unity-explorer's "error loading My Communities" toast.
+- **Community invites and join requests.** As unity-explorer: the browser's Invites & Requests
+  opens Invites, Requests Received (only for a user who owns or moderates a community; one group
+  per community, each request with ACCEPT, REJECT and the member menu without owner actions) and
+  Requests Sent, each titled with its count, and "No pending invites or requests." when all are
+  empty. Its counter is the invites plus the requests received, and Requests Received's title
+  counts the same totals. Unlike unity-explorer, opening the page reads only the counter (each
+  read's total, one row asked for); the section is read in full when it opens, and again after
+  any answer or cancel and when an invite or request notification arrives while the page is open
+  (the counter alone until the section has been opened). A section that cannot be read says so,
+  with RETRY. Only private communities are read for join requests, a
+  community's first 100 (the service's page cap); one whose read fails is left out, and the list
+  fails only when none could be read. A card the user is invited to offers Accept and Reject
+  (asked first) instead of Join in the grid, and ACCEPT INVITE and REJECT INVITE on the community
+  card. The card's Members tab gives owners and moderators MEMBERS, BANNED (with UNBAN), JOIN
+  REQUESTS (private communities, with its counter) and INVITED (with CANCEL). Invite to Community,
+  in the user menus, the member menus and the passport but not the voice panel's, lists the
+  communities the user may invite the person to, is hidden when there are none, and is read again
+  after an invite. It opens beside its row, on the left or upward where there is no room, and from
+  the keyboard (a keyboard click on the row focuses its first community, Tab moves through them);
+  Cancel closes it before the menu around it. Clicking an invite, a request received or a request accepted notification opens the
+  community's card, and every opening of a card reads its community again, so an invite or an
+  accepted request that arrived since shows. An accepted request also reads My Communities, the
+  grid and that open card again. Call in the member menu closes the card first, as Chat does.
+  Answers and an unban are toasted when they fail. A request takes one answer at a time, released
+  when that answer settles, and a request answered here never comes back from an older read.
+  Differences: a Members section that cannot be read says so, with RETRY (unity-explorer keeps
+  what it showed and tries again on the next read, so a first read that fails looks empty); each section reads its first 100 rows without paging, as the Members list does;
+  the section shows a spinner, not unity-explorer's skeleton cards, while it loads; and a row's
+  buttons are disabled, with no spinner, while its answer runs.
+- **One answer to "banned or blocked?".** The `ban_block` crate is a facade: it reads the
+  social client's block sets and comms' scene admission and scene-room lists through one
+  `BanBlock` system parameter and owns only the platform-ban check, where unity-explorer keeps
+  `IUserBlockingCache`, `ApplicationBlocklistGuard` and `RoomMetadataCurrentScene` apart. A
+  blocked pair is blocked in either direction, as there. The last block sets stand across a
+  social reconnect until the next snapshot (unity-explorer also resets only on the next
+  `GetBlockingStatus`). The platform ban is read from the gatekeeper's public, unsigned
+  `GET /users/{address}/bans` (unity-explorer signs the same request, which the endpoint does
+  not need), on sign-in, on a realm change, on `/ban_block_refresh` and, as a periodic chance to
+  notice a ban while the client idles, every 300 s (unity-explorer checks at start-up only; no
+  push reaches an idle client here, and the period promises no freshness, as a failed check
+  fails open, as there, and the state says so instead of guessing); a ban whose record the
+  gatekeeper withholds (a device match) is still a ban. The endpoint matches the address only,
+  so a device ban shows only as a platform-scoped refusal of the scene adapter: that refusal
+  marks the platform ban, and the endpoint's "not banned" does not lift it while the refusal
+  stands. The local user's scene ban is the refusal of the
+  scene adapter, read from its status and body (the gatekeeper's 403 for a platform or scene
+  ban, the worlds server's 401 for a platform or world ban), where unity-explorer treats any 401
+  or 403 as forbidden access. The player is not moved out of a scene that refused them, as
+  there. Other players' scene bans and
+  the admins come from the room's metadata and count only while the room is connected, as there.
 - **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
   through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
   avatar-state transport and none of that exists, so a retryable failure is retried without limit.

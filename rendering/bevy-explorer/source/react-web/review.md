@@ -17,8 +17,8 @@ checklist**. Keep it current: when you add a domain or a rule, add it here.
 
 ```bash
 # from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
-npm run typecheck          # tsc, the app
-npm test                   # tier 1 — the unit tests present at this revision
+npm run typecheck          # tsc, the app and the shared HUD UI (library/ui/apps/hud)
+npm test                   # tier 1 — the unit tests present at this revision, the shared HUD UI's included
 # With the authorized visual suite and configuration present:
 npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
 (cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
@@ -80,7 +80,7 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 
 Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
 lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
-it). Its contract is tier-1: `src/test/integratedGpuGuide.test.tsx`, `src/lib/integratedGpu.test.ts`.
+it). Its contract is tier-1: `library/ui/apps/hud/test/integratedGpuGuide.test.tsx`, `library/explorer-core/lib/integratedGpu.test.ts`.
 
 **Updating baselines** (only when the change is intentional):
 ```bash
@@ -92,7 +92,7 @@ Never blind-update. A baseline refresh in a PR must be reviewed image-by-image.
 **Caveats / known limits**
 - **Baselines are platform-specific** (`*-chromium-darwin.png`). Font hinting differs across OSes, so
   generate/verify on the same platform CI uses (or add a Linux baseline set when CI is wired).
-- **Mock data is the ceiling.** A panel can only be as rich as `src/engine/mockBridge.ts` makes it.
+- **Mock data is the ceiling.** A panel can only be as rich as `library/explorer-core/engine/mockBridge.ts` makes it.
   - Enrich mock `getEmotes` with an OWNED collection (some with `slot`, varied `rarity`/`count`) so
     the new owned-grid + assign-to-slot are exercised, not just the 10 base emotes.
 - **Captures are viewport-sized, hover-free.** A scrolling panel is pinned only above the fold: the
@@ -126,11 +126,11 @@ or when touching the bridge protocol.
 
 **Still tier-1-only** (a fresh guest can't reach them, so they can't round-trip here): accepting a
 friend request, leaving a community, marking notifications read, community chat (the tabs come
-from the communities the account is a member of; `src/test/communityChat*.test.tsx`, and
+from the communities the account is a member of; `library/ui/apps/hud/test/hosted/communityChat*.test.tsx`, and
 `apps/bevy-explorer/e2e/specs/community-chat.test.ts` with a member account), creating, editing
 and deleting a community (it needs an account with a claimed NAME), linking places to it (an account
-that owns a LAND or a World with a deployed scene; `src/test/communities.clicks.test.tsx` covers the
-form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; acting on a member needs a second account in a community the first owns or moderates, and finding a community past the first browse page needs a service with more than 20) — these need seeded
+that owns a LAND or a World with a deployed scene; `library/ui/apps/hud/test/hosted/communities.clicks.test.tsx` covers the
+form, the places picker, the card's ADD PLACE and place delete, the content-check screens, the picture checks, the card's Edit and Delete, the member row and menu, and the browse grid's search, paging and card buttons; `library/ui/apps/hud/test/hosted/communities.invites.test.tsx` covers the Invites & Requests section and its counter, accepting and rejecting invites, the card's Banned, Join Requests and Invited sections, the Invite to Community submenu and the notifications that open a card; acting on a member needs a second account in a community the first owns or moderates, an invite or a join request needs a second account too, and finding a community past the first browse page needs a service with more than 20) — these need seeded
 data and are covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
 fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
 logout via the profile chip.
@@ -182,7 +182,7 @@ Run through this on every diff (it encodes `AGENTS.md`):
 
 - [ ] **Design system** — no new hardcoded brand/status hex, `rgba()`, radius, or type size in a
       component (`grep` your diff for `#` and `rgba(`); each must be a `tokens.css` var or justified.
-      No bespoke `<button>`/control where a `src/design/` primitive exists.
+      No bespoke `<button>`/control where a `@hud/design` primitive exists.
 - [ ] **No dead code** — no unused exports/CSS classes/imports; no commented-out blocks; comments are
       sparse and explain *why*, not *what*.
 - [ ] **Structure** — one concern per file; reuse a primitive or *create* one rather than inlining a
@@ -201,15 +201,17 @@ Run through this on every diff (it encodes `AGENTS.md`):
       `alert`/`confirm`/`prompt`. On native the HUD is rendered offscreen and CEF paints popup
       widgets as a separate surface the engine never composites (`update_hud_texture` takes whatever
       paint arrives), so opening one replaces the whole HUD with the widget's bitmap. Use `Select`,
-      `DateField` and `showConfirm`/`showDialog` from `src/design/`.
+      `DateField` and `showConfirm`/`showDialog` from `@hud/design`.
 
 ---
 
 ## 6. Adding a domain
 
-1. Build it (token-driven, reusing `src/design/` primitives).
-2. Add the mock data in `src/engine/mockBridge.ts` so `?mock=1` renders it richly.
-3. Add a tier-1 test (`src/test/<domain>.test.tsx`) for its API contract + clicks.
+1. Build it (token-driven, reusing `@hud/design` primitives).
+2. Add the mock data in `library/explorer-core/engine/mockBridge.ts` so `?mock=1` renders it richly.
+3. Add a tier-1 test for its API contract + clicks beside the shared code: `library/explorer-core/test/`
+   for core code, `library/ui/apps/hud/test/hosted/` for UI and session code (`src/test/` only for this
+   host's own files).
 4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.
 5. If it's world-space (engine-drawn), add a line to the §4 checklist instead of a screenshot.
 6. List its expectations here.
@@ -225,7 +227,7 @@ from HUD-side key matching. The rules:
 - **Never add a DOM hotkey or Escape handler.** Panel/menu keys arrive as `systemAction`
   messages (dispatcher in `useEngineSession`); add a `case` there. Cancel/close behaviour
   for leaf UI (a lightbox, an open dropdown) = register on the **cancel-layer stack**
-  (`src/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
+  (`library/explorer-core/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
   per press, keyboard and gamepad alike.
 - **The only DOM key handling allowed is inside a focused text field** (chat, map search),
   where the engine deliberately resolves nothing (`UiText`). There: match with
@@ -236,7 +238,7 @@ from HUD-side key matching. The rules:
   `inputLock`. If the engine can't see that your surface is active, scenes keep receiving
   input behind it.
 - **The scene editor stands the HUD down through `session.editor.setMode`** (Create or `?editor`,
-  `src/features/editorHost`): in `edit` the dispatcher acts on `Cancel` only and App unmounts the
+  `library/ui/apps/hud/features/editorHost`): in `edit` the dispatcher acts on `Cancel` only and App unmounts the
   sidebar, minimap, chat and pointer; `play` adds the reticle and the emote wheel. Not through
   `inputLock`: that declares `ui` focus, which would take the viewport's input from the editor's
   own scene. A new hotkey or persistent surface must respect the mode (`hudActsOn`).
@@ -303,9 +305,9 @@ back as `analyticsSession`). Expectations:
   none)}: the GA4 export's `user_pseudo_id` / `ga_session_id` on the Segment session, taken at the
   conversion (`shell/googleTag.ts` `onInWorld`, `listenForGoogleTag` over `lib/shell.ts`
   `onShellMessage`).
-- Tests: `src/test/analytics.test.ts` (stamping, the handoff, the rejected send, `Google Tag Linked`),
-  `src/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
-  `src/test/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
+- Tests: `library/explorer-core/test/analytics.test.ts` (stamping, the handoff, the rejected send, `Google Tag Linked`),
+  `library/explorer-core/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
+  `library/ui/apps/hud/test/hosted/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
   id at launch), `entryParams.test.ts` (campaign params).
 
 ## Photo mode
@@ -328,7 +330,7 @@ owns the mode as a surface. Expectations:
   storage-full notice in Shoot's place. Shoot is disabled while a photo is in flight, the storage
   is unknown or the capture effect plays; a capture plays the flash once per event seq and the
   photo flies into the Gallery button.
-- Tests: `src/test/photoMode.test.tsx` (the session contract above), `src/test/photoModeOverlay.test.tsx`
+- Tests: `library/ui/apps/hud/test/hosted/photoMode.test.tsx` (the session contract above), `library/ui/apps/hud/test/hosted/photoModeOverlay.test.tsx`
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 

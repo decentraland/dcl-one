@@ -1,0 +1,24 @@
+/* Fills its positioned parent; the still image shows while WebGL boots, or alone without WebGL or with reduced motion. */
+.root {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background-image: url('../../assets/custom-welcome-background.webp');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}

@@ -6,49 +6,17 @@ import { componentRegistryEntries } from '../component-generation.mjs'
 const ui = path.resolve(import.meta.dirname, '../..')
 const MARKER = '<!-- navbar-accepted-limits -->'
 
-// The bullet list right after the marker: "- `id`: text".
-function readmeLimits(markdown: string): { id: string; text: string }[] {
-  const lines = markdown.split('\n')
-  const start = lines.findIndex((line) => line.trim() === MARKER)
-  if (start < 0) throw new Error('README has no accepted-limits marker')
-  const limits: { id: string; text: string }[] = []
-  for (const line of lines.slice(start + 1)) {
-    const match = /^- `([^`]+)`: (.+)$/.exec(line)
-    if (match) limits.push({ id: match[1]!, text: match[2]! })
-    else if (limits.length && line.trim()) break
-  }
-  return limits
-}
-
-describe('the accepted NavBar limits', () => {
-  it('should be the same list, by id and text, in the README and the component registry', () => {
+describe('the accepted limits of generated public components', () => {
+  // NavBar, the last generated public component, is hand-written: its limits live in docs/ui-components.md.
+  it('should record no limits in the component registry', () => {
     const registry = componentRegistryEntries(
       JSON.parse(readFileSync(path.join(ui, 'components/promotion.json'), 'utf8'))
     )
-    expect(readmeLimits(readFileSync(path.join(ui, 'README.md'), 'utf8'))).toEqual(
-      registry.limits.NavBar
-    )
+    expect(registry.limits).toEqual({})
   })
 
-  it.each([
-    ['drops', (list: { id: string; text: string }[]) => list.slice(1)],
-    [
-      'rewords',
-      (list: { id: string; text: string }[]) =>
-        list.map((l, i) => (i ? l : { ...l, text: 'Reworded.' }))
-    ]
-  ])('should fail the comparison when the README %s a limit', (_label, change) => {
-    const registry = componentRegistryEntries(
-      JSON.parse(readFileSync(path.join(ui, 'components/promotion.json'), 'utf8'))
-    ).limits.NavBar!
-    const readme = `${MARKER}\n\n${change(registry)
-      .map((l) => `- \`${l.id}\`: ${l.text}`)
-      .join('\n')}\n`
-    expect(readmeLimits(readme)).not.toEqual(registry)
-  })
-
-  it('should refuse a README without the marker', () => {
-    expect(() => readmeLimits('no marker')).toThrow('no accepted-limits marker')
+  it('should keep no accepted-limits list in the README', () => {
+    expect(readFileSync(path.join(ui, 'README.md'), 'utf8')).not.toContain(MARKER)
   })
 })
 
@@ -71,12 +39,64 @@ describe('componentRegistryEntries', () => {
     ['an over-long text', { name: 'NavBar', limits: [{ id: 'a', text: 'x'.repeat(301) }] }],
     ['a link', { name: 'NavBar', limits: [{ id: 'a', text: 'see https://example.com' }] }],
     ['a control character', { name: 'NavBar', limits: [{ id: 'a', text: 'line\nbreak' }] }],
+    ['a C1 control', { name: 'NavBar', limits: [{ id: 'a', text: 'next\u0085line' }] }],
+    ['a bidi override', { name: 'NavBar', limits: [{ id: 'a', text: 'abc\u202Edef' }] }],
+    ['a zero-width space', { name: 'NavBar', limits: [{ id: 'a', text: 'zero\u200Bwidth' }] }],
+    ['a paragraph separator', { name: 'NavBar', limits: [{ id: 'a', text: 'a\u2029b' }] }],
+    ['a www link', { name: 'NavBar', limits: [{ id: 'a', text: 'see www.example.org' }] }],
+    ['a mailto link', { name: 'NavBar', limits: [{ id: 'a', text: 'mailto:someone' }] }],
+    ['markup', { name: 'NavBar', limits: [{ id: 'a', text: 'an <img> tag' }] }],
+    ['a name that is not a string', { name: 5, limits: [limit] }],
+    ['no name', { limits: [limit] }],
+    ['a name that is not an identifier', { name: '../NavBar', limits: [limit] }],
+    [
+      'more than ten limits',
+      {
+        name: 'NavBar',
+        limits: Array.from({ length: 11 }, (_, i) => ({ id: `l${i}`, text: 'Pending.' }))
+      }
+    ],
     ['an id that is not kebab-case', { name: 'NavBar', limits: [{ id: 'Logo_Size', text: 'x.' }] }],
     ['an empty limits list', { name: 'NavBar', limits: [] }],
     ['an unknown key', { name: 'NavBar', limits: [limit], extra: true }],
     ['an unknown limit key', { name: 'NavBar', limits: [{ ...limit, url: 'x' }] }]
   ])('should refuse %s', (_label, entry) => {
     expect(() => componentRegistryEntries({ components: [entry] })).toThrow()
+  })
+
+  // The nearest false positives of the stricter text rule and the cap.
+  it.each([
+    ['ordinary punctuation and units', 'The logo is 60px on desktop; alignment (40px) is pending.'],
+    ['a colon that is not a scheme', 'Note: the avatar is a placeholder.'],
+    ['a non-ASCII letter', 'Résumé views are pending.']
+  ])('should accept %s', (_label, text) => {
+    expect(
+      componentRegistryEntries({ components: [{ name: 'NavBar', limits: [{ id: 'a', text }] }] })
+        .limits.NavBar
+    ).toEqual([{ id: 'a', text }])
+  })
+
+  it('should accept exactly ten limits', () => {
+    const limits = Array.from({ length: 10 }, (_, i) => ({ id: `l${i}`, text: 'Pending.' }))
+    expect(
+      componentRegistryEntries({ components: [{ name: 'NavBar', limits }] }).limits.NavBar
+    ).toHaveLength(10)
+  })
+
+  it.each([
+    ['a public name twice', { components: ['NavBar', { name: 'NavBar', limits: [limit] }] }],
+    ['a name both public and internal', { components: ['NavBar'], internal: ['NavBar'] }],
+    ['a name twice in another case', { components: ['NavBar', 'navbar'] }]
+  ])('should refuse %s', (_label, registry) => {
+    expect(() => componentRegistryEntries(registry)).toThrow('Duplicate component registry name')
+  })
+
+  // The nearest false positive: distinct names, one with limits, are kept apart.
+  it('should accept distinct names', () => {
+    expect(
+      componentRegistryEntries({ components: ['Button', { name: 'NavBar', limits: [limit] }] })
+        .components
+    ).toEqual(['Button', 'NavBar'])
   })
 
   it('should refuse limits on an internal name', () => {

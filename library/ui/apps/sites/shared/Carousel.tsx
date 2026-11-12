@@ -89,6 +89,7 @@ function Carousel<T>({
       setAnimated(!reduced)
       setPosition((previous) => {
         const next = previous + offset
+        if (reduced) return total + (((next % total) + total) % total)
         // Fast repeated input may exhaust the clone range before a transition settles.
         return next < 0 || next >= total * 3 ? total + (((next % total) + total) % total) : next
       })
@@ -162,6 +163,7 @@ function Carousel<T>({
       return
     drag.current = { x: event.clientX, y: event.clientY }
     dragged.current = false
+    if (animated) settle()
     setAnimated(false)
     setDragging(true)
   }

@@ -230,6 +230,49 @@ export interface NearbyMutes {
   muted: string[]
 }
 
+/** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
+ *  `null` reading explained in `unavailable` by its field path. */
+export interface BanBlockState {
+  address: string | null
+  blocks: {
+    state: 'unavailable' | 'live'
+    reason: 'social_feature_off' | 'not_signed_in' | 'social_not_connected' | null
+    blocked: string[]
+    blockedBy: string[]
+  }
+  platformBan: {
+    state: 'unknown' | 'checked' | 'failed'
+    isBanned: boolean | null
+    source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
+    reason: string | null
+    matchedOn: string | null
+    customMessage: string | null
+    expiresAt: string | null
+    checkedAgoSecs: number | null
+    error: string | null
+  }
+  sceneAdmission: {
+    state: 'unknown' | 'allowed' | 'refused'
+    scope: 'platform' | 'world' | 'scene' | null
+    message: string | null
+    sceneId: string | null
+  }
+  sceneRoom: {
+    state: 'not_connected' | 'connected'
+    sceneId: string | null
+    bannedAddresses: string[]
+    sceneAdmins: string[]
+  }
+  lookup: {
+    address: string
+    isBlockedEitherWay: boolean
+    direction: 'none' | 'local_user_blocked_them' | 'they_blocked_local_user' | 'mutual'
+    bannedInScene: boolean
+    adminPermissions: 'admin' | 'not_admin' | 'not_loaded_yet'
+  } | null
+  unavailable: Record<string, string>
+}
+
 export interface ScreenPosition {
   entity: string
   scene: string
@@ -603,6 +646,21 @@ export class Explorer {
 
   voiceState(): Promise<VoiceState> {
     return this.json<VoiceState>('/voice_state')
+  }
+
+  /** The ban and block status; with an address, also that address's standing. */
+  banBlockState(address?: string): Promise<BanBlockState> {
+    return this.json<BanBlockState>(address ? `/ban_block_state ${address}` : '/ban_block_state')
+  }
+
+  /** Block a user through the social service; answers once the service has. */
+  async blockUser(address: string): Promise<void> {
+    await this.run(`/block_user ${address}`)
+  }
+
+  /** Lift a block through the social service; answers once the service has. */
+  async unblockUser(address: string): Promise<void> {
+    await this.run(`/unblock_user ${address}`)
   }
 
   /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and

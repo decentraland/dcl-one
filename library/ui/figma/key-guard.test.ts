@@ -156,7 +156,7 @@ describe('figma-key-guard', () => {
       expect(lines.join('\n')).not.toContain(FAKE_KEY)
       expect(lines.join('\n')).not.toContain('AbC123')
       expect(lines).toContain(
-        'hint: a new public Figma URL lands in two pull requests: its key-guard-allow.json entry merged to main first, then the URL'
+        'hint: if this is a public Figma URL, it lands in two pull requests: its key-guard-allow.json entry merged to main first, then the URL; a private file URL is removed instead'
       )
     })
   })

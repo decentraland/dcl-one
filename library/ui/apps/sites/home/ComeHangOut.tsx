@@ -34,10 +34,15 @@ function ComeHangOut({ title, background: decoration, actions, store }: ComeHang
         <h2 id={titleId} className={styles.title}>
           {title}
         </h2>
+        {actions ? (
+          <div className={styles.wideOffers}>
+            <DownloadActions {...actions} align="center" appearance="source" />
+          </div>
+        ) : null}
         {store ? (
-          <StoreBadge {...store} appearance="source" />
-        ) : actions ? (
-          <DownloadActions {...actions} align="center" appearance="source" />
+          <div className={styles.narrowOffer}>
+            <StoreBadge {...store} appearance="source" />
+          </div>
         ) : null}
       </div>
     </section>
