@@ -129,6 +129,16 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       )
       await session.send('Input.dispatchKeyEvent', {
         type: 'keyDown',
+        key: 'Escape',
+        code: 'Escape',
+        windowsVirtualKeyCode: 27
+      })
+      expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(true)
+      expect(
+        await evaluate('document.querySelector("#account-control").getAttribute("aria-expanded")')
+      ).toBe('false')
+      await session.send('Input.dispatchKeyEvent', {
+        type: 'keyDown',
         key: 'Tab',
         code: 'Tab',
         windowsVirtualKeyCode: 9
@@ -148,6 +158,10 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       })
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
       expect(await evaluate('document.querySelectorAll("#balance-action").length')).toBe(1)
+      await click('button[aria-label="Open menu"]')
+      await click('#secondary-link')
+      expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
+      expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
     }, 30_000)
   }
 })

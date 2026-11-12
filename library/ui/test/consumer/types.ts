@@ -23,7 +23,8 @@ const composition: NavBarProps = {
   signIn: { href: '/sign-in' },
   balanceAction: createElement('a', { href: '/credits' }, 'Get credits'),
   accountControl: createElement('button', { type: 'button' }, 'Connect wallet'),
-  mobileSecondaryNavigation: createElement('nav', { 'aria-label': 'Profile sections' })
+  mobileSecondaryNavigation: ({ closeDrawer }) =>
+    createElement('a', { href: '/profile', onClick: closeDrawer }, 'Profile')
 }
 const callbackSlot: NavBarProps = {
   sections,

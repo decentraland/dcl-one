@@ -1,7 +1,44 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import '../../foundations/foundations.css'
 import { Button, NavBar } from '@dcl/one-ui'
+
+function AppAccountControl({ onConnect }: { onConnect: () => void }) {
+  const [open, setOpen] = useState(false)
+  const trigger = useRef<HTMLButtonElement>(null)
+  return (
+    <div
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.preventDefault()
+          setOpen(false)
+          trigger.current?.focus()
+        }
+      }}
+    >
+      <Button
+        ref={trigger}
+        id="account-control"
+        variant="secondary"
+        size="sm"
+        aria-expanded={open}
+        onClick={() => {
+          onConnect()
+          setOpen((value) => !value)
+        }}
+      >
+        Connect wallet
+      </Button>
+      {open ? (
+        <div aria-label="Wallet actions">
+          <Button href="/wallet/profile" variant="text" size="sm">
+            Wallet profile
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  )
+}
 
 function CompositionExample() {
   const [connections, setConnections] = useState(0)
@@ -17,22 +54,24 @@ function CompositionExample() {
           </Button>
         }
         accountControl={
-          <Button
-            id="account-control"
-            variant="secondary"
-            size="sm"
-            onClick={() => setConnections((value) => value + 1)}
-          >
-            Connect wallet
-          </Button>
+          <AppAccountControl onConnect={() => setConnections((value) => value + 1)} />
         }
-        mobileSecondaryNavigation={
+        mobileSecondaryNavigation={({ closeDrawer }) => (
           <nav aria-label="Profile sections">
-            <Button id="secondary-link" href="/profile/photos" variant="text" size="md">
+            <Button
+              id="secondary-link"
+              href="/profile/photos"
+              variant="text"
+              size="md"
+              onClick={(event) => {
+                event.preventDefault()
+                closeDrawer()
+              }}
+            >
               Photos
             </Button>
           </nav>
-        }
+        )}
       />
       <main>
         <p role="status">Connections: {connections}</p>

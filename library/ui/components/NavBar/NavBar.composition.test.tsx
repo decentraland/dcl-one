@@ -35,11 +35,11 @@ describe('when NavBar accepts app-owned composition controls', () => {
     }
   })
 
-  it('should retain numeric balances and the standard account trigger beside separate controls', async () => {
+  it('should retain numeric balances while replacing the standard account trigger', async () => {
     render(<NavBar {...props} />)
     expect(screen.getByText('0')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Account: Ada' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Account: Ada' })).not.toBeInTheDocument()
     const credits = screen.getByRole('link', { name: 'Get credits' })
     const wallet = screen.getByRole('button', { name: 'Connect wallet' })
     expect(credits.parentElement?.closest('a, button')).toBeNull()
@@ -50,7 +50,7 @@ describe('when NavBar accepts app-owned composition controls', () => {
 
   it('should accept explicitly supplied controls for a signed-out account without showing numeric balances', () => {
     render(<NavBar {...props} account={undefined} signIn={{ href: '/sign-in' }} />)
-    expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Get credits' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeInTheDocument()
     expect(screen.queryByText('2')).not.toBeInTheDocument()
@@ -265,5 +265,110 @@ describe('when NavBar accepts app-owned composition controls', () => {
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: 'Wallet' })).not.toBeInTheDocument()
     expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+  })
+  for (const value of [null, undefined]) {
+    it(`should restore standard account and sign-in controls for ${String(value)} overrides`, async () => {
+      const { rerender } = render(
+        <NavBar
+          {...props}
+          accountControl={value}
+          accountActions={[{ label: 'Profile', href: '/profile' }]}
+        />
+      )
+      expect(screen.getByRole('button', { name: 'Account: Ada' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(within(screen.getByRole('dialog')).getByText('Ada')).toBeInTheDocument()
+      expect(
+        within(screen.getByRole('dialog')).getByRole('link', { name: 'Profile' })
+      ).toBeInTheDocument()
+      await user.keyboard('{Escape}')
+      rerender(<NavBar sections={[]} signIn={{ href: '/sign-in' }} accountControl={value} />)
+      expect(screen.getByRole('link', { name: 'Sign in' })).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: 'Open menu' }))
+      expect(
+        within(screen.getByRole('dialog')).getByRole('link', { name: 'Sign in' })
+      ).toBeInTheDocument()
+    })
+  }
+
+  it('should treat false as an explicit replacement rather than restoring default account controls', async () => {
+    const { rerender } = render(
+      <NavBar
+        {...props}
+        accountControl={false}
+        accountActions={[{ label: 'Profile', href: '/profile' }]}
+      />
+    )
+    expect(screen.queryByRole('button', { name: 'Account: Ada' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const drawer = screen.getByRole('dialog')
+    expect(within(drawer).queryByText('Ada')).not.toBeInTheDocument()
+    expect(within(drawer).queryByRole('link', { name: 'Profile' })).not.toBeInTheDocument()
+    expect(within(drawer).getByText('0')).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    rerender(<NavBar sections={[]} signIn={{ href: '/sign-in' }} accountControl={false} />)
+    expect(screen.queryByRole('link', { name: 'Sign in' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(
+      within(screen.getByRole('dialog')).queryByRole('link', { name: 'Sign in' })
+    ).not.toBeInTheDocument()
+  })
+
+  it('should let secondary navigation callbacks close the drawer and use the latest app state', async () => {
+    const renderTabs =
+      (label: string) =>
+      ({ closeDrawer }: { closeDrawer: () => void }) => (
+        <nav aria-label="Profile tabs">
+          <a
+            href="/profile/photos"
+            onClick={(event) => {
+              event.preventDefault()
+              onConnect()
+              closeDrawer()
+            }}
+          >
+            {label}
+          </a>
+        </nav>
+      )
+    const { rerender } = render(
+      <NavBar {...props} mobileSecondaryNavigation={renderTabs('Old photos')} />
+    )
+    expect(screen.queryByRole('navigation', { name: 'Profile tabs' })).not.toBeInTheDocument()
+    const menu = screen.getByRole('button', { name: 'Open menu' })
+    await user.click(menu)
+    rerender(<NavBar {...props} mobileSecondaryNavigation={renderTabs('Current photos')} />)
+    expect(screen.queryByRole('link', { name: 'Old photos' })).not.toBeInTheDocument()
+    await user.click(
+      within(screen.getByRole('dialog')).getByRole('link', { name: 'Current photos' })
+    )
+    expect(onConnect).toHaveBeenCalledOnce()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(menu).toHaveFocus()
+    expect(document.querySelectorAll('#wallet-control')).toHaveLength(1)
+  })
+
+  it('should allow a secondary navigation callback to render nothing', async () => {
+    render(<NavBar {...props} mobileSecondaryNavigation={() => null} />)
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    expect(screen.queryByRole('navigation', { name: 'Profile sections' })).not.toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+  it('should preserve a noninteractive balance action without inventing absent numeric balances', async () => {
+    render(
+      <NavBar
+        {...props}
+        balances={undefined}
+        balanceAction={<span id="iap-status">IAP credits</span>}
+      />
+    )
+    expect(screen.queryByText('0')).not.toBeInTheDocument()
+    expect(screen.queryByText('2')).not.toBeInTheDocument()
+    expect(screen.getByText('IAP credits').closest('a,button')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Open menu' }))
+    const drawer = screen.getByRole('dialog')
+    expect(within(drawer).getByText('IAP credits').closest('a,button')).toBeNull()
+    expect(within(drawer).queryByText('0')).not.toBeInTheDocument()
+    expect(document.querySelectorAll('#iap-status')).toHaveLength(1)
   })
 })

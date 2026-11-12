@@ -93,10 +93,10 @@ type NavBarCommonProps = {
   balances?: NavBarBalances
   /** App-owned balance action beside numeric balances, rendered in the header or open drawer, never both. */
   balanceAction?: ReactNode
-  /** Additional account control beside the standard account/sign-in control. Rendered in the desktop header or open drawer. */
+  /** Replaces the standard account/sign-in UI. null/undefined retain defaults; false hides them. Rendered once in the desktop header or open drawer. */
   accountControl?: ReactNode
-  /** Secondary navigation rendered only in the open drawer. Supply semantic links and their accessible names. */
-  mobileSecondaryNavigation?: ReactNode
+  /** Secondary navigation in the open drawer. The callback lets app-owned links close it after navigation. */
+  mobileSecondaryNavigation?: ReactNode | ((context: { closeDrawer: () => void }) => ReactNode)
   /** Signed in: the notifications button. */
   notifications?: NavBarNotifications
   /** Signed in: the account menu's entries, for example profile links and sign out. */
@@ -557,6 +557,13 @@ export function NavBar({
     navRef.current?.querySelector<HTMLElement>('a[href]')?.focus()
   }, [])
 
+  const hasAccountOverride = accountControl !== null && accountControl !== undefined
+  const secondaryNavigation = drawerOpen
+    ? typeof mobileSecondaryNavigation === 'function'
+      ? mobileSecondaryNavigation({ closeDrawer })
+      : mobileSecondaryNavigation
+    : null
+
   const renderSignIn = (onDone?: () => void) =>
     !signInAction ? null : signInAction.onSelect ? (
       <button
@@ -619,24 +626,23 @@ export function NavBar({
             ) : null}
           </div>
         ) : null}
-        {account ? (
-          <>
-            {notifications ? (
-              <NotificationsButton count={count} labels={labels} onClick={notifications.onSelect} />
-            ) : null}
-            <AccountMenu
-              account={account}
-              actions={accountActions}
-              labels={labels}
-              renderLink={renderLink}
-            />
-          </>
+        {account && notifications ? (
+          <NotificationsButton count={count} labels={labels} onClick={notifications.onSelect} />
+        ) : null}
+        {hasAccountOverride ? (
+          !drawerOpen && hasSlot(accountControl) ? (
+            <div className={styles.barAccountControl}>{accountControl}</div>
+          ) : null
+        ) : account ? (
+          <AccountMenu
+            account={account}
+            actions={accountActions}
+            labels={labels}
+            renderLink={renderLink}
+          />
         ) : (
           renderSignIn()
         )}
-        {!drawerOpen && hasSlot(accountControl) ? (
-          <div className={styles.barAccountControl}>{accountControl}</div>
-        ) : null}
         <button
           ref={menuButtonRef}
           type="button"
@@ -690,11 +696,11 @@ export function NavBar({
               </li>
             ))}
           </ul>
-          {hasSlot(mobileSecondaryNavigation) ? (
-            <div className={styles.secondaryNavigation}>{mobileSecondaryNavigation}</div>
+          {hasSlot(secondaryNavigation) ? (
+            <div className={styles.secondaryNavigation}>{secondaryNavigation}</div>
           ) : null}
           <div className={styles.drawerAccount}>
-            {account ? (
+            {!hasAccountOverride && account ? (
               <div className={styles.drawerIdentity}>
                 <Avatar account={account} />
                 <span className={styles.accountName}>
@@ -708,35 +714,31 @@ export function NavBar({
             {hasSlot(balanceAction) ? (
               <div className={styles.compositionControl}>{balanceAction}</div>
             ) : null}
-            {account ? (
-              <>
-                {notifications ? (
-                  <button
-                    type="button"
-                    className={styles.menuItem}
-                    onClick={() => {
-                      closeDrawer()
-                      notifications.onSelect()
-                    }}
-                  >
-                    {count > 0 ? labels.unreadNotifications(count) : labels.notifications}
-                  </button>
-                ) : null}
-                {accountActions.length > 0 ? (
+            {account && notifications ? (
+              <button
+                type="button"
+                className={styles.menuItem}
+                onClick={() => {
+                  closeDrawer()
+                  notifications.onSelect()
+                }}
+              >
+                {count > 0 ? labels.unreadNotifications(count) : labels.notifications}
+              </button>
+            ) : null}
+            {accountControl ??
+              (account ? (
+                accountActions.length > 0 ? (
                   <AccountActionList
                     actions={accountActions}
                     renderLink={renderLink}
                     onDone={closeDrawer}
                     className={styles.menuList}
                   />
-                ) : null}
-              </>
-            ) : (
-              renderSignIn(closeDrawer)
-            )}
-            {hasSlot(accountControl) ? (
-              <div className={styles.compositionControl}>{accountControl}</div>
-            ) : null}
+                ) : null
+              ) : (
+                renderSignIn(closeDrawer)
+              ))}
           </div>
         </Drawer>
       ) : null}
