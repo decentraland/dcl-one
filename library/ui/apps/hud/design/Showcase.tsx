@@ -11,6 +11,8 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
+import { CountBadge } from './CountBadge'
+import { SwapLabel } from './SwapLabel'
 import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
@@ -486,6 +488,7 @@ export function Showcase(): React.JSX.Element {
           items={[
             { label: 'View Community' },
             { kind: 'submenu', label: 'Notification Ping' },
+            { kind: 'submenu', label: 'Invite to Community', items: [{ label: 'Pixel Builders' }, { label: 'Neon Club' }] },
             { kind: 'separator' },
             { kind: 'title', label: 'Notification Ping' },
             { kind: 'option', label: 'All Messages', checked: true },
@@ -495,6 +498,14 @@ export function Showcase(): React.JSX.Element {
             { label: 'Delete chat history', danger: true }
           ]}
         />
+      </Section>
+
+      <Section title="SwapLabel (hover the button)">
+        <Button size="sm" variant="ghost" aria-label="Cancel join request"><SwapLabel idle="Request Sent" hover="Cancel Request" /></Button>
+      </Section>
+
+      <Section title="CountBadge (count · capped)">
+        <CountBadge count={5} /> <CountBadge count={140} max={99} />
       </Section>
 
       <Section title="KebabMenu (md · sm)">

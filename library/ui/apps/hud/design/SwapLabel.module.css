@@ -1,0 +1,11 @@
+.hover {
+  display: none;
+}
+:hover > .idle,
+:focus-visible > .idle {
+  display: none;
+}
+:hover > .hover,
+:focus-visible > .hover {
+  display: inline;
+}
