@@ -299,9 +299,6 @@ const NO_WALLET: Eip1193Provider = {
   }
 }
 
-/** The shell's request signer for a login: its ephemeral key over its auth chain (ADR-44 headers). */
-export { loginSigner }
-
 /** One login, as signed: a new sign-in (or its renewal) is another, even for the same account. */
 const loginKey = (login: StoredLogin): string => `${rootAddress(login.identity).toLowerCase()}|${login.identity.ephemeralIdentity.address.toLowerCase()}|${login.identity.expiration}`
 

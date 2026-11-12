@@ -30,10 +30,10 @@ Donate runs in the `/play` web shell, the same way the Shop's purchases do.
   reaches the wallet, and re-checks the account and the login before the signature.
 - **Gasless only, never twice.** The tip is relayed as a meta-transaction and nothing else: a transaction from the
   wallet beside it would not use up its nonce, so both could land. The relay's refusal (`ok: false`, which it also
-  answers after a broadcast it lost) fails the tip. The account's next send first reads the token's nonce: once it
-  is past the failed tip's, that tip was mined after all and is shown as sent (its Transfer found) instead of paying
-  again; while it is not, the new tip is pinned to the failed tip's nonce (the guard refuses any other), so at most
-  one of the two can land. Any outcome the shell can't tell apart from a broadcast (a lost answer, a transaction not yet mined) is
+  answers after a broadcast it lost) fails the tip. The account's next send first reads the token's nonce. While it
+  is still the failed tip's, the new tip is pinned to that nonce (the guard refuses any other), so at most one of them
+  can land; every attempt of that nonce (TRY AGAIN at another amount is one) is remembered. Once the nonce has moved
+  past it, nothing is signed: those attempts are watched for their Transfer, and the one mined is shown as sent. Any outcome the shell can't tell apart from a broadcast (a lost answer, a transaction not yet mined) is
   shown as processing and watched, never retried.
 - **Confirmed by its own Transfer.** An unclear tip is watched by its hash, when there is one, and by the MANA
   token's `Transfer(tipper, creator, amount)` after the block read just before signing, which also gives the hash the
@@ -42,6 +42,9 @@ Donate runs in the `/play` web shell, the same way the Shop's purchases do.
   AGAIN) only while the token's meta-transaction nonce is still the one the tip signed. Once it has moved past it,
   the signature was used, so the tip's Transfer is looked for and the tip is never retried: a retry would sign the
   next nonce and could pay twice. A known hash that reverted is not watched again; its Transfer is.
+- **Switched by the Explorer's flags file.** `explorer-alfa-donations` turns Donate on, and
+  `explorer-alfa-recommended-donation-amount` names the suggested amounts (`166,333,500` without it), read from the
+  flags service the Shop reads (`window.__SHOP_FEATURE_FLAGS__`, else Decentraland's) each time Donate opens.
 - **Web3 sign-ins only.** Donate is offered, and `donate.open` is accepted, only for a web3 wallet sign-in, as
   AGENTS.md requires for MANA. The shell checks this on every open, not only in what the HUD reads.
 - **One dialog over the app.** The Shop's dialog and the Donate panel each refuse to open while the other's is up.

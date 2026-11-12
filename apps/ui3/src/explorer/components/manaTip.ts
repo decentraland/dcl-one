@@ -16,7 +16,8 @@ const FORWARD_MAX_RETRY_MS = 120_000;
 const POLYGON_CHAIN_IDS = new Set([137, 80002]);
 const TX_HASH_RE = /^0x[0-9a-fA-F]{64}$/;
 
-const TRANSFER_ABI = [
+/** The ERC-20 `transfer`, the one call a MANA tip makes. */
+export const TRANSFER_ABI = [
   {
     type: "function",
     name: "transfer",
@@ -161,6 +162,20 @@ export async function deliverTip(provider: Eip1193Provider, hash: string, opts: 
     if (now() + RECEIPT_POLL_MS > deadline) return "gave-up";
     await sleep(RECEIPT_POLL_MS);
   }
+  return forwardUntil(hash, forward, { sleep, now, deadline });
+}
+
+/**
+ * Forwards a mined tip, retrying what may succeed later (429, 5xx, no answer) with backoff, never sooner than the
+ * server's Retry-After, until `deadline`. A `CatalystError` carries the status and the hint. Never throws.
+ */
+export async function forwardUntil(
+  hash: string,
+  forward: (transactionHash: string) => Promise<void>,
+  opts: { sleep?: (ms: number) => Promise<void>; now?: () => number; deadline: number },
+): Promise<Exclude<TipDelivery, "reverted">> {
+  const sleep = opts.sleep ?? realSleep;
+  const now = opts.now ?? Date.now;
   let delay = FORWARD_FIRST_RETRY_MS;
   for (;;) {
     let hint = 0;
@@ -173,7 +188,7 @@ export async function deliverTip(provider: Eip1193Provider, hash: string, opts: 
     }
     // Never sooner than the server's Retry-After, never longer than the max.
     const wait = Math.min(Math.max(delay, hint), FORWARD_MAX_RETRY_MS);
-    if (now() + wait > deadline) return "gave-up";
+    if (now() + wait > opts.deadline) return "gave-up";
     await sleep(wait);
     delay = Math.min(delay * 2, FORWARD_MAX_RETRY_MS);
   }

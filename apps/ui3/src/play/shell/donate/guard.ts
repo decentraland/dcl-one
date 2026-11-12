@@ -11,7 +11,8 @@
 // signature it reads the wallet's selected account and checks the login is still the one that confirmed. Anything
 // else is refused before it reaches the wallet.
 
-import { decodeFunctionData, parseAbi, type Hex } from 'viem'
+import { decodeFunctionData, type Hex } from 'viem'
+import { TRANSFER_ABI } from '../../../explorer/components/manaTip'
 import { chainSalt } from '../../../shop/market/lib/tx'
 import type { ChainId } from '@shop/model/chain'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
@@ -33,8 +34,6 @@ export interface DonationIntent {
   current(): boolean
 }
 
-/** The MANA token's transfer, the one call a tip makes. */
-export const TRANSFER_ABI = parseAbi(['function transfer(address to, uint256 amount) returns (bool)'])
 const DOMAIN_FIELDS = [
   { name: 'name', type: 'string' },
   { name: 'version', type: 'string' },

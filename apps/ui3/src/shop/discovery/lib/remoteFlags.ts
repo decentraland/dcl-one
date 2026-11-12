@@ -73,8 +73,9 @@ const fetchFlags: FlagsTransport = async (url, { signal }) => {
   return { status: res.status, body: await res.text() };
 };
 
-export async function readRemoteFlags(signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
-  return readFlagsFile(flagsService(), fetchFlags, signal);
+/** Reads the flags file of `app` (the Shop's own unless named) from this page's flags service. */
+export async function readRemoteFlags(signal?: AbortSignal, app?: string): Promise<RemoteFlagsAnswer> {
+  return readFlagsFile(flagsService(), fetchFlags, signal, app);
 }
 
 export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {

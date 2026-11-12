@@ -11,6 +11,7 @@ import { MANA_TOKEN } from '@shop/market/lib/contracts'
 import { metaTransactionTypedData, MetaTransactionError } from '../../shop/market/lib/metaTx'
 import { signTypedData, TxPendingError, TxRevertedError } from '../../shop/market/lib/tx'
 import type { StoredLogin } from '@explorer-core/features/auth/sso'
+import { CatalystError } from '../../data/catalyst/client'
 import { isShellError } from '@explorer-core/lib/shellReply'
 import { DONATE_BUSY, DONATE_EVENT, DONATE_UNAVAILABLE } from '../lib/donateProtocol'
 import { createShellDonate, parsePresets, safeCreator, placeTitle, resolvePlace, weiToMana, type DonateHandlers, type DonateView, type ShellDonateServices } from '../shell/donate/donation'
@@ -587,6 +588,84 @@ describe('sending a tip', () => {
     expect(signed).toHaveLength(2)
     expect(s.last().step).toBe('sent')
     expect(s.services.forward).toHaveBeenCalledWith(MINED, LOGIN)
+  })
+
+  /** A relay that refuses every tip, signing the nonce it was pinned to (else 1), and the nonces it signed. */
+  const refusingRelay = () => {
+    const signed: bigint[] = []
+    const relay = vi.fn(async (p: Eip1193Provider, token: typeof TOKEN, data: `0x${string}`, f: typeof fetch, pinned?: bigint) => {
+      const nonce = pinned ?? 1n
+      signed.push(nonce)
+      await signTypedData(p, TIPPER, metaTransactionTypedData(token, 'collection', TIPPER, nonce, data))
+      await f('https://relay.test/transactions', { method: 'POST' })
+      throw new MetaTransactionError('Invalid transaction', 'invalid_transaction', 400, true)
+    })
+    return { signed, relay }
+  }
+
+  it('never signs again when an earlier failed tip of another amount is mined: it finds that one and shows it sent', async () => {
+    const { signed, relay } = refusingRelay()
+    let used = 1n
+    const MINED = '0x' + 'ef'.repeat(32)
+    // The 166 tip (the first attempt) is mined after both attempts were refused.
+    const transfers = vi.fn(async (_t: unknown, _f: string, _to: string, _b: bigint) => (used > 1n ? [{ hash: MINED, value: parseUnits('166', 18) }] : []))
+    const s = setup({ sendGasless: relay, now: () => 0, nonce: async () => used, transfers })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    s.handlers().onRetry?.()
+    s.handlers().onSend?.('200')
+    await flush()
+    expect(signed).toEqual([1n, 1n])
+    used = 2n
+    s.handlers().onRetry?.()
+    s.handlers().onSend?.('300')
+    await flush()
+    await flush()
+    expect(signed).toHaveLength(2)
+    expect(s.last()).toEqual({ step: 'sent', creator: { address: CREATOR, name: 'Aurora' } })
+    expect(s.services.forward).toHaveBeenCalledWith(MINED, LOGIN)
+  })
+
+  it('never signs again when a failed tip’s nonce moved but no Transfer can be read: it shows it processing', async () => {
+    const { signed, relay } = refusingRelay()
+    let used = 1n
+    const s = setup({ sendGasless: relay, now: () => 0, sleep: () => new Promise<void>(() => {}), nonce: async () => used, transfers: () => Promise.reject(new Error('eth_getLogs rate-limited')) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('failed')
+    used = 2n
+    s.handlers().onRetry?.()
+    s.handlers().onSend?.('166')
+    await flush()
+    await flush()
+    expect(signed).toEqual([1n])
+    expect(s.last()).toMatchObject({ step: 'processing', amount: '166' })
+  })
+
+  it('forwards with retries on a 5xx, never on the catalyst’s refusal', async () => {
+    const retried = vi.fn().mockRejectedValueOnce(new CatalystError('busy', 'u', 503)).mockResolvedValue(undefined)
+    const s = setup({ forward: retried, now: () => 0 })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    await flush()
+    expect(retried).toHaveBeenCalledTimes(2)
+    const refused = vi.fn().mockRejectedValue(new CatalystError('no', 'u', 400))
+    const r = setup({ forward: refused, now: () => 0 })
+    await open(r.donate)
+    r.handlers().onSend?.('166')
+    await flush()
+    await flush()
+    expect(refused).toHaveBeenCalledOnce()
+  })
+
+  it('asks the places service on every donate.target: nothing is kept', async () => {
+    const place = vi.fn(async () => ({ creator: CREATOR, title: 'Plaza' }))
+    const s = setup({ place })
+    for (let i = 0; i < 2; i++) expect(await s.donate.request('donate.target', { v: 1, place: { parcel: { x: 0, y: 0 } } })).toEqual({ v: 1, tippable: true })
+    expect(place).toHaveBeenCalledTimes(2)
   })
 
   it('draws only an https face and a plain colour from a profile, and ignores a stored record with any bad field', async () => {

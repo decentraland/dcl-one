@@ -13,12 +13,11 @@
 // checked again here on every open, not only in the capabilities the HUD reads.
 
 import type { Eip1193Provider } from '../../../data/auth/wallet'
-import { catalystBase, getJSON } from '../../../data/catalyst/client'
+import { CatalystError, catalystBase, getJSON } from '../../../data/catalyst/client'
 import { fetchProfile, mapProfile, profileFaceUrl } from '../../../data/catalyst/profile'
-import { encodeManaTransfer, fetchTipTarget, manaToWei, TIP_FORWARD_PATH, type TipTarget } from '../../../explorer/components/manaTip'
+import { encodeManaTransfer, fetchTipTarget, forwardUntil, manaToWei, TIP_DELIVERY_WINDOW_MS, TIP_FORWARD_PATH, type TipTarget } from '../../../explorer/components/manaTip'
 import { settlementChainId } from '../../../shop/checkout/chain/config'
-import { flagsService } from '../../../shop/discovery/lib/remoteFlags'
-import { parseRemoteFlags } from '@shop/discovery/lib/rolloutFlags'
+import { readRemoteFlags } from '../../../shop/discovery/lib/remoteFlags'
 import { manaToken, type ContractData } from '@shop/market/lib/contracts'
 import { readManaBalance } from '../../../shop/market/lib/mana'
 import { MetaTransactionError, readNonce, sendMetaTransaction } from '../../../shop/market/lib/metaTx'
@@ -53,14 +52,11 @@ import type { DonateCreator, DonateHandlers, DonateView } from '@hud/features/do
 export const DEFAULT_PRESETS = [166, 333, 500]
 const DONATIONS_FLAG = 'explorer-alfa-donations'
 const PRESETS_FLAG = 'explorer-alfa-recommended-donation-amount'
-const RATE_CACHE_MS = 30 * 60_000
 /** How long the panel waits for the tip to be mined before it says the tip is processing. */
 const RECEIPT_WAIT_MS = 3 * 60_000
 /** How long a processing tip is still watched (by its effect on the balance) after the panel says so. */
 const WATCH_FOR_MS = 30 * 60_000
 const WATCH_EVERY_MS = 10_000
-const FORWARD_RETRY_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
-const TARGET_TTL_MS = 5 * 60_000
 const FORWARD_TIMEOUT_MS = 10_000
 
 export type { DonateCreator, DonateHandlers, DonateView }
@@ -166,28 +162,10 @@ export function weiToMana(wei: bigint): number {
   return Number(wei / 10n ** 14n) / 10_000
 }
 
-const FLAGS_TTL_MS = 60_000
 const FLAGS_TIMEOUT_MS = 3_000
-let flagsCache: { at: number; read: Promise<ReturnType<typeof parseRemoteFlags>> } | null = null
 
-/** The Explorer's flags file (the same service the Shop reads its own from), kept a minute; a failed read is not kept. */
-function readExplorerFlags(): Promise<ReturnType<typeof parseRemoteFlags>> {
-  if (flagsCache && Date.now() - flagsCache.at < FLAGS_TTL_MS) return flagsCache.read
-  const read = fetch(`${flagsService()}/explorer.json`, { signal: AbortSignal.timeout(FLAGS_TIMEOUT_MS) }).then(async (res) => {
-    if (!res.ok) {
-      await res.body?.cancel().catch(() => {})
-      throw new Error(`feature flags: HTTP ${res.status}`)
-    }
-    return parseRemoteFlags(await res.json())
-  })
-  flagsCache = { at: Date.now(), read }
-  read.catch(() => {
-    if (flagsCache?.read === read) flagsCache = null
-  })
-  return read
-}
-
-let rateCache: { at: number; rate: number } | null = null
+/** The Explorer's flags file, from the service the Shop reads its own from; read each time, never kept. */
+const readExplorerFlags = (): ReturnType<typeof readRemoteFlags> => readRemoteFlags(AbortSignal.timeout(FLAGS_TIMEOUT_MS), 'explorer')
 
 const LIVE: ShellDonateServices = {
   async enabled() {
@@ -211,13 +189,10 @@ const LIVE: ShellDonateServices = {
   balance: async (account, token) => BigInt(await readManaBalance(token.chainId, account)),
   nonce: (token, account) => readNonce(token, account),
   async usdRate() {
-    if (rateCache && Date.now() - rateCache.at < RATE_CACHE_MS) return rateCache.rate
     const res = await fetch(`${catalystBase()}/price/api/v3/simple/price?ids=decentraland&vs_currencies=usd`, { signal: AbortSignal.timeout(FLAGS_TIMEOUT_MS) })
     const body = (await res.json().catch(() => null)) as { decentraland?: { usd?: unknown } } | null
     const rate = body?.decentraland?.usd
-    if (!res.ok || typeof rate !== 'number' || !(rate > 0)) return null
-    rateCache = { at: Date.now(), rate }
-    return rate
+    return res.ok && typeof rate === 'number' && rate > 0 ? rate : null
   },
   tipTarget: () => fetchTipTarget().catch(() => null),
   chainId: () => settlementChainId(),
@@ -259,10 +234,16 @@ const LIVE: ShellDonateServices = {
       body: JSON.stringify({ type: 'tip-received', transactionHash: hash }),
       signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS)
     })
-    await res.body?.cancel().catch(() => {})
-    // A 4xx is the catalyst refusing the claim (a 429 is its rate limit, asked again later).
-    if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new ForwardRefused(res.status)
-    if (!res.ok) throw new Error(`The tip forward answered ${res.status}`)
+    if (res.ok) {
+      await res.body?.cancel().catch(() => {})
+      return
+    }
+    // The status decides a retry (forwardUntil: a 429 or 5xx is asked again, any other 4xx is the catalyst refusing
+    // the claim), never sooner than the Retry-After the server repeats in its body.
+    const body = (await res.json().catch(() => null)) as { retryAfter?: unknown } | null
+    const err = new CatalystError(`The tip forward answered ${res.status}`, url, res.status)
+    if (typeof body?.retryAfter === 'number' && Number.isFinite(body.retryAfter) && body.retryAfter > 0) err.retryAfterSecs = body.retryAfter
+    throw err
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   now: () => Date.now(),
@@ -306,13 +287,6 @@ export function safeCreator(c: Partial<DonateCreator> | null | undefined): Donat
   }
 }
 
-/** The catalyst refused a tip's forward (a 4xx other than its rate limit): asking again changes nothing. */
-class ForwardRefused extends Error {
-  constructor(readonly status: number) {
-    super(`The tip forward was refused (${status})`)
-  }
-}
-
 /**
  * The relay answered and refused the tip (`ok: false`). It may have broadcast and lost it first, but a refused tip
  * isn't mined, and trying again signs the same meta-transaction nonce, so at most one of the two can land.
@@ -353,6 +327,8 @@ interface Pending {
   onShowProcessing?: () => void
   /** Lets the account's tip lock go, once the tip settles. */
   release?: () => void
+  /** Other tips that signed the same nonce (failed attempts at other amounts): whichever is mined is this tip. */
+  alternates?: PendingRecord[]
   settled: boolean
 }
 
@@ -382,17 +358,16 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
    */
   let session: { id: number } | null = null
   let sessions = 0
-  /** Places looked up for donate.target, kept a while so walking around reads each once. Failed reads aren't kept. */
-  const targets = new Map<string, { at: number; tippable: boolean }>()
   /** Unsettled tips, by account; also kept in storage, so a reload or another tab sees them. */
   const pending = new Map<string, Pending>()
   /**
-   * The account's last tip shown as failed, while its watch would still run. Failed means its nonce was unused when
+   * The account's tips shown as failed that signed one nonce (TRY AGAIN at another amount adds one), while their
+   * watch would still run. Failed means its nonce was unused when
    * checked, but a broadcast the relay lost can still be mined after that. So the next send first checks it: once its
    * nonce is used, its Transfer is looked for and shown instead; while unused, the next tip signs that same nonce,
    * so at most one of the two can land.
    */
-  const lastFailed = new Map<string, PendingRecord>()
+  const lastFailed = new Map<string, PendingRecord[]>()
 
   const account = (): string | null => {
     const login = deps.login()
@@ -465,7 +440,10 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     if (pending.get(who) === p) pending.delete(who)
     // Only this tip's record: another tab may since have stored a newer one (where it has no tip lock).
     if (load(who)?.id === p.record.id) save(who, null)
-    if (outcome === 'failed') lastFailed.set(who, p.record)
+    if (outcome === 'failed') {
+      const same = (lastFailed.get(who) ?? []).filter((r) => r.nonce === p.record.nonce && r.until > svc.now())
+      lastFailed.set(who, [...same, p.record])
+    }
     // A tip mined uses the nonce a failed one signed (it signed that one or a later one): that one can't land now.
     else if (outcome === 'sent') lastFailed.delete(who)
     p.release?.()
@@ -474,17 +452,8 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   }
 
   async function forward(hash: string, login: StoredLogin): Promise<void> {
-    for (const delay of [0, ...FORWARD_RETRY_MS]) {
-      if (delay) await svc.sleep(delay)
-      try {
-        await svc.forward(hash, login)
-        return
-      } catch (e) {
-        console.warn('[donate] tip forward failed', e)
-        // The catalyst refused the claim itself: asking again changes nothing.
-        if (e instanceof ForwardRefused) return
-      }
-    }
+    const outcome = await forwardUntil(hash, (h) => svc.forward(h, login), { sleep: svc.sleep, now: svc.now, deadline: svc.now() + TIP_DELIVERY_WINDOW_MS })
+    if (outcome !== 'notified') console.warn('[donate] tip forward', outcome)
   }
 
   /**
@@ -494,6 +463,15 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   async function findTransfer(who: string, record: PendingRecord, token: ContractData): Promise<string | null> {
     const found = (await svc.transfers(token, who, record.creator.address, BigInt(record.fromBlock) + 1n).catch(() => [])).find((t) => t.value === BigInt(record.wei))
     return found?.hash ?? null
+  }
+
+  /** The Transfer of the pending tip or of any tip that signed the same nonce, and which of them it is. */
+  async function findAny(who: string, p: Pending, token: ContractData): Promise<{ hash: string; record: PendingRecord } | null> {
+    for (const record of [p.record, ...(p.alternates ?? [])]) {
+      const hash = await findTransfer(who, record, token)
+      if (hash) return { hash, record }
+    }
+    return null
   }
 
   /**
@@ -515,15 +493,19 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     const byHash: Promise<void> = known
       ? svc.wait(chainId, known, Math.max(0, record.until - svc.now()), () => p.settled).then(
           () => sent(known),
-          (e: unknown) => (isTxReverted(e) ? settleFailure(who, p, token, login) : undefined)
+          // The Transfer watch below is already running: a revert doesn't start another.
+          (e: unknown) => (isTxReverted(e) ? settleFailure(who, p, token, login, true) : undefined)
         )
       : Promise.resolve()
     const byTransfer = (async (): Promise<void> => {
       while (!p.settled && svc.now() < record.until) {
         await svc.sleep(WATCH_EVERY_MS)
         if (p.settled) return
-        const hash = await findTransfer(who, record, token)
-        if (hash) return sent(hash)
+        const found = await findAny(who, p, token)
+        if (!found) continue
+        // The panel says which tip was mined: its amount and creator.
+        if (found.record !== p.record) p.record = { ...found.record, id: p.record.id }
+        return sent(found.hash)
       }
     })()
     void Promise.all([byHash, byTransfer]).then(() => settle(who, p, 'unknown'))
@@ -536,7 +518,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
    * same nonce) went through, so it is looked for and never retried: TRY AGAIN would sign the next nonce and could
    * pay twice. A nonce that can't be read leaves the tip watched.
    */
-  async function settleFailure(who: string, p: Pending, token: ContractData, login: StoredLogin | null): Promise<void> {
+  async function settleFailure(who: string, p: Pending, token: ContractData, login: StoredLogin | null, watching = false): Promise<void> {
     const now = await svc.nonce(token, who).catch(() => null)
     if (p.settled) return
     if (now != null && now <= BigInt(p.record.nonce)) return settle(who, p, 'failed')
@@ -551,7 +533,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
     // Its known hash reverted: watching it again would revert at once and come back here. Its Transfer only.
     delete p.record.hash
     save(who, p.record)
-    watch(who, p, token, login)
+    if (!watching) watch(who, p, token, login)
   }
 
   async function capabilities(): Promise<DonateCapabilities> {
@@ -570,7 +552,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   }
 
   /** `read`, or a refusal after `ms`: a read the panel waits on never holds the dialog for good. */
-  function bounded<T>(read: Promise<T>, ms = LOAD_TIMEOUT_MS): Promise<T> {
+  function bounded<T>(read: Promise<T>, ms: number): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(new Error('Donate couldn’t load in time.')), ms)))
     return Promise.race([read, late]).finally(() => clearTimeout(timer))
@@ -688,14 +670,18 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
 
     show({ step: 'loading' })
 
-    // Everything the panel shows, read here (each read bounded). A failure closes the panel.
-    const target = await bounded(svc.tipTarget())
+    // Everything the panel shows, read here, all within one deadline (the HUD waits on the opening). A failure
+    // closes the panel.
+    const deadline = svc.now() + LOAD_TIMEOUT_MS
+    const left = (): number => Math.max(0, deadline - svc.now())
+    const target = await bounded(svc.tipTarget(), left())
     // When the payments config can be read, it must name this build's chain and token, or nothing is sent.
     if (target && (target.chainId !== chainId || lower(target.manaToken) !== lower(token.address))) throw new Error('The deployment pays tips on another network.')
-    const place = await bounded(svc.place(request.place))
+    const place = await bounded(svc.place(request.place), left())
     if (!place) throw new Error('This place has no creator to tip.')
     const [creator, balanceWei, usdRate, presets] = await bounded(
-      Promise.all([svc.creator(place.creator), svc.balance(who, token), svc.usdRate().catch(() => null), svc.presets().catch(() => DEFAULT_PRESETS)])
+      Promise.all([svc.creator(place.creator), svc.balance(who, token), svc.usdRate().catch(() => null), svc.presets().catch(() => DEFAULT_PRESETS)]),
+      left()
     )
     let form: Extract<DonateView, { step: 'form' }> = { step: 'form', scene: place.title, creator, balance: weiToMana(balanceWei), presets, usdRate }
 
@@ -735,20 +721,24 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         if (wei > before) return toForm(amount, 'Insufficient MANA')
         // The last tip shown as failed may have been mined since: show it rather than pay again.
         let pin: bigint | undefined
-        const earlier = lastFailed.get(who)
-        if (earlier && earlier.until > svc.now()) {
+        const earlier = (lastFailed.get(who) ?? []).filter((r) => r.until > svc.now())
+        if (earlier.length > 0) {
           const used = await svc.nonce(token, who).catch(() => null)
           if (cancelled) return
           if (used == null) return toForm(amount, 'Couldn’t check your last tip. Try again.')
-          if (used > BigInt(earlier.nonce)) {
+          if (used > BigInt(earlier[0].nonce)) {
+            // Their signature was used: one of them may have been mined after all (or another meta-transaction took
+            // the nonce). Nothing is signed again; they are watched for their Transfer, holding the lock.
             lastFailed.delete(who)
-            const hash = await findTransfer(who, earlier, token)
-            if (cancelled) return
-            if (hash) {
-              void forward(hash, login)
-              return sent(earlier.creator)
-            }
-          } else pin = BigInt(earlier.nonce)
+            const latest = earlier[earlier.length - 1]
+            const { hash: _reverted, ...record } = latest
+            const p = begin(who, { ...record, id: svc.newId(), until: Math.max(...earlier.map((r) => r.until)) }, owned.lock)
+            owned.lock = null
+            p.alternates = earlier.slice(0, -1)
+            watch(who, p, token, login)
+            return follow(p, () => close(s))
+          }
+          pin = BigInt(earlier[0].nonce)
         } else lastFailed.delete(who)
         await sendTip(amount, wei, fromBlock, login, () => cancelled, owned, pin)
       } finally {
@@ -851,27 +841,10 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         case DONATE_METHODS.capabilities:
           return capabilities()
         case DONATE_METHODS.target: {
-          const place = parseDonateTarget(params)
-          const key = JSON.stringify(place)
-          const now = svc.now()
-          const known = targets.get(key)
-          if (known && now - known.at < TARGET_TTL_MS) return { v: DONATE_PROTOCOL, tippable: known.tippable }
-          let found: ResolvedPlace | null
-          try {
-            found = await svc.place(place)
-          } catch {
-            // A failed read is not an answer: Donate stays hidden now and the next look asks again.
-            return { v: DONATE_PROTOCOL, tippable: false }
-          }
-          for (const [k, v] of targets) if (now - v.at >= TARGET_TTL_MS) targets.delete(k)
-          const tippable = found != null
-          targets.set(key, { at: now, tippable })
-          // A place covers several parcels: walking across it reads it once.
-          for (const pos of found?.positions ?? []) {
-            const [x, y] = pos.split(',').map(Number)
-            if (Number.isInteger(x) && Number.isInteger(y)) targets.set(JSON.stringify({ parcel: { x, y } }), { at: now, tippable })
-          }
-          return { v: DONATE_PROTOCOL, tippable }
+          // Asked each time (nothing is kept here: web-app-standards.md); a failed read is not an answer, so Donate
+          // stays hidden and the next look asks again.
+          const found = await svc.place(parseDonateTarget(params)).catch(() => null)
+          return { v: DONATE_PROTOCOL, tippable: found != null }
         }
         case DONATE_METHODS.open:
           await open(parseDonateRequest(params))
