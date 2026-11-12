@@ -114,6 +114,8 @@ pub struct Settings {
     pub owner_reconcile_interval: std::time::Duration,
     /// `ACCESS_MAX_WALLETS`, `ACCESS_MAX_COMMUNITIES`: the access allow-list caps.
     pub access_caps: store::AccessCaps,
+    /// `BLOCKED_WORLD_NAMES`, as configured ([`names::BlockedNames::parse`]).
+    pub blocked_world_names: String,
 }
 
 impl std::fmt::Debug for Settings {
@@ -142,6 +144,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            blocked_world_names: String::new(),
         })
     }
 
@@ -174,6 +177,11 @@ impl Settings {
         self
     }
 
+    pub fn with_blocked_world_names(mut self, raw: &str) -> Self {
+        self.blocked_world_names = raw.to_string();
+        self
+    }
+
     pub fn with_max_file_count(mut self, max_file_count: u32) -> Self {
         self.max_file_count = max_file_count as usize;
         self
@@ -197,6 +205,7 @@ impl Settings {
             partial_uploads: PartialUploadLimits::default(),
             owner_reconcile_interval: DEFAULT_OWNER_RECONCILE_INTERVAL,
             access_caps: store::AccessCaps::default(),
+            blocked_world_names: String::new(),
         }
     }
 }
@@ -318,6 +327,7 @@ impl CoreState {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
         let (access_log_tx, access_log_rx) = mpsc::unbounded_channel();
+        let names = names::NameDenyList::new(&settings.blocked_world_names);
         Self {
             pool,
             storage,
@@ -325,7 +335,7 @@ impl CoreState {
             settings,
             eip1654,
             presence: Arc::new(Presence::new()),
-            names: names::NameDenyList::default(),
+            names,
             access_log_tx,
             access_log_rx: Mutex::new(Some(access_log_rx)),
             revocation_sinks: parking_lot::RwLock::new(Vec::new()),

@@ -5827,10 +5827,17 @@ async fn served_app(f: &Fixture) -> Router {
 
 /// The read states `served_app` mounts, for a test that seeds them first.
 fn served_states(f: &Fixture) -> (Arc<crate::WorldsState>, Arc<crate::content::ContentState>) {
+    served_states_with(f, crate::Settings::for_tests("https://worlds.example.org"))
+}
+
+fn served_states_with(
+    f: &Fixture,
+    settings: crate::Settings,
+) -> (Arc<crate::WorldsState>, Arc<crate::content::ContentState>) {
     let worlds = Arc::new(crate::WorldsState::new(
         f.pool.clone(),
         f.storage.clone(),
-        crate::Settings::for_tests("https://worlds.example.org"),
+        settings,
         None,
         crate::http::Outbound::for_tests(),
     ));
@@ -6188,14 +6195,22 @@ async fn available_content_reads_literal_cids_and_lists_denylisted_ones() {
 #[tokio::test]
 async fn index_lists_deny_listed_worlds_and_answers_upstream_fields() {
     let Some(f) = fixture().await else { return };
-    let (listed, banned) = (world_name(), world_name());
-    for world in [&listed, &banned] {
+    let (listed, banned, blocked) = (world_name(), world_name(), world_name());
+    for world in [&listed, &banned, &blocked] {
         let owner = Wallet::random();
         f.names.set(&owner.address, world.label());
         let d = deployment(&owner, world, "Indexed", "0,0", &["0,0"]).await;
         post_entity(&f.app, &d, 200).await;
     }
-    let (worlds, blobs) = served_states(&f);
+    // `getBannedNames` holds `BLOCKED_WORLD_NAMES` as configured (lowercased)
+    // and the list entries suffix-stripped; both compare with the full name.
+    let (worlds, blobs) = served_states_with(
+        &f,
+        crate::Settings {
+            blocked_world_names: format!(" {} ,", blocked.display().to_uppercase()),
+            ..crate::Settings::for_tests("https://worlds.example.org")
+        },
+    );
     worlds.names.seed(vec![banned.label().to_uppercase()]);
     let app = served_app_over(&f, worlds, blobs).await;
 
@@ -6211,6 +6226,7 @@ async fn index_lists_deny_listed_worlds_and_answers_upstream_fields() {
             .cloned()
     };
     assert!(entry(&banned).is_some(), "{body}");
+    assert!(entry(&blocked).is_none(), "{body}");
     let listed = entry(&listed).expect("the allowed world is listed");
     let scene = &listed["scenes"][0];
     assert_eq!(scene["title"], "Indexed");
@@ -6249,6 +6265,164 @@ async fn active_entities_look_up_pointers_as_sent_and_fold_a_null_owner() {
     let body = expect(&f.app, active(world.display().to_uppercase()), 200).await;
     assert_eq!(body[0]["id"], json!(d.entity_id));
     assert_eq!(body[0]["metadata"]["owner"], Value::Null);
+}
+
+/// `index-handler.ts` reads `searchParams.get('limit')`, the first of a
+/// repeated key, so a repeated `limit` is not a 400.
+#[tokio::test]
+async fn index_reads_the_first_of_a_repeated_query_key() {
+    let Some(f) = fixture().await else { return };
+    let app = served_app(&f).await;
+    let body = expect(
+        &app,
+        Case::new(
+            "get",
+            format!("{NEST}/index?limit=1&limit=2&offset=0&offset=x"),
+        ),
+        200,
+    )
+    .await;
+    assert!(body["data"].as_array().unwrap().len() <= 1, "{body}");
+}
+
+/// `checkNameDenyList` refuses a `BLOCKED_WORLD_NAMES` entry (trimmed,
+/// lowercased, the full name), so `POST /entities/active` leaves it out.
+#[tokio::test]
+async fn active_entities_skip_a_blocked_world_name() {
+    let Some(f) = fixture().await else { return };
+    let (allowed, blocked) = (world_name(), world_name());
+    for world in [&allowed, &blocked] {
+        let owner = Wallet::random();
+        f.names.set(&owner.address, world.label());
+        let d = deployment(&owner, world, "Active", "0,0", &["0,0"]).await;
+        post_entity(&f.app, &d, 200).await;
+    }
+    let blocking = fixture_on_pool(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings()
+            .with_blocked_world_names(&format!(" , {} ", blocked.display().to_uppercase())),
+    )
+    .await;
+    let pointers = json!({ "pointers": [allowed.display(), blocked.display()] });
+    let body = expect(
+        &blocking.app,
+        Case::new("post", "/entities/active").json(&pointers),
+        200,
+    )
+    .await;
+    let names: Vec<&str> = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| {
+            e["metadata"]["worldConfiguration"]["name"]
+                .as_str()
+                .unwrap()
+        })
+        .collect();
+    assert_eq!(names, vec![allowed.display()]);
+}
+
+/// `JSON.stringify` of `JSON.parse(<jsonb text>)`: an object's members in
+/// `jsonb`'s order (key length, then bytes).
+fn jsonb_js_members(object: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
+    let mut keys: Vec<&String> = object.keys().collect();
+    keys.sort_by(|a, b| (a.len(), a.as_bytes()).cmp(&(b.len(), b.as_bytes())));
+    keys.into_iter()
+        .map(|k| (k.clone(), jsonb_js_text(&object[k])))
+        .collect()
+}
+
+fn jsonb_js_text(value: &Value) -> String {
+    match value {
+        Value::Object(object) => js_object(jsonb_js_members(object)),
+        Value::Array(items) => format!(
+            "[{}]",
+            items
+                .iter()
+                .map(jsonb_js_text)
+                .collect::<Vec<_>>()
+                .join(",")
+        ),
+        other => other.to_string(),
+    }
+}
+
+fn js_object(members: Vec<(String, String)>) -> String {
+    let members: Vec<String> = members
+        .into_iter()
+        .map(|(k, v)| format!("{}:{v}", Value::String(k)))
+        .collect();
+    format!("{{{}}}", members.join(","))
+}
+
+/// `{...members, [key]: value}`.
+fn js_spread(
+    mut members: Vec<(String, String)>,
+    key: &str,
+    value: String,
+) -> Vec<(String, String)> {
+    match members.iter_mut().find(|(k, _)| k == key) {
+        Some(member) => member.1 = value,
+        None => members.push((key.to_string(), value)),
+    }
+    members
+}
+
+/// `getEntityForWorlds` answers `{...row.entity, id, metadata: {...metadata,
+/// owner}}` over node-postgres' parse of the `jsonb` column: the body bytes
+/// keep the stored member order with `owner` last in the metadata (WR-15).
+#[tokio::test]
+async fn active_entities_answer_upstream_member_order() {
+    let Some(f) = fixture().await else { return };
+    let world = world_name();
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let d = deployment(&owner, &world, "Ordered", "0,0", &["0,0"]).await;
+    post_entity(&f.app, &d, 200).await;
+
+    let (stored, stored_owner): (Value, String) = sqlx::query_as(
+        "SELECT ws.entity, w.owner FROM worlds.world_scenes ws JOIN worlds.worlds w ON w.name = ws.world_name WHERE ws.world_name = $1",
+    )
+    .bind(world.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    let stored = stored.as_object().unwrap();
+    let metadata = js_spread(
+        jsonb_js_members(stored["metadata"].as_object().unwrap()),
+        "owner",
+        Value::String(stored_owner).to_string(),
+    );
+    let entity = js_spread(
+        js_spread(
+            jsonb_js_members(stored),
+            "id",
+            Value::String(d.entity_id.clone()).to_string(),
+        ),
+        "metadata",
+        js_object(metadata),
+    );
+    let expected = format!("[{}]", js_object(entity));
+
+    let request = Request::builder()
+        .method("POST")
+        .uri("/entities/active")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "pointers": [world.display()] }).to_string(),
+        ))
+        .unwrap();
+    let response = f.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .unwrap();
+    assert_eq!(String::from_utf8(body.to_vec()).unwrap(), expected);
+    assert!(expected.contains(r#","owner":"0x"#), "{expected}");
 }
 
 /// WCS's status checks answer under the worlds prefix.

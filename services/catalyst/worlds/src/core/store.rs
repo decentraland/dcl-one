@@ -9,6 +9,7 @@
 use std::collections::HashSet;
 
 use chrono::NaiveDateTime;
+use serde_json::value::RawValue;
 use serde_json::{Value, json};
 use sqlx::postgres::PgRow;
 use sqlx::{PgPool, Postgres, Row};
@@ -1197,19 +1198,21 @@ pub async fn scene_base_parcel(
     }))
 }
 
-/// `POST /entities/active`: the newest scene of each named world, with the
-/// entity id and the world owner (`null` when the row has none) folded into
-/// the entity as the old route did.
+/// `POST /entities/active`: the newest scene of each named world as upstream's
+/// `{...entity, id, metadata: {...metadata, owner}}` writes it (`worlds-manager.ts`
+/// `getEntityForWorlds`): the stored entity's members in their jsonb order, `id`
+/// and `metadata` replaced in place or appended, and `owner` (`null` when the row
+/// has none) replaced in place in the metadata or appended last.
 pub async fn entities_for_worlds(
     pool: &PgPool,
     worlds: &[WorldName],
-) -> Result<Vec<Value>, ApiError> {
+) -> Result<Vec<Box<RawValue>>, ApiError> {
     if worlds.is_empty() {
         return Ok(Vec::new());
     }
     let keys: Vec<&str> = worlds.iter().map(WorldName::key).collect();
     let rows = sqlx::query(
-        r#"SELECT DISTINCT ON (ws.world_name) ws.entity_id, ws.entity, w.owner
+        r#"SELECT DISTINCT ON (ws.world_name) ws.entity_id, ws.entity::text AS entity, w.owner
            FROM worlds.world_scenes ws
            JOIN worlds.worlds w ON w.name = ws.world_name
            WHERE ws.world_name = ANY($1::text[])
@@ -1218,24 +1221,114 @@ pub async fn entities_for_worlds(
     .bind(&keys)
     .fetch_all(pool)
     .await?;
-    Ok(rows
-        .into_iter()
+    rows.into_iter()
         .map(|r| {
+            let entity: String = r.get("entity");
             let entity_id: String = r.get("entity_id");
             let owner: Option<String> = r.get("owner");
-            let mut entity: Value = r.get("entity");
-            if let Some(obj) = entity.as_object_mut() {
-                obj.insert("id".into(), Value::String(entity_id));
-                let metadata = obj
-                    .entry("metadata")
-                    .or_insert_with(|| Value::Object(serde_json::Map::new()));
-                if let Some(meta_obj) = metadata.as_object_mut() {
-                    meta_obj.insert("owner".into(), owner.map_or(Value::Null, Value::String));
-                }
-            }
-            entity
+            active_entity(&entity, &entity_id, owner.as_deref())
+                .map_err(|e| ApiError::internal(format!("stored entity {entity_id}: {e}")))
         })
-        .collect())
+        .collect()
+}
+
+/// One JSON object's members in the order written, each value as written.
+struct Members<'a>(Vec<(String, &'a RawValue)>);
+
+impl<'de> serde::Deserialize<'de> for Members<'de> {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct Visit;
+        impl<'de> serde::de::Visitor<'de> for Visit {
+            type Value = Members<'de>;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a JSON object")
+            }
+            fn visit_map<A: serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> Result<Self::Value, A::Error> {
+                let mut members = Vec::new();
+                while let Some(member) = map.next_entry::<String, &'de RawValue>()? {
+                    members.push(member);
+                }
+                Ok(Members(members))
+            }
+        }
+        deserializer.deserialize_map(Visit)
+    }
+}
+
+/// JSON text without the whitespace outside strings (`jsonb::text` writes
+/// `", "` and `": "`; `JSON.stringify` writes none).
+fn compact_json(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let (mut in_string, mut escaped) = (false, false);
+    for c in text.chars() {
+        if in_string {
+            out.push(c);
+            if escaped {
+                escaped = false;
+            } else if c == '\\' {
+                escaped = true;
+            } else if c == '"' {
+                in_string = false;
+            }
+        } else if c == '"' {
+            in_string = true;
+            out.push(c);
+        } else if !c.is_ascii_whitespace() {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `{...object, [key]: value}` over written members: `key` keeps its place
+/// when present and is appended otherwise.
+fn spread_with(members: &mut Vec<(String, String)>, key: &str, value: String) {
+    match members.iter_mut().find(|(k, _)| k == key) {
+        Some(member) => member.1 = value,
+        None => members.push((key.to_string(), value)),
+    }
+}
+
+fn write_object(members: &[(String, String)]) -> serde_json::Result<String> {
+    let mut out = String::from("{");
+    for (i, (key, value)) in members.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str(&serde_json::to_string(key)?);
+        out.push(':');
+        out.push_str(value);
+    }
+    out.push('}');
+    Ok(out)
+}
+
+/// One `getEntityForWorlds` element from the stored entity's `jsonb::text`.
+/// A metadata that is not an object spreads to nothing, as in JS.
+fn active_entity(stored: &str, id: &str, owner: Option<&str>) -> serde_json::Result<Box<RawValue>> {
+    let compact = compact_json(stored);
+    let Members(members) = serde_json::from_str(&compact)?;
+    let mut metadata: Vec<(String, String)> = members
+        .iter()
+        .find(|(k, _)| k == "metadata")
+        .and_then(|(_, raw)| serde_json::from_str::<Members>(raw.get()).ok())
+        .map(|Members(m)| {
+            m.into_iter()
+                .map(|(k, v)| (k, v.get().to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    spread_with(&mut metadata, "owner", serde_json::to_string(&owner)?);
+    let mut entity: Vec<(String, String)> = members
+        .into_iter()
+        .map(|(k, v)| (k, v.get().to_string()))
+        .collect();
+    spread_with(&mut entity, "id", serde_json::to_string(id)?);
+    spread_with(&mut entity, "metadata", write_object(&metadata)?);
+    RawValue::from_string(write_object(&entity)?)
 }
 
 /// `POST /permissions/{deployment|streaming}` in one statement: ensure the
@@ -2356,6 +2449,39 @@ async fn queue_access_recheck(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `{...row.entity, id, metadata: {...metadata, owner}}` over the text
+    /// `jsonb` writes (members ordered by key length, then bytes): members keep
+    /// their order, `id`, `metadata` and `owner` take their places, and nothing
+    /// inside strings is touched.
+    #[test]
+    fn active_entity_spreads_in_the_stored_member_order() {
+        let stored = r#"{"id": "old", "type": "scene", "content": [{"file": "a b.png", "hash": "h"}], "version": "v3", "metadata": {"main": "bin/index.js", "owner": "0xold", "scene": {"base": "0,0", "parcels": ["0,0"]}, "display": {"title": "Say \"hi\": \\ ok"}}, "pointers": ["0,0"], "timestamp": 1}"#;
+        let got = active_entity(stored, "bafy", Some("0xnew")).unwrap();
+        assert_eq!(
+            got.get(),
+            r#"{"id":"bafy","type":"scene","content":[{"file":"a b.png","hash":"h"}],"version":"v3","metadata":{"main":"bin/index.js","owner":"0xnew","scene":{"base":"0,0","parcels":["0,0"]},"display":{"title":"Say \"hi\": \\ ok"}},"pointers":["0,0"],"timestamp":1}"#
+        );
+    }
+
+    #[test]
+    fn active_entity_appends_what_the_entity_lacks() {
+        let got = active_entity(r#"{"type": "scene", "timestamp": 2}"#, "bafy", None).unwrap();
+        assert_eq!(
+            got.get(),
+            r#"{"type":"scene","timestamp":2,"id":"bafy","metadata":{"owner":null}}"#
+        );
+        let got = active_entity(
+            r#"{"metadata": null, "type": "scene"}"#,
+            "bafy",
+            Some("0xa"),
+        )
+        .unwrap();
+        assert_eq!(
+            got.get(),
+            r#"{"metadata":{"owner":"0xa"},"type":"scene","id":"bafy"}"#
+        );
+    }
 
     fn entity_with_wc(wc: Value) -> Value {
         json!({ "metadata": { "worldConfiguration": wc } })

@@ -217,30 +217,34 @@ pub async fn list_scenes_full(
 }
 
 /// The scenes of one page of unblocked worlds (name order), projected to
-/// what the index summary reads: timestamp, display, runtimeVersion and the
-/// one content entry the thumbnail names. No name deny-list filter: upstream's
-/// compares full world names with suffix-stripped entries, so it leaves out no
-/// world (WR-17).
+/// what the index summary reads: timestamp, display, runtimeVersion (only
+/// when the metadata has the key) and the one content entry the thumbnail
+/// names. `banned` is upstream's `getBannedNames` (the `BLOCKED_WORLD_NAMES`
+/// full names and the suffix-stripped deny list), compared exactly with the
+/// stored name before paging, as `getRawWorldRecords` does (WR-17).
 pub async fn list_index_scenes(
     pool: &PgPool,
     limit: i64,
     offset: i64,
+    banned: &[String],
 ) -> AppResult<Vec<(String, WorldScene)>> {
     let rows = sqlx::query(
         r#"WITH paged_worlds AS (
              SELECT DISTINCT ws.world_name
              FROM worlds.world_scenes ws
              JOIN worlds.worlds w ON lower(w.name) = lower(ws.world_name)
-             WHERE w.blocked_since IS NULL
+             WHERE w.blocked_since IS NULL AND w.name <> ALL($3::text[])
              ORDER BY ws.world_name
              LIMIT $1 OFFSET $2
            )
            SELECT ws.world_name, ws.entity_id, ws.parcels, ws.deployer, ws.mirror_source,
                   jsonb_build_object(
                     'timestamp', ws.entity->'timestamp',
-                    'metadata', jsonb_build_object(
-                      'display', ws.entity->'metadata'->'display',
-                      'runtimeVersion', ws.entity->'metadata'->'runtimeVersion'),
+                    'metadata', jsonb_build_object('display', ws.entity->'metadata'->'display')
+                      || CASE WHEN jsonb_typeof(ws.entity->'metadata') = 'object'
+                                   AND ws.entity->'metadata' ? 'runtimeVersion'
+                              THEN jsonb_build_object('runtimeVersion', ws.entity->'metadata'->'runtimeVersion')
+                              ELSE '{}'::jsonb END,
                     'content', (SELECT jsonb_agg(c) FROM jsonb_array_elements(
                                   CASE WHEN jsonb_typeof(ws.entity->'content') = 'array'
                                        THEN ws.entity->'content' ELSE '[]'::jsonb END) c
@@ -252,6 +256,7 @@ pub async fn list_index_scenes(
     )
     .bind(limit)
     .bind(offset)
+    .bind(banned)
     .fetch_all(pool)
     .await?;
     Ok(rows

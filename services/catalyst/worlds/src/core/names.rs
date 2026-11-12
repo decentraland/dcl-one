@@ -1,9 +1,12 @@
 //! The DAO name deny list: the `banned-names` list the explorer-api mirror
 //! keeps in `explore_api.lists` (plus its local overlay), read through
-//! `explore::api::lists::values` and memoized for the old checker's hour.
-//! Entries are lowercased and ONLY lowercased, not suffix-stripped: the
-//! pre-existing semantics compared `entry.to_lowercase()` against
-//! `normalize_world_name(world_name)`.
+//! `explore::api::lists::values` and memoized for the old checker's hour,
+//! plus the operator's `BLOCKED_WORLD_NAMES` (upstream
+//! `name-deny-list-checker.ts`). List entries are lowercased and ONLY
+//! lowercased, not suffix-stripped: a name is compared as
+//! `normalize_world_name(world_name)`. A configured block is a full world
+//! name, compared with the lowercased name, and holds while the list cannot
+//! be read.
 
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -16,59 +19,103 @@ use crate::shared::cache::TtlMap;
 const NAME_DENYLIST_TTL: Duration = Duration::from_secs(60 * 60);
 pub const BANNED_NAMES_LIST: &str = "banned-names";
 
+/// `BLOCKED_WORLD_NAMES`: comma-separated, each entry trimmed and lowercased,
+/// empty entries and repeats dropped, first occurrence order kept.
+#[derive(Debug, Default)]
+pub struct BlockedNames {
+    ordered: Vec<String>,
+    set: HashSet<String>,
+}
+
+impl BlockedNames {
+    pub fn parse(raw: &str) -> Self {
+        let mut blocked = Self::default();
+        for name in raw.split(',').map(|n| n.trim().to_lowercase()) {
+            if !name.is_empty() && blocked.set.insert(name.clone()) {
+                blocked.ordered.push(name);
+            }
+        }
+        blocked
+    }
+}
+
 pub struct BannedNames {
+    blocked: Arc<BlockedNames>,
     raw: Vec<String>,
     normalized: HashSet<String>,
 }
 
 impl BannedNames {
-    /// Whether `world_name` passes the deny list this snapshot holds.
+    /// Whether `world_name` passes the configured blocks and the deny list
+    /// this snapshot holds (upstream `checkNameDenyList`).
     pub fn allows(&self, world_name: &str) -> bool {
-        !is_name_banned(&self.normalized, world_name)
+        !self.blocked.set.contains(&world_name.to_lowercase())
+            && !is_name_banned(&self.normalized, world_name)
     }
 
-    pub fn from_list(names: Vec<String>) -> Self {
+    fn new(blocked: Arc<BlockedNames>, names: Vec<String>) -> Self {
         let normalized = names.iter().map(|n| n.to_lowercase()).collect();
         Self {
+            blocked,
             raw: names,
             normalized,
         }
     }
 
+    /// Upstream `getBannedNames`: the configured blocks as they are, then
+    /// each list entry without its first `.eth` and `.dcl`, repeats dropped.
     pub fn banned_names(&self) -> Vec<String> {
-        self.raw.iter().map(|n| strip_suffixes(n)).collect()
+        let mut seen = HashSet::new();
+        self.blocked
+            .ordered
+            .iter()
+            .cloned()
+            .chain(self.raw.iter().map(|n| strip_suffixes(n)))
+            .filter(|n| seen.insert(n.clone()))
+            .collect()
     }
 }
 
 pub struct NameDenyList {
+    blocked: Arc<BlockedNames>,
     cache: TtlMap<(), Arc<BannedNames>>,
 }
 
 impl Default for NameDenyList {
     fn default() -> Self {
-        Self {
-            cache: TtlMap::bounded(NAME_DENYLIST_TTL, 1),
-        }
+        Self::new("")
     }
 }
 
 impl NameDenyList {
+    /// A checker with `BLOCKED_WORLD_NAMES` (`raw`, see [`BlockedNames::parse`]).
+    pub fn new(blocked_world_names: &str) -> Self {
+        Self {
+            blocked: Arc::new(BlockedNames::parse(blocked_world_names)),
+            cache: TtlMap::bounded(NAME_DENYLIST_TTL, 1),
+        }
+    }
+
     /// The current snapshot; a database fault keeps the last snapshot when
-    /// there is one and otherwise reads as an empty list (the old checker
-    /// kept its last good list across fetch failures).
+    /// there is one and otherwise reads as the configured blocks alone (the
+    /// old checker kept its last good list across fetch failures).
     pub async fn snapshot(&self, pool: &PgPool) -> Arc<BannedNames> {
         if let Some(cached) = self.cache.get_fresh(&()) {
             return cached;
         }
-        match crate::explore::api::lists::values(pool, BANNED_NAMES_LIST).await {
+        self.read(crate::explore::api::lists::values(pool, BANNED_NAMES_LIST).await)
+    }
+
+    fn read<E: std::fmt::Display>(&self, list: Result<Vec<String>, E>) -> Arc<BannedNames> {
+        match list {
             Ok(names) => {
-                let fetched = Arc::new(BannedNames::from_list(names));
+                let fetched = Arc::new(BannedNames::new(self.blocked.clone(), names));
                 self.cache.insert((), fetched.clone());
                 fetched
             }
             Err(e) => {
-                tracing::warn!(error = %e, "failed to read the name denylist; allowing every name until it reads");
-                Arc::new(BannedNames::from_list(Vec::new()))
+                tracing::warn!(error = %e, "failed to read the name denylist; only BLOCKED_WORLD_NAMES applies until it reads");
+                Arc::new(BannedNames::new(self.blocked.clone(), Vec::new()))
             }
         }
     }
@@ -80,7 +127,7 @@ impl NameDenyList {
     #[cfg(test)]
     pub fn seed(&self, names: Vec<String>) {
         self.cache
-            .insert((), Arc::new(BannedNames::from_list(names)));
+            .insert((), Arc::new(BannedNames::new(self.blocked.clone(), names)));
     }
 }
 
@@ -112,7 +159,7 @@ mod tests {
 
     #[test]
     fn is_name_banned_matches_case_insensitively_after_stripping() {
-        let banned = BannedNames::from_list(vec!["foo".to_string(), "Evil".to_string()]);
+        let banned = BannedNames::new(Arc::default(), vec!["foo".to_string(), "Evil".to_string()]);
         assert!(is_name_banned(&banned.normalized, "foo.dcl.eth"));
         assert!(is_name_banned(&banned.normalized, "FOO.DCL.ETH"));
         assert!(is_name_banned(&banned.normalized, "evil.dcl.eth"));
@@ -121,7 +168,7 @@ mod tests {
 
     #[test]
     fn empty_banlist_allows_everything() {
-        let banned = BannedNames::from_list(Vec::new());
+        let banned = BannedNames::new(Arc::default(), Vec::new());
         assert!(!is_name_banned(&banned.normalized, "anything.dcl.eth"));
     }
 
@@ -148,7 +195,7 @@ mod tests {
             "good.dcl.eth",
         ];
         for list in &lists {
-            let set = BannedNames::from_list(list.clone());
+            let set = BannedNames::new(Arc::default(), list.clone());
             for name in &names {
                 let reference = list
                     .iter()
@@ -160,6 +207,52 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `name-deny-list-checker.spec.ts`: "blocks exact configured world names
+    /// without a remote service, preserving unrelated names".
+    #[test]
+    fn configured_blocks_refuse_exact_names_and_lead_the_banned_names() {
+        let checker = NameDenyList::new(" Blocked.dcl.eth, , Other.eth,blocked.dcl.eth, ");
+        let snapshot = checker.read(Ok::<_, String>(Vec::new()));
+        assert!(!snapshot.allows("BLOCKED.dcl.eth"));
+        assert!(!snapshot.allows("other.eth"));
+        assert!(snapshot.allows("blocked.eth"));
+        assert!(snapshot.allows("good.dcl.eth"));
+        assert_eq!(
+            snapshot.banned_names(),
+            vec!["blocked.dcl.eth", "other.eth"]
+        );
+    }
+
+    /// "keeps configured blocks effective when the remote list is unavailable".
+    #[test]
+    fn configured_blocks_hold_while_the_list_cannot_be_read() {
+        let checker = NameDenyList::new("blocked.dcl.eth");
+        let snapshot = checker.read(Err::<Vec<String>, _>("offline"));
+        assert!(!snapshot.allows("blocked.dcl.eth"));
+        assert!(
+            snapshot
+                .banned_names()
+                .contains(&"blocked.dcl.eth".to_string())
+        );
+        assert!(
+            checker.cache.get_fresh(&()).is_none(),
+            "a failed read is not memoized"
+        );
+    }
+
+    /// "adds configured blocks without replacing the remote denylist".
+    #[test]
+    fn configured_blocks_add_to_the_list() {
+        let checker = NameDenyList::new("blocked.dcl.eth");
+        let snapshot = checker.read(Ok::<_, String>(vec!["remote-banned".to_string()]));
+        assert!(!snapshot.allows("remote-banned.dcl.eth"));
+        assert!(!snapshot.allows("blocked.dcl.eth"));
+        assert_eq!(
+            snapshot.banned_names(),
+            vec!["blocked.dcl.eth", "remote-banned"]
+        );
     }
 
     #[tokio::test]

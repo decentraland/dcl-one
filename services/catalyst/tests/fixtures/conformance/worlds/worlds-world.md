@@ -87,6 +87,8 @@ Common notes:
   the settings, manifest and limits routes. `GET /worlds` instead strips the entries without lowercasing
   them and compares them exactly with the stored name (upstream `getBannedNames`), so it hides only a bare
   name; a moderation gap both trees share (WW-31).
+  Both trees also refuse every whole name in `BLOCKED_WORLD_NAMES` on these routes and hide it from
+  `GET /worlds`, even while the list cannot be read (`worlds/src/core/names.rs`; WR-35).
 
 ## Endpoint inventory
 

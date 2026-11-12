@@ -446,6 +446,13 @@ pub struct WorldsConfig {
     #[arg(long, env = "DENYLIST_JSON_URL", hide = true)]
     pub denylist_json_url: Option<String>,
 
+    /// Comma-separated full world names refused as the DAO name deny list
+    /// refuses a name (upstream's `BLOCKED_WORLD_NAMES`): each entry trimmed
+    /// and lowercased, compared with the whole lowercased name, and applied
+    /// even while that list cannot be read.
+    #[arg(long, env = "BLOCKED_WORLD_NAMES", default_value = "")]
+    pub blocked_world_names: String,
+
     /// The NATS broker `serve` (comms' one link) and `catalyst pulse` meet on; unset, no island is ever delivered.
     #[arg(long, env = "NATS_URL")]
     pub nats_url: Option<String>,

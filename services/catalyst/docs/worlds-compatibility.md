@@ -441,12 +441,15 @@ difference not listed here is a gap, not a decision.
   `@dcl/http-server` answers a body over its `maxBodySize`). Upstream sets
   no body limit on this route.
 - **Deny list in world listings (shared with upstream).** `GET /worlds`
-  filters the deny list as upstream's `getBannedNames` does: each entry
-  loses its first `.eth` and `.dcl` and is compared case-sensitively with
-  the stored name, so only a bare name equal to a stripped entry is hidden.
-  A deny-listed `<name>.dcl.eth` stays listed, with its title, description
-  and thumbnail, while `/about` and the manifest answer 404 for it. This is
-  a moderation gap both services have, kept for parity.
+  and `/index` filter the deny list as upstream's `getBannedNames` does:
+  each `BLOCKED_WORLD_NAMES` entry is a whole lowercased world name and
+  hides that world; each DAO list entry loses its first `.eth` and `.dcl`
+  and is compared case-sensitively with the stored name, so only a bare
+  name equal to a stripped entry is hidden. A `<name>.dcl.eth` on the DAO
+  list stays listed, with its title, description and thumbnail, while
+  `/about` and the manifest answer 404 for it. This is a moderation gap
+  both services have, kept for parity; `BLOCKED_WORLD_NAMES` is the way to
+  hide a full name.
 - **World listings.** In `GET /worlds`, `blocked_since` is set only for a
   storage-quota block of a DCL NAME or ENS world published here (upstream:
   any block of the stored owner), and `owner` is `null` for a world with no

@@ -1826,6 +1826,7 @@ async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
+                    .with_blocked_world_names(&config.worlds.blocked_world_names)
                     .with_access_caps(
                         config.worlds.access_max_wallets,
                         config.worlds.access_max_communities,
