@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import cx from 'classnames';
+import { Button, IconButton, Modal as MuiModal } from 'decentraland-ui2';
 
 import welcomeImage from '/assets/images/earn/welcome.webp';
 
@@ -11,31 +13,14 @@ import { actions } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 
+import { Modal } from '../Modals';
+
 import { ContactInfoForm, type ContactInfoFormProps, type ContactValues } from './ContactInfoForm';
-import {
-  CloseButton,
-  GlowLayer,
-  ModalCta,
-  ModalText,
-  ModalTitle,
-  StatusDialog,
-  StatusGlow,
-  StatusModal,
-  WelcomeFrame,
-  WelcomePaper,
-  WelcomeRoot,
-} from './EarnModal.styled';
-import {
-  CheckingBody,
-  CtaPair,
-  ReasonLine,
-  ResultBody,
-  SupportEmail,
-  WelcomeImage,
-} from './JoinFlow.styled';
 import { CheckingSpinner } from './Spinner';
 import { TermsModal } from './TermsModal';
 import { CloseIcon } from './icons';
+import modal from './EarnModal.module.css';
+import styles from './JoinFlow.module.css';
 
 export type JoinOutcome = 'cancelled' | 'joined' | 'conflict';
 
@@ -81,7 +66,8 @@ function StatusShell({
   children: React.ReactNode;
 }) {
   return (
-    <StatusDialog
+    <div
+      className={modal.statusDialog}
       role={role}
       aria-modal="true"
       aria-labelledby={labelledBy}
@@ -89,22 +75,26 @@ function StatusShell({
       aria-busy={busy || undefined}
       onKeyDown={event => event.key === 'Escape' && onDismiss()}
     >
-      <GlowLayer aria-hidden>
-        <StatusGlow />
-      </GlowLayer>
+      <div
+        className={modal.glowLayer}
+        aria-hidden
+      >
+        <div className={modal.statusGlow} />
+      </div>
       {children}
-    </StatusDialog>
+    </div>
   );
 }
 
 function Close({ onClick }: { onClick: () => void }) {
   return (
-    <CloseButton
+    <IconButton
+      className={modal.closeButton}
       aria-label={t('earn.close')}
       onClick={onClick}
     >
       <CloseIcon />
-    </CloseButton>
+    </IconButton>
   );
 }
 
@@ -116,7 +106,10 @@ export function IneligibleModal({ reasons, onClose }: { reasons: string[]; onClo
   const titleId = useId();
   const reasonId = useId();
   return (
-    <StatusModal open>
+    <Modal
+      className={modal.statusModal}
+      open
+    >
       <StatusShell
         role="alertdialog"
         labelledBy={titleId}
@@ -124,14 +117,28 @@ export function IneligibleModal({ reasons, onClose }: { reasons: string[]; onClo
         onDismiss={onClose}
       >
         <Close onClick={onClose} />
-        <ResultBody>
-          <ModalTitle id={titleId}>{t('earn.not_eligible.title')}</ModalTitle>
-          <ModalText id={reasonId}>
+        <div className={cx(modal.statusBody, styles.resultBody)}>
+          <h2
+            className={modal.modalTitle}
+            id={titleId}
+          >
+            {t('earn.not_eligible.title')}
+          </h2>
+          <p
+            className={modal.modalText}
+            id={reasonId}
+          >
             {reasonLines(reasons).map(line => (
-              <ReasonLine key={line}>{line}</ReasonLine>
+              <span
+                className={styles.reasonLine}
+                key={line}
+              >
+                {line}
+              </span>
             ))}
-          </ModalText>
-          <ModalCta
+          </p>
+          <Button
+            className={modal.modalCta}
             variant="contained"
             color="primary"
             size="large"
@@ -139,10 +146,10 @@ export function IneligibleModal({ reasons, onClose }: { reasons: string[]; onClo
             onClick={onClose}
           >
             {t('earn.not_eligible.got_it')}
-          </ModalCta>
-        </ResultBody>
+          </Button>
+        </div>
       </StatusShell>
-    </StatusModal>
+    </Modal>
   );
 }
 
@@ -150,7 +157,10 @@ function CheckFailedModal({ onRetry, onClose }: { onRetry: () => void; onClose: 
   const titleId = useId();
   const bodyId = useId();
   return (
-    <StatusModal open>
+    <Modal
+      className={modal.statusModal}
+      open
+    >
       <StatusShell
         role="alertdialog"
         labelledBy={titleId}
@@ -158,14 +168,23 @@ function CheckFailedModal({ onRetry, onClose }: { onRetry: () => void; onClose: 
         onDismiss={onClose}
       >
         <Close onClick={onClose} />
-        <ResultBody>
-          <ModalTitle id={titleId}>{t('earn.check_failed.title')}</ModalTitle>
-          <ModalText id={bodyId}>
+        <div className={cx(modal.statusBody, styles.resultBody)}>
+          <h2
+            className={modal.modalTitle}
+            id={titleId}
+          >
+            {t('earn.check_failed.title')}
+          </h2>
+          <p
+            className={modal.modalText}
+            id={bodyId}
+          >
             {getCurrentLocale().formatMessage(
               { id: 'earn.check_failed.body' },
               {
                 email: (
-                  <SupportEmail
+                  <a
+                    className={styles.supportEmail}
                     key="email"
                     href={`mailto:${SUPPORT_EMAIL}`}
                     onClick={event => {
@@ -177,21 +196,23 @@ function CheckFailedModal({ onRetry, onClose }: { onRetry: () => void; onClose: 
                     }}
                   >
                     {SUPPORT_EMAIL}
-                  </SupportEmail>
+                  </a>
                 ),
               },
             )}
-          </ModalText>
-          <CtaPair>
-            <ModalCta
+          </p>
+          <div className={cx(modal.actions, styles.ctaPair)}>
+            <Button
+              className={modal.modalCta}
               variant="contained"
               color="secondary"
               size="large"
               onClick={onClose}
             >
               {t('earn.close')}
-            </ModalCta>
-            <ModalCta
+            </Button>
+            <Button
+              className={modal.modalCta}
               variant="contained"
               color="primary"
               size="large"
@@ -199,11 +220,11 @@ function CheckFailedModal({ onRetry, onClose }: { onRetry: () => void; onClose: 
               onClick={onRetry}
             >
               {t('earn.errors.retry')}
-            </ModalCta>
-          </CtaPair>
-        </ResultBody>
+            </Button>
+          </div>
+        </div>
       </StatusShell>
-    </StatusModal>
+    </Modal>
   );
 }
 
@@ -317,24 +338,32 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
   switch (step.name) {
     case 'checking':
       return (
-        <StatusModal open>
+        <Modal
+          className={modal.statusModal}
+          open
+        >
           <StatusShell
             labelledBy={titleId}
             busy
             onDismiss={cancel}
           >
             <Close onClick={cancel} />
-            <CheckingBody>
+            <div className={cx(modal.statusBody, styles.checkingBody)}>
               <CheckingSpinner label={t('earn.checking.progress_label')} />
-              <ModalTitle id={titleId}>{t('earn.checking.title')}</ModalTitle>
-              <ModalText>
+              <h2
+                className={modal.modalTitle}
+                id={titleId}
+              >
+                {t('earn.checking.title')}
+              </h2>
+              <p className={modal.modalText}>
                 {t('earn.checking.body_1')}
                 <br />
                 {t('earn.checking.body_2')}
-              </ModalText>
-            </CheckingBody>
+              </p>
+            </div>
           </StatusShell>
-        </StatusModal>
+        </Modal>
       );
     case 'check_failed':
       return (
@@ -360,7 +389,10 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
       );
     case 'contact':
       return (
-        <StatusModal open>
+        <Modal
+          className={modal.statusModal}
+          open
+        >
           <StatusShell
             labelledBy={titleId}
             onDismiss={cancel}
@@ -374,27 +406,37 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
               {...submission}
             />
           </StatusShell>
-        </StatusModal>
+        </Modal>
       );
     case 'welcome':
       return (
-        <WelcomeRoot open>
-          <WelcomeFrame>
-            <WelcomeImage
+        <MuiModal
+          className={modal.welcomeRoot}
+          open
+        >
+          <div className={modal.welcomeFrame}>
+            <img
+              className={styles.welcomeImage}
               src={welcomeImage}
               alt=""
               aria-hidden
             />
-            <WelcomePaper>
+            <div className={modal.welcomePaper}>
               <StatusShell
                 labelledBy={titleId}
                 onDismiss={finish}
               >
                 <Close onClick={finish} />
-                <ResultBody>
-                  <ModalTitle id={titleId}>{t('earn.welcome.title')}</ModalTitle>
-                  <ModalText>{t('earn.welcome.body')}</ModalText>
-                  <ModalCta
+                <div className={cx(modal.statusBody, styles.resultBody)}>
+                  <h2
+                    className={modal.modalTitle}
+                    id={titleId}
+                  >
+                    {t('earn.welcome.title')}
+                  </h2>
+                  <p className={modal.modalText}>{t('earn.welcome.body')}</p>
+                  <Button
+                    className={modal.modalCta}
                     variant="contained"
                     color="primary"
                     size="large"
@@ -402,12 +444,12 @@ export function JoinFlow({ onExit }: { onExit: (outcome: JoinOutcome) => void })
                     onClick={finish}
                   >
                     {t('earn.welcome.lets_go')}
-                  </ModalCta>
-                </ResultBody>
+                  </Button>
+                </div>
               </StatusShell>
-            </WelcomePaper>
-          </WelcomeFrame>
-        </WelcomeRoot>
+            </div>
+          </div>
+        </MuiModal>
       );
   }
 }

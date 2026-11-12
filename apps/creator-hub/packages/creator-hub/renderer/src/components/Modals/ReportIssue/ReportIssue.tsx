@@ -10,7 +10,6 @@ import {
 import { t } from '/@/modules/store/translation/utils';
 import { EMAIL_MAX_LENGTH, HELP_FAQ_URL, isValidContact, parseContact } from '/@/modules/utils';
 
-import { FieldError, Required } from '../../EarnPage/ContactInfoForm.styled';
 import { ExternalLink } from '../../ExternalLink';
 import { WarningIcon } from '../../EarnPage/icons/WarningIcon';
 import { SelectCheckbox } from '../../LandDetailPage/SelectCheckbox';
@@ -18,6 +17,7 @@ import { Field, FieldTitle } from '../../LandDetailPage/DetailsTab/DetailsTab.st
 import { FormTextInput } from '../../TextInput';
 import { CheckRow } from '../../WorldDetailPage/SettingsTab/SettingsTab.styled';
 import { DefaultModal } from '../DefaultModal';
+import contactForm from '../../EarnPage/ContactInfoForm.module.css';
 import styles from './ReportIssue.module.css';
 
 type Status = 'editing' | 'sending' | FeedbackDelivery | 'failed';
@@ -142,7 +142,12 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
             htmlFor={descriptionId}
           >
             {t('modal.report_issue.description.label')}
-            <Required aria-hidden> *</Required>
+            <span
+              className={contactForm.required}
+              aria-hidden
+            >
+              {' *'}
+            </span>
           </FieldTitle>
           <FormTextInput
             className={styles.description}
@@ -160,8 +165,8 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
             onBlur={() => setDescriptionFocused(false)}
             inputProps={{ 'aria-invalid': overLimit, 'aria-describedby': counterId }}
           />
-          <FieldError
-            className={`${styles.errorLine} ${styles.counter}`}
+          <span
+            className={`${contactForm.fieldError} ${styles.errorLine} ${styles.counter}`}
             id={counterId}
             data-state={counter}
           >
@@ -171,7 +176,7 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
                 count: String(message.length),
                 max: String(FEEDBACK_MESSAGE_MAX_LENGTH),
               })}
-          </FieldError>
+          </span>
         </Field>
         <Field>
           <FieldTitle
@@ -205,14 +210,14 @@ export function ReportIssue({ open, source, associatedEventId, onClose }: Props)
             }}
           />
           {contact && showContactError && (
-            <FieldError
-              className={styles.errorLine}
+            <span
+              className={`${contactForm.fieldError} ${styles.errorLine}`}
               id={contactErrorId}
               role="alert"
             >
               <WarningIcon />
               {t(`modal.report_issue.contact.${contact.method}_invalid`)}
-            </FieldError>
+            </span>
           )}
         </Field>
         <div className={styles.logsOption}>

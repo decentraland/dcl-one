@@ -1,0 +1,101 @@
+.area {
+  --g: clamp(16px, 5.104vw, 98px);
+  --m: clamp(0px, 3.125vw, 60px);
+  --text-right: calc(var(--g) + var(--m) + min(800px, 100vw - 2 * var(--g) - var(--m)));
+  --art-gap: clamp(32px, 5.026vw, 96.5px);
+  --art-w: min(
+    794px,
+    calc((100vh - 284px) * 794 / 796),
+    calc((100vw - 8px - var(--g) - var(--text-right) - var(--art-gap)) / 0.95655)
+  );
+  position: relative;
+  height: calc(100vh - 305px);
+  min-height: min-content;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto minmax(0, 1fr) minmax(0, 93px);
+}
+
+.scenery {
+  position: absolute;
+  top: -30px;
+  bottom: 0;
+  left: 0;
+  right: calc(-1 * var(--g));
+  overflow: hidden;
+  pointer-events: none;
+}
+
+@media (max-width: 1341.19px), (max-height: 584.75px) {
+  .scenery {
+    display: none;
+  }
+}
+
+.artBox {
+  position: absolute;
+  top: calc(50% - 2.5px);
+  right: var(--g);
+  width: var(--art-w);
+  transform: translateY(-50%);
+}
+
+.floor {
+  position: absolute;
+  left: -31.99%;
+  top: 76.26%;
+  width: 177.71%;
+  height: 43.09%;
+  border-radius: 50%;
+  background-color: var(--palette-rarity-mythic);
+  opacity: 0.2;
+  filter: blur(calc(var(--art-w) * 100 / 794));
+}
+
+.art {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.column.column {
+  grid-row: 2;
+  transform: none;
+}
+
+.body {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h5-regular-size);
+  font-weight: var(--type-h5-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h5-regular-letter-spacing);
+  margin: 0;
+  color: var(--gray);
+}
+
+.stepLink {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-position: from-font;
+}
+
+.stepLink:hover {
+  color: var(--primary-hover);
+}
+
+.stepLink:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.linkLine {
+  display: block;
+  margin-top: 10px;
+}

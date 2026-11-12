@@ -1,0 +1,72 @@
+.banner {
+  position: relative;
+  min-height: 200px;
+  box-sizing: border-box;
+  padding-block: 30px;
+  display: flex;
+  align-items: center;
+  background-color: var(--onyx);
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusXLarge);
+  overflow: hidden;
+}
+
+.banner::before,
+.banner::after {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+  background-color: var(--palette-rarity-mythic);
+  pointer-events: none;
+}
+
+.banner::before {
+  width: 677px;
+  height: 590px;
+  right: -396px;
+  top: -370px;
+  opacity: 0.4;
+  filter: blur(100px);
+}
+
+.banner::after {
+  width: 196px;
+  height: 163px;
+  left: -86px;
+  top: 207px;
+  opacity: 0.5;
+  filter: blur(75px);
+}
+
+.bannerText {
+  position: relative;
+  z-index: 1;
+  margin-left: 81px;
+  width: min(875px, 100% - 81px - 40px);
+}
+
+.bannerText :global(.MarkdownRenderer),
+.bannerText :global(.MarkdownRenderer) p {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h5-regular-size);
+  font-weight: var(--type-h5-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h5-regular-letter-spacing);
+  line-height: 26px;
+  letter-spacing: -0.1px;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  color: var(--palette-neutral-softWhite);
+}
+
+.bannerText :global(.MarkdownRenderer) a {
+  color: var(--palette-neutral-softWhite);
+  text-decoration: underline;
+}
+
+.bannerText :global(.MarkdownRenderer) a:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}

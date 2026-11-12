@@ -1,14 +1,9 @@
+import { IconButton, Modal as MuiModal } from 'decentraland-ui2';
+
 import { t } from '/@/modules/store/translation/utils';
 
-import {
-  CloseButton,
-  GlowLayer,
-  StatusDialog,
-  StatusGlow,
-  WelcomePaper,
-  WelcomeRoot,
-} from './EarnModal.styled';
 import { CloseIcon } from './icons';
+import styles from './EarnModal.module.css';
 
 /**
  * The EARN modal shell over the Black 80 overlay; the overlay, Escape and the close button all
@@ -24,28 +19,34 @@ export function EarnDialog({
   children: React.ReactNode;
 }) {
   return (
-    <WelcomeRoot
+    <MuiModal
+      className={styles.welcomeRoot}
       open
       onClose={onClose}
     >
-      <WelcomePaper
+      <div
+        className={styles.welcomePaper}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}
       >
-        <StatusDialog>
-          <GlowLayer aria-hidden>
-            <StatusGlow />
-          </GlowLayer>
-          <CloseButton
+        <div className={styles.statusDialog}>
+          <div
+            className={styles.glowLayer}
+            aria-hidden
+          >
+            <div className={styles.statusGlow} />
+          </div>
+          <IconButton
+            className={styles.closeButton}
             aria-label={t('earn.close')}
             onClick={onClose}
           >
             <CloseIcon />
-          </CloseButton>
+          </IconButton>
           {children}
-        </StatusDialog>
-      </WelcomePaper>
-    </WelcomeRoot>
+        </div>
+      </div>
+    </MuiModal>
   );
 }

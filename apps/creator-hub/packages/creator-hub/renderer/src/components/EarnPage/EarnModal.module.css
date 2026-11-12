@@ -1,0 +1,289 @@
+.statusModal.statusModal > :global(.MuiBackdrop-root) {
+  background-color: var(--black-80);
+}
+
+.statusModal.statusModal > :global(.MuiPaper-root) {
+  position: relative;
+  box-sizing: border-box;
+  background-color: var(--modal);
+  background-image: none;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusXXLarge);
+  padding: 0;
+  width: 700px;
+  max-height: 90vh;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.statusModal.statusModal.statusModal.statusModal > :global(.MuiPaper-root) > :global(.MuiBox-root) {
+  padding: 0;
+}
+
+.welcomeRoot.welcomeRoot > :global(.MuiBackdrop-root) {
+  background-color: var(--black-80);
+}
+
+.welcomeRoot.welcomeRoot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.welcomeFrame {
+  position: relative;
+  outline: none;
+}
+
+.welcomePaper {
+  position: relative;
+  box-sizing: border-box;
+  background-color: var(--modal);
+  background-image: none;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusXXLarge);
+  padding: 0;
+  z-index: 1;
+  width: 700px;
+  max-height: 90vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+  line-height: 22px;
+  text-transform: uppercase;
+  min-height: 46px;
+  padding: 12px 24px;
+  border-radius: var(--shape-borderRadiusLarge);
+  color: var(--palette-neutral-softWhite);
+  box-shadow: none;
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta
+  :global(.MuiTouchRipple-root) {
+  display: none;
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(
+    .MuiButton-containedPrimary
+  ) {
+  background: var(--primary);
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(
+    .MuiButton-containedPrimary
+  ):hover {
+  background: var(--primary-hover);
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(
+    .MuiButton-containedSecondary
+  ) {
+  background: var(--palette-whiteTransparent-subtle);
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(
+    .MuiButton-containedSecondary
+  ):hover {
+  background: var(--palette-whiteTransparent-soft);
+}
+
+.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta.modalCta:global(.Mui-disabled) {
+  background: var(--primary);
+  color: var(--palette-neutral-softWhite);
+  opacity: 0.2;
+}
+
+.spinnerBox {
+  display: inline-flex;
+}
+
+.checkingSpinnerBox {
+  display: inline-grid;
+  place-items: center;
+  width: 80px;
+  height: 80px;
+}
+
+.checkingSpinnerBox > * {
+  grid-area: 1 / 1;
+}
+
+.spinnerTrack.spinnerTrack {
+  color: var(--palette-neutral-softWhite);
+  opacity: 0.3;
+}
+
+.spinnerArc.spinnerArc {
+  color: var(--primary);
+}
+
+.spinnerArc.spinnerArc :global(.MuiCircularProgress-circle) {
+  stroke-linecap: round;
+}
+
+.termsShell.termsShell > :global(.MuiBackdrop-root) {
+  background-color: var(--black-80);
+}
+
+.termsShell.termsShell > :global(.MuiPaper-root) {
+  position: relative;
+  box-sizing: border-box;
+  background-color: var(--modal);
+  background-image: none;
+  border: 1px solid var(--palette-whiteTransparent-subtle);
+  border-radius: var(--shape-borderRadiusXXLarge);
+  padding: 0;
+  width: 800px;
+  height: 700px;
+  max-height: 90vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.termsShell.termsShell.termsShell.termsShell > :global(.MuiPaper-root) > :global(.MuiBox-root) {
+  padding: 0;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.statusDialog {
+  position: relative;
+  padding: 99px;
+  display: flex;
+  justify-content: center;
+  outline: none;
+}
+
+.glowLayer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.statusGlow {
+  position: absolute;
+  width: 1037px;
+  height: 513px;
+  left: 50%;
+  top: calc(50% + 437px);
+  transform: translate(-50%, -50%) scaleY(-1);
+  border-radius: 50%;
+  background-color: var(--palette-rarity-mythic);
+  opacity: 0.3;
+  filter: blur(250px);
+}
+
+.statusBody {
+  position: relative;
+  z-index: 1;
+  width: 500px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+
+.modalTitle {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h2-semi-size);
+  font-weight: var(--type-h2-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h2-semi-letter-spacing);
+  margin: 0;
+  color: var(--palette-neutral-softWhite);
+}
+
+.modalText {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-regular-size);
+  font-weight: var(--type-h6-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-regular-letter-spacing);
+  margin: 0;
+  color: var(--gray);
+}
+
+.closeButton.closeButton {
+  position: absolute;
+  top: 19px;
+  right: 19px;
+  z-index: 2;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--r-pill);
+  background-color: var(--palette-whiteTransparent-subtle);
+  color: var(--gray);
+}
+
+.closeButton.closeButton svg {
+  width: 21.6px;
+  height: 21.6px;
+}
+
+.closeButton.closeButton:hover {
+  background-color: var(--palette-whiteTransparent-soft);
+}
+
+.closeButton.closeButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.errorLine {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h7-regular-size);
+  font-weight: var(--type-h7-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h7-regular-letter-spacing);
+  margin: 0;
+  color: var(--error);
+  text-align: center;
+}
+
+.actions {
+  display: flex;
+  gap: 20px;
+  width: 100%;
+}
+
+.actions > * {
+  flex: 1;
+}
+
+.actions.actions :global(.MuiButton-root) + :global(.MuiButton-root) {
+  margin-left: 0;
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

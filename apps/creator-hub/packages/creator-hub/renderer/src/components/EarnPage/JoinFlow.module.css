@@ -1,0 +1,40 @@
+.checkingBody {
+  gap: 20px;
+}
+
+.resultBody {
+  gap: 50px;
+}
+
+.resultBody :global(.MuiButton-root) {
+  width: 100%;
+}
+
+.ctaPair.ctaPair {
+  gap: 30px;
+}
+
+.supportEmail {
+  font-weight: 600;
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.supportEmail:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.reasonLine {
+  display: block;
+}
+
+.welcomeImage {
+  position: absolute;
+  z-index: 0;
+  width: 263.5px;
+  height: 221px;
+  left: calc(50% - 131.75px - 10.7px);
+  top: -182px;
+  pointer-events: none;
+}

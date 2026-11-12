@@ -1,3 +1,5 @@
+import cx from 'classnames';
+
 import { misc } from '#preload';
 import { useSelector } from '#store';
 import { selectors } from '/@/modules/store/creatorFund';
@@ -8,20 +10,10 @@ import { getCurrentLocale, t } from '/@/modules/store/translation/utils';
 import getReadyImage from '/assets/images/earn/get-ready.webp';
 
 import type { CommonProps } from '../../Icons/types';
-import { Feature, FeatureBody, Features, FeatureTitle, Intro, Title } from '../Landing.styled';
 import { BuildIcon, CalendarIcon, DiscordIcon, NameIcon } from '../icons';
+import landing from '../Landing.module.css';
 
-import {
-  Area,
-  Art,
-  ArtBox,
-  Body,
-  Column,
-  Floor,
-  LinkLine,
-  Scenery,
-  StepLink,
-} from './GetReady.styled';
+import styles from './GetReady.module.css';
 
 const LINKS = {
   docs: 'https://docs.decentraland.org/creator/',
@@ -32,7 +24,8 @@ const LINKS = {
 
 function ExternalLink({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <StepLink
+    <a
+      className={styles.stepLink}
       href={href}
       onClick={event => {
         event.preventDefault();
@@ -41,7 +34,7 @@ function ExternalLink({ href, children }: { href: string; children: React.ReactN
     >
       {children}
       <span aria-hidden> →</span>
-    </StepLink>
+    </a>
   );
 }
 
@@ -87,9 +80,9 @@ const STEPS: Step[] = [
     body: () => (
       <>
         {t('earn.joined.get_ready.name.body')}
-        <LinkLine>
+        <span className={styles.linkLine}>
           <ExternalLink href={LINKS.name}>{t('earn.joined.get_ready.name.link')}</ExternalLink>
-        </LinkLine>
+        </span>
       </>
     ),
   },
@@ -111,11 +104,11 @@ const STEPS: Step[] = [
     body: () => (
       <>
         {t('earn.joined.get_ready.community.body')}
-        <LinkLine>
+        <span className={styles.linkLine}>
           <ExternalLink href={LINKS.discord}>
             {t('earn.joined.get_ready.community.link')}
           </ExternalLink>
-        </LinkLine>
+        </span>
       </>
     ),
   },
@@ -134,42 +127,46 @@ function useFirstCycleStarted() {
 export function GetReady() {
   const firstCycleStarted = useFirstCycleStarted();
   return (
-    <Area>
-      <Scenery>
-        <ArtBox>
-          <Floor />
-          <Art
+    <section className={styles.area}>
+      <div className={styles.scenery}>
+        <div className={styles.artBox}>
+          <div className={styles.floor} />
+          <img
+            className={styles.art}
             src={getReadyImage}
             alt=""
             width={794}
             height={796}
             draggable={false}
           />
-        </ArtBox>
-      </Scenery>
-      <Column>
-        <Intro>
-          <Title as="h2">{t('earn.joined.get_ready.title')}</Title>
-          <Body>
+        </div>
+      </div>
+      <div className={cx(landing.information, styles.column)}>
+        <div className={landing.intro}>
+          <h2 className={landing.title}>{t('earn.joined.get_ready.title')}</h2>
+          <p className={styles.body}>
             {t(
               firstCycleStarted
                 ? 'earn.joined.get_ready.body_started'
                 : 'earn.joined.get_ready.body',
             )}
-          </Body>
-        </Intro>
-        <Features as="ol">
+          </p>
+        </div>
+        <ol className={landing.features}>
           {STEPS.map(({ key, Icon, title, body }) => (
-            <Feature key={key}>
-              <FeatureTitle>
+            <li
+              key={key}
+              className={landing.feature}
+            >
+              <span className={landing.featureTitle}>
                 <Icon />
                 {t(title)}
-              </FeatureTitle>
-              <FeatureBody>{body(firstCycleStarted)}</FeatureBody>
-            </Feature>
+              </span>
+              <span className={landing.featureBody}>{body(firstCycleStarted)}</span>
+            </li>
           ))}
-        </Features>
-      </Column>
-    </Area>
+        </ol>
+      </div>
+    </section>
   );
 }
