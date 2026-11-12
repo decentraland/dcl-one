@@ -107,12 +107,9 @@ const ETH_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
  * The scene's own contact wins over `owner`: the owner is whoever holds the land or name.
  * A wallet `owner` never stands in as the name; a non-wallet `owner` is a display string and can.
  */
-/**
- * `parcel` is the parcel the link asked for: a scene spans several parcels and its base is only one of
- * them, so the card keeps the visitor's parcel and falls back to the base for a World-level record.
- */
-export function toPlaceCard(place: JumpPlaceRecord, parcel?: [number, number]): JumpCard {
-  const coordinates = parcel ?? parsePosition(place.base_position).coordinates;
+/** The card shows the scene's base parcel whichever parcel the link named, as decentraland.org does. */
+export function toPlaceCard(place: JumpPlaceRecord): JumpCard {
+  const coordinates = parsePosition(place.base_position).coordinates;
   const ownerAddress = place.owner && ETH_ADDRESS.test(place.owner) ? place.owner : undefined;
   const worldName = place.world_name?.toLowerCase();
   return {

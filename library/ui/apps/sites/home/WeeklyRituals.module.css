@@ -1,25 +1,40 @@
-/* Source paint: decentraland/sites@5aabce35, WeeklyRitualsOuter. */
+/* Source paint: decentraland/sites@17b3535a, components/Home/WeeklyRituals/WeeklyRituals.styled.ts. */
 .root {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--dcl-layout-section-gap);
-  padding: var(--dcl-layout-section-padding-y) 0;
-  overflow: hidden;
-  background: var(--dcl-gradient-radial-background);
+  width: 100%;
+  background: radial-gradient(ellipse at 110% 50%, #9425cd 0%, #68149b 100%);
   color: var(--dcl-text-primary);
 }
 
+.inner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-32);
+  width: 100%;
+  max-width: 1920px;
+  margin: 0 auto;
+  padding: var(--dcl-space-48) 0;
+  overflow: hidden;
+}
+
 .title {
-  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
-  padding: 0 var(--dcl-layout-margin-x);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 600;
+  line-height: 1.167;
+  letter-spacing: normal;
   text-align: center;
 }
 
+/* The reference card is a button, which centres its image in the slide. */
 .link {
   cursor: inherit;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  width: 100%;
   height: 100%;
 }
 
@@ -31,17 +46,32 @@
 .image {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover;
 }
 
-/* breakpoints.tablet: source's 750 / 370 artwork. */
-@media (min-width: 768px) {
+/* Source's sm breakpoint: the portrait artwork, 358px at most, rounded. */
+@media (max-width: 599px) {
+  .image {
+    max-width: 358px;
+    height: auto;
+    margin: 0 auto;
+    border-radius: var(--dcl-radius-lg);
+  }
+}
+
+@media (min-width: 600px) {
   .slide {
     aspect-ratio: 750 / 370;
   }
+}
 
-  .image {
-    height: 100%;
-    object-fit: cover;
+@media (min-width: 991px) {
+  .inner {
+    padding: 80px 0;
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-lg);
   }
 }

@@ -9,7 +9,7 @@ export type BreadcrumbOrigin = {
 const ORIGINS: Record<string, BreadcrumbOrigin> = {
   scenes: { to: "/create/scenes", label: "Back to scenes", active: "scenes" },
   templates: { to: "/create/templates", label: "Back to templates", active: "templates" },
-  home: { to: "/create", label: "Back to Creator Hub", active: "home" },
+  home: { to: "/create/home", label: "Back to Creator Hub", active: "home" },
   manage: { to: "/create/worlds", label: "Back to Worlds", active: "manage" },
   activity: {
     to: "/create/metrics",

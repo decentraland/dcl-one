@@ -27,8 +27,8 @@ type HeroProps = {
 }
 
 const REDUCED_MOTION = '(prefers-reduced-motion: reduce)'
-// breakpoints.desktop in foundations/layout: the ambient video only plays in the wide layout.
-const WIDE = '(min-width: 1024px)'
+// Source's useDesktopMediaQuery: the ambient video only plays in the wide layout.
+const WIDE = '(min-width: 991px)'
 // The video waits for an idle moment so it never competes with the hero image (the LCP).
 const VIDEO_IDLE_TIMEOUT_MS = 4000
 
@@ -83,13 +83,14 @@ function Hero({ title, imageAlt, actions, mobile, children }: HeroProps) {
         />
         {playVideo ? (
           <video
-            className={`${styles.media} ${styles.video}`}
+            className={`hero-video-overlay ${styles.media} ${styles.video}`}
             autoPlay
             loop
             muted
             playsInline
             preload="none"
             aria-hidden="true"
+            onCanPlay={(event) => event.currentTarget.setAttribute('data-ready', 'true')}
           >
             <source src={videoWebm} type="video/webm" />
             <source src={videoMp4} type="video/mp4" />

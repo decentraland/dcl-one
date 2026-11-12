@@ -12,3 +12,6 @@ A test in `apps/sites` fails when a component in this folder is missing from thi
 | `profile/ProfileTabs`         | `src/components/profile/ProfileTabs`                       | Tabs                     | `apps/sites` profile page |
 | `profile/ProfileOverview`     | `src/pages/profile/tabs/OverviewTab`                       | Profile overview         | `apps/sites` profile page |
 | `profile/ProfileAvatarBody`   | `src/components/profile/AvatarRender` (its fallback image) | Avatar render            | `apps/sites` profile page |
+| `profile/ProfileActions`      | `src/components/profile/ProfileHeader` (its buttons)       | Button                   | `apps/sites` profile page |
+| `profile/ProfileMobileNav`    | `src/components/profile/ProfileMobileMenu`                 | Profile mobile menu      | `apps/sites` profile page |
+| `profile/icons`               | the Material icons those pages use                         | Icons                    | `profile/*`               |

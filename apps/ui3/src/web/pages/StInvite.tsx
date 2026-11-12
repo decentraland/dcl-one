@@ -1,25 +1,38 @@
-import { siteHost, siteUrl } from "../../data/site";
 import type { ReactNode } from "react";
-import { useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { Button } from "@dcl/one-ui/components";
 import SitesChrome from "../frames/SitesChrome";
-import "./stinvite.css";
+import AnimatedBackground from "../../shop/discovery/components/animated-background/AnimatedBackground";
+import { asset } from "../../asset";
 import { docsUrl } from "../../data/docs";
+import "./stinvite.css";
+
+const WearablePreview = lazy(() => import("../../wearable-preview/WearablePreview"));
 
 type Referrer = { name: string; ethAddress: string };
 
-const ENVELOPE_SRC = "/assets/twemoji-1f48c.svg";
+// from: sites@17b3535a:src/images/referral-envelope.webp and the second hero's clip (src/data/inviteContent.ts), the same bytes.
+const ENVELOPE_SRC = asset("assets/invite/referral-envelope.webp");
+const CLIP_SRC = asset("assets/invite/referral.webm");
+
+/** decentraland.org's sign-in link for an invite (sites hooks/useReferralUrl.ts): the referrer rides on the sign-in and on its redirect to the download. */
+export function referralUrl(referrer: string): string {
+  if (!referrer) return `/auth/login?${new URLSearchParams({ redirectTo: "/download" })}`;
+  const download = `/download?${new URLSearchParams({ referrer })}`;
+  return `/auth/login?${new URLSearchParams({ referrer, redirectTo: download })}`;
+}
 
 type Faq = { q: string; a: string };
 
-// The host the reader is on, from the request on the server and the location in the browser, so both render the same text.
-const faqsFor = (host: string): Faq[] => [
+// from: sites@17b3535a:src/intl/en.json page_invite.faq
+const FAQS: Faq[] = [
   {
     q: "What is Decentraland?",
-    a: "Decentraland is a community-driven virtual world where you can connect, explore, and create. Built on the Unity engine, Decentraland streams and renders a vast, continuous environment filled with diverse, user-generated content. As you explore this immersive landscape, you encounter new creations daily, from games and puzzles to scenes and artworks, all crafted by Decentraland's vibrant community of creators.\n\nDecentraland goes beyond traditional gaming experiences. In Decentraland, you can attend live music events, conferences, exhibitions, dance parties, and more.\n\nYour New Friends Are Waiting -- open Decentraland in your browser and jump straight in!",
+    a: "Decentraland is a community-driven virtual world where you can connect, explore, and create. Built on the Unity engine, Decentraland streams and renders a vast, continuous environment filled with diverse, user-generated content. As you explore this immersive landscape, you encounter new creations daily, from games and puzzles to scenes and artworks, all crafted by Decentraland's vibrant community of creators.\n\nDecentraland goes beyond traditional gaming experiences. In Decentraland, you can attend live music events, conferences, exhibitions, dance parties, and more.\n\nYour New Friends Are Waiting -- Download Decentraland today and jump in!",
   },
   {
     q: "How do I enter Decentraland?",
-    a: "Step 1: Open Decentraland in Your Browser\nNothing to install \u{2014} go to " + host + "/play and the world loads right in your browser.\n\nStep 2: Create your Account\nWhen you enter Decentraland, you can use a standard web3 wallet such as Metamask, or log in with a Social account (Google, Discord, X, or Apple).\n\nStep 3: Customize Your Avatar\nOnce you enter Decentraland you'll first be asked to customize your avatar.\n\nStep 4: Explore!\nAfter completing a quick tutorial, Decentraland is yours to explore!\n\nStep 5: Have fun!\nWalk around, talk to others via the chat box, and pop into some events!",
+    a: "Step 1: Download and Install the Client\nFirst you will need to install the client, go to Decentraland and click download.\n\nStep 2: Create your Account\nWhen you enter Decentraland, you can use a standard web3 wallet such as Metamask, or log in with a Social account (Google, Discord, X, or Apple).\n\nStep 3: Customize Your Avatar\nOnce you enter Decentraland you'll first be asked to customize your avatar.\n\nStep 4: Explore!\nAfter completing a quick tutorial, Decentraland is yours to explore!\n\nStep 5: Have fun!\nWalk around, talk to others via the chat box, and pop into some events!",
   },
   {
     q: "Do I need cryptocurrency or a digital wallet to use Decentraland?",
@@ -87,56 +100,74 @@ type InviteHeroProps = {
   title: string;
   subtitle: string;
   buttonLabel: string;
-  referrerName?: string;
+  referrer: Referrer | null;
   secondary?: boolean;
   loading?: boolean;
 };
 
-function InviteHero({ title, subtitle, buttonLabel, referrerName, secondary, loading }: InviteHeroProps) {
+function Envelope({ size }: { size: number }) {
   return (
-    <section className={"stinvite__hero" + (secondary ? " stinvite__hero--second" : "")}>
+    <div className="stinvite__envelope">
+      <span className="stinvite__envelope-glow" />
+      <img className="stinvite__envelope-img" src={ENVELOPE_SRC} alt="Envelope" loading="eager" width={size} height={size} />
+    </div>
+  );
+}
+
+// from: sites@17b3535a:src/components/Invite/InviteHero/InviteHero.tsx (+ .styled.ts). Both envelopes render and
+// CSS shows the one for the width, where the original picks one with useDesktopMediaQuery.
+function InviteHero({ title, subtitle, buttonLabel, referrer, secondary, loading }: InviteHeroProps) {
+  const [client, setClient] = useState(false);
+  useEffect(() => setClient(true), []);
+  const Title = secondary ? "h2" : "h1";
+  const address = referrer?.ethAddress.toLowerCase() ?? "";
+  return (
+    <section className="stinvite__hero">
       <div className="stinvite__hero-inner">
         <div className="stinvite__rail">
           <div className="stinvite__rail-text">
             {!secondary && (
-              <div className="stinvite__envelope">
-                <span className="stinvite__envelope-glow" />
-                <img className="stinvite__envelope-img" src={ENVELOPE_SRC} alt="" width={115} height={115} />
+              <div className="stinvite__desktop">
+                <Envelope size={115} />
               </div>
             )}
-            <h1 className="stinvite__title">
-              {!secondary && !loading && referrerName ? referrerName + " " : ""}
-              <GradientTitle>{title}</GradientTitle>
-            </h1>
+            <Title className="stinvite__title">
+              {!loading && !secondary && (referrer?.name || null)} <GradientTitle>{title}</GradientTitle>
+            </Title>
             <p className="stinvite__subtitle">{subtitle}</p>
           </div>
           <div className="stinvite__actions">
-            <a className="stinvite__cta-btn" href={siteUrl("/download")} onClick={(e) => e.preventDefault()}>
+            <Button variant="primary" size="lg" className="stinvite__cta-btn" href={referralUrl(address)}>
               {buttonLabel}
-            </a>
+            </Button>
           </div>
         </div>
 
         <div className="stinvite__media">
-          <div className="stinvite__anim-bg" aria-hidden="true" />
+          <AnimatedBackground />
           {secondary && <div className="stinvite__overlay" aria-hidden="true" />}
-          <div className="stinvite__video" aria-hidden="true" />
-          {!secondary && (
-            <div className="stinvite__avatar-slot" aria-hidden="true">
-              {loading ? (
-                <span className="u-skel__line stinvite__avatar-skel" />
-              ) : (
-                <div className="stinvite__avatar-figure" />
+          {secondary && <video className="stinvite__video" src={CLIP_SRC} loop muted autoPlay playsInline />}
+          <div className="stinvite__avatar">
+            {!secondary && (
+              <div className="stinvite__mobile">
+                <Envelope size={160} />
+              </div>
+            )}
+            <div className="stinvite__avatar-wrap">
+              {client && !loading && !secondary && address && (
+                <Suspense fallback={null}>
+                  <WearablePreview profile={address} controls={false} />
+                </Suspense>
               )}
             </div>
-          )}
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-function InviteFaqs({ faqs }: { faqs: Faq[] }) {
+function InviteFaqs() {
   const [expanded, setExpanded] = useState<number | false>(false);
   return (
     <section className="stinvite__faqs" aria-label="Frequently Asked Questions">
@@ -148,7 +179,7 @@ function InviteFaqs({ faqs }: { faqs: Faq[] }) {
             {"\n"}
             Questions
           </h2>
-          {faqs.map((faq, i) => {
+          {FAQS.map((faq, i) => {
             const open = expanded === i;
             return (
               <div
@@ -175,7 +206,7 @@ function InviteFaqs({ faqs }: { faqs: Faq[] }) {
               </div>
             );
           })}
-          <a className="stinvite__faqs-cta" href={docsUrl("player/faqs/decentraland-101")}>
+          <a className="stinvite__faqs-cta" href={docsUrl("faqs")}>
             see more
           </a>
         </div>
@@ -187,12 +218,10 @@ function InviteFaqs({ faqs }: { faqs: Faq[] }) {
 type StInviteProps = {
   referrer?: Referrer | null;
   loading?: boolean;
-  /** The host the page is served on; the route passes the request's, so the server and the browser render the same FAQ text. */
-  siteHost?: string;
 };
 
-export default function StInvite({ referrer = null, loading = false, siteHost: host }: StInviteProps) {
-  const faqs = faqsFor(host || siteHost());
+// from: sites@17b3535a:src/pages/invite/InvitePage.tsx: a page without the site navigation.
+export default function StInvite({ referrer = null, loading = false }: StInviteProps) {
   return (
     <SitesChrome hideNav>
       <div className="stinvite">
@@ -200,7 +229,7 @@ export default function StInvite({ referrer = null, loading = false, siteHost: h
           title="invited you to join Decentraland"
           subtitle="A social virtual world where you can connect, create, and be yourself"
           buttonLabel="JOIN NOW"
-          referrerName={referrer?.name}
+          referrer={referrer}
           loading={loading}
         />
         <InviteHero
@@ -208,8 +237,9 @@ export default function StInvite({ referrer = null, loading = false, siteHost: h
           title="Hang out in Decentraland"
           subtitle="Meet people from around the world, attend live events, and customize your digital self -- all in a virtual world owned by its community."
           buttonLabel="JOIN FREE"
+          referrer={referrer}
         />
-        <InviteFaqs faqs={faqs} />
+        <InviteFaqs />
       </div>
     </SitesChrome>
   );

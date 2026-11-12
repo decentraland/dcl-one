@@ -1,0 +1,78 @@
+/* decentraland.org's nav as the shared NavBar renders it (sites: components/LandingNavbar/LandingNavbar.styled.ts
+   NavBarRoot, NavBarLeft, NavBarRightGroup, BellButton, AvatarButton, SignInButton, HamburgerButton). The bar's
+   metrics go through the NavBar's --dcl-navbar-* properties; its background, shadow and blur sit on ::before, as the
+   reference's do, so a dropdown can blur on its own. The reference switches at 991/992px; the NavBar's controls
+   switch at the foundations' 1024px. The sign-in draws the reference's 1px border as a border, not the NavBar's
+   inset ring, so its rounded corners anti-alias as decentraland.org's do. */
+.root {
+  --sites-top-bar-bg: var(--dcl-bg-navbar-mobile);
+  --dcl-navbar-block-size: 64px;
+  --dcl-navbar-padding-block: var(--dcl-space-12);
+  --dcl-navbar-padding-inline: var(--dcl-space-16);
+  --dcl-navbar-background: transparent;
+  --dcl-navbar-shadow: none;
+  --dcl-navbar-start-gap: var(--dcl-space-12);
+  --dcl-navbar-end-gap: var(--dcl-space-24);
+  --dcl-navbar-control-padding: 0;
+  --dcl-navbar-balances-display: flex;
+  --dcl-navbar-avatar-size: 44px;
+  --dcl-navbar-avatar-border: 2px solid rgba(255, 255, 255, 0.5);
+  --dcl-navbar-avatar-background: var(--dcl-rarities-mythic);
+  --dcl-navbar-sign-in-padding: 8px 22px;
+  --dcl-navbar-sign-in-border: 1px solid currentColor;
+  --dcl-navbar-sign-in-ring: none;
+  --dcl-navbar-sign-in-font-weight: 600;
+  --dcl-navbar-sign-in-line-height: 24px;
+  --dcl-navbar-sign-in-letter-spacing: 0.46px;
+  position: relative;
+  isolation: isolate;
+}
+.root::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--sites-top-bar-bg);
+  box-shadow:
+    0 1.333px 24px rgba(0, 0, 0, 0.12),
+    0 8px 13.333px rgba(0, 0, 0, 0.14),
+    0 4px 6.667px var(--dcl-transparencies-black-20);
+  -webkit-backdrop-filter: saturate(1.8) blur(20px);
+  backdrop-filter: saturate(1.8) blur(20px);
+  pointer-events: none;
+}
+/* The landing page signed out, the reference's minimal nav: the logo, the wordmark and Sign in, no sections or menu. */
+.root[data-bare] {
+  --dcl-navbar-menu-button-display: none;
+}
+.wordmark {
+  display: none;
+}
+.menuIcon {
+  color: var(--dcl-neutrals-white);
+}
+@media (min-width: 992px) {
+  .root {
+    --sites-top-bar-bg: var(--dcl-bg-navbar);
+    --dcl-navbar-block-size: 92px;
+    --dcl-navbar-padding-block: var(--dcl-space-16);
+    --dcl-navbar-padding-inline: 54px;
+    --dcl-navbar-start-gap: var(--dcl-space-48);
+    --dcl-navbar-avatar-size: 52px;
+  }
+  .root[data-bare] {
+    --dcl-navbar-start-gap: var(--dcl-space-16);
+  }
+  .wordmark {
+    display: block;
+    width: 160px;
+    height: 20px;
+  }
+  /* On the landing page the desktop nav floats transparent over the hero, signed out or in. */
+  .root[data-landing]::before {
+    background: transparent;
+    box-shadow: none;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}

@@ -27,7 +27,7 @@ type MobileEditorGateProps = {
 export default function MobileEditorGate({
   title = "Open the editor on a desktop",
   message = "This editor needs a wider screen and a WebGPU-capable desktop browser. Come back on a laptop or desktop to keep building.",
-  backHref = "/create",
+  backHref = "/create/home",
   backLabel = "Back to Creator Hub",
   onContinue,
 }: MobileEditorGateProps) {

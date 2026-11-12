@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router";
 import { DownloadSuccess } from "@dcl/one-ui/apps/sites/download/DownloadSuccess";

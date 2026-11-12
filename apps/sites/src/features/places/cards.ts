@@ -5,6 +5,7 @@ import { FOUNDATION_CONTACT_NAME } from "@/data/lib/catalyst/jump/jump";
 import type { Destination } from "@/data/lib/catalyst/places/destinations";
 import { placeCreatorAddress, type PlaceCreatorProfile } from "@/data/lib/catalyst/places/discover";
 import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
+import { avatarBackground, displayName, syntheticAvatar } from "@ui/web/places/avatarColor";
 
 import type { DetectedPlatform } from "../download/options";
 import { jumpInFor, mobileLaunch } from "../jump/mobileLaunch";
@@ -22,24 +23,35 @@ function declaredAuthor(place: Destination): string | undefined {
   return name && name.toLowerCase() !== "sdk" ? name : undefined;
 }
 
+/** The violet source puts behind the Foundation's logo. */
+export const FOUNDATION_AVATAR_BACKGROUND = "#9d76e3";
+
+/** A name with no wallet: the explorer's colour for the name alone, behind a disc with its initial. */
+function namedCreator(name: string): NonNullable<PlaceCardData["creator"]> {
+  return { name, avatarUrl: syntheticAvatar(name), avatarBackground: avatarBackground(displayName(name, false)) };
+}
+
 /**
  * Who the card credits, as source: the scene's declared author, with the face of the wallet that
- * deployed it; the Foundation gets its logo; a scene with no author credits its own title and links
- * no wallet.
+ * deployed it on the wallet's ADR-292 colour (white until the profile is read); the Foundation gets
+ * its logo; a scene with no author credits its own title and links no wallet. A missing face shows
+ * the name's initial.
  */
 export function placeCreator(place: Destination, profiles: CreatorProfiles = {}): PlaceCardData["creator"] {
   const author = declaredAuthor(place);
-  if (author === FOUNDATION_CONTACT_NAME) return { name: author, foundation: true };
+  if (author === FOUNDATION_CONTACT_NAME) return { name: author, foundation: true, avatarBackground: FOUNDATION_AVATAR_BACKGROUND };
   if (!author) {
     const title = place.title?.trim();
-    return title ? { name: title } : undefined;
+    return title ? namedCreator(title) : undefined;
   }
   const address = placeCreatorAddress(place);
-  const avatarUrl = address ? profiles[address]?.avatarUrl : undefined;
+  if (!address) return namedCreator(author);
+  const profile = profiles[address];
   return {
     name: author,
-    ...(address ? { href: `/profile/${address}` } : {}),
-    ...(avatarUrl ? { avatarUrl } : {}),
+    href: `/profile/${address}`,
+    avatarUrl: profile?.avatarUrl ?? syntheticAvatar(author),
+    avatarBackground: avatarBackground(profile ? displayName(profile.name, profile.claimed === true, address) : ""),
   };
 }
 

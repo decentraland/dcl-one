@@ -7,6 +7,8 @@ export type ChromeAuth = {
   name: string;
   committee: boolean;
   avatarUrl?: string;
+  /** The avatar disc's background once the profile loads (web/places/avatarColor.ts); the CSS default before. */
+  avatarColor?: string;
   onSignIn?: () => void;
   onSignOut?: () => void;
   onSwitchAccount?: () => void;
@@ -20,6 +22,7 @@ const LOGGED_OUT: ChromeAuth = {
   name: "",
   committee: false,
   avatarUrl: undefined,
+  avatarColor: undefined,
   onSignIn: undefined,
   onSignOut: undefined,
   onSwitchAccount: undefined,

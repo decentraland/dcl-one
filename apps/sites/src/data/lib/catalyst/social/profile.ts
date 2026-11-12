@@ -1,6 +1,6 @@
 import { profileFaceUrl } from "../../auth/profile-face-url";
 import { siteUrl } from "../bases";
-import { getJSON } from "../client";
+import { catalystBase, errorFromResponse } from "../client";
 import type { GetOptions } from "../client";
 import { z } from "zod";
 import { absentWhenNull } from "../absent";
@@ -67,15 +67,23 @@ function parseProfileEnvelope(raw: unknown): ProfileEnvelope {
   return ProfileEnvelopeSchema.parse(raw);
 }
 
+/** Asked as decentraland.org asks it: an anonymous `POST /lambdas/profiles` with the one id; no row is no profile. */
 export async function fetchProfile(
   address: string,
   opts: GetOptions = {},
 ): Promise<Avatar | null> {
-  const raw = await getJSON<unknown>(
-    `/lambdas/profile/${encodeURIComponent(normalizeAddress(address))}`,
-    opts,
-  );
-  const env = parseProfileEnvelope(raw);
+  const url = `${catalystBase(opts.base)}/lambdas/profiles`;
+  const res = await (opts.fetchImpl ?? fetch)(url, {
+    method: "POST",
+    headers: { accept: "application/json", "content-type": "application/json", ...(opts.headers ?? {}) },
+    body: JSON.stringify({ ids: [normalizeAddress(address)] }),
+    signal: opts.signal,
+    cache: opts.cache ?? "no-store",
+  });
+  if (!res.ok) throw await errorFromResponse(res, url);
+  const rows = z.array(z.unknown()).parse(await res.json());
+  if (rows.length === 0) return null;
+  const env = parseProfileEnvelope(rows[0]);
   return env.avatars[0] ?? null;
 }
 
@@ -94,7 +102,8 @@ export type ProfileVM = {
   accountUrl: string;
   info: ProfileInfoField[];
   links: ProfileLink[];
-  equipped: unknown[];
+  /** The worn wearables that are not base-avatar defaults, as URNs. */
+  equipped: string[];
 };
 
 const DEFAULT_NAME_COLOR = "#FF8362";
@@ -134,6 +143,8 @@ export function emptyProfile(address: string): ProfileVM {
   };
 }
 
+const BASE_AVATAR_PREFIX = "urn:decentraland:off-chain:base-avatars:";
+
 export function mapProfile(avatar: Avatar, address: string): ProfileVM {
   const nameColor =
     typeof avatar.nameColor === "string"
@@ -168,6 +179,6 @@ export function mapProfile(avatar: Avatar, address: string): ProfileVM {
     accountUrl: siteUrl("/shop"),
     info,
     links,
-    equipped: [],
+    equipped: (avatar.avatar?.wearables ?? []).filter((urn) => !urn.startsWith(BASE_AVATAR_PREFIX)),
   };
 }

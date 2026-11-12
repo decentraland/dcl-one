@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef } from "react";
 
 import SitesChrome from "@ui/web/frames/SitesChrome";
@@ -9,7 +8,8 @@ import { CatchTheVibe } from "@dcl/one-ui/apps/sites/home/CatchTheVibe";
 import { WeeklyRituals } from "@dcl/one-ui/apps/sites/home/WeeklyRituals";
 import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
-import { downloadActions } from "@/features/download/actions";
+import { homeDownloadActions } from "@/features/home/actions";
+import { whatsOnCards } from "@/features/home/cards.server";
 import { detectPlatform } from "@/features/download/options";
 import {
   homeAgentContent,
@@ -17,9 +17,8 @@ import {
   WEEKLY_RITUALS,
 } from "@/features/home/content";
 
-import { heroEventCards } from "@/data/lib/catalyst/landings/home";
-import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
-import { loadHomeEvents } from "@/data/lib/catalyst/landings/home.server";
+import { loadDownloadCounts } from "@/data/lib/download/counts.server";
+import { loadHomeLive } from "@/data/lib/catalyst/landings/home.server";
 import { sidLoader } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
@@ -31,6 +30,8 @@ export const handle = {
 } satisfies AgentMarkdownHandle;
 
 const STORY = "discover";
+/** The reference's count while its download counter loads or fails (sites Hero.tsx). */
+const DOWNLOADS_FALLBACK = "+400K";
 
 export function meta() {
   return [{ title: "Decentraland" }];
@@ -38,22 +39,24 @@ export function meta() {
 
 export async function loader({ request, context }: Route.LoaderArgs) {
   const { sid, wrap } = sidLoader(request, context);
-  const [{ content: loadedContent }, downloads] = await Promise.all([
-    loadHomeEvents(),
-    loadDownloadsLabel(),
-  ]);
+  const [{ content: loadedContent, cards, profiles }, downloads] =
+    await Promise.all([loadHomeLive(), loadDownloadCounts()]);
   const content = homeAgentContent(loadedContent);
   const payload = {
     sid,
     content,
-    downloads,
+    downloads: downloads ?? DOWNLOADS_FALLBACK,
     platform: detectPlatform(request.headers.get("user-agent")),
+    cards: whatsOnCards(cards, profiles),
+    faces: Object.fromEntries(
+      VIBE_CLIPS.map((clip) => [clip.address, profiles[clip.address]?.face ?? null]),
+    ),
   };
   return wrap(payload);
 }
 
 export default function Home({ loaderData }: Route.ComponentProps) {
-  const { sid, content, platform, downloads } = loaderData;
+  const { sid, platform, downloads, cards, faces } = loaderData;
 
   const viewed = useRef(false);
   useEffect(() => {
@@ -62,7 +65,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
     track("lp_discover_viewed", {}, { sid, story: STORY });
   }, [sid]);
 
-  const { actions, store } = downloadActions(platform, downloads);
+  const { hero, hangOut, store } = homeDownloadActions(platform, downloads);
   const labels = {
     previous: "Previous slide",
     next: "Next slide",
@@ -75,7 +78,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <Hero
           title="Close the Feed. Come Hang Out."
           imageAlt="Friends exploring Decentraland"
-          actions={actions}
+          actions={hero}
           mobile={{
             title: "Hang Out From Anywhere",
             subtitle: "Decentraland now on mobile.",
@@ -84,14 +87,11 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         />
         <WhatsOn
           title="Jump Into What's Happening"
-          labels={{ live: "LIVE", by: "by" }}
-          viewAll={{ label: "View all", href: "/whats-on" }}
-          cards={(heroEventCards(content) ?? []).map((card) => ({
-            id: card.id,
-            title: card.title,
-            image: card.image,
-            href: homeEventHref(card.id),
-          }))}
+          labels={{ live: "LIVE", by: "by", jumpIn: "Jump in" }}
+          carouselLabels={labels}
+          viewAll={{ label: "View All", href: "/whats-on" }}
+          background={<AnimatedBackground />}
+          cards={cards}
         />
         <CatchTheVibe
           title="Catch the Vibe"
@@ -106,8 +106,13 @@ export default function Home({ loaderData }: Route.ComponentProps) {
             id: clip.id,
             image: clip.image,
             video: clip.video,
-            creator: { name: clip.name, href: `/profile/${clip.address}` },
+            creator: {
+              name: clip.name,
+              href: `/profile/${clip.address}`,
+              avatarUrl: faces[clip.address] ?? undefined,
+            },
           }))}
+          hangOut={{ label: "Hang out now", href: "/play/" }}
         />
         <WeeklyRituals
           title="Your Weekly Rituals"
@@ -123,7 +128,7 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <ComeHangOut
           title="Come Hang Out"
           background={<AnimatedBackground />}
-          actions={actions}
+          actions={hangOut}
           store={store}
         />
       </main>

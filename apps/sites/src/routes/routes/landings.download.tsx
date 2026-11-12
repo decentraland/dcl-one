@@ -1,4 +1,3 @@
-import "@dcl/one-ui/foundations/foundations.css";
 import { DownloadPage } from "@dcl/one-ui/apps/sites/download/DownloadPage";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 

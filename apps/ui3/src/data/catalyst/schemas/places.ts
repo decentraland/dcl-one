@@ -29,12 +29,6 @@ export const PlaceSchema = z.object({
 
 export type PlaceWire = z.infer<typeof PlaceSchema>;
 
-export const PlaceViewerSchema = z.object({
-  user_like: z.boolean(),
-  user_dislike: z.boolean(),
-  user_favorite: z.boolean(),
-});
-
 export const ListEnvelope = z.object({
   ok: z.boolean(),
   data: z.array(z.unknown()),

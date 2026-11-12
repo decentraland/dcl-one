@@ -1,74 +1,125 @@
-/* TODO(figma-ds): replace with the Figma-generated profile layout's styles.
- * The source's radial gradient (#7434B1 -> #481C6C -> #2B1040) has no token; the closest brand
- * tokens stand in for it and are listed as a visual difference. */
+/* TODO(figma-ds): replace with the profile page frame's styles (ProfileLayout.styled.ts), until the Figma-generated layout's. */
+/* The profile site's ProfileLayout (ProfileLayout.styled.ts): its MUI theme sets body1 on every inherited
+ * text (16px, 24px line height, 0.15008px letter spacing) and sizes icons through font-size (1em boxes). */
 .root {
   position: relative;
   isolation: isolate;
   box-sizing: border-box;
   width: 100%;
   min-height: 100vh;
-  /* The Sites top bar sits above the page, not over it, so only the source's gap below it remains. */
-  padding-top: var(--dcl-space-16);
+  padding-top: var(--dcl-space-64);
   padding-bottom: var(--dcl-space-64);
   background: radial-gradient(
     123.58% 82% at 9.01% 25.79%,
-    var(--dcl-brand-purple) 0%,
-    var(--dcl-brand-purple-dark) 37.11%,
-    var(--dcl-neutrals-black) 100%
+    #7434b1 0%,
+    #481c6c 37.11%,
+    #2b1040 100%
   );
-  color: var(--dcl-text-primary);
+  color: #f0f0f0;
+  font-family: Inter, Helvetica, Arial, sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 24px;
+  letter-spacing: 0.15008px;
+}
+
+.root *,
+.root *::before,
+.root *::after {
+  box-sizing: border-box;
+}
+
+:where(.root) :where(p, h1, h2) {
+  margin: 0;
+}
+
+:where(.root) :where(svg[data-testid]) {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 1em;
+  height: 1em;
+  font-size: 24px;
+  fill: currentcolor;
+  user-select: none;
 }
 
 .content {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
-  box-sizing: border-box;
   width: 100%;
   max-width: 1650px;
   margin: 0 auto;
 }
 
-.tabs {
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   width: 100%;
 }
 
-.body {
-  display: grid;
-  grid-template-columns: 1fr;
+.tabsArea {
   width: 100%;
+}
+
+.split {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-columns: minmax(280px, 500px) 1fr;
+  width: 100%;
+  min-height: 0;
+}
+
+.split[data-aside='hidden'] {
+  grid-template-columns: 0 1fr;
 }
 
 .aside {
   position: relative;
   overflow: visible;
-  min-height: 320px;
+  width: 100%;
+  max-width: 500px;
+  min-height: 480px;
 }
 
-.main {
-  box-sizing: border-box;
-  min-width: 0;
-  padding: var(--dcl-space-16);
+.split[data-aside='hidden'] .aside {
+  opacity: 0;
 }
 
-@media (min-width: 1024px) {
+.body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: var(--dcl-space-32);
+}
+
+@media (min-width: 992px) {
   .root {
-    padding-top: var(--dcl-space-24);
+    padding-top: var(--dcl-space-96);
   }
 
   .content {
-    padding: 0 var(--dcl-space-32);
+    padding-right: var(--dcl-space-32);
+    padding-left: var(--dcl-space-32);
   }
+}
 
-  .withAside {
-    grid-template-columns: minmax(280px, 500px) 1fr;
+@media (max-width: 991.95px) {
+  .split,
+  .split[data-aside='hidden'] {
+    grid-template-columns: 1fr;
   }
 
   .aside {
-    max-width: 500px;
-    min-height: 480px;
+    max-width: 100%;
+    min-height: 320px;
   }
 
-  .main {
-    padding: var(--dcl-space-32);
+  .split[data-aside='hidden'] .aside {
+    display: none;
+  }
+
+  .body {
+    padding: var(--dcl-space-16);
   }
 }

@@ -14,7 +14,7 @@ function LiveEventCardSlot(props: Extract<PlaceCardSlotProps, { skeleton?: false
     <div className={styles.cell}>
       <article className={styles.card} aria-label={card.title}>
         <div className={styles.media}>
-          <Cover card={card} priority />
+          <Cover card={card} />
           <Badges card={card} labels={labels} />
         </div>
         <div className={styles.bar}>

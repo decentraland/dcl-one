@@ -1,14 +1,18 @@
-/* TODO(figma-ds): replace with the Figma-generated avatar render's styles. */
-.root {
+/* TODO(figma-ds): replace with the avatar column's styles (AvatarRender.styled.ts), until the Figma-generated avatar render's. */
+/* The profile site's AvatarRender box (AvatarRender.styled.ts). */
+.render {
   position: relative;
   display: flex;
-  align-items: flex-end;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
-  width: 100%;
-  height: 360px;
+  overflow: visible;
+  width: 500px;
+  max-width: 100%;
+  height: 706.442px;
 }
 
-.image {
+.renderImage {
   display: block;
   width: auto;
   max-width: 100%;
@@ -17,8 +21,9 @@
   object-position: center bottom;
 }
 
-@media (min-width: 1024px) {
-  .root {
-    height: 706px;
+@media (max-width: 991.95px) {
+  .render {
+    width: 100%;
+    height: 360px;
   }
 }

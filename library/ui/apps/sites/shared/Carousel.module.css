@@ -1,3 +1,4 @@
+/* Source paint: decentraland/sites@17b3535a, components/Carousel/Carousel.styled.ts. */
 .carousel {
   position: relative;
   width: 100%;
@@ -11,7 +12,7 @@
 .track {
   display: flex;
   user-select: none;
-  align-items: center;
+  align-items: stretch;
   --carousel-slide-width: calc(100% - var(--dcl-space-32));
   --carousel-gap: var(--dcl-space-32);
   gap: var(--carousel-gap);
@@ -34,8 +35,8 @@
   transition: none;
 }
 
-/* Phones: the slide spans the width less 16px a side. Source's tablet slide is 70% and its desktop
-   slide 750px, with 24px between slides. */
+/* Phones: the slide spans the width less 16px a side, every slide at full opacity. Source's tablet
+   slide is 70% and its desktop slide 750px, with 24px between slides. */
 .slide {
   flex: none;
   width: var(--carousel-slide-width);
@@ -47,16 +48,41 @@
     transform 0.4s ease;
 }
 
-.peekStart,
-.peekEnd {
-  opacity: 0.7;
+.slide > * {
+  width: 100%;
+  min-width: 0;
 }
 
+/* Source's nav buttons show on hover only (and here on focus); phones and tablets have none. */
 .arrow {
   position: absolute;
   top: 45%;
+  z-index: 10;
   display: none;
   transform: translateY(-50%);
+  opacity: 0;
+  transition: opacity 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.carousel:hover .arrow,
+.arrow:focus-within {
+  opacity: 1;
+}
+
+.arrow > * {
+  width: var(--dcl-space-48);
+  height: var(--dcl-space-48);
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border: 2px solid var(--dcl-transparencies-white-40);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-white);
+}
+
+.arrow > *:hover {
+  background: var(--dcl-transparencies-black-60);
 }
 
 .arrowStart {
@@ -68,34 +94,34 @@
 }
 
 .dots {
+  position: relative;
+  z-index: 3;
   display: flex;
   justify-content: center;
   gap: var(--dcl-space-8);
   padding-top: var(--dcl-space-24);
 }
 
-/* An 8px dot inside a 24px hit target. */
+/* Source's 8px dot; the pseudo-element keeps a 24px hit target around it. */
 .dot {
-  display: grid;
-  place-items: center;
-  width: var(--dcl-space-24);
-  height: var(--dcl-space-24);
+  position: relative;
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
   padding: 0;
   border: 0;
   border-radius: var(--dcl-radius-full);
-  background: none;
-  cursor: pointer;
-}
-
-.dot::before {
-  content: '';
-  width: var(--dcl-space-8);
-  height: var(--dcl-space-8);
-  border-radius: var(--dcl-radius-full);
   background: var(--dcl-transparencies-white-40);
+  cursor: pointer;
+  transition: background-color 0.3s ease;
 }
 
-.dotActive::before {
+.dot::after {
+  content: '';
+  position: absolute;
+  inset: calc(-1 * var(--dcl-space-8));
+}
+
+.dotActive {
   background: var(--dcl-neutrals-white);
 }
 
@@ -104,15 +130,32 @@
   outline-offset: 2px;
 }
 
-/* breakpoints.tablet: neighbours peek more, faded into the page at their outer edge. */
-@media (min-width: 768px) {
+/* Source's sm breakpoint: neighbours fade and shrink, masked at their outer edge; the current slide
+   lifts. */
+@media (min-width: 600px) {
   .track {
     --carousel-slide-width: 70%;
     --carousel-gap: var(--dcl-space-16);
   }
+
+  .slide {
+    opacity: 0;
+    transform: scale(0.8);
+  }
+
+  .slide > * {
+    width: auto;
+  }
+
+  .active {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 2px 8px 8px rgba(255, 255, 255, 0.15);
+  }
+
   .peekStart,
   .peekEnd {
-    transform: scale(0.8);
+    opacity: 0.7;
   }
 
   .peekStart {
@@ -124,20 +167,11 @@
   }
 }
 
-/* breakpoints.desktop: source's 750px slide, the lifted current card and the arrows. */
-@media (min-width: 1024px) {
+/* Source's desktop (useDesktopMediaQuery, 991px): the 750px slide and the arrows. */
+@media (min-width: 991px) {
   .track {
     --carousel-slide-width: 750px;
     --carousel-gap: var(--dcl-space-24);
-  }
-
-  .peekStart,
-  .peekEnd {
-    transform: scale(0.8);
-  }
-
-  .active {
-    box-shadow: 0 2px 8px 8px color-mix(in srgb, var(--dcl-neutrals-white) 15%, transparent);
   }
 
   .arrow {

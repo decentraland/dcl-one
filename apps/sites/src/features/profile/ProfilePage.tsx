@@ -12,14 +12,18 @@ import StProfilePlacesTab from "@ui/web/pages/StProfilePlacesTab";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
 import { track } from "@/core/lib/telemetry/track";
 import { useAuth } from "@/data/lib/auth/index";
+import { playUrl } from "@/data/lib/catalyst/bases";
 import { emptyProfile, normalizeAddress, type ProfileVM } from "@/data/lib/catalyst/social/profile";
 import { canReadProfile } from "@/data/lib/profile/queries";
 
+import { loginPath } from "../auth/login/redirect";
 import { ProfileRouteError } from "./errors";
 import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
 import {
+  useEmptyTabs,
   useMyCommunities,
   useProfileAssets,
+  useProfileBadges,
   useProfileCreations,
   useProfilePhotos,
   useProfilePlaces,
@@ -28,6 +32,9 @@ import {
 import { isOwnProfile, profileHref, profileTabs, readProfileTab, type ProfileTab } from "./tabs";
 
 const STORY: StoryId = "landings/profile";
+
+/** A visitor's data tabs stay hidden until a probe finds a first row, as on the profile site. */
+const DATA_TABS: readonly string[] = ["places", "photos", "creations", "communities"];
 
 type TabList = { id: string; label: string }[];
 type TabProps = { address: string; profile: ProfileVM; own: boolean; tabs: TabList; sid: string };
@@ -66,8 +73,14 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
   useProfileViewed(sid, address, own, query.isSuccess ? (query.data ? "live" : "fallback") : null, profile);
 
   const activeTab: ProfileTab = tab ?? "overview";
-  const tabs = profileTabs(own).map((entry) => ({ id: entry.id, label: entry.label }));
+  const { isConnected, disconnect } = useAuth();
+  const emptyTabs = useEmptyTabs(address, !own);
+  const hidden = own ? [] : (emptyTabs.data ?? DATA_TABS);
+  const tabs = profileTabs(own)
+    .filter((entry) => !hidden.includes(entry.id))
+    .map((entry) => ({ id: entry.id, label: entry.label }));
   const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
+  const badges = useProfileBadges(address);
 
   if (activeTab === "overview") {
     return (
@@ -76,6 +89,13 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
         own={own}
         tabs={tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) }))}
         onTab={onTab}
+        explicitTab={Boolean(tabSegment)}
+        signedIn={isConnected}
+        badges={badges.data ?? []}
+        shareHref={profileHref(address)}
+        onSignIn={() => navigate(loginPath(profileHref(address)))}
+        onLogout={() => void disconnect()}
+        onEdit={() => window.location.assign(playUrl())}
       />
     );
   }

@@ -1,6 +1,7 @@
 import { useId } from 'react'
-import { GeneralHome, GeneralJumpIn } from '../../../foundations/icons'
+import { JumpInIcon } from '../../../components/JumpInCTA/JumpInCTA'
 import { Button } from '../shared/Button/Button'
+import { HomeIcon } from './JumpIcons'
 import styles from './JumpInvalid.module.css'
 
 type JumpInvalidProps = {
@@ -18,28 +19,30 @@ function JumpInvalid({ kind, jumpInHref, eventsHref, homeHref }: JumpInvalidProp
       <h1 className={styles.title} id={titleId}>
         Oops!
       </h1>
-      <p className={`${styles.message} ${styles.desktopOnly}`}>
-        Looks like that link was invalid. If you still want to explore, jump into
-        Decentraland&apos;s virtual world or browse community events.
+      <p className={styles.message}>
+        <span className={styles.desktopOnly}>
+          Looks like that link was invalid. If you still want to explore, jump into
+          Decentraland&apos;s virtual world or browse community events.
+        </span>
+        <span className={styles.mobileOnly}>
+          Looks like that link was invalid. If you still want to explore, browse the
+          community&apos;s events then jump in-world from your computer.
+        </span>
       </p>
-      <p className={`${styles.message} ${styles.mobileOnly}`}>
-        Looks like that link was invalid. If you still want to explore, browse the community&apos;s
-        events then jump in-world from your computer.
-      </p>
-      <div className={styles.actions}>
-        <Button href={jumpInHref} className={`${styles.wide} ${styles.desktopOnly}`}>
+      <div className={`${styles.jumpInto} ${styles.desktopOnly}`}>
+        <Button href={jumpInHref} className={styles.jumpIn}>
           Jump into Decentraland
-          <GeneralJumpIn size={20} aria-hidden="true" />
+          <JumpInIcon />
         </Button>
-        {kind === 'event' ? (
-          <Button href={eventsHref} variant="secondary" className={styles.wide}>
-            Explore events
-          </Button>
-        ) : null}
       </div>
-      <div className={`${styles.mobileBar} ${styles.mobileOnly}`}>
-        <Button href={homeHref} className={styles.wide}>
-          <GeneralHome size={20} aria-hidden="true" />
+      {kind === 'event' ? (
+        <Button href={eventsHref} variant="secondary" className={styles.explore}>
+          EXPLORE EVENTS
+        </Button>
+      ) : null}
+      <div className={styles.mobileBar}>
+        <Button href={homeHref} className={styles.home}>
+          <HomeIcon size={22} />
           Go to Homepage
         </Button>
       </div>

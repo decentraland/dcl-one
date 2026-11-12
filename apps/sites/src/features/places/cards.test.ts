@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 
 import { destination } from "@/data/lib/catalyst/places/destination.fixture";
 
+import { avatarBackground, displayName } from "@ui/web/places/avatarColor";
+
 import { creatorAddresses, creatorBatches, modalPlace, placeCard, placeCreator } from "./cards";
 
 const DESKTOP = { kind: "desktop", os: "macos", arch: "unknown" } as const;
@@ -14,16 +16,25 @@ describe("when crediting a card", () => {
     expect(placeCreator(destination({ contact_name: "Decentraland Foundation" }))).toEqual({
       name: "Decentraland Foundation",
       foundation: true,
+      avatarBackground: "#9d76e3",
     });
   });
 
   it("should credit the title when the scene declares only the SDK default", () => {
-    expect(placeCreator(destination({ contact_name: "SDK", title: "Monster Recon" }))).toEqual({ name: "Monster Recon" });
+    const creator = placeCreator(destination({ contact_name: "SDK", title: "Monster Recon" }));
+    expect(creator).toMatchObject({ name: "Monster Recon", avatarBackground: avatarBackground(displayName("Monster Recon", false)) });
+    expect(creator?.href).toBeUndefined();
+    expect(creator?.avatarUrl).toMatch(/^data:image\/svg\+xml/);
   });
 
   it("should link the deployer's profile with their face when it was read", () => {
     const creator = placeCreator(destination({ owner: WALLET }), { [WALLET]: { name: "Ann", avatarUrl: "https://cdn.example/a.png" } });
-    expect(creator).toEqual({ name: "Studio", href: `/profile/${WALLET}`, avatarUrl: "https://cdn.example/a.png" });
+    expect(creator).toEqual({
+      name: "Studio",
+      href: `/profile/${WALLET}`,
+      avatarUrl: "https://cdn.example/a.png",
+      avatarBackground: avatarBackground(displayName("Ann", false, WALLET)),
+    });
   });
 
   it("should not ask for the faces of the Foundation or of authorless scenes", () => {

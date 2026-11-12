@@ -1,43 +1,29 @@
-.search, .pager {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 12px;
-  max-width: 1200px;
-  margin: 0 auto;
-  padding: 12px 24px;
-  box-sizing: border-box;
-  color: var(--text);
-}
-
-.search input {
-  min-width: 0;
-  flex: 1 1 180px;
-  padding: 8px;
-  border: 1px solid var(--ink-45);
-  border-radius: 6px;
-  font: inherit;
-  background: var(--panel);
-  color: var(--text);
-}
-
-.search button, .unavailable button {
-  padding: 8px 16px;
-  cursor: pointer;
-  font: inherit;
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--ink-45);
-  border-radius: 6px;
-}
-
-.search button:disabled, .unavailable button:disabled { cursor: wait; }
-.search :focus-visible, .pager :focus-visible, .unavailable button:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 3px;
-}
-
 .unavailable {
-  padding: 16px 24px;
-  color: var(--text);
+  padding: var(--dcl-space-16) var(--dcl-space-24);
+  color: var(--dcl-neutrals-snow);
 }
+
+/* An event link whose event is gone or unreachable: a panel over the feed, where the event's dialog would be. */
+.detailMissing {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-16);
+  background-color: rgba(0, 0, 0, 0.8); /* the dialog's backdrop rgba(0, 0, 0, 0.8), no token */
+}
+
+.detailMissingBody {
+  max-width: 640px;
+  padding: var(--dcl-space-48) var(--dcl-space-24);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  text-align: center;
+}
+
+.detailMissingBody h1 { margin: 0 0 var(--dcl-space-12); font-size: var(--dcl-font-size-heading-1); font-weight: 800; }
+.detailMissingBody p { margin: 0 0 var(--dcl-space-24); font-size: var(--dcl-font-size-body-md); color: rgba(255, 255, 255, 0.5); }
+.detailMissingBody a { color: #ff829d; font-weight: 600; text-decoration: none; }

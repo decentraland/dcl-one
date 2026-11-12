@@ -1,40 +1,37 @@
+/* Colours, spacing, radii and font sizes are @dcl/one-ui tokens where decentraland.org's value equals one;
+   the others keep the reference value and say so. */
 .stinvite {
-  --sti-bg: var(--panel);
+  --sti-bg: var(--dcl-bg-page);
   --sti-soft-black2: #242129;
   --sti-text: rgba(240, 240, 240, 1);
   --sti-text-2: rgba(240, 240, 240, 0.7);
-  --sti-flare: linear-gradient(261.51deg, var(--brand) 6.92%, #ffbc5b 83.3%);
+  /* reference #ffbc5b, no token; the stops and angle are the reference's, not --dcl-gradient-flare */
+  --sti-flare: linear-gradient(261.51deg, var(--dcl-primary-primary) 6.92%, #ffbc5b 83.3%);
   --sti-overlay: linear-gradient(180deg, #410461 0%, #5d0089 100%);
-  --sti-faq-hover: linear-gradient(90deg, #43404a 0%, #691fa9 100%);
-  --sti-anim:
-    radial-gradient(90% 90% at 80% 30%, rgba(150, 30, 200, 0.35) 0%, rgba(150, 30, 200, 0) 60%),
-    #7d09b2;
+  --sti-faq-hover: linear-gradient(90deg, var(--dcl-neutrals-pale-black) 0%, var(--dcl-brand-purple) 100%);
 
   background: var(--sti-bg);
   color: var(--sti-text);
-  font-family: var(--font-sans);
 }
 
+/* from: sites@17b3535a:src/components/Invite/InviteHero/InviteHero.styled.ts. Breakpoints are decentraland-ui2's
+   down(): lg 1280, md 1024, sm 991, xs 768, and 390, each 0.05px under. */
 .stinvite__hero {
   position: relative;
+  z-index: 1099;
   width: 100%;
   min-height: 100vh;
-  display: flex;
-  background: var(--sti-bg);
-  overflow: hidden;
-}
-.stinvite__hero--second .stinvite__rail {
-  z-index: 4;
 }
 .stinvite__hero-inner {
   position: relative;
   width: 100%;
   min-height: 100vh;
+  box-sizing: border-box;
   display: flex;
   flex-direction: column;
   justify-content: center;
   align-items: flex-start;
-  padding: 96px 0;
+  padding: var(--dcl-space-96) 0;
 }
 
 .stinvite__media {
@@ -43,12 +40,6 @@
   z-index: 1;
   overflow: hidden;
 }
-.stinvite__anim-bg {
-  position: absolute;
-  inset: 0;
-  background: var(--sti-anim);
-  z-index: 0;
-}
 .stinvite__video {
   position: absolute;
   top: 0;
@@ -56,9 +47,10 @@
   bottom: 0;
   left: 50%;
   z-index: 2;
-  background:
-    radial-gradient(80% 80% at 50% 45%, rgba(255, 255, 255, 0.06) 0%, rgba(0, 0, 0, 0) 60%),
-    linear-gradient(180deg, rgba(0, 0, 0, 0.12) 0%, rgba(0, 0, 0, 0.32) 100%);
+  object-fit: cover;
+  object-position: center;
+  width: 100%;
+  height: 100%;
 }
 .stinvite__overlay {
   position: absolute;
@@ -71,45 +63,33 @@
   clip-path: polygon(0 0, 100% 0, 85% 100%, 0 100%);
 }
 
-.stinvite__avatar-slot {
+.stinvite__avatar {
   position: absolute;
   top: 0;
   right: 0;
   bottom: 0;
   left: 50%;
-  z-index: 4;
-  display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 4%;
+  height: 100%;
+  z-index: 2;
 }
-.stinvite__avatar-figure {
-  width: 220px;
-  height: 70%;
-  border-radius: 110px 110px 24px 24px;
-  background:
-    radial-gradient(60% 40% at 50% 18%, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 60%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.04) 100%);
-  border: 1px solid var(--fill-3);
-}
-.stinvite__avatar-skel {
-  width: 200px;
-  height: 60%;
-  border-radius: 18px;
+.stinvite__avatar-wrap {
+  height: 100%;
 }
 
 .stinvite__rail {
-  position: relative;
   z-index: 2;
   max-width: 40vw;
   margin-left: 200px;
+  margin-right: 0;
   text-align: left;
 }
 .stinvite__rail-text {
-  position: relative;
   margin-bottom: 120px;
 }
 
+.stinvite__mobile {
+  display: none;
+}
 .stinvite__envelope {
   position: relative;
   width: 120px;
@@ -118,7 +98,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  margin-bottom: 32px;
+  margin-bottom: var(--dcl-space-32);
   z-index: 11;
 }
 .stinvite__envelope-glow {
@@ -148,9 +128,9 @@
 }
 
 .stinvite__title {
-  margin: 0 0 48px;
+  margin: 0 0 var(--dcl-space-48);
   font-weight: 600;
-  font-size: 60px;
+  font-size: var(--dcl-font-size-heading-xl);
   line-height: 120%;
   letter-spacing: -0.5px;
   color: var(--sti-text);
@@ -165,7 +145,7 @@
 .stinvite__subtitle {
   margin: 0;
   font-weight: 500;
-  font-size: 32px;
+  font-size: var(--dcl-font-size-heading-1);
   line-height: 124%;
   letter-spacing: 0;
   color: var(--sti-text);
@@ -174,24 +154,23 @@
 .stinvite__actions {
   display: flex;
 }
+/* The hero CTA is @dcl/one-ui Button lg (primary, button/lg 15px uppercase). decentraland.org renders a ui2
+   BannerButton: its padding, radius, weight, line height, tracking and white label are set here, it draws no
+   border (the shared Button's 1px transparent border would add 2px to each side), and its hover keeps the
+   primary fill. */
 .stinvite__cta-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  height: auto;
   padding: 18.5px 61px;
-  border-radius: 8px;
-  background: var(--brand-cta, #d80029);
-  color: #fff;
-  text-decoration: none;
-  font-size: 15px;
+  border: 0; /* reference: the contained MUI button draws none */
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-neutrals-white);
   font-weight: 600;
-  letter-spacing: 0.2px;
-  cursor: pointer;
+  line-height: 24px;
+  letter-spacing: 0.4px;
   transition: background 0.12s ease, transform 0.12s ease;
 }
 .stinvite__cta-btn:hover {
-  background: var(--brand);
-  transform: translateY(-1px);
+  background-color: var(--dcl-primary-primary);
 }
 
 .stinvite__faqs {
@@ -226,16 +205,17 @@
 .stinvite__faqs-eyebrow {
   margin: 0;
   text-align: center;
-  font-size: 14px;
+  font-size: var(--dcl-font-size-body-sm);
   line-height: 19px;
   font-weight: 600;
+  letter-spacing: 0.00938em;
   color: var(--sti-text-2);
   text-transform: uppercase;
 }
 .stinvite__faqs-title {
   margin: 0;
   text-align: center;
-  font-size: clamp(2.25rem, 15.789vw - 6.632rem, 6rem);
+  font-size: clamp(2.25rem, 15.789vw - 6.632rem, 6rem); /* reference 36px to 96px, no token */
   line-height: clamp(2.7rem, 21.474vw - 9.379rem, 7.8rem);
   font-weight: 700;
   letter-spacing: -0.01em;
@@ -273,14 +253,13 @@
   opacity: 1;
 }
 .stinvite__faq:focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }
 .stinvite__faq-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 24px;
 }
 .stinvite__faq-q {
   font-weight: 300;
@@ -319,7 +298,7 @@
   margin: 0;
   padding: 1em 0 2em;
   font-weight: 400;
-  font-size: 16px;
+  font-size: var(--dcl-font-size-body-md);
   line-height: 165%;
   white-space: pre-line;
   color: var(--sti-text);
@@ -332,64 +311,110 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 24px 64px;
+  padding: var(--dcl-space-24) var(--dcl-space-64);
   box-sizing: border-box;
-  border-radius: var(--r-control);
+  border-radius: var(--dcl-radius-xs);
   border: 1px solid var(--sti-text);
   color: var(--sti-text);
   text-decoration: none;
-  font-size: 15px;
+  font-size: var(--dcl-font-size-button-lg);
   font-weight: 600;
   cursor: pointer;
   transition: background-color 200ms ease;
 }
 .stinvite__faqs-cta:hover {
-  background-color: var(--fill-3);
+  background-color: rgba(255, 255, 255, 0.08);
 }
 .stinvite__faqs-cta:active {
-  background-color: var(--fill-5);
+  background-color: rgba(255, 255, 255, 0.12);
 }
 .stinvite__faqs-cta:focus-visible {
-  outline: 2px solid var(--brand);
+  outline: 2px solid var(--dcl-primary-primary);
   outline-offset: 2px;
 }
 
-@media (max-width: 1200px) {
-  .stinvite__title { font-size: 48px; }
+@media (max-width: 1279.95px) {
+  .stinvite__title { font-size: var(--dcl-font-size-heading-lg); }
+}
+@media (max-width: 1023.95px) {
   .stinvite__rail { margin-left: 192px; margin-right: 192px; }
 }
-@media (max-width: 900px) {
+@media (max-width: 990.95px) {
   .stinvite__rail {
+    position: absolute;
+    top: 50%;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 50%;
     max-width: none;
     width: calc(100% - 296px);
     margin-left: 148px;
     margin-right: 148px;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
   }
-  .stinvite__rail-text { margin-bottom: 80px; }
-  .stinvite__envelope { margin-left: auto; margin-right: auto; }
-  .stinvite__actions { justify-content: center; }
+  .stinvite__desktop { display: none; }
+  .stinvite__mobile { display: block; }
+  .stinvite__envelope {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-100%, -50%);
+    margin-bottom: 0;
+  }
+  .stinvite__envelope-glow { width: 150px; height: 150px; }
+  .stinvite__envelope-img { width: 160px; height: 160px; }
+  .stinvite__subtitle { font-size: var(--dcl-font-size-heading-2); }
+  .stinvite__overlay {
+    width: 100vw;
+    top: 50%;
+    clip-path: polygon(0 0, 100% 0, 100% 100%, 0 100%);
+  }
   .stinvite__video { left: 0; bottom: 50%; }
-  .stinvite__avatar-slot { left: 0; bottom: 50%; top: 0; }
-  .stinvite__faqs { padding: 48px 32px 320px; }
+  .stinvite__avatar { height: 50%; top: 0; left: 0; bottom: 50%; width: 100%; }
+  .stinvite__avatar-wrap { margin-left: 140px; }
+  .stinvite__faqs { padding: var(--dcl-space-48) var(--dcl-space-32) 320px; }
+  .stinvite__faqs-border {
+    background:
+      linear-gradient(to right, var(--sti-text) 2px, transparent 2px) 0 0,
+      linear-gradient(to right, var(--sti-text) 2px, transparent 2px) 0 100%,
+      linear-gradient(to left, var(--sti-text) 2px, transparent 2px) 100% 0,
+      linear-gradient(to left, var(--sti-text) 2px, transparent 2px) 100% 100%,
+      linear-gradient(to bottom, var(--sti-text) 2px, transparent 2px) 0 0,
+      linear-gradient(to bottom, var(--sti-text) 2px, transparent 2px) 100% 0,
+      linear-gradient(to top, var(--sti-text) 2px, transparent 2px) 0 100%,
+      linear-gradient(to top, var(--sti-text) 2px, transparent 2px) 100% 100%;
+    background-repeat: no-repeat;
+    background-size: 10px 10px;
+  }
+  .stinvite__faqs-inner { padding: 128px 0 144px; }
   .stinvite__faqs-title { font-size: 36px; line-height: 36px; }
+  .stinvite__faq-q { font-size: var(--dcl-font-size-body-md); letter-spacing: -0.01em; }
 }
-@media (max-width: 600px) {
-  .stinvite__hero-inner { padding: 96px 16px; }
+@media (max-width: 767.95px) {
+  .stinvite__hero-inner { padding-left: var(--dcl-space-16); padding-right: var(--dcl-space-16); }
   .stinvite__rail {
-    margin-left: 48px;
-    margin-right: 48px;
+    margin-left: var(--dcl-space-48);
+    margin-right: var(--dcl-space-48);
     width: calc(100% - 96px);
   }
-  .stinvite__title { font-size: 32px; }
-  .stinvite__subtitle { font-size: 20px; }
+  .stinvite__subtitle { font-size: var(--dcl-font-size-heading-4); }
   .stinvite__cta-btn { width: 100%; }
   .stinvite__faq {
     padding: 40px 40px 40px 72px;
     margin-bottom: 20px;
     border-radius: 50px;
   }
-  .stinvite__faq-q { font-size: 16px; }
+  .stinvite__faq-a { line-height: 24px; }
   .stinvite__arrow { width: 48px; height: 48px; min-width: 48px; min-height: 48px; }
   .stinvite__faqs-cta { width: 100%; }
+}
+@media (max-width: 389.95px) {
+  .stinvite__rail { height: 70%; top: 30%; }
+  .stinvite__avatar { height: 30%; }
+  .stinvite__envelope-glow { width: 100px; height: 100px; }
+  .stinvite__envelope-img { width: 80px; height: 80px; }
 }

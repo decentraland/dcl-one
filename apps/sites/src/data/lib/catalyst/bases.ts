@@ -74,6 +74,23 @@ export function worldsContentServerUrl(override?: string, env: BaseEnv = process
   );
 }
 
+/**
+ * The host of the Explorer launcher installers /download offers, from deployment config: the node serves no
+ * installer, so no default points at another operator's binaries; unset, /download offers none.
+ */
+export function explorerInstallersUrl(env: BaseEnv = processEnv()): string | null {
+  const v = envValue(env, "EXPLORER_INSTALLERS_URL");
+  return v ? trimSlash(v) : null;
+}
+
+/**
+ * The JSON of the Explorer's download counts per platform (sites: DOWNLOAD_COUNTS_URL), from deployment config:
+ * unset, the hero shows its fallback total and /download no total.
+ */
+export function downloadCountsUrl(env: BaseEnv = processEnv()): string | null {
+  return envValue(env, "DOWNLOAD_COUNTS_URL") ?? null;
+}
+
 export function communitiesUrl(env: BaseEnv = processEnv()): string {
   return trimSlash(
     envValue(env, "COMMUNITIES_URL") ?? `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,

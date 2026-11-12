@@ -18,7 +18,10 @@
   text-underline-offset: 3px;
 }
 .ui-surface { background: var(--ui-canvas); }
-:where(.ui-surface, .xc, .st, .ch) :where(button, input, select, textarea) { font-family: inherit; }
+/* In the reset layer so the font-family of a @dcl/one-ui control (layers dcl.foundations, dcl.components) applies. */
+@layer dcl.reset {
+  :where(.ui-surface, .xc, .st, .ch) :where(button, input, select, textarea) { font-family: inherit; }
+}
 :where(.ui-surface, .xc, .st, .ch) :where(button, a, input, select, textarea, [tabindex]):focus-visible {
   outline: 2px solid var(--ui-accent);
   outline-offset: 3px;

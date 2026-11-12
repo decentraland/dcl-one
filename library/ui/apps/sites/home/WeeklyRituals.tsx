@@ -22,8 +22,8 @@ type WeeklyRitualsProps = {
 function RitualImage({ card, decorative }: { card: RitualCard; decorative?: boolean }) {
   return (
     <picture>
-      {/* Below breakpoints.tablet the portrait artwork fits better. */}
-      <source media="(max-width: 767px)" srcSet={card.mobileImage} />
+      {/* Source's sm breakpoint (599px) swaps in the portrait artwork. */}
+      <source media="(max-width: 599px)" srcSet={card.mobileImage} />
       <img
         className={styles.image}
         src={card.image}
@@ -43,31 +43,31 @@ function WeeklyRituals({ title, cards, labels, onCardClick }: WeeklyRitualsProps
   const titleId = useId()
   return (
     <section className={styles.root} aria-labelledby={titleId}>
-      <h2 id={titleId} className={styles.title}>
-        {title}
-      </h2>
-      <Carousel
-        items={cards}
-        autoplayDelay={4000}
-        getKey={(card) => card.id}
-        labelledBy={titleId}
-        labels={labels}
-        slideClassName={styles.slide}
-        renderSlide={(card, peek) =>
-          peek ? (
-            <RitualImage card={card} decorative />
-          ) : (
+      <div className={styles.inner}>
+        <h2 id={titleId} className={styles.title}>
+          {title}
+        </h2>
+        <Carousel
+          items={cards}
+          autoplayDelay={4000}
+          getKey={(card) => card.id}
+          labelledBy={titleId}
+          labels={labels}
+          slideClassName={styles.slide}
+          renderSlide={(card, peek) => (
+            // Every slide is a link, as source's card; the Carousel keeps the peeks inert.
             <a
               className={styles.link}
               href={card.href}
+              tabIndex={peek ? -1 : undefined}
               onClick={() => onCardClick?.(card)}
               draggable={false}
             >
-              <RitualImage card={card} />
+              <RitualImage card={card} decorative={peek} />
             </a>
-          )
-        }
-      />
+          )}
+        />
+      </div>
     </section>
   )
 }

@@ -1,19 +1,25 @@
+/*
+ * decentraland.org's jump card (sites: components/jump/Card/Card.styled.ts, TextWrapper/TextWrapper.styled.ts;
+ * decentraland-ui2 breakpoints: xs 768, sm 991, md 1024, xl 1500). Its fills (#380a4d, the phone gradients)
+ * are the reference's own colours, which no token names.
+ */
 .root {
   display: flex;
   width: 100%;
-  max-width: 90.5rem;
-  height: 38rem;
+  min-width: 1118px;
+  max-width: 1448px;
+  height: 608px;
   overflow: hidden;
   border-radius: var(--dcl-radius-lg);
-  box-shadow: 0 8px 32px var(--dcl-transparencies-black-10);
-  color: var(--dcl-text-primary);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+  color: var(--dcl-neutrals-white);
 }
 
 .media {
   position: relative;
-  flex: 1 1 50%;
-  min-width: 0;
-  max-width: 45.25rem;
+  box-sizing: border-box;
+  flex-grow: 1;
+  max-width: 724px;
   overflow: hidden;
 }
 
@@ -26,17 +32,19 @@
 }
 
 .badge {
-  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
   position: absolute;
   top: var(--dcl-space-16);
   left: var(--dcl-space-16);
-  display: inline-flex;
+  display: flex;
   align-items: center;
   gap: var(--dcl-space-8);
   padding: var(--dcl-space-8) var(--dcl-space-16);
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-neutrals-snow);
-  color: var(--dcl-neutrals-black);
+  color: var(--dcl-neutrals-shadow);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 700;
+  line-height: 1.5;
   backdrop-filter: blur(4px);
 }
 
@@ -49,6 +57,10 @@
   color: var(--dcl-primary-primary);
 }
 
+.online {
+  color: var(--dcl-system-green-dark-2);
+}
+
 .visuallyHidden {
   position: absolute;
   width: 1px;
@@ -58,70 +70,74 @@
   white-space: nowrap;
 }
 
-.onlineDot {
-  width: var(--dcl-space-12);
-  height: var(--dcl-space-12);
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-system-green);
-}
-
 .body {
   display: flex;
-  flex: 1 1 50%;
+  box-sizing: border-box;
+  flex-grow: 1;
   flex-direction: column;
-  min-width: 0;
-  max-width: 45.25rem;
-  padding: 3.75rem 3.75rem var(--dcl-space-48) var(--dcl-space-48);
-  background: var(--dcl-background-web-dark);
+  justify-content: flex-start;
+  max-width: 724px;
+  padding: 60px 60px var(--dcl-space-48) var(--dcl-space-48);
+  background: #380a4d;
 }
 
 .content {
   display: flex;
-  flex: 1;
+  flex-grow: 1;
   flex-direction: column;
-  min-height: 0;
-  margin-bottom: var(--dcl-space-32);
+  margin-bottom: 30px;
 }
 
+/* 48px from 1024px, where --dcl-font-size-heading-lg is 48px; the media rules below set the smaller widths. */
 .title {
-  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
   display: -webkit-box;
   margin: 0 0 var(--dcl-space-16);
   overflow: hidden;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-lg);
+  font-weight: 600;
+  line-height: 1.17;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
 }
 
 .creator {
-  composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
   display: flex;
   align-items: center;
   gap: var(--dcl-space-8);
   margin: 0 0 var(--dcl-space-24);
-  font-weight: 500;
   color: var(--dcl-primary-primary);
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  line-height: 1.5;
 }
 
 .avatar {
-  flex: none;
-  width: var(--dcl-space-32);
-  height: var(--dcl-space-32);
-  border-radius: var(--dcl-radius-full);
-  background: var(--dcl-neutrals-snow);
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  border-radius: 34px;
+  /* The disc every Decentraland client draws behind a profile's face, from the display name. */
+  background: var(--avatar-bg, var(--dcl-neutrals-white));
   object-fit: cover;
 }
 
 .by {
-  color: var(--dcl-text-primary);
+  color: var(--dcl-neutrals-white);
 }
 
 .creatorLink {
-  color: inherit;
+  color: var(--dcl-primary-primary);
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  letter-spacing: normal;
   text-decoration: none;
+  transition: color 0.2s ease;
 }
 
 .creatorLink:hover {
-  color: var(--dcl-primary-primary-light-1);
+  color: #ff4d75; /* MUI primary hover, no token */
   text-decoration: underline;
 }
 
@@ -138,9 +154,7 @@
   margin-bottom: var(--dcl-space-48);
 }
 
-.chip,
-.ended {
-  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+.chip {
   display: inline-flex;
   width: fit-content;
   align-items: center;
@@ -148,51 +162,84 @@
   padding: var(--dcl-space-4) var(--dcl-space-8);
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-transparencies-black-40);
-  color: var(--dcl-text-primary);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: 1.75;
   backdrop-filter: blur(4px);
 }
 
 .ended {
-  background: var(--dcl-neutrals-pale-black);
+  background: var(--dcl-neutrals-cloudy-sky);
+  color: var(--dcl-neutrals-snow);
   text-transform: uppercase;
 }
 
-.description {
-  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
-  min-height: 0;
-  max-height: 8rem;
-  margin: 0;
+.text {
+  position: relative;
+  height: 128px;
+  --text-fade: #380a4d;
+}
+
+.text::after {
+  content: '';
+  position: absolute;
+  right: 3px;
+  bottom: -1px;
+  left: 0;
+  z-index: 1;
+  height: var(--dcl-space-24);
+  background: linear-gradient(transparent, var(--text-fade));
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.text[data-fade='true']::after {
+  opacity: 1;
+}
+
+.scroll {
+  position: absolute;
+  inset: 0;
+  padding-right: var(--dcl-space-4);
   overflow-y: auto;
-  color: var(--dcl-text-primary);
-  white-space: pre-line;
   scrollbar-color: transparent transparent;
   scrollbar-width: thin;
 }
 
-.description:hover,
-.description:focus-visible {
-  scrollbar-color: var(--dcl-transparencies-white-40) var(--dcl-transparencies-white-10);
+.scroll:hover {
+  scrollbar-color: rgba(255, 255, 255, 0.3) var(--dcl-transparencies-white-10);
 }
 
+.description {
+  margin: 0;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-4);
+  line-height: 1.6;
+}
+
+/* On a desktop the actions are the content section's last flex child; on a phone they are a fixed bar. */
 .bottom {
-  display: flex;
-  width: 100%;
+  display: contents;
 }
 
 .jumpIn {
-  width: 100%;
+  composes: jumpIn from './JumpButtons.module.css';
 }
 
-@media (max-width: 1439px) {
+@media (max-width: 1499.98px) {
   .root {
+    min-width: 100%;
     max-width: 100%;
   }
 }
 
-@media (max-width: 1023px) {
+@media (max-width: 1023.98px) {
   .root {
-    width: calc(100% - 2 * var(--dcl-space-32));
-    height: 30.625rem;
+    width: calc(100% - var(--dcl-space-64));
+    min-width: auto;
+    height: 490px;
     margin: 0 var(--dcl-space-32);
   }
 
@@ -201,62 +248,117 @@
   }
 
   .body {
-    padding: var(--dcl-space-24);
+    padding: 20px;
+  }
+
+  .title {
+    font-size: 40px;
+  }
+
+  .date {
+    font-size: var(--dcl-font-size-body-sm);
   }
 }
 
-@media (max-width: 767px) {
+@media (max-width: 990.98px) {
+  .body {
+    padding: var(--dcl-space-16);
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-1);
+  }
+}
+
+@media (max-width: 767.98px) {
   .root {
     width: 100%;
     height: auto;
     flex-direction: column;
     margin: 0;
-    overflow: visible;
+    padding-bottom: 25px;
     border-radius: 0;
-    background: var(--dcl-gradient-amethyst);
+    background: linear-gradient(96.05deg, #2e013e 36.2%, #7f0d59 100.69%);
     box-shadow: none;
   }
 
   .media {
-    flex: none;
-    height: 15.625rem;
-    max-width: none;
+    width: 100%;
+    max-width: 100%;
+    height: 250px;
+    flex-grow: 0;
+  }
+
+  .badge {
+    gap: 6px;
+    padding: 6px var(--dcl-space-12);
+    border-radius: var(--dcl-radius-xs);
+    font-size: var(--dcl-font-size-body-xs);
   }
 
   .body {
-    flex: none;
-    max-width: none;
+    max-width: 100%;
     padding: var(--dcl-space-32) var(--dcl-space-24) 0;
     background: transparent;
   }
 
-  .content {
-    flex: none;
+  .title {
+    font-size: 28px;
+    line-height: 1.2;
+  }
+
+  .creator {
+    gap: 6px;
+    margin-bottom: var(--dcl-space-16);
+    font-size: var(--dcl-font-size-body-md);
   }
 
   .avatar {
     width: var(--dcl-space-24);
     height: var(--dcl-space-24);
+    border-radius: 50%;
+  }
+
+  .creatorLink {
+    font-size: var(--dcl-font-size-body-md);
   }
 
   .meta {
     margin-bottom: var(--dcl-space-12);
   }
 
-  .description {
-    max-height: 15.625rem;
+  .chip {
+    gap: 6px;
+    border-radius: var(--dcl-radius-xs);
+    font-size: var(--dcl-font-size-body-sm);
+    line-height: 1.5;
   }
 
-  /* In flow and stuck to the viewport's bottom edge, so it never covers the description. */
+  .text {
+    height: 250px;
+    --text-fade: #2e013e;
+  }
+
+  .description {
+    font-size: var(--dcl-font-size-body-md);
+    line-height: 1.5;
+  }
+
   .bottom {
-    position: sticky;
-    bottom: 0;
-    z-index: 1;
-    width: auto;
-    margin: var(--dcl-space-16) calc(-1 * var(--dcl-space-24)) 0;
+    position: fixed;
+    right: 0;
+    bottom: -1px;
+    left: 0;
+    z-index: 1000;
+    display: flex;
+    box-sizing: border-box;
+    flex-direction: row;
+    gap: var(--dcl-space-12);
+    min-height: 115px;
     padding: var(--dcl-space-32) var(--dcl-space-24);
     border-top: 1px solid var(--dcl-transparencies-white-10);
-    background: var(--dcl-background-web-dark);
+    background: linear-gradient(100.12deg, #130119 0%, #320524 100%);
+    box-shadow: 0 -4px 16px var(--dcl-transparencies-black-20);
     backdrop-filter: blur(8px);
   }
 }

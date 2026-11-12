@@ -1,6 +1,6 @@
-/* TODO(figma-ds): replace with the Figma-generated profile overview's styles.
- * The source's link color #57C2FF has no token; the link token stands in for it. */
-.root {
+/* TODO(figma-ds): replace with the Overview tab's styles (OverviewTab.styled.ts), until the Figma-generated profile overview's. */
+/* The profile site's OverviewTab (OverviewTab.styled.ts, EditProfileButton.styled.ts). */
+.overview {
   position: relative;
   display: flex;
   flex-direction: column;
@@ -9,13 +9,13 @@
 }
 
 .surface {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--dcl-space-24);
-  box-sizing: border-box;
+  gap: var(--dcl-space-32);
   width: 100%;
-  padding: var(--dcl-space-16);
+  padding: 30px 40px;
   border-radius: var(--dcl-radius-lg);
   background: var(--dcl-transparencies-black-20);
 }
@@ -24,43 +24,55 @@
   width: 100%;
 }
 
-.title {
-  margin: 0;
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--dcl-space-12);
+}
+
+.sectionTitle {
   color: var(--dcl-text-primary);
-  font-family: 'Inter', sans-serif;
   font-size: var(--dcl-font-size-label-md-caps);
   font-weight: 600;
   line-height: normal;
   text-transform: uppercase;
 }
 
+.spaced {
+  margin-top: var(--dcl-space-8);
+}
+
 .bio {
-  margin: var(--dcl-space-8) 0 0;
   color: var(--dcl-text-primary);
   font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: normal;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
 .empty {
-  margin: var(--dcl-space-8) 0 0;
-  color: var(--dcl-text-disabled);
+  color: rgb(240 240 240 / 38%);
   font-size: var(--dcl-font-size-body-sm);
   font-style: italic;
-  line-height: 1.5;
+  font-weight: 400;
+  line-height: 21px;
+  letter-spacing: 0.13132px;
 }
 
-.info {
+.infoGrid {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-start;
   gap: var(--dcl-space-16);
-  margin: var(--dcl-space-16) 0 0;
+  margin-top: var(--dcl-space-16);
 }
 
 .infoItem {
   display: flex;
   flex-direction: column;
+  justify-content: center;
   gap: var(--dcl-space-4);
   width: 200px;
 }
@@ -70,21 +82,31 @@
   align-items: center;
   gap: var(--dcl-space-8);
   color: var(--dcl-neutrals-gray);
-  font-size: var(--dcl-font-size-body-sm);
+  font-size: var(--dcl-font-size-label-sm-caps);
   font-weight: 600;
+  line-height: normal;
   text-transform: uppercase;
 }
 
 .infoIcon {
   display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  color: var(--dcl-neutrals-gray);
+}
+
+.infoIcon svg {
   width: 20px;
   height: 20px;
 }
 
 .infoValue {
-  margin: 0;
   color: var(--dcl-text-primary);
   font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
   line-height: 1.5;
   word-break: break-word;
 }
@@ -93,36 +115,117 @@
   display: flex;
   flex-wrap: wrap;
   gap: 14px;
+}
+
+.linkPill {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  color: var(--dcl-text-primary);
+  text-decoration: none;
+}
+
+.linkPill:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.linkPillIcon {
+  display: inline-flex;
+}
+
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 30px;
+}
+
+.badgeSlot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 86px;
+  height: 86px;
+}
+
+.badgeImage {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.badgeFallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: var(--dcl-transparencies-white-10);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 600;
+}
+
+.equipped {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-8);
   margin: var(--dcl-space-8) 0 0;
   padding: 0;
   list-style: none;
 }
 
-.link {
-  display: flex;
+.equippedItem {
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 21px;
+  word-break: break-all;
+}
+
+.editButton {
+  position: absolute;
+  top: var(--dcl-space-12);
+  right: 14px;
+  display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 7px 10px;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  height: 40px;
+  padding: 0 var(--dcl-space-16);
+  border: 0;
   border-radius: var(--dcl-radius-md);
-  background: var(--dcl-transparencies-black-20);
-  color: var(--dcl-text-link);
-  font-size: var(--dcl-font-size-body-md);
+  background-color: var(--dcl-transparencies-black-40);
+  color: var(--dcl-text-primary);
+  font-family: inherit;
+  font-size: var(--dcl-font-size-button-md);
   font-weight: 600;
-  text-decoration: none;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  cursor: pointer;
 }
 
-.link:hover {
-  background: var(--dcl-transparencies-black-40);
-}
-
-.link:focus-visible {
+.editButton:focus-visible {
   outline: 2px solid var(--dcl-text-primary);
   outline-offset: 2px;
 }
 
-@media (min-width: 1024px) {
+.editIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+}
+
+@media (max-width: 991.95px) {
   .surface {
-    gap: var(--dcl-space-32);
-    padding: 30px 40px;
+    gap: var(--dcl-space-24);
+    padding: var(--dcl-space-16);
+  }
+
+  .editButton {
+    position: static;
   }
 }

@@ -1,4 +1,4 @@
-// TODO(figma-ds): replace with the Figma-generated tab bar from library/ui/components.
+// TODO(figma-ds): replace with the tab bar, until the Figma-generated one from library/ui/components.
 import type { ComponentType, ReactNode } from 'react'
 import styles from './ProfileTabs.module.css'
 
@@ -26,7 +26,7 @@ function AnchorLink({ to, ...props }: TabLinkProps) {
   return <a href={to} {...props} />
 }
 
-/** Each tab is a link to its own path; the active one is underlined in the primary color. */
+/** The desktop tab bar: each tab a link to its own path, the current one underlined in the primary colour. */
 function ProfileTabs({
   tabs,
   active,
@@ -35,24 +35,18 @@ function ProfileTabs({
   label = 'Profile sections'
 }: ProfileTabsProps) {
   return (
-    <nav className={styles.root} aria-label={label}>
-      <ul className={styles.list}>
-        {tabs.map((tab) => {
-          const current = tab.id === active
-          return (
-            <li key={tab.id} className={styles.item}>
-              <LinkComponent
-                to={tab.href}
-                className={current ? `${styles.tab} ${styles.active}` : (styles.tab ?? '')}
-                aria-current={current ? 'page' : undefined}
-                onClick={() => onSelect?.(tab.id)}
-              >
-                {tab.label}
-              </LinkComponent>
-            </li>
-          )
-        })}
-      </ul>
+    <nav className={styles.tabs} aria-label={label}>
+      {tabs.map((tab) => (
+        <LinkComponent
+          key={tab.id}
+          to={tab.href}
+          className={styles.tab ?? ''}
+          aria-current={tab.id === active ? 'page' : undefined}
+          onClick={() => onSelect?.(tab.id)}
+        >
+          {tab.label}
+        </LinkComponent>
+      ))}
     </nav>
   )
 }

@@ -61,7 +61,7 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
             };
           }
         ).result.value;
-        const height = width < 1024 ? 64 : 80;
+        const height = width < 992 ? 64 : 92;
         expect(actual.root).toBe(`${height}px`);
         expect(actual.child).toBe(`${height}px`);
         if (host === "shop") expect(actual.shop).toBe(`${height}px`);

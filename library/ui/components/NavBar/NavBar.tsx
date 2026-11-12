@@ -110,6 +110,10 @@ type NavBarCommonProps = {
    * page's locale so server and client agree.
    */
   locale?: string
+  /** Shown after the home link, for example a wordmark. */
+  brand?: ReactNode
+  /** Replace the component's own marks: the home link's logo, the menu button's icon and the notifications bell. */
+  icons?: { logo?: ReactNode; menu?: ReactNode; notifications?: ReactNode }
   className?: string
 }
 
@@ -319,10 +323,12 @@ function Balances({
 function NotificationsButton({
   count,
   labels,
+  icon,
   onClick
 }: {
   count: number
   labels: NavBarLabels
+  icon?: ReactNode
   onClick: () => void
 }) {
   return (
@@ -335,7 +341,7 @@ function NotificationsButton({
         onClick()
       }}
     >
-      <GeneralBell size={24} aria-hidden="true" />
+      {icon ?? <GeneralBell size={24} aria-hidden="true" />}
       {count > 0 ? (
         <span className={styles.badge} aria-hidden="true">
           {count > BADGE_MAX ? `${BADGE_MAX}+` : count}
@@ -541,6 +547,8 @@ export function NavBar({
   linkComponent,
   labels: labelOverrides,
   locale = 'en-US',
+  brand,
+  icons,
   className
 }: NavBarProps) {
   // An override set to undefined (an i18n map with a missing key) keeps the default instead of replacing it.
@@ -607,8 +615,11 @@ export function NavBar({
           href: logoHref,
           className: styles.logo,
           'aria-label': labels.home,
-          children: <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+          children: icons?.logo ?? (
+            <GeneralDecentralandColor className={styles.logoMark} aria-hidden="true" />
+          )
         })}
+        {brand}
         <ul className={styles.sections}>
           {sections.map((section, index) =>
             section.items ? (
@@ -638,7 +649,12 @@ export function NavBar({
           </div>
         ) : null}
         {account && notifications ? (
-          <NotificationsButton count={count} labels={labels} onClick={notifications.onSelect} />
+          <NotificationsButton
+            count={count}
+            labels={labels}
+            icon={icons?.notifications}
+            onClick={notifications.onSelect}
+          />
         ) : null}
         {hasAccountOverride ? (
           !drawerOpen && hasSlot(accountControl) ? (
@@ -664,7 +680,7 @@ export function NavBar({
           aria-haspopup="dialog"
           onClick={() => setDrawerOpen(true)}
         >
-          <GeneralMenu size={24} aria-hidden="true" />
+          {icons?.menu ?? <GeneralMenu size={24} aria-hidden="true" />}
         </button>
       </div>
       {drawerOpen ? (

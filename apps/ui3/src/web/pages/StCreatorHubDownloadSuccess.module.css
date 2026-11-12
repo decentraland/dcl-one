@@ -1,0 +1,238 @@
+/* from: sites@17b3535a:src/pages/download/CreatorHubDownloadSuccess.tsx and DownloadSuccessLayout.tsx. Values come
+   from the @dcl/one-ui foundations tokens. The foundations have no font-weight, line-height or letter-spacing token
+   outside the text styles, and no text on this page matches a whole text style, so those stay as the reference
+   writes them. */
+.root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  min-height: 900px;
+  background-color: #830e5b;
+  background-image: linear-gradient(
+    99.92deg,
+    var(--dcl-brand-lavender) -16.74%,
+    #481a5f 28.57%,
+    #33144c 56.18%,
+    #501c66 76.26%,
+    var(--dcl-brand-lavender) 100%
+  );
+  padding-top: 120px;
+  color: rgba(240, 240, 240, 1);
+  /* The reference's links keep the browser's underline offset; the .st surface sets 3px. */
+  text-underline-offset: auto;
+  overflow: hidden;
+}
+
+/* The reference's CssBaseline sizes every box by its border. */
+.root,
+.root * {
+  box-sizing: border-box;
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  position: relative;
+  text-align: center;
+  padding: 0 var(--dcl-space-16);
+}
+
+.osIcon {
+  width: 80px;
+  height: 80px;
+  color: var(--dcl-neutrals-white);
+}
+.osIcon svg { width: 100%; height: 100%; display: block; }
+
+.title {
+  margin: var(--dcl-space-32) 0 0;
+  font-size: 3rem; /* reference 48px, no fixed token (heading/lg is 48px only from 768px) */
+  font-weight: 600;
+  line-height: 1.167;
+  letter-spacing: 0;
+}
+
+.subtitle {
+  margin: var(--dcl-space-16) 0 0;
+  font-size: var(--dcl-font-size-heading-2);
+  font-weight: 500;
+  line-height: 1.334;
+  letter-spacing: normal;
+}
+
+.cards {
+  display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
+  margin: 80px;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  max-width: 350px;
+  flex: 1;
+  height: 420px;
+  border-radius: var(--dcl-radius-xl);
+  border: 1px solid #a09ba87a;
+  background-color: #1c072fe6;
+  /* The reference's card is a dark-mode MUI Paper at elevation 1: a 5% white overlay and the elevation-1 shadow
+     (reference white at 5% alpha and black at 14% and 12% alpha, no token). */
+  background-image: linear-gradient(rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.05));
+  box-shadow:
+    var(--dcl-transparencies-black-20) 0 2px 1px -1px,
+    rgba(0, 0, 0, 0.14) 0 1px 1px 0,
+    rgba(0, 0, 0, 0.12) 0 1px 3px 0;
+  margin-right: var(--dcl-space-32);
+  margin-bottom: var(--dcl-space-32);
+  overflow: hidden;
+}
+.card:last-child { margin-right: 0; }
+
+.cardContent {
+  padding: var(--dcl-space-16);
+}
+
+.overline {
+  display: block;
+  margin: 0;
+  font-size: var(--dcl-font-size-body-xs);
+  font-weight: 400;
+  line-height: 2.66;
+  letter-spacing: 0.08333em;
+  text-transform: uppercase;
+}
+
+.cardTitle {
+  margin: 0;
+  font-size: 1.775rem; /* reference 28.4px, no token */
+  font-weight: 500;
+  line-height: 1.235;
+  letter-spacing: 0.00735em;
+}
+
+.cardText {
+  margin: var(--dcl-space-8) 0 0;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+  color: var(--dcl-neutrals-gray);
+}
+.cardText .hl { color: var(--dcl-neutrals-white); }
+
+.cardMedia {
+  min-height: 240px;
+  background-color: #5122545e;
+  background-image: var(--chds-media-img);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.footer {
+  margin: 0;
+  text-align: center;
+  padding: 0 var(--dcl-space-16);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+}
+.footer a {
+  color: var(--dcl-primary-primary);
+  text-decoration: underline;
+  transition: color 0.12s ease;
+}
+.footer a:hover { color: #f8919d; }
+
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-24);
+  background-color: rgba(26, 9, 28, 0.2);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  color: var(--dcl-neutrals-white);
+}
+
+.backBox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 493px;
+  height: 251px;
+  border-radius: 32px;
+  padding: var(--dcl-space-48);
+  gap: var(--dcl-space-32);
+  background-color: var(--dcl-brand-purple);
+  box-sizing: border-box;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  font-weight: 700;
+  font-size: var(--dcl-font-size-heading-3);
+  letter-spacing: 0.2px;
+}
+.logo svg { width: 34px; height: 34px; }
+
+.backDetail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  width: 100%;
+}
+.backText {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.progress {
+  width: 100%;
+  height: 16px;
+  border-radius: var(--dcl-radius-sm);
+  background-color: var(--dcl-transparencies-white-20);
+  overflow: hidden;
+}
+.progress > span {
+  display: block;
+  height: 100%;
+  width: 64%;
+  border-radius: var(--dcl-radius-sm);
+  background: linear-gradient(90deg, var(--dcl-primary-primary) 0%, #ffbc5b 100%);
+  animation: chds-indeterminate 1.4s ease-in-out infinite;
+}
+@keyframes chds-indeterminate {
+  0%   { transform: translateX(-30%); }
+  50%  { transform: translateX(20%); }
+  100% { transform: translateX(-30%); }
+}
+
+/* The decentraland-ui2 theme's breakpoints: down("md") is max-width 1023.95px, down("sm") 990.95px. */
+@media (max-width: 1023.95px) {
+  .cards { flex-direction: column; align-items: center; margin: var(--dcl-space-48) var(--dcl-space-32); }
+  .card { max-width: 100%; width: 100%; margin-right: 0; height: auto; }
+  .cardMedia { min-height: 200px; }
+}
+@media (max-width: 990.95px) {
+  .root { min-height: auto; padding-top: var(--dcl-space-32); padding-bottom: var(--dcl-space-32); }
+  .backBox { width: calc(100% - 32px); height: auto; padding: var(--dcl-space-32); }
+}

@@ -8,12 +8,14 @@ type Route = [needle: string, make: () => Response];
 
 function stub(routes: Route[]) {
   const urls: string[] = [];
-  const fetchImpl = (async (url: string) => {
+  const inits: (RequestInit | undefined)[] = [];
+  const fetchImpl = (async (url: string, init?: RequestInit) => {
     urls.push(url);
+    inits.push(init);
     for (const [needle, make] of routes) if (url.includes(needle)) return make();
     throw new Error(`unstubbed ${url}`);
   }) as unknown as typeof fetch;
-  return { opts: { fetchImpl, base: "https://node.example" }, urls };
+  return { opts: { fetchImpl, base: "https://node.example" }, urls, inits };
 }
 
 const json = (body: unknown, status = 200) => () => new Response(JSON.stringify(body), { status });
@@ -118,23 +120,38 @@ describe("loadWorldEntity", () => {
 });
 
 const profile = (name: string) =>
-  json({ avatars: [{ name, hasClaimedName: true, description: "", avatar: { snapshots: { face256: "face.png" } } }] });
+  json([{ avatars: [{ name, hasClaimedName: true, description: "", avatar: { snapshots: { face256: "face.png" } } }] }]);
 
 describe("loadCreator", () => {
   it("should return null when the wallet has no profile name", async () => {
-    const { opts } = stub([["/lambdas/profile/", profile("")]]);
+    const { opts } = stub([["/lambdas/profiles", profile("")]]);
+    await expect(loadCreator(WALLET, opts)).resolves.toBeNull();
+  });
+
+  it("should post the one id to the profiles route, spelled as given", async () => {
+    const mixed = "0x" + "aB".repeat(20);
+    const { opts, urls, inits } = stub([["/lambdas/profiles", profile("builder")]]);
+    await expect(loadCreator(mixed, opts)).resolves.toMatchObject({ address: mixed, name: "builder" });
+    expect(urls[0]).toBe("https://node.example/lambdas/profiles");
+    expect(inits[0]?.method).toBe("POST");
+    expect(JSON.parse(String(inits[0]?.body))).toEqual({ ids: [mixed] });
+  });
+
+  it("should return null when the wallet has no profile", async () => {
+    const { opts } = stub([["/lambdas/profiles", json([])]]);
     await expect(loadCreator(WALLET, opts)).resolves.toBeNull();
   });
 });
 
 describe("loadParcelCreator", () => {
   it("should name a parcel's deployer", async () => {
-    const { opts } = stub([
+    const { opts, urls } = stub([
       ["/content/entities/active", json([{ id: "bafy" }])],
       ["/content/deployments", json({ deployments: [{ deployedBy: WALLET }] })],
-      ["/lambdas/profile/", profile("builder")],
+      ["/lambdas/profiles", profile("builder")],
     ]);
-    await expect(loadParcelCreator([1, 2], opts)).resolves.toEqual({ address: WALLET, name: "builder", avatar: "face.png" });
+    await expect(loadParcelCreator([1, 2], opts)).resolves.toEqual({ address: WALLET, name: "builder", avatar: "face.png", hasClaimedName: true });
+    expect(urls[1]).toBe("https://node.example/content/deployments/?entityId=bafy");
   });
 
   it("should return null for an empty parcel", async () => {
@@ -185,10 +202,11 @@ describe("loadJumpEvent", () => {
   });
 
   it("should keep World events out of a Genesis City parcel", async () => {
-    const { opts, urls } = stub([["/events/v1/events?", json({ ok: true, data: [eventRow] })]]);
-    await loadJumpEvent({ id: null, lookup: [0, 0], realm: undefined }, opts);
-    expect(urls[0]).toContain("world=false");
-    expect(urls[0]).not.toContain("world_names");
+    const { opts, urls } = stub([["/events/v1/events?", json({ ok: true, data: [{ ...eventRow, id: "w1", world: true }, eventRow] })]]);
+    await expect(loadJumpEvent({ id: null, lookup: [0, 0], realm: undefined }, opts)).resolves.toMatchObject({ id: "e1" });
+    expect(urls[0]).toContain("position=0%2C0");
+    expect(urls[0]).not.toContain("world");
+    expect(urls[0]).not.toContain("limit");
   });
 
   it("should return null when no event is at the parcel", async () => {

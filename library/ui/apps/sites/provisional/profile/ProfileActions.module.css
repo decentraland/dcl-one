@@ -1,0 +1,100 @@
+/* TODO(figma-ds): replace with the header buttons' styles (MUI's medium Button), until the Figma-generated Button's. */
+/* decentraland-ui2's MUI Button (medium) and IconButton, as the profile site's header and section list draw them. */
+.containedButton,
+.outlinedButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 64px;
+  padding: 6px var(--dcl-space-16);
+  border-radius: var(--dcl-radius-xs);
+  font-family: inherit;
+  font-size: var(--dcl-font-size-button-md);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.4px;
+  text-decoration: none;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.containedButton {
+  border: 0;
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+}
+
+.outlinedButton {
+  border: 1px solid var(--dcl-neutrals-silver);
+  background: transparent;
+  color: #f0f0f0;
+}
+
+.containedButton:focus-visible,
+.outlinedButton:focus-visible,
+.moreButton:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.containedButton:disabled,
+.outlinedButton:disabled {
+  background-color: rgb(255 255 255 / 12%);
+  color: rgb(255 255 255 / 30%);
+  cursor: default;
+}
+
+.startIcon {
+  display: inherit;
+  margin-right: var(--dcl-space-8);
+  margin-left: calc(-1 * var(--dcl-space-4));
+}
+
+.startIcon svg[data-testid] {
+  font-size: 20px;
+}
+
+.friendCta {
+  min-width: 180px;
+  height: 40px;
+}
+
+/* Outside the header the profile site's contained buttons use the snow text colour. */
+.containedButton.drawerCta {
+  color: var(--dcl-neutrals-snow);
+}
+
+.drawerCta {
+  flex: 1 1 0;
+  height: 40px;
+}
+
+.nameCta {
+  flex: 1;
+  height: 40px;
+}
+
+.moreButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-8);
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dcl-neutrals-white);
+  cursor: pointer;
+}
+
+.moreButton:disabled {
+  color: rgb(255 255 255 / 38%);
+  cursor: default;
+}
+
+@media (max-width: 991.95px) {
+  .friendCta {
+    min-width: 140px;
+  }
+}

@@ -2,17 +2,18 @@
   position: relative;
 }
 
+/* The journey-step switcher is dcl-one's own (decentraland.org has none): token values where one fits. */
 .invite-referral-route__steps {
   position: fixed;
-  top: 12px;
-  right: 12px;
+  top: var(--dcl-space-12);
+  right: var(--dcl-space-12);
   z-index: 50;
   display: flex;
   gap: 6px;
   background: rgba(22, 21, 24, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-  padding: 4px;
+  border-radius: var(--dcl-radius-full);
+  padding: var(--dcl-space-4);
   backdrop-filter: blur(8px);
 }
 
@@ -21,15 +22,15 @@
   border: none;
   background: transparent;
   color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
+  font-size: var(--dcl-font-size-body-xs);
   font-weight: 600;
   text-transform: capitalize;
-  border-radius: 999px;
-  padding: 5px 12px;
+  border-radius: var(--dcl-radius-full);
+  padding: 5px var(--dcl-space-12);
   cursor: pointer;
 }
 
 .invite-referral-route__step.is-active {
-  background: #ff2d55;
-  color: #fff;
+  background: var(--dcl-primary-primary);
+  color: var(--dcl-neutrals-white);
 }

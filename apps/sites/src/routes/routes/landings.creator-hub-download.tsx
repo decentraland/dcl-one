@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useSearchParams } from "react-router";
+import { redirect } from "react-router";
 
 import LdCreatorHubDownloadPage from "@ui/landings/pages/LdCreatorHubDownloadPage";
 
@@ -9,8 +9,7 @@ import {
   type DownloadOption,
   type OsKey,
 } from "@/core/lib/landings/creator-hub-download.server";
-import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
-import { pageLoader } from "@/core/lib/telemetry/page-loader";
+import { pageLoader, type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/landings.creator-hub-download";
@@ -22,17 +21,18 @@ const FALLBACK: PageDefaults = {
   variant: "os_detected",
 };
 
+const SUCCESS_PATH = "/download/creator-hub-success";
+// from: sites@17b3535a:src/hooks/useCreatorHubDownload.ts (REDIRECT_DELAY_MS): the installer starts, then the steps page opens.
+const SUCCESS_DELAY_MS = 3000;
+
+export function successPath(os: OsKey, arch: string): string {
+  return `${SUCCESS_PATH}?${new URLSearchParams({ os, arch }).toString()}`;
+}
+
 export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
-  const step = url.searchParams.get("step")?.trim() ?? "view";
   const osParam = url.searchParams.get("os");
   const archParam = url.searchParams.get("arch");
-
-  const { sid, wrap } = await pageLoader(
-    request,
-    context,
-    FALLBACK,
-  );
 
   const fixture = loadDownloadFixture();
   const resolved = resolveDownload(fixture, request.headers.get("user-agent"), {
@@ -40,17 +40,22 @@ export async function loader({ request, context }: Route.LoaderArgs) {
     arch: archParam,
   });
 
+  if (url.searchParams.get("step")?.trim() === "success") {
+    throw redirect(successPath(resolved.detectedOs, resolved.detectedArch));
+  }
+
+  const { sid, wrap } = await pageLoader(request, context, FALLBACK);
+
   const payload = {
     sid,
-    step: step === "success" ? "success" : "view",
     version: resolved.version,
     releaseUrl: resolved.releaseUrl,
     repo: resolved.repo,
     overridden: resolved.overridden,
     detectedOs: resolved.detectedOs,
     detectedArch: resolved.detectedArch,
-    primary: resolved.primary,
-    secondary: resolved.secondary,
+    primary: resolved.installable ? resolved.primary : null,
+    secondary: resolved.installable ? resolved.secondary : [],
     systemRequirements: resolved.systemRequirements,
   };
 
@@ -59,116 +64,38 @@ export async function loader({ request, context }: Route.LoaderArgs) {
 
 export default function CreatorHubDownloadRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData;
-  return d.step === "success" ? (
-    <DownloadSuccess sid={d.sid} os={d.detectedOs} />
-  ) : (
-    <DownloadPage
-      sid={d.sid}
-      version={d.version}
-      detectedOs={d.detectedOs}
-      detectedArch={d.detectedArch}
-      overridden={d.overridden}
-      primary={d.primary}
-      secondary={d.secondary}
-    />
-  );
-}
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-type PageProps = {
-  sid: string;
-  version: string;
-  detectedOs: OsKey;
-  detectedArch: string;
-  overridden: boolean;
-  primary: DownloadOption;
-  secondary: DownloadOption[];
-};
+  useDownloadView(d.sid, d.detectedOs, d.detectedArch, d.version, d.overridden);
+  useEffect(() => () => {
+    if (timer.current !== null) clearTimeout(timer.current);
+  }, []);
 
-function DownloadPage({
-  sid,
-  version,
-  detectedOs,
-  detectedArch,
-  overridden,
-  primary,
-  secondary,
-}: PageProps) {
-  const [, setSearchParams] = useSearchParams();
-
-  useDownloadView(sid, detectedOs, detectedArch, version, overridden);
-
-  function selectOs(os: OsKey) {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set("os", os);
-        return next;
-      },
-      { preventScrollReset: true },
-    );
-  }
-
-  function onSurfaceClick(e: React.MouseEvent<HTMLDivElement>) {
-    const el = (e.target as HTMLElement).closest<HTMLElement>("[data-os]");
-    if (!el) return;
-    const osText = el.getAttribute("data-os") ?? "";
-    const isSecondary = el.tagName === "BUTTON";
-
-    if (isSecondary) {
-      const osKey: OsKey = /windows/i.test(osText) ? "windows" : "macos";
-      const opt = secondary.find((s) => s.osKey === osKey);
-      track(
-        "lp_creatorhub_download_clicked",
-        {
-          os: osKey,
-          arch: opt?.arch ?? detectedArch,
-          file_name: opt?.fileName ?? null,
-          kind: "secondary",
-        },
-        { sid, story: STORY },
-      );
-      selectOs(osKey);
-      return;
-    }
-
+  function onDownload(option: DownloadOption) {
     track(
       "lp_creatorhub_download_clicked",
       {
-        os: primary.osKey,
-        arch: primary.arch,
-        file_name: primary.fileName,
-        kind: "primary",
+        os: option.osKey,
+        arch: option.arch,
+        file_name: option.fileName,
+        kind: option === d.primary ? "primary" : "secondary",
       },
-      { sid, story: STORY },
+      { sid: d.sid, story: STORY },
     );
+    if (timer.current !== null) clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      window.location.assign(successPath(option.osKey, option.arch));
+    }, SUCCESS_DELAY_MS);
   }
 
   return (
     <LdCreatorHubDownloadPage
-      version={version}
-      primary={primary}
-      secondary={secondary}
-      successHref={`?step=success&os=${primary.osKey}`}
-      onSurfaceClick={onSurfaceClick}
-      onSuccessLinkClick={(e) => {
-        e.preventDefault();
-        setSearchParams(
-          (prev) => {
-            const next = new URLSearchParams(prev);
-            next.set("step", "success");
-            next.set("os", primary.osKey);
-            return next;
-          },
-          { preventScrollReset: true },
-        );
-      }}
+      version={d.version}
+      primary={d.primary}
+      secondary={d.secondary}
+      onDownload={onDownload}
     />
   );
-}
-
-function DownloadSuccess({ sid, os }: { sid: string; os: OsKey }) {
-  useSuccessView(sid, os);
-  return <LdCreatorHubDownloadPage step="success" os={os} />;
 }
 
 function useDownloadView(
@@ -189,13 +116,4 @@ function useDownloadView(
       { sid, story: STORY },
     );
   }, [sid, os, arch, version, overridden]);
-}
-
-function useSuccessView(sid: string, os: OsKey) {
-  const fired = useRef(false);
-  useEffect(() => {
-    if (fired.current) return;
-    fired.current = true;
-    track("lp_creatorhub_download_success", { os }, { sid, story: STORY });
-  }, [sid, os]);
 }

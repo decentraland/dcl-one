@@ -1,9 +1,15 @@
+/* decentraland.org's header is fixed over the page, whose gradient starts at the top of the viewport:
+   the page starts under the header and pads by its height. */
 .page {
   min-height: 100vh;
   overflow-x: clip;
-  background: var(--dcl-gradient-radial-background), var(--dcl-bg-page);
-  background-attachment: fixed;
+  margin-top: calc(-1 * var(--site-header-h, 92px));
+  padding-top: var(--site-header-h, 92px);
+  padding-bottom: var(--dcl-space-32);
+  /* decentraland.org's page gradient (its discover layout's page container); no token holds its stops. */
+  background: radial-gradient(65% 130% at 50% 28%, #8b38b2 0%, #6b2a8c 30%, #45155f 60%, #2b0a3b 100%) no-repeat, #2b0a3b;
   color: var(--dcl-text-primary);
+  -webkit-font-smoothing: antialiased;
 }
 
 .top {
@@ -13,6 +19,13 @@
 @media (max-width: 767px) {
   .top {
     padding: var(--dcl-space-32) var(--dcl-space-16) 0;
+  }
+}
+
+/* The reference keeps 4px between its desktop navbar and the page. */
+@media (min-width: 992px) {
+  .page {
+    padding-top: calc(var(--site-header-h, 92px) + var(--dcl-space-4));
   }
 }
 

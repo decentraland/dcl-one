@@ -1,0 +1,92 @@
+/* from: sites@17b3535a:src/components/Report/ReportSuccess/ReportSuccess.styled.ts on decentraland-ui2's dark theme.
+   Tokens as in ReportForm.module.css: @dcl/one-ui foundations where the reference value equals one. */
+.page {
+  position: relative;
+  width: 100%;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: var(--dcl-space-96) var(--dcl-space-32) var(--dcl-space-64);
+  box-sizing: border-box;
+  color: rgb(240, 240, 240);
+  font-family: Inter, Helvetica, Arial, sans-serif;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+
+.card {
+  background-color: rgba(22, 7, 35, 0.92);
+  border-radius: var(--dcl-radius-md);
+  padding: 56px var(--dcl-space-32);
+  max-width: 608px;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+}
+
+.logoWrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+}
+
+.logo {
+  width: 64px;
+  height: 64px;
+}
+
+.title {
+  margin: 0;
+  letter-spacing: normal;
+  font-size: 48px; /* reference 48px, no token (heading-lg is 32px below 768px) */
+  line-height: 1.167;
+  font-weight: 600;
+  text-align: center;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-24);
+  text-align: center;
+}
+
+.body {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+}
+
+.secondary {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+  letter-spacing: 0.01071em;
+  color: rgba(240, 240, 240, 0.7);
+}
+
+@media (min-width: 1024px) {
+  .page {
+    padding-top: 128px;
+    padding-bottom: var(--dcl-space-96);
+  }
+
+  .card {
+    padding: 56px 72px;
+  }
+}

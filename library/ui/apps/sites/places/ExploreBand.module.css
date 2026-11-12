@@ -66,7 +66,7 @@
   gap: clamp(6px, 0.417vw, 8px);
   padding: clamp(6px, 0.417vw, 8px) clamp(12px, 0.833vw, 16px);
   border: 0;
-  border-radius: var(--dcl-radius-full);
+  border-radius: 50px;
   background: var(--dcl-transparencies-white-10);
   color: var(--dcl-neutrals-snow);
   cursor: pointer;
@@ -88,7 +88,7 @@
 }
 
 .tabIcon {
-  width: clamp(19px, 1.25vw, 24px);
+  width: auto;
   height: clamp(19px, 1.25vw, 24px);
 }
 
@@ -116,50 +116,75 @@
   }
 }
 
+/* One outlined pill holds the magnifier and the field, as the reference's outlined input does. */
 .search {
   position: relative;
+  display: flex;
   flex: 1 1 auto;
+  align-items: center;
+  box-sizing: border-box;
   min-width: 0;
+  height: clamp(38px, 2.396vw, 46px);
+  padding-left: var(--dcl-space-16);
+  border-radius: var(--dcl-space-8);
+  background: var(--dcl-transparencies-black-20);
+  color: var(--dcl-neutrals-snow);
+  font-size: clamp(14px, 0.885vw, 17px);
+  line-height: 1.4375;
+  letter-spacing: -0.2px;
+}
+
+/* The hairline is out of flow, like the reference's notched outline, so it moves no text. */
+.search::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--dcl-neutrals-gray);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.search:hover::after {
+  border-color: var(--dcl-neutrals-snow);
+}
+
+.search:focus-within::after {
+  border: 1px solid var(--dcl-action-primary);
 }
 
 @media (min-width: 1024px) {
   .search {
     flex: 0 1 auto;
     width: clamp(340px, 27.083vw, 520px);
+    border-radius: 50px;
   }
 }
 
 .searchIcon {
-  position: absolute;
-  top: 50%;
-  left: var(--dcl-space-16);
-  width: clamp(19px, 1.25vw, 24px);
+  display: block;
+  flex: none;
+  width: auto;
   height: clamp(19px, 1.25vw, 24px);
-  transform: translateY(-50%);
+  margin-right: var(--dcl-space-8);
   color: var(--dcl-neutrals-snow);
   pointer-events: none;
 }
 
 .searchInput {
   composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
-  box-sizing: border-box;
-  width: 100%;
-  height: clamp(38px, 2.396vw, 46px);
-  padding: 0 var(--dcl-space-16) 0
-    calc(var(--dcl-space-16) + clamp(19px, 1.25vw, 24px) + var(--dcl-space-8));
-  border: 0.5px solid var(--dcl-neutrals-silver);
-  border-radius: var(--dcl-space-8);
-  background: var(--dcl-transparencies-black-20);
-  color: var(--dcl-neutrals-snow);
-  font-size: clamp(14px, 0.885vw, 17px);
-  letter-spacing: -0.2px;
+  box-sizing: content-box;
+  /* The reference's input has its line-height as an explicit height, which sits the text one pixel lower. */
+  height: 1.4375em;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 10px var(--dcl-space-16) 10px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
   appearance: none;
-}
-
-@media (min-width: 1024px) {
-  .searchInput {
-    border-radius: var(--dcl-radius-full);
-  }
 }
 
 .searchInput::placeholder {
@@ -167,12 +192,7 @@
   opacity: 0.8;
 }
 
-.searchInput:hover {
-  border-color: var(--dcl-neutrals-snow);
-}
-
 .searchInput:focus {
-  border: 1px solid var(--dcl-action-primary);
   outline: none;
 }
 
@@ -181,23 +201,55 @@
   box-shadow: 0 0 0 1000px var(--dcl-transparencies-black-20) inset;
 }
 
+/* The category pill shows the reference's label and arrow over a transparent native select. */
 .selectWrap {
   position: relative;
   display: inline-flex;
-}
-
-.select {
-  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
-  width: 100%;
+  align-items: center;
+  box-sizing: border-box;
   min-width: clamp(120px, 7.813vw, 150px);
   height: clamp(36px, 2.292vw, 44px);
-  padding: 0 clamp(32px, 2.083vw, 40px) 0 clamp(18px, 1.25vw, 24px);
-  border: 0;
   border-radius: var(--dcl-radius-sm);
   background: var(--dcl-transparencies-black-40);
   color: var(--dcl-neutrals-pearl);
-  cursor: pointer;
   font-size: clamp(13px, 0.833vw, 16px);
+  line-height: 1.4375;
+  letter-spacing: 0.00938em;
+  cursor: pointer;
+}
+
+.selectWrap:focus-within {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.selectLabel {
+  composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0 clamp(32px, 2.083vw, 40px) 0 clamp(18px, 1.25vw, 24px);
+  overflow: hidden;
+  border-radius: 6px;
+  font-size: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: pointer;
   appearance: none;
 }
 
@@ -210,6 +262,8 @@
   position: absolute;
   top: 50%;
   right: var(--dcl-space-12);
+  width: 20px;
+  height: 20px;
   transform: translateY(-50%);
   color: var(--dcl-neutrals-pearl);
   pointer-events: none;

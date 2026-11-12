@@ -5,7 +5,7 @@ vi.mock("../schema-drift", () => ({ reportSchemaDrift: vi.fn() }));
 import { reportSchemaDrift } from "../schema-drift";
 import { getJSON, signedGetJSON } from "../client";
 import { DestinationSchema } from "../generated-schemas/places";
-import { fetchDestinations, resolveLegacyPlace } from "./destinations";
+import { fetchDestinations, loadWorldPlace, resolveLegacyPlace } from "./destinations";
 import { mapPlace } from "./index";
 import type { AuthIdentity } from "../../auth/types";
 
@@ -73,5 +73,34 @@ describe("when browsing the unified destinations feed", () => {
   it("should reject malformed coordinates without querying the catalogue", async () => {
     await expect(resolveLegacyPlace("place", "1.5,2")).resolves.toBeNull();
     expect(getJSON).not.toHaveBeenCalled();
+  });
+
+  describe.each([",", "missing,other.dcl.eth", ""])("and the world name is %j", (name) => {
+    it("should answer no world without querying the catalogue", async () => {
+      await expect(loadWorldPlace(name)).resolves.toBeNull();
+      expect(getJSON).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("and a world page reads its world by name", () => {
+    const world = {
+      id: "sample.dcl.eth", title: "Sample", description: null, image: null, owner: "0xabc", world_name: "sample.dcl.eth", contact_name: "Studio",
+      base_position: "0,0", categories: ["game"], highlighted: false, highlighted_image: null, user_count: 2, user_visits: 0, favorites: 1, likes: 3,
+      like_rate: 1, created_at: null, updated_at: null, settings_version: "1",
+    };
+    it("should read the worlds catalogue by the lowercase name, as decentraland.org does", async () => {
+      vi.mocked(getJSON).mockResolvedValueOnce({ ok: true, data: [world], total: 1 });
+      await expect(loadWorldPlace("SAMPLE.dcl.eth")).resolves.toMatchObject({ id: "sample.dcl.eth", title: "Sample", world: true, world_name: "sample.dcl.eth", positions: ["0,0"] });
+      expect(getJSON).toHaveBeenCalledWith("/places/api/worlds", expect.objectContaining({ query: { names: "sample.dcl.eth" } }));
+    });
+    it("should answer no world when the catalogue has none of that name", async () => {
+      vi.mocked(getJSON).mockResolvedValueOnce({ ok: true, data: [], total: 0 });
+      await expect(loadWorldPlace("missing.dcl.eth")).resolves.toBeNull();
+    });
+    it("should report a drifted world row instead of showing it", async () => {
+      vi.mocked(getJSON).mockResolvedValueOnce({ ok: true, data: [{ id: "sample.dcl.eth" }], total: 1 });
+      await expect(loadWorldPlace("sample.dcl.eth")).resolves.toBeNull();
+      expect(reportSchemaDrift).toHaveBeenCalledOnce();
+    });
   });
 });

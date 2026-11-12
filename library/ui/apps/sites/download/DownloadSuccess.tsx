@@ -1,5 +1,6 @@
 import type { CSSProperties, MouseEvent, ReactNode } from 'react'
 import { GeneralDecentralandColor } from '../../../foundations/icons'
+import dclLogo from '../assets/dcl-logo.svg'
 import externalIcon from '../assets/download-steps/external-link-icon.svg'
 import highlightIcon from '../assets/download-steps/highlight-icon.webp'
 import styles from './DownloadSuccess.module.css'
@@ -58,7 +59,7 @@ function DownloadSuccess({
     <>
       <main className={styles.root}>
         <header className={styles.header}>
-          <GeneralDecentralandColor size={48} aria-hidden="true" />
+          <img src={dclLogo} alt="" width={48} height={48} />
           <h1 className={styles.title}>{title}</h1>
           <p className={styles.subtitle}>{subtitle}</p>
         </header>
@@ -86,6 +87,7 @@ function DownloadSuccess({
                   {step.highlight ? (
                     <span
                       className={styles.highlight}
+                      data-testid="download-steps-highlight"
                       style={
                         {
                           '--highlight-x': `${step.highlight.x}%`,

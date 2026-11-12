@@ -1,8 +1,8 @@
-import type { ReactNode } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import SitesChrome from "../frames/SitesChrome";
 import ManaMark from "../../atoms/ManaMark";
 import { asset } from "../../asset";
-import "./stcreatorhubdownloadsuccess.css";
+import styles from "./StCreatorHubDownloadSuccess.module.css";
 
 const AppleGlyph = () => (
   <svg viewBox="-52.01 0 560.035 560.035" fill="currentColor" aria-hidden="true">
@@ -17,7 +17,7 @@ const WindowsGlyph = () => (
 
 const Diamond = () => <ManaMark size={34} />;
 
-const hl = (t: ReactNode) => <span className="chds__hl">{t}</span>;
+const hl = (t: ReactNode) => <span className={styles.hl}>{t}</span>;
 
 type OSKey = "macos" | "windows";
 
@@ -25,7 +25,6 @@ type Step = {
   title: string;
   text: ReactNode;
   img: string;
-  pulse?: boolean;
 };
 
 const STEPS: Record<OSKey, Step[]> = {
@@ -50,7 +49,6 @@ const STEPS: Record<OSKey, Step[]> = {
         <>Locate {hl("Decentraland Creator Hub")} in your {hl("Applications Folder")} and Start Building.</>
       ),
       img: "assets/chs-macos_app_icon.svg",
-      pulse: true,
     },
   ],
   windows: [
@@ -81,67 +79,67 @@ const RE_DOWNLOAD_HREF = "https://github.com/decentraland/creator-hub/releases/l
 type StCreatorHubDownloadSuccessProps = {
   os?: OSKey;
   loading?: boolean;
+  /** The installer the footer offers again; the latest release page when the caller has none. */
+  retryUrl?: string;
 };
 
+// from: sites@17b3535a:src/pages/download/CreatorHubDownloadSuccess.tsx and pages/DownloadSuccess/DownloadSuccessLayout.tsx
 export default function StCreatorHubDownloadSuccess({
   os = "macos",
   loading = false,
+  retryUrl = RE_DOWNLOAD_HREF,
 }: StCreatorHubDownloadSuccessProps) {
   const clientOS: OSKey = os === "windows" ? "windows" : "macos";
   const steps = STEPS[clientOS];
 
   return (
-    <SitesChrome active="create" overlayNav>
+    <SitesChrome active="none" overlayNav>
       {loading && (
-        <div className="chds__backdrop" role="status" aria-live="polite">
-          <div className="chds__backbox">
-            <div className="chds__logo">
+        <div className={styles.backdrop} role="status" aria-live="polite">
+          <div className={styles.backBox}>
+            <div className={styles.logo}>
               <Diamond />
               <span>Decentraland</span>
             </div>
-            <div className="chds__backdetail">
-              <p className="chds__backtext">Downloading Decentraland...</p>
-              <div className="chds__progress"><span /></div>
+            <div className={styles.backDetail}>
+              <p className={styles.backText}>Downloading Decentraland...</p>
+              <div className={styles.progress}><span /></div>
             </div>
           </div>
         </div>
       )}
 
-      <section className="chds" aria-label="Creator Hub download started">
-        <header className="chds__header">
-          <span className="chds__osicon">
+      <main className={styles.root}>
+        <header className={styles.header}>
+          <span className={styles.osIcon}>
             {clientOS === "windows" ? <WindowsGlyph /> : <AppleGlyph />}
           </span>
-          <h1 className="chds__title">You&apos;re almost done!</h1>
-          <p className="chds__subtitle">
-            Open the file you just downloaded to finish installing Decentraland and start{" "}
-            <span className="chds__hl">creating</span>
+          <h3 className={styles.title}>You&apos;re almost done!</h3>
+          <p className={styles.subtitle}>
+            Open the file you just downloaded to finish installing Decentraland and start creating
           </p>
         </header>
 
-        <div className="chds__cards">
+        <div className={styles.cards}>
           {steps.map((step, i) => (
-            <article className="chds__card" key={i}>
-              <div className="chds__cardcontent">
-                <span className="chds__overline">Step {i + 1}</span>
-                <h2 className="chds__cardtitle">{step.title}</h2>
-                <p className="chds__cardtext">{step.text}</p>
+            <article className={styles.card} key={i}>
+              <div className={styles.cardContent}>
+                <span className={styles.overline}>Step {i + 1}</span>
+                <h4 className={styles.cardTitle}>{step.title}</h4>
+                <p className={styles.cardText}>{step.text}</p>
               </div>
-              <div className="chds__cardmedia">
-                <img className="chds__mediaimg" src={asset(step.img)} alt="" aria-hidden="true" />
-                {step.pulse && <span className="chds__pulse" />}
-              </div>
+              <div className={styles.cardMedia} style={{ "--chds-media-img": `url("${asset(step.img)}")` } as CSSProperties} />
             </article>
           ))}
         </div>
 
-        <p className="chds__footer">
+        <p className={styles.footer}>
           Trouble with the download? Let&apos;s try that again:{" "}
-          <a href={RE_DOWNLOAD_HREF} data-os={clientOS}>
+          <a href={retryUrl} data-os={clientOS}>
             Download Decentraland Creator Hub
           </a>
         </p>
-      </section>
+      </main>
     </SitesChrome>
   );
 }

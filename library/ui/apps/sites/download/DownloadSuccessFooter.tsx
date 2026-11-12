@@ -374,7 +374,9 @@ function DownloadSuccessFooter({
             ))}
           </ul>
         </div>
-        <p className={styles.copyright}>{copyright}</p>
+        <p className={styles.copyrightLine}>
+          <span className={styles.copyright}>{copyright}</span>
+        </p>
       </div>
     </footer>
   )

@@ -6,11 +6,10 @@ import {
   isRenderablePlaceCategory,
   normalizePlace,
   normalizePlaceCategory,
-  placeViewerOf,
   toPlaceView,
   toCategoryView,
 } from "./places";
-import type { PlaceView, CategoryView, PlaceViewer } from "./places";
+import type { PlaceView, CategoryView } from "./places";
 import { field, isRecord, keepRow, keepRows, listOf } from "./rows";
 import {
   CategoriesEnvelope,
@@ -18,7 +17,6 @@ import {
   ItemEnvelope,
   ListEnvelope,
   PlaceSchema,
-  PlaceViewerSchema,
 } from "./schemas/places";
 
 export { PlaceSchema };
@@ -59,13 +57,6 @@ export async function fetchPlace(
     isRenderablePlace,
   );
   return row ? toPlaceView(normalizePlace(row)) : null;
-}
-
-export async function fetchPlaceViewer(id: string): Promise<PlaceViewer | null> {
-  const env = await sendSignedJSON(`/api/places/${encodeURIComponent(id)}`, { method: "GET", service: "places" });
-  const parsed = ItemEnvelope.safeParse(env);
-  const row = PlaceViewerSchema.safeParse(parsed.success ? field(parsed.data, "data") : null);
-  return row.success ? placeViewerOf(row.data) : null;
 }
 
 export async function fetchWorlds(

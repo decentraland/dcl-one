@@ -1,0 +1,148 @@
+/* TODO(figma-ds): replace with the phone's section list styles (ProfileMobileMenu.styled.ts), until the Figma-generated mobile menu's. */
+/* The profile site's ProfileMobileMenu (ProfileMobileMenu.styled.ts): the phone's section list. */
+.navScreen {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-12);
+  width: 100%;
+  min-height: 60vh;
+}
+
+.iconSmall {
+  font-size: 20px;
+}
+
+.userBlock {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.userNameColumn {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.userName {
+  overflow: hidden;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-heading-2);
+  font-weight: 600;
+  line-height: 1.6;
+  letter-spacing: 0.22512px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.userAddressRow {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  color: var(--dcl-text-primary);
+}
+
+.userAddressText {
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: 28px;
+}
+
+.addressCopyButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 5px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+}
+
+.addressCopyButton svg[data-testid] {
+  font-size: 16px;
+}
+
+.ctaRow {
+  display: flex;
+  gap: var(--dcl-space-12);
+  width: 100%;
+  padding: var(--dcl-space-8) 0;
+}
+
+.divider {
+  height: 1px;
+  background: rgb(255 255 255 / 12%);
+}
+
+.tabList {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+}
+
+/* The row's text is the body/md style: 16px/400 on a 24px line, no letter spacing. */
+.tabItem {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  width: 100%;
+  height: 44px;
+  padding: var(--dcl-space-8) 0;
+  border-radius: var(--dcl-radius-md);
+  color: var(--dcl-neutrals-gray);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: 24px;
+  letter-spacing: normal;
+  text-align: left;
+  text-decoration: none;
+}
+
+.tabItem:focus-visible,
+.logout:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.tabLeading {
+  display: inline-flex;
+  align-items: center;
+  color: rgb(255 255 255 / 85%);
+}
+
+.tabLabel {
+  flex: 1 1 auto;
+}
+
+.tabChevron {
+  display: inline-flex;
+  align-items: center;
+  color: rgb(255 255 255 / 50%);
+}
+
+.logout {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  width: 100%;
+  margin-top: auto;
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  border: 0;
+  border-radius: var(--dcl-radius-md);
+  background: transparent;
+  color: var(--dcl-neutrals-gray);
+  font-family: inherit;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: 28px;
+  text-align: left;
+  cursor: pointer;
+}

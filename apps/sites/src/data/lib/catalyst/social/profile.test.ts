@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-vi.mock("../client", async (original) => ({ ...await original<typeof import("../client")>(), getJSON: vi.fn() }));
-import { getJSON } from "../client";
+const fetchMock = vi.fn();
+vi.stubGlobal("fetch", fetchMock);
+const answer = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
 import { fetchProfile, mapProfile } from "./profile";
 import type { ProfileVM } from "./profile";
 
@@ -73,7 +74,7 @@ describe("when fetching a profile", () => {
 
   describe("and the lambdas answer sends the unset optional fields as null", () => {
     beforeEach(() => {
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it.each(NULLABLE_FIELDS)("should parse %s as absent", async (field) => {
@@ -84,7 +85,7 @@ describe("when fetching a profile", () => {
   describe("and the avatar snapshots object is null", () => {
     beforeEach(() => {
       (avatar.avatar as Record<string, unknown>).snapshots = null;
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it("should parse the snapshots as absent", async () => {
@@ -95,7 +96,7 @@ describe("when fetching a profile", () => {
   describe("and the lambdas answer omits the optional fields", () => {
     beforeEach(() => {
       for (const field of NULLABLE_FIELDS) delete avatar[field];
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it.each(NULLABLE_FIELDS)("should parse %s as absent", async (field) => {
@@ -106,7 +107,7 @@ describe("when fetching a profile", () => {
   describe("and the optional fields are set", () => {
     beforeEach(() => {
       avatar = { ...avatar, country: "Exampleland", birthdate: 946684800 };
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it("should keep their values", async () => {
@@ -123,7 +124,7 @@ describe("when fetching a profile", () => {
   ])("and %s has the wrong type", (field, value) => {
     beforeEach(() => {
       avatar = { ...avatar, [field]: value };
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it("should reject the profile with an issue at that field", async () => {
@@ -136,7 +137,7 @@ describe("when fetching a profile", () => {
   describe("and the snapshots value has the wrong type", () => {
     beforeEach(() => {
       (avatar.avatar as Record<string, unknown>).snapshots = "https://example.com/face256.png";
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it("should reject the profile with an issue at the snapshots", async () => {
@@ -149,7 +150,7 @@ describe("when fetching a profile", () => {
   describe("and the required name is null", () => {
     beforeEach(() => {
       avatar = { ...avatar, name: null };
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
     });
 
     it("should reject the profile with an invalid type issue at the name", async () => {
@@ -170,7 +171,7 @@ describe("when mapping a fetched profile", () => {
 
   describe("and its unset optional fields arrived as null", () => {
     beforeEach(async () => {
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
       vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
     });
 
@@ -198,7 +199,7 @@ describe("when mapping a fetched profile", () => {
   describe("and its snapshots object arrived as null", () => {
     beforeEach(async () => {
       (avatar.avatar as Record<string, unknown>).snapshots = null;
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
       vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
     });
 
@@ -215,7 +216,7 @@ describe("when mapping a fetched profile", () => {
         links: [{ title: "Site", url: "https://example.com" }],
         nameColor: { r: 1, g: 0, b: 0 },
       };
-      vi.mocked(getJSON).mockResolvedValueOnce(envelope(avatar));
+      fetchMock.mockResolvedValueOnce(answer([envelope(avatar)]));
       vm = mapProfile((await fetchProfile(ADDRESS))!, ADDRESS);
     });
 

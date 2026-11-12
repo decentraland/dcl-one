@@ -192,7 +192,7 @@ export default function CreateCurate({ loaderData }: Route.ComponentProps) {
             iconWash
             title="Committee access only"
             subtitle="This wallet isn't on the curation committee. Reviewing collections is reserved for committee members."
-            actions={[{ label: "Back to Creator Hub", href: "/create" }]}
+            actions={[{ label: "Back to Creator Hub", href: "/create/home" }]}
             variant={undefined}
             tone={undefined}
             actionsGap={undefined}

@@ -1,9 +1,11 @@
-/* Source's fixed-height band with the owning route's shared animation behind the avatar group. */
+/* Source paint: decentraland/sites@17b3535a, components/Home/ComeHangOut/ComeHangOut.styled.ts: a
+   fixed-height band with the owning route's animation behind the avatar group. */
 .root {
   position: relative;
   isolation: isolate;
   display: flex;
   flex-direction: column;
+  justify-content: flex-start;
   align-items: center;
   height: 480px;
   overflow: hidden;
@@ -21,7 +23,7 @@
 /* Phones: the group fills the lower 65%, overhanging the bottom edge as source. */
 .avatars {
   position: absolute;
-  bottom: calc(-1 * var(--dcl-space-48));
+  bottom: -50px;
   left: 50%;
   width: auto;
   max-width: none;
@@ -39,6 +41,7 @@
   gap: var(--dcl-space-16);
   box-sizing: border-box;
   width: 100%;
+  max-width: 393px;
   padding: var(--dcl-space-48) var(--dcl-space-16);
 }
 
@@ -47,31 +50,39 @@
 }
 
 .narrowOffer {
-  display: block;
+  display: flex;
+  justify-content: center;
+  width: 100%;
 }
 
 .title {
-  composes: text68656164696e672f6c67 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.5px;
   text-align: center;
 }
 
-/* breakpoints.desktop (source switches at 991px): the group starts a third of the way down. */
-@media (min-width: 1024px) {
+/* Source's useDesktopMediaQuery (991px): the group starts a third of the way down. */
+@media (min-width: 991px) {
   .root {
     height: 800px;
   }
 
   /* Source sizes the 1920x1228 artwork to 840px tall (its declared height, a design measurement). */
   .avatars {
-    top: calc(35% - var(--dcl-space-16) - var(--dcl-space-4));
+    top: calc(35% - 20px);
     bottom: auto;
     height: 840px;
   }
 
   .content {
     gap: var(--dcl-space-24);
-    padding: calc(var(--dcl-space-64) + var(--dcl-space-16)) var(--dcl-space-64);
+    width: auto;
+    max-width: none;
+    padding: 80px var(--dcl-space-64);
   }
 
   .wideOffers {
@@ -80,5 +91,9 @@
 
   .narrowOffer {
     display: none;
+  }
+
+  .title {
+    font-size: var(--dcl-font-size-heading-lg);
   }
 }

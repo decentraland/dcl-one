@@ -280,7 +280,6 @@ export default defineConfig({
       }).map(([find, replacement]) => ({ find, replacement })),
       { find: /^@dcl\/one-ui$/, replacement: join(oneUi, "index.ts") },
       { find: /^@dcl\/one-ui\/components$/, replacement: join(oneUi, "components", "index.ts") },
-      { find: /^@dcl\/one-ui\/foundations\.css$/, replacement: join(oneUi, "foundations", "foundations.css") },
       { find: /^@dcl\/one-ui\/text-styles\.module\.css$/, replacement: join(oneUi, "foundations", "typography", "text-styles.module.css") },
       { find: /^@dcl\/one-ui\//, replacement: `${oneUi}/` },
     ],

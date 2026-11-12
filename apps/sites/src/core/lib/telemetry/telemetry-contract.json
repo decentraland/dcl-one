@@ -2660,7 +2660,7 @@
           "optional": false
         },
         "file_name": {
-          "kind": "unknown",
+          "kind": "string",
           "optional": false
         },
         "kind": {
@@ -3348,7 +3348,7 @@
         },
         "report_id": {
           "kind": "string",
-          "optional": true
+          "optional": false
         }
       }
     },

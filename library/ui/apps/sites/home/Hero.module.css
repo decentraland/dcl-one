@@ -1,12 +1,12 @@
+/* Source paint: decentraland/sites@17b3535a, components/Home/Hero/Hero.styled.ts. */
 .root {
-  --sites-hero-purple: var(--dcl-background-web-dark);
+  --sites-hero-purple: #39055c;
   text-size-adjust: 100%;
   position: relative;
   display: flex;
   align-items: flex-end;
   justify-content: center;
   min-height: 100vh;
-  min-height: 100svh;
   overflow: hidden;
   color: var(--dcl-text-primary);
   background: var(--sites-hero-purple);
@@ -15,51 +15,58 @@
 .background {
   position: absolute;
   inset: 0;
+  z-index: 0;
 }
 
 .media {
-  position: absolute;
-  inset: 0;
+  display: block;
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-/* The still image stays underneath as the first paint; the video fades in over it. */
+/* The still image stays underneath as the first paint; the video fades in over it once it can play. */
 .video {
-  animation: fade-in 600ms ease-out both;
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  transition: opacity 400ms ease-in;
 }
 
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
+.video[data-ready='true'] {
+  opacity: 1;
 }
 
 .shadeTop {
   position: absolute;
   inset: 0 0 auto;
+  z-index: 1;
   height: 24.3%;
-  background: linear-gradient(180deg, var(--dcl-neutrals-black) 0%, transparent 100%);
+  background: linear-gradient(180deg, var(--dcl-neutrals-black) 0%, rgba(0, 0, 0, 0) 100%);
+  pointer-events: none;
 }
 
-/* Keep the hero fade aligned with the shared dark web background token. */
+/* Source's sm breakpoint (600px) picks the phone fade; the layout switches at 991px. */
 .shadeBottom {
   position: absolute;
   inset: auto 0 0;
+  z-index: 1;
   height: 85%;
   background: linear-gradient(
     0deg,
     var(--sites-hero-purple) 0%,
     var(--sites-hero-purple) 30%,
-    transparent 100%
+    rgba(57, 5, 92, 0) 100%
   );
+  pointer-events: none;
 }
 
-/* Source centers the title and actions at the bottom of the hero, 120px up on desktop
-   (96 + 24 here) and 64px up on phones. */
+/* Source centers the title and actions at the bottom of the hero, 120px up on desktop and 64px up on
+   phones. */
 .content {
   position: relative;
+  z-index: 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -80,8 +87,8 @@
 }
 
 .title {
-  composes: text68656164696e672f786c from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  font-family: 'Inter', sans-serif;
   font-size: 40px;
   font-weight: 700;
   line-height: 1.2;
@@ -90,8 +97,8 @@
 }
 
 .subtitle {
-  composes: text626f64792f6c67 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  font-family: 'Inter', sans-serif;
   font-size: 20px;
   font-weight: 500;
   line-height: 28px;
@@ -100,17 +107,19 @@
   text-shadow: 0 1px var(--dcl-space-4) var(--dcl-transparencies-black-40);
 }
 
-/* breakpoints.desktop in foundations/layout (custom properties cannot be media conditions). */
-@media (min-width: 1024px) {
+@media (min-width: 600px) {
+  .shadeBottom {
+    height: 60%;
+    background: linear-gradient(0deg, var(--sites-hero-purple) 0%, rgba(0, 0, 0, 0) 100%);
+  }
+}
+
+/* Source's useDesktopMediaQuery (custom properties cannot be media conditions). */
+@media (min-width: 991px) {
   .content {
     width: auto;
     max-width: none;
     padding: 0 0 calc(var(--dcl-space-96) + var(--dcl-space-24));
-  }
-
-  .shadeBottom {
-    height: 60%;
-    background: linear-gradient(0deg, var(--sites-hero-purple) 0%, transparent 100%);
   }
 
   .narrowOnly {
@@ -119,15 +128,15 @@
 
   .title {
     margin-bottom: 36px;
+    font-family: 'Inter', Helvetica, Arial, sans-serif;
     font-size: 60px;
     font-weight: 600;
-    font-family: 'Inter', Helvetica, Arial, sans-serif;
     letter-spacing: -0.5px;
   }
 }
 
-/* Below breakpoints.desktop the narrow layout replaces the wide one. */
-@media not all and (min-width: 1024px) {
+/* Below it the narrow layout replaces the wide one. */
+@media not all and (min-width: 991px) {
   .wideOnly {
     display: none;
   }
@@ -135,6 +144,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   .video {
-    animation: none;
+    transition: none;
   }
 }

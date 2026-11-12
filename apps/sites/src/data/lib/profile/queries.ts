@@ -12,6 +12,7 @@ import {
   mapProfile,
   normalizeAddress,
 } from "../catalyst/social/profile";
+import { fetchProfileBadges, probeEmptyTabs } from "./overview";
 import { mapPhotos } from "./view";
 
 /** Page sizes the profile reads use; the loader shares them until it reads through these factories. */
@@ -31,6 +32,8 @@ export const profileKeys = {
   ownedWearables: (address: string) =>
     ["profile", "owned-wearables", normalizeAddress(address)] as const,
   ownedNames: (address: string) => ["profile", "owned-names", normalizeAddress(address)] as const,
+  badges: (address: string) => ["profile", "badges", normalizeAddress(address)] as const,
+  emptyTabs: (address: string) => ["profile", "empty-tabs", normalizeAddress(address)] as const,
   myCommunities: (account: string) =>
     ["private", normalizeAddress(account), "profile", "communities"] as const,
 };
@@ -48,6 +51,21 @@ export const profileQuery = (address: string) =>
       const avatar = await fetchProfile(address, { signal });
       return avatar ? mapProfile(avatar, address) : null;
     },
+  });
+
+export const badgesQuery = (address: string) =>
+  queryOptions({
+    queryKey: profileKeys.badges(address),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => fetchProfileBadges(address, { signal }),
+  });
+
+/** The member tabs a visitor does not see because they have no row; the owner sees every tab. */
+export const emptyTabsQuery = (address: string) =>
+  queryOptions({
+    queryKey: profileKeys.emptyTabs(address),
+    staleTime: PROFILE_STALE_MS,
+    queryFn: ({ signal }) => probeEmptyTabs(address, { signal }),
   });
 
 export const creationsQuery = (address: string) =>

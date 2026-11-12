@@ -1,0 +1,199 @@
+/* from: sites@17b3535a:src/pages/not-found/NotFoundPage.styled.ts on decentraland-ui2's dark theme (md = 1024px), the
+   AnimatedBackground as ui2's variant "absolute" (the page's own box, behind its content). Tokens as in
+   ReportSuccess.module.css: @dcl/one-ui foundations where the reference value equals one. Below md the avatar flows
+   under the CTA; from md it floats in the space right of the text column (reference TEXT_COLUMN_RIGHT, GRAPHIC_*). */
+.page {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  min-height: 100dvh;
+  padding-bottom: var(--dcl-space-24);
+  overflow-x: hidden;
+  isolation: isolate;
+  color: var(--dcl-neutrals-white);
+  font-family: Inter, Helvetica, Arial, sans-serif;
+}
+
+.background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+}
+
+.home {
+  position: absolute;
+  top: 70px;
+  left: 23px;
+  z-index: 2;
+  display: inline-flex;
+  border-radius: 50%; /* reference 50%, no token */
+}
+
+.home:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-white);
+  outline-offset: 4px;
+}
+
+.logo {
+  width: 48px;
+  height: 48px;
+}
+
+.content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-48);
+  padding: 132px var(--dcl-space-16) 0;
+  text-align: center;
+}
+
+.text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-32);
+}
+
+.watermark {
+  margin: 0 0 -12px;
+  opacity: 0.2;
+  font-size: 72px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 2px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+
+.title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.235;
+  letter-spacing: normal;
+}
+
+.description {
+  max-width: 360px;
+  margin: 0;
+  font-size: var(--dcl-font-size-body-lg);
+  font-weight: 500;
+  line-height: 1.6;
+  letter-spacing: normal;
+}
+
+/* The reference's MUI contained button, size large, as its page restyles it (height 46, padding 48, radius 12). The
+   shared Button sizes its root with min-height: var(--button-height) and a 1px border, so the class sets both. */
+.cta {
+  --button-height: 46px; /* reference height 46 */
+  min-width: 64px;
+  height: 46px;
+  padding: var(--dcl-space-0) var(--dcl-space-48);
+  border: 0; /* reference: no border */
+  border-radius: var(--dcl-radius-md);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-button-lg);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  font-feature-settings: "liga" off, "clig" off;
+}
+
+.graphic {
+  position: relative;
+  width: 100%;
+  height: 62vw;
+  margin-top: var(--dcl-space-24);
+}
+
+.avatar {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  z-index: 1;
+  width: 68vw;
+  height: auto;
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+@media (min-width: 1024px) {
+  .page {
+    justify-content: center;
+  }
+
+  .home {
+    top: 114px;
+    left: 72px;
+  }
+
+  .logo {
+    width: 63px;
+    height: 63px;
+  }
+
+  .content {
+    align-items: flex-start;
+    gap: 60px;
+    padding: 0 0 0 min(8.96vw, 172px);
+    text-align: left;
+  }
+
+  .watermark {
+    margin-bottom: -20px;
+    font-size: 120px;
+    letter-spacing: 4px;
+  }
+
+  .title {
+    max-width: 657px;
+    font-size: 48px; /* reference typography/h3, no token (--dcl-font-size-heading-lg is 32px below 768px) */
+    font-weight: 600;
+    line-height: 1.167;
+  }
+
+  .titleRest {
+    display: block;
+  }
+
+  .description {
+    max-width: 657px;
+    font-size: var(--dcl-font-size-heading-2);
+    line-height: 1.334;
+  }
+
+  .graphic {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    height: auto;
+    margin-top: 0;
+    pointer-events: none;
+  }
+
+  /* Centred in the width left of the text column (its right edge at min(8.96vw, 172px) + 657px, 24px kept at the
+     viewport's edge), 66dvh tall or as tall as that width allows at the art's 801/698 ratio. */
+  .avatar {
+    --column-right: calc(min(8.96vw, 172px) + 657px);
+    --free-width: calc(100vw - var(--column-right) - 24px);
+    top: 50%;
+    bottom: auto;
+    left: calc(var(--column-right) + var(--free-width) / 2);
+    width: auto;
+    height: min(66dvh, calc(var(--free-width) / 1.15));
+    transform: translate(-50%, -50%);
+  }
+}
+
+@media (min-width: 1024px) and (max-height: 780px) {
+  .content {
+    padding-top: 200px;
+  }
+}

@@ -1,7 +1,7 @@
 // Native shell for the Creator Hub. The window is created in code (not
 // tauri.conf.json) so the target URL can come from the environment:
-//   DCL_HUB_URL=http://127.0.0.1:5159/create  (local build)
-//   DCL_HUB_URL=https://example.org/create     (a deployment; required, no default)
+//   DCL_HUB_URL=http://127.0.0.1:5159/create/home  (local build)
+//   DCL_HUB_URL=https://example.org/create/home     (a deployment; required, no default)
 // capabilities/default.json allows loopback pages only; the origin of
 // DCL_HUB_URL gets the same IPC permissions as a runtime capability
 // (`hub-remote`), so an operator's own domain needs no JSON edit.
@@ -54,7 +54,7 @@ fn main() {
         .filter(|u| !u.trim().is_empty())
         .unwrap_or_else(|| {
             eprintln!(
-                "[shell] set DCL_HUB_URL to the Creator Hub page, e.g. https://example.org/create"
+                "[shell] set DCL_HUB_URL to the Creator Hub home, e.g. https://example.org/create/home"
             );
             std::process::exit(2)
         });

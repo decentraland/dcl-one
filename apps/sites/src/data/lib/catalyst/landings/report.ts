@@ -17,89 +17,16 @@ export const REPORT_LIMITS = {
   descriptionMax: 500,
   commentsMax: 500,
   maxFiles: 5,
-  maxFileSizeMb: 10,
+  maxFileSizeMb: 5,
 } as const;
 
-const ReasonOptionSchema = z.object({
-  value: z.string().min(1),
-  label: z.string().min(1),
-});
-export type ReasonOption = z.infer<typeof ReasonOptionSchema>;
-
-const EvidenceFileSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  size: z.number().nonnegative(),
-});
-type EvidenceFile = z.infer<typeof EvidenceFileSchema>;
-
-export type EvidenceUpload = EvidenceFile & {
+export type EvidenceUpload = {
+  id: string;
+  name: string;
+  size: number;
   blob?: Blob;
   contentType?: string;
 };
-
-const ReportCopySchema = z
-  .object({
-    reportedLabel: z.string(),
-    reportedHelper: z.string(),
-    reportedPlaceholder: z.string(),
-    reasonLabel: z.string(),
-    descriptionLabel: z.string(),
-    descriptionPlaceholder: z.string(),
-    descriptionHint: z.string(),
-    evidenceLabel: z.string(),
-    evidenceHelper: z.string(),
-    additionalLabel: z.string(),
-    additionalHelper: z.string(),
-    additionalPlaceholder: z.string(),
-    confirmationLabel: z.string(),
-    submit: z.string(),
-    submitFailed: z.string(),
-    yourWalletHelper: z.string(),
-    signInAlert: z.string(),
-    walletMismatch: z.string(),
-    errors: z.object({
-      invalidAddress: z.string(),
-      missingReason: z.string(),
-      missingDescription: z.string(),
-      missingEvidence: z.string(),
-      mustConfirm: z.string(),
-    }),
-  })
-  .partial();
-
-const ReportFixtureSchema = z.object({
-  title: z.string(),
-  successTitle: z.string(),
-  successBody: z.string(),
-  successDismiss: z.string(),
-  limits: z
-    .object({
-      descriptionMax: z.number(),
-      commentsMax: z.number(),
-      maxFiles: z.number(),
-      maxFileSizeMb: z.number(),
-      acceptedFileTypes: z.array(z.string()),
-    })
-    .partial(),
-  reasonOptions: z.array(ReasonOptionSchema),
-  copy: ReportCopySchema,
-  sampleReporter: z.object({ playerAddress: z.string() }).partial(),
-  sampleTarget: z
-    .object({
-      reportedAddress: z.string(),
-      reason: z.string(),
-      description: z.string(),
-      evidence: z.array(EvidenceFileSchema),
-      additionalComments: z.string(),
-    })
-    .partial(),
-});
-export type ReportFixture = z.infer<typeof ReportFixtureSchema>;
-
-export function parseReportFixture(raw: unknown): ReportFixture {
-  return ReportFixtureSchema.parse(raw);
-}
 
 export type ReportDraft = {
   playerAddress: string;
@@ -161,13 +88,12 @@ export type SubmitReportFn = (args: {
   signal?: AbortSignal;
 }) => Promise<SubmitReportResult>;
 
-export const failClosedSubmitReport: SubmitReportFn = async () => {
-  throw new Error("report submission unavailable: report service not configured");
-};
-
-const COMMS_PREFIX = "/comms";
-const REPORT_PRESIGN_PATH = "/reports/players/presign";
-const REPORT_CREATE_PATH = "/reports/players";
+// The node's report-user area (services/catalyst/comms/src/gatekeeper/reports.rs):
+// each request is signed over the path it is sent to (the mount included);
+// the upload paths the presign answers are relative to the mount.
+const REPORT_USER_PREFIX = "/report-user";
+const REPORT_PRESIGN_PATH = "/api/reports/players/presign";
+const REPORT_CREATE_PATH = "/api/reports/players";
 
 const NOT_CONNECTED_MESSAGE = "Connect your wallet to submit a report.";
 const MISSING_BYTES_MESSAGE =
@@ -214,7 +140,7 @@ export function buildSubmitReport(
     });
 
     const presignRaw = await postJSON<unknown>(
-      `${COMMS_PREFIX}${REPORT_PRESIGN_PATH}`,
+      `${REPORT_USER_PREFIX}${REPORT_PRESIGN_PATH}`,
       {
         files: uploads.map((u) => ({
           filename: u.name,
@@ -222,7 +148,7 @@ export function buildSubmitReport(
           fileSize: u.blob.size,
         })),
       },
-      { identity, signPath: REPORT_PRESIGN_PATH, signal },
+      { identity, signal },
     );
     const presign = PresignResponseSchema.safeParse(presignRaw);
     if (!presign.success || presign.data.files.length !== uploads.length) {
@@ -234,10 +160,9 @@ export function buildSubmitReport(
       const upload = uploads[index];
       const res = await signedFetch(
         identity,
-        `${base}${COMMS_PREFIX}${slot.uploadPath}`,
+        `${base}${REPORT_USER_PREFIX}${slot.uploadPath}`,
         {
           method: "PUT",
-          signPath: slot.uploadPath,
           metadata: {},
           headers: { "content-type": upload.contentType },
           body: upload.blob,
@@ -253,7 +178,7 @@ export function buildSubmitReport(
 
     const comments = draft.additionalComments.trim();
     const createdRaw = await postJSON<unknown>(
-      `${COMMS_PREFIX}${REPORT_CREATE_PATH}`,
+      `${REPORT_USER_PREFIX}${REPORT_CREATE_PATH}`,
       {
         reportId: presign.data.reportId,
         reportedAddress: draft.reportedAddress.trim().toLowerCase(),
@@ -263,7 +188,7 @@ export function buildSubmitReport(
         confirmAccuracy: draft.confirmAccuracy,
         evidenceKeys: presign.data.files.map((f) => f.key),
       },
-      { identity, signPath: REPORT_CREATE_PATH, signal },
+      { identity, signal },
     );
     const created = CreatedReportSchema.safeParse(createdRaw);
     if (!created.success) {

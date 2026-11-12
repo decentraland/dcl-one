@@ -57,6 +57,21 @@
   height: var(--dcl-space-32);
 }
 
+/* Source's blank 32px slot where the OS logo would be. */
+.osSlot {
+  display: block;
+  flex-shrink: 0;
+  width: var(--dcl-space-32);
+  height: var(--dcl-space-32);
+}
+
+.separator {
+  display: block;
+  width: 1px;
+  height: 20px;
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* A full-width primary action at the Button large height: its 12px padding around a 32px badge
    is 56px. Source's is 64px around a 40px badge; that geometry waits on design (B1). */
 .store {
@@ -74,6 +89,7 @@
 }
 
 .sourceAction {
+  color: #fcfcfc; /* reference #fcfcfc (MUI contained contrast text), no token */
   width: 304px;
   height: var(--dcl-space-64);
   gap: var(--dcl-space-16);
@@ -86,6 +102,7 @@
 }
 
 .sourceEpic {
+  color: #242129; /* reference #242129 (sites Hero.styled.ts), no token */
   gap: var(--dcl-space-24);
   border: 3px solid var(--dcl-neutrals-white);
 }
@@ -109,6 +126,16 @@
 .sourceAltIcon {
   width: var(--dcl-space-24);
   height: var(--dcl-space-24);
+  filter: brightness(0) invert(1);
+}
+
+/* Source's Come Hang Out row: one line, the counter at its own width. */
+.sourceFit {
+  flex-wrap: nowrap;
+}
+
+.sourceFit .sourceDownloads {
+  min-width: 0;
 }
 
 .sourceDownloads {

@@ -1,0 +1,118 @@
+/* from: sites@17b3535a:src/components/cast/NotFound/NotFound.styled.ts (decentraland-ui2 theme, border-box).
+   Values equal to a @dcl/one-ui token use the token; the others name the reference value. */
+.root {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: linear-gradient(135deg, var(--dcl-primary-primary-dark-2) 0%, #16213e 50%, #0d1117 100%);
+  color: var(--dcl-neutrals-white);
+  text-align: center;
+  padding: var(--dcl-space-32);
+}
+
+.icon {
+  font-size: 64px;
+  margin-bottom: var(--dcl-space-32);
+  opacity: 0.6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.glyph {
+  width: 1em;
+  height: 1em;
+  flex-shrink: 0;
+  fill: currentColor;
+}
+
+.title {
+  font-size: 3rem; /* reference 3rem, no token (heading-lg is 32px below 768px) */
+  font-weight: bold;
+  line-height: 1.5;
+  margin: 0 0 var(--dcl-space-16) 0;
+  color: var(--dcl-neutrals-white);
+}
+
+.description {
+  font-size: 1.2rem;
+  color: rgba(255, 255, 255, 0.7);
+  margin: 1em 0 var(--dcl-space-32) 0;
+  max-width: 600px;
+  line-height: 1.6;
+}
+
+.actions {
+  display: flex;
+  gap: var(--dcl-space-16);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Go Home is the library Button (primary, md). The reference is the decentraland-ui2 contained primary
+   button at its medium size (36px tall with no border, a 20px start icon 8px before the label; the row
+   stretches it to its sibling's height), so this page sets that size, type and hover on top. */
+.goHome {
+  --button-height: 36px; /* reference 36px: 6px padding, 24px line, no border */
+  --button-gap: var(--dcl-space-8);
+  height: auto;
+  min-width: 200px;
+  padding: 6px var(--dcl-space-16);
+  border: 0;
+  border-radius: var(--dcl-radius-xs);
+  background: var(--dcl-primary-primary);
+  color: var(--dcl-neutrals-white);
+  font-size: var(--dcl-font-size-button-md);
+  font-weight: 600; /* reference 600, no token (button/md is 700) */
+  line-height: 24px;
+  letter-spacing: 0.4px;
+  transition: background 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+.goHome:hover {
+  background: var(--dcl-primary-primary-dark-2);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(255, 45, 85, 0.3);
+}
+.goHome:active {
+  transform: translateY(0);
+}
+.goHomeIcon {
+  margin-left: calc(-1 * var(--dcl-space-4));
+  font-size: 20px;
+}
+
+/* View Documentation is the library Button (secondary, lg). The reference is a styled link on the
+   decentraland-ui2 secondary palette (50px tall, a 24px icon 8px before the label), so this page sets its
+   fill, border, size and type on top. */
+.viewDocs {
+  --button-height: 50px; /* reference 50px: 12px padding, 24px line, 1px border */
+  --button-gap: var(--dcl-space-8);
+  height: auto;
+  min-width: 200px;
+  padding: var(--dcl-space-12) var(--dcl-space-24);
+  background: var(--dcl-neutrals-pale-black);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--dcl-radius-sm);
+  color: rgba(240, 240, 240, 1);
+  font-size: var(--dcl-font-size-body-md-strong);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: inherit;
+  text-transform: none;
+  transition: all 0.2s ease;
+}
+.viewDocs:hover {
+  background: var(--dcl-neutrals-cloudy-sky);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--dcl-transparencies-black-20);
+  color: rgba(240, 240, 240, 1);
+}
+.viewDocs:active {
+  transform: translateY(0);
+}
+.viewDocsGlyph {
+  font-size: 24px;
+}

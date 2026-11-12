@@ -5,10 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type PlaceDetail from "@ui/explorer/pages/PlaceDetail";
 
-import type { AuthIdentity } from "@/data/lib/auth/types";
-import { postJSON, signedGetJSON } from "@/data/lib/catalyst/client";
-import { openSignIn } from "@/features/components/auth/signin-store";
-import type { PlaceTravel } from "@/data/lib/catalyst/places/world-scenes";
+import type { PlaceTravel, WorldScene } from "@/data/lib/catalyst/places/world-scenes";
 import { track } from "@/core/lib/telemetry/track";
 import PlaceDetailRoute from "./places_.$id";
 
@@ -22,31 +19,21 @@ vi.mock("@ui/explorer/pages/PlaceDetail", () => ({
   },
 }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
-vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
-vi.mock("@/data/lib/catalyst/client", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/data/lib/catalyst/client")>()),
-  postJSON: vi.fn(async () => ({ ok: true })),
-  signedGetJSON: vi.fn(async () => ({ ok: true, data: { user_like: false, user_dislike: false, user_favorite: true } })),
-}));
-const auth = vi.hoisted(() => ({ identity: null as unknown, isConnected: false }));
-vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
 
-const IDENTITY: AuthIdentity = {
-  signer: "0x4e9c4a2502fdf71e93ed8ed6ca9ddbd891d6f295",
-  ephemeral: { address: "0xeph", privateKey: "0xdeadbeef" },
-  expiration: "2999-01-01T00:00:00.000Z",
-  authChain: [],
-};
 const PLACE_ID = "66ef7bd9-3060-4e1a-a6d7-edc8d251e0cb";
 
-function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/play/?position=34%2C17&realm=fixture" }) {
+const GENESIS_PLACE = { id: PLACE_ID, title: "New Scene 12", base_position: "34,17", positions: ["34,17"], world: false, world_name: null as string | null, contact_name: "Studio", owner: "0x296fa4213a6a88590328008dd5f5b535cf37bd66" };
+
+function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/play/?position=34%2C17&realm=fixture" }, place = GENESIS_PLACE, scenes: WorldScene[] = []) {
   seen.props = null;
   const loaderData = {
-    id: PLACE_ID,
-    place: { id: PLACE_ID, title: "New Scene 12", base_position: "34,17", positions: ["34,17"], world: false },
+    place,
+    scenes,
     sid: "sid-1",
     unavailable: false,
     travel,
+    livePlayers: 3,
+    mobile: false,
   };
   // The exported route reads its loader data from the data router, so seed one with it.
   const router = createMemoryRouter(
@@ -59,46 +46,31 @@ function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/pla
 
 beforeEach(() => {
   vi.clearAllMocks();
-  auth.identity = null;
-  auth.isConnected = false;
 });
 
-describe("/places/:id likes and favorites", () => {
+describe("/places/:id", () => {
   it("wires the visible travel control to the current parcel", () => {
     expect(renderRoute().jumpHref).toBe("/play/?position=34%2C17&realm=fixture");
   });
 
-  it("hands PlaceDetail the place id and saves signed PATCHes to the node's places API", async () => {
-    auth.identity = IDENTITY;
-    auth.isConnected = true;
+  it("hands PlaceDetail the place, its creator fields, the live player count and the device", () => {
     const props = renderRoute();
-    expect(props.place?.id).toBe(PLACE_ID);
-
-    await props.onFavorite!(PLACE_ID, true);
-    expect(postJSON).toHaveBeenLastCalledWith(`/places/api/places/${PLACE_ID}/favorites`, { favorites: true }, { identity: IDENTITY, method: "PATCH" });
-    await props.onLike!(PLACE_ID, false);
-    expect(postJSON).toHaveBeenLastCalledWith(`/places/api/places/${PLACE_ID}/likes`, { like: false }, { identity: IDENTITY, method: "PATCH" });
-    await props.onLike!(PLACE_ID, null);
-    expect(postJSON).toHaveBeenLastCalledWith(`/places/api/places/${PLACE_ID}/likes`, { like: null }, { identity: IDENTITY, method: "PATCH" });
-  });
-
-  it("the server render knows no session, so PlaceDetail starts without the visitor's saved state and nothing is read", () => {
-    expect(renderRoute().viewer).toBeNull();
-    auth.identity = IDENTITY;
-    auth.isConnected = true;
-    expect(renderRoute().viewer).toBeNull();
-    expect(signedGetJSON).not.toHaveBeenCalled();
-  });
-
-  it("signed out, a like or favorite opens sign-in and rejects so the button reverts", async () => {
-    const props = renderRoute();
-    await expect(props.onFavorite!(PLACE_ID, true)).rejects.toThrow(/Sign in/);
-    await expect(props.onLike!(PLACE_ID, true)).rejects.toThrow(/Sign in/);
-    expect(openSignIn).toHaveBeenCalledTimes(2);
-    expect(postJSON).not.toHaveBeenCalled();
+    expect(props.place).toMatchObject({ id: PLACE_ID, title: "New Scene 12", coords: "34,17", contactName: "Studio", owner: "0x296fa4213a6a88590328008dd5f5b535cf37bd66" });
+    expect(props.livePlayers).toBe(3);
+    expect(props.mobile).toBe(false);
   });
 });
 
+describe("when a world has more than one scene", () => {
+  const world = { ...GENESIS_PLACE, id: "sample.dcl.eth", base_position: "0,0", positions: ["0,0"], world: true, world_name: "sample.dcl.eth" };
+  const scenes = [{ entityId: "bafy1", title: "Plaza", base: "0,0" }, { entityId: "bafy2", title: "Arena", base: "10,4" }];
+  let props: DetailProps;
+  beforeEach(() => { props = renderRoute({ playBase: "/play/", jumpHref: "/play/?realm=sample.dcl.eth&position=0%2C0" }, world, scenes); });
+  it("should offer each scene by title and base parcel, the first one picked", () => {
+    expect(props.scenePicker).toMatchObject({ options: [{ value: "bafy1", label: "Plaza (0,0)" }, { value: "bafy2", label: "Arena (10,4)" }], value: "bafy1" });
+    expect(props.jumpHref).toBe("/play/?realm=sample.dcl.eth&position=0%2C0");
+  });
+});
 
 describe("when handing off place travel", () => {
   let props: DetailProps;

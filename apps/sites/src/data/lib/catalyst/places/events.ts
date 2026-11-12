@@ -47,6 +47,18 @@ export type Event = {
   total_attendees: number | null;
   place_id: string | null;
   connected_addresses?: string[];
+  user?: string | null;
+  approved?: boolean;
+  rejected?: boolean;
+  deleted_by_user?: boolean;
+  deleted_by_admin?: boolean;
+  recurrent_dates?: string[];
+  recurrent_interval?: number | null;
+  recurrent_weekday_mask?: number | null;
+  world?: boolean;
+  server?: string | null;
+  attending?: boolean;
+  categories?: string[];
 };
 
 export type EventCategory = {
@@ -86,10 +98,11 @@ function toEventCategory(c: z.infer<typeof EventCategoryRecordSchema>): EventCat
   };
 }
 
-export const EVENT_CALENDAR_LIMIT = 500;
+export const EVENT_CALENDAR_LIMIT = 200;
 
 type FetchEventsParams = {
-  list?: "live" | "active" | "highlight" | "trending";
+  list?: "live" | "active" | "upcoming" | "highlight" | "trending";
+  order?: "asc" | "desc";
   search?: string;
   category?: string;
   from?: string;
@@ -151,6 +164,7 @@ async function fetchEventRows(
       position: params.position,
       world_names: params.world_names,
       world: params.world,
+      order: params.order,
     },
   });
   const copy = readCopy(raw);
@@ -248,7 +262,7 @@ export async function fetchAttendees(
   return { attendees, count: env.data.total ?? attendees.length };
 }
 
-function hueFor(id: string): number {
+export function hueFor(id: string): number {
   let h = 0;
   for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) % 360;
   return h;
@@ -338,12 +352,12 @@ export function toLiveNowCard(e: Event): LiveNowCard {
   };
 }
 
-export function toUpcomingCard(e: Event): UpcomingCard {
+export function toUpcomingCard(e: Event, now = new Date()): UpcomingCard {
   return {
     id: e.id,
     name: e.name ?? "Untitled event",
     creator: e.user_name ?? e.scene_name ?? "Decentraland",
-    time: formatEventTime(effectiveStartAt(e)),
+    time: relativeTimeLabel(e.next_start_at ?? e.start_at, now),
     hue: hueFor(e.id),
     image: e.image ?? undefined,
     jumpUrl: eventJumpUrl(e) ?? undefined,
@@ -354,7 +368,12 @@ export type DayEvent = {
   id: string;
   name: string;
   creator: string;
+  /** The creator's address and `user_name`, for the face and name a profile read supplies. */
+  user?: string;
+  userName?: string;
+  attending?: boolean;
   time: string;
+  upcomingTime?: string;
   live: boolean;
   users?: number;
   x?: number;
@@ -422,4 +441,84 @@ export function eventOccurrence(event: Pick<Event, "start_at" | "next_start_at" 
     ? new Date(startTime + duration).toISOString()
     : undefined);
   return { start, finish };
+}
+
+const utcDay = (t: number) => Math.floor(t / DAY_MS);
+
+/** The clock time of an event in the page's time zone (UTC), "6:00 PM". */
+export function formatEventClock(iso: string | null | undefined): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return "Soon";
+  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", hour12: true, timeZone: "UTC" }).format(t);
+}
+
+/** "Starts in 12 mins", "Today 6:00 PM", "Tomorrow 1:00 AM" or the clock time. */
+export function relativeTimeLabel(iso: string | null | undefined, now = new Date()): string {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (Number.isNaN(t)) return "Soon";
+  const diff = t - now.getTime();
+  if (diff <= 0) return formatEventClock(iso);
+  const mins = Math.round(diff / 60_000);
+  if (mins < 60) return `Starts in ${mins} mins`;
+  const days = utcDay(t) - utcDay(now.getTime());
+  if (days === 0) return `Today ${formatEventClock(iso)}`;
+  if (days === 1) return `Tomorrow ${formatEventClock(iso)}`;
+  return formatEventClock(iso);
+}
+
+/** Only approved events that nobody rejected or deleted are listed in public. */
+export function isPublicEvent(e: Event): boolean {
+  return e.approved !== false && !e.rejected && !e.deleted_by_user && !e.deleted_by_admin;
+}
+
+/** The day header of the calendar column `offset` days after `now`'s day: "Today", "Tomorrow", "Wed, Nov 11". */
+export function dayHeaderLabel(offset: number, now = new Date()): string {
+  if (offset === 0) return "Today";
+  if (offset === 1) return "Tomorrow";
+  const day = new Date((utcDay(now.getTime()) + offset) * DAY_MS);
+  const weekday = day.toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+  const month = day.toLocaleDateString("en-US", { month: "short", timeZone: "UTC" });
+  return `${weekday}, ${month} ${day.getUTCDate()}`;
+}
+
+/**
+ * One list per day from `now`'s day: each occurrence of a recurring event on its day, every other
+ * event on the day it starts (today when it started earlier and still runs, as an event live across
+ * midnight), without occurrences that already ended, sorted by start.
+ */
+export function bucketEventsByDay(events: Event[], days: number, now = new Date()): DayEvent[][] {
+  const today = utcDay(now.getTime());
+  const buckets: [number, DayEvent][][] = Array.from({ length: days }, () => []);
+  for (const e of events) {
+    if (!isPublicEvent(e)) continue;
+    const recurring = e.recurrent && (e.recurrent_dates?.length ?? 0) > 0;
+    for (const iso of recurring ? e.recurrent_dates! : [e.start_at]) {
+      const start = iso ? Date.parse(iso) : NaN;
+      if (Number.isNaN(start)) continue;
+      const finish = recurring ? start + (e.duration ?? 0) : Date.parse(e.finish_at ?? "");
+      if (finish < now.getTime()) continue;
+      const startDay = utcDay(start) - today;
+      const index = !recurring && startDay < 0 && !Number.isNaN(finish) ? 0 : startDay;
+      if (index < 0 || index >= days) continue;
+      const live = recurring ? start <= now.getTime() && now.getTime() <= finish : e.live;
+      const at = e.next_start_at ?? new Date(start).toISOString();
+      buckets[index].push([start, {
+        id: e.id,
+        name: e.name ?? "Untitled event",
+        creator: e.user_name ?? e.scene_name ?? "Decentraland",
+        user: e.user ?? undefined,
+        userName: e.user_name ?? undefined,
+        attending: e.attending,
+        time: formatEventClock(at),
+        upcomingTime: relativeTimeLabel(at, now),
+        live,
+        users: e.total_attendees ?? undefined,
+        x: e.x ?? e.position?.[0] ?? undefined,
+        y: e.y ?? e.position?.[1] ?? undefined,
+        hue: hueFor(e.id),
+        image: e.image ?? undefined,
+      }]);
+    }
+  }
+  return buckets.map((bucket) => bucket.sort((a, b) => a[0] - b[0]).map(([, event]) => event));
 }
