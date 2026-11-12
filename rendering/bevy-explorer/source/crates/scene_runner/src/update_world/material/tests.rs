@@ -98,7 +98,9 @@ fn waiting(app: &App, entities: &[Entity]) -> usize {
 }
 
 fn preset_charges(app: &mut App, charges: Duration) {
-    app.world_mut().resource_mut::<InstantiationCharges>().0 = charges;
+    app.world_mut()
+        .resource_mut::<InstantiationCharges>()
+        .this_frame = charges;
 }
 
 fn charged(app: &App) -> Duration {

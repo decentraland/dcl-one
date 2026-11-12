@@ -67,7 +67,12 @@ impl Plugin for SceneSpawnSlicePlugin {
 /// no clock in those systems sees it. The slice ends that much earlier for spawning and
 /// processing.
 #[derive(Resource, Default, Clone, Copy, Debug, PartialEq)]
-pub struct InstantiationCharges(pub Duration);
+pub struct InstantiationCharges {
+    /// Charged so far this frame.
+    pub this_frame: Duration,
+    /// What the last frame charged in all, for the debug panel.
+    pub last_frame: Duration,
+}
 
 /// The frame's instantiation slice as `PostLoop` systems see it.
 #[derive(SystemParam)]
@@ -90,14 +95,16 @@ impl InstantiationBudget<'_, '_> {
     pub fn gate(&mut self) -> Gate<'_> {
         Gate {
             slice: self.slice(),
-            charges: &mut self.charges.0,
+            charges: &mut self.charges.this_frame,
             admitted: 0,
             deferred: 0,
         }
     }
 
     fn take_charges(&mut self) -> Duration {
-        std::mem::take(&mut self.charges.0)
+        let charged = std::mem::take(&mut self.charges.this_frame);
+        self.charges.last_frame = charged;
+        charged
     }
 }
 

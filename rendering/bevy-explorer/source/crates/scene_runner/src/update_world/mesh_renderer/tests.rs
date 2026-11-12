@@ -28,7 +28,7 @@ use crate::{
 pub(crate) struct Charged(pub Duration);
 
 pub(crate) fn record_charges(charges: Res<InstantiationCharges>, mut charged: ResMut<Charged>) {
-    charged.0 = charges.0;
+    charged.0 = charges.this_frame;
 }
 
 /// An app that runs `update_mesh` as the explorer does: in `Update`, with the slice handed to
@@ -152,7 +152,9 @@ pub(crate) fn fit(cost: Duration) -> usize {
 }
 
 fn preset_charges(app: &mut App, charges: Duration) {
-    app.world_mut().resource_mut::<InstantiationCharges>().0 = charges;
+    app.world_mut()
+        .resource_mut::<InstantiationCharges>()
+        .this_frame = charges;
 }
 
 fn charged(app: &App) -> Duration {

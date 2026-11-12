@@ -150,7 +150,7 @@ fn ms(n: u64) -> Duration {
 
 /// One run's admissions of `costs`, in order, after `charged` was spent this frame.
 fn admissions(world: &mut World, charged: Duration, costs: &[Duration]) -> Vec<bool> {
-    world.resource_mut::<InstantiationCharges>().0 = charged;
+    world.resource_mut::<InstantiationCharges>().this_frame = charged;
     let costs = costs.to_vec();
     world
         .run_system_once(move |mut budget: InstantiationBudget| {
@@ -164,7 +164,7 @@ fn admissions(world: &mut World, charged: Duration, costs: &[Duration]) -> Vec<b
 }
 
 fn charges(world: &World) -> Duration {
-    world.resource::<InstantiationCharges>().0
+    world.resource::<InstantiationCharges>().this_frame
 }
 
 #[test]
@@ -221,7 +221,7 @@ fn a_headless_app_admits_everything_uncharged() {
 #[test]
 fn the_slice_ends_earlier_by_what_was_charged() {
     let (mut world, _) = world_with_player();
-    world.resource_mut::<InstantiationCharges>().0 = ms(3);
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(3);
 
     let before = Instant::now();
     let (spawning, processing) = deadlines_after_a_run(&mut world);
@@ -239,7 +239,7 @@ fn the_slice_ends_earlier_by_what_was_charged() {
 #[test]
 fn charges_past_the_slice_leave_an_expired_slice() {
     let (mut world, _) = world_with_player();
-    world.resource_mut::<InstantiationCharges>().0 = ms(6);
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(6);
 
     let (_, processing) = deadlines_after_a_run(&mut world);
     let after = Instant::now();
@@ -250,7 +250,7 @@ fn charges_past_the_slice_leave_an_expired_slice() {
 #[test]
 fn a_gate_is_spent_once_it_refuses() {
     let (mut world, _) = world_with_player();
-    world.resource_mut::<InstantiationCharges>().0 = ms(10);
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(10);
 
     let spent = world
         .run_system_once(|mut budget: InstantiationBudget| {
@@ -264,4 +264,16 @@ fn a_gate_is_spent_once_it_refuses() {
         .unwrap();
 
     assert_eq!(spent, (false, false, true));
+}
+
+#[test]
+fn the_last_frames_charges_stay_readable() {
+    let (mut world, _) = world_with_player();
+    world.resource_mut::<InstantiationCharges>().this_frame = ms(3);
+
+    deadlines_after_a_run(&mut world);
+
+    let charges = world.resource::<InstantiationCharges>();
+    assert_eq!(charges.last_frame, ms(3));
+    assert_eq!(charges.this_frame, Duration::ZERO);
 }
