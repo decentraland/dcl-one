@@ -26,7 +26,6 @@ import { PAGES, closePage } from './pages.ts'
 const scenario = spec(import.meta.url)
 
 const SLOTS = [1, 2, 3, 4, 5]
-const SHOP = { name: 'SHOP', role: 'button' } as const
 const SAVE_TIMEOUT_MS = 40_000
 
 const savedOutfit = (slot: number): Selector => ({ name: `Outfit ${slot}`, role: 'button' })
@@ -79,7 +78,10 @@ scenario(
 
 scenario('the Wearables tab offers the SHOP button', async ({ explorer }) => {
   await openBackpack(explorer, 'outfits')
-  await explorer.hud.wait(SHOP, { state: 'actionable', timeoutMs: 10_000 })
+  // The top bar's Shop tab matches the name too (names match case-insensitively): it comes first.
+  const shops = (await explorer.hud.list('button')).filter((entry) => entry.name.toLowerCase() === 'shop')
+  assert.ok(shops.length > 0, 'the Wearables tab should show a SHOP button')
+  await explorer.hud.wait({ name: 'SHOP', role: 'button', index: shops.length - 1 }, { state: 'actionable', timeoutMs: 10_000 })
   await closePage(explorer, 'backpack')
 })
 

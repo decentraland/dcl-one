@@ -242,14 +242,14 @@ Each new file's header classes its cases as above. The chat helpers the chat spe
 | Outfits | Outfits shop | `backpack-outfit-slots` | Partial |
 | Outfits | Randomize outfit, Randomize undo / redo | `backpack-randomize` | Partial |
 | Emotes | Equip, Replace equipped, Pagination | `backpack-emotes` | Partial |
-| Emotes | Animations | `emote-slots` | Partial |
+| Emotes | Animations | `emote-slots` | Gap |
 | Emotes | Wheel | `emote-wheel`, `emote-slots` | Port |
-| Emotes | Play | `emote-wheel` (a click), `emote-slots` (the numpad) | Partial |
+| Emotes | Play | `emote-wheel` (a click); the numpad in `emote-slots` | Partial, Gap |
 | Profile | Passport, Overview, Edit name, Equipped items | `passport` | Port, Partial |
 | Profile | Edit name color | `passport-links` | Gap |
 | Profile | Edit about me | `passport` (bio), `passport-links` (links) | Partial |
 | Communities | NavBar, Content, View a Community, Search | `explore-panel`, `communities` | Port, Partial |
-| Map | View | `shortcuts` (M), `minimap`, `map-panels` (Tab) | Port |
+| Map | View | `shortcuts` (M), `minimap`; Tab in `map-panels` | Port, Gap |
 | Map | Layers | `map-panels` | Gap |
 | Map | Filters | `navmap`, `map-panels` | Partial |
 | Map | Search | `teleport` (the card, JUMP IN), `map-panels` (no match; the card's other controls a Gap) | Partial |

@@ -26,7 +26,7 @@
 // Every scenario puts the player back on the realm and the parcel it started on.
 import assert from 'node:assert/strict'
 import { closeToRest, spec, until, type Explorer, type WorldState } from '../driver/index.ts'
-import { closeChat, openChat, sendMessage, submitLine } from './chat.ts'
+import { RAIL_CHAT, closeChat, openChat, submitLine } from './chat.ts'
 import { PAGES, closePage, openWithKey } from './pages.ts'
 
 const scenario = spec(import.meta.url)
@@ -37,6 +37,8 @@ const ARRIVAL_TIMEOUT_MS = 90_000
 /** A realm change: the world's about, its scenes and the comms connection. */
 const REALM_TIMEOUT_MS = 120_000
 const CONTROL_TIMEOUT_MS = 20_000
+/** The conversation rail's Nearby button, pressed while the Nearby conversation shows (ConversationRail.tsx). */
+const NEARBY_CHAT = { name: 'Nearby chat', role: 'button' } as const
 const WORLD = (process.env.DCL_E2E_WORLD ?? '33.dcl.eth').toLowerCase()
 const WORLD_PARCEL: [number, number] = [2, 3]
 const SCENARIO_TIMEOUT_MS = 300_000
@@ -50,9 +52,16 @@ function parcelOf(state: WorldState): Parcel {
 
 const showParcel = ([x, y]: Parcel): string => `${x},${y}`
 
+/** The HUD back after an arrival: `/world_state` reads `inWorld` while the HUD's loading screen still
+ *  covers the page, rail included, until the scenes around the player are loaded. */
+async function hudBack(explorer: Explorer): Promise<void> {
+  await explorer.hud.wait(RAIL_CHAT, { state: 'actionable', timeoutMs: ARRIVAL_TIMEOUT_MS })
+}
+
 /** Where the scenario started, and the restore that takes the player back there. */
 async function startingPoint(explorer: Explorer, restore: (undo: () => Promise<void>) => void): Promise<{ state: WorldState; parcel: Parcel }> {
   const state = await explorer.waitInWorld()
+  await hudBack(explorer)
   const parcel = parcelOf(state)
   restore(async () => {
     // A failure can leave the Map or the chat open: the rail, and the chat's button on it, come back at rest.
@@ -62,6 +71,7 @@ async function startingPoint(explorer: Explorer, restore: (undo: () => Promise<v
     if (now.realm !== state.realm) await explorer.changeRealm(state.realm, { timeoutMs: REALM_TIMEOUT_MS })
     const back = await explorer.worldState()
     if (showParcel(parcelOf(back)) !== showParcel(parcel)) await explorer.teleport(parcel[0], parcel[1], { timeoutMs: ARRIVAL_TIMEOUT_MS })
+    await hudBack(explorer)
   })
   return { state, parcel }
 }
@@ -69,10 +79,12 @@ async function startingPoint(explorer: Explorer, restore: (undo: () => Promise<v
 /** Wait for an arrival counted after `before`, then for the player to stand in `parcel`. */
 async function waitArrivalAt(explorer: Explorer, before: number, parcel: Parcel): Promise<WorldState> {
   await until(() => explorer.worldState(), (state) => state.arrivals > before && state.inWorld, { timeoutMs: ARRIVAL_TIMEOUT_MS, what: `the arrival at ${showParcel(parcel)}` })
-  return until(() => explorer.worldState(), (state) => state.position !== null && showParcel(parcelOf(state)) === showParcel(parcel), {
+  const there = await until(() => explorer.worldState(), (state) => state.position !== null && showParcel(parcelOf(state)) === showParcel(parcel), {
     timeoutMs: CONTROL_TIMEOUT_MS,
     what: `the player to stand in parcel ${showParcel(parcel)}`
   })
+  await hudBack(explorer)
+  return there
 }
 
 /** A parcel a couple away from the start: near enough to load fast, far enough to be another parcel. */
@@ -85,10 +97,14 @@ scenario(
     const target = nearby(parcel, 2, 0)
     const coordinate = showParcel(target)
     await openChat(explorer)
-    await sendMessage(explorer, `automation teleport ${coordinate}`)
+    // An earlier spec can leave a community's conversation shown, whose messages /chat_history does
+    // not hold and whose members would get this one: the message goes to Nearby.
+    if (!(await explorer.hud.get(NEARBY_CHAT)).checked) await explorer.hud.click(NEARBY_CHAT)
+    await until(async () => (await explorer.hud.get(NEARBY_CHAT)).checked, (shown) => shown === true, { timeoutMs: CONTROL_TIMEOUT_MS, what: 'the Nearby conversation to show' })
+    await openChat(explorer)
+    await submitLine(explorer, `automation teleport ${coordinate}`)
 
-    // The engine records the message before the HUD renders it; earlier runs left the same
-    // coordinate in the history, and the newest is the last in the page's order.
+    // Earlier runs left the same coordinate in the history: the newest is the last in the page's order.
     const buttons = await until(
       async () => (await explorer.hud.list('button')).filter((entry) => entry.name === coordinate),
       (found) => found.length > 0,
@@ -127,6 +143,7 @@ scenario(
       what: `the arrival in ${WORLD}`
     })
     assert.notEqual(inWorld.realm, state.realm, 'the realm should have changed to the world')
+    await hudBack(explorer)
 
     await openChat(explorer)
     await submitLine(explorer, `/goto ${showParcel(WORLD_PARCEL)}`)
@@ -179,6 +196,7 @@ scenario(
 
     await explorer.hud.click({ name: 'JUMP IN', role: 'button' })
     const arrived = await until(() => explorer.worldState(), (now) => now.arrivals > state.arrivals && now.inWorld, { timeoutMs: ARRIVAL_TIMEOUT_MS, what: `the arrival at "${title}"` })
+    await hudBack(explorer)
     t.diagnostic(`"${title}" has its base parcel at ${bx},${by}; the player arrived in ${showParcel(parcelOf(arrived))}`)
     if (await explorer.hud.isVisible(PAGES.map.marker)) await closePage(explorer, 'map')
   },

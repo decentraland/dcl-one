@@ -7,18 +7,17 @@
 //
 // | Suite case   | Here                                                                                | Class   |
 // | Wheel        | B opens the wheel; each of its ten slots names the emote the Backpack's slot holds   | Port    |
-// | Play         | a numpad digit plays the emote of that slot, read through /avatar_state              | Partial |
-// | Animations   | clicking an emote card in the Backpack plays an emote on the preview avatar          | Partial |
+// | Play         | a numpad digit plays the emote of that slot                                          | Gap     |
+// | Animations   | clicking an emote card in the Backpack plays it on the preview avatar                | Gap     |
 //
-// Partial, Play: the suite presses B and then a digit; the Bevy bindings are the numpad's digits
-// alone (the wheel's own click is emote-wheel.test.ts). The slot is the first one the profile fills.
-// Partial, Animations: "the selected emote autoplays" is read on the preview avatar
-// (`/avatar_state all`, the report tagged `preview`), as an emote that is not the idle or locomotion
-// one (`velocitySelected`); the urn is reported, not compared with the
-// card, whose name is the HUD's title-cased form of it.
+// Gap, Play: the suite presses B and then a digit; the Bevy bindings are the numpad's digits alone,
+// and the console's `/press_key` knows no numpad code (`unknown key code Numpad1`, CI run
+// 43224979097), so the key cannot be pressed. The wheel's own click is emote-wheel.test.ts.
+// Gap, Animations: selecting an emote card only selects it; the Backpack plays nothing on the
+// preview (the HUD's `previewEmote` is the Shop's alone), so the preview stays idle (same run).
 import assert from 'node:assert/strict'
-import { spec, until, type AvatarReport, type Explorer } from '../driver/index.ts'
-import { emoteCards, emoteSlots, openBackpack, pointAtCard, waitForCards } from './backpack.ts'
+import { spec } from '../driver/index.ts'
+import { emoteSlots, openBackpack } from './backpack.ts'
 import { closePage } from './pages.ts'
 
 const scenario = spec(import.meta.url)
@@ -26,22 +25,8 @@ const scenario = spec(import.meta.url)
 const WHEEL = { name: 'Close emotes', role: 'button' } as const
 const WHEEL_SLOT = /^Emote slot (\d)(?:: (.+))?$/
 const CONTROL_TIMEOUT_MS = 20_000
-const PLAY_TIMEOUT_MS = 20_000
 
 const normalized = (name: string | undefined): string => (name ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
-
-/** Two urns name the same emote: the same text, or a base emote's name against its full urn. */
-function sameEmote(a: string, b: string): boolean {
-  const first = a.toLowerCase()
-  const second = b.toLowerCase()
-  if (first === second) return true
-  const [name, urn] = first.includes(':') ? [second, first] : [first, second]
-  return !name.includes(':') && urn.endsWith(`:${name}`)
-}
-
-async function previewAvatar(explorer: Explorer): Promise<AvatarReport | undefined> {
-  return (await explorer.avatarState('all')).find((report) => report.kind === 'preview')
-}
 
 scenario(
   "the emote wheel's slots name the emotes the Backpack assigned to them",
@@ -66,35 +51,10 @@ scenario(
   { timeoutMs: 180_000 }
 )
 
-scenario('a numpad digit plays the emote of that slot', async ({ explorer }) => {
-  const emotes = (await explorer.myAvatar()).selected.emotes
-  // The slots in the wheel's order, 1 to 9 then 0.
-  const slot = [1, 2, 3, 4, 5, 6, 7, 8, 9, 0].find((index) => (emotes[index] ?? '') !== '')
-  assert.ok(slot !== undefined, 'the profile should hold an emote in at least one slot')
-  const expected = emotes[slot]!
-
-  await explorer.key(`Numpad${slot}`)
-  await until(
-    async () => (await explorer.myAvatar()).emote,
-    (emote) => emote !== null && emote.source === 'triggeredEmote' && sameEmote(emote.urn, expected),
-    { timeoutMs: PLAY_TIMEOUT_MS, intervalMs: 100, what: `Numpad${slot} to play ${expected}` }
-  )
+scenario('a numpad digit plays the emote of that slot', async () => {}, {
+  todo: "the console's /press_key knows no numpad code, and the quick emotes are bound to the numpad alone"
 })
 
-scenario(
-  'clicking an emote card in the Backpack plays an emote on the preview avatar',
-  async ({ explorer, t }) => {
-    await openBackpack(explorer, 'emotes')
-    const [card] = await waitForCards(explorer, emoteCards)
-    assert.ok(card, 'the Emotes tab should list at least one emote')
-    await pointAtCard(explorer, card.selector)
-    const playing = await until(() => previewAvatar(explorer), (preview) => preview?.emote != null && preview.emote.source !== 'velocitySelected' && !preview.emote.finished, {
-      timeoutMs: PLAY_TIMEOUT_MS,
-      intervalMs: 100,
-      what: `the preview avatar to play "${card.name}"`
-    })
-    t.diagnostic(`"${card.name}" plays ${playing!.emote!.urn} on the preview`)
-    await closePage(explorer, 'backpack')
-  },
-  { timeoutMs: 180_000 }
-)
+scenario('clicking an emote card in the Backpack plays it on the preview avatar', async () => {}, {
+  todo: "the Bevy Backpack plays nothing on the preview when an emote card is selected (the HUD's previewEmote is the Shop's alone)"
+})

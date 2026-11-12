@@ -27,7 +27,7 @@
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer } from '../driver/index.ts'
 import { CATALOG, CATEGORIES, GRID_TIMEOUT_MS, normalize, openBackpack, searchFor, wearableCards, type Category } from './backpack.ts'
-import { closePage } from './pages.ts'
+import { PAGES, closePage } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -43,6 +43,14 @@ async function catalogReady(explorer: Explorer): Promise<void> {
   await explorer.hud.waitReady(CATALOG, GRID_TIMEOUT_MS)
 }
 
+/** Press a pressed category tile again, which lets it go and shows every category. */
+async function releaseTile(explorer: Explorer, category: Category): Promise<void> {
+  const tile = { name: category, role: 'button', index: 0 } as const
+  if ((await explorer.hud.get(tile)).checked === true) await explorer.hud.click(tile)
+  await until(async () => (await explorer.hud.get(tile)).checked, (pressed) => pressed !== true, { timeoutMs: CONTROL_TIMEOUT_MS, what: `the ${category} tile to let go` })
+  await catalogReady(explorer)
+}
+
 /** Choose an option of FILTER & SORT, opening the menu when it is closed and closing it after. */
 async function choose(explorer: Explorer, name: string): Promise<void> {
   if (!(await explorer.hud.isVisible(option(name)))) await explorer.hud.click(FILTER_BUTTON)
@@ -55,10 +63,17 @@ async function choose(explorer: Explorer, name: string): Promise<void> {
 
 scenario(
   'each category tile filters the grid to its category',
-  async ({ explorer, t }) => {
+  async ({ explorer, restore, t }) => {
     await openBackpack(explorer, 'wearables')
     const counts: string[] = []
     let previous: Category | undefined
+    // The Backpack keeps its category across closes, and an empty one (Skin) hides the breadcrumb's
+    // All chip every later Backpack scenario starts from: the tile left pressed is released.
+    restore(async () => {
+      if (!previous || !(await explorer.hud.isVisible(PAGES.backpack.marker))) return
+      await releaseTile(explorer, previous)
+      await closePage(explorer, 'backpack')
+    })
     for (const category of CATEGORIES) {
       const tile = { name: category, role: 'button', index: 0 } as const
       if ((await explorer.hud.get(tile)).checked !== true) await explorer.hud.click(tile)
@@ -79,6 +94,8 @@ scenario(
       previous = category
     }
     t.diagnostic(counts.join('; '))
+    if (previous) await releaseTile(explorer, previous)
+    previous = undefined
     await closePage(explorer, 'backpack')
   },
   { timeoutMs: 420_000 }
