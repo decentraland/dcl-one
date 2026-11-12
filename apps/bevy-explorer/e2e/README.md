@@ -67,7 +67,7 @@ second one on its own realm.
 | `CHROME_PATH`, `CHROME_EXTRA_ARGS` | The browser, and more flags | the installed Chrome |
 | `DCL_E2E_HEADLESS` | `1` runs Chrome headless (the engine then has no GPU: for the driver's tests only) | headed |
 | `DCL_E2E_WINDOW` | The window size, `<width>x<height>` | `1600x900` (the Visual suite uses 960x540) |
-| `DCL_E2E_WORLD` | The world the Teleport scenarios visit with `/world`; it needs a parcel 2,3 | `33.dcl.eth` |
+| `DCL_E2E_WORLD`, `DCL_E2E_WORLD_PARCEL` | The world the Teleport scenarios visit with `/world`, and a parcel of its scene away from the spawn for the in-world `/goto` | `pixelpixie.dcl.eth`, `80,-2` |
 | `DCL_E2E_RECORD` | `1` records a missing visual reference instead of failing | unset |
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
@@ -242,22 +242,22 @@ Each new file's header classes its cases as above. The chat helpers the chat spe
 | Outfits | Outfits shop | `backpack-outfit-slots` | Partial |
 | Outfits | Randomize outfit, Randomize undo / redo | `backpack-randomize` | Partial |
 | Emotes | Equip, Replace equipped, Pagination | `backpack-emotes` | Partial |
-| Emotes | Animations | `emote-slots` | Gap |
+| Emotes | Animations | none: the Bevy Backpack does not play an emote on the preview, by design | Drop |
 | Emotes | Wheel | `emote-wheel`, `emote-slots` | Port |
-| Emotes | Play | `emote-wheel` (a click); the numpad in `emote-slots` | Partial, Gap |
+| Emotes | Play | `emote-wheel` (a click), `emote-slots` (B, then the slot's digit) | Port |
 | Profile | Passport, Overview, Edit name, Equipped items | `passport` | Port, Partial |
 | Profile | Edit name color | `passport-links` | Gap |
 | Profile | Edit about me | `passport` (bio), `passport-links` (links) | Partial |
 | Communities | NavBar, Content, View a Community, Search | `explore-panel`, `communities` | Port, Partial |
-| Map | View | `shortcuts` (M), `minimap`; Tab in `map-panels` | Port, Gap |
+| Map | View | `shortcuts` (M), `minimap`, `map-panels` (Tab) | Port |
 | Map | Layers | `map-panels` | Gap |
 | Map | Filters | `navmap`, `map-panels` | Partial |
 | Map | Search | `teleport` (the card, JUMP IN), `map-panels` (no match; the card's other controls a Gap) | Partial |
 | Teleport | Coordinates on chat, Coordinates via command, Coordinates in world | `teleport` | Port |
 | Teleport | Worlds, Via Map | `teleport` | Partial |
 
-The world the Teleport cases visit is `DCL_E2E_WORLD`, `33.dcl.eth` by default: the checklist's
-`olavra` is not a world on decentraland.zone. The Gaps that need a second user in the world (DMs,
+The world the Teleport cases visit is `DCL_E2E_WORLD`, `pixelpixie.dcl.eth` by default: the
+checklist's `olavra` is not a world on decentraland.zone. The Gaps that need a second user in the world (DMs,
 mentions, another user seeing a new look) wait for a second client in a run.
 
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's

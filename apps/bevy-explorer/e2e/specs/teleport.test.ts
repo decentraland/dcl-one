@@ -14,8 +14,8 @@
 // | Via Map               | the Map's search finds a place read from a category list; its card's JUMP IN teleports | Partial |
 //
 // Partial, Worlds: the suite's `olavra` is not a world on decentraland.zone, so the world is
-// `DCL_E2E_WORLD` (`33.dcl.eth` by default: a zone world deployed in 2023, parcels 0,0 to 4,5); the
-// in-world `/goto` targets 2,3 of it. `/goto <world>` is the same parse as `/world` (chatCommands.ts)
+// `DCL_E2E_WORLD` (`pixelpixie.dcl.eth` by default: on zone its scene spans 77,-4 to 80,-2 and
+// spawns at 78,-3); the in-world `/goto` targets `DCL_E2E_WORLD_PARCEL` (80,-2), away from the spawn. `/goto <world>` is the same parse as `/world` (chatCommands.ts)
 // and is not run twice.
 // Partial, Via Map: the suite clicks a scene on the map canvas, which has no addressable parcels.
 // The place comes from a category list instead (nothing asserts zone's live listings as literals),
@@ -39,8 +39,8 @@ const REALM_TIMEOUT_MS = 120_000
 const CONTROL_TIMEOUT_MS = 20_000
 /** The conversation rail's Nearby button, pressed while the Nearby conversation shows (ConversationRail.tsx). */
 const NEARBY_CHAT = { name: 'Nearby chat', role: 'button' } as const
-const WORLD = (process.env.DCL_E2E_WORLD ?? '33.dcl.eth').toLowerCase()
-const WORLD_PARCEL: [number, number] = [2, 3]
+const WORLD = (process.env.DCL_E2E_WORLD ?? 'pixelpixie.dcl.eth').toLowerCase()
+const WORLD_PARCEL = (process.env.DCL_E2E_WORLD_PARCEL ?? '80,-2').split(',').map(Number) as [number, number]
 const SCENARIO_TIMEOUT_MS = 300_000
 
 type Parcel = [number, number]

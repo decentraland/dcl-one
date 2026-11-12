@@ -8,7 +8,7 @@
 // itself. The place card and its JUMP IN are teleport.test.ts's.
 //
 // | Suite case | Here                                                                                 | Class   |
-// | View       | Tab opens the Map (M and the minimap: shortcuts and minimap specs)                    | Gap     |
+// | View       | Tab opens the Map and Escape closes it (M and the minimap: shortcuts and minimap specs) | Port    |
 // | Filters    | a category chip opens its side list with the three sorts and place cards; Close closes it | Partial |
 // | Search     | a search no place or world matches lists no result                                   | Partial |
 // | Layers     | the Layers modal with its pins, details and map types                                | Gap     |
@@ -18,15 +18,12 @@
 // addressable, so the side list that comes with them is read, for one chip that lists something.
 // Nothing asserts zone's listings as literals. Partial, Search: the found place's card is
 // teleport.test.ts's; here the empty search, whose result list is absent.
-// Gap, View: Tab is bound to the Map (inputs.rs), but on the web build it did not open it (CI run
-// 43224979097: the Map's search never showed after the press), while M does; to be checked with the
-// engine team before it becomes a scenario.
 // Gaps: the Bevy Map has no Layers control and a satellite map only (Notion U6); its place card has
 // JUMP IN, the location, the parcel count and the description (MapPage.tsx PlacePanel), none of the
 // other controls.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer } from '../driver/index.ts'
-import { PAGES, closePage, openWithKey } from './pages.ts'
+import { PAGES, PAGE_OPEN_TIMEOUT_MS, closePage, openWithKey } from './pages.ts'
 
 const scenario = spec(import.meta.url)
 
@@ -45,8 +42,11 @@ async function placeCards(explorer: Explorer): Promise<string[]> {
   return (await explorer.hud.list('button')).map((entry) => entry.name).filter((name) => CARD.test(name))
 }
 
-scenario('Tab opens the Map and Escape closes it', async () => {}, {
-  todo: 'on the web build Tab did not open the Map (M does), though inputs.rs binds both'
+// Tab is bound to the Map beside M (inputs.rs SystemAction::Map).
+scenario('Tab opens the Map and Escape closes it', async ({ explorer }) => {
+  await explorer.key('Tab')
+  await explorer.hud.wait(SEARCH, { timeoutMs: PAGE_OPEN_TIMEOUT_MS })
+  await closePage(explorer, 'map')
 })
 
 scenario("a category chip opens its side list with the three sorts and the category's places", async ({ explorer, t }) => {
