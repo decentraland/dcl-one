@@ -162,7 +162,12 @@ function LegalPageLayout({
             </section>
           ))}
           {cta && blogHref(cta.href) ? (
-            <a className={styles.cta} href={blogHref(cta.href)?.href} target={cta.target} rel={cta.rel}>
+            <a
+              className={styles.cta}
+              href={blogHref(cta.href)?.href}
+              target={cta.target}
+              rel={cta.rel}
+            >
               {cta.label}
             </a>
           ) : null}
