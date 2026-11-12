@@ -13,6 +13,7 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
+    landscape_textures::{self, LandscapeTextures},
     satellite_floor,
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
@@ -66,6 +67,7 @@ pub(super) fn register(app: &mut App) {
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
             ("Satellite floor shown", "satelliteShown"),
+            ("Ground and cliff textures", "groundTextures"),
         ],
         actions: &[],
         inputs: &[
@@ -170,8 +172,8 @@ fn landscape_command(
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
     (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
-    trees: Query<(), With<Tree>>,
-    grass: Query<(), With<ParcelGrass>>,
+    (textures, server): (Res<LandscapeTextures>, Res<AssetServer>),
+    (trees, grass): (Query<(), With<Tree>>, Query<(), With<ParcelGrass>>),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let (Some(layer), Some(value)) = (args.layer.as_deref(), args.visible) {
@@ -187,8 +189,10 @@ fn landscape_command(
         }
     }
     let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
+    let ground_textures = landscape_textures::load_state(&textures, &server);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "satelliteShown":satellite_shown}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "satelliteShown":satellite_shown,
+        "groundTextures":ground_textures}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;

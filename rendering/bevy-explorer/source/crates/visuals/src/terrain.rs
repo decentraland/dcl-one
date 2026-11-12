@@ -2,17 +2,22 @@
 //! eased values to the ground and grass vertex shader, and builds the player's ground collider from
 //! the same values so what you see is what you stand on.
 
+use crate::landscape_textures::{ground_shader_defs, LandscapeTextures};
 use bevy::{
     asset::{embedded_asset, embedded_path, weak_handle, RenderAssetUsages},
-    pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin},
+    pbr::{
+        ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+        MaterialPlugin,
+    },
     prelude::*,
     render::{
         extract_resource::{ExtractResource, ExtractResourcePlugin},
-        mesh::{Indices, PrimitiveTopology},
+        mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology},
         render_asset::RenderAssets,
         render_resource::{
-            AsBindGroup, Extent3d, Origin3d, ShaderRef, TexelCopyBufferLayout,
-            TexelCopyTextureInfo, TextureAspect, TextureDimension, TextureFormat,
+            AsBindGroup, Extent3d, Origin3d, RenderPipelineDescriptor, ShaderRef,
+            SpecializedMeshPipelineError, TexelCopyBufferLayout, TexelCopyTextureInfo,
+            TextureAspect, TextureDimension, TextureFormat,
         },
         renderer::RenderQueue,
         texture::GpuImage,
@@ -52,10 +57,7 @@ pub(crate) struct TerrainPlugin;
 
 impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
-        embedded_asset!(app, "terrain_vertex.wgsl");
-        embedded_asset!(app, "terrain_params.wgsl");
-        embedded_asset!(app, "terrain_flat.wgsl");
-        embedded_asset!(app, "coast_profile.wgsl");
+        embed_shaders(app);
 
         app.init_resource::<TerrainSurface>()
             .init_resource::<PlayerTerrainHeight>()
@@ -86,6 +88,14 @@ impl Plugin for TerrainPlugin {
             );
         }
     }
+}
+
+pub(crate) fn embed_shaders(app: &mut App) {
+    embedded_asset!(app, "terrain_vertex.wgsl");
+    embedded_asset!(app, "terrain_params.wgsl");
+    embedded_asset!(app, "terrain_flat.wgsl");
+    embedded_asset!(app, "coast_profile.wgsl");
+    embedded_asset!(app, "landscape_ground.wgsl");
 }
 
 pub(crate) fn terrain_vertex_shader() -> ShaderRef {
@@ -141,7 +151,8 @@ mod decl {
 }
 pub use decl::*;
 
-/// Flat ground colour (used when parcel grass is off), displaced like the grass.
+/// The ground without grass shells (used when parcel grass is off), textured from the splat and
+/// displaced like the grass.
 pub type TerrainFlatMaterial = ExtendedMaterial<TerrainExtension>;
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -150,13 +161,25 @@ pub struct TerrainExtension {
     pub terrain_steps: Handle<Image>,
     #[uniform(101)]
     pub terrain: TerrainParams,
+    #[texture(102)]
+    #[sampler(103)]
+    pub ground_splat: Handle<Image>,
+    #[texture(104)]
+    #[sampler(105)]
+    pub ground_colour: Handle<Image>,
+    #[texture(106)]
+    #[sampler(107)]
+    pub sand_colour: Handle<Image>,
 }
 
-impl Default for TerrainExtension {
-    fn default() -> Self {
+impl TerrainExtension {
+    pub(crate) fn new(textures: &LandscapeTextures) -> Self {
         Self {
             terrain_steps: TERRAIN_TEXTURE,
             terrain: TerrainParams::default(),
+            ground_splat: textures.splat.clone(),
+            ground_colour: textures.ground.clone(),
+            sand_colour: textures.sand.clone(),
         }
     }
 }
@@ -184,6 +207,18 @@ impl MaterialExtension for TerrainExtension {
 
     fn prepass_fragment_shader() -> ShaderRef {
         Self::fragment_shader()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.extend(ground_shader_defs());
+        }
+        Ok(())
     }
 }
 

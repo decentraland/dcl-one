@@ -1,4 +1,5 @@
-// Cliffs and sand: vertex-coloured standard lighting, with the shore wash on the sand.
+// Cliffs and sand: standard lighting, the rock textured from the reference cliff and the sand
+// vertex-coloured, with the shore wash on the sand.
 
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
@@ -28,6 +29,52 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 #endif
 
 @group(2) @binding(100) var<uniform> land_bounds: vec4<f32>;
+@group(2) @binding(101) var rock_colour: texture_2d<f32>;
+@group(2) @binding(102) var rock_colour_sampler: sampler;
+@group(2) @binding(103) var rock_normal: texture_2d<f32>;
+@group(2) @binding(104) var rock_normal_sampler: sampler;
+
+// metres per repeat of the rock texture: the texel density of the reference cliff mesh's uvs
+const ROCK_TEXTURE_METRES: f32 = 17.08;
+// the reference rock material: its smoothness, and a moss colour (sRGB) that takes over as faces
+// turn upward, fully from a normal y of MOSS_MASK
+const ROCK_SMOOTHNESS: f32 = 0.082;
+const MOSS_SRGB: vec3<f32> = vec3(0.649, 0.23631646, 0.16419701);
+const MOSS_MASK: f32 = 0.752;
+const MOSS_EDGE: f32 = 1.12;
+
+struct Rock {
+    albedo: vec3<f32>,
+    normal: vec3<f32>,
+}
+
+// One projection of the triplanar rock: tangent `t` and image-up `b` span the plane, `a` is its
+// axis, with t x b = a so the map's green channel points along b. Blends the map's normal with
+// the face normal `n` (whiteout) and returns it in world space.
+fn rock_plane(p: vec3<f32>, n: vec3<f32>, t: vec3<f32>, b: vec3<f32>, a: vec3<f32>) -> Rock {
+    // image rows run down the texture, so v grows against b
+    let uv = vec2(dot(p, t), -dot(p, b)) / ROCK_TEXTURE_METRES;
+    let albedo = textureSample(rock_colour, rock_colour_sampler, uv).rgb;
+    let detail = textureSample(rock_normal, rock_normal_sampler, uv).rgb * 2.0 - vec3(1.0);
+    let blended = vec3(detail.xy + vec2(dot(n, t), dot(n, b)), detail.z * dot(n, a));
+    return Rock(albedo, t * blended.x + b * blended.y + a * blended.z);
+}
+
+// The procedural cliff has no uvs: the rock texture is projected along each world axis and the
+// three blended by the face normal `n`, mirrored on negative faces so the normals keep their
+// handedness. Samples textures: call in uniform control flow.
+fn rock(p: vec3<f32>, n: vec3<f32>) -> Rock {
+    let s = select(vec3(-1.0), vec3(1.0), n >= vec3(0.0));
+    let x = rock_plane(p, n, vec3(0.0, 0.0, -s.x), vec3(0.0, 1.0, 0.0), vec3(s.x, 0.0, 0.0));
+    let y = rock_plane(p, n, vec3(s.y, 0.0, 0.0), vec3(0.0, 0.0, -1.0), vec3(0.0, s.y, 0.0));
+    let z = rock_plane(p, n, vec3(s.z, 0.0, 0.0), vec3(0.0, 1.0, 0.0), vec3(0.0, 0.0, s.z));
+    var w = pow(abs(n), vec3(4.0));
+    w /= w.x + w.y + w.z;
+    let colour = x.albedo * w.x + y.albedo * w.y + z.albedo * w.z;
+    let moss = pow((MOSS_SRGB + 0.055) / 1.055, vec3(2.4));
+    let albedo = mix(moss, colour, smoothstep(n.y, MOSS_EDGE, MOSS_MASK));
+    return Rock(albedo, normalize(x.normal * w.x + y.normal * w.y + z.normal * w.z));
+}
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -35,6 +82,17 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     // derivatives must be taken in uniform control flow (WebGPU rejects them in the branch)
     let p = in.world_position.xz;
     let footprint = max(length(dpdx(p)), length(dpdy(p)));
+    let face = normalize(select(-in.world_normal, in.world_normal, is_front));
+    let stone = rock(in.world_position.xyz, face);
+#ifdef VERTEX_COLORS
+    let rock_weight = in.color.a;
+#else
+    let rock_weight = 0.0;
+#endif
+    pbr.material.base_color = vec4(mix(pbr.material.base_color.rgb, stone.albedo, rock_weight), 1.0);
+    pbr.material.perceptual_roughness =
+        mix(pbr.material.perceptual_roughness, 1.0 - ROCK_SMOOTHNESS, rock_weight);
+    pbr.N = normalize(mix(pbr.N, stone.normal, rock_weight));
     if in.world_position.y < -16.2 {
         let fade = 1.0 - smoothstep(0.27, 0.8, footprint);
         let sand = max(pbr.N.y, 0.0);

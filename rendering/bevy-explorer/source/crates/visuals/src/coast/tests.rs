@@ -202,3 +202,41 @@ fn ripples_tile_and_are_deterministic() {
     let top = &bytes[..ripples::SIZE * ripples::SIZE * 2];
     assert!(top.iter().any(|&v| v < 100) && top.iter().any(|&v| v > 155));
 }
+
+/// The textured cliff compiles with the prepasses and shadows. Needs a GPU, so `#[ignore]`d and
+/// skipped by CI:
+///
+/// ```text
+/// cargo test -p visuals cliff_shader_compiles -- --ignored --nocapture
+/// ```
+#[test]
+#[ignore = "needs a GPU; run with --ignored"]
+fn cliff_shader_compiles() {
+    use crate::{landscape_textures::LandscapeTextures, pipeline_test, terrain};
+
+    let mut app = pipeline_test::app();
+    terrain::embed_shaders(&mut app);
+    embed_shaders(&mut app);
+    app.add_plugins(MaterialPlugin::<CliffMaterial>::default());
+    app.finish();
+    app.cleanup();
+
+    let world = app.world_mut();
+    let textures = world.resource::<LandscapeTextures>().clone();
+    let bounds = bounds(IVec2::ZERO, IVec2::ZERO);
+    let mesh = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(cliff_mesh(bounds, 0, 0));
+    let material = world
+        .resource_mut::<Assets<CliffMaterial>>()
+        .add(cliff_material(&textures));
+    world.spawn((Mesh3d(mesh), MeshMaterial3d(material), Transform::default()));
+
+    let crest = Vec3::new(8.0, 0.0, -8.0);
+    pipeline_test::assert_pipelines_compile(
+        &mut app,
+        crest + Vec3::new(0.0, 20.0, 60.0),
+        crest,
+        &["coast_cliff.wgsl"],
+    );
+}

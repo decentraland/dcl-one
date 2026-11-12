@@ -6,6 +6,7 @@
     #import bevy_pbr::pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing};
     #import bevy_pbr::{mesh_view_bindings::lights, shadows};
     #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
+    #import "embedded://visuals/landscape_ground.wgsl"::ground_albedo_normal
 #endif
 #import bevy_pbr::mesh_functions::get_tag;
 #import bevy_pbr::mesh_view_bindings::view;
@@ -48,8 +49,6 @@ struct ShellTexture {
     layers: u32,
     // xz the snap grid is anchored to
     snap_anchor: vec2<f32>,
-    root_color: vec4<f32>,
-    tip_color: vec4<f32>,
 }
 
 @group(2) @binding(0) var<uniform> shell: ShellTexture;
@@ -77,6 +76,10 @@ fn cell_hash2(cell: vec2<i32>) -> vec2<f32> {
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     // metres of ground per pixel, taken before any discard so the derivatives stay uniform
     let footprint = max(fwidth(in.world_position.x), fwidth(in.world_position.z));
+#ifndef PREPASS_PIPELINE
+    // likewise sampled before any discard
+    let ground = ground_albedo_normal(in.world_position.xz);
+#endif
 
     // shells are double sided so the inside of a hill shows; dither them out between the camera
     // and the player like scene materials
@@ -92,7 +95,6 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     let layer_f32 = f32(layer);
     let layers_f32 = f32(shell.layers);
     let factor = layer_f32 / layers_f32;
-    let color_factor = factor * color_attenuation(layers_f32);
 
     let subdivisions_f32 = f32(shell.subdivisions);
 
@@ -152,15 +154,12 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
 #ifndef PREPASS_PIPELINE
     var pbr_input = pbr_input_from_vertex_output(in, is_front, true);
     pbr_input.material.reflectance = vec3(0.125);
-    pbr_input.material.base_color = mix(shell.root_color, shell.tip_color, color_factor);
+    // every shell takes the ground colour under it, so the ground looks the same with grass off
+    pbr_input.material.base_color = vec4(ground.albedo, 1.0);
 
     out.color = apply_pbr_lighting(pbr_input);
     out.color = main_pass_post_lighting_processing(pbr_input, out.color);
 #endif // PREPASS_PIPELINE
 
     return out;
-}
-
-fn color_attenuation(layers: f32) -> f32 {
-    return 1 - (log(2 * layers) / (2 * log(10.))) + 0.6;
 }
