@@ -16,6 +16,7 @@ pub enum Outcome {
     Idle,
     Applied,
     Blocked,
+    AwaitingCommand,
 }
 
 /// Record an already validated snapshot boundary. Existing generations cannot
@@ -25,6 +26,16 @@ pub async fn register(pool: &PgPool, name: &str, generation: Uuid, baseline: &st
     ensure!(!generation.is_nil(), "generation must not be nil");
     parse_lsn(baseline)?;
     let mut tx = pool.begin().await?;
+    let exclusive: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_xact_lock(hashtextextended('dcl-one/migration-follower',0))",
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    ensure!(
+        exclusive,
+        "normal serving process is active; registration requires follower isolation"
+    );
+
     sqlx::query(
         "INSERT INTO migration_sync.streams(name, source, generation, baseline_lsn, applied_lsn)
          VALUES ($1, 'places', $2, $3::text::pg_lsn, $3::text::pg_lsn) ON CONFLICT DO NOTHING",
@@ -69,6 +80,24 @@ pub async fn enqueue(pool: &PgPool, envelope: &Envelope) -> Result<bool> {
         stream.try_get::<Uuid, _>("generation")? == envelope.generation,
         "stream generation mismatch"
     );
+    let scoped: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2)")
+        .bind(&envelope.stream).bind(envelope.generation).fetch_one(&mut *tx).await?;
+    if scoped {
+        let mut entities: BTreeSet<&str> = envelope
+            .changes
+            .iter()
+            .map(|change| change.key().1)
+            .collect();
+        if let Some(command) = &envelope.command {
+            entities.insert(&command.entity_id);
+        }
+        for entity in entities {
+            let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 AND entity_id=$3)")
+                .bind(&envelope.stream).bind(envelope.generation).bind(Uuid::parse_str(entity)?)
+                .fetch_one(&mut *tx).await?;
+            ensure!(allowed, "transaction escapes installed capture scope");
+        }
+    }
     let existing: Option<Value> = sqlx::query_scalar(
         "SELECT payload FROM migration_sync.inbox
          WHERE stream=$1 AND generation=$2 AND commit_lsn=$3::text::pg_lsn",
@@ -144,7 +173,8 @@ pub async fn status(pool: &PgPool, name: &str) -> Result<Value> {
           (SELECT count(*) FROM migration_sync.inbox i WHERE i.stream=s.name AND status='pending') AS pending,
           (SELECT count(*) FROM migration_sync.inbox i WHERE i.stream=s.name AND status='blocked') AS blocked,
           (SELECT commit_lsn::text FROM migration_sync.inbox i WHERE i.stream=s.name AND status='pending' ORDER BY commit_lsn LIMIT 1) AS next_pending,
-          (SELECT error_code FROM migration_sync.inbox i WHERE i.stream=s.name AND previous_lsn=s.applied_lsn) AS head_error
+          (SELECT error_code FROM migration_sync.inbox i WHERE i.stream=s.name AND previous_lsn=s.applied_lsn) AS head_error,
+          (SELECT commit_lsn::text FROM migration_sync.inbox i WHERE i.stream=s.name AND previous_lsn=s.applied_lsn) AS head_lsn
          FROM migration_sync.streams s WHERE name=$1",
     )
     .bind(name)
@@ -162,6 +192,7 @@ pub async fn status(pool: &PgPool, name: &str) -> Result<Value> {
         "blocked": row.try_get::<i64,_>("blocked")?,
         "next_pending_lsn": row.try_get::<Option<String>,_>("next_pending")?,
         "head_error": row.try_get::<Option<String>,_>("head_error")?,
+        "head_lsn": row.try_get::<Option<String>,_>("head_lsn")?,
     }))
 }
 
@@ -211,18 +242,62 @@ pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
         }
         _ => return block(tx, name, generation, &position, "invalid_envelope").await,
     };
-    if let Decision::Blocked(code) = envelope.classify() {
-        return block(tx, name, generation, &position, code).await;
-    }
-    // Savepoint keeps the head lock when a domain statement fails, while
-    // rolling back every domain write before recording the blocked outcome.
-    let mut application = tx.begin().await?;
-    let result = apply(&mut application, &envelope).await;
-    match result {
-        Ok(()) => application.commit().await?,
-        Err(_) => {
-            application.rollback().await?;
-            return block(tx, name, generation, &position, "apply_failed").await;
+    match envelope.classify() {
+        Decision::Blocked(code) => return block(tx, name, generation, &position, code).await,
+        Decision::ExecuteCommand => {
+            let command = envelope
+                .command
+                .as_ref()
+                .context("validated command missing")?;
+            let receipt = sqlx::query(
+                "SELECT commit_lsn::text AS position, command=$4 AS matches_command, state=$5 AS matches_state
+                 FROM migration_sync.command_receipts WHERE stream=$1 AND generation=$2 AND operation_id=$3",
+            ).bind(name).bind(generation).bind(command.operation_id)
+             .bind(serde_json::to_value(command)?).bind(serde_json::to_value(&command.expected)?)
+             .fetch_optional(&mut *tx).await?;
+            let Some(receipt) = receipt else {
+                return Ok(Outcome::AwaitingCommand);
+            };
+            if receipt.try_get::<String, _>("position")? != position
+                || !receipt.try_get::<bool, _>("matches_command")?
+                || !receipt.try_get::<bool, _>("matches_state")?
+            {
+                return block(tx, name, generation, &position, "command_receipt_conflict").await;
+            }
+            let state = sqlx::query("SELECT user_activity, created_at FROM explore.user_favorites WHERE \"user\"=$1 AND entity_id=$2")
+                .bind(&command.user).bind(&command.entity_id).fetch_optional(&mut *tx).await?;
+            let equivalent = match (state, &command.expected) {
+                (None, None) => true,
+                (Some(row), Some(expected)) => {
+                    row.try_get::<f64, _>("user_activity")? == expected.user_activity
+                        && row.try_get::<chrono::NaiveDateTime, _>("created_at")?
+                            == expected.created_at.naive_utc()
+                }
+                _ => false,
+            };
+            if !equivalent {
+                return block(tx, name, generation, &position, "native_state_diverged").await;
+            }
+            sqlx::query(
+                "INSERT INTO migration_sync.favorite_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted)
+                 VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6)
+                 ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted",
+            ).bind(name).bind(generation).bind(&command.user).bind(&command.entity_id).bind(&position).bind(!command.favorite)
+             .execute(&mut *tx).await?;
+            // Native mutation and receipt already committed together. Do not
+            // reapply captured favorite writes or increment counters again.
+        }
+        Decision::Apply => {
+            // Savepoint preserves the head lock while rolling back all domain
+            // writes before a durable blocked outcome is recorded.
+            let mut application = tx.begin().await?;
+            match apply(&mut application, &envelope).await {
+                Ok(()) => application.commit().await?,
+                Err(_) => {
+                    application.rollback().await?;
+                    return block(tx, name, generation, &position, "apply_failed").await;
+                }
+            }
         }
     }
     sqlx::query(
@@ -312,5 +387,45 @@ async fn apply(tx: &mut Transaction<'_, Postgres>, envelope: &Envelope) -> Resul
                dislikes=EXCLUDED.dislikes,updated_at=EXCLUDED.updated_at",
         ).bind(entity).execute(&mut **tx).await?;
     }
+    Ok(())
+}
+
+/// The pointer is read without holding a transaction across network I/O. The
+/// follower rechecks the predecessor under the same stream lock as apply.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CommandPointer {
+    pub stream: String,
+    pub generation: Uuid,
+    pub commit_lsn: String,
+}
+
+pub async fn pending_command(pool: &PgPool, name: &str) -> Result<Option<CommandPointer>> {
+    let row = sqlx::query("SELECT i.payload FROM migration_sync.streams s JOIN migration_sync.inbox i ON i.stream=s.name AND i.generation=s.generation AND i.previous_lsn=s.applied_lsn WHERE s.name=$1 AND NOT s.paused AND i.status='pending'")
+        .bind(name).fetch_optional(pool).await?;
+    let Some(row) = row else {
+        return Ok(None);
+    };
+    let envelope: Envelope = serde_json::from_value(row.try_get("payload")?)?;
+    envelope.validate()?;
+    Ok(
+        matches!(envelope.classify(), Decision::ExecuteCommand).then_some(CommandPointer {
+            stream: envelope.stream,
+            generation: envelope.generation,
+            commit_lsn: envelope.commit_lsn,
+        }),
+    )
+}
+
+/// A definitive rejection may block only the same current head, and must not
+/// overwrite an atomic receipt committed by a concurrent/retried dispatcher.
+pub async fn reject_command(pool: &PgPool, pointer: &CommandPointer) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT name FROM migration_sync.streams WHERE name=$1 FOR UPDATE")
+        .bind(&pointer.stream)
+        .fetch_optional(&mut *tx)
+        .await?;
+    sqlx::query("UPDATE migration_sync.inbox i SET status='blocked',error_code='native_command_rejected' FROM migration_sync.streams s WHERE s.name=i.stream AND s.generation=i.generation AND i.previous_lsn=s.applied_lsn AND i.stream=$1 AND i.generation=$2 AND i.commit_lsn=$3::text::pg_lsn AND i.status='pending' AND NOT EXISTS(SELECT 1 FROM migration_sync.command_receipts r WHERE r.stream=i.stream AND r.generation=i.generation AND r.commit_lsn=i.commit_lsn)")
+        .bind(&pointer.stream).bind(pointer.generation).bind(&pointer.commit_lsn).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }

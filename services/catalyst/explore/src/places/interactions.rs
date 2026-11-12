@@ -473,6 +473,19 @@ pub async fn set_favorite_in(
     favorite: bool,
     user_activity: f64,
 ) -> Result<(), ApiError> {
+    set_favorite_at_in(tx, entity_id, user, favorite, user_activity, now()).await
+}
+
+/// The native favorite transition with an explicit accepted-source clock for
+/// ordered migration replay. Existing requests retain the local clock above.
+pub async fn set_favorite_at_in(
+    tx: &mut PgConnection,
+    entity_id: &str,
+    user: &str,
+    favorite: bool,
+    user_activity: f64,
+    created_at: chrono::NaiveDateTime,
+) -> Result<(), ApiError> {
     let user = user.to_lowercase();
     lock_counts(&mut *tx, entity_id).await?;
     if favorite {
@@ -482,7 +495,7 @@ pub async fn set_favorite_in(
             .bind(&user)
             .bind(entity_id)
             .bind(user_activity)
-            .bind(now())
+            .bind(created_at)
             .execute(&mut *tx)
             .await?;
     } else {

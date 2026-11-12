@@ -208,6 +208,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     )
     .await
     .context("connecting to DATABASE_URL")?;
+    let _runtime_guard = crate::migration_follower::normal_runtime_guard(&pool).await?;
     db::bootstrap(&pool).await?;
     worlds::rooms::ensure_world_scene_ban_release(&pool).await?;
 

@@ -1563,7 +1563,7 @@ revokes, whose `address` a catalog write does not have.
 ## Removable one-way migration worker
 
 `services/migration-sync` owns the `migration_sync` stream, inbox and favorite
-version tables. Its workload is a bounded, ordered source transaction (up to
+version, command receipt and capture-progress tables. Its workload is a bounded, ordered source transaction (up to
 1,000 changes) applied to an isolated destination. One stream row lock serializes
 workers; facts, versions, receipt and position commit together. A predecessor gap
 waits; a failed domain transaction rolls back before its head is marked blocked.
@@ -1573,7 +1573,9 @@ scope. No throughput or production-load budget is claimed without measurement.
 The pilot changes Explore favorite facts and recomputes interaction counts from
 facts. It reads canonical non-mirrored Genesis catalogue IDs and preserves
 delete history without an FK to a place that can disappear. Existing Explore
-writers/mirrors must remain off for this scope. Dual-command application is
-blocked until backend receipts and execution/repair arbitration exist. The
+writers/mirrors must remain off for this scope. Dual commands execute through the isolated follower native favorite helper and
+commit their target receipt atomically; the coordinator verifies it without
+reapplying domain rows. Capture reads a source-local transactional outbox and
+bootstrap aligns a repeatable-read baseline with its ordered boundary. The
 worker uses the single root schema bootstrap/object migration pass and has no
 automatic schema installer or history cleanup.

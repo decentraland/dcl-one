@@ -1,132 +1,175 @@
-# Migration sync worker
+# One-way migration service
 
-A separately deployable, removable worker for **production → dcl-one**
-synchronization. It does not run inside the gateway or the Catalyst API process.
-Build it from this monorepo; the serving backend does not depend on it.
+A separately deployable, removable **production → dcl-one** coordinator. Production
+remains the write authority and owns jobs and external effects. The gateway returns
+production's result. Its production transaction records the command durably; the
+coordinator executes the equivalent native target command in source order. Changes
+without a command receipt use the selective database mapping instead.
 
-## Implemented scope
+## Supported pilot
 
-- Durable transaction inbox with immutable stream generation and snapshot boundary.
-- Strictly ordered apply through predecessor positions; missing predecessors wait.
-- Identical replay is a no-op; conflicting replay, forks and stale generations fail.
-- Places favorites upsert/delete for canonical wallet and Genesis-place UUID keys.
-- Fact changes, deletion/version history, derived counts and checkpoints commit atomically.
-- Multiple worker processes serialize on the stream row. Failed application rolls
-  back the whole domain transaction and retains a blocked head.
-- Pause, resume, status and SIGINT/SIGTERM shutdown. Pausing waits for in-flight
-  application; shutdown never deletes history or advances an unfinished transaction.
+Only favorites for explicitly selected Genesis Places UUIDs. Shop and credits are
+excluded for security reasons, including marketplace imports. Worlds, social/voice,
+notifications, other aggregates and arbitrary SQL replication are not implemented.
+The asset-bundle rewriter is unrelated and unchanged.
 
-This increment is **for isolated rehearsals only**. `--rehearsal` acknowledges
-that prerequisite; it does not disable another process's writers. Keep the mapped
-Catalyst APIs, jobs and mirrors off and use isolated storage/providers. There is
-no live WAL connector, consistent-snapshot exporter, gateway dispatcher, backend
-receipt protocol or automatic follower-mode enforcement yet. Envelopes marked
-`dual` are durably blocked with `dual_receipts_required`, never assumed equivalent.
+The [executable scope contract](pilot-contract.json) lists mappings and activation gates.
 
-Shop, credits, marketplace favorites, worlds and arbitrary table/SQL replication
-are outside this executable's mapping. Only one Places stream can own the scope.
+The target's dedicated `catalyst migration-follower` listener starts no normal
+services, consumers, mirrors or scheduled jobs. Its authenticated read endpoint is
+an internal verification API, **not** a compatible replacement for the public
+Places API. Do not send public read traffic to it yet.
 
-## Build and schema
+Source capture is an opt-in **transactional outbox**, not logical WAL replication.
+Triggers write locally in the same production transaction, including direct SQL
+writes. A source-local transaction lock establishes commit order; production never
+waits for dcl-one, but contending source writers do serialize. Measure that cost
+before rollout. Outbox ordinals use the envelope's hexadecimal cursor format;
+they are not actual PostgreSQL WAL positions.
 
-From the repository root:
+## Build and prerequisites
 
 ```sh
 cargo build --locked --manifest-path services/catalyst/Cargo.toml -p dcl-migration-sync
-nix build .#migration-sync         # separate package
-nix build .#image-migration-sync   # separate image; not started automatically
+nix build .#migration-sync
+nix build .#image-migration-sync
 ```
 
-Use the normal Catalyst fresh-schema or additive schema migration procedure to
-install `schemas/70_migration_sync.sql` with the rest of the destination schema.
-The worker does not create tables on startup. For existing databases the schema
-migrator's object pass creates these new objects; no existing table is altered.
-The baseline must already contain the pilot's canonical, non-mirrored Genesis
-catalogue and migrated facts. Registration records an operator-established
-boundary; it does not prove a source snapshot or capture stream is complete.
+Use the normal schema migration procedure to install
+[worker state](../../schemas/70_migration_sync.sql) and
+[capture progress](../../schemas/71_migration_capture.sql). Migrate the canonical
+Genesis catalogue before bootstrap. Bootstrap imports a consistent scoped favorite
+snapshot and rejects existing target favorites in that scope; omit that scoped
+favorite batch from the initial import or use a clean rehearsal destination.
+Catalogue changes are not continuously mapped by this pilot: freeze reviewed
+catalogue identities or stop the pilot when dependencies change.
 
-## Run an isolated rehearsal
+Stop all normal destination API/job/mirror processes. New `serve` and `index`
+commands share a startup advisory guard with registration/bootstrap; old binaries,
+independent SQL writers and lost guard sessions are **not** fenced by that guard.
+Keep the destination dedicated, restrict DB roles and ingress, and supervise these
+processes separately. `--rehearsal` remains required until rollout gates are proven.
 
-Provide a destination-only connection using `MIGRATION_SYNC_DATABASE_URL`.
-Use a role restricted to `migration_sync`, reading the mapped Explore catalogue
-and likes, and changing favorites and interaction counts. It needs no production
-credentials, DDL permissions or access to financial tables. Runtime credentials
-are not built into the package/image.
+## Start a rehearsal
+
+Credentials belong in the supervisor's secret environment, not CLI arguments or
+images. `MIGRATION_SYNC_DATABASE_URL` targets dcl-one. Source commands additionally
+use `MIGRATION_SYNC_SOURCE_DATABASE_URL`. Installation uses a separate DDL-capable
+source role; subsequent capture uses a read-only source role. See
+[source installation and grants](source/README.md).
 
 ```sh
-export MIGRATION_SYNC_DATABASE_URL='postgres://USER:PASSWORD@HOST/ISOLATED_DB'
-dcl-migration-sync register --stream places --generation 11111111-1111-4111-8111-111111111111 --baseline-lsn 0/10
-dcl-migration-sync enqueue transaction.json
-dcl-migration-sync status --stream places
+# Explicit source mutation: install only in the approved source rehearsal DB.
+dcl-migration-sync install-source --entity 22222222-2222-4222-8222-222222222222
+# Imports favorites at a consistent capture boundary and registers a paused stream.
+dcl-migration-sync bootstrap --stream places
+# Copy committed source transactions; supervise separately from application.
+dcl-migration-sync capture --stream places --poll-ms 1000
+```
+
+Bootstrap prints the immutable generation. Start the dedicated target listener
+with that value and its own `MIGRATION_FOLLOWER_DATABASE_URL` plus a secret
+`MIGRATION_FOLLOWER_TOKEN` of at least 32 bytes:
+
+```sh
+catalyst migration-follower --host 127.0.0.1 --port 5213 --stream places --generation GENERATION
+```
+
+Set worker `MIGRATION_SYNC_FOLLOWER_URL` to the complete URL ending in
+`/internal/migration/favorites/replay`, and the same bearer token. HTTPS is required
+except for loopback rehearsal. Redirects are disabled. The replay body contains
+only stream, generation and cursor; the target reads the immutable command from
+its captured inbox. Original client signatures are never forged or retained.
+
+```sh
 dcl-migration-sync resume --stream places --rehearsal
-dcl-migration-sync run --stream places --rehearsal --once
-# Omit --once for the separately supervised polling worker:
 dcl-migration-sync run --stream places --rehearsal --poll-ms 1000
-# From another process:
-dcl-migration-sync pause --stream places
+dcl-migration-sync status --stream places
+dcl-migration-sync check --stream places --max-age-seconds 30
+dcl-migration-sync reconcile --stream places
+dcl-migration-sync metrics --stream places
 ```
 
-Streams start paused. `run --once` processes at most one source transaction;
-it reports failure for a blocked head. `status` reports positions, queue counts
-and a non-sensitive error code, not payloads. Paused/empty/gapped streams are idle;
-use status to distinguish those states. A database error stops the process;
-restart safely after resolving it. Resume does not clear blocked transactions,
-skip missing predecessors or change the snapshot generation.
+Enable the Places application's `MIGRATION_CAPTURE_ENABLED=true` only after source
+installation. Its authenticated favorite handler requires a stable client-generated
+`x-dcl-operation-id` for captured commands. Client retries reuse that ID and payload.
+Configure the alb-router hybrid allowlist to match the installed UUID scope. Writes
+without that protocol still produce source-only changes through capture; they do
+not prove native command compatibility. Direct independent target writes stay denied.
 
-## Input contract
+## Ordering and failure handling
 
-`enqueue` reads one JSON file, at most 1 MiB and 1,000 ordered mutations. This is
-trusted normalized capture input, not raw WAL and not a public request body.
-`previous_lsn` is the prior captured transaction in this stream, not an assumption
-that PostgreSQL LSNs are consecutive. The future connector must establish that
-chain, preserve transaction boundaries and map source identities correctly.
-An empty transaction may advance the captured boundary when explicitly accounted for.
+- A command receipt, favorite mutation and source outbox entry commit together.
+  Conflicting operation-ID reuse fails; an identical retry returns the stored result.
+- Capture persists each complete transaction before advancing its durable offset.
+  Snapshot-covered commands never replay. A source generation change or history gap
+  stops capture rather than silently starting over.
+- One stream lock coordinates native target execution, transformed SQL and progress.
+  Native state and receipt commit together. The coordinator validates that receipt
+  and advances without applying those captured favorite rows again.
+- A timeout may hide success. Retry the same pointer and resolve the durable target
+  receipt. Later deletes cannot be overtaken by a delayed earlier command.
+- Mapping or native invariant failures block the head. No later transaction skips it.
+  Transport failures leave the head pending. Never fall back to independent target
+  execution if production is unavailable.
 
-```json
-{
-  "version": 1,
-  "source": "places",
-  "stream": "places",
-  "generation": "11111111-1111-4111-8111-111111111111",
-  "previous_lsn": "0/10",
-  "commit_lsn": "0/20",
-  "mode": "source_only",
-  "changes": [{
-    "op": "upsert",
-    "user": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    "entity_id": "22222222-2222-4222-8222-222222222222",
-    "user_activity": 0,
-    "created_at": "2026-11-12T00:00:00Z"
-  }]
-}
-```
-
-The example entity must exist in the imported catalogue. A delete carries only
-`op`, `user` and `entity_id`; it also works after its catalogue entry was removed.
-Counters are recomputed from accepted favorite/like facts, never incremented
-again from a captured counter. Canonical keys and source-only provenance must be
-established by the capture adapter: its mode field is not automatic writer detection.
-
-All transaction payloads remain retained for replay conflict detection. Restrict
-access and account for their storage/privacy cost. No automatic pruning or stream
-reset is implemented. Retiring/rebuilding a generation requires an explicit,
-validated baseline transition; old envelopes must never replay over a newer baseline.
-
-## Verification
+Pause waits for the current application transaction. Capture can continue while
+application is paused. SIGINT/SIGTERM stops each worker without deleting history.
+After fixing the cause, an operator can retry the exact immutable blocked head:
 
 ```sh
-cargo test --locked --manifest-path services/catalyst/Cargo.toml -p dcl-migration-sync
-# Opt into DB tests using a disposable server with CREATEDB permission:
+dcl-migration-sync pause --stream places
+dcl-migration-sync status --stream places
+dcl-migration-sync retry-blocked --stream places --expected-cursor 0/2
+dcl-migration-sync resume --stream places --rehearsal
+```
+
+Retry changes only its blocked status; it does not alter payloads, receipts,
+checkpoints or domain data. Revalidation can block it again. There is no skip,
+automatic repair, destructive reset or automatic history pruning.
+
+## Operating and retiring
+
+`status` separates observed source, durable capture and applied positions, pending
+receipts, blocked rows and oldest unapplied age. `metrics` emits Prometheus text for
+a supervised textfile collector. Export atomically; alert on missing collector
+samples too. Example rehearsal alert rules are in [alerts.yml](alerts.yml); their
+thresholds are examples, not measured production budgets.
+
+Readiness requires current source contact, matching generation, fully caught-up
+capture/application, no blocked head and an unpaused stream. Idle capture polls
+refresh contact. Readiness is sampled, not linearizable cross-database consistency.
+Reconciliation compares scoped favorite rows and target favorite counts derived
+from source facts, and rejects a moving source or target boundary. It never repairs data; catalogue/effects/API equivalence still
+need separate verification.
+
+For a repeatable stable-window soak, run `scripts/soak.sh places 1440 60` with
+the worker binary and read-only source credentials in the environment. It records
+status, metrics, health checks and boundary reconciliation each minute and stops on failure;
+it does not start writers or claim a production workload was exercised.
+
+For retirement, disable hybrid ingress, preserve production authority, fence source
+writers at final cutover, capture through the final boundary, drain and reconcile.
+Stop follower ingress and both workers before transferring write/job ownership.
+Archive receipts and tombstones for the agreed retry/outage horizon. Removing
+capture triggers or deleting history is an explicit operator migration after that
+proof; this service does not do it automatically. Once dcl-one accepts independent
+writes, rollback to production needs a separate preservation plan.
+
+## Verification and remaining gates
+
+```sh
 MIGRATION_SYNC_TEST_DATABASE_URL='postgres://USER:PASSWORD@HOST/postgres' \
   cargo test --locked --manifest-path services/catalyst/Cargo.toml -p dcl-migration-sync
+CATALYST_TEST_DATABASE_URL='postgres://USER:PASSWORD@HOST/postgres' \
+  cargo test --locked --manifest-path services/catalyst/Cargo.toml -p catalyst-explore migration_follower
 ```
 
-The PostgreSQL test creates and removes its own uniquely named database. Without
-the explicit test URL, only unit checks run locally; CI requires the URL. Tests
-cover replay, gaps, deletion ordering, fork rejection, immutable baselines,
-transaction rollback, duplicate-mode refusal and competing worker instances.
-They do not establish live CDC continuity, production load budgets or end-to-end
-hybrid readiness.
+DB tests create uniquely named disposable databases; the test role needs CREATEDB.
+Without the explicit URL, DB tests are skipped locally. Local tests do not establish
+production restart/failover behavior, deployed role grants, source load budgets,
+public read compatibility, real scheduled-job coverage or a multi-day soak.
+Those remain activation gates. Expand table mappings only after an actual job-owned
+and coupled permission/notification workflow passes equivalent fault tests.
 
-See the [deployment decision](../../docs/adr/2026-11-12-removable-migration-sync-service.md)
-for ownership and retirement. No production services are started by installing
-this package.
+See the [deployment ADR](../../docs/adr/2026-11-12-removable-migration-sync-service.md).

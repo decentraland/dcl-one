@@ -3,7 +3,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use dcl_migration_sync::{model::Envelope, store};
+use dcl_migration_sync::{capture, dispatch, model::Envelope, ops, store};
 use sqlx::postgres::PgPoolOptions;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -24,6 +24,49 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Fail unless capture is fresh, application caught up, and the stream unpaused.
+    Check {
+        #[arg(long)]
+        stream: String,
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        max_age_seconds: u64,
+    },
+    /// Emit payload-free Prometheus gauges for a supervised textfile collector.
+    Metrics {
+        #[arg(long)]
+        stream: String,
+    },
+    /// Revalidate one immutable blocked head after resolving its cause; requires pause.
+    RetryBlocked {
+        #[arg(long)]
+        stream: String,
+        #[arg(long)]
+        expected_cursor: String,
+    },
+    /// Explicitly install the source-local capture adapter for reviewed Genesis IDs.
+    InstallSource {
+        #[arg(long, required = true, num_args = 1..)]
+        entity: Vec<Uuid>,
+    },
+    /// Import the scoped favorite baseline after catalogue migration; starts paused.
+    Bootstrap {
+        #[arg(long)]
+        stream: String,
+    },
+    /// Copy committed source outbox transactions into the durable destination inbox.
+    Capture {
+        #[arg(long)]
+        stream: String,
+        #[arg(long)]
+        once: bool,
+        #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(100..=60000))]
+        poll_ms: u64,
+    },
+    /// Compare scoped favorite rows at an unchanged, caught-up source boundary.
+    Reconcile {
+        #[arg(long)]
+        stream: String,
+    },
     /// Register an immutable snapshot boundary; the new stream starts paused.
     Register {
         #[arg(long)]
@@ -105,6 +148,53 @@ async fn shutdown_signal() -> Result<()> {
     Ok(())
 }
 
+async fn source_pool() -> Result<sqlx::PgPool> {
+    let url = std::env::var("MIGRATION_SYNC_SOURCE_DATABASE_URL")
+        .context("MIGRATION_SYNC_SOURCE_DATABASE_URL is required for source operations")?;
+    PgPoolOptions::new()
+        .max_connections(3)
+        .acquire_timeout(Duration::from_secs(10))
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::raw_sql("SET statement_timeout = '30s'; SET lock_timeout = '5s'")
+                    .execute(connection)
+                    .await?;
+                Ok(())
+            })
+        })
+        .connect(&url)
+        .await
+        .context("connect to capture source")
+}
+
+fn dispatch_config() -> Result<Option<(String, String)>> {
+    match (
+        std::env::var("MIGRATION_SYNC_FOLLOWER_URL").ok(),
+        std::env::var("MIGRATION_FOLLOWER_TOKEN").ok(),
+    ) {
+        (None, None) => Ok(None),
+        (Some(url), Some(token)) => {
+            let parsed =
+                reqwest::Url::parse(&url).map_err(|_| anyhow::anyhow!("invalid follower URL"))?;
+            let loopback = matches!(parsed.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+            if !(parsed.scheme() == "https" || parsed.scheme() == "http" && loopback)
+                || !parsed.username().is_empty()
+                || parsed.password().is_some()
+                || parsed.query().is_some()
+                || parsed.fragment().is_some()
+                || parsed.path() != "/internal/migration/favorites/replay"
+                || token.len() < 32
+            {
+                bail!(
+                    "follower requires HTTPS (or loopback HTTP), the exact replay path, and a token of at least 32 bytes"
+                );
+            }
+            Ok(Some((url, token)))
+        }
+        _ => bail!("follower URL and token must be configured together"),
+    }
+}
+
 async fn execute(args: Args) -> Result<()> {
     // Validate/size-bound input before opening any connection.
     let envelope = match &args.command {
@@ -126,6 +216,68 @@ async fn execute(args: Args) -> Result<()> {
         .await
         .context("connect to migration sync destination")?;
     match args.command {
+        Command::Check {
+            stream,
+            max_age_seconds,
+        } => {
+            ops::check_health(&ops::status(&pool, &stream).await?, max_age_seconds)?;
+            println!("stream healthy at observed capture boundary");
+        }
+        Command::Metrics { stream } => {
+            print!("{}", ops::metrics(&ops::status(&pool, &stream).await?)?)
+        }
+        Command::RetryBlocked {
+            stream,
+            expected_cursor,
+        } => ops::retry_blocked(&pool, &stream, &expected_cursor).await?,
+        Command::InstallSource { entity } => {
+            let source = source_pool().await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&capture::install(&source, &entity).await?)?
+            );
+            source.close().await;
+        }
+        Command::Bootstrap { stream } => {
+            let source = source_pool().await?;
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&capture::bootstrap(&source, &pool, &stream).await?)?
+            );
+            source.close().await;
+        }
+        Command::Reconcile { stream } => {
+            let source = source_pool().await?;
+            let report = capture::reconcile(&source, &pool, &stream).await?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            source.close().await;
+            if report["matches"] != true {
+                bail!("favorite reconciliation found a mismatch");
+            }
+        }
+        Command::Capture {
+            stream,
+            once,
+            poll_ms,
+        } => {
+            let source = source_pool().await?;
+            let run = async {
+                loop {
+                    let captured = capture::pump_once(&source, &pool, &stream).await?;
+                    if once {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                    if !captured {
+                        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+                    }
+                }
+            };
+            tokio::select! {
+                result = run => result?,
+                result = shutdown_signal() => { result?; tracing::info!("capture stopping"); }
+            }
+            source.close().await;
+        }
         Command::Register {
             stream,
             generation,
@@ -144,7 +296,7 @@ async fn execute(args: Args) -> Result<()> {
         Command::Status { stream } => {
             println!(
                 "{}",
-                serde_json::to_string_pretty(&store::status(&pool, &stream).await?)?
+                serde_json::to_string_pretty(&ops::status(&pool, &stream).await?)?
             );
         }
         Command::Run {
@@ -153,12 +305,36 @@ async fn execute(args: Args) -> Result<()> {
             poll_ms,
             ..
         } => {
+            let config = dispatch_config()?;
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()?;
             let run = async {
                 loop {
-                    match store::process_next(&pool, &stream).await? {
+                    let outcome = match &config {
+                        Some((endpoint, token)) => {
+                            dispatch::process_next(&pool, &stream, &client, endpoint, token).await?
+                        }
+                        None => store::process_next(&pool, &stream).await?,
+                    };
+                    match outcome {
                         store::Outcome::Applied => tracing::info!("source transaction applied"),
                         store::Outcome::Blocked => {
                             bail!("stream blocked; inspect status and reconcile before proceeding")
+                        }
+                        store::Outcome::AwaitingCommand => {
+                            if config.is_none() {
+                                bail!(
+                                    "head requires native replay; configure follower URL and token"
+                                );
+                            }
+                            tracing::info!(
+                                "native receipt pending; retaining ordered head for retry"
+                            );
+                            if !once {
+                                tokio::time::sleep(Duration::from_millis(poll_ms)).await;
+                            }
                         }
                         store::Outcome::Idle => {
                             if !once {

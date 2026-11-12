@@ -48,3 +48,19 @@ CREATE TABLE migration_sync.favorite_versions (
     FOREIGN KEY (stream, generation, commit_lsn)
         REFERENCES migration_sync.inbox (stream, generation, commit_lsn)
 );
+
+-- The follower writes this receipt in the native mutation transaction. The
+-- coordinator reads it; captured command JSON alone never proves execution.
+CREATE TABLE migration_sync.command_receipts (
+    stream text NOT NULL,
+    generation uuid NOT NULL,
+    operation_id uuid NOT NULL,
+    commit_lsn pg_lsn NOT NULL,
+    command jsonb NOT NULL CHECK (jsonb_typeof(command) = 'object'),
+    state jsonb NOT NULL,
+    completed_at timestamptz NOT NULL DEFAULT now(),
+    PRIMARY KEY (stream, generation, operation_id),
+    UNIQUE (stream, generation, commit_lsn),
+    FOREIGN KEY (stream, generation, commit_lsn)
+        REFERENCES migration_sync.inbox (stream, generation, commit_lsn)
+);

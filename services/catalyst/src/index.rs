@@ -16,6 +16,7 @@ pub async fn run(mut config: Config) -> anyhow::Result<()> {
     )
     .await
     .context("connecting index worker to DATABASE_URL")?;
+    let _runtime_guard = crate::migration_follower::normal_runtime_guard(&pool).await?;
     db::bootstrap(&pool).await?;
     let http = http::Outbound::new(http::HttpClientCfg::serve(
         config.content.connections_max_idle,

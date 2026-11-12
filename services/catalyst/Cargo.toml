@@ -206,7 +206,7 @@ tikv-jemallocator = "0.7"
 
 [dev-dependencies]
 bcrypt.workspace = true
-catalyst-db = { path = "db", features = ["scratch"] }
+catalyst-db = { path = "db", features = ["test-support"] }
 catalyst-fed = { path = "fed", features = ["test-support"] }
 catalyst-shop = { path = "shop", features = ["test-support"] }
 catalyst-camera-reel = { path = "camera-reel", features = ["test-support"] }

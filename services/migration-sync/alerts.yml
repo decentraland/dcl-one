@@ -1,0 +1,30 @@
+groups:
+  - name: migration-sync-rehearsal
+    rules:
+      - alert: MigrationSyncBlocked
+        expr: migration_sync_blocked > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Migration stream is blocked; disable dependent target reads"
+      - alert: MigrationSyncCaptureStale
+        expr: migration_sync_contact_age_seconds > 30
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Source capture contact is stale"
+      - alert: MigrationSyncUnapplied
+        expr: migration_sync_oldest_unapplied_age_seconds > 60
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Migration backlog exceeds the rehearsal threshold"
+      - alert: MigrationSyncCollectorMissing
+        expr: absent_over_time(migration_sync_paused[2m])
+        labels:
+          severity: critical
+        annotations:
+          summary: "Migration metrics collector has stopped reporting"

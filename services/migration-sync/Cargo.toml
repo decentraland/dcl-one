@@ -9,6 +9,7 @@ description = "Removable one-way migration worker for production-to-dcl-one stat
 anyhow.workspace = true
 chrono.workspace = true
 clap.workspace = true
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
@@ -16,3 +17,6 @@ tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
+
+[dev-dependencies]
+catalyst-explore = { path = "../catalyst/explore" }

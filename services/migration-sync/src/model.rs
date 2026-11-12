@@ -22,6 +22,8 @@ pub struct Envelope {
     pub commit_lsn: String,
     pub mode: Mode,
     pub changes: Vec<FavoriteChange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<FavoriteCommand>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -49,7 +51,66 @@ pub enum FavoriteChange {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Decision {
     Apply,
+    ExecuteCommand,
     Blocked(&'static str),
+}
+
+/// An accepted source command and its state observed in the same transaction.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FavoriteCommand {
+    pub operation_id: Uuid,
+    pub request_hash: String,
+    pub user: String,
+    pub entity_id: String,
+    pub favorite: bool,
+    pub user_activity: f64,
+    pub expected: Option<FavoriteState>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FavoriteState {
+    pub user_activity: f64,
+    pub created_at: DateTime<Utc>,
+}
+
+impl FavoriteCommand {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(!self.operation_id.is_nil(), "operation ID must not be nil");
+        ensure!(
+            self.request_hash.len() == 64
+                && self
+                    .request_hash
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "request hash must be lowercase SHA256"
+        );
+        FavoriteChange::Delete {
+            user: self.user.clone(),
+            entity_id: self.entity_id.clone(),
+        }
+        .validate()?;
+        ensure!(
+            self.user_activity.is_finite(),
+            "user activity must be finite"
+        );
+        ensure!(
+            self.favorite == self.expected.is_some(),
+            "source command result disagrees with requested favorite state"
+        );
+        if let Some(state) = &self.expected {
+            ensure!(
+                state.user_activity.is_finite(),
+                "expected activity must be finite"
+            );
+            ensure!(
+                state.created_at.timestamp_subsec_nanos() % 1000 == 0,
+                "source timestamp must have PostgreSQL microsecond precision"
+            );
+        }
+        Ok(())
+    }
 }
 
 impl Envelope {
@@ -70,14 +131,49 @@ impl Envelope {
         for change in &self.changes {
             change.validate()?;
         }
+        if let Some(command) = &self.command {
+            ensure!(
+                self.mode == Mode::Dual,
+                "source-only transactions cannot carry commands"
+            );
+            command.validate()?;
+            ensure!(
+                self.changes
+                    .iter()
+                    .all(|change| change.key()
+                        == (command.user.as_str(), command.entity_id.as_str())),
+                "dual transaction changes escape command scope"
+            );
+            if let Some(change) = self.changes.last() {
+                match (change, &command.expected) {
+                    (
+                        FavoriteChange::Upsert {
+                            user_activity,
+                            created_at,
+                            ..
+                        },
+                        Some(expected),
+                    ) => {
+                        ensure!(
+                            *user_activity == expected.user_activity
+                                && *created_at == expected.created_at,
+                            "captured changes disagree with source command result"
+                        );
+                    }
+                    (FavoriteChange::Delete { .. }, None) => {}
+                    _ => anyhow::bail!("captured changes disagree with source command result"),
+                }
+            }
+        }
         Ok(())
     }
 
-    /// Dual execution cannot be assumed complete from a capture marker. Until
-    /// transactional backend receipts are supported, retain it as blocked.
+    /// A capture marker alone cannot prove execution. A source command permits
+    /// dispatch; advancement separately requires its atomic native receipt.
     pub fn classify(&self) -> Decision {
         match self.mode {
             Mode::SourceOnly => Decision::Apply,
+            Mode::Dual if self.command.is_some() => Decision::ExecuteCommand,
             Mode::Dual => Decision::Blocked("dual_receipts_required"),
         }
     }
@@ -192,6 +288,45 @@ mod tests {
         assert_eq!(
             envelope.classify(),
             Decision::Blocked("dual_receipts_required")
+        );
+    }
+
+    #[test]
+    fn dual_command_requires_matching_canonical_source_evidence() {
+        let mut value = fixture();
+        value["mode"] = json!("dual");
+        value["command"] = json!({
+            "operation_id":"10000000-0000-4000-8000-000000000003",
+            "request_hash":"a".repeat(64),
+            "user":value["changes"][0]["user"],
+            "entity_id":value["changes"][0]["entity_id"],
+            "favorite":true,"user_activity":1.5,
+            "expected":{"user_activity":1.5,"created_at":"2026-11-12T10:00:00Z"}
+        });
+        let valid: Envelope = serde_json::from_value(value.clone()).unwrap();
+        valid.validate().unwrap();
+        assert_eq!(valid.classify(), Decision::ExecuteCommand);
+        value["command"]["expected"]["user_activity"] = json!(2.0);
+        assert!(
+            serde_json::from_value::<Envelope>(value.clone())
+                .unwrap()
+                .validate()
+                .is_err()
+        );
+        value["changes"] = json!([]);
+        // No-op commands have no row event, but still require native receipt.
+        assert!(
+            serde_json::from_value::<Envelope>(value.clone())
+                .unwrap()
+                .validate()
+                .is_ok()
+        );
+        value["mode"] = json!("source_only");
+        assert!(
+            serde_json::from_value::<Envelope>(value)
+                .unwrap()
+                .validate()
+                .is_err()
         );
     }
 

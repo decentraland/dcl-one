@@ -25,6 +25,8 @@ struct Cli {
 enum Command {
     /// Verify the schema, attach the workers and serve HTTP.
     Serve(Box<Config>),
+    /// Run only the bounded migration follower, without jobs or providers.
+    MigrationFollower(catalyst::migration_follower::FollowerConfig),
     /// Run chain indexes and marketplace mirrors without an HTTP listener.
     Index(Box<Config>),
     /// Administrative schema operations.
@@ -349,6 +351,7 @@ async fn run() -> anyhow::Result<()> {
     let cli =
         <Cli as clap::FromArgMatches>::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     match cli.command {
+        Command::MigrationFollower(config) => catalyst::migration_follower::run(config).await,
         Command::Serve(mut config) => {
             if let Some(serve_matches) = matches.subcommand_matches("serve") {
                 config.refuse_argv_secrets(serve_matches)?;
