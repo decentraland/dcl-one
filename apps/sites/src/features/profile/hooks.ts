@@ -1,4 +1,4 @@
-import { skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { hashKey, skipToken, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import type { AssetCategory, CreationsCategory } from "@/data/lib/catalyst/marketplace/profile-collectibles";
@@ -9,12 +9,14 @@ import {
   creationsQuery,
   myCommunitiesQuery,
   myFavoritePlacesQuery,
+  photoQuery,
   photosQuery,
   placeOwnersQuery,
   placesQuery,
   PROFILE_STALE_MS,
   profileKeys,
   profileQuery,
+  signsFor,
 } from "@/data/lib/profile/queries";
 
 export function useProfile(address: string) {
@@ -67,9 +69,28 @@ export function useProfileBadges(address: string, hasProfile: boolean) {
   return useQuery({ ...badgesQuery(address), enabled: hasProfile && canReadProfile(address) });
 }
 
-export function useProfilePhotos(address: string) {
-  return useQuery({ ...photosQuery(address), enabled: canReadProfile(address) });
+/**
+ * A profile's snapshots, a page at a time: the owner's signed list (private ones included) with their
+ * identity, the public list otherwise. While the signed list first loads, the public one already on
+ * screen stays; never the other way round, so a signed-out page never keeps private rows.
+ */
+export function useProfilePhotos(address: string, identity: AuthIdentity | null) {
+  const signed = signsFor(identity, address);
+  const publicKey = profileKeys.photos(address);
+  return useInfiniteQuery({
+    ...photosQuery(address, identity),
+    enabled: canReadProfile(address),
+    placeholderData: (previous, previousQuery) =>
+      signed && previousQuery && hashKey(previousQuery.queryKey) === hashKey(publicKey) ? previous : undefined,
+  });
 }
+
+/** One snapshot by id; only read while a link names a photo the loaded pages do not hold. */
+export function useProfilePhoto(id: string | null) {
+  const options = photoQuery(id ?? "");
+  return useQuery({ ...options, queryFn: id === null ? skipToken : options.queryFn });
+}
+
 
 /** The signed-in member's communities; nothing is requested without an identity. */
 export function useMyCommunities(identity: AuthIdentity | null, enabled = true) {

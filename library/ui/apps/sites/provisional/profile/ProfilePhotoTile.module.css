@@ -1,0 +1,69 @@
+/* TODO(figma-ds): replace with the Figma-generated photo tile's styles. The source's 265px tile
+ * height and 28px badge keep their sizes; its 55% black badge uses the nearest transparency (60%),
+ * and its hover shadow (35% black) the 40% shadow token. */
+.root {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  width: 100%;
+  height: 265px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-40);
+  cursor: pointer;
+  transition:
+    transform 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.root:hover {
+  box-shadow: 0 8px 20px var(--dcl-transparencies-shadow-40);
+  transform: translateY(-2px);
+}
+
+.root:focus-visible {
+  outline: 2px solid var(--dcl-transparencies-white-60);
+  outline-offset: 2px;
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.broken {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: var(--dcl-text-disabled);
+}
+
+.privateBadge {
+  position: absolute;
+  top: var(--dcl-space-8);
+  right: var(--dcl-space-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-60);
+  color: var(--dcl-neutrals-snow);
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .root {
+    transition: none;
+  }
+
+  .root:hover {
+    transform: none;
+  }
+}

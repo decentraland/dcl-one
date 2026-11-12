@@ -65,8 +65,9 @@ function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
       return client.prefetchInfiniteQuery(creationsQuery(address, DEFAULT_CREATIONS_CATEGORY));
     case "places":
       return client.prefetchQuery(placesQuery(address));
+    // The public gallery's first page; the owner's signed one needs the browser's identity.
     case "photos":
-      return client.prefetchQuery(photosQuery(address));
+      return client.prefetchInfiniteQuery(photosQuery(address));
     case "assets":
       return client.prefetchInfiniteQuery(assetsQuery(address, null));
     default:

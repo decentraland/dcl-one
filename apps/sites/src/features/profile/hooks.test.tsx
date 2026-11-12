@@ -15,6 +15,8 @@ const communities = vi.hoisted(() => ({ fetch: vi.fn() }));
 vi.mock("@/data/lib/catalyst/social/profile-communities", () => ({
   fetchMyCommunities: communities.fetch,
 }));
+const photos = vi.hoisted(() => ({ fetch: vi.fn() }));
+vi.mock("@/data/lib/catalyst/social/photos", () => ({ fetchUserPhotos: photos.fetch }));
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { profileKeys } from "@/data/lib/profile/queries";
@@ -23,6 +25,7 @@ import {
   useProfile,
   useProfileAssets,
   useProfileCreations,
+  useProfilePhotos,
 } from "./hooks";
 
 const ADDRESS = "0x17a253c2ac0d5ba92cadbbf665e3390c9913dc5d";
@@ -53,6 +56,7 @@ afterEach(() => {
   client.clear();
   vi.unstubAllGlobals();
   communities.fetch.mockReset();
+  photos.fetch.mockReset();
 });
 
 describe("useProfile", () => {
@@ -158,5 +162,69 @@ describe("useMyCommunities", () => {
 
     await waitFor(() => expect(result.current.isError).toBe(true));
     expect(result.current.data).toBeUndefined();
+  });
+});
+
+describe("useProfilePhotos", () => {
+  const OWNER = SIGNER.toLowerCase();
+  const row = (id: string, isPublic = true) => ({ id, isPublic });
+  const page = (rows: unknown[]) => ({ items: rows, received: rows.length, total: rows.length });
+
+  it("keeps the public photos on screen while the owner's signed list first loads", async () => {
+    let release!: (value: unknown) => void;
+    photos.fetch.mockImplementation((_address: string, _params: unknown, opts: { identity?: AuthIdentity }) =>
+      opts.identity ? new Promise((resolve) => (release = resolve)) : Promise.resolve(page([row("pub")])),
+    );
+    const { result, rerender } = renderHook(({ id }) => useProfilePhotos(OWNER, id), {
+      wrapper,
+      initialProps: { id: null as AuthIdentity | null },
+    });
+    await waitFor(() => expect(result.current.data?.pages[0]?.items).toEqual([row("pub")]));
+
+    rerender({ id: identity });
+
+    expect(result.current.isPlaceholderData).toBe(true);
+    expect(result.current.data?.pages[0]?.items).toEqual([row("pub")]);
+    release(page([row("pub"), row("mine", false)]));
+    await waitFor(() => expect(result.current.isPlaceholderData).toBe(false));
+    expect(result.current.data?.pages[0]?.items).toEqual([row("pub"), row("mine", false)]);
+  });
+
+  it("never keeps the owner's private photos once the list is no longer signed", async () => {
+    photos.fetch.mockImplementation((_address: string, _params: unknown, opts: { identity?: AuthIdentity }) =>
+      opts.identity ? Promise.resolve(page([row("mine", false)])) : new Promise(() => {}),
+    );
+    const { result, rerender } = renderHook(({ id }) => useProfilePhotos(OWNER, id), {
+      wrapper,
+      initialProps: { id: identity as AuthIdentity | null },
+    });
+    await waitFor(() => expect(result.current.data?.pages[0]?.items).toEqual([row("mine", false)]));
+
+    rerender({ id: null });
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.isPending).toBe(true);
+  });
+
+  it("does not carry one profile's photos over to another's", async () => {
+    photos.fetch.mockImplementation((address: string) =>
+      address === OWNER ? Promise.resolve(page([row("a")])) : new Promise(() => {}),
+    );
+    const { result, rerender } = renderHook(({ address }) => useProfilePhotos(address, null), {
+      wrapper,
+      initialProps: { address: OWNER },
+    });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+
+    rerender({ address: ADDRESS });
+
+    expect(result.current.data).toBeUndefined();
+  });
+
+  it("requests nothing for a value that is not a wallet address", () => {
+    const { result } = renderHook(() => useProfilePhotos("alice", null), { wrapper });
+
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(photos.fetch).not.toHaveBeenCalled();
   });
 });

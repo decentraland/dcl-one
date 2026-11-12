@@ -9,14 +9,15 @@ type ProfileCollectiblesState =
   | { kind: 'error'; message: string; action?: ReactNode }
   /** Nothing to list: an EmptyState, or a one-line note. */
   | { kind: 'empty'; label: string; children: ReactNode }
-  | { kind: 'empty-note'; message: string }
+  /** `more` keeps Load more under a note when a filter matched nothing on the pages loaded so far. */
+  | { kind: 'empty-note'; message: string; more?: ReactNode }
   | {
       kind: 'list'
       /** Announced when loading ends; shown above the list unless `showCount` is false. */
       count: string
       showCount?: boolean
-      /** Cards in a grid, or full-width rows (NAMEs). */
-      layout?: 'grid' | 'rows'
+      /** Cards in a grid, full-width rows (NAMEs), or the photo grid. */
+      layout?: 'grid' | 'rows' | 'photos'
       children: ReactNode
       /** The list element, so the page can move focus to a row it loaded. */
       listRef?: Ref<HTMLUListElement>
@@ -34,10 +35,11 @@ type ProfileCollectiblesProps = {
   panelRef?: Ref<HTMLDivElement>
 }
 
-/** A profile's Creations or Assets tab body: the filters, then loading, an error, an empty state or the list. */
+/** A profile's Creations, Assets or Photos tab body: the filters, then loading, an error, an empty state or the list. */
 function ProfileCollectibles({ filters, aside, state, panelRef }: ProfileCollectiblesProps) {
   const list = state.kind === 'list' ? state : null
   const countShown = list !== null && list.showCount !== false
+  const more = state.kind === 'list' || state.kind === 'empty-note' ? state.more : undefined
 
   return (
     <div ref={panelRef} className={styles.root} tabIndex={panelRef ? -1 : undefined}>
@@ -74,13 +76,11 @@ function ProfileCollectibles({ filters, aside, state, panelRef }: ProfileCollect
       ) : null}
       {state.kind === 'empty' ? state.children : null}
       {list ? (
-        <>
-          <ul ref={list.listRef} className={list.layout === 'rows' ? styles.rows : styles.grid}>
-            {list.children}
-          </ul>
-          {list.more ? <div className={styles.more}>{list.more}</div> : null}
-        </>
+        <ul ref={list.listRef} className={styles[list.layout ?? 'grid']}>
+          {list.children}
+        </ul>
       ) : null}
+      {more ? <div className={styles.more}>{more}</div> : null}
     </div>
   )
 }

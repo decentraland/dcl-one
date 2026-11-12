@@ -217,6 +217,17 @@ describe("profile loader, dehydrated state", () => {
     expect(net.fetchProfileAssets.mock.calls[0]?.[1]).toMatchObject({ category: undefined, skip: 0 });
   });
 
+  it("reads the public gallery's first page on Photos, unsigned even for the owner", async () => {
+    net.fetchUserPhotos.mockResolvedValue({ items: [], received: 0, total: 0 });
+
+    const out = await run(`/profile/${A}/photos`, { address: A, tab: "photos" }, A);
+
+    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A), profileKeys.photos(A)]);
+    expect(net.fetchUserPhotos).toHaveBeenCalledTimes(1);
+    expect(net.fetchUserPhotos.mock.calls[0]?.[1]).toEqual({ limit: 24, offset: 0 });
+    expect(net.fetchUserPhotos.mock.calls[0]?.[2]).not.toHaveProperty("identity");
+  });
+
   it("keeps two interleaved requests for different profiles apart", async () => {
     let releaseA!: () => void;
     net.fetchProfile.mockImplementation((address: string) =>

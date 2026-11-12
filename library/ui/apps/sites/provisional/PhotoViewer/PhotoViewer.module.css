@@ -1,0 +1,294 @@
+/* TODO(figma-ds): replace with the Figma-generated photo viewer's styles. The source is the
+ * profile site's PhotoModal: a 1500px paper (min(820px, 92vh) tall) with a 571px information rail,
+ * full screen below the 900px MUI `md` breakpoint with the rail stacked under the photo. Values
+ * without tokens: its 85% black backdrop (the 80% overlay token stands in), its #0E0518 paper
+ * (black), its rail's radial gradient (the profile layout's brand stand-ins), its 55% white section
+ * titles (60% white) and its #57C2FF link (the link token). */
+.backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--dcl-transparencies-overlay-80);
+}
+
+.dialog {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  background: var(--dcl-neutrals-black);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+}
+
+.dialog:focus {
+  outline: none;
+}
+
+.close {
+  position: absolute;
+  z-index: 2;
+  top: var(--dcl-space-8);
+  right: var(--dcl-space-8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+
+.close:hover {
+  background: var(--dcl-transparencies-black-60);
+}
+
+.close:focus-visible,
+.tool:focus-visible,
+.step:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.body {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
+  min-height: 0;
+}
+
+.withDetails {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.media {
+  position: relative;
+  display: flex;
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  background: var(--dcl-neutrals-black);
+}
+
+.image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.toolbar {
+  position: absolute;
+  z-index: 1;
+  top: var(--dcl-space-8);
+  left: var(--dcl-space-8);
+  display: flex;
+  gap: var(--dcl-space-8);
+}
+
+.tool,
+.step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-black-40);
+  color: var(--dcl-neutrals-snow);
+  cursor: pointer;
+}
+
+.tool:hover,
+.step:hover:not([aria-disabled='true']) {
+  background: var(--dcl-transparencies-black-60);
+}
+
+.toolOn {
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-black);
+}
+
+.toolOn:hover {
+  background: var(--dcl-neutrals-silver);
+}
+
+.step[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.4;
+}
+
+.step {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+}
+
+.previous {
+  left: var(--dcl-space-8);
+}
+
+.next {
+  right: var(--dcl-space-8);
+}
+
+.details {
+  display: flex;
+  overflow: hidden auto;
+  flex-direction: column;
+  gap: var(--dcl-space-16);
+  box-sizing: border-box;
+  max-height: 55vh;
+  padding: var(--dcl-space-24) 0;
+  background: radial-gradient(
+    123.58% 82% at 9.01% 25.79%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 37.11%,
+    var(--dcl-neutrals-black) 100%
+  );
+}
+
+.header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 var(--dcl-space-24);
+}
+
+.sectionTitle {
+  margin: 0;
+  color: var(--dcl-transparencies-white-60);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.padded {
+  padding: 0 var(--dcl-space-24);
+}
+
+.date,
+.takenBy {
+  margin: 0;
+  font-size: var(--dcl-font-size-body-sm);
+}
+
+.date {
+  font-weight: 500;
+}
+
+.takenBy {
+  margin-top: var(--dcl-space-4);
+}
+
+.link {
+  color: var(--dcl-text-link);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover,
+.personName:hover {
+  text-decoration: underline;
+}
+
+.link:focus-visible,
+.personName:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.place {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--dcl-space-12);
+  padding: 0 var(--dcl-space-24);
+}
+
+.placeLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+}
+
+.people {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.person {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  padding: var(--dcl-space-12) var(--dcl-space-24);
+  border-top: 1px solid var(--dcl-transparencies-white-10);
+}
+
+.person:first-child {
+  border-top: 0;
+}
+
+.personName {
+  overflow: hidden;
+  min-width: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.guest {
+  padding: 2px var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-20);
+  font-size: var(--dcl-font-size-label-xs-caps);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+@media (min-width: 900px) {
+  .backdrop {
+    padding: var(--dcl-space-24);
+  }
+
+  .dialog {
+    max-width: 1500px;
+    height: min(820px, 92vh);
+    border-radius: var(--dcl-radius-lg);
+    box-shadow: 0 4px 25px var(--dcl-transparencies-white-20);
+  }
+
+  .withDetails {
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr) 571px;
+  }
+
+  .details {
+    max-height: none;
+  }
+}
