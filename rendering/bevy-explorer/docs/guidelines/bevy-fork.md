@@ -105,10 +105,11 @@ across workers:
 
 - `GltfLoader::uri_resolver` (`GltfPlugin::with_uri_resolver`): the host resolves every URI a
   glTF references. This is how content paths are contained; see the security page.
-- `KHR_texture_basisu` is supported: `gltf`'s `allow_empty_texture` feature lets a file that
-  requires it (and textures with no `source`) through. A texture with no `source` samples its
-  extension image; one with a PNG/JPEG fallback keeps the fallback. Its KTX2, by path or
-  embedded, decodes through `bevy_image`'s KTX2 route below.
+- `KHR_texture_basisu`, `EXT_texture_webp` and `MSFT_texture_dds` are supported: `gltf`'s
+  `allow_empty_texture` feature lets a file that requires them (and textures with no `source`)
+  through. A texture with no `source` samples its extension image, KTX2 first when it has
+  several; one with a PNG/JPEG fallback keeps the fallback. A KTX2, by path or embedded,
+  decodes through `bevy_image`'s KTX2 route below; WebP and DDS through bevy's own decoders.
 - KTX2 transcoder hook (`bevy_image::set_ktx2_transcoder`, `Ktx2Transcoder`): one process-wide
   host function, set once, that every KTX2 decode asks first. It gets the bytes and the asset
   path: the one `ImageLoader` loaded it from, or the labelled path the glTF loader decodes an

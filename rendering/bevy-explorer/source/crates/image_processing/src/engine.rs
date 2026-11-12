@@ -227,18 +227,13 @@ fn check_assets(
         }
     }
 
-    // a gltf that fails to load because it is draco-compressed or has basisu
-    // textures (the loader rejects the extension by name, and spec-compliant
-    // files without a fallback must list it in extensionsRequired) is run
-    // through the processor once, which decompresses or transcodes and persists
-    // it. the processor independently verifies the extension against the
-    // actual bytes.
+    // a gltf that fails to load because it is draco-compressed (the loader
+    // rejects the extension by name) is run through the processor once, which
+    // decompresses and persists it. the processor independently verifies the
+    // extension against the actual bytes. a required KHR_texture_basisu no
+    // longer fails: the loader reads it natively
     for ev in failed_gltfs.read() {
-        let error = ev.error.to_string();
-        if !["KHR_draco_mesh_compression", "KHR_texture_basisu"]
-            .iter()
-            .any(|extension| error.contains(extension))
-        {
+        if !ev.error.to_string().contains("KHR_draco_mesh_compression") {
             continue;
         }
         let asset_path = ev.path.clone();

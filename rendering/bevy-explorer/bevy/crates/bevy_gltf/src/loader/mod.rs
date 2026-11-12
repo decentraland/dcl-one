@@ -277,7 +277,7 @@ async fn load_gltf<'a, 'b, 'c>(
         }
         Err(e) => return Err(e.into()),
     };
-    let gltf = prefer_basisu_sources(gltf);
+    let gltf = prefer_extension_sources(gltf);
 
     let file_name = load_context
         .asset_path()
@@ -1016,45 +1016,49 @@ async fn load_gltf<'a, 'b, 'c>(
     })
 }
 
-/// The image index a texture's `KHR_texture_basisu` extension names, when the texture has no
+/// The texture extensions whose `source` names an image this loader decodes, in the order one is
+/// picked when a texture carries several: `KHR_texture_basisu` (KTX2, through the host's
+/// transcoder), `EXT_texture_webp` and `MSFT_texture_dds`. They are the extensions `gltf`'s
+/// `allow_empty_texture` lets a file require with no `source` on its textures.
+const SOURCE_EXTENSIONS: [&str; 3] = ["KHR_texture_basisu", "EXT_texture_webp", "MSFT_texture_dds"];
+
+/// The image index a texture's [`SOURCE_EXTENSIONS`] entry names, when the texture has no
 /// `source` of its own and the index is in range. A texture with a PNG/JPEG fallback keeps it:
 /// the fallback always decodes, while its KTX2 may be a codec the host can't transcode (ETC1S).
-fn basisu_source(texture: &gltf::json::Texture, image_count: usize) -> Option<u32> {
+fn extension_source(texture: &gltf::json::Texture, image_count: usize) -> Option<u32> {
     // `allow_empty_texture` stores a missing `source` as u32::MAX
     if texture.source.value() != u32::MAX as usize {
         return None;
     }
-    let source = texture
-        .extensions
-        .as_ref()?
-        .others
-        .get("KHR_texture_basisu")?
-        .get("source")?
-        .as_u64()?;
+    let extensions = &texture.extensions.as_ref()?.others;
+    let source = SOURCE_EXTENSIONS
+        .iter()
+        .find_map(|name| extensions.get(*name)?.get("source")?.as_u64())?;
     (source < image_count as u64).then_some(source as u32)
 }
 
-/// Points every texture whose only image is its `KHR_texture_basisu` one at that image, so the
-/// rest of the loader reads the KTX2 as the texture's ordinary `source`: by path through the
-/// asset server, or embedded through `Image::from_buffer_at` at its labelled path. Both end in `bevy_image`'s KTX2
-/// decode, where the host's transcoder (`bevy_image::set_ktx2_transcoder`) takes UASTC.
-/// `gltf`'s `allow_empty_texture` feature is what lets a file that requires the extension, and
+/// Points every texture whose only image is an extension's ([`SOURCE_EXTENSIONS`]) at that
+/// image, so the rest of the loader reads it as the texture's ordinary `source`: by path through
+/// the asset server, or embedded through `Image::from_buffer_at` at its labelled path. A KTX2
+/// ends in `bevy_image`'s KTX2 decode, where the host's transcoder
+/// (`bevy_image::set_ktx2_transcoder`) takes UASTC; a WebP or DDS in bevy's own decoders.
+/// `gltf`'s `allow_empty_texture` feature is what lets a file that requires one of these, and
 /// whose textures have no `source`, through validation.
-fn prefer_basisu_sources(gltf: gltf::Gltf) -> gltf::Gltf {
+fn prefer_extension_sources(gltf: gltf::Gltf) -> gltf::Gltf {
     let image_count = gltf.document.images().len();
     if !gltf
         .document
         .as_json()
         .textures
         .iter()
-        .any(|texture| basisu_source(texture, image_count).is_some())
+        .any(|texture| extension_source(texture, image_count).is_some())
     {
         return gltf;
     }
     let gltf::Gltf { document, blob } = gltf;
     let mut root = document.into_json();
     for texture in &mut root.textures {
-        if let Some(source) = basisu_source(texture, image_count) {
+        if let Some(source) = extension_source(texture, image_count) {
             texture.source = gltf::json::Index::new(source);
         }
     }
@@ -1097,7 +1101,7 @@ fn load_image<'a, 'b>(
     // would be ignored while the real file loaded anyway.
     //
     // A texture with no image at all (`allow_empty_texture`: its only image is in an extension
-    // `prefer_basisu_sources` doesn't read) gets the same placeholder, which `texture_handle`
+    // `prefer_extension_sources` doesn't read) gets the same placeholder, which `texture_handle`
     // points it at.
     let source = gltf_texture.source().filter(|image| {
         !(render_asset_usages.is_empty()
@@ -2552,9 +2556,9 @@ mod test {
         assert_eq!(skinned_node.skin.as_ref(), Some(&gltf_root.skins[0]));
     }
 
-    /// `json` parsed with validation, then through `prefer_basisu_sources`.
+    /// `json` parsed with validation, then through `prefer_extension_sources`.
     fn parse_basisu(json: &str) -> gltf::Gltf {
-        super::prefer_basisu_sources(gltf::Gltf::from_slice(json.as_bytes()).unwrap())
+        super::prefer_extension_sources(gltf::Gltf::from_slice(json.as_bytes()).unwrap())
     }
 
     /// The image index texture `texture` samples.
@@ -2598,6 +2602,34 @@ mod test {
         );
         // no image: `load_image` registers the placeholder under the texture label
         assert_eq!(sampled_image(&gltf, 0), None);
+    }
+
+    #[test]
+    fn required_webp_and_dds_textures_without_source_sample_their_image() {
+        let gltf = parse_basisu(
+            r#"{"asset":{"version":"2.0"},
+                "extensionsUsed":["EXT_texture_webp","MSFT_texture_dds"],
+                "extensionsRequired":["EXT_texture_webp","MSFT_texture_dds"],
+                "images":[{"uri":"albedo.webp","mimeType":"image/webp"},{"uri":"normal.dds"}],
+                "textures":[{"extensions":{"EXT_texture_webp":{"source":0}}},
+                            {"extensions":{"MSFT_texture_dds":{"source":1}}}]}"#,
+        );
+        assert_eq!(sampled_image(&gltf, 0), Some(0));
+        assert_eq!(sampled_image(&gltf, 1), Some(1));
+    }
+
+    #[test]
+    fn basisu_is_picked_over_webp_on_one_texture() {
+        let gltf = parse_basisu(
+            r#"{"asset":{"version":"2.0"},
+                "extensionsUsed":["KHR_texture_basisu","EXT_texture_webp"],
+                "extensionsRequired":["KHR_texture_basisu","EXT_texture_webp"],
+                "images":[{"uri":"albedo.webp","mimeType":"image/webp"},
+                          {"uri":"albedo.ktx2","mimeType":"image/ktx2"}],
+                "textures":[{"extensions":{"EXT_texture_webp":{"source":0},
+                                           "KHR_texture_basisu":{"source":1}}}]}"#,
+        );
+        assert_eq!(sampled_image(&gltf, 0), Some(1));
     }
 
     #[test]
