@@ -20,7 +20,7 @@ pub mod test_support {
         pointers: impl IntoIterator<Item = (wearables::WearableUrn, String)>,
     ) {
         app.add_plugins(CollectiblesTypePlugin::<wearables::Wearable>::default())
-            .add_systems(PostUpdate, expire_idle_wearables);
+            .add_systems(Update, expire_idle_wearables);
         let mut cache = app
             .world_mut()
             .resource_mut::<Collectibles<wearables::Wearable>>();

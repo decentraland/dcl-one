@@ -9,7 +9,7 @@ use bevy::asset::{
         memory::{Dir, MemoryAssetReader},
         AssetSource, AssetSourceId, Reader,
     },
-    AssetLoader, LoadContext, StrongHandle,
+    AssetLoader, AsyncReadExt, LoadContext, StrongHandle,
 };
 use bevy::ecs::system::RunSystemOnce;
 use collectibles::{
@@ -151,7 +151,7 @@ impl AssetLoader for ControlledGltfLoader {
 
     async fn load(
         &self,
-        _: &mut dyn Reader,
+        reader: &mut dyn Reader,
         _: &(),
         context: &mut LoadContext<'_>,
     ) -> Result<Gltf, Self::Error> {
@@ -170,6 +170,14 @@ impl AssetLoader for ControlledGltfLoader {
             .ok_or_else(|| anyhow::anyhow!("unexpected repeat load for {content}"))?;
         let _ = started.send(());
         anyhow::ensure!(result.await?, "fixture load failed");
+        let mut contents = Vec::new();
+        reader.read_to_end(&mut contents).await?;
+        if contents == b"no-animations" {
+            return Ok(Gltf {
+                animations: Vec::new(),
+                ..gltf(Handle::default())
+            });
+        }
         let clip = context.add_labeled_asset("clip".into(), clip(1.0));
         Ok(gltf(clip))
     }
@@ -1101,6 +1109,92 @@ fn recurring_failed_scene_movement_uses_one_load_and_stable_fallback() {
     retried.result.send(true).unwrap();
     fixture.wait_for_playback("stride", EmoteMask::FullBody);
     assert_eq!(fixture.loads.lock().unwrap()["stride"], 2);
+}
+
+#[test]
+fn empty_scene_movement_gltf_loads_once_until_request_replacement_or_avatar_despawn() {
+    for despawn in [false, true] {
+        let mut fixture = PlaybackFixture::with_pressure();
+        let scene = fixture.app.world_mut().spawn_empty().id();
+        let mut empty = fixture.gate("empty");
+        fixture
+            .dir
+            .insert_asset_text(path("empty").path(), "no-animations");
+        fixture.request_movement(Some(scene), "empty");
+        fixture.wait_for_load(&mut empty);
+        let pending = fixture.pending("empty");
+        let gltf = fixture.gltf_id("empty").unwrap();
+        empty.result.send(true).unwrap();
+        let avatar = fixture.avatar;
+        fixture.update_until("empty movement never selected locomotion", |world| {
+            world.get::<ActiveEmote>(avatar).is_some_and(|active| {
+                active.urn == *URN_IDLE
+                    && active.source == ActiveEmoteSource::VelocitySelected
+                    && active.duration_ms == Some(2000)
+            })
+        });
+        let idle = fixture
+            .app
+            .world()
+            .get::<AnimationTransitions>(avatar)
+            .unwrap()
+            .get_main_animation()
+            .unwrap();
+        let mut fallback_stayed_selected = true;
+        for _ in 0..16 {
+            fixture.request_movement(Some(scene), "empty");
+            fixture.app.update();
+            let world = fixture.app.world();
+            let active = world.get::<ActiveEmote>(avatar).unwrap();
+            fallback_stayed_selected &= active.urn == *URN_IDLE
+                && active.source == ActiveEmoteSource::VelocitySelected
+                && active.duration_ms == Some(2000);
+            assert_eq!(
+                world
+                    .get::<AnimationTransitions>(avatar)
+                    .unwrap()
+                    .get_main_animation(),
+                Some(idle)
+            );
+            assert!(world
+                .get::<AnimationPlayer>(avatar)
+                .unwrap()
+                .is_playing_animation(idle));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            fixture.loads.lock().unwrap()["empty"],
+            1,
+            "an unchanged movement request must not reload a GLTF without animations"
+        );
+        assert!(fallback_stayed_selected);
+        assert!(pending.upgrade().is_some());
+        assert!(fixture
+            .app
+            .world()
+            .resource::<Assets<Gltf>>()
+            .get(gltf)
+            .unwrap()
+            .animations
+            .is_empty());
+
+        if despawn {
+            fixture.app.world_mut().despawn(avatar);
+        } else {
+            let mut replacement = fixture.gate("replacement");
+            fixture.request_movement(Some(scene), "replacement");
+            fixture.wait_for_load(&mut replacement);
+            replacement.result.send(true).unwrap();
+            fixture.wait_for_playback("replacement", EmoteMask::FullBody);
+        }
+        assert!(
+            pending.upgrade().is_none(),
+            "an abandoned invalid movement GLTF is still owned"
+        );
+        fixture.update_until("the invalid GLTF was not released", |world| {
+            world.resource::<Assets<Gltf>>().get(gltf).is_none()
+        });
+    }
 }
 
 #[test]

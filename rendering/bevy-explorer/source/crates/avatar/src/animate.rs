@@ -1145,10 +1145,7 @@ fn resolve_playback<'a>(
                 })
             };
             let gltf = match gltfs.get_mut(handle.id()) {
-                Some(gltf) => {
-                    pending.0 = None;
-                    gltf
-                }
+                Some(gltf) => gltf,
                 None => {
                     if matches!(
                         ipfas.asset_server().load_state(handle.id()),
@@ -1165,7 +1162,7 @@ fn resolve_playback<'a>(
             // fix up the gltf if possible/required
             if !gltf.named_animations.any_avatar_emote() {
                 let Some(anim) = gltf.animations.first() else {
-                    warn!("scene emote has no animations");
+                    warn_once!("scene emote has no animations");
                     return Err(Hold::Failed);
                 };
 

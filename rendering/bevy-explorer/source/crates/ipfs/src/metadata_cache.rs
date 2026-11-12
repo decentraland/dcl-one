@@ -210,3 +210,7 @@ async fn reload_definition(ipfs: &Arc<IpfsIo>, hash: &str) -> Option<(IpfsEntity
 #[cfg(test)]
 #[path = "metadata_cache_tests.rs"]
 mod tests;
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "scene_collection_tests.rs"]
+mod scene_collection_tests;

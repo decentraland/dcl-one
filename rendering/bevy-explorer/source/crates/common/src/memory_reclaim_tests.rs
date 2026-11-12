@@ -249,6 +249,97 @@ fn restoring_platform_capacity_discards_the_preview_pressure_latch() {
 }
 
 #[test]
+fn changing_preview_limits_discards_the_previous_pressure_latch() {
+    let mut app = app();
+    app.init_resource::<Visits>()
+        .add_memory_reclaimer(spec("a", 10, ReclaimDomains::Ram), clean_a)
+        .insert_resource(PreviewMode {
+            is_preview: true,
+            ..default()
+        });
+    app.world_mut()
+        .resource_mut::<MemoryReclaimSettings>()
+        .frame_budget = Duration::from_secs(10);
+    ready(&mut app);
+
+    for (limit, used, cap, pressure, active) in [
+        (Some(500), 680, 500, MemoryPressure::Full, true),
+        (Some(2_000), 680, 1_000, MemoryPressure::Normal, false),
+        (Some(950), 680, 950, MemoryPressure::Warning, true),
+        (Some(950), 640, 950, MemoryPressure::Normal, true),
+        (Some(1_000), 680, 1_000, MemoryPressure::Normal, false),
+        (Some(900), 680, 900, MemoryPressure::Full, true),
+        (Some(2_000), 720, 1_000, MemoryPressure::Warning, true),
+        (Some(500), 800, 500, MemoryPressure::Full, true),
+        (Some(2_000), 800, 1_000, MemoryPressure::Full, true),
+        (None, 680, 1_000, MemoryPressure::Normal, true),
+    ] {
+        ram(&mut app, Some(used));
+        app.world_mut().resource_mut::<MemoryStatus>().limit_mib = limit.and_then(NonZeroU64::new);
+        app.world_mut().resource_mut::<Visits>().0.clear();
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<MemoryStatus>()
+                .reading()
+                .unwrap()
+                .cap_mib,
+            cap
+        );
+        let state = app.world().resource::<MemoryReclaimState>();
+        assert_eq!(state.ram, Some(pressure), "limit {limit:?}, used {used}");
+        assert_eq!(state.ram_active, active, "limit {limit:?}, used {used}");
+        assert_eq!(app.world().resource::<ReclaimBudget>().ram, active);
+        assert_eq!(app.world().resource::<Visits>().0.is_empty(), !active);
+    }
+}
+
+#[test]
+fn ineffective_preview_limits_preserve_real_pressure_until_abundance() {
+    use bevy::ecs::schedule::common_conditions::run_once;
+
+    let mut app = app();
+    app.insert_resource(PreviewMode {
+        is_preview: true,
+        ..default()
+    });
+    ready(&mut app);
+    ram(&mut app, Some(800));
+    app.update();
+    ram(&mut app, Some(680));
+    app.update();
+    assert!(app.world().resource::<MemoryReclaimState>().ram_active);
+
+    for limit in [Some(2_000), Some(3_000), None] {
+        app.world_mut().resource_mut::<MemoryStatus>().limit_mib = limit.and_then(NonZeroU64::new);
+        app.update();
+        let state = app.world().resource::<MemoryReclaimState>();
+        assert_eq!(state.ram, Some(MemoryPressure::Normal));
+        assert!(
+            state.ram_active,
+            "ineffective limit {limit:?} cleared real pressure"
+        );
+        assert!(app.world().resource::<ReclaimBudget>().ram);
+    }
+
+    app.world_mut().resource_mut::<MemoryStatus>().limit_mib = NonZeroU64::new(3_000);
+    app.add_systems(
+        PostUpdate,
+        (|mut preview: ResMut<PreviewMode>| preview.is_preview = false).run_if(run_once),
+    );
+    app.update();
+    assert!(app.world().resource::<MemoryStatus>().limit_mib.is_none());
+    assert!(app.world().resource::<MemoryReclaimState>().ram_active);
+    assert!(app.world().resource::<ReclaimBudget>().ram);
+
+    ram(&mut app, Some(649));
+    app.update();
+    assert!(!app.world().resource::<MemoryReclaimState>().ram_active);
+    assert!(!app.world().resource::<ReclaimBudget>().ram);
+}
+
+#[test]
 fn leaving_preview_restores_platform_capacity_before_the_same_frames_cleanup() {
     use bevy::ecs::schedule::common_conditions::run_once;
 
@@ -329,6 +420,17 @@ fn spec(name: &'static str, priority: u16, domains: ReclaimDomains) -> ReclaimSp
         max_releases: 2,
         max_inspections: 4,
     }
+}
+
+#[test]
+#[should_panic(expected = "unregistered memory reclaimer: missing")]
+fn an_unregistered_cache_name_is_reported_even_without_pressure() {
+    let mut app = app();
+    app.add_memory_reclaimer(spec("registered", 10, ReclaimDomains::Ram), || {});
+    ready(&mut app);
+    let mut budget = app.world_mut().resource_mut::<ReclaimBudget>();
+    assert!(budget.begin("registered", 10).is_none());
+    let _ = budget.begin("missing", 10);
 }
 
 #[test]

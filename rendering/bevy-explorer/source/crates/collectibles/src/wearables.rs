@@ -24,7 +24,7 @@ impl Plugin for WearablePlugin {
         app.add_plugins(CollectiblesTypePlugin::<Wearable>::default());
         app.register_asset_loader(WearableLoader);
         app.register_asset_loader(WearableMetaLoader);
-        app.add_systems(PostUpdate, crate::expire_idle_wearables);
+        app.add_systems(Update, crate::expire_idle_wearables);
         app.add_systems(PostUpdate, clean_images.before(AssetEvents));
     }
 }
@@ -440,17 +440,6 @@ impl AssetLoader for WearableLoader {
 
 struct WearableMetaLoader;
 
-#[test]
-fn wearable_metadata_expires_and_reloads() {
-    crate::metadata_lifecycle_tests::metadata_expires_and_reloads::<Wearable>(
-        WearableMetaLoader,
-        serde_json::json!({
-            "id": "fixture", "name": "Fixture metadata", "thumbnail": "thumbnail.png",
-            "data": { "tags": [], "category": "hat", "representations": [], "hides": [], "replaces": [] }
-        }),
-    );
-}
-
 impl AssetLoader for WearableMetaLoader {
     type Asset = CollectibleData<Wearable>;
 
@@ -552,6 +541,22 @@ fn screenshot_reference(path: &AssetPath<'_>) -> bool {
     // leaves metadata in Assets<Image>, but the renderer takes their pixel buffers.
     matches!(path.source(), AssetSourceId::Name(source) if source.as_ref() == "embedded")
         && path.path().starts_with("images/screenshots")
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn wearable_metadata_expires_and_reloads() {
+        crate::metadata_lifecycle_tests::metadata_expires_and_reloads::<Wearable>(
+            WearableMetaLoader,
+            serde_json::json!({
+                "id": "fixture", "name": "Fixture metadata", "thumbnail": "thumbnail.png",
+                "data": { "tags": [], "category": "hat", "representations": [], "hides": [], "replaces": [] }
+            }),
+        );
+    }
 }
 
 #[cfg(test)]

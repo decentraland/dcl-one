@@ -11181,6 +11181,7 @@ dependencies = [
  "console 0.1.0",
  "dcl_component",
  "dcl_types",
+ "futures-util",
  "image",
  "ipfs",
  "platform",

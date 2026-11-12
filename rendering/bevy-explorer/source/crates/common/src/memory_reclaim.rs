@@ -46,7 +46,7 @@ pub struct MemoryReclaimState {
     pub ram_active: bool,
     pub gpu_active: bool,
     ram_latched: bool,
-    ram_limit_active: bool,
+    ram_cap_mib: Option<u64>,
     gpu_latched: bool,
 }
 
@@ -185,7 +185,8 @@ impl ReclaimBudget {
         let index = self
             .caches
             .iter()
-            .position(|cache| cache.spec.name == name)?;
+            .position(|cache| cache.spec.name == name)
+            .unwrap_or_else(|| panic!("unregistered memory reclaimer: {name}"));
         let cache = &mut self.caches[index];
         cache.entries = entries;
         if index < self.start_cache
@@ -361,16 +362,15 @@ fn snapshot_pressure(
     settings: Res<MemoryReclaimSettings>,
     mut state: ResMut<MemoryReclaimState>,
 ) {
-    let ram_limit_active = ram.as_ref().is_some_and(|ram| ram.limit_mib.is_some());
-    state.ram = ram
-        .and_then(|ram| ram.reading())
-        .map(|reading| reading.pressure());
+    let reading = ram.and_then(|ram| ram.reading());
+    let cap_mib = reading.map(|reading| reading.cap_mib);
+    state.ram = reading.map(|reading| reading.pressure());
     state.gpu = gpu.as_deref().and_then(gpu_pressure);
-    // A restored platform cap must not inherit pressure from the preview limit.
-    if state.ram_limit_active && !ram_limit_active {
+    // Pressure history belongs to the effective cap, including when a preview limit exceeds it.
+    if state.ram_cap_mib != cap_mib {
         state.ram_latched = false;
     }
-    state.ram_limit_active = ram_limit_active;
+    state.ram_cap_mib = cap_mib;
     state.ram_latched = latch(state.ram_latched, state.ram);
     state.gpu_latched = latch(state.gpu_latched, state.gpu);
     state.ram_active = state.ram_latched;
@@ -399,16 +399,17 @@ fn begin_frame(
     // Preview can end in PostUpdate, after the pressure snapshot.
     if preview.is_some_and(|preview| !preview.is_preview) {
         *settings = MemoryReclaimSettings::default();
-        if state.ram_limit_active || ram.as_ref().is_some_and(|ram| ram.limit_mib.is_some()) {
-            if let Some(ram) = ram.as_mut() {
+        if let Some(ram) = ram.as_mut() {
+            if ram.limit_mib.is_some() {
                 ram.limit_mib = None;
             }
-            state.ram = ram
-                .as_deref()
-                .and_then(MemoryStatus::reading)
-                .map(|reading| reading.pressure());
+        }
+        let reading = ram.as_deref().and_then(MemoryStatus::reading);
+        let cap_mib = reading.map(|reading| reading.cap_mib);
+        if state.ram_cap_mib != cap_mib {
+            state.ram = reading.map(|reading| reading.pressure());
             state.ram_latched = latch(false, state.ram);
-            state.ram_limit_active = false;
+            state.ram_cap_mib = cap_mib;
         }
         state.ram_active = state.ram_latched;
         state.gpu_active = state.gpu_latched;

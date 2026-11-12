@@ -1692,49 +1692,56 @@ impl IpfsIo {
     /// just the referenced files, so this picks up files added to the project *outside* the editor
     /// without a scene reload. Imported assets (written to disk by `/init_asset`) are naturally
     /// included. Acts only on local (`dcl start`, b64-addressed) scenes — deployed scenes have an
-    /// immutable content map. Returns true if the collection was refreshed.
-    pub async fn refresh_scene_collection(self: &Arc<Self>, scene_hash: &str) -> bool {
+    /// immutable content map. Live callers supply their retained entity metadata; only callers
+    /// without an owner reload it. Returns true if the collection was refreshed.
+    pub async fn refresh_scene_collection(
+        self: &Arc<Self>,
+        scene_hash: &str,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<bool, String> {
         // local scenes only; deployed content maps don't change
         if self.local_project_root(scene_hash).await.is_none() {
-            return false;
+            return Ok(false);
         }
-        // the scene's base parcel pointer, from its stored scene.json
-        let pointer = {
-            self.scene_metadata(scene_hash)
-                .await
-                .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
-                .and_then(|j| {
-                    j.get("scene")
-                        .and_then(|s| s.get("base"))
-                        .and_then(|b| b.as_str())
-                        .map(str::to_owned)
-                })
+        let metadata = match metadata {
+            Some(metadata) => std::borrow::Cow::Borrowed(metadata),
+            None => std::borrow::Cow::Owned(
+                serde_json::from_str::<serde_json::Value>(
+                    &self
+                        .scene_metadata(scene_hash)
+                        .await
+                        .ok_or_else(|| "scene metadata is unavailable".to_owned())?,
+                )
+                .map_err(|error| format!("invalid scene metadata: {error}"))?,
+            ),
         };
-        let Some(pointer) = pointer else {
-            return false;
-        };
-        let Ok(defs) = self
-            .active_entities(ActiveEntitiesRequest::Pointers(vec![pointer]), None)
+        let pointer = metadata
+            .pointer("/scene/base")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "scene metadata has no base parcel".to_owned())?;
+        let defs = self
+            .active_entities(
+                ActiveEntitiesRequest::Pointers(vec![pointer.to_owned()]),
+                None,
+            )
             .await
-        else {
-            return false;
-        };
+            .map_err(|error| format!("could not refresh scene content: {error}"))?;
         // exactly one scene at the base parcel; match by id when present, else take the first
         let Some(def) = defs
             .iter()
             .find(|d| d.id == scene_hash)
             .or_else(|| defs.first())
         else {
-            return false;
+            return Err("content server returned no active scene".to_owned());
         };
         let collection = def.content.clone();
         let mut write = self.context.write().await;
         match write.entities.get_mut(scene_hash) {
             Some(entity) => {
                 entity.collection = collection;
-                true
+                Ok(true)
             }
-            None => false,
+            None => Err("scene collection no longer exists".to_owned()),
         }
     }
 
