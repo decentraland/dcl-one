@@ -88,11 +88,6 @@
   stroke-width: 3;
 }
 
-.Assets .Assets-buttons .Assets-buttons-left .import-button:hover {
-  background-color: var(--base-19);
-}
-
-/* 32px buttons with a 20px glyph, per the Figma header (icon inset 20%), whatever the icon source. */
 .Assets .Assets-buttons .Assets-buttons-left .icon-item {
   width: 32px;
   height: 32px;

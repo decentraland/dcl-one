@@ -50,6 +50,10 @@
   color: white;
 }
 
+.ActionInspector .content .RemoveButton:hover:not(:disabled) {
+  background-color: transparent;
+}
+
 .ActionInspector .content .Block .content .MoreOptionsMenu {
   position: absolute;
   top: 5px;

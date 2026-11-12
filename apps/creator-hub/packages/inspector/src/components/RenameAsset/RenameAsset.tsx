@@ -48,14 +48,15 @@ const RenameAsset: React.FC<PropTypes> = ({ assetId, currentName }) => {
             />
             <div className="button-container">
               <Button
-                size="big"
-                type="danger"
+                variant="primary"
+                size="lg"
                 onClick={handleSave}
               >
                 Rename
               </Button>
               <Button
-                size="big"
+                variant="secondary"
+                size="lg"
                 onClick={handleCancel}
               >
                 Cancel
