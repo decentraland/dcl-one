@@ -33,14 +33,6 @@ export function postAge(ts: number, now = Date.now()): string {
   return d.getUTCFullYear() === new Date(now).getUTCFullYear() ? day : `${day}, ${d.getUTCFullYear()}`
 }
 
-function HeartIcon({ filled }: { filled: boolean }): React.JSX.Element {
-  return (
-    <svg viewBox="0 0 24 24" width="15" height="15" fill={filled ? 'currentColor' : 'none'} aria-hidden="true">
-      <path d="M12 20s-7-4.5-9.5-9C1 8 2.5 4.5 6 4.5c2 0 3.2 1.2 4 2.5.8-1.3 2-2.5 4-2.5 3.5 0 5 3.5 3.5 6.5C19 15.5 12 20 12 20z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
-    </svg>
-  )
-}
-
 function AnnouncementCard({
   post,
   canDelete,
@@ -92,13 +84,8 @@ function AnnouncementCard({
               onLike(!post.likedByMe)
             }}
           >
-            <span className={styles.heart}>
-              <HeartIcon filled={post.likedByMe} />
-              {burst > 0 && (
-                <span key={burst} className={styles.burst} aria-hidden="true">
-                  <HeartIcon filled />
-                </span>
-              )}
+            <span className={styles.heart} aria-hidden="true">
+              {burst > 0 && <span key={burst} className={styles.burst} />}
             </span>
             {post.likes}
           </button>

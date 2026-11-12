@@ -97,16 +97,24 @@
 .delete {
   margin-left: auto;
 }
+/* The like's heart: white outline, pink on hover and once liked. */
 .heart {
   position: relative;
-  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  background: url('../../assets/communities/like-idle.png') center / contain no-repeat;
+}
+.like:not(:disabled):hover .heart {
+  background-image: url('../../assets/communities/like-hover.png');
+}
+.liked .heart {
+  background-image: url('../../assets/communities/like-selected.png');
 }
 /* The like's mark: grows to twice its size and fades out, once. */
 .burst {
   position: absolute;
   inset: 0;
-  display: inline-flex;
-  color: var(--brand);
+  background: url('../../assets/communities/like-selected.png') center / contain no-repeat;
   pointer-events: none;
   animation: burst var(--dur-pop) var(--ease-outquad) forwards;
 }
