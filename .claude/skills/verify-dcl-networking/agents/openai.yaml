@@ -1,4 +1,0 @@
-interface:
-  display_name: "Verify dcl-one Networking"
-  short_description: "Source-bound proofs for dcl-one networking decisions"
-  default_prompt: "Use $verify-dcl-networking to verify one bounded LiveKit or comms decision against the current dcl-one source."

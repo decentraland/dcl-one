@@ -5,6 +5,7 @@
 ## Agent work and commits
 
 - Keep accepted architecture in `docs/adr/` and reusable instructions in this tree.
+- Keep agent instructions and skills usable across LLM providers and models; omit provider-specific metadata files.
 - Keep plans, briefs, handoffs, task reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting. `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
