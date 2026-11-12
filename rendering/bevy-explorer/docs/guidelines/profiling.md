@@ -69,12 +69,12 @@ numbers.
   `swapchain_present_wait` when the present wait takes a fifth of the frame or more (vsync; on
   the web the render worker's wait for the browser's next animation frame,
   `pipelined/wait_frame`); otherwise `main_thread_cpu`, `render_thread_cpu` or `gpu`, whichever
-  of CPU busy time and GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they
-  are within it. CPU busy time is the frame without its pacing wait and, on the web, without the
-  handoff wait (`pipelined/wait_handoff`, the app blocked until the render worker takes the
-  frame); it includes the main thread's wait for the render world, so the frame is
-  `render_thread_cpu` when the render world's CPU time is the longer, by the margin, of it and
-  the main world's schedules. Null until a GPU time exists.
+  of the CPU side and GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they
+  are within it. The CPU side is the longer of the main thread's busy time (the frame without
+  its pacing wait and, on the web, without the handoff wait, `pipelined/wait_handoff`, the app
+  blocked until the render worker takes the frame) and the render world's CPU time; a CPU-bound
+  frame is `render_thread_cpu` when the render world's CPU time is the longer, by the margin, of
+  it and the main world's schedules. Null until a GPU time exists.
 - **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
   its cores and the RAM.
 

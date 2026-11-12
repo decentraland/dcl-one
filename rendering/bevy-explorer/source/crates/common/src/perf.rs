@@ -288,12 +288,14 @@ const BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME: f32 = 0.2;
 /// Compares the main thread's busy time, GPU time and present wait with a 20 % margin.
 /// `frame_pacing_wait_ms` is the time the frame-rate cap held the frame: the frame limiter's
 /// sleep natively, the app loop's wait for its frame timer on the web. `cpu_busy_ms` is the
-/// frame without the waits that pace it; it includes the main thread's wait for the render
-/// world, so a CPU-bound frame is `RenderThreadCpu` when `render_world_cpu_ms` is the longer, by
-/// the margin, of it and `main_world_schedules_ms`. The pacing wait or a present wait of a fifth
-/// of the frame or more bounds the frame (`FrameRateLimiter`, `SwapchainPresentWait` for
-/// vsync); otherwise the longer of CPU busy and GPU time does, or `CpuAndGpuBalanced` when they
-/// are within the margin. `None` without a GPU time.
+/// main thread's frame without the waits that pace it. The pacing wait or a present wait of a
+/// fifth of the frame or more bounds the frame (`FrameRateLimiter`, `SwapchainPresentWait` for
+/// vsync); otherwise the longer of the CPU side and GPU time does, or `CpuAndGpuBalanced` when
+/// they are within the margin. The CPU side is the longer of `cpu_busy_ms` and
+/// `render_world_cpu_ms` (the render world runs on its own thread or worker, so the main thread's
+/// busy time may or may not contain its wait for it); a CPU-bound frame is `RenderThreadCpu`
+/// when `render_world_cpu_ms` is the longer, by the margin, of it and `main_world_schedules_ms`,
+/// else `MainThreadCpu`. `None` without a GPU time.
 pub fn classify_frame_bottleneck(
     whole_frame_wall_ms: f32,
     frame_pacing_wait_ms: f32,
@@ -315,7 +317,7 @@ pub fn classify_frame_bottleneck(
         return Some(FrameBottleneck::SwapchainPresentWait);
     }
     let gpu = gpu_frame_time_ms?;
-    let cpu_busy = cpu_busy_ms.max(0.0);
+    let cpu_busy = cpu_busy_ms.max(0.0).max(render_world_cpu_ms);
     Some(if gpu > cpu_busy * BOTTLENECK_MIN_RATIO {
         FrameBottleneck::Gpu
     } else if cpu_busy > gpu * BOTTLENECK_MIN_RATIO {
@@ -468,6 +470,11 @@ mod tests {
         // the main thread's busy time is its wait for the render world
         assert_eq!(
             classify_frame_bottleneck(20.0, 1.0, 19.0, 6.0, 18.0, Some(10.0), Some(1.0)),
+            Some(RenderThreadCpu)
+        );
+        // the web: the main thread's busy time leaves out its wait for the render worker
+        assert_eq!(
+            classify_frame_bottleneck(20.0, 1.0, 4.0, 4.0, 18.0, Some(10.0), Some(1.0)),
             Some(RenderThreadCpu)
         );
         assert_eq!(

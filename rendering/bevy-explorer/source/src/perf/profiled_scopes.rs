@@ -1,8 +1,9 @@
 //! The in-app scope profiler: a `tracing` layer that times Bevy's spans (`system`, `schedule`,
 //! `node`) and the explorer's own, folded once a frame into [`ProfiledScopesTable`].
 //!
-//! The layer records nothing while the table is disabled: `on_enter` returns on one atomic load,
-//! `on_exit` after popping the scope from this thread's stack if it is there.
+//! The layer records nothing while the table is disabled: `on_new_span` keys a system span (one
+//! allocation) and nothing else, `on_enter` returns on one atomic load, `on_exit` after popping
+//! the scope from this thread's stack if it is there.
 //!
 //! Self time excludes the child scopes entered on the same thread: each thread keeps a stack of
 //! the scopes it has entered, and a scope's inclusive time is added to the one below it when it
@@ -41,7 +42,44 @@ const SMOOTHING_FRAMES: f32 = 60.0;
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct ProfiledScopeKey {
     kind: ProfiledScopeKind,
-    name: Arc<str>,
+    name: ScopeName,
+}
+
+/// A scope's name: the span's static name, or its `name` field's value. Equal and hashed by
+/// the text.
+#[derive(Clone, Debug)]
+enum ScopeName {
+    Static(&'static str),
+    Shared(Arc<str>),
+}
+
+impl ScopeName {
+    fn as_str(&self) -> &str {
+        match self {
+            ScopeName::Static(name) => name,
+            ScopeName::Shared(name) => name,
+        }
+    }
+}
+
+impl PartialEq for ScopeName {
+    fn eq(&self, other: &Self) -> bool {
+        self.as_str() == other.as_str()
+    }
+}
+
+impl Eq for ScopeName {}
+
+impl std::hash::Hash for ScopeName {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.as_str().hash(state);
+    }
+}
+
+impl From<&str> for ScopeName {
+    fn from(name: &str) -> Self {
+        ScopeName::Shared(name.into())
+    }
 }
 
 /// One scope's calls within the frame being recorded.
@@ -72,6 +110,9 @@ struct ProfiledScopesShared {
     /// Every recording thread's accumulation of the frame under way, each under its own lock;
     /// a thread adds its own on its first recorded exit and removes it when it ends.
     thread_frames: Mutex<Vec<Arc<Mutex<FrameAccumulations>>>>,
+    /// What ended threads recorded since the last fold. Locked after `thread_frames`, before a
+    /// thread's own.
+    orphaned_frame: Mutex<FrameAccumulations>,
 }
 
 static PROFILED_SCOPES_SHARED: LazyLock<ProfiledScopesShared> =
@@ -79,7 +120,15 @@ static PROFILED_SCOPES_SHARED: LazyLock<ProfiledScopesShared> =
         enabled: AtomicBool::new(false),
         recording_epoch: AtomicU64::new(0),
         thread_frames: Mutex::new(Vec::new()),
+        orphaned_frame: Mutex::new(HashMap::new()),
     });
+
+fn lock_orphaned_frame() -> MutexGuard<'static, FrameAccumulations> {
+    PROFILED_SCOPES_SHARED
+        .orphaned_frame
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
 
 /// This thread's accumulation, registered with the shared list while the thread lives.
 struct ThreadFrame(Arc<Mutex<FrameAccumulations>>);
@@ -93,8 +142,16 @@ impl ThreadFrame {
 }
 
 impl Drop for ThreadFrame {
+    /// Moves what the thread recorded since the last fold to the orphaned accumulation.
     fn drop(&mut self) {
-        lock_thread_frames().retain(|frame| !Arc::ptr_eq(frame, &self.0));
+        let mut thread_frames = lock_thread_frames();
+        let mut orphaned = lock_orphaned_frame();
+        let mut own = self.0.lock().unwrap_or_else(|poison| poison.into_inner());
+        for (key, accum) in own.drain() {
+            orphaned.entry(key).or_default().add(&accum);
+        }
+        drop(own);
+        thread_frames.retain(|frame| !Arc::ptr_eq(frame, &self.0));
     }
 }
 
@@ -117,16 +174,18 @@ fn profiler_recording_enabled() -> bool {
     PROFILED_SCOPES_SHARED.enabled.load(Ordering::Relaxed)
 }
 
-/// Runs `record` on this thread's accumulation.
+/// Runs `record` on this thread's accumulation; nothing once the thread's locals are destroyed.
 fn with_this_threads_frame(record: impl FnOnce(&mut FrameAccumulations)) {
     THREAD_FRAME
-        .with(|frame| record(&mut frame.0.lock().unwrap_or_else(|poison| poison.into_inner())));
+        .try_with(|frame| record(&mut frame.0.lock().unwrap_or_else(|poison| poison.into_inner())))
+        .ok();
 }
 
-/// Every thread's accumulation, merged and emptied.
+/// Every thread's accumulation and the orphaned one, merged and emptied.
 fn take_current_frame_accumulations() -> FrameAccumulations {
-    let mut merged = FrameAccumulations::new();
-    for thread_frame in lock_thread_frames().iter() {
+    let thread_frames = lock_thread_frames();
+    let mut merged = std::mem::take(&mut *lock_orphaned_frame());
+    for thread_frame in thread_frames.iter() {
         let mut frame = thread_frame
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
@@ -138,7 +197,9 @@ fn take_current_frame_accumulations() -> FrameAccumulations {
 }
 
 fn clear_current_frame_accumulations() {
-    for thread_frame in lock_thread_frames().iter() {
+    let thread_frames = lock_thread_frames();
+    lock_orphaned_frame().clear();
+    for thread_frame in thread_frames.iter() {
         thread_frame
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -148,7 +209,11 @@ fn clear_current_frame_accumulations() {
 
 #[cfg(test)]
 fn current_frame_accumulations_are_empty() -> bool {
-    lock_thread_frames().iter().all(|thread_frame| {
+    let thread_frames = lock_thread_frames();
+    if !lock_orphaned_frame().is_empty() {
+        return false;
+    }
+    thread_frames.iter().all(|thread_frame| {
         thread_frame
             .lock()
             .unwrap_or_else(|poison| poison.into_inner())
@@ -212,29 +277,32 @@ where
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let metadata = attrs.metadata();
         let kind = classify_profiled_scope_kind(metadata);
-        // every span gets its key, recording on or off: Bevy's long-lived `system_commands` and
-        // executor spans and the explorer's thread spans are created before any enable
+        // the spans keyed by their `name` field, read at creation: a system span whatever the
+        // recording state, so one created before an enable has its key; a schedule or node
+        // span, recreated every run, only while recording. The other kinds are keyed on enter
+        // from their static name, at no allocation.
+        let keyed_now = match kind {
+            ProfiledScopeKind::EcsSystem => true,
+            ProfiledScopeKind::Schedule | ProfiledScopeKind::RenderGraphNode => {
+                profiler_recording_enabled()
+            }
+            ProfiledScopeKind::BevyInternal | ProfiledScopeKind::ExplorerSpan => false,
+        };
+        if !keyed_now {
+            return;
+        }
         let Some(span) = ctx.span(id) else {
             return;
         };
-        // only Bevy's system, schedule and node spans are keyed by their `name` field; any
-        // other span is keyed by its static name, whatever fields it carries
-        let name = match kind {
-            ProfiledScopeKind::EcsSystem
-            | ProfiledScopeKind::Schedule
-            | ProfiledScopeKind::RenderGraphNode => {
-                let mut visitor = SpanNameFieldVisitor::default();
-                attrs.record(&mut visitor);
-                visitor.0.unwrap_or_else(|| metadata.name().to_owned())
-            }
-            ProfiledScopeKind::BevyInternal | ProfiledScopeKind::ExplorerSpan => {
-                metadata.name().to_owned()
-            }
-        };
-        span.extensions_mut().insert(ProfiledScopeKey {
-            kind,
-            name: name.into(),
-        });
+        let mut visitor = SpanNameFieldVisitor::default();
+        attrs.record(&mut visitor);
+        let name = visitor
+            .0
+            .map_or(ScopeName::Static(metadata.name()), |name| {
+                ScopeName::Shared(name.into())
+            });
+        span.extensions_mut()
+            .insert(ProfiledScopeKey { kind, name });
     }
 
     fn on_enter(&self, id: &Id, ctx: Context<'_, S>) {
@@ -244,37 +312,57 @@ where
         let Some(span) = ctx.span(id) else {
             return;
         };
-        let extensions = span.extensions();
-        let Some(key) = extensions.get::<ProfiledScopeKey>() else {
-            return;
+        let key = match span.extensions().get::<ProfiledScopeKey>() {
+            Some(key) => key.clone(),
+            None => {
+                let metadata = span.metadata();
+                match classify_profiled_scope_kind(metadata) {
+                    kind @ (ProfiledScopeKind::BevyInternal | ProfiledScopeKind::ExplorerSpan) => {
+                        ProfiledScopeKey {
+                            kind,
+                            name: ScopeName::Static(metadata.name()),
+                        }
+                    }
+                    // a schedule or node span created before the enable: keyed on its next
+                    // creation
+                    _ => return,
+                }
+            }
         };
         let entered = EnteredProfiledScope {
             id: id.clone(),
-            key: key.clone(),
+            key,
             started: Instant::now(),
             child_inclusive_time: Duration::ZERO,
             recording_epoch: PROFILED_SCOPES_SHARED
                 .recording_epoch
                 .load(Ordering::Relaxed),
         };
-        ENTERED_SCOPE_STACK.with(|stack| stack.borrow_mut().push(entered));
+        // nothing once the thread's locals are destroyed
+        ENTERED_SCOPE_STACK
+            .try_with(|stack| stack.borrow_mut().push(entered))
+            .ok();
     }
 
     /// Pops the scope even while recording is off, so no entry outlives its span; records it only
     /// when recording is on and was already on, without a disable, when the scope was entered.
     fn on_exit(&self, id: &Id, _: Context<'_, S>) {
-        let Some((entered, inclusive)) = ENTERED_SCOPE_STACK.with(|stack| {
-            let mut stack = stack.borrow_mut();
-            if !stack.last().is_some_and(|top| top.id == *id) {
-                return None;
-            }
-            let entered = stack.pop()?;
-            let inclusive = entered.started.elapsed();
-            if let Some(parent) = stack.last_mut() {
-                parent.child_inclusive_time += inclusive;
-            }
-            Some((entered, inclusive))
-        }) else {
+        let popped = ENTERED_SCOPE_STACK
+            .try_with(|stack| {
+                let mut stack = stack.borrow_mut();
+                if !stack.last().is_some_and(|top| top.id == *id) {
+                    return None;
+                }
+                let entered = stack.pop()?;
+                let inclusive = entered.started.elapsed();
+                if let Some(parent) = stack.last_mut() {
+                    parent.child_inclusive_time += inclusive;
+                }
+                Some((entered, inclusive))
+            })
+            .ok()
+            .flatten();
+        let Some((entered, inclusive)) = popped else {
             return;
         };
         if !profiler_recording_enabled()
@@ -422,7 +510,7 @@ fn fold_into(
         let row = rows
             .entry(key.clone())
             .or_insert_with(|| ProfiledScopeSummary {
-                scope_name: key.name.to_string(),
+                scope_name: key.name.as_str().to_owned(),
                 scope_kind: key.kind,
                 call_count: 0,
                 self_time_ms: 0.0,
