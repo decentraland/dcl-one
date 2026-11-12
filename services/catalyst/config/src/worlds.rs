@@ -576,6 +576,24 @@ mod tests {
     }
 
     #[test]
+    fn blocked_world_names_defaults_empty_and_keeps_the_raw_list() {
+        let defaults = parse(&["x", "--database-url", "postgres:///c"]).unwrap();
+        assert_eq!(defaults.worlds.blocked_world_names, "");
+        let config = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///c",
+            "--blocked-world-names",
+            " Blocked.dcl.eth, , other.eth",
+        ])
+        .unwrap();
+        assert_eq!(
+            config.worlds.blocked_world_names,
+            " Blocked.dcl.eth, , other.eth"
+        );
+    }
+
+    #[test]
     fn max_file_count_is_capped_at_the_deploy_file_parts() {
         let with = |v: &str| {
             parse(&[

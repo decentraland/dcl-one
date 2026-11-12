@@ -10,7 +10,7 @@ deployment grants over parcels, size limits, multi-scene placement).
 
 Pinned revisions:
 
-- Upstream: `decentraland/worlds-content-server` @ `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21).
+- Upstream: `decentraland/worlds-content-server` @ `ebbf8d41d07973e317892067c765107d3512938e` (2026-11-12).
   Packages read from their published tarballs at the versions `yarn.lock` pins:
   `@dcl/http-commons` 2.0.0 (`errorHandler`), `@dcl/crypto-middleware` 6.3.0 (`wellKnownComponents`,
   `rejectIfSigner`, `verify`), `@dcl/http-server` 2.3.0 (string and JSON bodies).
@@ -44,7 +44,8 @@ Files read:
     `src/adapters/worlds-manager.ts` (`deployScene`, `undeployWorld`, `undeployScene`)
   - `src/types.ts` (`SceneReplacementConflictError`, `DeploymentUniqueViolationError`), `src/components.ts`
   - Tests: `test/integration/{deploy,partial-deploy,partial-upload-accounting,multipart-error-handling,multipart-limiter,source-upload-limits,deploy-parcel-permission,strict-scene-signer-gate,undeploy-entity-handler,scenes-handler,content-locks}.spec.ts`,
-    `test/contracts/partial-deployment.ts`, `test/unit/validations/common.spec.ts`
+    `test/contracts/partial-deployment.ts`, `test/unit/validations/common.spec.ts`,
+    `test/unit/name-deny-list-checker.spec.ts`
 - dcl-one (`services/catalyst/`):
   - `worlds/src/core/mod.rs` (routes), `worlds/src/lib.rs` (`app_router`), `worlds/src/writes.rs`
   - `worlds/src/core/{deploy,deploy_form,deploy_validate,partial,upload_limits,upload_spool,scenes,store,quota,auth,http}.rs`
@@ -190,7 +191,7 @@ one transaction (`store.rs`).
 | Parcel out of bounds | 400 | `Deployment failed: Coordinate X value 9999 is out of bounds. Must be between -150 and 150.` | same | `scene.ts:185-198`, `coordinates/component.ts:33-58`, test `deploy.spec.ts:1589-1648` | `deploy_validate.rs` `validate_parcel_in_bounds`, `deploy.rs` `validate` | MATCH |
 | Base not in parcels / not canonical / pointers ≠ parcels | 400 | `Deployment failed: The scene base parcel [b] must be included in the scene parcels [..].` / `… Scene pointers and parcels must be unique canonical parcel coordinates.` / `… The scene pointers [..] must match the scene parcels [..].` | same | `scene.ts:30-60`, test `deploy-parcel-permission.spec.ts:252-321` | `deploy.rs` `scene_pointers_error` | MATCH |
 | Over `MAX_PARCELS` | 400 | `Deployment failed: Max allowed scene dimensions is <n> parcels.` | same | `scene.ts:167-178` | `deploy.rs` `validate` | MATCH |
-| Name on the DAO deny list | 400 | `Deployment failed: Deployment failed: World "<name>" can not be deployed because the name is in the name deny list managed by Decentraland DAO.` | same (prefix twice in both) | `scene.ts:86-101` | `deploy.rs` `validate` | MATCH |
+| Name on the DAO deny list | 400 | `Deployment failed: Deployment failed: World "<name>" can not be deployed because the name is in the name deny list managed by Decentraland DAO.` | same (prefix twice in both); the name is refused when its whole lowercased form is in `BLOCKED_WORLD_NAMES` or its suffix-stripped form is on the list | `scene.ts:86-101`, `name-deny-list-checker.ts:8-13,45-59` | `deploy.rs` `validate`, `names.rs` `BannedNames::allows` | MATCH (WD-28) |
 | No permission | 400 | `Deployment failed: Deployment failed: Your wallet has no permission to publish this scene because it does not have permission to deploy under "<name>". Check scene.json to select a name that either you own or you were given permission to deploy.` | same | `scene.ts:108-163`, tests `deploy.spec.ts:1251-1303`, `deploy-parcel-permission.spec.ts:104-250` | `deploy.rs` `validate` | MATCH |
 | Name authority cannot answer | 500 `{"error":"Internal Server Error"}` (the fetch throws) | | 403 `Not authorized: could not verify deployment permissions (deploy denied)` | `dcl-name-checker.ts:9-20` | `deploy.rs` `validate` | intended (worlds-compatibility.md, WD-14) |
 | World disabled by an operator | — | | 403 with the disabled message | none | `deploy.rs` `validate` (`store::is_world_disabled`) | dcl-one only |
@@ -216,7 +217,7 @@ dcl-one kicks the forwarder, re-checks the quota block and updates the in-tree s
 ### Data dependency
 
 Name ownership (DCL NAME registrar or ENS), the deployment grants, the storage allowance (wallet
-holdings over JSON-RPC), the DAO deny list and the blob store. dcl-one reads these through
+holdings over JSON-RPC), the DAO deny list with the operator's `BLOCKED_WORLD_NAMES`, and the blob store. dcl-one reads these through
 `crate::policy::Policy` (`can_deploy`, `live_name_owner`, `world_limits`) and
 `CoreState::scene_cap`; the allowance rules are in `docs/worlds-compatibility.md` ("Wallet storage
 allowance").
@@ -282,7 +283,7 @@ Upstream (`routes.ts:199`, `handlers/undeploy-entity-handler.ts:6-38`): strict s
 (`namePermissionChecker.checkPermission`) or a world-wide deployment grantee
 (`permissions.hasWorldWidePermission`); `worlds.undeployWorld` soft-deletes every scene, clears the
 spawn and the stats, publishes `WorldUndeploymentEvent` and re-checks the owner's block
-(`logic/worlds/component.ts:179-197`, `worlds-manager.ts:864-890`).
+(`logic/worlds/component.ts:185-203`, `worlds-manager.ts:864-890`).
 
 dcl-one (`scenes.rs` `undeploy_world`): world name parsed first (400 `Invalid world name: …`), the strict signed
 fetch, `Policy::is_owner`, else `has_world_wide_permission`, `store::undeploy_world` (rows retired,
@@ -308,7 +309,7 @@ Upstream (`routes.ts:210`, `scenes-handler.ts:87-133`): strict signed fetch; the
 `^-?\d+,-?\d+$` (no bounds check); the owner removes every scene on the parcel; anyone else needs a
 deployment grant over the whole footprint of every scene on it (else 401), and only those scene
 identities are removed; `undeployWorldScenes` recomputes the spawn and publishes
-`WorldScenesUndeploymentEvent` (`logic/worlds/component.ts:210-244`, `worlds-manager.ts:1052-1120`).
+`WorldScenesUndeploymentEvent` (`logic/worlds/component.ts:216-250`, `worlds-manager.ts:1052-1120`).
 
 dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed fetch, `Parcel::parse_strict`
 (the same pattern, values within `i32`, `comms/src/world_identity.rs`), `Policy::is_owner`, else
@@ -554,7 +555,7 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
 19. **WD-19 · all routes · no deployment or undeployment events.** Status: intended (worlds-compatibility.md).
     - Upstream: SNS `WorldDeploymentEvent` (with `isMultiplayer`), `WORLD_SETTINGS_CHANGED` after a deploy
       that changed the settings, `WorldUndeploymentEvent`, `WorldScenesUndeploymentEvent`
-      (`src/adapters/entity-deployer.ts:196-248`, `src/logic/worlds/component.ts:179-244`).
+      (`src/adapters/entity-deployer.ts:196-248`, `src/logic/worlds/component.ts:185-250`).
     - dcl-one: in-tree consumers only (scene identities, the forward outbox, the quota re-check)
       (`services/catalyst/worlds/src/core/deploy.rs` `publish`, `store.rs`). "No deployment events"
       names what replaces each event.
@@ -621,6 +622,25 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
     - Upstream: owner or world-wide deployment grantee, else 400 with the fixed text
       (`undeploy-entity-handler.ts:16-29`).
     - dcl-one: `scenes.rs` `undeploy_world`.
+    - Severity: none (closed).
+
+28. **WD-28 · `POST /entities` (single request and `partial=true`) · `BLOCKED_WORLD_NAMES`.** Status: MATCH, no work.
+    - Upstream: `BLOCKED_WORLD_NAMES` (`.env.default:97`, empty) is read once, split on commas, each
+      entry trimmed and lowercased, empty ones dropped (`src/adapters/name-deny-list-checker.ts:8-13`).
+      `checkNameDenyList` refuses a name whose whole lowercased form is in that set before it reads the
+      remote list, and keeps refusing it while that list is offline (`:45-49`);
+      `createValidateBannedNames` turns the refusal into the deny-list 400 of section 1
+      (`src/logic/validations/scene.ts:86-101`). Pinned by `test/unit/name-deny-list-checker.spec.ts:19-62`.
+    - dcl-one: `WorldsConfig::blocked_world_names` reads `BLOCKED_WORLD_NAMES`
+      (`services/catalyst/config/src/worlds.rs:449-454`); `serve` passes it to the deploy core's
+      `Settings` and `CoreState::new` parses it once into `NameDenyList` (`worlds/src/core/mod.rs:330`,
+      `worlds/src/core/names.rs:31-39,92-97`). `deploy::validate` asks `check_name_deny_list` at
+      upstream's position (`worlds/src/core/deploy.rs:777-784`), so a single-request publish and the
+      first `partial=true` batch carrying the manifest answer the same 400 and store nothing. Pinned by
+      `worlds/src/core/tests/partial_uploads.rs` `a_publish_to_a_blocked_world_name_answers_the_deny_list_400`
+      (through `/worlds-content-server/entities`), `names.rs`
+      `configured_blocks_refuse_exact_names_and_lead_the_banned_names`, `blank_configured_blocks_are_empty`
+      and `config/src/worlds.rs` `blocked_world_names_defaults_empty_and_keeps_the_raw_list`.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not

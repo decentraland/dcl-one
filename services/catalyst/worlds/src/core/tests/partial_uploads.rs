@@ -426,6 +426,55 @@ async fn a_part_not_named_by_a_cidv1_is_refused() {
     assert!(!f.storage.exist(&u.entity_id).await.unwrap());
 }
 
+/// `BLOCKED_WORLD_NAMES` on the deploy route (`name-deny-list-checker.ts:8-13,45-49`,
+/// `scene.ts:86-101`): the name owner's publish to a configured full name (entry trimmed and
+/// lowercased) answers the deny-list 400 through the gateway nest and stores nothing; a
+/// `partial=true` first batch carrying the manifest is refused the same way before staging.
+#[tokio::test]
+async fn a_publish_to_a_blocked_world_name_answers_the_deny_list_400() {
+    let world = world_name();
+    let configured = format!(" , {} ,", world.display().to_uppercase());
+    let Some(f) = fixture_with_settings(|s| s.blocked_world_names = configured).await else {
+        return;
+    };
+    let owner = Wallet::random();
+    f.names.set(&owner.address, world.label());
+    let refusal = json!({
+        "error": "Bad request",
+        "message": format!(
+            "Deployment failed: Deployment failed: World \"{}\" can not be deployed because the name is in the name deny list managed by Decentraland DAO.",
+            world.display()
+        )
+    });
+
+    let nested = Router::new().nest(NEST, f.app.clone());
+    let d = deployment(
+        &owner,
+        &world,
+        &format!("Blocked {}", world.label()),
+        "0,0",
+        &["0,0"],
+    )
+    .await;
+    let body = expect(
+        &nested,
+        Case::new("post", format!("{NEST}/entities")).body(d.body.clone(), &d.content_type),
+        400,
+    )
+    .await;
+    assert_eq!(body, refusal);
+    assert!(!f.storage.exist(&d.entity_id).await.unwrap());
+    assert!(!f.storage.exist(&d.thumb_hash).await.unwrap());
+
+    let u = upload(&world, 2);
+    let body = expect_batch(&f.app, &u, Batch::of(&owner, true, &[0]), 400).await;
+    assert_eq!(body, refusal);
+    assert_eq!(pending_count(&f.pool, &u.entity_id).await, 0);
+    assert_eq!(world_rows(&f.pool, &world).await, 0);
+    assert!(!f.storage.exist(&u.entity_id).await.unwrap());
+    assert!(!f.storage.exist(&u.files[0].0).await.unwrap());
+}
+
 /// Upstream dates a partial upload when its first batch arrives (WD-12): the pending row's
 /// time is the request's arrival, not when its body finished.
 #[tokio::test]

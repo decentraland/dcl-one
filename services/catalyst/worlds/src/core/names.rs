@@ -225,6 +225,18 @@ mod tests {
         );
     }
 
+    /// An unset or blank `BLOCKED_WORLD_NAMES` blocks nothing.
+    #[test]
+    fn blank_configured_blocks_are_empty() {
+        for raw in ["", " ", " , ,"] {
+            let blocked = BlockedNames::parse(raw);
+            assert!(
+                blocked.ordered.is_empty() && blocked.set.is_empty(),
+                "{raw:?}"
+            );
+        }
+    }
+
     /// "keeps configured blocks effective when the remote list is unavailable".
     #[test]
     fn configured_blocks_hold_while_the_list_cannot_be_read() {
