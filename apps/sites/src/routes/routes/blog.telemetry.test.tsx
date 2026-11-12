@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ComponentType, ReactNode } from "react";
 import { createRoutesStub, redirect, useLoaderData } from "react-router";
@@ -77,7 +83,9 @@ describe("blog list telemetry", () => {
     const user = userEvent.setup();
     renderAt("/blog");
     await screen.findByRole("heading", { level: 1, name: "The Decentraland Blog" });
-    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]);
+    await waitFor(() =>
+      expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }]),
+    );
 
     await user.click(screen.getByRole("link", { name: "Load more" }));
     await screen.findByRole("heading", { level: 3, name: "News 9" });
@@ -96,13 +104,20 @@ describe("blog list telemetry", () => {
     const nav = screen.getByRole("navigation", { name: "Blog categories" });
     await user.click(within(nav).getByRole("link", { name: "Announcements" }));
     await screen.findByRole("heading", { level: 1, name: "Announcements" });
-    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 11 }, { post_count: 9 }]);
+    await waitFor(() =>
+      expect(calls("lp_blog_viewed")).toEqual([
+        { post_count: 11 },
+        { post_count: 9 },
+      ]),
+    );
 
     cleanup();
     track.mockClear();
     renderAt("/blog/author/jane-doe");
     await screen.findByRole("heading", { level: 1, name: "Jane Doe" });
-    expect(calls("lp_blog_viewed")).toEqual([{ post_count: 1 }]);
+    await waitFor(() =>
+      expect(calls("lp_blog_viewed")).toEqual([{ post_count: 1 }]),
+    );
   });
 
   it("fires nothing for an unknown category or an unavailable blog", async () => {
@@ -127,6 +142,7 @@ describe("blog list telemetry", () => {
     renderAt("/blog");
     const nav = await screen.findByRole("navigation", { name: "Blog categories" });
     await user.click(within(nav).getByRole("link", { name: "Platform" }));
+    await screen.findByRole("heading", { level: 1, name: "Platform" });
     await user.click(await screen.findByRole("link", { name: "Second Post" }));
     await screen.findByRole("heading", { level: 1, name: "Second Post" });
     expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
@@ -138,14 +154,21 @@ describe("blog post telemetry", () => {
     const user = userEvent.setup();
     renderAt("/blog/platform/first-post");
     await screen.findByRole("heading", { level: 1, name: "First Post" });
-    expect(calls("lp_blog_post_viewed")).toEqual([{ slug: "first-post" }]);
+    await waitFor(() =>
+      expect(calls("lp_blog_post_viewed")).toEqual([{ slug: "first-post" }]),
+    );
 
     const related = screen.getByRole("region", { name: /More on|More from/ });
     await user.click(within(related).getByRole("link", { name: "Second Post" }));
     await screen.findByRole("heading", { level: 1, name: "Second Post" });
 
-    expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
-    expect(calls("lp_blog_post_viewed")).toEqual([{ slug: "first-post" }, { slug: "second-post" }]);
+    await waitFor(() => {
+      expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
+      expect(calls("lp_blog_post_viewed")).toEqual([
+        { slug: "first-post" },
+        { slug: "second-post" },
+      ]);
+    });
   });
 
   it("sends no click for the back link, the author link or a link in the body, and no view for a missing post", async () => {
