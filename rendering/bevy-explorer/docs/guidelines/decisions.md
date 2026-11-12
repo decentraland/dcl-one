@@ -355,13 +355,22 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
   frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
-- **The web build has no Bevy spans.** The `profiler` cargo feature (Bevy's `trace` spans and
-  the counting allocator) is in `default`, so every native build has it, and the web build is
-  built without it: the engine's tracing layer on the web (`tracing_wasm`) marks every span on
-  the page's performance timeline, which nothing clears. Patching that layer in the vendored
-  `bevy_log` to report no timings was the alternative; the feature is the one-line change
-  instead. The web profiler records the explorer's own spans only, and `/profile_top` says so
-  (`profilerBuild`). See [profiling](profiling.md#profiler-profile_top-count-sort-profile_enable-onoffreset).
+- **The web build has no system, schedule or render-node spans.** The `profiler` cargo feature
+  (Bevy's `trace` spans, the counting allocator, Bevy's render and system-information
+  diagnostics) is in `default`, so every native build has it, and the web build is built without
+  it: the engine's tracing layer on the web (`tracing_wasm`) marks every span on the page's
+  performance timeline, which nothing clears. Patching that layer in the vendored `bevy_log` to
+  report no timings was the alternative; the feature is the one-line change instead. The web
+  profiler records the explorer's own spans and Bevy's unconditional ones (`present_frames`,
+  `entity_sync`), and `/profile_top` says so (`profilerBuild`). See
+  [profiling](profiling.md#profiler-profile_top-count---sort-metric-profile_enable-onoffreset).
+- **The analytics performance event reads the sampler's snapshot.** `PerformanceMetrics` counts
+  hiccups against the sampler's threshold (the larger of 50 ms and two target frames, so 66.7 ms
+  at a 30 FPS cap), takes real frame times with no 250 ms cap, and is sent once per 15 s sample,
+  in world and focused only, instead of once per 1000 frames of virtual time through loading
+  screens and unfocused windows. The old event's own sampling was removed rather than kept beside
+  the sampler. Dashboards comparing across this change see a step from the definitions; whether
+  the event gets a schema field or a fixed 50 ms count is the analytics owners' call.
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an
   open discussion, not a decision.

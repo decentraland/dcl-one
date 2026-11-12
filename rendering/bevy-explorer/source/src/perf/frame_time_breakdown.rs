@@ -266,6 +266,8 @@ pub fn publish_frame_time_breakdown_system(
             smoothed_frame,
             frame_pacing_wait_ms,
             cpu_busy_ms,
+            smoothed(&PERF_MAIN_WORLD_SCHEDULES_MS).unwrap_or(main_timer.last_frame_schedules_ms),
+            smoothed(&PERF_RENDER_WORLD_CPU_MS).unwrap_or(render_world_cpu_ms),
             gpu_frame_time_ms,
             smoothed_present,
         ),

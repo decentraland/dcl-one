@@ -97,8 +97,10 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
       }
     } else {
       assert.equal(explorer.console.kind, 'web', 'only the web build is without the profiler feature')
-      for (const row of enabled.scopeSummaries) assert.equal(row.scopeKind, 'explorer_span', JSON.stringify(row))
-      if (enabled.scopeSummaries.length === 0) assert.match(String(enabled.unavailable.scopeSummary), /no Bevy spans/)
+      // without Bevy's `trace` feature there are no system, schedule or render-node spans; Bevy's
+      // unconditional spans (`present_frames`, `entity_sync`) and the explorer's own remain
+      for (const row of enabled.scopeSummaries) assert.ok(['explorer_span', 'bevy_internal'].includes(row.scopeKind), JSON.stringify(row))
+      if (enabled.scopeSummaries.length === 0) assert.match(String(enabled.unavailable.scopeSummary), /no system, schedule or render-node spans/)
     }
     await explorer.hud.click(button('Disable profiler'))
     await explorer.hud.wait(button('Enable profiler'))
@@ -149,7 +151,7 @@ scenario('the performance sampler samples in world and scales the hiccup thresho
   assert.equal(state.sampling.pausedReason, null)
   assert.equal(state.frameTimeBreakdown.length, 6)
   assert.ok(state.frameTimeBreakdown.slice(0, 4).every((ms) => typeof ms === 'number' && ms >= 0), JSON.stringify(state.frameTimeBreakdown))
-  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'gpu', 'swapchain_present_wait', 'frame_rate_limiter', 'cpu_and_gpu_balanced'].includes(state.bottleneck), String(state.bottleneck))
+  assert.ok(state.bottleneck === null || ['main_thread_cpu', 'render_thread_cpu', 'gpu', 'swapchain_present_wait', 'frame_rate_limiter', 'cpu_and_gpu_balanced'].includes(state.bottleneck), String(state.bottleneck))
   assert.ok((state.entityCount ?? 0) > 0)
   if (explorer.console.kind === 'native') {
     assert.equal(state.hudMainThreadCost, null)

@@ -347,6 +347,34 @@ pub fn incidents_per_run_verdict(
     }
 }
 
+/// The Hiccups per run verdict: the incidents rule on the medians, given fully separated run
+/// ranges, and the same hiccup threshold in both builds (a build's threshold is the median of
+/// its summaries').
+pub fn hiccups_per_run_verdict(
+    change: &MedianAndRange,
+    base: &MedianAndRange,
+    change_threshold_ms: Option<f32>,
+    base_threshold_ms: Option<f32>,
+    incomparable: Option<SessionsNotComparable>,
+) -> IncidentsPerRunVerdict {
+    if let Some(incomparable) = incomparable {
+        return IncidentsPerRunVerdict::Withheld(incomparable.reason());
+    }
+    if change_threshold_ms
+        .zip(base_threshold_ms)
+        .is_some_and(|(change_ms, base_ms)| (change_ms - base_ms).abs() >= 0.5)
+    {
+        return IncidentsPerRunVerdict::Withheld("the builds' hiccup thresholds differ");
+    }
+    let verdict = incidents_per_run_verdict(f64::from(change.median), f64::from(base.median), None);
+    let separated = change.min > base.max || change.max < base.min;
+    if separated {
+        verdict
+    } else {
+        IncidentsPerRunVerdict::NoSignificantChange
+    }
+}
+
 /// A 🟢 or 🔴 verdict, kept for the headline.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SignificantMetricChange {
@@ -431,6 +459,42 @@ mod tests {
         assert_eq!(parse_float(" 16.7\t"), Some(16.7));
         assert_eq!(parse_float("abc"), None);
         assert_eq!(parse_float(""), None);
+    }
+
+    #[test]
+    fn the_hiccup_verdict_needs_separated_runs_and_equal_thresholds() {
+        let runs = |median, min, max| MedianAndRange { median, min, max };
+        // medians 0 and 2, ranges overlapping (base 0, 0, 3; change 2, 2, 0)
+        assert_eq!(
+            hiccups_per_run_verdict(
+                &runs(2.0, 0.0, 2.0),
+                &runs(0.0, 0.0, 3.0),
+                Some(50.0),
+                Some(50.0),
+                None
+            ),
+            IncidentsPerRunVerdict::NoSignificantChange
+        );
+        assert_eq!(
+            hiccups_per_run_verdict(
+                &runs(4.0, 4.0, 5.0),
+                &runs(0.0, 0.0, 1.0),
+                Some(50.0),
+                Some(50.0),
+                None
+            ),
+            IncidentsPerRunVerdict::More
+        );
+        assert_eq!(
+            hiccups_per_run_verdict(
+                &runs(4.0, 4.0, 5.0),
+                &runs(0.0, 0.0, 1.0),
+                Some(66.7),
+                Some(50.0),
+                None
+            ),
+            IncidentsPerRunVerdict::Withheld("the builds' hiccup thresholds differ")
+        );
     }
 
     #[test]

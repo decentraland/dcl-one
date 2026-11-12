@@ -389,12 +389,12 @@ fn render_state(
 }
 
 /// Report the scope profiler's top scopes as JSON: `count` rows (20 by default) sorted by
-/// `sort` (self time by default), plus the allocations per frame.
+/// `--sort` (self time by default), plus the allocations per frame.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/profile_top")]
 struct ProfileTopCommand {
     count: Option<usize>,
-    #[arg(value_enum)]
+    #[arg(long, value_enum)]
     sort: Option<ProfiledScopeSortMetric>,
 }
 
@@ -457,7 +457,7 @@ fn profile_top(
                 } else if profiler_build {
                     "No scope has been recorded yet."
                 } else {
-                    "This build has no Bevy spans (the `profiler` cargo feature is off): only the explorer's own spans are recorded."
+                    "This build has no system, schedule or render-node spans (the `profiler` cargo feature is off): only the explorer's own spans and Bevy's unconditional ones are recorded."
                 },
                 "allocations": if profiler_build {
                     "Waiting for the first frame's allocation counts."

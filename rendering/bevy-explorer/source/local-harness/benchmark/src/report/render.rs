@@ -153,8 +153,7 @@ pub fn runner_section(section: &RunnerSection) -> String {
                     CPU_HICCUPS_METRIC,
                     cpu_hiccups_cell(base),
                     cpu_hiccups_cell(change),
-                    if change.cpu_hiccup_count_run_count > 0
-                        && base.cpu_hiccup_count_run_count > 0
+                    if change.cpu_hiccup_count_run_count > 0 && base.cpu_hiccup_count_run_count > 0
                     {
                         signed_hundredths(f64::from(
                             change.cpu_hiccups_per_run.median - base.cpu_hiccups_per_run.median,

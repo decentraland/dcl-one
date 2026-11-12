@@ -53,3 +53,40 @@ pub fn publish_frame_allocations_system(mut diagnostics: Diagnostics) {
         allocated_bytes_sum as f64
     });
 }
+
+#[cfg(test)]
+mod tests {
+    use std::alloc::System;
+
+    use super::*;
+
+    /// Through the wrapper directly, as this test binary's global allocator is the system's.
+    #[test]
+    fn every_allocation_counts_once_and_a_reallocation_counts_its_growth() {
+        // the counters are process-wide: serialised with the other tests that touch them
+        let _shared = crate::perf::profiled_scopes::SHARED_PROFILER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let allocator = CountingAllocator(System);
+        let before = (
+            ALLOCATION_COUNT.load(Ordering::Relaxed),
+            ALLOCATED_BYTES_SUM.load(Ordering::Relaxed),
+        );
+        let layout = Layout::from_size_align(64, 8).unwrap();
+        let grown = Layout::from_size_align(96, 8).unwrap();
+        // SAFETY: the layouts are valid, each pointer is freed once with its layout
+        unsafe {
+            let a = allocator.alloc(layout);
+            let b = allocator.alloc_zeroed(layout);
+            let a = allocator.realloc(a, layout, grown.size());
+            allocator.dealloc(a, grown);
+            allocator.dealloc(b, layout);
+        }
+        let after = (
+            ALLOCATION_COUNT.load(Ordering::Relaxed),
+            ALLOCATED_BYTES_SUM.load(Ordering::Relaxed),
+        );
+        assert_eq!(after.0 - before.0, 3);
+        assert_eq!(after.1 - before.1, 64 + 64 + 32);
+    }
+}

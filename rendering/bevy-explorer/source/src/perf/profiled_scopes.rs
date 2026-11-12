@@ -53,20 +53,61 @@ struct ProfiledScopeFrameAccumulation {
     max_single_call: Duration,
 }
 
+impl ProfiledScopeFrameAccumulation {
+    fn add(&mut self, other: &ProfiledScopeFrameAccumulation) {
+        self.call_count += other.call_count;
+        self.self_time += other.self_time;
+        self.inclusive_time += other.inclusive_time;
+        self.max_single_call = self.max_single_call.max(other.max_single_call);
+    }
+}
+
+type FrameAccumulations = HashMap<ProfiledScopeKey, ProfiledScopeFrameAccumulation>;
+
 /// What the layer and the table share.
 struct ProfiledScopesShared {
     enabled: AtomicBool,
     /// Moves on every enable; a scope entered under an older one is not recorded.
     recording_epoch: AtomicU64,
-    frame: Mutex<HashMap<ProfiledScopeKey, ProfiledScopeFrameAccumulation>>,
+    /// Every recording thread's accumulation of the frame under way, each under its own lock;
+    /// a thread adds its own on its first recorded exit and removes it when it ends.
+    thread_frames: Mutex<Vec<Arc<Mutex<FrameAccumulations>>>>,
 }
 
 static PROFILED_SCOPES_SHARED: LazyLock<ProfiledScopesShared> =
     LazyLock::new(|| ProfiledScopesShared {
         enabled: AtomicBool::new(false),
         recording_epoch: AtomicU64::new(0),
-        frame: Mutex::new(HashMap::new()),
+        thread_frames: Mutex::new(Vec::new()),
     });
+
+/// This thread's accumulation, registered with the shared list while the thread lives.
+struct ThreadFrame(Arc<Mutex<FrameAccumulations>>);
+
+impl ThreadFrame {
+    fn register() -> Self {
+        let frame = Arc::new(Mutex::new(HashMap::new()));
+        lock_thread_frames().push(Arc::clone(&frame));
+        Self(frame)
+    }
+}
+
+impl Drop for ThreadFrame {
+    fn drop(&mut self) {
+        lock_thread_frames().retain(|frame| !Arc::ptr_eq(frame, &self.0));
+    }
+}
+
+thread_local! {
+    static THREAD_FRAME: ThreadFrame = ThreadFrame::register();
+}
+
+fn lock_thread_frames() -> MutexGuard<'static, Vec<Arc<Mutex<FrameAccumulations>>>> {
+    PROFILED_SCOPES_SHARED
+        .thread_frames
+        .lock()
+        .unwrap_or_else(|poison| poison.into_inner())
+}
 
 /// Serialises the tests that touch the process-wide recording state.
 #[cfg(test)]
@@ -76,16 +117,43 @@ fn profiler_recording_enabled() -> bool {
     PROFILED_SCOPES_SHARED.enabled.load(Ordering::Relaxed)
 }
 
-fn lock_current_frame_accumulations(
-) -> MutexGuard<'static, HashMap<ProfiledScopeKey, ProfiledScopeFrameAccumulation>> {
-    PROFILED_SCOPES_SHARED
-        .frame
-        .lock()
-        .unwrap_or_else(|poison| poison.into_inner())
+/// Runs `record` on this thread's accumulation.
+fn with_this_threads_frame(record: impl FnOnce(&mut FrameAccumulations)) {
+    THREAD_FRAME
+        .with(|frame| record(&mut frame.0.lock().unwrap_or_else(|poison| poison.into_inner())));
 }
 
-fn take_current_frame_accumulations() -> HashMap<ProfiledScopeKey, ProfiledScopeFrameAccumulation> {
-    std::mem::take(&mut *lock_current_frame_accumulations())
+/// Every thread's accumulation, merged and emptied.
+fn take_current_frame_accumulations() -> FrameAccumulations {
+    let mut merged = FrameAccumulations::new();
+    for thread_frame in lock_thread_frames().iter() {
+        let mut frame = thread_frame
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        for (key, accum) in frame.drain() {
+            merged.entry(key).or_default().add(&accum);
+        }
+    }
+    merged
+}
+
+fn clear_current_frame_accumulations() {
+    for thread_frame in lock_thread_frames().iter() {
+        thread_frame
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clear();
+    }
+}
+
+#[cfg(test)]
+fn current_frame_accumulations_are_empty() -> bool {
+    lock_thread_frames().iter().all(|thread_frame| {
+        thread_frame
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .is_empty()
+    })
 }
 
 /// An entered scope on this thread.
@@ -144,11 +212,8 @@ where
     fn on_new_span(&self, attrs: &Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
         let metadata = attrs.metadata();
         let kind = classify_profiled_scope_kind(metadata);
-        // a `system` span's name is kept even while recording is off, so a span created before
-        // an enable still has one
-        if kind != ProfiledScopeKind::EcsSystem && !profiler_recording_enabled() {
-            return;
-        }
+        // every span gets its key, recording on or off: Bevy's long-lived `system_commands` and
+        // executor spans and the explorer's thread spans are created before any enable
         let Some(span) = ctx.span(id) else {
             return;
         };
@@ -221,12 +286,17 @@ where
             return;
         }
         let self_time = inclusive.saturating_sub(entered.child_inclusive_time);
-        let mut frame = lock_current_frame_accumulations();
-        let accum = frame.entry(entered.key).or_default();
-        accum.call_count += 1;
-        accum.self_time += self_time;
-        accum.inclusive_time += inclusive;
-        accum.max_single_call = accum.max_single_call.max(inclusive);
+        with_this_threads_frame(|frame| {
+            frame
+                .entry(entered.key)
+                .or_default()
+                .add(&ProfiledScopeFrameAccumulation {
+                    call_count: 1,
+                    self_time,
+                    inclusive_time: inclusive,
+                    max_single_call: inclusive,
+                });
+        });
     }
 }
 
@@ -280,7 +350,7 @@ impl ProfiledScopesTable {
     /// Empties the table; the sample under way keeps its rows.
     pub fn reset(&mut self) {
         self.scope_summaries.clear();
-        lock_current_frame_accumulations().clear();
+        clear_current_frame_accumulations();
     }
 
     /// The `count` scopes with the most of `sort`, highest first.
@@ -509,7 +579,7 @@ mod tests {
                 let _outer = info_span!("outer").entered();
                 std::thread::sleep(Duration::from_millis(2));
             }
-            assert!(lock_current_frame_accumulations().is_empty());
+            assert!(current_frame_accumulations_are_empty());
 
             table.set_recording_enabled(true);
             {

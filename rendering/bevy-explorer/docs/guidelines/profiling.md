@@ -68,11 +68,13 @@ numbers.
   timer, the cap, then the animation frame that runs the next update);
   `swapchain_present_wait` when the present wait takes a fifth of the frame or more (vsync; on
   the web the render worker's wait for the browser's next animation frame,
-  `pipelined/wait_frame`); otherwise `main_thread_cpu` or `gpu`, whichever of CPU busy time and
-  GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they are within it. CPU
-  busy time is the frame without its pacing wait and, on the web, without the handoff wait
-  (`pipelined/wait_handoff`, the app blocked until the render worker takes the frame). Null
-  until a GPU time exists.
+  `pipelined/wait_frame`); otherwise `main_thread_cpu`, `render_thread_cpu` or `gpu`, whichever
+  of CPU busy time and GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they
+  are within it. CPU busy time is the frame without its pacing wait and, on the web, without the
+  handoff wait (`pipelined/wait_handoff`, the app blocked until the render worker takes the
+  frame); it includes the main thread's wait for the render world, so the frame is
+  `render_thread_cpu` when the render world's CPU time is the longer, by the margin, of it and
+  the main world's schedules. Null until a GPU time exists.
 - **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
   its cores and the RAM.
 
@@ -84,7 +86,7 @@ backend and driver, and the pipeline statistics (vertex and fragment shader invo
 adapter supports them. The GPU frame time of the whole frame is the explorer's own measurement
 (`benchmark.md`, *GPU time*) and works on every backend with timestamp queries.
 
-### Profiler (`/profile_top [count] [sort]`, `/profile_enable on|off|reset`)
+### Profiler (`/profile_top [count] [--sort <metric>]`, `/profile_enable on|off|reset`)
 
 The in-app scope profiler. A `profiler` build (the cargo feature, in `default`, so every native
 build; the web build is without it) carries Bevy's tracing spans (Bevy's `trace` feature): one
@@ -94,10 +96,15 @@ build has. Scene JavaScript runs in its own process on native (`dcl_deno_ipc`), 
 `js startup` and `js update` spans are not recorded here. A `tracing` layer in every build times
 the spans there are, but records nothing until the table is enabled: **Enable profiler** in the
 section, `/profile_enable on` in the console, or the benchmark autopilot for its measured phase.
-Enabled, it costs two clock reads per span and a map update per exit, tens of microseconds a
-frame on native. `/profile_top` reports `profilerBuild`; without the feature the empty table says
-so. The web build leaves the feature off because the engine's tracing layer there
-(`tracing_wasm`) marks every span on the page's performance timeline, which nothing clears.
+Enabled, it costs two clock reads per span and an update of the thread's own map per exit (the
+fold merges the threads' maps once a frame, so no exit waits on another thread), tens of
+microseconds a frame on native. A span that lives across frames is one call, recorded when it
+ends. `/profile_top` reports `profilerBuild`; without the feature the empty table says so, and
+the rows are the explorer's own spans and Bevy's unconditional ones (`present_frames`,
+`entity_sync`). The web build leaves the feature off because the engine's tracing layer there
+(`tracing_wasm`) marks every span on the page's performance timeline, which nothing clears. With
+the feature, Bevy's `trace` also prefixes a native session-log line logged inside a system with
+its spans (`schedule{name=Update}:system{name=...}:`) and installs a span-trace panic hook.
 
 A row is one scope since the last reset: its kind (`ecs_system`, `schedule`, `render_graph_node`,
 `bevy_internal`, `explorer_span`), call count, self time, inclusive time, longest call and the
