@@ -41,7 +41,7 @@
 
 .row .label.label:hover:not(:disabled),
 .row .toggle.toggle:hover:not(:disabled) {
-  background-color: var(--dcl-hover);
+  background-color: var(--primary-hover);
   box-shadow: none;
 }
 

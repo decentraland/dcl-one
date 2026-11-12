@@ -544,7 +544,7 @@
 }
 
 .sendButton.sendButton:hover:not(:disabled) {
-  background-color: var(--dcl-hover);
+  background-color: var(--primary-hover);
 }
 
 .sendButton.sendButton:disabled {
