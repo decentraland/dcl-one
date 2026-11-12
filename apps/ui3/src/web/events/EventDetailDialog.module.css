@@ -1,0 +1,215 @@
+/* from: sites@17b3535a:src/components/events/DetailModal/DetailModal.styled.ts,
+   src/components/events/EventDetailModal/EventDetailModal.styled.ts, the MUI Dialog and decentraland-ui2 Button they
+   render. The mobile rules are MUI's down('sm'). Values come from the @dcl/one-ui foundations tokens; a reference value
+   with no token stays a literal and names it. */
+.root, .root * { box-sizing: border-box; }
+.root { position: fixed; inset: 0; z-index: 1300; }
+.backdrop { position: fixed; inset: 0; z-index: -1; display: flex; align-items: center; justify-content: center; background-color: rgba(0, 0, 0, 0.8); -webkit-tap-highlight-color: transparent; }
+.container { height: 100%; outline: 0; display: flex; justify-content: center; align-items: center; }
+.paper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 880px;
+  max-height: 80vh;
+  margin: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: var(--dcl-radius-lg);
+  background: transparent;
+  color: #f0f0f0;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
+  box-shadow: 0px 4px 25px 0px #ffffff40;
+  scrollbar-width: none;
+  outline: 0;
+}
+.paper::-webkit-scrollbar { display: none; }
+.hero { position: relative; width: 880px; height: 450px; max-width: 100%; overflow: hidden; flex-shrink: 0; }
+.heroImage { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+.heroOverlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(0deg, var(--dcl-neutrals-black) 0%, rgba(0, 0, 0, 0.8) 30.02%, transparent 106.22%); }
+.close {
+  position: absolute;
+  top: var(--dcl-space-12);
+  right: var(--dcl-space-12);
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--dcl-transparencies-black-40);
+  cursor: pointer;
+}
+.close:hover { background-color: var(--dcl-transparencies-black-60); }
+.close:focus-visible { outline: 2px solid var(--dcl-neutrals-snow); outline-offset: 2px; }
+.icon { width: 1em; height: 1em; display: inline-block; flex-shrink: 0; fill: currentColor; user-select: none; }
+.closeIcon { font-size: 20px; color: var(--dcl-neutrals-snow); }
+.backIcon { display: none; font-size: 20px; color: var(--dcl-neutrals-snow); }
+.heroContent { position: absolute; bottom: 0; left: 0; right: 0; z-index: 1; display: flex; flex-direction: column; gap: var(--dcl-space-8); padding: 0 30px 50px 30px; }
+.timeTrigger { display: inline-flex; align-items: center; cursor: pointer; }
+.subtitle { margin: 0; font-size: var(--dcl-font-size-body-sm); font-weight: 600; line-height: 1.5; letter-spacing: 0.04em; color: var(--dcl-neutrals-snow); }
+.title {
+  margin: 0;
+  font-size: var(--dcl-font-size-heading-1);
+  font-weight: 600;
+  line-height: 1.24;
+  letter-spacing: 0.00938em;
+  color: var(--dcl-neutrals-snow);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.creatorLocation { display: flex; align-items: center; flex-wrap: wrap; column-gap: var(--dcl-space-24); row-gap: var(--dcl-space-4); margin-bottom: var(--dcl-space-8); }
+.creator { display: flex; align-items: center; gap: var(--dcl-space-8); }
+.creatorButton {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+  border-radius: var(--dcl-radius-sm);
+  transition: opacity 150ms ease;
+}
+.creatorButton:hover { opacity: 0.85; }
+.creatorButton:focus-visible { outline: 2px solid var(--dcl-primary-primary); outline-offset: 2px; }
+.avatar { width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid rgba(255, 255, 255, 0.5); flex-shrink: 0; object-fit: cover; }
+.creatorName { margin: 0; font-size: var(--dcl-font-size-body-sm); line-height: 1; letter-spacing: 0.00938em; color: var(--dcl-neutrals-snow); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.creatorHighlight { color: var(--dcl-primary-primary); }
+.location {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: var(--dcl-space-4) 10px;
+  border: none;
+  border-radius: var(--dcl-radius-sm);
+  color: var(--dcl-neutrals-snow);
+  background-color: var(--dcl-transparencies-white-10);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.location:hover { background-color: var(--dcl-transparencies-white-20); }
+.location:active { background-color: rgba(255, 255, 255, 0.15); }
+.location:focus-visible { outline: 2px solid var(--dcl-neutrals-snow); outline-offset: 2px; }
+.locationIcon { font-size: 18px; color: var(--dcl-neutrals-snow); }
+.locationText { font-size: var(--dcl-font-size-body-sm); line-height: 1.4; color: var(--dcl-neutrals-snow); word-break: break-word; }
+.actions { display: flex; align-items: center; gap: var(--dcl-space-8); }
+/* Remind me and Add to calendar: a #fcfcfc button with #161518 text (signed in) or a 1px #fcfcfc outline (signed
+   out). @dcl/one-ui Button has neither variant, so the page keeps its own. */
+.primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  height: 46px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--dcl-radius-md);
+  background-color: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-shadow);
+  font-family: Arial, sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.primary:hover:not(:disabled) { background-color: rgba(252, 252, 252, 0.85); }
+.primary:disabled, .secondary:disabled { opacity: 0.5; cursor: default; }
+.primary:focus-visible, .secondary:focus-visible, .copy:focus-visible { outline: 2px solid var(--dcl-neutrals-snow); outline-offset: 2px; }
+.secondary, .copy {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  padding: var(--dcl-space-8) var(--dcl-space-16);
+  border: 1px solid var(--dcl-neutrals-snow);
+  border-radius: var(--dcl-radius-sm);
+  background-color: transparent;
+  color: var(--dcl-neutrals-snow);
+  font-family: Arial, sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 250ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+.copy { flex-shrink: 0; gap: 0; }
+.secondary:hover:not(:disabled), .copy:hover { background-color: var(--dcl-transparencies-white-20); }
+.smallIcon { font-size: 20px; }
+.copyIcon { font-size: 18px; color: var(--dcl-neutrals-snow); }
+.copied {
+  position: absolute;
+  bottom: calc(100% + var(--dcl-space-8));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: 4px;
+  background-color: rgba(97, 97, 97, 0.92);
+  color: var(--dcl-neutrals-white);
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.bell { position: relative; display: inline-flex; flex-shrink: 0; width: 20px; height: 20px; }
+.bellLayer { position: absolute; inset: 0; transition: opacity 0.3s ease; }
+.bellActive { fill: var(--dcl-primary-primary); }
+.check { transform-origin: 17px 9px; transition: opacity 0.25s ease 0.15s, transform 0.25s ease 0.15s; }
+.checkHidden { opacity: 0; transform: scale(0); transition: opacity 0.15s ease, transform 0.15s ease; }
+.liveBadge { align-self: flex-start; padding: 2px var(--dcl-space-8); border-radius: 4px; background-color: var(--dcl-primary-primary); color: var(--dcl-neutrals-snow); font-size: var(--dcl-font-size-body-xs); font-weight: 600; text-transform: uppercase; }
+.content { flex: 1; padding: 30px 50px; background: radial-gradient(47.37% 84.21% at 42.4% 26.48%, #6e31a7 0%, var(--dcl-background-web-dark) 100%); }
+.label { margin: 0 0 var(--dcl-space-8); font-size: var(--dcl-font-size-body-sm); font-weight: 600; line-height: 1.75; letter-spacing: 0.00938em; text-transform: uppercase; color: var(--dcl-neutrals-silver); }
+.description { margin: 0; font-size: var(--dcl-font-size-body-sm); line-height: 1.6; letter-spacing: 0.00938em; color: var(--dcl-neutrals-snow); white-space: pre-wrap; word-break: break-word; }
+.description a { color: var(--dcl-primary-primary); text-decoration: underline; }
+.divider { height: 1px; margin: var(--dcl-space-16) 0; background-color: rgba(255, 255, 255, 0.15); }
+.scheduleRow { display: flex; align-items: center; justify-content: space-between; gap: var(--dcl-space-12); }
+.scheduleText { margin: 0; font-size: var(--dcl-font-size-body-sm); line-height: 1.5; letter-spacing: 0.00938em; color: var(--dcl-neutrals-snow); }
+.recurrence { margin: var(--dcl-space-4) 0 0; font-size: var(--dcl-font-size-body-xs); line-height: 1.5; letter-spacing: 0.00938em; color: var(--dcl-neutrals-silver); }
+.scheduleButton { display: flex; align-items: center; justify-content: center; padding: 0; border: none; background: none; color: var(--dcl-neutrals-silver); cursor: pointer; flex-shrink: 0; }
+.scheduleButton:hover { color: var(--dcl-neutrals-snow); }
+.scheduleButton:focus-visible { outline: 2px solid var(--dcl-neutrals-snow); outline-offset: 2px; }
+.scheduleIcon { font-size: 20px; }
+.bottomJump { display: flex; margin-top: var(--dcl-space-24); }
+/* Jump In is @dcl/one-ui JumpInCTA md. The reference draws it as a decentraland-ui2 contained Button (MUI medium in
+   the hero, large at the bottom), so the page sets that size and type on top: the icon's -4px end margin is taken
+   off the end padding. */
+.jumpIn {
+  height: auto;
+  border-radius: var(--dcl-radius-xs);
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+}
+.jumpIn:hover { background-color: #e02347; }
+.jumpIn:focus-visible { outline-color: var(--dcl-neutrals-snow); }
+.jumpInMedium { padding: 6px var(--dcl-space-12) 6px var(--dcl-space-16); font-size: var(--dcl-font-size-body-sm); --jump-in-icon: 20px; }
+.jumpInLarge { padding: var(--dcl-space-8) 18px var(--dcl-space-8) 22px; font-size: var(--dcl-font-size-button-lg); --jump-in-icon: 22px; }
+@media (max-width: 599.95px) {
+  .paper { border-radius: 0; max-width: 100%; max-height: calc(100% - var(--dcl-space-64)); height: calc(100% - var(--dcl-space-64)); margin: var(--dcl-space-64) 0 0; background-color: #1a0a2e; }
+  .hero { width: 100%; height: auto; }
+  .heroImage { position: relative; aspect-ratio: 16 / 9; height: auto; }
+  .heroOverlay { display: none; }
+  .close { top: var(--dcl-space-8); left: var(--dcl-space-8); right: auto; }
+  .closeIcon { display: none; }
+  .backIcon { display: inline-block; }
+  .heroContent { position: relative; padding: var(--dcl-space-16); background: linear-gradient(180deg, #1a0a2e 0%, var(--dcl-background-web-dark) 100%); }
+  .content { padding: var(--dcl-space-24) var(--dcl-space-16); }
+}

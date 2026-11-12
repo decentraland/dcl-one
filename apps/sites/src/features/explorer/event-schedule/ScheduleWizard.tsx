@@ -230,7 +230,7 @@ function ScheduleWizardInner({
         liveNow={liveNow}
         allDays={allDays}
         dayLabels={dayLabels}
-        filterBar={scheduleBrowse}
+        notice={scheduleBrowse}
       />
 
       <div className="event-schedule__controls" role="group" aria-label="Schedule wizard">

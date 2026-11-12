@@ -1,5 +1,10 @@
+/* The reference footer inherits its page's body text (16px/1.5, letter-spacing 0.00938em): every run keeps the
+   computed 0.15008px, so the composed text styles, which reset it, inherit it back; buttons keep normal, as there. */
 .root {
   color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+  letter-spacing: 0.00938em;
 }
 
 .main {
@@ -43,6 +48,7 @@
 .newsletterTitle {
   composes: text68656164696e672f34 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  letter-spacing: inherit;
   text-align: center;
 }
 
@@ -60,12 +66,14 @@
 .sectionLabel {
   composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  letter-spacing: inherit;
   color: var(--dcl-text-secondary-on-brand);
   text-transform: uppercase;
 }
 
 .socials {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   margin: 0;
   padding: 0;
@@ -120,6 +128,7 @@
 .link {
   composes: text626f64792f6d642d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-neutrals-white);
+  letter-spacing: inherit;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -138,6 +147,7 @@
 .menuLabel {
   composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
   margin: 0;
+  letter-spacing: inherit;
   padding: var(--dcl-space-12) 0;
   border-bottom: 1px solid var(--dcl-border-subtle);
   color: var(--dcl-text-secondary-on-brand);
@@ -183,6 +193,7 @@
 .menuLink {
   composes: text626f64792f6d64 from '../../../foundations/typography/text-styles.module.css';
   padding-left: var(--dcl-space-8);
+  letter-spacing: inherit;
   color: var(--dcl-neutrals-snow);
   text-decoration: none;
 }
@@ -212,7 +223,8 @@
   display: grid;
   grid-template-rows: repeat(2, auto);
   grid-auto-flow: column;
-  column-gap: var(--dcl-space-96);
+  justify-content: start;
+  column-gap: 142px;
   row-gap: var(--dcl-space-16);
 }
 
@@ -220,6 +232,7 @@
 .copyright {
   composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
   color: var(--dcl-text-secondary);
+  letter-spacing: inherit;
   text-decoration: none;
   white-space: nowrap;
 }
@@ -228,7 +241,11 @@
   color: var(--dcl-text-secondary-on-brand);
 }
 
-.copyright {
+.legalLink {
+  display: block;
+}
+
+.copyrightLine {
   display: none;
   margin: 0;
 }
@@ -352,7 +369,7 @@
     gap: var(--dcl-space-16);
   }
 
-  .copyright {
+  .copyrightLine {
     display: block;
   }
 }
@@ -397,9 +414,6 @@
 .lead {
   gap: 40px;
 }
-.newsletterTitle {
-  letter-spacing: normal;
-}
 .menuLabel {
   line-height: 1.75;
   border-bottom-width: 0.5px;
@@ -411,6 +425,9 @@
 .languageTrigger {
   font-size: 15px;
   line-height: 24px;
+}
+.flag {
+  border-radius: 2px;
 }
 .legalLink {
   font-size: 14px;

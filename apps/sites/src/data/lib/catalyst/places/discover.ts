@@ -87,7 +87,7 @@ export const browsePlacesQuery = (filters: BrowseFilters) =>
     initialPageParam: 0,
     queryFn: ({ pageParam, signal }) =>
       fetchDestinations(
-        { limit: BROWSE_LIMIT, offset: pageParam || undefined, search: filters.search || undefined, ...categoryParams(filters.category) },
+        { limit: BROWSE_LIMIT, offset: pageParam, search: filters.search || undefined, ...categoryParams(filters.category) },
         { signal },
       ),
     getNextPageParam: (last, _pages, offset) => nextBrowseOffset(last, offset),
@@ -98,7 +98,7 @@ export const liveFeedQuery = () =>
   queryOptions({
     queryKey: placesKeys.live(),
     staleTime: PLACES_STALE_MS,
-    queryFn: ({ signal }) => fetchDestinations({ limit: LIVE_FEED_LIMIT }, { signal }),
+    queryFn: ({ signal }) => fetchDestinations({ limit: LIVE_FEED_LIMIT, offset: 0 }, { signal }),
   });
 
 /** The member's saved places, signed as them; the key names only their account. */
@@ -149,7 +149,8 @@ export function placeCreatorAddress(place: Pick<Destination, "creator_address" |
   return undefined;
 }
 
-export type PlaceCreatorProfile = { name: string; avatarUrl?: string };
+/** `claimed` tells the display name (`name#1234` otherwise), which decides the avatar's background colour (ADR-292). */
+export type PlaceCreatorProfile = { name: string; avatarUrl?: string; claimed?: boolean };
 
 const ProfilesEnvelope = z.array(
   z
@@ -159,6 +160,7 @@ const ProfilesEnvelope = z.array(
           .object({
             ethAddress: z.string(),
             name: z.string().optional(),
+            hasClaimedName: z.boolean().optional(),
             avatar: z
               .object({ snapshots: z.object({ face256: z.string().optional() }).passthrough().optional() })
               .passthrough()
@@ -189,7 +191,11 @@ export async function fetchPlaceCreators(addresses: readonly string[], signal?: 
     const avatar = entry.avatars[0];
     if (!avatar) continue;
     const face = profileFaceUrl(avatar.avatar?.snapshots?.face256);
-    out[avatar.ethAddress.toLowerCase()] = { name: avatar.name ?? "", ...(face ? { avatarUrl: face } : {}) };
+    out[avatar.ethAddress.toLowerCase()] = {
+      name: avatar.name ?? "",
+      ...(face ? { avatarUrl: face } : {}),
+      ...(avatar.hasClaimedName ? { claimed: true } : {}),
+    };
   }
   return out;
 }
