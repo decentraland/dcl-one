@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -53,14 +54,12 @@ function Host({
 }
 import * as React from "react";
 beforeEach(() => {
-  window.matchMedia = vi
-    .fn()
-    .mockImplementation((query) => ({
-      matches: false,
-      media: query,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-    }));
+  window.matchMedia = vi.fn().mockImplementation((query) => ({
+    matches: false,
+    media: query,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  }));
   HTMLDialogElement.prototype.showModal = function () {
     this.open = true;
   };
@@ -152,6 +151,41 @@ describe("Sites native chrome integration", () => {
     await screen.findByText("No notifications yet");
     view.rerender(<Host auth={{ ...a, account: "0xb" }} />);
     view.rerender(<Host auth={a} />);
+    expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
+  });
+  it("closes the mobile drawer before loading notifications and ignores a late reply after closing", async () => {
+    let release: (value: unknown) => void = () => {};
+    const fetchNotifications = vi.fn(
+      () =>
+        new Promise<unknown>((resolve) => {
+          release = resolve;
+        }),
+    );
+    render(
+      <Host
+        auth={{
+          ...baseAuth,
+          signedIn: true,
+          account: "0xa",
+          fetchNotifications,
+        }}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Open menu" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog", { name: "Menu" })).getByRole("button", {
+        name: "Notifications",
+      }),
+    );
+    expect(screen.queryByRole("dialog", { name: "Menu" })).toBeNull();
+    expect(screen.getByRole("dialog", { name: "Notifications" })).toBeTruthy();
+    expect(screen.getByRole("status").textContent).toContain(
+      "Loading notifications",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    await act(async () => {
+      release({ notifications: [] });
+    });
     expect(screen.queryByRole("dialog", { name: "Notifications" })).toBeNull();
   });
   it("keeps standalone chrome fallback and refuses self-recursive renderer", () => {

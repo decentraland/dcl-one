@@ -26,11 +26,34 @@ export default function SitesNotificationsDialog({
   const titleId = useId()
   useEffect(() => {
     const dialog = ref.current
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null
     dialog?.showModal()
-    return () => dialog?.close()
+    return () => {
+      if (dialog?.open) dialog.close()
+      if (opener?.isConnected) opener.focus()
+    }
   }, [])
   return (
-    <dialog ref={ref} className={styles.dialog} aria-labelledby={titleId} onClose={onClose}>
+    <dialog
+      ref={ref}
+      className={styles.dialog}
+      aria-labelledby={titleId}
+      onCancel={(event) => {
+        event.preventDefault()
+        onClose()
+      }}
+      onClick={(event) => {
+        if (event.target !== event.currentTarget) return
+        const box = event.currentTarget.getBoundingClientRect()
+        if (
+          event.clientX < box.left ||
+          event.clientX > box.right ||
+          event.clientY < box.top ||
+          event.clientY > box.bottom
+        )
+          onClose()
+      }}
+    >
       <div className={styles.heading}>
         <h2 id={titleId}>Notifications</h2>
         <Button onClick={onClose}>Close</Button>
