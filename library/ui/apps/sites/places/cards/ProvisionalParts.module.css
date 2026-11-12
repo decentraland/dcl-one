@@ -1,0 +1,159 @@
+/* TODO(shared-card): provisional card pieces, removed with ProvisionalParts.tsx. Sizes are cqw
+   against the card's own width, so both cards scale with their grid column as source does; each
+   value is the source design measurement, capped at its design pixel size. */
+
+.badges {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: min(1.838cqw, 8px);
+  pointer-events: none;
+}
+
+.badgeGroup {
+  display: flex;
+  gap: var(--dcl-space-4);
+}
+
+.badge {
+  composes: text6c6162656c2f746167 from '../../../../foundations/typography/text-styles.module.css';
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  height: min(5.974cqw, 26px);
+  padding: 0 min(1.838cqw, 8px);
+  border-radius: min(1.838cqw, 8px);
+  color: var(--dcl-neutrals-white);
+}
+
+.live {
+  composes: badge;
+  background: var(--dcl-system-red);
+  text-transform: uppercase;
+}
+
+.users {
+  composes: badge;
+  background: var(--dcl-neutrals-shadow);
+}
+
+.dot {
+  width: var(--dcl-space-8);
+  height: var(--dcl-space-8);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-system-green);
+}
+
+.featured {
+  composes: badge;
+  background: var(--dcl-gradient-light-rainbow);
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.cover {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.titleLink {
+  overflow: hidden;
+  color: inherit;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  outline: none;
+}
+
+/* The title link covers the card, so the whole card opens the page. */
+.titleLink::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+}
+
+.creatorRow {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: min(2.298cqw, 10px);
+  min-width: 0;
+}
+
+.avatar {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: min(7.352cqw, 32px);
+  height: min(7.352cqw, 32px);
+  border: min(0.525cqw, 2px) solid var(--dcl-transparencies-white-40);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-brand-lavender);
+  color: var(--dcl-neutrals-white);
+  font-size: min(3.217cqw, 14px);
+  object-fit: cover;
+}
+
+.by {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../../foundations/typography/text-styles.module.css';
+  min-width: 0;
+  overflow: hidden;
+  font-size: min(3.217cqw, 14px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Above the card's covering title link, so it stays its own target. */
+.creator {
+  position: relative;
+  z-index: 1;
+  color: var(--dcl-brand-ruby);
+  text-decoration: none;
+}
+
+a.creator:hover {
+  text-decoration: underline;
+}
+
+a.creator:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.jumpIn {
+  composes: text627574746f6e2f786c from '../../../../foundations/typography/text-styles.module.css';
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  width: 100%;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-action-primary);
+  color: var(--dcl-text-on-action);
+  text-decoration: none;
+  transition: background-color 0.15s ease;
+}
+
+.jumpIn:hover {
+  background: var(--dcl-primary-primary-dark-1);
+}
+
+.jumpIn:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}

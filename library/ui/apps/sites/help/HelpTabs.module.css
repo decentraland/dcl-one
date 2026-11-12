@@ -1,0 +1,63 @@
+/* Source: decentraland/sites HelpTabButtonsContainer and HelpTabButton (src/pages/help/HelpPage.styled.ts). */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: var(--dcl-space-12) var(--dcl-space-16) var(--dcl-space-12) 0;
+}
+
+.tab {
+  composes: text626f64792f736d2d7374726f6e67 from '../../../foundations/typography/text-styles.module.css';
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-8);
+  height: 40px;
+  margin-bottom: var(--dcl-space-8);
+  padding: 0 var(--dcl-space-16);
+  border: 0;
+  border-radius: var(--dcl-radius-sm);
+  background: transparent;
+  color: var(--dcl-neutrals-gray);
+  cursor: pointer;
+  line-height: 17px;
+  text-align: left;
+}
+
+.tab svg {
+  flex-shrink: 0;
+  color: var(--dcl-neutrals-snow);
+}
+
+.tab:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.tab:focus-visible {
+  outline: 2px solid var(--dcl-neutrals-snow);
+  outline-offset: 2px;
+}
+
+.selected,
+.selected:hover {
+  background: var(--dcl-neutrals-white);
+  color: var(--dcl-neutrals-shadow);
+}
+
+.selected svg {
+  color: var(--dcl-neutrals-shadow);
+}
+
+/* Three tabs do not fit one phone row: they wrap instead of breaking their labels. */
+@media (max-width: 767px) {
+  .root {
+    flex-direction: row;
+    flex-wrap: wrap;
+    column-gap: var(--dcl-space-8);
+  }
+
+  .tab {
+    white-space: nowrap;
+  }
+}

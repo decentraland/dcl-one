@@ -1,0 +1,146 @@
+/*
+ * Source: decentraland/sites HelpPageWrapper, HelpPageContainer, HelpSidebar*, HelpContentArea and the status
+ * wrappers (src/pages/help/HelpPage.styled.ts). One grid places every part, so the status control is rendered once
+ * and moves from the right column (wider screens) to beside the title (phones).
+ *
+ * From 768px up the page is one viewport high (never under 640px, where the page scrolls instead): the chat banner
+ * keeps its height at the bottom and the active section's list fills the rest, scrolling on its own.
+ */
+.root {
+  display: flex;
+  box-sizing: border-box;
+  height: max(640px, calc(100vh - var(--site-header-h, 64px)));
+  height: max(640px, calc(100svh - var(--site-header-h, 64px)));
+  flex-direction: column;
+  padding: var(--dcl-space-32) 20px 20px;
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  /* decentraland.org renders this page's text with grayscale antialiasing. */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.layout {
+  display: grid;
+  min-height: 0;
+  flex: 1 1 auto;
+  grid-template-areas:
+    'title panel status'
+    'description panel status'
+    'tabs panel status'
+    '. panel .';
+  grid-template-columns: minmax(0, 300px) minmax(0, 1fr) auto;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  align-items: start;
+  padding-left: var(--dcl-space-48);
+}
+
+.title {
+  composes: text68656164696e672f32 from '../../../foundations/typography/text-styles.module.css';
+  grid-area: title;
+  margin: 0 0 var(--dcl-space-4);
+  font-size: var(--dcl-font-size-heading-1);
+  line-height: 36px;
+}
+
+.description {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  grid-area: description;
+  margin: 0;
+  color: var(--dcl-text-secondary-on-brand);
+  font-weight: 500;
+  line-height: 24px;
+}
+
+.tabs {
+  grid-area: tabs;
+  padding-top: var(--dcl-space-4);
+}
+
+.panel {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  grid-area: panel;
+  align-self: stretch;
+  margin: 18px 0 0 80px;
+}
+
+.status {
+  display: flex;
+  min-width: 173px;
+  grid-area: status;
+  align-items: flex-start;
+  margin-right: 50px;
+}
+
+@media (max-width: 1023px) {
+  .layout {
+    padding-left: 40px;
+  }
+
+  .panel {
+    margin-left: var(--dcl-space-48);
+  }
+
+  .status {
+    min-width: 0;
+    margin-right: 0;
+  }
+}
+
+/* Phones keep the page's natural height: the list keeps its fixed height and the banner sticks to the bottom. */
+@media (max-width: 767px) {
+  .root {
+    height: auto;
+    min-height: calc(100vh - var(--site-header-h, 64px));
+    min-height: calc(100svh - var(--site-header-h, 64px));
+    padding: var(--dcl-space-24) var(--dcl-space-16) var(--dcl-space-32);
+  }
+
+  .layout {
+    flex: 1 0 auto;
+    grid-template-areas:
+      'title status'
+      'description description'
+      'tabs tabs'
+      'panel panel';
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto;
+    align-items: baseline;
+    padding-left: 0;
+  }
+
+  .title {
+    width: 200px;
+    max-width: 100%;
+    padding-left: var(--dcl-space-16);
+    font-size: var(--dcl-font-size-heading-2);
+    line-height: 29px;
+  }
+
+  .description {
+    max-width: 380px;
+    padding: 0 var(--dcl-space-16);
+    font-size: var(--dcl-font-size-body-xs);
+    line-height: 18px;
+  }
+
+  .tabs {
+    padding: 0 var(--dcl-space-16);
+  }
+
+  .status {
+    align-self: center;
+    padding-right: var(--dcl-space-16);
+  }
+
+  .panel {
+    display: block;
+    width: 100%;
+    max-width: 375px;
+    justify-self: center;
+    margin: 0;
+  }
+}

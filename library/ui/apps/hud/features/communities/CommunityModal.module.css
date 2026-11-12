@@ -588,3 +588,20 @@
   align-items: center;
   gap: 16px;
 }
+
+/* A request's, an invite's or a ban's own buttons, where Members rows show the friendship button. */
+.rowActions {
+  flex: none;
+  display: inline-flex;
+  gap: 6px;
+}
+
+/* The Members tab's sections for owners and moderators (Members, Banned, Join Requests, Invited). */
+.memberTabs {
+  margin-bottom: 12px;
+}
+
+/* A section's rows carry two buttons each: one row per line, so the names keep their room. */
+.sectionGrid {
+  grid-template-columns: 1fr;
+}

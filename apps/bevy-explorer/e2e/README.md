@@ -164,7 +164,7 @@ Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash key
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
+test is in the spec file's header. Port 43, Partial 33, Gap 11, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -175,7 +175,7 @@ test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | | | 3 | | Two lists, no calendar, detail popup or Create button |
 | Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
-| Communities (4) | `communities` | | 3 | 1 | | No invites view, titles or counts; the detail is a modal |
+| Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
 | Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the rail's Camera button) and shows the overlay's Shoot and Close |

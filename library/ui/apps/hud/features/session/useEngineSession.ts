@@ -37,6 +37,7 @@ import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot
 import { dispatchCancelLayer } from '@explorer-core/lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '@explorer-core/lib/inputLock'
 import { applyProfileEdit } from '@explorer-core/engine/profileEdit'
+import { COMMUNITY_REQUEST_NOTIFICATIONS } from '@explorer-core/features/communities/notifications'
 import { peekProfile, profileChanged, receiveProfile, seedProfiles, setOwnProfile, setProfileRequester, updateProfile } from './profileStore'
 import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '@explorer-core/features/pointer/cursorStore'
@@ -70,6 +71,10 @@ import type {
   CommunityAction,
   CommunityMemberAction,
   CommunityDetailMessage,
+  CommunityInvitesMessage,
+  CommunityMemberSection,
+  CommunityMemberSectionMessage,
+  InvitableCommunitiesMessage,
   CommunityChannel,
   CommunityMember,
   Emote,
@@ -124,7 +129,31 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   transfer: 'There was an error transfering ownership. Please try again.',
   kick: 'There was an error kicking the user. Please try again.',
   ban: 'There was an error banning the user. Please try again.',
-  fetch: 'There was an error loading the community. Please try again.'
+  unban: 'There was an error unbanning the user. Please try again.',
+  fetch: 'There was an error loading the community. Please try again.',
+  // answers to invites and requests
+  acceptInvite: 'There was an error accepting community invitation. Please try again.',
+  rejectInvite: 'There was an error rejecting community invitation. Please try again.',
+  manageRequest: 'There was an error managing the user request. Please try again.'
+}
+
+// Answers to invites and requests, and an unban, are toasted rather than shown on a card: the
+// Invites & Requests section has none.
+const TOASTED_COMMUNITY_ACTIONS: ReadonlySet<CommunityAction> = new Set(['acceptInvite', 'rejectInvite', 'manageRequest', 'unban'])
+
+// The texts for the Invites & Requests section's reads and the Invite to Community submenu.
+export const INVITES_LOAD_ERROR: Record<CommunityInvitesMessage['failed'][number], string> = {
+  invites: 'There was an error loading invites. Please try again.',
+  requestsReceived: 'There was an error loading requests received. Please try again.',
+  requestsSent: 'There was an error loading requests. Please try again.'
+}
+export const INVITE_SENT = 'Invite to Community Sent'
+const INVITE_FAILED = 'Error sending invitation. Please try again.'
+const INVITABLE_FAILED = "Error loading 'Invite to Community' menu option. Reopen menu to try again."
+// A community member as the profile store keeps them: an unclaimed name with its #tag, as every
+// explorer shows it (the card reads a bare name as claimed).
+function memberProfiles(members: CommunityMember[]): Parameters<typeof seedProfiles>[0] {
+  return members.map((m) => ({ address: m.address, name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`, picture: m.picture, claimed: m.hasClaimedName }))
 }
 
 // The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
@@ -319,6 +348,33 @@ export interface CommunitiesState {
   cards: Readonly<Record<string, Community>>
   /** Fetch one community into `cards`. */
   fetch: (id: string) => void
+  /** The browser's Invites & Requests section: null until read. */
+  invites: CommunityInvitesMessage | null
+  /** Read the Invites & Requests section (and its counter) again. */
+  loadInvites: () => void
+  /** How many invites and requests received wait on the user, for the sidebar's counter; null
+   *  until read. */
+  pendingCount: number | null
+  /** Read the counter alone (the Communities page opening). */
+  loadInvitesCount: () => void
+  /** Accept, reject or cancel an invite or a join request. `address` names the member when an
+   *  owner or moderator answers their request or cancels their invite; without it the request is
+   *  the user's own invite. A failure is toasted. */
+  manageRequest: (id: string, requestId: string, intention: 'accepted' | 'rejected' | 'cancelled', address?: string) => void
+  /** The open card's Members tab sections (Banned, Requests, Invites), as last read. */
+  memberSections: Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>>
+  /** The card for a community opened or closed (null), so a failure on it shows on the card. */
+  cardOpen: (id: string | null) => void
+  /** Read one of the open card's Members tab sections. */
+  loadMemberSection: (id: string, section: CommunityMemberSection) => void
+  /** The communities the user may invite the person last asked about to, or null until read. */
+  invitable: InvitableCommunitiesMessage | null
+  /** Read the communities the user may invite someone to (the Invite to Community submenu). */
+  loadInvitable: (address: string) => void
+  /** Invite someone to a community; its outcome is toasted. */
+  invite: (id: string, address: string) => void
+  /** Lift a member's ban (the card's Banned section); the section is read again after it. */
+  unban: (id: string, address: string) => void
 }
 
 export interface MapState {
@@ -1283,6 +1339,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunityBrowse(communityBrowseRef.current)
   }, [])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
+  // read by the bridge handler, which outlives each render
+  const communitiesOpenRef = useRef(false)
+  communitiesOpenRef.current = communitiesOpen
   const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
   const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
   const [communitySave, setCommunitySave] = useState<CommunitySave | null>(null)
@@ -1293,6 +1352,17 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const placeOptionsWanted = useRef<string | null>(null)
   // The community whose card asked for its detail last: details for any other are dropped.
   const detailWanted = useRef<string | null>(null)
+  const [communityInvites, setCommunityInvites] = useState<CommunityInvitesMessage | null>(null)
+  const communityInvitesRef = useRef<CommunityInvitesMessage | null>(null)
+  communityInvitesRef.current = communityInvites
+  const [pendingCount, setPendingCount] = useState<number | null>(null)
+  const [memberSections, setMemberSections] = useState<Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>>>({})
+  const [invitable, setInvitable] = useState<InvitableCommunitiesMessage | null>(null)
+  const invitableWanted = useRef<string | null>(null)
+  // the requests being answered, each released when the bridge says it settled
+  const answering = useRef(new Set<string>())
+  // the community whose card is open, if any
+  const openCard = useRef<string | null>(null)
   // A create or update is waiting for its answer. Cleared when the form closes, so an answer that
   // comes after that is dropped instead of driving the next form.
   const communitySaveInFlight = useRef(false)
@@ -1775,6 +1845,26 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             const have = new Set(prev.map((n) => n.id))
             return [...fresh.filter((n) => !have.has(n.id)), ...prev].slice(0, NOTIFICATIONS_KEPT)
           })
+          // an invite or a request arriving while the Communities page is open reads its Invites &
+          // Requests section again
+          // (the whole section once it has been read, else its counter alone)
+          if (communitiesOpenRef.current && fresh.some((n) => COMMUNITY_REQUEST_NOTIFICATIONS.has(n.type))) {
+            driverRef.current?.send({ kind: communityInvitesRef.current != null ? 'getCommunityInvites' : 'getCommunityInvitesCount' })
+          }
+          // a request of the user's accepted: they are a member now. My Communities, the grid and
+          // that community's open card are read again
+          const joined = fresh.filter((n) => n.type === 'community_request_to_join_accepted').map((n) => n.metadata?.communityId).filter((id): id is string => typeof id === 'string')
+          if (joined.length > 0) {
+            if (communitiesOpenRef.current) {
+              driverRef.current?.send({ kind: 'getCommunities' })
+              if (communityBrowsePage.current > 0) loadCommunityBrowse(communityBrowseRef.current.search)
+            }
+            const open = detailWanted.current
+            if (open != null && joined.includes(open)) {
+              driverRef.current?.send({ kind: 'getCommunity', id: open })
+              driverRef.current?.send({ kind: 'getCommunityDetail', id: open })
+            }
+          }
           // Newest first in the list; toasts and reward popups play in arrival order.
           const arrived = [...fresh].reverse()
           queueNotificationToasts(arrived)
@@ -1844,6 +1934,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           // (keeping the friends only the browse read carries)
           const fresh = withSavedPicture(msg.community)
           setCommunityCards((prev) => ({ ...prev, [fresh.id]: fresh }))
+          // My Communities shows it too, when listed there (a card prefers that entry)
+          setCommunities((prev) => (prev.some((c) => c.id === fresh.id) ? prev.map((c) => (c.id === fresh.id ? { ...fresh, friends: fresh.friends ?? c.friends } : c)) : prev))
           if (communityBrowseRef.current.items.some((c) => c.id === fresh.id)) {
             updateCommunityBrowse((prev) => ({
               ...prev,
@@ -1871,7 +1963,49 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         }
         case 'communityActionFailed':
-          setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
+          if (TOASTED_COMMUNITY_ACTIONS.has(msg.action)) showToast(COMMUNITY_ERROR[msg.action], { tone: 'error' })
+          else {
+            setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
+            // a join or request from a grid card: no card is open to show it, so it is toasted
+            if (msg.id !== openCard.current && (msg.action === 'join' || msg.action === 'requestToJoin' || msg.action === 'cancelJoinRequest')) {
+              showToast(COMMUNITY_ERROR[msg.action], { tone: 'error' })
+            }
+          }
+          break
+        case 'communityRequestSettled':
+          answering.current.delete(msg.requestId)
+          break
+        case 'communityInvites':
+          for (const list of msg.failed) showToast(INVITES_LOAD_ERROR[list], { tone: 'error' })
+          // the requesters' names and faces, for their menu and the passport they open
+          seedProfiles(memberProfiles(msg.requestsReceived.flatMap((g) => g.requests)))
+          setCommunityInvites({ ...msg, invites: msg.invites.map(withSavedPicture), requestsSent: msg.requestsSent.map(withSavedPicture) })
+          setPendingCount(msg.invites.length + msg.requestsReceived.reduce((n, g) => n + g.total, 0))
+          break
+        case 'communityJoinRequest': {
+          // every copy of the community shows the request (or its cancel) at once
+          const patch = (c: Community): Community => (c.id === msg.id ? { ...c, pendingRequestId: msg.requestId } : c)
+          setCommunityCards((prev) => (prev[msg.id] != null ? { ...prev, [msg.id]: patch(prev[msg.id]) } : prev))
+          setCommunities((prev) => (prev.some((c) => c.id === msg.id) ? prev.map(patch) : prev))
+          if (communityBrowseRef.current.items.some((c) => c.id === msg.id)) updateCommunityBrowse((prev) => ({ ...prev, items: prev.items.map(patch) }))
+          break
+        }
+        case 'communityInvitesCount':
+          setPendingCount(msg.count)
+          break
+        case 'communityMemberSection':
+          // only the card open now
+          if (msg.id !== detailWanted.current) break
+          seedProfiles(memberProfiles(msg.members))
+          setMemberSections((prev) => ({ ...prev, [msg.section]: msg }))
+          break
+        case 'invitableCommunities':
+          if (msg.address !== invitableWanted.current) break
+          if (msg.failed === true) showToast(INVITABLE_FAILED, { tone: 'error' })
+          setInvitable(msg)
+          break
+        case 'communityInviteSent':
+          showToast(msg.ok ? INVITE_SENT : INVITE_FAILED, msg.ok ? {} : { tone: 'error' })
           break
         case 'communityPlaceOptions':
           if (placeOptionsWanted.current !== (msg.communityId ?? '')) break
@@ -1902,16 +2036,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'communityDetail':
           // only the card open now: a re-read for a card already closed must not replace its detail
           if (msg.id !== detailWanted.current) break
-          // the members' names and faces, for the member menu and the passport they open; an unclaimed
-          // name with its #tag, as every explorer shows it (the card reads a bare name as claimed)
-          seedProfiles(
-            msg.members.map((m) => ({
-              address: m.address,
-              name: m.hasClaimedName === true || m.name.includes('#') ? m.name : `${m.name}#${m.address.slice(-4)}`,
-              picture: m.picture,
-              claimed: m.hasClaimedName
-            }))
-          )
+          // the members' names and faces, for the member menu and the passport they open
+          seedProfiles(memberProfiles(msg.members))
           setCommunityDetail(msg)
           break
         case 'communityChannels': {
@@ -3303,7 +3429,39 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setCommunityError(null)
     driverRef.current?.send({ kind: 'leaveCommunity', id })
   }, [])
+  const loadCommunityInvites = useCallback(() => {
+    driverRef.current?.send({ kind: 'getCommunityInvites' })
+  }, [])
+  const loadCommunityInvitesCount = useCallback(() => {
+    driverRef.current?.send({ kind: 'getCommunityInvitesCount' })
+  }, [])
+  const manageCommunityRequest = useCallback((id: string, requestId: string, intention: 'accepted' | 'rejected' | 'cancelled', address?: string) => {
+    // one answer per request: a second click while the first runs would answer a request the
+    // first already settled, and toast an error after the success. Released when the bridge says
+    // this request settled.
+    if (answering.current.has(requestId)) return
+    answering.current.add(requestId)
+    driverRef.current?.send({ kind: 'manageCommunityRequest', id, requestId, intention, ...(address != null ? { address } : {}) })
+  }, [])
+  const setOpenCard = useCallback((id: string | null) => {
+    openCard.current = id
+  }, [])
+  const loadMemberSection = useCallback((id: string, section: CommunityMemberSection) => {
+    driverRef.current?.send({ kind: 'getCommunityMemberSection', id, section })
+  }, [])
+  const loadInvitable = useCallback((address: string) => {
+    invitableWanted.current = address
+    setInvitable(null)
+    driverRef.current?.send({ kind: 'getInvitableCommunities', address })
+  }, [])
+  const unbanCommunityMember = useCallback((id: string, address: string) => {
+    driverRef.current?.send({ kind: 'unbanCommunityMember', id, address })
+  }, [])
+  const inviteToCommunity = useCallback((id: string, address: string) => {
+    driverRef.current?.send({ kind: 'inviteToCommunity', id, address })
+  }, [])
   const loadCommunityDetail = useCallback((id: string) => {
+    if (detailWanted.current !== id) setMemberSections({})
     detailWanted.current = id
     setCommunityDetail(null) // clear stale detail while the new one loads
     driverRef.current?.send({ kind: 'getCommunityDetail', id })
@@ -3492,6 +3650,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setActiveVoiceChatsLoaded(false)
     setCommunities([])
     setCommunityCards({})
+    setCommunityInvites(null)
+    setPendingCount(null)
+    answering.current.clear()
+    setMemberSections({})
+    setInvitable(null)
     communityBrowseWanted.current = null
     communityBrowsePage.current = 0
     updateCommunityBrowse(() => NO_BROWSE)
@@ -4296,7 +4459,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
