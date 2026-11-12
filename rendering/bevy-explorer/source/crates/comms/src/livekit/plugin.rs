@@ -316,7 +316,7 @@ fn handle_input(
     }
 }
 
-fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<MicState>) {
+pub(crate) fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<MicState>) {
     for ev in events.read() {
         match ev {
             SystemApi::GetMicState(rpc_result_sender) => {

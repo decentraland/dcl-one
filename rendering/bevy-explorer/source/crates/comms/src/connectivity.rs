@@ -382,6 +382,7 @@ fn sample_connectivity(
         let scope = match scope.map(|scope| &scope.0) {
             Some(AccessScope::Scene(_)) => "scene",
             Some(AccessScope::PrivateChat) => "private_chat",
+            Some(AccessScope::Voice(_)) => "voice",
             _ if scene_room => "scene",
             _ => "realm",
         };
@@ -584,6 +585,35 @@ mod room_tests {
         assert_eq!(status.rooms.len(), 1);
         assert_eq!(status.rooms[0].scope, "realm");
         assert_eq!(status.rooms[0].state, "connecting");
+    }
+
+    #[test]
+    fn private_chat_and_generic_voice_are_reported_without_requiring_realm_health() {
+        let mut world = monitor_world();
+        for scope in [
+            AccessScope::PrivateChat,
+            AccessScope::Voice("session".to_owned()),
+        ] {
+            world.spawn((
+                RoomAccessScope(scope),
+                RoomRecovery {
+                    failure: Some(FailureKind::CredentialsRequired),
+                    ..Default::default()
+                },
+            ));
+        }
+        assert!(!world.run_system_once(sample_connectivity).unwrap());
+        let status = world.resource::<ConnectivityStatus>();
+        assert!(status.suppressed);
+        assert!(!status.ever_connected);
+        assert_eq!(status.rooms.len(), 2);
+        for scope in ["private_chat", "voice"] {
+            assert!(status
+                .rooms
+                .iter()
+                .any(|room| room.scope == scope && room.state == "credentials_required"));
+        }
+        assert!(!serde_json::to_string(status).unwrap().contains("session"));
     }
 
     #[test]

@@ -299,6 +299,11 @@ impl CallState {
         !self.status.is_not_connected()
     }
 
+    /// A delayed community start keeps ownership while its previous call ends.
+    pub fn has_deferred_start(&self) -> bool {
+        self.deferred.is_some()
+    }
+
     /// Back to no call; the last error, a deferred start and a pending end survive it.
     fn reset(&mut self) {
         let me = self.me;

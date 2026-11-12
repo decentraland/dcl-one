@@ -480,7 +480,7 @@ type ChangedCallParticipant = (
 );
 
 #[derive(SystemParam)]
-struct CallParticipantChanges<'w, 's> {
+pub(crate) struct CallParticipantChanges<'w, 's> {
     changed: Query<'w, 's, (), ChangedCallParticipant>,
     participants: Query<'w, 's, (), With<CallParticipant>>,
     left: RemovedComponents<'w, 's, CallParticipant>,
@@ -573,7 +573,7 @@ fn user_refusal(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn drive_voice_chat(
+pub(crate) fn drive_voice_chat(
     mut commands: Commands,
     mut voice: ResMut<VoiceChat>,
     mut call_mic: ResMut<CallMic>,
@@ -581,6 +581,7 @@ fn drive_voice_chat(
     mut system_api: EventReader<SystemApi>,
     mut social_events: EventReader<VoiceEventReceived>,
     social: Res<SocialClient>,
+    on_demand: Option<Res<crate::voice_room::ActiveVoiceRoom>>,
     wallet: Res<Wallet>,
     time: Res<Time>,
     mut rooms: VoiceRoomQuery,
@@ -779,6 +780,22 @@ fn drive_voice_chat(
     if had_inputs {
         let mut queued = std::mem::take(&mut inputs.0);
         while let Some(input) = queued.pop_front() {
+            if on_demand
+                .as_ref()
+                .is_some_and(|room| room.routing.active.is_some())
+                && matches!(
+                    input,
+                    Input::StartPrivate(_)
+                        | Input::Accept
+                        | Input::StartCommunity(_)
+                        | Input::JoinCommunity(_)
+                )
+            {
+                voice
+                    .state
+                    .set_error("Leave the on-demand voice session before starting a call.");
+                continue;
+            }
             effects.extend(voice.state.apply(input, now));
         }
     }
@@ -1216,5 +1233,421 @@ mod tests {
         assert_eq!(voice.state.error.as_deref(), Some("The stream ended."));
         assert!(voice.state.error_is_notice);
         assert_eq!(voice.connection, VoiceChatConnection::None);
+    }
+
+    fn combined_app() -> App {
+        use crate::voice_room::{update_voice_room, ActiveVoiceRoom};
+        let mut wallet = Wallet::default();
+        wallet.finalize_remote(
+            Address::from([1; 20]),
+            Address::from([2; 20]),
+            vec![common::structs::ChainLink {
+                ty: "SIGNER".to_owned(),
+                payload: "test".to_owned(),
+                signature: String::new(),
+            }],
+            false,
+        );
+        let state = CallState::new(wallet.address());
+        let mut app = App::new();
+        app.insert_resource(wallet)
+            .insert_resource(VoiceChat {
+                state,
+                ..Default::default()
+            })
+            .init_resource::<CallMic>()
+            .init_resource::<VoiceInputs>()
+            .init_resource::<SocialClient>()
+            .init_resource::<ActiveVoiceRoom>()
+            .insert_resource(common::structs::MicState {
+                available: true,
+                enabled: true,
+            })
+            .init_resource::<DisableSceneRoomGatekeeper>()
+            .insert_resource(Time::<()>::default())
+            .add_event::<SystemApi>()
+            .add_event::<VoiceEventReceived>()
+            .add_event::<SystemAudio>()
+            .add_event::<crate::livekit::StartLivekit>()
+            .add_systems(Update, crate::livekit::plugin::respond_to_system_api)
+            .add_systems(
+                Update,
+                drive_voice_chat.in_set(SceneSets::RestrictedActions),
+            )
+            .add_systems(
+                Update,
+                update_voice_room
+                    .in_set(SceneSets::RestrictedActions)
+                    .after(drive_voice_chat)
+                    .after(crate::livekit::plugin::respond_to_system_api),
+            );
+        app
+    }
+
+    fn request_on_demand(app: &mut App) -> common::rpc::RpcResultReceiver<Result<(), String>> {
+        let (response, result) = common::rpc::RpcResultSender::channel();
+        app.world_mut().send_event(SystemApi::SetVoiceRoom {
+            session: "session".to_owned(),
+            adapter: "livekit:wss://voice.example/?access_token=test".to_owned(),
+            response,
+        });
+        result
+    }
+
+    #[test]
+    fn an_existing_call_refuses_generic_activation_without_changing_mics() {
+        let mut app = combined_app();
+        app.world_mut()
+            .resource_mut::<VoiceChat>()
+            .state
+            .apply(Input::StartPrivate(Address::from([3; 20])), 0.0);
+        let mut result = request_on_demand(&mut app);
+        app.update();
+        assert!(result.try_recv().unwrap().is_err());
+        assert!(app.world().resource::<VoiceChat>().state.is_active());
+        assert!(app
+            .world()
+            .resource::<crate::voice_room::ActiveVoiceRoom>()
+            .routing
+            .active
+            .is_none());
+        assert!(app.world().resource::<common::structs::MicState>().enabled);
+    }
+
+    #[test]
+    fn idle_same_frame_call_entry_wins_and_generic_does_not_reserve() {
+        let mut app = combined_app();
+        let mut generic = request_on_demand(&mut app);
+        app.world_mut().send_event(SystemApi::VoiceChatAction(
+            VoiceChatAction::StartPrivateCall {
+                address: format!("{:#x}", Address::from([3; 20])),
+            },
+        ));
+        app.update();
+        assert!(generic.try_recv().unwrap().is_err());
+        assert!(app.world().resource::<VoiceChat>().state.is_active());
+        assert!(app
+            .world()
+            .resource::<crate::voice_room::ActiveVoiceRoom>()
+            .routing
+            .active
+            .is_none());
+    }
+
+    #[test]
+    fn generic_route_rejects_every_call_entry_from_hud_and_queued_inputs() {
+        for via_hud in [false, true] {
+            for action in [
+                VoiceChatAction::StartPrivateCall {
+                    address: format!("{:#x}", Address::from([3; 20])),
+                },
+                VoiceChatAction::AcceptCall,
+                VoiceChatAction::StartCommunityCall {
+                    community_id: "community".to_owned(),
+                },
+                VoiceChatAction::JoinCommunityCall {
+                    community_id: "community".to_owned(),
+                },
+            ] {
+                let mut app = combined_app();
+                let mut result = request_on_demand(&mut app);
+                app.update();
+                assert_eq!(result.try_recv().unwrap(), Ok(()));
+                let room = app
+                    .world()
+                    .resource::<crate::voice_room::ActiveVoiceRoom>()
+                    .routing
+                    .active;
+                if via_hud {
+                    app.world_mut()
+                        .send_event(SystemApi::VoiceChatAction(action));
+                } else {
+                    app.world_mut()
+                        .resource_mut::<VoiceInputs>()
+                        .0
+                        .push_back(action_input(&action).unwrap());
+                }
+                app.update();
+                let call = app.world().resource::<VoiceChat>();
+                assert!(!call.state.is_active());
+                assert!(call.pending.is_empty());
+                assert!(call.state.error.as_ref().unwrap().contains("on-demand"));
+                assert_eq!(
+                    app.world()
+                        .resource::<crate::voice_room::ActiveVoiceRoom>()
+                        .routing
+                        .active,
+                    room
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_deferred_community_replacement_reserves_the_gap() {
+        let mut app = combined_app();
+        {
+            let mut call = app.world_mut().resource_mut::<VoiceChat>();
+            call.state
+                .apply(Input::StartPrivate(Address::from([3; 20])), 0.0);
+            call.state.apply(
+                Input::Reply(Reply::StartPrivate(1, Ok("call".to_owned()))),
+                0.0,
+            );
+            call.state
+                .apply(Input::JoinCommunity("community".to_owned()), 0.0);
+            assert!(!call.state.is_active());
+            assert!(call.state.has_deferred_start());
+        }
+        let mut generic = request_on_demand(&mut app);
+        app.update();
+        assert!(generic.try_recv().unwrap().is_err());
+        assert!(app
+            .world()
+            .resource::<VoiceChat>()
+            .state
+            .has_deferred_start());
+        app.world_mut()
+            .resource_mut::<Time>()
+            .advance_by(Duration::from_secs(1));
+        app.update();
+        assert!(app.world().resource::<VoiceChat>().state.is_active());
+        assert!(!app
+            .world()
+            .resource::<VoiceChat>()
+            .state
+            .has_deferred_start());
+    }
+
+    #[test]
+    fn generic_replacement_survives_an_incoming_ring_and_reject_still_runs() {
+        use social::voice::{PrivateVoiceStatus, PrivateVoiceUpdate};
+        let mut app = combined_app();
+        let mut initial = request_on_demand(&mut app);
+        app.update();
+        assert_eq!(initial.try_recv().unwrap(), Ok(()));
+        let old = app
+            .world()
+            .resource::<crate::voice_room::ActiveVoiceRoom>()
+            .routing
+            .active
+            .unwrap();
+        app.world_mut()
+            .send_event(VoiceEventReceived(VoiceEvent::Private(
+                PrivateVoiceUpdate {
+                    call_id: "incoming".to_owned(),
+                    status: PrivateVoiceStatus::Requested,
+                    caller: Some(format!("{:#x}", Address::from([3; 20]))),
+                    callee: None,
+                    connection_url: None,
+                },
+            )));
+        let mut replacement = request_on_demand(&mut app);
+        app.update();
+        assert_eq!(replacement.try_recv().unwrap(), Ok(()));
+        assert!(app.world().resource::<VoiceChat>().state.is_active());
+        assert!(app.world().get_entity(old).is_err());
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::Accept);
+        app.update();
+        assert_eq!(
+            app.world().resource::<VoiceChat>().state.status,
+            state::Status::ReceivedCall
+        );
+        assert!(app.world().resource::<VoiceChat>().pending.is_empty());
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::Reject);
+        app.update();
+        assert_eq!(
+            app.world().resource::<VoiceChat>().state.status,
+            state::Status::RejectingCall
+        );
+        assert!(app
+            .world()
+            .resource::<crate::voice_room::ActiveVoiceRoom>()
+            .routing
+            .active
+            .is_some());
+    }
+
+    #[test]
+    fn leaving_a_call_allows_generic_then_leaving_generic_allows_a_new_call() {
+        use crate::voice_room::ActiveVoiceRoom;
+        use social::voice::{PrivateVoiceStatus, PrivateVoiceUpdate};
+        let mut app = combined_app();
+        let adapter = "livekit:wss://voice.example/?access_token=test";
+        app.world_mut().resource_mut::<VoiceInputs>().0.extend([
+            Input::StartPrivate(Address::from([3; 20])),
+            Input::Reply(Reply::StartPrivate(1, Ok("call".to_owned()))),
+            Input::PrivateUpdate(PrivateVoiceUpdate {
+                call_id: "call".to_owned(),
+                status: PrivateVoiceStatus::Accepted,
+                caller: None,
+                callee: None,
+                connection_url: Some(adapter.to_owned()),
+            }),
+        ]);
+        app.update();
+        assert!(app.world().resource::<VoiceChat>().state.is_in_call());
+        assert_eq!(
+            app.world()
+                .resource::<VoiceChat>()
+                .state
+                .connection_url
+                .as_deref(),
+            Some(adapter)
+        );
+        let old = {
+            let world = app.world_mut();
+            world
+                .query_filtered::<Entity, With<VoiceRoom>>()
+                .single(world)
+                .unwrap()
+        };
+        // The controller consumes connection inputs; Connected itself requires an SDK room.
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::RoomConnected);
+        app.update();
+        assert!(app.world().resource::<CallMic>().enabled);
+        assert!(app.world().resource::<CallMic>().suppress_nearby);
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::EndCall);
+        let mut generic = request_on_demand(&mut app);
+        app.update();
+        assert_eq!(generic.try_recv().unwrap(), Ok(()));
+        assert!(app.world().get_entity(old).is_err());
+        assert!(!app.world().resource::<CallMic>().enabled);
+        assert!(app.world().resource::<common::structs::MicState>().enabled);
+        let generic_room = app
+            .world()
+            .resource::<ActiveVoiceRoom>()
+            .routing
+            .active
+            .unwrap();
+
+        app.world_mut().send_event(SystemApi::LeaveVoiceRoom);
+        app.update();
+        assert!(app.world().get_entity(generic_room).is_err());
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::StartPrivate(Address::from([3; 20])));
+        app.update();
+        assert!(app.world().resource::<VoiceChat>().state.is_active());
+        assert!(app
+            .world()
+            .resource::<ActiveVoiceRoom>()
+            .routing
+            .active
+            .is_none());
+    }
+
+    #[test]
+    fn late_call_replies_cannot_spawn_beside_an_active_generic_route() {
+        let mut app = combined_app();
+        let mut result = request_on_demand(&mut app);
+        app.update();
+        assert_eq!(result.try_recv().unwrap(), Ok(()));
+        let generic = app
+            .world()
+            .resource::<crate::voice_room::ActiveVoiceRoom>()
+            .routing
+            .active;
+        app.world_mut().resource_mut::<VoiceInputs>().0.extend([
+            Input::Reply(Reply::AcceptPrivate(
+                "abandoned".to_owned(),
+                Ok("livekit:wss://voice.example/?access_token=test".to_owned()),
+            )),
+            Input::Reply(Reply::StartPrivate(99, Ok("late-call".to_owned()))),
+            Input::SocialConnected,
+        ]);
+        app.update();
+        assert_eq!(
+            app.world()
+                .resource::<crate::voice_room::ActiveVoiceRoom>()
+                .routing
+                .active,
+            generic
+        );
+        assert!(!app.world().resource::<VoiceChat>().state.is_active());
+        let world = app.world_mut();
+        assert_eq!(world.query::<&VoiceRoom>().iter(world).count(), 0);
+    }
+
+    #[test]
+    fn same_frame_mic_request_is_saved_for_generic_leave() {
+        let mut app = combined_app();
+        let mut result = request_on_demand(&mut app);
+        app.world_mut().send_event(SystemApi::SetMicEnabled(false));
+        app.update();
+        assert_eq!(result.try_recv().unwrap(), Ok(()));
+        app.world_mut()
+            .resource_mut::<common::structs::MicState>()
+            .enabled = true;
+        app.world_mut().send_event(SystemApi::LeaveVoiceRoom);
+        app.update();
+        assert!(!app.world().resource::<common::structs::MicState>().enabled);
+        assert!(!app.world().resource::<CallMic>().enabled);
+    }
+
+    #[test]
+    fn local_call_mute_and_end_do_not_wait_for_a_queued_teardown_reply() {
+        let (mut app, room) = in_call();
+        app.world_mut()
+            .resource_mut::<VoiceChat>()
+            .state
+            .local_speaker = true;
+        app.insert_resource(common::structs::MicState {
+            available: true,
+            enabled: true,
+        });
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::RoomConnected);
+        app.update();
+        assert!(app.world().resource::<CallMic>().enabled);
+        let (queued, pending) = query(Rpc::EndPrivate {
+            call_id: "older-call".to_owned(),
+        });
+        let (server_queue, mut queued_requests) = tokio::sync::mpsc::unbounded_channel();
+        server_queue.send(queued).unwrap();
+        app.world_mut()
+            .resource_mut::<VoiceChat>()
+            .pending
+            .push(pending);
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::SetMic(false));
+        app.update();
+        assert!(!app.world().resource::<CallMic>().enabled);
+        assert!(app.world().resource::<common::structs::MicState>().enabled);
+        assert_eq!(app.world().resource::<VoiceChat>().pending.len(), 1);
+        app.world_mut()
+            .resource_mut::<VoiceInputs>()
+            .0
+            .push_back(Input::EndCall);
+        app.update();
+        assert!(app.world().get_entity(room).is_err());
+        assert!(!app.world().resource::<CallMic>().enabled);
+        assert!(!app.world().resource::<CallMic>().suppress_nearby);
+        assert!(!app.world().resource::<VoiceChat>().state.is_active());
+        assert_eq!(app.world().resource::<VoiceChat>().pending.len(), 1);
+        let VoiceQuery::EndPrivate { response, .. } = queued_requests.try_recv().unwrap() else {
+            panic!("expected queued end")
+        };
+        response.send(Ok(())).unwrap();
+        app.update();
+        assert!(app.world().resource::<VoiceChat>().pending.is_empty());
+        assert!(!app.world().resource::<VoiceChat>().state.is_active());
     }
 }

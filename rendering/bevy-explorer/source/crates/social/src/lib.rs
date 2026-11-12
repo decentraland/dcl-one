@@ -57,13 +57,8 @@ impl Plugin for SocialPlugin {
         app.add_event::<SocialStateChanged>();
         app.add_systems(
             PostUpdate,
-            |mut client: ResMut<SocialClient>, mut changed: EventWriter<SocialStateChanged>| {
-                if client.0.as_mut().is_some_and(|client| client.update()) {
-                    changed.write(SocialStateChanged);
-                }
-            },
+            (init_social_client, update_social_client).chain(),
         );
-        app.add_systems(PostUpdate, init_social_client);
         app.add_systems(
             PostUpdate,
             (
@@ -90,6 +85,15 @@ impl Plugin for SocialPlugin {
                 debug_write_social.run_if(|e: Res<DebugSocialEnabled>| e.0),
             );
         }
+    }
+}
+
+fn update_social_client(
+    mut social: ResMut<SocialClient>,
+    mut changed: EventWriter<SocialStateChanged>,
+) {
+    if social.0.as_mut().is_some_and(|client| client.update()) {
+        changed.write(SocialStateChanged);
     }
 }
 
@@ -121,6 +125,7 @@ fn is_social_consumer_request(event: &SystemApi) -> bool {
             | SystemApi::GetBlockingStatus(_)
             | SystemApi::GetBlockUpdateStream(_)
             | SystemApi::GetDmUserStateStream(_, _)
+            | SystemApi::SetVoiceRoom { .. }
             | SystemApi::GetCommunityConnectivityStream(_)
             | SystemApi::GetVoiceChatStateStream(_)
             | SystemApi::GetCommunityVoiceUpdateStream(_)
@@ -352,7 +357,11 @@ fn toggle_debug_social(
 }
 
 #[cfg(feature = "social")]
-fn debug_write_social(social: Res<SocialClient>, mut debug: ResMut<DebugInfo>) {
+fn debug_write_social(
+    social: Res<SocialClient>,
+    wallet: Res<Wallet>,
+    mut debug: ResMut<DebugInfo>,
+) {
     let Some(client) = social.0.as_ref() else {
         debug
             .info
@@ -364,9 +373,10 @@ fn debug_write_social(social: Res<SocialClient>, mut debug: ResMut<DebugInfo>) {
     debug.info.insert(
         "Social client",
         format!(
-            "live={}, initialized={}",
+            "live={}, initialized={}, block status ready={}",
             client.live(),
-            client.is_initialized
+            client.is_initialized,
+            social.blocks_ready_for(&wallet),
         ),
     );
     debug.info.insert(
@@ -453,7 +463,7 @@ fn init_social_client(
         let (c_sx, c_rx) = unbounded_channel();
         let (community_sx, community_rx) = unbounded_channel();
         let (v_sx, v_rx) = unbounded_channel();
-        let client = SocialClientHandler::connect(
+        let mut client = SocialClientHandler::connect(
             wallet.clone(),
             &social_runtime,
             move |f| {
@@ -485,6 +495,9 @@ fn init_social_client(
                 let _ = v_sx.send(VoiceEventReceived(v));
             },
         );
+        if let Some(client) = client.as_mut() {
+            client.wallet_changed = Some(wallet.last_changed());
+        }
         social.0 = client;
         *friends = Some(f_rx);
         *connectivity = Some(conn_rx);
@@ -642,6 +655,33 @@ pub enum FriendshipState {
 }
 
 impl SocialClient {
+    /// Whether both block lists are complete for the wallet session using this handler.
+    pub fn blocks_ready_for(&self, wallet: &Res<Wallet>) -> bool {
+        #[cfg(feature = "social")]
+        {
+            self.0.as_ref().is_some_and(|client| {
+                // A new login can keep the address while replacing its signer and connection.
+                client.wallet_changed == Some(wallet.last_changed())
+                    && client
+                        .block_snapshot_owner()
+                        .is_some_and(|owner| Some(owner) == wallet.address())
+            })
+        }
+        #[cfg(not(feature = "social"))]
+        {
+            let _ = wallet;
+            false
+        }
+    }
+
+    /// Receive-side eligibility for a voice peer, including blocks in both directions.
+    pub fn allows_voice_from(&self, wallet: &Res<Wallet>, peer: Address) -> bool {
+        self.blocks_ready_for(wallet)
+            && self.0.as_ref().is_some_and(|client| {
+                !client.blocked.contains(&peer) && !client.blocked_by.contains(&peer)
+            })
+    }
+
     pub fn get_state(&self, address: Address) -> FriendshipState {
         let Some(client) = self.0.as_ref() else {
             return FriendshipState::Error;
@@ -1412,4 +1452,41 @@ pub struct DirectChatMessage {
     pub partner: Address,
     pub me_speaking: bool,
     pub message: String,
+}
+
+#[cfg(test)]
+mod block_readiness_tests {
+    use super::*;
+
+    #[test]
+    fn voice_activation_requests_the_existing_block_status_source() {
+        let (sender, _) = RpcResultSender::channel();
+        assert!(is_social_consumer_request(&SystemApi::SetVoiceRoom {
+            session: "call".into(),
+            adapter: "livekit:wss://voice.example/?access_token=test".into(),
+            response: sender,
+        }));
+        assert!(!is_social_consumer_request(&SystemApi::LeaveVoiceRoom));
+    }
+
+    #[cfg(not(feature = "social"))]
+    #[test]
+    fn no_social_never_reports_an_empty_ready_snapshot() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        let mut app = App::new();
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([12; 32]);
+        app.insert_resource(wallet)
+            .insert_resource(SocialClient(Some(SocialClientHandler {
+                is_initialized: true,
+                ..Default::default()
+            })));
+        app.world_mut()
+            .run_system_once(|social: Res<SocialClient>, wallet: Res<Wallet>| {
+                assert!(!social.blocks_ready_for(&wallet));
+                assert!(!social.allows_voice_from(&wallet, Address::from([9; 20])));
+            })
+            .unwrap();
+    }
 }

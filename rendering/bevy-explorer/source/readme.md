@@ -178,6 +178,8 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
   player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
   `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`),
+  `/voice_room [status|leave]` (on-demand voice, block readiness and nearby suppression;
+  `leave` acknowledges the request, then `status` reports its applied state),
   `/connectivity_state` (safe room state, offline warning and reachability probe; room states
   match voice diagnostics, with `connecting` for first admission and `failed` for refused dials),
   `/connectivity_retry` (immediate recovery without overriding denied access), `/entity_screen_position <entity>

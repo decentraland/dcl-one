@@ -86,8 +86,26 @@ describe('connectivity feedback', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull()
   })
 
-  it('keeps the initial room connection quiet', () => {
-    render(<ConnectivityFeedback state={{ connectionLost: false, probing: false, rooms: [{ scope: 'scene', state: 'connecting' }] }} retry={vi.fn()} exit={vi.fn()} />)
+  it.each([
+    ['private_chat', 'Private chat'],
+    ['voice', 'Voice room'],
+  ])('keeps %s access decisions and pauses scoped', (scope, label) => {
+    const { rerender } = render(<ConnectivityFeedback state={null} retry={vi.fn()} exit={vi.fn()} />)
+    for (const [state, reason] of [
+      ['denied', 'access denied'],
+      ['identity_conflict', 'this identity is connected elsewhere'],
+      ['invalid', 'connection settings are invalid'],
+      ['credentials_required', 'new credentials are required'],
+      ['paused', 'paused'],
+    ]) {
+      rerender(<ConnectivityFeedback state={{ connectionLost: false, probing: false, rooms: [{ scope, state }] }} retry={vi.fn()} exit={vi.fn()} />)
+      expect(screen.getByRole('status', { name: 'Multiplayer status' })).toHaveTextContent(`${label}: ${reason}`)
+      expect(screen.queryByRole('alertdialog')).toBeNull()
+    }
+  })
+
+  it.each(['scene', 'private_chat', 'voice'])('keeps the initial %s connection quiet', scope => {
+    render(<ConnectivityFeedback state={{ connectionLost: false, probing: false, rooms: [{ scope, state: 'connecting' }] }} retry={vi.fn()} exit={vi.fn()} />)
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.queryByRole('alertdialog')).toBeNull()
   })
@@ -136,7 +154,7 @@ describe('connectivity feedback', () => {
     expect(result.current.state).toEqual(state)
   })
 
-  it('retains the snapshot identity on repeated events and accepts changed rooms', () => {
+  it.each(['private_chat', 'voice'])('retains the snapshot identity on repeated events and accepts changed %s rooms', scope => {
     const driver = new FakeDriver()
     const snapshot = { connectionLost: false, probing: false, everConnected: true, suppressed: false, rooms: [] }
     const { result } = renderHook(() => useConnectivity(driver, true))
@@ -145,8 +163,8 @@ describe('connectivity feedback', () => {
     expect(initial).not.toBeNull()
     driver.emit({ kind: 'connectivity', state: { ...snapshot, rooms: [] } })
     expect(result.current.state).toBe(initial)
-    driver.emit({ kind: 'connectivity', state: { ...snapshot, rooms: [{ scope: 'private_chat', state: 'denied', retryAt: null }] } })
-    expect(result.current.state?.rooms).toEqual([{ scope: 'private_chat', state: 'denied', retryAt: null }])
+    driver.emit({ kind: 'connectivity', state: { ...snapshot, rooms: [{ scope, state: 'denied', retryAt: null }] } })
+    expect(result.current.state?.rooms).toEqual([{ scope, state: 'denied', retryAt: null }])
     expect(driver.commands).toEqual([])
   })
 

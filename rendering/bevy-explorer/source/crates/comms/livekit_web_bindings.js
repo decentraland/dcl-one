@@ -521,7 +521,7 @@ function track_rig_new(remote_track) {
     const source = audioContext.createMediaStreamSource(stream);
     const pannerNode = audioContext.createStereoPanner();
     const gainNode = audioContext.createGain();
-    // The engine applies playback gain after subscription arrives.
+    // The engine applies voice/scene volume and block policy after subscription arrives.
     gainNode.gain.value = 0;
 
     // Connect the audio graph: source -> panner -> gain -> destination

@@ -298,7 +298,7 @@ Connectivity diagnostics use `explorer.connectivity()` (`/connectivity_state`) a
 `probing`, `everConnected`, `suppressed`, and `rooms` (`scope`, `state`, `retryAt`), without
 credentials or raw server responses. The HUD exposes one `alertdialog` named `Connection Lost`,
 with `Retry` and `Exit Application` buttons, and a `status` named `Multiplayer status` for scoped room
-degradation. Retry is disabled and `aria-busy` while its command is pending. The dialog
+degradation. Retry is disabled and `aria-busy` until the bridge acknowledges its request. The dialog
 follows engine state through retry, reopening or remaining available when a probe fails.
 Recovery retracts it automatically; Exit follows session sign-out.
 
@@ -308,6 +308,12 @@ Connectivity and voice diagnostics share room states: `connecting` for first adm
 retry deadline. `/room_diagnostics` reports failed attempts since the last stable reset.
 The HUD receives initial and changed connectivity snapshots through its bridge stream;
 the console commands remain available to the driver and debug panel.
+
+The On-demand voice debug section reads `/voice_room`: `active`, `session`, `phase`, `failure`,
+`blockStatusReady`, `proximitySuppressed`, and `microphoneCleanupPending`. On-demand voice playback
+waits for `blockStatusReady` for the current wallet. `Leave` uses `/voice_room leave`, which
+replies `Voice room leave requested`; read `/voice_room` again for the applied state. Room
+credentials never travel on the console. Inspect these values in the native runtime smoke.
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.

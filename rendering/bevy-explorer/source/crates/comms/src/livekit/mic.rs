@@ -55,6 +55,7 @@ use crate::{
     private_chat::PrivateChatRoom,
     recovery::RetryState,
     voice_chat::{CallMic, VoiceRoom},
+    voice_room::ActiveVoiceRoom,
 };
 
 #[path = "mic_debug.rs"]
@@ -91,7 +92,8 @@ impl Plugin for MicPlugin {
                 // Revocation runs even when permission or device availability was lost.
                 reconcile_publications,
             )
-                .chain(),
+                .chain()
+                .after(crate::voice_room::update_voice_room),
         );
         #[cfg(not(target_arch = "wasm32"))]
         app.add_systems(OnEnter(MicrophoneState::Enabled), build_cpal_stream);
@@ -441,8 +443,21 @@ fn nearby_mic_on(mic_state: &MicState, call_mic: &CallMic) -> bool {
     mic_state.enabled && !call_mic.suppress_nearby
 }
 
-fn verify_enabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if nearby_mic_on(&mic_state, &call_mic) || call_mic.enabled {
+fn capture_enabled(mic: &MicState, call_mic: &CallMic, route: &ActiveVoiceRoom) -> bool {
+    if route.routing.active.is_some() {
+        mic.enabled
+    } else {
+        nearby_mic_on(mic, call_mic) || call_mic.enabled
+    }
+}
+
+fn verify_enabled(
+    mut commands: Commands,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
+    route: Res<ActiveVoiceRoom>,
+) {
+    if capture_enabled(&mic_state, &call_mic, &route) {
         debug!("Microphone is now enabled.");
         commands.set_state(MicrophoneState::Enabled);
     }
@@ -518,8 +533,13 @@ fn drop_cpal_stream(mut commands: Commands, mut mic_stream: NonSendMut<MicStream
     commands.set_state(MicrophoneState::Disabled);
 }
 
-fn verify_disabled(mut commands: Commands, mic_state: Res<MicState>, call_mic: Res<CallMic>) {
-    if !nearby_mic_on(&mic_state, &call_mic) && !call_mic.enabled {
+fn verify_disabled(
+    mut commands: Commands,
+    mic_state: Res<MicState>,
+    call_mic: Res<CallMic>,
+    route: Res<ActiveVoiceRoom>,
+) {
+    if !capture_enabled(&mic_state, &call_mic, &route) {
         debug!("Microphone is now disabled.");
         commands.set_state(MicrophoneState::Disabled);
     }
@@ -536,13 +556,17 @@ fn can_publish_microphone(participant: &Participant) -> bool {
 }
 
 fn microphone_route_enabled(
+    room: Entity,
     (proximity, private, voice, connected): (bool, bool, bool, bool),
     mic: &MicState,
     call_mic: &CallMic,
+    route: &ActiveVoiceRoom,
 ) -> bool {
     connected
         && !private
-        && if voice {
+        && if route.routing.active.is_some() {
+            route.routing.allows(room, proximity, private) && mic.enabled
+        } else if voice {
             call_mic.enabled
         } else {
             proximity && nearby_mic_on(mic, call_mic)
@@ -567,6 +591,7 @@ fn reconcile_publications(
         Has<VoiceRoom>,
         Has<super::room::Connected>,
     )>,
+    route: Res<crate::voice_room::ActiveVoiceRoom>,
     mic: Res<MicState>,
     call_mic: Res<CallMic>,
     permission: Res<State<MicrophonePermission>>,
@@ -580,9 +605,9 @@ fn reconcile_publications(
         && *permission.get() == MicrophonePermission::Granted
         && *availability.get() == MicrophoneAvailability::Available;
     let eligible = |room: Entity, participant: &LivekitParticipant| {
-        rooms.get(room).is_ok_and(|room| {
+        rooms.get(room).is_ok_and(|state| {
             enabled
-                && microphone_route_enabled(room, &mic, &call_mic)
+                && microphone_route_enabled(room, state, &mic, &call_mic, &route)
                 && can_publish_microphone(participant)
         })
     };
@@ -918,14 +943,38 @@ mod routing_tests {
         let voice_room = (false, false, true, true);
         let nearby = pending(&runtime, &drain);
         let nearby_state = nearby.state.clone();
-        assert!(microphone_route_enabled(nearby_room, &mic, &call_mic));
-        assert!(!microphone_route_enabled(voice_room, &mic, &call_mic));
+        assert!(microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            nearby_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
+        assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            voice_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
 
         call_mic.enabled = true;
         call_mic.in_call = true;
         call_mic.suppress_nearby = true;
-        assert!(nearby.should_remove(microphone_route_enabled(nearby_room, &mic, &call_mic,)));
-        assert!(microphone_route_enabled(voice_room, &mic, &call_mic));
+        assert!(nearby.should_remove(microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            nearby_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        )));
+        assert!(microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            voice_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
         drop(nearby);
         assert_eq!(drain.pending(), 1);
         complete_publication(&nearby_state, &drain, true);
@@ -934,8 +983,20 @@ mod routing_tests {
         let call = pending(&runtime, &drain);
         let call_state = call.state.clone();
         call_mic = CallMic::default();
-        assert!(call.should_remove(microphone_route_enabled(voice_room, &mic, &call_mic,)));
-        assert!(microphone_route_enabled(nearby_room, &mic, &call_mic));
+        assert!(call.should_remove(microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            voice_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        )));
+        assert!(microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            nearby_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
         drop(call);
         assert_eq!(drain.pending(), 1);
         complete_publication(&call_state, &drain, true);
@@ -956,18 +1017,44 @@ mod routing_tests {
         };
         let nearby_room = (true, false, false, true);
         let voice_room = (false, false, true, true);
-        assert!(!microphone_route_enabled(nearby_room, &mic, &call_mic));
-        assert!(!microphone_route_enabled(voice_room, &mic, &call_mic));
+        assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            nearby_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
+        assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            voice_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
 
         call_mic.enabled = true;
-        assert!(microphone_route_enabled(voice_room, &mic, &call_mic));
+        assert!(microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            voice_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
         call_mic.in_call = false;
         assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
             (false, false, true, false),
             &mic,
             &call_mic,
+            &ActiveVoiceRoom::default()
         ));
-        assert!(!microphone_route_enabled(nearby_room, &mic, &call_mic));
+        assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
+            nearby_room,
+            &mic,
+            &call_mic,
+            &ActiveVoiceRoom::default()
+        ));
         assert!(mic.enabled);
     }
 
@@ -983,24 +1070,32 @@ mod routing_tests {
             suppress_nearby: true,
         };
         assert!(microphone_route_enabled(
+            Entity::PLACEHOLDER,
             (false, false, true, true),
             &mic,
             &call_mic,
+            &ActiveVoiceRoom::default()
         ));
         assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
             (false, true, false, true),
             &mic,
             &call_mic,
+            &ActiveVoiceRoom::default()
         ));
         assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
             (true, false, false, true),
             &mic,
             &CallMic::default(),
+            &ActiveVoiceRoom::default()
         ));
         assert!(!microphone_route_enabled(
+            Entity::PLACEHOLDER,
             (false, false, false, true),
             &mic,
             &call_mic,
+            &ActiveVoiceRoom::default()
         ));
     }
 
@@ -1186,6 +1281,130 @@ mod routing_tests {
         let publication = pending(&runtime, &drain);
         complete_publication(&publication.state, &drain, true);
         drop(publication);
+        assert_eq!(drain.pending(), 0);
+    }
+
+    #[test]
+    fn generic_route_excludes_call_and_nearby_even_when_call_mic_is_stale() {
+        let mut world = World::new();
+        let generic = world.spawn_empty().id();
+        let call = world.spawn_empty().id();
+        let nearby = world.spawn_empty().id();
+        let mut route = ActiveVoiceRoom::default();
+        route.routing.active = Some(generic);
+        let mut mic = MicState {
+            available: true,
+            enabled: true,
+        };
+        let call_mic = CallMic {
+            enabled: true,
+            in_call: true,
+            suppress_nearby: true,
+        };
+        assert!(microphone_route_enabled(
+            generic,
+            (false, false, false, true),
+            &mic,
+            &call_mic,
+            &route
+        ));
+        assert!(!microphone_route_enabled(
+            call,
+            (false, false, true, true),
+            &mic,
+            &call_mic,
+            &route
+        ));
+        assert!(!microphone_route_enabled(
+            nearby,
+            (true, false, false, true),
+            &mic,
+            &call_mic,
+            &route
+        ));
+        assert!(!microphone_route_enabled(
+            generic,
+            (true, true, true, true),
+            &mic,
+            &call_mic,
+            &route
+        ));
+        assert!(!microphone_route_enabled(
+            generic,
+            (false, false, false, false),
+            &mic,
+            &call_mic,
+            &route
+        ));
+        mic.enabled = false;
+        assert!(!capture_enabled(&mic, &call_mic, &route));
+        assert!(!microphone_route_enabled(
+            generic,
+            (false, false, false, true),
+            &mic,
+            &call_mic,
+            &route
+        ));
+        route.routing.active = None;
+        assert!(capture_enabled(&mic, &call_mic, &route));
+        assert!(microphone_route_enabled(
+            call,
+            (false, false, true, true),
+            &mic,
+            &call_mic,
+            &route
+        ));
+    }
+
+    #[test]
+    fn refusing_generic_activation_does_not_revoke_but_accepting_it_drains_before_ack() {
+        use crate::{
+            voice_chat::{state::Input, VoiceChat},
+            voice_room::update_voice_room,
+        };
+        use common::rpc::RpcResultSender;
+        use system_bridge::SystemApi;
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let drain = MicrophoneDrain::default();
+        let publication = pending(&runtime, &drain);
+        let state = publication.state.clone();
+        let revoked = publication.revoked.clone();
+        let mut app = App::new();
+        let mut wallet = wallet::Wallet::default();
+        wallet.finalize_as_guest_with_seed([42; 32]);
+        app.insert_resource(wallet)
+            .init_resource::<ActiveVoiceRoom>()
+            .init_resource::<VoiceChat>()
+            .insert_resource(MicState {
+                available: true,
+                enabled: true,
+            })
+            .add_event::<SystemApi>()
+            .add_event::<crate::livekit::StartLivekit>()
+            .add_systems(Update, update_voice_room);
+        app.world_mut().spawn(publication);
+        app.world_mut().resource_mut::<VoiceChat>().state.apply(
+            Input::StartPrivate(alloy_core::primitives::Address::from([3; 20])),
+            0.0,
+        );
+        for busy in [true, false] {
+            if !busy {
+                app.world_mut().resource_mut::<VoiceChat>().state = Default::default();
+            }
+            let (response, mut result) = RpcResultSender::channel();
+            app.world_mut().send_event(SystemApi::SetVoiceRoom {
+                session: "session".to_owned(),
+                adapter: "livekit:wss://voice.example/?access_token=test".to_owned(),
+                response,
+            });
+            app.update();
+            assert_eq!(result.try_recv().unwrap().is_err(), busy);
+            assert_eq!(revoked.load(Ordering::SeqCst), !busy);
+            assert_eq!(drain.pending(), usize::from(!busy));
+        }
+        complete_publication(&state, &drain, true);
         assert_eq!(drain.pending(), 0);
     }
 }

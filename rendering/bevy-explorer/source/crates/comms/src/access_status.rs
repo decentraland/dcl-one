@@ -8,6 +8,7 @@ pub enum AccessScope {
     Realm(String),
     Scene(String),
     PrivateChat,
+    Voice(String),
 }
 
 /// Room admission observations for the active identity.
@@ -63,6 +64,7 @@ mod tests {
             AccessScope::Scene("other-scene".to_owned()),
             AccessScope::Realm("shared-id".to_owned()),
             AccessScope::PrivateChat,
+            AccessScope::Voice("shared-id".to_owned()),
         ] {
             assert!(!status.is_denied(&unrelated));
         }
@@ -104,5 +106,19 @@ mod tests {
             assert!(!status.is_denied(&room));
             status.set_denied(room.clone());
         }
+    }
+
+    #[test]
+    fn voice_denial_is_scoped_and_removal_preserves_private_chat() {
+        let mut status = AccessStatus::default();
+        let voice = AccessScope::Voice("session".to_owned());
+        status.set_denied(voice.clone());
+        status.set_denied(AccessScope::PrivateChat);
+        assert!(status.is_denied(&voice));
+        assert!(!status.is_denied(&AccessScope::Voice("other".to_owned())));
+        assert!(!status.is_denied(&AccessScope::Scene("session".to_owned())));
+        status.remove_scope(&voice);
+        assert!(!status.is_denied(&voice));
+        assert!(status.is_denied(&AccessScope::PrivateChat));
     }
 }

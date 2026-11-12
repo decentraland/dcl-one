@@ -208,8 +208,16 @@ State, in every build:
   emote markers and direct messages are left out; `/dm_history` has those.
 - `/voice_state`: the mic (`available`, `enabled`) and, in LiveKit builds, each voice room's state
   and the addresses speaking.
+- `/voice_room [status|leave]`: the on-demand room's `active`, `session`, `phase`, `failure`,
+  `blockStatusReady`, `proximitySuppressed`, and `microphoneCleanupPending` status. The On-demand voice debug section
+  exposes these readings and Leave. `leave` replies `Voice room leave requested`; query status
+  again after the request is applied. Trusted system callers activate or replace credentials with
+  `SystemApi.js` `setVoiceRoom(session, adapter)` and deactivate with `leaveVoiceRoom()`; adapters
+  are never passed on a console command line. Activation suppresses proximity publication until
+  explicit deactivation, including while the voice room connects or recovers. On-demand voice
+  playback waits for the current wallet's block snapshot; `blockStatusReady` exposes that gate.
 - `/connectivity_state`: `connectionLost`, `probing`, `everConnected`, `suppressed` and `rooms`
-  (`scope`, `state`, `retryAt`). Scope names identify realm, scene or private chat rooms without
+  (`scope`, `state`, `retryAt`). Scope names identify realm, scene, private chat or voice, without
   adapter URLs or credentials. `/connectivity_retry` requests immediate recovery and a new
   reachability check; terminal admission failures and intentional pauses stay stopped.
   The Connectivity debug section exposes both. The HUD's Connection Lost alert has Retry and

@@ -3946,7 +3946,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "901f35454274867a30e1bc602841a1162c29cfd8c0a235657ba5b7952b8ea745"
+      "sha256": "2b80d4ad21e463604b658eed498235397e3f075b5a5be98b9096a69bf871b167"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -6280,7 +6280,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/error/ConnectivityFeedback.tsx",
-      "sha256": "76d0f5abe8462f4d0c917d48b0c7a754dc059d9109f2fb356ad7cedc840a24d2"
+      "sha256": "5fb0a627a52ee2c98b36f699c7dc2131f23f83f97382c64e182afe33f7c038b8"
     },
     {
       "path": "library/ui/apps/hud/features/error/CrashModal.module.css",
@@ -6936,7 +6936,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/connectivity.test.tsx",
-      "sha256": "729cf497d3956fff69a79ea601d016834bd9fcb7bdf9087fa6754265fcc1bc5e"
+      "sha256": "4cb4329bef59ffac89a7fb9d7ed927513ca41e91ed0e6f425e4bb79225ace734"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/debugPanel.test.tsx",
