@@ -9,6 +9,7 @@
     justify-content: space-between;
     gap: var(--dcl-space-16);
     min-height: var(--dcl-space-64);
+    block-size: 64px;
     padding: var(--dcl-space-12) var(--dcl-layout-margin-x);
     background: var(--dcl-bg-navbar-mobile);
     box-shadow:
@@ -249,6 +250,8 @@
 
   .account {
     position: relative;
+    display: flex;
+    align-items: center;
   }
 
   .avatar {
@@ -431,6 +434,7 @@
   @media (min-width: 1024px) {
     .root {
       min-height: 80px;
+      block-size: 80px;
       padding-block: var(--dcl-space-16);
       background: var(--dcl-bg-navbar);
     }

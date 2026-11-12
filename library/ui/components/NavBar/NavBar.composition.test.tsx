@@ -391,4 +391,30 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(container.querySelector('nav')).toHaveAttribute('data-surface', 'overlay')
     expect(container.querySelectorAll('#wallet-control')).toHaveLength(1)
   })
+  for (const surface of ['solid', 'overlay'] as const) {
+    it(`should server-render the default account and one 44px balance control on ${surface}`, () => {
+      const container = document.createElement('div')
+      container.innerHTML = renderToString(
+        <NavBar
+          {...props}
+          accountControl={undefined}
+          surface={surface}
+          balanceAction={
+            <a
+              id="ssr-credit-action"
+              href="/shop/credits"
+              style={{ display: 'inline-flex', height: 44 }}
+            >
+              0
+            </a>
+          }
+        />
+      )
+      expect(container.querySelector('nav')).toHaveAttribute('data-surface', surface)
+      expect(container.querySelectorAll('#ssr-credit-action')).toHaveLength(1)
+      expect(container.querySelector('#ssr-credit-action')).toHaveAttribute('href', '/shop/credits')
+      expect(container.querySelector('button[aria-label="Account: Ada"]')).not.toBeNull()
+      expect(container.querySelector('[role="dialog"]')).toBeNull()
+    })
+  }
 })

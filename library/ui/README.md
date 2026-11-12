@@ -23,6 +23,8 @@ The HUD schema 2 contract also records names and regular-file/directory kinds in
 
 NavBar and its prop types are exported from `@dcl/one-ui`. It is hand-written from `templates/component/` in `components/NavBar/`, so no generated public component remains: generated components back the Review previews only. Its open limits are recorded in the [component adoption tracker](../../docs/ui-components.md). Component deep imports remain unavailable.
 
+The NavBar header is 64px below the 1024px desktop breakpoint and 80px at and above it. Header slot controls must fit within a 48px block size; applications own their labels, intrinsic widths and popup positioning outside normal flow. The header preserves control hit areas and focus outlines without clipping, scaling or reducing them. Larger content requires a separate layout contract rather than relying on header growth.
+
 The design values are generated from the verified capture pinned by `upstream.lock.json`, preserving its Dark semantic mode and four responsive layout modes. These outputs do not certify parity with later live design changes. The five families use four source pages: Colors (`1:5238`), Icons (`1:5239`), Typography (`1:5237`) and Layout & Spacing (`15521:20146`, shared by layouts and spacings). No live source is written into the library.
 
 `semantic` exposes resolved Dark-mode values for inspection. Use `theme.color` for semantic CSS references. A text style's `fontSize` references the responsive CSS variable; `fontSizePx` is the captured tablet-and-larger value for responsive headings, not the current viewport measurement. Use the generated CSS classes for rendering and computed styles for viewport-specific pixel measurements.

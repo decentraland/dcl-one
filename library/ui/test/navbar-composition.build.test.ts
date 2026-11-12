@@ -225,4 +225,89 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       }
     }, 30000)
   }
+
+  for (const width of [991, 992, 1023, 1024, 1440]) {
+    for (const surface of ['solid', 'overlay']) {
+      it(`should keep account geometry stable across balance states at ${width}px on ${surface}`, async () => {
+        await session.send('Emulation.setDeviceMetricsOverride', {
+          width,
+          height: 900,
+          deviceScaleFactor: 1,
+          mobile: false
+        })
+        for (const account of ['default', 'custom']) {
+          await session.navigate(
+            server.resolvedUrls!.local[0]! + '?geometry&surface=' + surface + '&account=' + account
+          )
+          await evaluate(
+            `(async()=>{for(let n=0;n<100&&!document.querySelector('[data-chip-mode]');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready})()`
+          )
+          expect(
+            await evaluate(
+              `getComputedStyle(document.querySelector('nav[aria-label="Main"]')).fontFamily`
+            )
+          ).toContain('Inter')
+          expect(
+            await evaluate(
+              `Array.from(document.fonts).some(face => face.family.includes('Inter') && face.status === 'loaded')`
+            )
+          ).toBe(true)
+          for (const mode of [
+            'none',
+            'loading',
+            'zero',
+            'positive',
+            'iap',
+            'loading',
+            'positive'
+          ]) {
+            await click('[data-chip-mode="' + mode + '"]')
+            const triggerSelector =
+              account === 'default' ? 'button[aria-label="Account: Ada"]' : '#geometry-account'
+            const hover = await evaluate<{ x: number; y: number } | null>(
+              `(() => { const r=document.querySelector(${JSON.stringify(triggerSelector)}).getBoundingClientRect(); return r.height ? {x:r.x+r.width/2,y:r.y+r.height/2} : null })()`
+            )
+            if (hover)
+              await session.send('Input.dispatchMouseEvent', { type: 'mouseMoved', ...hover })
+            const bounds = await evaluate<{
+              height: number
+              width: number
+              account: number
+              trigger: number
+              chip: number | null
+              hit: boolean | null
+              count: number
+              inside: boolean
+            }>(`(() => {
+              const nav=document.querySelector('nav[aria-label="Main"]'),n=nav.getBoundingClientRect();
+              const trigger=nav.querySelector(${JSON.stringify(triggerSelector)}),t=trigger.getBoundingClientRect();
+              const chip=document.querySelector('#balance-action'),r=chip?.getBoundingClientRect();
+              return {height:n.height,width:n.width,account:trigger.parentElement.getBoundingClientRect().height,trigger:t.height,chip:r?.height ?? null,hit:r ? chip.contains(document.elementFromPoint(r.right-1,r.bottom-1)) : null,count:document.querySelectorAll('#balance-action').length,inside:(!t.height || t.top>=n.top+2 && t.bottom<=n.bottom-2) && (!r || r.top>=n.top+2 && r.bottom<=n.bottom-2)};
+            })()`)
+            const context = account + '/' + mode
+            expect(bounds.height, context).toBe(width >= 1024 ? 80 : 64)
+            expect(bounds.width, context).toBe(width)
+            const accountSize = width >= 1024 ? 48 : account === 'default' ? 40 : 0
+            expect(bounds.account, context).toBe(accountSize)
+            expect(bounds.trigger, context).toBe(accountSize)
+            expect(bounds.inside, context).toBe(true)
+            expect(bounds.count, context).toBe(mode === 'none' || mode === 'loading' ? 0 : 1)
+            if (bounds.chip !== null) {
+              expect(bounds.chip, context).toBe(44)
+              expect(bounds.hit, context).toBe(true)
+            }
+            if (accountSize) {
+              await evaluate(`document.querySelector(${JSON.stringify(triggerSelector)}).focus()`)
+              expect(
+                await evaluate(
+                  `document.querySelector('nav[aria-label="Main"]').getBoundingClientRect().height`
+                ),
+                context
+              ).toBe(width >= 1024 ? 80 : 64)
+            }
+          }
+        }
+      }, 30000)
+    }
+  }
 })

@@ -42,6 +42,28 @@ function AppAccountControl({ onConnect }: { onConnect: () => void }) {
 
 function CompositionExample() {
   const [connections, setConnections] = useState(0)
+  const params = new URLSearchParams(window.location.search)
+  const geometry = params.has('geometry')
+  const [chipMode, setChipMode] = useState('none')
+  const chipStyle = {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 44,
+    minWidth: 44,
+    padding: '0 12px',
+    boxSizing: 'border-box' as const
+  }
+  const geometryAction =
+    chipMode === 'none' || chipMode === 'loading' ? null : chipMode === 'iap' ? (
+      <span id="balance-action" style={chipStyle}>
+        7.78
+      </span>
+    ) : (
+      <a id="balance-action" href="/shop/credits" style={chipStyle}>
+        {chipMode === 'zero' ? '0' : '7.78'}
+      </a>
+    )
   return (
     <>
       <NavBar
@@ -57,12 +79,24 @@ function CompositionExample() {
         account={{ address: '0x1234', name: 'Ada' }}
         balances={{ credits: 8, mana: 2 }}
         balanceAction={
-          <Button id="balance-action" variant="secondary" size="sm">
-            Buy credits
-          </Button>
+          geometry ? (
+            geometryAction
+          ) : (
+            <Button id="balance-action" variant="secondary" size="sm">
+              Buy credits
+            </Button>
+          )
         }
         accountControl={
-          <AppAccountControl onConnect={() => setConnections((value) => value + 1)} />
+          geometry ? (
+            params.get('account') === 'custom' ? (
+              <Button id="geometry-account" iconOnly size="lg" aria-label="Custom account">
+                AC
+              </Button>
+            ) : undefined
+          ) : (
+            <AppAccountControl onConnect={() => setConnections((value) => value + 1)} />
+          )
         }
         mobileSecondaryNavigation={({ closeDrawer }) => (
           <nav aria-label="Profile sections">
@@ -83,6 +117,13 @@ function CompositionExample() {
       />
       <main>
         <p role="status">Connections: {connections}</p>
+        {geometry
+          ? ['none', 'loading', 'zero', 'positive', 'iap'].map((mode) => (
+              <button key={mode} data-chip-mode={mode} onClick={() => setChipMode(mode)}>
+                {mode}
+              </button>
+            ))
+          : null}
       </main>
     </>
   )
