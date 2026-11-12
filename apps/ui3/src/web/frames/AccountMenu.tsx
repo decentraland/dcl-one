@@ -97,7 +97,10 @@ export default function AccountMenu({
           role="menu"
           aria-label={triggerLabel}
         >
-          <div className="acm__head">
+          <div
+            className="acm__head"
+            onClick={() => triggerRef.current?.focus({ preventScroll: true })}
+          >
             <span className="acm__name">{name || "My Account"}</span>
             {account ? (
               <span className="acm__addr" title={account}>

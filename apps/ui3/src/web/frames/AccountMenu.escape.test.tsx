@@ -132,6 +132,26 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     },
   );
+  it.each(["Ada", "0x1234…abcd"])(
+    "should retain keyboard ownership after clicking static account text %s",
+    async (label) => {
+      render(
+        <AccountMenu name="Ada" account="0x1234567890abcd">
+          Account
+        </AccountMenu>,
+      );
+      const trigger = screen.getByRole("button", { name: "My account" });
+      await user.click(trigger);
+      await user.click(screen.getByText(label));
+      expect(trigger).toHaveFocus();
+      expect(screen.queryByRole("menu")).toBeInTheDocument();
+      await user.keyboard("{Escape}");
+      expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+      expect(trigger).toHaveFocus();
+      expect(outerEscape).not.toHaveBeenCalled();
+    },
+  );
+
   it("should focus the trigger on pointer opening when the browser does not focus clicked buttons", async () => {
     render(<AccountMenu>Account</AccountMenu>);
     const trigger = screen.getByRole("button", { name: "My account" });
