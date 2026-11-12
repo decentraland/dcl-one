@@ -9,6 +9,7 @@ export type AccordionProps = {
   label: string;
   children: React.ReactNode;
   className?: string;
+  info?: React.ReactNode;
   initialOpen?: boolean;
   enabled?: boolean;
   onToggleEnabled?: (enabled: boolean) => void;
@@ -18,6 +19,7 @@ export const Accordion: React.FC<AccordionProps> = ({
   label,
   children,
   className,
+  info,
   initialOpen = true,
   enabled,
   onToggleEnabled,
@@ -35,6 +37,7 @@ export const Accordion: React.FC<AccordionProps> = ({
         open: isOpen,
         disabled: isOff,
         'has-toggle': enabled !== undefined,
+        'has-info': !!info,
       })}
     >
       <div className="header">
@@ -52,11 +55,13 @@ export const Accordion: React.FC<AccordionProps> = ({
         {enabled !== undefined && (
           <CheckboxField
             className="enable"
+            color="tertiary"
             aria-label={`Enable ${label}`}
             checked={enabled}
             onChange={e => onToggleEnabled?.(e.target.checked)}
           />
         )}
+        {info && <span className="info">{info}</span>}
       </div>
       <div
         id={regionId}

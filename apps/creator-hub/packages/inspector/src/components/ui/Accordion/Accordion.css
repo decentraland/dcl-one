@@ -75,6 +75,19 @@
   margin-right: 0;
 }
 
+.Accordion.has-info .toggle {
+  padding-inline-end: calc(var(--uid-space-5) * 2 + var(--uid-space-1));
+}
+
+.Accordion .header > .info {
+  position: absolute;
+  top: 50%;
+  right: var(--uid-space-5);
+  z-index: 1;
+  display: inline-flex;
+  transform: translateY(-50%);
+}
+
 .Accordion > .content:not([hidden]) {
   display: flex;
   flex-direction: column;

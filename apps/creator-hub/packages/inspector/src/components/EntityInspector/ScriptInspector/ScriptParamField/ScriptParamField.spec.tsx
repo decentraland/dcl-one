@@ -14,6 +14,14 @@ vi.mock('../../../Container', () => ({
     </div>
   ),
 }));
+vi.mock('../../../ui/Accordion', () => ({
+  Accordion: ({ label, children }: { label?: string; children?: React.ReactNode }) => (
+    <div data-testid="accordion">
+      <div>{label}</div>
+      {children}
+    </div>
+  ),
+}));
 
 describe('ObjectField', () => {
   const objectParam: ScriptParamObject = {

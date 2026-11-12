@@ -68,6 +68,21 @@ describe('when enabled is given', () => {
     expect(button.contains(checkbox)).toBe(false);
   });
 
+  it('should draw the checkbox as the tertiary outline box', () => {
+    render(
+      <Accordion
+        label="Video Screens"
+        enabled
+      >
+        body
+      </Accordion>,
+    );
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Enable Video Screens' });
+
+    expect(checkbox.closest('.Checkbox')?.classList.contains('tertiary')).toBe(true);
+  });
+
   it('should report the new value without toggling the section', () => {
     const onToggleEnabled = vi.fn();
     render(
@@ -86,6 +101,32 @@ describe('when enabled is given', () => {
     expect(
       screen.getByRole('button', { name: 'Video Screens' }).getAttribute('aria-expanded'),
     ).toBe('true');
+  });
+});
+
+describe('when info is given', () => {
+  it('should render it in the header, outside the toggle button', () => {
+    const { container } = render(
+      <Accordion
+        label="Video Screens"
+        info={<span>help</span>}
+      >
+        body
+      </Accordion>,
+    );
+
+    const info = container.querySelector('.Accordion > .header > .info');
+
+    expect(info?.textContent).toBe('help');
+    expect(screen.getByRole('button', { name: 'Video Screens' }).contains(info)).toBe(false);
+  });
+});
+
+describe('when info is omitted', () => {
+  it('should render no info slot', () => {
+    const { container } = render(<Accordion label="Video Screens">body</Accordion>);
+
+    expect(container.querySelector('.info')).toBeNull();
   });
 });
 
