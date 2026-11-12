@@ -50,6 +50,7 @@ Figma moves while you work: re-read the set and its board at the start of Spec, 
 | [`references/spec-template.md`](references/spec-template.md) | The spec's fixed sections |
 | [`references/validate-report.md`](references/validate-report.md) | The Validate round's table and verdict |
 | [`scripts/wcag.mjs`](scripts/wcag.mjs) | `node wcag.mjs <fg> <bg> [alpha]`, and `--self-test` |
+| [`scripts/ch-capture.mjs`](scripts/ch-capture.mjs) | Creator Hub Before / After shots and grids from a states file, one launch per side: [`references/screenshots.md`](references/screenshots.md) → "ch-capture" |
 
 ## After the change, verify these are still TRUE
 
