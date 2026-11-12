@@ -5,8 +5,8 @@ import { PointerEventType, PointerLock, engine } from '@dcl/sdk/ecs'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { HoverAction } from '../../../src/engine/protocol'
-import type { Info } from '../../../src/engine/generated'
+import type { HoverAction } from '@explorer-core/engine/protocol'
+import type { Info } from '@explorer-core/engine/generated'
 
 const TARGET_UI = 1 // HoverTargetType.UI — ignore hovers over engine UI
 

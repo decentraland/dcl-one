@@ -12,7 +12,8 @@ a response cache. No Registry profile or entity response cache is added.
 denylist, ownership readers and profile transformations used by Lambdas. They
 accept an empty `ids` array and at most 1000 ids, the Lambdas cap, because each id
 costs an ownership pass; more is a 400 with the Lambdas message in the Registry
-error envelope. They resolve case-insensitive pointers once and project the
+error envelope. A request body over 256 KiB is a 413 in the same JSON envelope.
+They resolve case-insensitive pointers once and project the
 processed results into Registry response shapes, in request order.
 Non-profile entities and profiles without a usable avatar are omitted; an entity
 missing its id, pointer or timestamp is logged and omitted. A failed entity lookup
@@ -59,9 +60,9 @@ the ops console, behind its sign-in, write switch and audit log.
 
 Nothing is cached, so every read, including each explorer boot read, is a
 backend call. At most 64 backend requests run at once, bounding buffered
-responses at 2 GiB; a read waits up to 2 seconds for a free slot and is then
+responses at 512 MiB; a read waits up to 2 seconds for a free slot and is then
 refused with 503 and `Retry-After: 1`. A request times out after 30 seconds, does
-not follow redirects and buffers at most 32 MiB; a failed request or a larger
+not follow redirects and buffers at most 8 MiB; a failed request or a larger
 response returns 502. A
 path the URL parser would normalize, such as an encoded `..`, returns 400.
 Responses preserve status, body, content type, cache directives, validators,

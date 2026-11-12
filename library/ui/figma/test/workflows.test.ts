@@ -1368,6 +1368,22 @@ describe('ui-library-key-scan.yml', () => {
   const [first] = prepare
   const keyStep = scanJob.find((step) => JSON.stringify(step).includes(SECRET))!
 
+  // ui-library.yml builds and uploads the Review artifact for these paths; the scan must then require it.
+  it('should require the Review artifact for exactly the paths that make ui-library.yml build it', () => {
+    const pathspecs = (file: string) => {
+      const found = [
+        ...readFileSync(path.join(workflows, file), 'utf8').matchAll(
+          /--diff-merges=cc "\$range" -- ([^)\n]+)\)/g
+        )
+      ].map((match) => match[1]!.trim().split(/\s+/))
+      expect(found).toHaveLength(1)
+      return found[0]!
+    }
+
+    expect(pathspecs('ui-library-key-scan.yml')).toEqual(pathspecs('ui-library.yml'))
+    expect(pathspecs('ui-library.yml')).toContain('.claude/skills/implement-figma-design')
+  })
+
   it('should run only from workflow_run, with the least permissions each job needs', () => {
     expect(triggers(workflow)).toEqual(['workflow_run'])
     expect(workflow.permissions).toEqual({})

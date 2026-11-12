@@ -1,5 +1,5 @@
 import { dehydrate, QueryClient, type DehydratedState } from "@tanstack/react-query";
-import { data, redirect } from "react-router";
+import { data, redirect, type RouterContextProvider } from "react-router";
 
 import { QUERY_CLIENT_CONFIG } from "@/core/lib/query/defaults";
 import { sidLoader } from "@/core/lib/telemetry/session";
@@ -83,6 +83,7 @@ function prefetchTab(client: QueryClient, address: string, tab: ProfileTab) {
  */
 export async function profileLoader(
   request: Request,
+  context: Readonly<RouterContextProvider>,
   params: { address?: string; tab?: string },
 ): Promise<ReturnType<ReturnType<typeof sidLoader>["wrap"]>> {
   const url = new URL(request.url);
@@ -92,7 +93,7 @@ export async function profileLoader(
     throw data({ address: raw, reason: "not-found" } satisfies ProfileErrorData, { status: 404 });
   }
 
-  const session = sidLoader(request);
+  const session = sidLoader(request, context);
   // The wallet cookie every sign-in method sets (the root loader reads the same one); the verified
   // cookie only exists after a thirdweb sign-in.
   const own = isOwnProfile(address, readWallet(request));
@@ -117,7 +118,7 @@ export async function profileLoader(
   try {
     profile = await profileRead;
     // The tab's own reads are optional: past the budget the page renders and the browser reads them.
-    await withinBudget(optional, OPTIONAL_READS_BUDGET_MS);
+    if (profile !== null || tab !== "overview") await withinBudget(optional, OPTIONAL_READS_BUDGET_MS);
   } catch (error) {
     // Nothing is dehydrated on a failure, so any read still running is cancelled here.
     client.clear();

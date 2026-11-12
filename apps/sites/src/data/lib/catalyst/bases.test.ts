@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { playUrl, siteUrl } from "./bases";
+import { blogCmsUrl, playUrl, publicPageUrl, siteUrl } from "./bases";
 
 describe("siteUrl + playUrl (server side: no window)", () => {
   it("links stay on this origin: relative without PUBLIC_CATALYST_URL, absolute under it", () => {
@@ -23,5 +23,36 @@ describe("siteUrl + playUrl (server side: no window)", () => {
     expect(playUrl(params, { PUBLIC_CATALYST_URL: "https://c.example", BEVY_PLAY_URL: "/play" })).toBe(
       "https://c.example/play/?position=0%2C0&realm=dcl-one",
     );
+  });
+});
+
+describe("publicPageUrl", () => {
+  const request = new Request("http://10.0.0.5:3000/blog/post?x=1");
+
+  it("names the configured public origin, trailing slash or not", () => {
+    expect(publicPageUrl(request, "/blog/post", { PUBLIC_CATALYST_URL: "https://catalyst.example/" })).toBe(
+      "https://catalyst.example/blog/post",
+    );
+    expect(publicPageUrl(request, "/blog/post", { PUBLIC_CATALYST_URL: " https://catalyst.example " })).toBe(
+      "https://catalyst.example/blog/post",
+    );
+  });
+
+  it("falls back to the request's origin when unset or blank", () => {
+    expect(publicPageUrl(request, "/blog/post", {})).toBe("http://10.0.0.5:3000/blog/post");
+    expect(publicPageUrl(request, "/blog/post", { PUBLIC_CATALYST_URL: "   " })).toBe("http://10.0.0.5:3000/blog/post");
+  });
+});
+
+describe("blogCmsUrl", () => {
+  it("reads BLOG_CMS_URL trimmed and without a trailing slash", () => {
+    expect(blogCmsUrl({ BLOG_CMS_URL: " https://cms.example/spaces/s/environments/e/ " })).toBe(
+      "https://cms.example/spaces/s/environments/e",
+    );
+  });
+
+  it("is undefined when BLOG_CMS_URL is unset or blank", () => {
+    expect(blogCmsUrl({})).toBeUndefined();
+    expect(blogCmsUrl({ BLOG_CMS_URL: "   " })).toBeUndefined();
   });
 });

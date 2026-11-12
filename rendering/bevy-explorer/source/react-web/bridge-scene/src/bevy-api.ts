@@ -2,7 +2,7 @@
 // inside the super-user (--system-scene) scene sandbox. This is the ENGINE-side surface (raw shapes);
 // the wire shapes React sees live in the shared protocol. Only the methods the domains use
 // are declared — extend as needed.
-import type { ActionWire, Setting } from '../../src/engine/protocol'
+import type { ActionWire, Setting } from '@explorer-core/engine/protocol'
 import type { CompactProfile, SerializedProfile } from './domains/profile'
 import type {
   AnalyticsEvent,
@@ -12,8 +12,11 @@ import type {
   ChatMessage,
   ChatReactionData,
   CommunityMemberConnectivityData,
+  CommunityVoiceUpdate,
   DmHistoryEntryData,
   DmUserStateData,
+  VoiceChatAction,
+  VoiceChatState,
   VoiceMessage,
   FriendData,
   FriendRequestData,
@@ -34,7 +37,7 @@ import type {
   Vector3,
   WelcomeState,
   WorldAccessEvent
-} from '../../src/engine/generated'
+} from '@explorer-core/engine/generated'
 
 // --- raw social-service shapes (BevyApi.social.*), generated from the Rust structs ---
 export type { FriendData, FriendStatusData, FriendRequestData }
@@ -73,6 +76,17 @@ export type SocialApi = {
   getCommunityConnectivityStream: () => Promise<AsyncIterable<CommunityMemberConnectivityData>>
   /** The community channels the local user listens to, as community ids; replaces the set. */
   setCommunityChannels: (ids: string[]) => void
+}
+
+/** Private calls and community streams (BevyApi.voiceChat.*), generated from the Rust structs. */
+export type { VoiceChatState, VoiceChatAction, CommunityVoiceUpdate }
+export type VoiceChatApi = {
+  /** The voice chat state now, then on every change; `close()` ends it. */
+  getStateStream: () => AsyncIterable<VoiceChatState> & { close: () => void }
+  /** Every community stream started / ended broadcast; `close()` ends it. */
+  getCommunityUpdateStream: () => AsyncIterable<CommunityVoiceUpdate> & { close: () => void }
+  /** Fire and forget; the outcome shows on the state stream. */
+  action: (action: VoiceChatAction) => void
 }
 
 export type ChatStreamMessage = ChatMessage
@@ -220,6 +234,8 @@ export type BevyApiInterface = {
   loginCancel: () => void
   logout: () => void
   social: SocialApi
+  /** Optional: absent on runtimes whose SystemApi predates voice chat. */
+  voiceChat?: VoiceChatApi
 }
 
 const globalRequire = (globalThis as { require?: (module: string) => unknown }).require
