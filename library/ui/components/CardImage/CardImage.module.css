@@ -1,0 +1,17 @@
+@layer dcl.reset, dcl.foundations, dcl.components;
+@layer dcl.components {
+  .root {
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+    color: var(--dcl-text-secondary);
+    background: var(--dcl-bg-surface);
+  }
+  .image {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
