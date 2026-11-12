@@ -31,6 +31,8 @@ const CLOSERS = /["'`,;)\]]+$/
 const RAW_JSON = /\{.*/s
 /** Shorter than this, it could be part of other text; an identity is hundreds of characters. */
 const MIN_SECRET = 16
+/** An object's start with no readable key (a typo in each first key) is an identity this long. */
+const LONG_IDENTITY = 128
 
 const decoded = (base64: string): string => Buffer.from(base64, 'base64').toString('latin1')
 
@@ -41,10 +43,11 @@ function jsonTextAt(joined: string, offset: number, length: number): boolean {
   return JSON_TEXT.test(decoded(joined.slice(0, offset + length)).slice(from))
 }
 
-/** The identity a line carries from `start`, if one starts there: the text it spans on the line, up
+/** The identity a line carries from `start`, if one starts there (its base64 `minimum` characters
+ *  long or more, and with its first key readable when `keyed`): the text it spans on the line, up
  *  to the next flag (wrapped, split, quoted or mistyped, all of it), its pieces of base64, and how
  *  far into the line they go (a second identity after its padding is found on its own). */
-function identityAt(line: string, start: number, first: string): { span: string; pieces: [number, string][]; joined: string; end: number } | undefined {
+function identityAt(line: string, start: number, first: string, minimum: number, keyed: boolean): { span: string; pieces: [number, string][]; joined: string; end: number } | undefined {
   const rest = line.slice(start)
   const flag = NEXT_FLAG.exec(rest)
   const span = (flag == null ? rest : rest.slice(0, flag.index)).trimEnd().replace(CLOSERS, '')
@@ -60,7 +63,7 @@ function identityAt(line: string, start: number, first: string): { span: string;
     joined += piece
     end = word.lastIndex
   }
-  if (joined.length < MIN_SECRET || !OBJECT_KEY.test(decoded(joined.slice(0, 128)))) return undefined
+  if (joined.length < minimum || (keyed && !OBJECT_KEY.test(decoded(joined.slice(0, 128))))) return undefined
   return { span, pieces, joined, end: start + end }
 }
 
@@ -79,15 +82,22 @@ export function secretsOf(line: string): string[] {
   let covered = 0
   for (const { 0: run, index } of line.matchAll(BASE64_RUN)) {
     if (index < covered) continue
-    for (let at = 0; at + 4 <= run.length; at++) {
+    // the run holds an identity when any object's start in it has its first key readable; it then
+    // starts at the run's first object start, so a typo in the outer key leaves nothing before
+    // the inner object in clear. With no key readable (a typo in each), a long one is one still.
+    let first = -1
+    let keyed = false
+    for (let at = 0; at + 4 <= run.length && !keyed; at++) {
       if (!OBJECT_START.test(decoded(run.slice(at, at + 64)))) continue
-      const identity = identityAt(line, index + at, run.slice(at))
-      if (identity == null) continue
-      secrets.add(identity.span)
-      for (const [offset, piece] of identity.pieces) if (piece.length >= MIN_SECRET && jsonTextAt(identity.joined, offset, piece.length)) secrets.add(piece)
-      covered = identity.end
-      break
+      if (first < 0) first = at
+      keyed = identityAt(line, index + at, run.slice(at), MIN_SECRET, true) != null
     }
+    if (first < 0) continue
+    const identity = identityAt(line, index + first, run.slice(first), keyed ? MIN_SECRET : LONG_IDENTITY, false)
+    if (identity == null) continue
+    secrets.add(identity.span)
+    for (const [offset, piece] of identity.pieces) if (piece.length >= MIN_SECRET && jsonTextAt(identity.joined, offset, piece.length)) secrets.add(piece)
+    covered = identity.end
   }
   const raw = RAW_JSON.exec(line)?.[0].trimEnd()
   if (raw !== undefined && raw.length >= MIN_SECRET) secrets.add(raw)

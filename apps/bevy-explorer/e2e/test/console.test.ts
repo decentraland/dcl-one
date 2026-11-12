@@ -103,6 +103,9 @@ describe('ConsoleError', () => {
       [`/hud_login "${pieces.join('\n')}" --guest`, '/hud_login "<redacted>" --guest'],
       [`/hud_login '${pieces.join(' ')}'`, "/hud_login '<redacted>'"],
       [`/hud_login ${mistypedFirst.join('\n')}`, '/hud_login <redacted>'],
+      // a typo in the outer key, and one in the inner key too: still all of it
+      [`/hud_login ${long.slice(0, 3)}/${long.slice(4)} --realm main`, '/hud_login <redacted> --realm main'],
+      [`/hud_login ${long.slice(0, 3)}/${long.slice(4, 29)}Q${long.slice(30)} --realm main`, '/hud_login <redacted> --realm main'],
       [`/hud_login ${mistypedThird.join('\n')} --guest`, '/hud_login <redacted> --guest'],
       [`/hud_login ${long.slice(0, 8)} ${long.slice(8)}`, '/hud_login <redacted>'],
       [`/hud_login ${long} my-long-world-name-2025.dcl.eth`, '/hud_login <redacted>'],

@@ -85,6 +85,10 @@ class HeldWelcomeDriver extends IdentityDriver {
   answerWelcome(): void {
     this.answers.shift()?.()
   }
+  /** The next ask is never answered. */
+  loseWelcome(): void {
+    this.answers.shift()
+  }
   send(msg: PageToScene): void {
     const welcome = this.welcome
     if (msg.kind !== 'getWelcome' || welcome == null) return super.send(msg)
@@ -92,7 +96,7 @@ class HeldWelcomeDriver extends IdentityDriver {
     this.welcome = null
     super.send(msg)
     this.welcome = welcome
-    this.answers.push(() => this.emit({ kind: 'welcome', ...welcome }))
+    this.answers.push(() => this.emit({ kind: 'welcome', ...welcome, ask: msg.ask }))
   }
 }
 
@@ -820,6 +824,21 @@ describe('/hud_logout', () => {
     await expect(next).resolves.toMatchObject({ phase: 'lobby' })
     expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome', name: 'second' }])
     expect(h.session().phase).toBe('lobby')
+  })
+
+  it("a welcome ask never answered before /hud_logout does not hold back the next sign-in's answer", async () => {
+    const driver = new HeldWelcomeDriver()
+    driver.welcome = { terms: true, newProfile: false }
+    await ready(driver)
+    const first = expect(login(ENCODED)).rejects.toThrow('signed out')
+    await waitFor(() => expect(driver.sentOf('getWelcome')).toHaveLength(1))
+    driver.loseWelcome()
+    await act(async () => expect(await logout()).toBe('signed out'))
+    await first
+    const next = login(ENCODED)
+    await waitFor(() => expect(driver.sentOf('getWelcome')).toHaveLength(2))
+    await act(async () => driver.answerWelcome())
+    await expect(next).resolves.toMatchObject({ phase: 'lobby' })
   })
 
   it('a sign-in the engine refuses after /hud_logout puts no error on the start page', async () => {

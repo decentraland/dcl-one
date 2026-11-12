@@ -1134,12 +1134,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const pendingLogin = useRef<((driver: LoginDriver) => Promise<unknown>) | null>(null)
   // Counts sign-outs, so a sign-in the engine answers after one (runPendingLogin) is known stale.
   const signOuts = useRef(0)
-  // The welcome page asks in flight, each with the sign-out count it went out under: the bridge
-  // answers them in order, so an answer to one from before a sign-out is the signed-out account's.
-  const welcomeAsks = useRef<number[]>([])
+  // A welcome page ask, tagged with the sign-out count it goes out under, which its answer echoes:
+  // an answer to one from before a sign-out is the signed-out account's.
   const askWelcome = useCallback((driver: LoginDriver): void => {
-    welcomeAsks.current.push(signOuts.current)
-    driver.send({ kind: 'getWelcome' })
+    driver.send({ kind: 'getWelcome', ask: signOuts.current })
   }, [])
   // The sign-in `/hud_login` runs (lib/hudAutomation.ts, a test runner's), answered once it has
   // landed (`landed`: the engine took it) and the welcome page is done, or failed. The destination
@@ -2172,8 +2170,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'welcome': {
           // an answer to an ask from before a sign-out is the signed-out account's: no page of a
-          // sign-in since, even one already submitted, and none of its pick
-          if (welcomeAsks.current.shift() !== signOuts.current) break
+          // sign-in since, even one already submitted, and none of its pick. One from a bridge
+          // that echoes no tag counts while a sign-in is submitted.
+          if (msg.ask !== undefined ? msg.ask !== signOuts.current : !submittedRef.current) break
           // ACCEPT AND PLAY's pick accepted the terms already, and a /hud_login's sign-in stands
           // for them too (lib/hudAutomation.ts): the page is answered, with the pick's name. A
           // first login deploys its profile under the pick's name, so without one a /hud_login

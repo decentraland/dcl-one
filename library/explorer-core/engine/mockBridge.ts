@@ -857,7 +857,7 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
 
     if (msg.kind === 'getWelcome') {
-      reply({ kind: 'welcome', terms: o.welcome, newProfile: o.welcome })
+      reply({ kind: 'welcome', terms: o.welcome, newProfile: o.welcome, ask: msg.ask })
       return
     }
     if (msg.kind === 'acceptWelcome') {
