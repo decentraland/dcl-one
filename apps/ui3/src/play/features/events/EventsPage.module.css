@@ -1,0 +1,134 @@
+/* Events — on the menu's reference canvas. The header is a 68px band across the canvas; below it
+   the content keeps a 1920-wide frame, centred when the canvas is wider. */
+.page {
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  font-family: var(--font-family);
+  pointer-events: auto;
+  animation: pageIn var(--dur-panel) linear;
+}
+@keyframes pageIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* the drifting purple the menu's pages share */
+.backdrop {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: linear-gradient(90deg, var(--lava-1) 0%, var(--lava-1) 30%, color-mix(in srgb, var(--lava-1) 55%, var(--lava-2)) 65%, var(--lava-2) 100%);
+}
+.backdrop::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 140%;
+  height: 140%;
+  background: radial-gradient(ellipse 60% 45% at 25% 100%, var(--lava-3) 0%, transparent 100%);
+  transform: translate(0, -28.571%);
+  animation: lava 24s var(--ease-inout) infinite alternate;
+  will-change: transform;
+}
+.backdrop::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--lava-4) 55%, transparent) 0%, transparent 22%);
+}
+@keyframes lava {
+  from {
+    transform: translate(0, -28.571%);
+  }
+  to {
+    transform: translate(-28.571%, -22.857%);
+  }
+}
+
+.header {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 68px;
+  background: var(--scrim-head);
+  animation: headerIn var(--dur-panel) var(--ease-outquad);
+}
+@keyframes headerIn {
+  from {
+    transform: translateY(-64px);
+  }
+  to {
+    transform: none;
+  }
+}
+.headerFrame {
+  position: relative;
+  width: 1920px;
+  max-width: 100%;
+  height: 100%;
+  margin: 0 auto;
+}
+.title {
+  position: absolute;
+  top: 12px;
+  left: 24px;
+  margin: 0;
+  font-size: var(--type-36);
+  font-weight: 600;
+  line-height: 44px;
+}
+.today {
+  position: absolute;
+  top: 13px;
+  right: 398px;
+  width: 82px;
+  height: 42px;
+  font-size: var(--type-18);
+}
+.create::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 2px solid var(--text);
+  border-radius: 12px;
+  pointer-events: none;
+}
+.create {
+  position: absolute;
+  top: 11px;
+  right: 20px;
+  width: 358px;
+  height: 46px;
+  font-size: var(--type-16);
+}
+
+.content {
+  position: absolute;
+  top: 68px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+}
+.frame {
+  position: relative;
+  width: 1920px;
+  max-width: 100%;
+  height: 100%;
+  margin: 0 auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page,
+  .header,
+  .backdrop::before {
+    animation: none;
+  }
+}

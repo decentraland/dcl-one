@@ -2,6 +2,8 @@
 // the Explorer 2.0 Figma. Open with ?showcase=1. Add every new primitive here.
 
 import { Button } from './Button'
+import { TintButton } from './TintButton'
+import { Skeleton } from './Skeleton'
 import { IconButton } from './IconButton'
 import { VoiceBars } from './VoiceBars'
 import { ColorPicker } from './ColorPicker'
@@ -216,6 +218,23 @@ export function Showcase(): React.JSX.Element {
           <Button size="row" variant="secondary">Row</Button>
           <Button size="md">Medium</Button>
           <Button size="lg">Large</Button>
+        </div>
+      </Section>
+
+      <Section title="TintButton (a translucent fill, by tone)">
+        <div style={row}>
+          {(['dark', 'faint', 'glass', 'brand', 'clear'] as const).map((tone) => (
+            <TintButton key={tone} tone={tone} style={{ height: 46, padding: '0 20px' }}>
+              {tone}
+            </TintButton>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="Skeleton">
+        <div style={row}>
+          <Skeleton style={{ width: 126, height: 126 }} />
+          <Skeleton tone="band" style={{ width: 200, height: 22 }} />
         </div>
       </Section>
 

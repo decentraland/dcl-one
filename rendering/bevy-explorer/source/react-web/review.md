@@ -78,6 +78,13 @@ each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDif
 `panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
 `minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
 
+Not yet baselined: the Events page (`features/events`: the calendar, a day's grid, the event
+detail). Mock mode serves it a week of events around now (`src/engine/mockEvents.ts`;
+`?mock=1&mockEvents=error` fails every read), so a baseline needs the frozen clock. Its contract is
+tier-1: `src/test/events.test.tsx` (the reads sent, the loading, error, empty and loaded states,
+the day navigation, the reminder, the detail, share and jump), `eventsStore.test.ts` and
+`eventFormat.test.ts`.
+
 Not yet baselined: the integrated-GPU guide (`features/gate/IntegratedGpuGuide.tsx`, opened over the
 lobby or world when the pre-boot probe sees an Intel adapter on Windows; `?mock=1&gpuGuide=1` forces
 it). Its contract is tier-1: `src/test/integratedGpuGuide.test.tsx`, `src/lib/integratedGpu.test.ts`.

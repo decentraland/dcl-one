@@ -58,7 +58,7 @@ type Item =
   | { kind: 'backpack'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'communities'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'places'; icon: IconName; label: string; hotkey?: string }
-  | { kind: 'events'; icon: IconName; label: string }
+  | { kind: 'events'; icon: IconName; label: string; hotkey?: string }
   | { kind: 'skybox'; icon: IconName; label: string }
   | { kind: 'permissions'; icon: IconName; label: string }
   | { kind: 'gallery'; icon: IconName; label: string; hotkey?: string }
@@ -98,7 +98,7 @@ const TOP: Item[] = [
   { kind: 'profile', icon: 'profile', label: 'Profile' },
   { kind: 'notifications', icon: 'notifications', label: 'Notifications' },
   { kind: 'divider' },
-  { kind: 'events', icon: 'events', label: 'Events' },
+  { kind: 'events', icon: 'events', label: 'Events', hotkey: 'Events' },
   { kind: 'places', icon: 'places', label: 'Places', hotkey: 'Places' },
   { kind: 'communities', icon: 'communities', label: 'Communities', hotkey: 'Communities' },
   { kind: 'backpack', icon: 'backpack', label: 'Backpack', hotkey: 'Backpack' },
@@ -300,10 +300,11 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         key="events"
         icon={item.icon}
         label={item.label}
+        shortcut={shortcut}
         badge={liveEvents}
         badgeTone="lavender"
         active={session.events.open}
-        onClick={session.events.toggle}
+        onClick={() => session.events.toggle('sidebar')}
       />
     )
   if (item.kind === 'link')

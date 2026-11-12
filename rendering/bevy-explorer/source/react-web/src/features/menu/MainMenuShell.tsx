@@ -44,7 +44,7 @@ export interface MenuItem {
 // (icon + LABEL [shortcut]). Every item is now a React page.
 export const MENU_ITEMS: MenuItem[] = [
   { label: 'Places', icon: 'places', hotkey: 'Places', page: 'places' },
-  { label: 'Events', icon: 'events', page: 'events' },
+  { label: 'Events', icon: 'events', hotkey: 'Events', page: 'events' },
   { label: 'Shop', icon: 'marketplace', page: 'shop' },
   { label: 'Map', icon: 'map', hotkey: 'Map', page: 'map' },
   { label: 'Backpack', icon: 'backpack', hotkey: 'Backpack', page: 'backpack' },

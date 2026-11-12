@@ -50,6 +50,8 @@ import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
 import { hudActsOn, type EditorHudMode } from '../editorHost/hudMode'
+import { eventAnalytics } from '../events/eventFormat'
+import { useEventsData, type EventsData } from '../events/useEventsData'
 import type {
   AvatarColorTarget,
   AppNotification,
@@ -363,10 +365,25 @@ export interface PlacesState {
   toggle: () => void
 }
 
-// Events browses the public events API over HTTP, like Places.
+/** What opened the Events page: its key, the menu's top bar, or the sidebar. */
+export type EventsOpenSource = 'shortcut' | 'start_menu' | 'sidebar'
+
+/** A community the user is a member of, as an event card names it. */
+export interface EventCommunity {
+  id: string
+  name: string
+  thumbnail: string
+}
+
+// Events reads the events service through the bridge, signed, so each event carries the user's
+// reminder.
 export interface EventsState {
   open: boolean
-  toggle: () => void
+  /** Open or close the page; `source` is what opened it. */
+  toggle: (source?: EventsOpenSource) => void
+  data: EventsData
+  /** The communities the user is a member of. */
+  memberOf: EventCommunity[]
 }
 
 // The Shop browses the public marketplace catalog over HTTP, like Places and Events.
@@ -1285,6 +1302,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const [lobbyOpen, setLobbyOpen] = useState(false)
   const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
   const [eventsOpen, setEventsOpen] = useState(false)
+  const eventsOpenSource = useRef<EventsOpenSource | null>(null)
+  const eventsData = useEventsData(driverRef, (event) => track('event_set_as_interested', eventAnalytics(event)))
   const [shopOpen, setShopOpen] = useState(false)
   const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([])
   const [galleryStorage, setGalleryStorage] = useState({ current: 0, max: 0 })
@@ -1862,6 +1881,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             }))
           )
           setCommunityDetail(msg)
+          break
+        case 'events':
+        case 'eventAttending':
+        case 'eventPlaces':
+          eventsData.onMessage(msg)
           break
         case 'communityChannels': {
           // the user's communities, in the order they already have (new ones last)
@@ -2551,7 +2575,25 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
   // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
   const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
-  const toggleEvents = useCallback(() => exclusive(setEventsOpen), [exclusive])
+  const toggleEvents = useCallback(
+    (source?: EventsOpenSource) => {
+      // a click handler may pass its event here
+      eventsOpenSource.current = typeof source === 'string' ? source : null
+      exclusive(setEventsOpen)
+    },
+    [exclusive]
+  )
+  const clearEvents = eventsData.clear
+  useEffect(() => {
+    if (!eventsOpen) {
+      // nothing is kept between visits: the page reads again each time it opens
+      clearEvents()
+      return
+    }
+    if (eventsOpenSource.current != null) track('events_section_opened', { source: eventsOpenSource.current })
+    eventsOpenSource.current = null
+  }, [eventsOpen, clearEvents])
+  const eventCommunities = useMemo(() => communityConvos.map((c) => ({ id: c.id, name: c.name, thumbnail: c.thumbnail })), [communityConvos])
   // The Shop's try-on dresses the current look, so opening it asks for the look the way the Backpack does.
   const toggleShop = useCallback(
     () =>
@@ -4053,6 +4095,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     switch (action) {
       case 'Map': toggleMap(); break
       case 'Places': togglePlaces(); break
+      case 'Events': toggleEvents('shortcut'); break
       case 'Communities': toggleCommunities(); break
       case 'Backpack': toggleBackpack(); break
       case 'Gallery': toggleGallery(); break
@@ -4204,7 +4247,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },
-    events: { open: eventsOpen, toggle: toggleEvents },
+    events: { open: eventsOpen, toggle: toggleEvents, data: eventsData, memberOf: eventCommunities },
     shop: { open: shopOpen, toggle: toggleShop },
     create: { open: createOpen, toggle: toggleCreate, show: showCreate },
     photoMode: {

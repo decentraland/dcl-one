@@ -2031,6 +2031,10 @@ mod tests {
             get(&config, SystemAction::Places),
             Some(vec![InputIdentifier::Key(KeyCode::KeyZ)])
         );
+        assert_eq!(
+            get(&config, SystemAction::Events),
+            Some(vec![InputIdentifier::Key(KeyCode::KeyX)])
+        );
         assert_eq!(config.inputs_generation, INPUTS_GENERATION);
         // fixed bindings restored: the wheel always scrolls
         assert_eq!(

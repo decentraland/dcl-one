@@ -47,6 +47,7 @@ pub enum SystemAction {
     QuickEmote0,
     PointAt,
     Places,
+    Events,
     Communities,
     Backpack,
     Gallery,
@@ -633,6 +634,10 @@ impl Default for InputMap {
                 (
                     Action::System(SystemAction::Places),
                     vec![InputIdentifier::Key(KeyCode::KeyZ)],
+                ),
+                (
+                    Action::System(SystemAction::Events),
+                    vec![InputIdentifier::Key(KeyCode::KeyX)],
                 ),
                 (
                     Action::System(SystemAction::Communities),

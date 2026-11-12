@@ -1,91 +1,82 @@
-// Events — full-screen MainMenuShell page (Unity ExplorePanel's Events section): live and upcoming
-// events from the public events API; a card jumps to the event's parcel or world.
+// Events — a full-screen MainMenuShell page: the calendar of the coming days with the highlighted
+// events beside it, and one day's events in a grid. Every visit opens on the calendar at today.
 
-import { useCallback, useEffect, useState } from 'react'
-import { BrowseLoading, BrowsePanel, BrowseToolbar, DiscoverCard, DiscoverGrid, EmptyState, Tabs, type TabItem } from '../../design'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { TintButton, MaskIcon } from '../../design'
+import type { EventData } from '../../engine/protocol'
+import { track } from '../../lib/analytics'
 import { MainMenuShell } from '../menu/MainMenuShell'
-import type { EventsState, ProfileState } from '../session/useEngineSession'
-import { eventDestination, eventLocation, eventPeopleNow, fetchEvents, fetchLiveHeadcounts, type DclEvent, type EventsList, type LiveHeadcounts } from './eventsApi'
+import type { EventsState, FriendsState, ProfileState } from '../session/useEngineSession'
+import addIcon from '../../assets/events/add-icn.png'
+import { openEventDetail } from './EventDetail'
+import { addDays, dayKey, eventAnalytics, startOfDay } from './eventFormat'
+import { EventsByDay } from './EventsByDay'
+import { EventsCalendar, type EventCardContext } from './EventsCalendar'
+import { calendarColumns, dayEvents, highlightedEvents } from './eventsStore'
+import { useEventActions } from './useEventActions'
+import styles from './EventsPage.module.css'
 
-const SECTIONS: TabItem<EventsList>[] = [
-  { id: 'live', label: 'Live now' },
-  { id: 'upcoming', label: 'Upcoming' }
-]
+/** The days a calendar shows; the highlighted carousel takes the last one's place. */
+export const CALENDAR_DAYS = 5
 
-function when(e: DclEvent): string {
-  if (e.live) return 'Happening now'
-  return new Date(e.start_at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-}
-
-function EventCard({ event, people, onClick }: { event: DclEvent; people: number | undefined; onClick: () => void }): React.JSX.Element {
-  return (
-    <DiscoverCard
-      id={event.id}
-      title={event.name}
-      image={event.image}
-      live={event.live}
-      count={people}
-      byline={when(event)}
-      location={{ text: eventLocation(event), world: event.world === true }}
-      label={event.name}
-      onClick={onClick}
-    />
-  )
-}
+type View = { kind: 'calendar' } | { kind: 'day'; day: Date }
 
 export function EventsPage({
   events,
   profile,
-  onNavigate,
-  onTeleport,
-  onVisitWorld
+  friends,
+  onNavigate
 }: {
   events: EventsState
   profile: ProfileState
+  friends: FriendsState
   onNavigate: (page: string) => void
-  onTeleport: (x: number, y: number) => void
-  onVisitWorld: (realm: string) => void
 }): React.JSX.Element | null {
-  const [section, setSection] = useState<EventsList>('live')
-  const [list, setList] = useState<DclEvent[]>([])
-  const [headcounts, setHeadcounts] = useState<LiveHeadcounts | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [attempt, setAttempt] = useState(0)
-  const retry = useCallback(() => setAttempt((n) => n + 1), [])
+  const { open, data, memberOf } = events
+  const { store, loadCalendar, loadDay } = data
+  const actions = useEventActions()
+  const [view, setView] = useState<View>({ kind: 'calendar' })
+  const [startDay, setStartDay] = useState(() => startOfDay(new Date()))
 
+  const showCalendar = useCallback(
+    (from: Date) => {
+      setView({ kind: 'calendar' })
+      setStartDay(from)
+      loadCalendar(from, CALENDAR_DAYS, true)
+    },
+    [loadCalendar]
+  )
+  const showDay = useCallback(
+    (day: Date) => {
+      setView({ kind: 'day', day })
+      loadDay(day)
+      track('events_by_day_opened', { date: dayKey(day) })
+    },
+    [loadDay]
+  )
   useEffect(() => {
-    if (!events.open) return
-    const ctrl = new AbortController()
-    setLoading(true)
-    setError(null)
-    setHeadcounts(null)
-    fetchEvents(section, ctrl.signal).then(
-      (data) => {
-        setList(data)
-        setLoading(false)
-      },
-      (e: unknown) => {
-        if (ctrl.signal.aborted) return
-        setError(e instanceof Error ? e.message : 'Could not reach the events service')
-        setLoading(false)
-      }
-    )
-    // The list never waits on presence: live counts fill in when (and if) they arrive.
-    if (section === 'live') void fetchLiveHeadcounts(ctrl.signal).then((counts) => !ctrl.signal.aborted && setHeadcounts(counts))
-    return () => ctrl.abort()
-  }, [events.open, section, attempt])
+    if (open) showCalendar(startOfDay(new Date()))
+  }, [open, showCalendar])
 
-  if (!events.open) return null
+  const highlightedStatus = store.queries.highlighted.status
+  const highlighted = useMemo(() => highlightedEvents(store), [store])
+  const days = highlighted.length > 0 ? CALENDAR_DAYS - 1 : CALENDAR_DAYS
+  const columns = useMemo(() => calendarColumns(store, startDay, days), [store, startDay, days])
+  const dayList = useMemo(() => dayEvents(store), [store])
 
-  const visit = (e: DclEvent): void => {
-    const d = eventDestination(e)
-    if (!d) return
-    if (d.kind === 'world') onVisitWorld(d.realm)
-    else onTeleport(d.x, d.y)
-    events.toggle()
+  if (!open) return null
+
+  const context: EventCardContext = {
+    friends: friends.list,
+    memberOf,
+    remindedWhenRead: store.remindedWhenRead,
+    actions,
+    onOpen: (event: EventData) => {
+      openEventDetail(event.id)
+      track('event_card_clicked', { ...eventAnalytics(event), source: 'explore' })
+    }
   }
-
+  const range = store.queries.range.status
   const p = profile.data
   return (
     <MainMenuShell
@@ -95,28 +86,55 @@ export function EventsPage({
       profileAddress={p?.address}
       profileClaimed={p?.hasClaimedName}
       onNavigate={onNavigate}
-      onClose={events.toggle}
+      onClose={() => events.toggle()}
+      transparentBody
     >
-      <BrowseToolbar tabs={<Tabs items={SECTIONS} value={section} onChange={setSection} aria-label="Events sections" />} />
-      <BrowsePanel>
-        {loading ? (
-          <BrowseLoading />
-        ) : error ? (
-          <EmptyState variant="inline" tone="error" title="Couldn't load events" subtitle={error} actions={[{ label: 'Retry', onClick: retry }]} />
-        ) : list.length === 0 ? (
-          <EmptyState
-            variant="inline"
-            title={section === 'live' ? 'No events live right now' : 'No upcoming events'}
-            subtitle={section === 'live' ? 'Check Upcoming to see what is next.' : 'New events show up here when they are scheduled.'}
-          />
-        ) : (
-          <DiscoverGrid>
-            {list.map((e) => (
-              <EventCard key={e.id} event={e} people={section === 'upcoming' ? e.total_attendees : headcounts ? eventPeopleNow(e, headcounts) : undefined} onClick={() => visit(e)} />
-            ))}
-          </DiscoverGrid>
-        )}
-      </BrowsePanel>
+      <div className={styles.page}>
+        <div className={styles.backdrop} />
+        <header className={styles.header}>
+          <div className={styles.headerFrame}>
+            <h1 className={styles.title}>Events</h1>
+            <TintButton radius="pill" tone="glass" className={styles.today} aria-label="Go to today" onClick={() => showCalendar(startOfDay(new Date()))}>
+              Today
+            </TintButton>
+            <TintButton radius={12} tone="dark" className={styles.create} onClick={() => actions.createEvent(true)}>
+              <MaskIcon src={addIcon} size={12} />
+              CREATE EVENT
+            </TintButton>
+          </div>
+        </header>
+        <div className={styles.content}>
+          <div className={styles.frame}>
+            {view.kind === 'calendar' ? (
+              <EventsCalendar
+                startDay={startDay}
+                columns={columns}
+                highlighted={highlighted}
+                loading={range === 'loading' || range === 'idle' || store.queries.live.status === 'loading'}
+                failed={range === 'failed'}
+                arrowsLocked={highlightedStatus === 'loading' || highlightedStatus === 'idle'}
+                context={context}
+                onStartDay={(day) => {
+                  setStartDay(day)
+                  loadCalendar(day, CALENDAR_DAYS, false)
+                }}
+                onDay={showDay}
+                onRetry={() => showCalendar(startDay)}
+              />
+            ) : (
+              <EventsByDay
+                day={view.day}
+                events={dayList}
+                status={store.queries.day.status}
+                context={context}
+                onBack={() => showCalendar(startDay)}
+                onNextDay={() => showDay(addDays(view.day, 1))}
+                onRetry={() => showDay(view.day)}
+              />
+            )}
+          </div>
+        </div>
+      </div>
     </MainMenuShell>
   )
 }

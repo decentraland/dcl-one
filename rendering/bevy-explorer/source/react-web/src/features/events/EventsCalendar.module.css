@@ -1,0 +1,241 @@
+/* The calendar, on the 1920-wide reference frame: the day bar at (22, 15), the columns from
+   (22, 80) to 18 from the right and 20 from the bottom, 360 wide and 380.5 apart. */
+.calendar {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---- day bar ---- */
+.dayBar {
+  position: absolute;
+  top: 15px;
+  left: 22px;
+  display: flex;
+  align-items: center;
+  gap: 22.5px;
+  height: 50px;
+  border-radius: var(--r-pill);
+  background: linear-gradient(180deg, var(--events-day-bar-top) 0%, var(--events-day-bar-bottom) 100%);
+}
+.dayCell {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 358px;
+  height: 50px;
+}
+.dayPill {
+  position: relative;
+  width: 140px;
+  height: 46px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-family: var(--font-family);
+  font-size: var(--type-16);
+  font-weight: 600;
+  cursor: pointer;
+  isolation: isolate;
+}
+.dayPill::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: var(--r-pill);
+  background: transparent;
+}
+.dayPill:hover::before,
+.dayPill:focus-visible::before {
+  background: var(--events-day-hover);
+}
+.dayPill:active::before {
+  background: var(--events-day-press);
+}
+.dayPill:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: var(--r-pill);
+}
+.dayToday {
+  color: var(--events-day-today-ink);
+}
+.dayToday::before {
+  inset: 2px 0;
+  background: linear-gradient(180deg, var(--events-day-today-top) 0%, var(--events-day-today-bottom) 85%, var(--events-day-today-top) 100%);
+  box-shadow: 0 0 4px var(--events-day-today-bottom);
+}
+.dayToday:hover::before,
+.dayToday:focus-visible::before {
+  background: var(--events-day-today-hover);
+}
+.dayToday:active::before {
+  background: var(--events-day-today-press);
+}
+.rangeArrow {
+  position: absolute;
+  top: 7px;
+  width: 36px;
+  height: 36px;
+}
+.rangePrev {
+  left: 6px;
+}
+.rangeNext {
+  right: 6px;
+}
+
+/* ---- columns ---- */
+.columns {
+  position: absolute;
+  top: 80px;
+  right: 18px;
+  bottom: 20px;
+  left: 22px;
+  display: flex;
+  gap: 20.5px;
+}
+.failed {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.column {
+  border-radius: 24px;
+  overflow: hidden;
+  position: relative;
+  flex: none;
+  width: 360px;
+  height: 100%;
+  background: var(--events-column);
+}
+.columnOutline {
+  position: absolute;
+  inset: 0;
+  border: 1.8px solid var(--events-column-outline);
+  border-radius: 24px;
+  pointer-events: none;
+}
+.columnLoading {
+  position: absolute;
+  inset: 10px 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+}
+.columnScroll {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 10px 20px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  scrollbar-width: none;
+  /* the cards fade towards the column's top and out over its last 150px */
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.47) 0, var(--black) 80px, var(--black) calc(100% - 155px), transparent calc(100% - 5px));
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.47) 0, var(--black) 80px, var(--black) calc(100% - 155px), transparent calc(100% - 5px));
+}
+.columnScroll::-webkit-scrollbar {
+  display: none;
+}
+.columnThumb {
+  top: 10px;
+  right: 1px;
+  bottom: 10px;
+  opacity: 0;
+  transition: opacity var(--dur-mid) linear;
+}
+.column:hover .columnThumb,
+.column:focus-within .columnThumb,
+.column:hover .more,
+.column:focus-within .more {
+  opacity: 1;
+}
+.columnThumb > span {
+  background: var(--events-scroll-handle);
+}
+.more {
+  position: absolute;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  width: 360px;
+  height: 60px;
+  padding: 0;
+  border: 0;
+  background: var(--events-more);
+  color: var(--text);
+  cursor: pointer;
+  /* shown with the scroll handle, while the pointer is over the column */
+  opacity: 0;
+  transition: opacity var(--dur-mid) linear;
+}
+.more:hover,
+.more:focus-visible {
+  background: var(--events-more-hover);
+  outline: none;
+}
+.moreUp {
+  top: 0;
+  align-items: flex-start;
+  padding-top: 14px;
+  -webkit-mask-image: linear-gradient(to bottom, var(--black) calc(100% - 25.5px), transparent 100%);
+  mask-image: linear-gradient(to bottom, var(--black) calc(100% - 25.5px), transparent 100%);
+}
+.moreDown {
+  bottom: 0;
+  align-items: flex-end;
+  padding-bottom: 14px;
+  -webkit-mask-image: linear-gradient(to top, var(--black) calc(100% - 30.5px), transparent 100%);
+  mask-image: linear-gradient(to top, var(--black) calc(100% - 30.5px), transparent 100%);
+}
+
+/* ---- highlighted carousel: over the last day's place, from the day bar's top down ---- */
+.carousel {
+  position: absolute;
+  top: 15px;
+  right: 18px;
+  bottom: 20px;
+  width: 358px;
+}
+.dots {
+  position: absolute;
+  right: 20px;
+  bottom: 10px;
+  left: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  height: 34px;
+}
+.dot {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  background: var(--events-dot);
+  cursor: pointer;
+  border-radius: var(--r-pill);
+  transition: width var(--dur-mid) var(--ease-outcubic);
+}
+.dotSelected {
+  width: 40px;
+  background: var(--brand);
+}
+.dot:focus-visible {
+  outline: 2px solid var(--text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot,
+  .more,
+  .columnThumb {
+    transition: none;
+  }
+}

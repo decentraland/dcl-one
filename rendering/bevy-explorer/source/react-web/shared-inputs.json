@@ -339,6 +339,10 @@
       "sha256": "42fb5c50ac97cc1dab32eb976aaab03224bcb7b6ac833fd9d4a81112955a553b"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
+      "sha256": "42692ce5ffe11b4b167ea1bbb125e4cbc9985ec67129c9f8ee0195a6e8308294"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/friends.ts",
       "sha256": "d94a6b8c14c835a181f0153d41ee8fb713112ca0f8f63699444b05b05987d12d"
     },
@@ -416,7 +420,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/App.tsx",
-      "sha256": "8dd5076885bdabd4cc4625c4bf353430c4f912bc3289c29eced9f4df1b6ddc37"
+      "sha256": "45b52cf8eed982e4e2542f9467211bf02dc1ce1a812387fffdceeb718fadfd8a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/assets/backpack/add-gradient.webp",
@@ -777,6 +781,102 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/assets/chat/scroll-bottom-solid.png",
       "sha256": "6c1d7ae4d8fdf33951ffe4cae923f029863c7f70095995e1aa51658dfaed4241"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/add-icn-gradient.png",
+      "sha256": "dd057f7ec5b7fd4ae4e923264122d0d66be972f6c11b8acadac4bd5a863bead8"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/add-icn.png",
+      "sha256": "44d24f16d1b3e104c6daa9bd96b4581614454dc9d9a4fedbefd7d28879bba43a"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/add-to-calendar-icn.png",
+      "sha256": "dc3ae2cf7dc691cd1e98c43bdaaf74f7269ab0bac7ee2a6e1bf791bcb655b570"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-down.png",
+      "sha256": "22ea3b89bb4b600dd1a08f260673895248125da5fcb4e27a5d704eae55daea0b"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-left.png",
+      "sha256": "5bc5d8b5af16fa41bdf488257e76586fc252b03bcb5c088fe39bfecaf491f1c3"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-right.png",
+      "sha256": "9e24b3ea64adf6ffcaaa002d0aba7ccbfe851571c2289217b26df374a7fa87b7"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-up.png",
+      "sha256": "cdb249fa3f7e7f0ab42f37c7139e43e4d9adf48a0aba92ad8305fd7e23933767"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/calendar-icn.png",
+      "sha256": "972ce1fdbdbb0dc1c626aa543a241dd73523adb37770c0502b5296894021a1f0"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/close-icn-thin.png",
+      "sha256": "9d751af8ec2813679a81ed185aff4ab3e13ba046b9537a3a35c3aad948016fae"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/default-image-place.png",
+      "sha256": "23c578b4b6b0699e9337c3ce80084187899ac220081e9efdcdd9b2bef542ceab"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/empty-events-img.png",
+      "sha256": "8ce5f4b9ec1892031293e1e0b1cfaba1f72c07d1744c37efd4fe2883d0292fc4"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/jump-in-outline.png",
+      "sha256": "232f2560d4d0cb473412e58f62aa177cb719772e841fe2364051a756c32f35db"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/link-icn.png",
+      "sha256": "1c27dfbdabbd6bb191aeaceb38b2553dcbe083353091e6b5cb4eac045181f4b3"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/live-event.png",
+      "sha256": "d759873d2ca242885ef3fbef56369d6e4ffc1c65730323671c92f975bfe982e1"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/live-icn.png",
+      "sha256": "6c96a18bab96a62a444f44d759ea55d3680923ddafd0bbb2086dbc98def0f286"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/pin-outline.png",
+      "sha256": "76ba1712beb95983f7c43bd1895d9d0786777758324cad4ad1ea93c19ea67c04"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/players-icn.png",
+      "sha256": "00c5a1f61d3768694ddc9bbd37a789409916c81dc7c01e21e4682adde8b2b0fb"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/radial-glow.png",
+      "sha256": "e130cfd61d8c3ce39f492a972ed2029b8a45a6584d80291586b311f4634bac28"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/remind-me-event.png",
+      "sha256": "8469a76514f0ec96f98bc5b0daa1cf7cea2b74425a3f2a3cc5c6fd0c0741bf1d"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/reminder-off.png",
+      "sha256": "51328f1c15626845ebd536b5b69bb13f652b475fbd8a74b058cc908db54716e0"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/reminder-on.png",
+      "sha256": "2c172ade73ff24222d73f0c532e355b004383e2ef5b905ae44ca95cdf30f3b79"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/share-icn.png",
+      "sha256": "8aaf1360e7f0e3bab57b4ecb6bcea6b133cc93bde2d708fc97be59edb949925f"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/time-icn.png",
+      "sha256": "cd9ca9f811aeec21454a42bc87e8cba089a133186e82360a00adedafbcb22d3f"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/assets/events/x-icn.png",
+      "sha256": "3f9d844bf0e67644aec5aa9a5110f768a139e56fa53504ec693503650a095ea6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/assets/loading-tips/add-friends.webp",
@@ -1532,7 +1632,15 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Showcase.tsx",
-      "sha256": "8df49dae5ab94c81aa6a41fac01b07e21e0599548a2da07d825a6fd29f6c9a08"
+      "sha256": "317eb33c894e851944bcb4619e62b9db65834053c18e296b91926f22c75c64be"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/design/Skeleton.module.css",
+      "sha256": "ec2d385ec0a7c1feebf0435fd8f7a44d67a7d23b40ff6b587eb339b0d7572987"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/design/Skeleton.tsx",
+      "sha256": "ec2751ef99c5e5fc8b351139afbe9a1e6a3f51c5a33a49ddfb78b02ac16c15c0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Slider.module.css",
@@ -1573,6 +1681,14 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/TextInput.tsx",
       "sha256": "7667ba0dfaa41e28c1c3b2f607c4cf78ea64cd5575dc3abc71f92663db5651c7"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/design/TintButton.module.css",
+      "sha256": "d8ef8fadbf1591d2e414ce1847d46f2218f92d492b4b0bb3563456410ce5446e"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/design/TintButton.tsx",
+      "sha256": "c33228a10b9c3831f28e4a816f56385b5ad4ee148f5974ecb87748efda74a14c"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/Toast.module.css",
@@ -1620,7 +1736,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/index.ts",
-      "sha256": "8ed7cc66e152786c3c4ec4f0f40a74c6f37e2b65c1c73fe22ad038472665d51c"
+      "sha256": "0039af5ca97058450f97aa592e14bfa77689304028308d228ef4ef52d966d22a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/design/popups.module.css",
@@ -1680,7 +1796,11 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/mockBridge.ts",
-      "sha256": "96734b4e26e5426b5f36bfe24c8b9e81e1e12ebed161cb9f44c2927d85e24845"
+      "sha256": "f9e9e4a689f634c8370b33c3aa849f444c2233029c5c3092a0f237153a753204"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/engine/mockEvents.ts",
+      "sha256": "f3b6a76e1cdd6b5eb6b2072f1f3f240db8437347c2d6d1b2cf97c40c4db05739"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/nameColor.ts",
@@ -1704,7 +1824,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/engine/protocol.ts",
-      "sha256": "ca38b05083aef244744c046612f40512ebb19c6c77deac807f9bbb2835d9e36b"
+      "sha256": "a74c41bec4e8eef928998ba0aa7f5c12b503dccae2db49a0f3a37dc61f53a67f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/auth/guest.ts",
@@ -2019,12 +2139,64 @@
       "sha256": "a1d5a3432d2de55429b1cb0003451634191d43b6164ec555fcfa9288796f4274"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventCard.module.css",
+      "sha256": "016c5608e0bc9e93aef1efe7ace060e699d93053583c30e3e2ba9721de5a970d"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventCard.tsx",
+      "sha256": "56573da7919843752f584119542b493c48e40f550377d1f2e052a449a22e5661"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventDetail.module.css",
+      "sha256": "1b04c9a7d4ddb087f0bc32a343295ad3eac54ceb4e4a263bd747b92b5b2f5d69"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventDetail.tsx",
+      "sha256": "03a616a3995445a9d22676046046782b5d6da1755652ad84a854c70727bcdab8"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventsByDay.module.css",
+      "sha256": "b0bdb5d66438bd5bd4a2943bb92ee1544bd71b348351f293fff5f3aab6a2c17b"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventsByDay.tsx",
+      "sha256": "31b682cd1f60ade6b57e4b07ac7538927717c5af572eaf32377a207adc391c4a"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventsCalendar.module.css",
+      "sha256": "201a4236ae55456e139908897fe16ec095bb8427b4ceb5ff18e717dc49a53a8f"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventsCalendar.tsx",
+      "sha256": "6828668705280f0bf929e70bf51036461da9f02c8cfcc423e06e0512b04c68a6"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventsPage.module.css",
+      "sha256": "9ab62ba723fef149240372387c6ad397e8bee50070e51a47fb81d6b49be6c00e"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/features/events/EventsPage.tsx",
-      "sha256": "4b0e15e7bfe75676f6dbabd6678bfe466810b2ac9c5baef5591c9036e2d7b15d"
+      "sha256": "86f8594e67306ca4e7b81d36aa7a9dca6151c1558fe0ea1b0b832fe2b50191db"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/eventFormat.ts",
+      "sha256": "6c8424a475b22e7bb50f2cbff1e144988ad66c4fdc3ab6d7502a9a8f93a12dc6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/events/eventsApi.ts",
-      "sha256": "f4ba5560898f97b4e1eee5fcb9a0c00700355906576ef7ce84095c8533f24631"
+      "sha256": "d6e23c17961d31204b2843f86daa22d50cc29e1494dfd3f79aee414a4e354eca"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/eventsStore.ts",
+      "sha256": "4421d64f0835ef56a80087b12aaab6fdd7a090060ff4fba36d60f33fae8235e7"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/useEventActions.ts",
+      "sha256": "a9fc477d85e11ebfa2bf15f0d26ed1aef2287e3a89012314133d632f9f0a9b13"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/features/events/useEventsData.ts",
+      "sha256": "597de1026de16e08cf97733a88d4d414571877ea5d9145e18b3e9ea0aa4cc0a3"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/friends/FriendRequestPopup.module.css",
@@ -2168,7 +2340,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/menu/MainMenuShell.tsx",
-      "sha256": "16579e2d65f3c2ac3dcaf6d3f56af74bd5301d35e5524d14c663ee2585965a17"
+      "sha256": "86935711e53dc5426617b2e327bfe16b1962df4d7836670708871da3479ef763"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/menu/ProfileChip.module.css",
@@ -2404,7 +2576,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/session/useEngineSession.ts",
-      "sha256": "ec4e31afbbbfbf42d3d7f18dc5eb577bc6edc7746ce08d6faec7ebf7d7d65179"
+      "sha256": "5a4a207b884b7a2e1b58e513b1f16cf7f7d15125d539982aaa73040b77a51046"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/KeyBindingsTab.module.css",
@@ -2412,7 +2584,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/KeyBindingsTab.tsx",
-      "sha256": "fea005ce126f43e219235e01cf514fd46b7ebe0f56698dd0a29b125f97c9921f"
+      "sha256": "edbed93fb2545224042bae65dfb69f42c9aecc2662453d2b22062df81f3923f1"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/settings/SettingsPanel.module.css",
@@ -2444,7 +2616,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/sidebar/Sidebar.tsx",
-      "sha256": "bb994a29dd45bf41423c90796d71c74b36850a7b631a3fe5a7b7a6457b3b7c26"
+      "sha256": "e565c01759b2110c64c5a742f74e8b2bbd26ff6efc7fc1fab02d40940a413db4"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/features/sidebar/useAutoHide.ts",
@@ -2708,7 +2880,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/styles/tokens.css",
-      "sha256": "9841f47f557007cecc54f7208e86f45ff61263bba8936e0d5ad9e1b0263ebc0a"
+      "sha256": "b7fd368278e7cf230786301cef8896a4c42f6101a8028ac69911e5aae6618055"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/analytics.boot.test.ts",
@@ -2817,6 +2989,10 @@
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
       "sha256": "846543f4702827b93e7dd3e2a9ba18120bb4078785d6d4934f4b035a5f7cbd5c"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
+      "sha256": "74c0d25733d7a5018d06e515af9963d7d774aa74353ed40617ed4c00531e92bf"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
@@ -2983,8 +3159,20 @@
       "sha256": "aa1aa2082713c59401120807cc74e8d52b6e4d3bce94de22089cc2d5943baecd"
     },
     {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/eventFixtures.ts",
+      "sha256": "960296de2482d7e77cbff2f62f64712d5343e6427d1be29cadfeef87756dde2c"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/eventFormat.test.ts",
+      "sha256": "61e912417c3dc2779c2c58d1d505a703e99baa0df96ad0300d4791f11eac0e60"
+    },
+    {
       "path": "rendering/bevy-explorer/source/react-web/src/test/events.test.tsx",
-      "sha256": "9bb6c57da9312b241b302904b96ec505a6b1e0bbfa904a97b4fa69a0d85baf62"
+      "sha256": "1f4a30d7865658311834917641e43b3ca43f745f33b975cf2b4bd09151602442"
+    },
+    {
+      "path": "rendering/bevy-explorer/source/react-web/src/test/eventsStore.test.ts",
+      "sha256": "44224bd334299a571bfcf0402aaf9aef3d5d4b80c582075c419919186693911a"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/fpsMeter.test.tsx",
@@ -3020,7 +3208,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/harness.tsx",
-      "sha256": "28df21eb274fc02adb453f7f8e82d8cdbdfbd4a4dd7c8710f45354496a75a7b1"
+      "sha256": "252a3028ab55fd5a617a90bbcf5d12db9204dc4725afca351c32658cf70940db"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/hudInset.test.tsx",
@@ -3296,7 +3484,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/systemActionShortcuts.test.tsx",
-      "sha256": "a89cd8964b24f213cb38daefd68162563b3a55054b9510b3beb07046624493d5"
+      "sha256": "0fbd69e7f9b0cb445c20b29841430a1be92d37d788c84a7b43baa0b5a50137ef"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/systemScene.test.tsx",
@@ -3344,7 +3532,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/tsconfig.json",
-      "sha256": "e2ed3557654375089d9158c40c8c97d03be55ce6f475f3b277291c873f55b893"
+      "sha256": "ec8f76477ef812600c41d987a82a5b22f65e4b9e62c398146492f4405873efef"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/vite.config.ts",
@@ -3453,6 +3641,30 @@
     "rendering/bevy-explorer/source/react-web/src/assets/chat/players.png",
     "rendering/bevy-explorer/source/react-web/src/assets/chat/scroll-bottom-outline.png",
     "rendering/bevy-explorer/source/react-web/src/assets/chat/scroll-bottom-solid.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/add-icn-gradient.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/add-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/add-to-calendar-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-down.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-left.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-right.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/arrow-up.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/calendar-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/close-icn-thin.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/default-image-place.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/empty-events-img.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/jump-in-outline.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/link-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/live-event.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/live-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/pin-outline.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/players-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/radial-glow.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/remind-me-event.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/reminder-off.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/reminder-on.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/share-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/time-icn.png",
+    "rendering/bevy-explorer/source/react-web/src/assets/events/x-icn.png",
     "rendering/bevy-explorer/source/react-web/src/assets/loading-tips/add-friends.webp",
     "rendering/bevy-explorer/source/react-web/src/assets/loading-tips/earn-badges.webp",
     "rendering/bevy-explorer/source/react-web/src/assets/loading-tips/hang-out-plaza.webp",
@@ -3642,6 +3854,8 @@
     "rendering/bevy-explorer/source/react-web/src/design/Select.module.css",
     "rendering/bevy-explorer/source/react-web/src/design/Select.tsx",
     "rendering/bevy-explorer/source/react-web/src/design/Showcase.tsx",
+    "rendering/bevy-explorer/source/react-web/src/design/Skeleton.module.css",
+    "rendering/bevy-explorer/source/react-web/src/design/Skeleton.tsx",
     "rendering/bevy-explorer/source/react-web/src/design/Slider.module.css",
     "rendering/bevy-explorer/source/react-web/src/design/Slider.tsx",
     "rendering/bevy-explorer/source/react-web/src/design/Spinner.module.css",
@@ -3652,6 +3866,8 @@
     "rendering/bevy-explorer/source/react-web/src/design/TextArea.tsx",
     "rendering/bevy-explorer/source/react-web/src/design/TextInput.module.css",
     "rendering/bevy-explorer/source/react-web/src/design/TextInput.tsx",
+    "rendering/bevy-explorer/source/react-web/src/design/TintButton.module.css",
+    "rendering/bevy-explorer/source/react-web/src/design/TintButton.tsx",
     "rendering/bevy-explorer/source/react-web/src/design/Toast.module.css",
     "rendering/bevy-explorer/source/react-web/src/design/Toast.tsx",
     "rendering/bevy-explorer/source/react-web/src/design/Toggle.module.css",
@@ -3679,6 +3895,7 @@
     "rendering/bevy-explorer/source/react-web/src/engine/lobbyStage.ts",
     "rendering/bevy-explorer/source/react-web/src/engine/mention.ts",
     "rendering/bevy-explorer/source/react-web/src/engine/mockBridge.ts",
+    "rendering/bevy-explorer/source/react-web/src/engine/mockEvents.ts",
     "rendering/bevy-explorer/source/react-web/src/engine/nameColor.ts",
     "rendering/bevy-explorer/source/react-web/src/engine/outfitRandomizer.ts",
     "rendering/bevy-explorer/source/react-web/src/engine/paging.ts",
@@ -3763,8 +3980,21 @@
     "rendering/bevy-explorer/source/react-web/src/features/error/RealmErrorModal.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/error/SurfaceBoundary.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/error/fatalError.ts",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventCard.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventCard.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventDetail.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventDetail.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventsByDay.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventsByDay.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventsCalendar.module.css",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventsCalendar.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/events/EventsPage.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/events/EventsPage.tsx",
+    "rendering/bevy-explorer/source/react-web/src/features/events/eventFormat.ts",
     "rendering/bevy-explorer/source/react-web/src/features/events/eventsApi.ts",
+    "rendering/bevy-explorer/source/react-web/src/features/events/eventsStore.ts",
+    "rendering/bevy-explorer/source/react-web/src/features/events/useEventActions.ts",
+    "rendering/bevy-explorer/source/react-web/src/features/events/useEventsData.ts",
     "rendering/bevy-explorer/source/react-web/src/features/friends/FriendRequestPopup.module.css",
     "rendering/bevy-explorer/source/react-web/src/features/friends/FriendRequestPopup.tsx",
     "rendering/bevy-explorer/source/react-web/src/features/friends/FriendsPanel.module.css",
@@ -3963,6 +4193,7 @@
     "rendering/bevy-explorer/source/react-web/src/test/bridgeClient.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeCommunities.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeEditor.test.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/bridgeEvents.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeFriends.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeHashing.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/bridgeIdentity.test.ts",
@@ -4004,7 +4235,10 @@
     "rendering/bevy-explorer/source/react-web/src/test/entryParams.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/entryUrl.ts",
     "rendering/bevy-explorer/source/react-web/src/test/error.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/eventFixtures.ts",
+    "rendering/bevy-explorer/source/react-web/src/test/eventFormat.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/events.test.tsx",
+    "rendering/bevy-explorer/source/react-web/src/test/eventsStore.test.ts",
     "rendering/bevy-explorer/source/react-web/src/test/fpsMeter.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/friends.test.tsx",
     "rendering/bevy-explorer/source/react-web/src/test/gallery.page.test.tsx",

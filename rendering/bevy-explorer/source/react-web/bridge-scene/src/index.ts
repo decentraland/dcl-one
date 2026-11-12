@@ -28,6 +28,7 @@ import { registerWelcome } from './domains/welcome'
 import { registerNotifications } from './domains/notifications'
 import { registerSettings } from './domains/settings'
 import { registerCommunities } from './domains/communities'
+import { registerEvents } from './domains/events'
 import { registerGallery } from './domains/gallery'
 import { registerWorld } from './domains/world'
 import { registerVoice } from './domains/voice'
@@ -69,6 +70,7 @@ export function main(): void {
     registerNotifications(ctx)
     registerSettings(ctx)
     registerCommunities(ctx)
+    registerEvents(ctx)
     registerGallery(ctx)
     registerWorld(ctx)
     registerPointer(ctx)
