@@ -5,6 +5,7 @@
 // `tabpanel`s; the strip only owns selection).
 
 import { useRef } from 'react'
+import { CountBadge } from './CountBadge'
 import styles from './Tabs.module.css'
 
 export interface TabItem<T extends string = string> {
@@ -89,7 +90,7 @@ export function Tabs<T extends string>({
             {it.icon}
             {it.label}
             {it.iconAfter}
-            {it.badge ? <span className={styles.badge}>{it.badgeMax != null && it.badge > it.badgeMax ? `+${it.badgeMax}` : it.badge}</span> : null}
+            {it.badge ? <CountBadge count={it.badge} max={it.badgeMax} size={fill ? 'xs' : 'sm'} announce /> : null}
           </button>
         )
       })}
