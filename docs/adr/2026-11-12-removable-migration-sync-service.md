@@ -18,7 +18,7 @@ there is no private application schema installer. Target facts and their apply
 receipts commit together. Removing the worker does not remove business facts.
 
 The executable supports isolated rehearsals of explicitly scoped Genesis Places
-favorites. Source-local transactional outbox capture records changes and command
+favorites and likes/dislikes. Source-local transactional outbox capture records changes and command
 receipts without contacting dcl-one. A repeatable-read snapshot and capture boundary
 bootstrap the destination before activation. Source-only changes apply through the
 mapping; duplicate commands run through a dedicated authenticated follower listener,
@@ -40,7 +40,7 @@ recovery controls and remaining activation gates.
 ## Ownership and retirement
 
 The sync worker may write only its own metadata and the declared destination
-mapping. The initial mapping updates `explore.user_favorites` and derives
+mapping. The initial mapping updates `explore.user_favorites` and `explore.user_likes`, and derives
 `explore.place_interaction_counts`; catalogue data remains owned by Explore.
 No production-to-target flow may silently become target-to-production writes.
 Normal API/jobs must stay off; only the dedicated follower may serve the pilot.
@@ -52,3 +52,13 @@ when their pending state is accounted for. Retain metadata for the agreed
 recovery period; retiring replication slots and deleting metadata are explicit
 operator actions, not shutdown behavior. After independent target writes,
 rollback requires preserving those writes through a separately tested process.
+
+## Unchanged-client interaction coverage
+
+The default pilot uses source-only capture of favorite and like/dislike changes.
+Clients and production HTTP handlers remain unchanged; the source database receives
+the explicit local capture installation. Native favorite replay stays optional.
+Adapter v2 captures both interaction tables in one ordered stream and bootstraps
+them at one snapshot boundary. V1 history is retained under its original identity;
+it is not silently expanded. Vote facts and independent version history commit
+with derived counters and the applied cursor.

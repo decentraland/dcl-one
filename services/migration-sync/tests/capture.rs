@@ -8,7 +8,7 @@ const USER: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PLACE: &str = "11111111-1111-4111-8111-111111111111";
 
 async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
-    source.execute(sqlx::raw_sql("CREATE TABLE places(id uuid PRIMARY KEY,world boolean NOT NULL DEFAULT false,disabled boolean NOT NULL DEFAULT false,favorites integer NOT NULL DEFAULT 0); CREATE TABLE user_favorites(\"user\" text,entity_id uuid,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); INSERT INTO places(id) VALUES('11111111-1111-4111-8111-111111111111');")).await?;
+    source.execute(sqlx::raw_sql("CREATE TABLE places(id uuid PRIMARY KEY,world boolean NOT NULL DEFAULT false,disabled boolean NOT NULL DEFAULT false,favorites integer NOT NULL DEFAULT 0); CREATE TABLE user_favorites(\"user\" text,entity_id uuid,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); CREATE TABLE user_likes(\"user\" text,entity_id uuid,\"like\" boolean NOT NULL,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); INSERT INTO places(id) VALUES('11111111-1111-4111-8111-111111111111');")).await?;
     let mut files = std::fs::read_dir(Path::new(env!("DCL_ONE_ROOT")).join("schemas"))?
         .collect::<std::io::Result<Vec<_>>>()?;
     files.sort_by_key(|e| e.file_name());
@@ -39,6 +39,13 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
         .bind(id)
         .execute(&mut *first)
         .await?;
+    sqlx::query(
+        "INSERT INTO user_likes VALUES($1,$2,true,5,'2026-01-01T00:00:00Z','2026-01-02T00:00:00Z')",
+    )
+    .bind(USER)
+    .bind(id)
+    .execute(&mut *first)
+    .await?;
     let src = source.clone();
     let dst = target.clone();
     let baseline = tokio::spawn(async move { capture::bootstrap(&src, &dst, "pilot").await });
@@ -51,6 +58,20 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
         capture::reconcile(source, target, "pilot").await?["matches"],
         true
     );
+    // Complete favorite rows alone cannot make old adapter metadata compatible.
+    sqlx::query("UPDATE migration_sync.capture_sources SET adapter='places_outbox_v1'")
+        .execute(target)
+        .await?;
+    assert!(
+        capture::reconcile(source, target, "pilot")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("adapters differ")
+    );
+    sqlx::query("UPDATE migration_sync.capture_sources SET adapter='places_outbox_v2'")
+        .execute(target)
+        .await?;
     sqlx::query("UPDATE explore.place_interaction_counts SET favorites=99")
         .execute(target)
         .await?;
@@ -78,6 +99,61 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
     assert_eq!(
         capture::reconcile(source, target, "pilot").await?["matches"],
         true
+    );
+    // An existing client vote flip and metadata update have no receipt header.
+    // Source-only capture preserves both timestamps and derives all counters.
+    sqlx::query(
+        "UPDATE user_likes SET \"like\"=false,user_activity=9,updated_at='2026-02-03T04:05:06Z'",
+    )
+    .execute(source)
+    .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["matches"],
+        true
+    );
+    sqlx::query("UPDATE explore.place_interaction_counts SET dislikes=99")
+        .execute(target)
+        .await?;
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["counts_match"],
+        false
+    );
+    sqlx::query("UPDATE explore.place_interaction_counts SET dislikes=1")
+        .execute(target)
+        .await?;
+    // Capture several facts from both tables as one source transaction.
+    let mut mixed = source.begin().await?;
+    sqlx::query("INSERT INTO user_favorites VALUES($1,$2,1,now())")
+        .bind(USER)
+        .bind(id)
+        .execute(&mut *mixed)
+        .await?;
+    sqlx::query("DELETE FROM user_likes")
+        .execute(&mut *mixed)
+        .await?;
+    sqlx::query("DELETE FROM user_favorites")
+        .execute(&mut *mixed)
+        .await?;
+    mixed.commit().await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["matches"],
+        true
+    );
+    assert!(
+        sqlx::query("TRUNCATE user_likes")
+            .execute(source)
+            .await
+            .is_err()
     );
     // A second writer cannot commit past an earlier open capture transaction.
     let mut earlier = source.begin().await?;
@@ -233,6 +309,17 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
             .unwrap_err()
             .to_string()
             .contains("scope changed")
+    );
+    // A v1 installation cannot be mistaken for complete interaction capture.
+    sqlx::raw_sql("ALTER TABLE migration_capture.control DROP CONSTRAINT control_version_check; UPDATE migration_capture.control SET version=1")
+        .execute(source).await?;
+    assert!(capture::source_info(source).await.is_err());
+    assert!(
+        capture::install(source, &[id])
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("version lacks")
     );
     Ok(())
 }

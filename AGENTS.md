@@ -74,7 +74,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
   - Only the primary `serve` (`FLEET_JOBS_ENABLED`) serves `/ws` and the island subscriber.
   - Social replicas derive online status from Pulse's wallet topology over NATS; every `serve` recovers room occupancy through the gatekeeper's LiveKit adapter; presence owns observations, source age and public/admission projections.
 - `storage`: the shared hash-addressed blob store.
-- `migration-sync`: separately deployed migration worker, not linked into Catalyst. Owns `migration_sync` metadata; its current rehearsal mapping writes `explore.user_favorites` and derives `explore.place_interaction_counts`. Production remains authoritative; the dedicated follower, source outbox capture and ordered native replay are bounded Places pilot paths; production rollout remains gated. See `docs/adr/2026-11-12-removable-migration-sync-service.md`.
+- `migration-sync`: separately deployed migration worker, not linked into Catalyst. Owns `migration_sync` metadata; its current rehearsal mapping writes `explore.user_favorites`/`explore.user_likes` and derives `explore.place_interaction_counts`. Production remains authoritative; the dedicated follower, source outbox capture and ordered native replay are bounded Places pilot paths; production rollout remains gated. See `docs/adr/2026-11-12-removable-migration-sync-service.md`.
 - Domain ownership is not a separate deployable; keep the shared SQL and process contracts.
 
 - Prefer the smallest readable implementation: no forwarding layers, internal HTTP hops or per-service pools; direct SQL and a passed transaction for atomic writes.

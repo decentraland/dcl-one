@@ -42,7 +42,7 @@ pub async fn source_info(source: &PgPool) -> Result<SourceInfo> {
     .fetch_one(source)
     .await?;
     ensure!(
-        row.try_get::<i32, _>("version")? == 1,
+        row.try_get::<i32, _>("version")? == 2,
         "unsupported capture adapter version"
     );
     let scope = sqlx::query_scalar::<_, Uuid>(
@@ -51,7 +51,7 @@ pub async fn source_info(source: &PgPool) -> Result<SourceInfo> {
     .fetch_all(source)
     .await?;
     Ok(SourceInfo {
-        adapter: "places_outbox_v1",
+        adapter: "places_outbox_v2",
         generation: row.try_get("generation")?,
         position: row.try_get("position")?,
         scope,
@@ -87,6 +87,14 @@ pub async fn install(source: &PgPool, scope: &[Uuid]) -> Result<SourceInfo> {
             .fetch_one(&mut *tx)
             .await?;
     if installed {
+        let version: i32 =
+            sqlx::query_scalar("SELECT version FROM migration_capture.control WHERE singleton")
+                .fetch_one(&mut *tx)
+                .await?;
+        ensure!(
+            version == 2,
+            "installed capture version lacks interaction coverage; stop and create a reviewed new baseline"
+        );
         let actual: Vec<Uuid> =
             sqlx::query_scalar("SELECT entity_id FROM migration_capture.scope ORDER BY entity_id")
                 .fetch_all(&mut *tx)
@@ -137,7 +145,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
     .fetch_one(&mut *snapshot)
     .await?;
     ensure!(
-        row.try_get::<i32, _>("version")? == 1,
+        row.try_get::<i32, _>("version")? == 2,
         "unsupported capture adapter version"
     );
     let generation: Uuid = row.try_get("generation")?;
@@ -173,6 +181,30 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         change.validate()?;
         baseline.push(change);
     }
+    let like_rows = sqlx::query(
+        "SELECT f.\"user\"::text AS actor,f.entity_id::text AS entity_id,
+                f.\"like\",f.user_activity::double precision AS activity,f.created_at,f.updated_at
+         FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id=f.entity_id
+         ORDER BY f.entity_id,f.\"user\" LIMIT 100001",
+    )
+    .fetch_all(&mut *snapshot)
+    .await?;
+    ensure!(
+        baseline.len() + like_rows.len() <= MAX_BASELINE_ROWS,
+        "pilot baseline exceeds bounded export size; choose a smaller scope"
+    );
+    for row in like_rows {
+        let change = FavoriteChange::LikeUpsert {
+            user: row.try_get("actor")?,
+            entity_id: row.try_get("entity_id")?,
+            r#like: row.try_get("like")?,
+            user_activity: row.try_get("activity")?,
+            created_at: row.try_get::<DateTime<Utc>, _>("created_at")?,
+            updated_at: row.try_get::<DateTime<Utc>, _>("updated_at")?,
+        };
+        change.validate()?;
+        baseline.push(change);
+    }
     snapshot.commit().await?;
     let boundary = position_cursor(position)?;
     let mut tx = target.begin().await?;
@@ -196,14 +228,14 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         "bootstrap requires an unregistered destination; never overwrite an active generation"
     );
     let existing: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM explore.user_favorites WHERE entity_id=ANY($1))",
+        "SELECT EXISTS(SELECT 1 FROM explore.user_favorites WHERE entity_id=ANY($1)) OR EXISTS(SELECT 1 FROM explore.user_likes WHERE entity_id=ANY($1))",
     )
     .bind(scope.iter().map(ToString::to_string).collect::<Vec<_>>())
     .fetch_one(&mut *tx)
     .await?;
     ensure!(
         !existing,
-        "bootstrap scope already contains target favorites; use a clean scoped baseline"
+        "bootstrap scope already contains target interaction facts; use a clean scoped baseline"
     );
     for entity in &scope {
         let local: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM explore.place WHERE id=$1 AND NOT world AND origin='local')")
@@ -215,15 +247,30 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
     sqlx::query("INSERT INTO migration_sync.capture_scope(stream,generation,entity_id) SELECT $1,$2,unnest($3::uuid[])")
         .bind(stream).bind(generation).bind(&scope).execute(&mut *tx).await?;
     for change in baseline {
-        if let FavoriteChange::Upsert {
-            user,
-            entity_id,
-            user_activity,
-            created_at,
-        } = change
-        {
-            sqlx::query("INSERT INTO explore.user_favorites(\"user\",entity_id,user_activity,created_at) VALUES($1,$2,$3,$4)")
-                .bind(user).bind(entity_id).bind(user_activity).bind(created_at.naive_utc()).execute(&mut *tx).await?;
+        match change {
+            FavoriteChange::Upsert {
+                user,
+                entity_id,
+                user_activity,
+                created_at,
+            } => {
+                sqlx::query("INSERT INTO explore.user_favorites(\"user\",entity_id,user_activity,created_at) VALUES($1,$2,$3,$4)")
+                    .bind(user).bind(entity_id).bind(user_activity).bind(created_at.naive_utc()).execute(&mut *tx).await?;
+            }
+            FavoriteChange::LikeUpsert {
+                user,
+                entity_id,
+                r#like,
+                user_activity,
+                created_at,
+                updated_at,
+            } => {
+                sqlx::query("INSERT INTO explore.user_likes(\"user\",entity_id,\"like\",user_activity,created_at,updated_at,source) VALUES($1,$2,$3,$4,$5,$6,'local')")
+                    .bind(user).bind(entity_id).bind(r#like).bind(user_activity).bind(created_at.naive_utc()).bind(updated_at.naive_utc()).execute(&mut *tx).await?;
+            }
+            FavoriteChange::Delete { .. } | FavoriteChange::LikeDelete { .. } => {
+                unreachable!("snapshot has no deletes")
+            }
         }
     }
     for entity in &scope {
@@ -234,11 +281,11 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
             ON CONFLICT(entity_id) DO UPDATE SET favorites=EXCLUDED.favorites,likes=EXCLUDED.likes,dislikes=EXCLUDED.dislikes,updated_at=timezone('UTC',now())")
             .bind(entity.to_string()).execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,captured_position,observed_position,last_contact_at) VALUES($1,$2,$3,$3,clock_timestamp())")
+    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,adapter,captured_position,observed_position,last_contact_at) VALUES($1,$2,'places_outbox_v2',$3,$3,clock_timestamp())")
         .bind(stream).bind(generation).bind(position).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(SourceInfo {
-        adapter: "places_outbox_v1",
+        adapter: "places_outbox_v2",
         generation,
         position,
         scope,
@@ -327,6 +374,18 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
         status["generation"] == json!(info.generation),
         "source and target generations differ"
     );
+    let adapter: String = sqlx::query_scalar(
+        "SELECT adapter FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2",
+    )
+    .bind(stream)
+    .bind(info.generation)
+    .fetch_optional(target)
+    .await?
+    .context("stream has no matching capture bootstrap")?;
+    ensure!(
+        adapter == info.adapter,
+        "source and target capture adapters differ"
+    );
     let approved_scope: Vec<Uuid> = sqlx::query_scalar("SELECT entity_id FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 ORDER BY entity_id")
         .bind(stream).bind(info.generation).fetch_all(target).await?;
     ensure!(
@@ -346,13 +405,19 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
         .fetch_all(source).await?;
     let target_rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_array(\"user\",entity_id,user_activity,to_char(created_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) FROM explore.user_favorites WHERE entity_id=ANY($1) ORDER BY \"user\",entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let source_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id::text,count(f.entity_id)) FROM migration_capture.scope s LEFT JOIN public.user_favorites f ON f.entity_id=s.entity_id GROUP BY s.entity_id ORDER BY s.entity_id")
+    let source_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(f.\"user\"::text,f.entity_id::text,f.\"like\",f.user_activity,to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'local') FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id=f.entity_id ORDER BY f.\"user\",f.entity_id")
         .fetch_all(source).await?;
-    let target_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id,c.favorites) FROM unnest($1::text[]) AS s(entity_id) LEFT JOIN explore.place_interaction_counts c USING(entity_id) ORDER BY s.entity_id")
+    let target_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(\"user\",entity_id,\"like\",user_activity,to_char(created_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(updated_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),source) FROM explore.user_likes WHERE entity_id=ANY($1) ORDER BY \"user\",entity_id")
+        .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
+    let source_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id::text,(SELECT count(*) FROM public.user_favorites f WHERE f.entity_id=s.entity_id),(SELECT count(*) FROM public.user_likes l WHERE l.entity_id=s.entity_id AND l.\"like\"),(SELECT count(*) FROM public.user_likes l WHERE l.entity_id=s.entity_id AND NOT l.\"like\")) FROM migration_capture.scope s ORDER BY s.entity_id")
+        .fetch_all(source).await?;
+    let target_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id,c.favorites,c.likes,c.dislikes) FROM unnest($1::text[]) AS s(entity_id) LEFT JOIN explore.place_interaction_counts c USING(entity_id) ORDER BY s.entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
     let after = source_info(source).await?;
     ensure!(
-        after.position == info.position && after.generation == info.generation,
+        after.position == info.position
+            && after.generation == info.generation
+            && after.scope == info.scope,
         "source changed during reconciliation; retry at a stable boundary"
     );
     let target_after = store::status(target, stream).await?;
@@ -361,7 +426,20 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
             && target_after["generation"] == status["generation"],
         "target changed during reconciliation"
     );
+    let scope_after: Vec<Uuid> = sqlx::query_scalar("SELECT entity_id FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 ORDER BY entity_id")
+        .bind(stream).bind(info.generation).fetch_all(target).await?;
+    let adapter_after: Option<String> = sqlx::query_scalar(
+        "SELECT adapter FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2",
+    )
+    .bind(stream)
+    .bind(info.generation)
+    .fetch_optional(target)
+    .await?;
+    ensure!(
+        scope_after == approved_scope && adapter_after.as_deref() == Some(adapter.as_str()),
+        "target capture contract changed during reconciliation"
+    );
     Ok(
-        json!({"stream":stream,"generation":info.generation,"position":info.position,"matches":source_rows==target_rows && source_counts==target_counts,"rows_match":source_rows==target_rows,"counts_match":source_counts==target_counts,"source_rows":source_rows.len(),"target_rows":target_rows.len()}),
+        json!({"stream":stream,"generation":info.generation,"position":info.position,"matches":source_rows==target_rows && source_likes==target_likes && source_counts==target_counts,"rows_match":source_rows==target_rows,"likes_match":source_likes==target_likes,"source_likes":source_likes.len(),"target_likes":target_likes.len(),"counts_match":source_counts==target_counts,"source_rows":source_rows.len(),"target_rows":target_rows.len()}),
     )
 }

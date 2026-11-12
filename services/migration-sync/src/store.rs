@@ -368,14 +368,61 @@ async fn apply(tx: &mut Transaction<'_, Postgres>, envelope: &Envelope) -> Resul
                 .await?;
                 (user, entity_id, true)
             }
+            FavoriteChange::LikeUpsert {
+                user,
+                entity_id,
+                r#like,
+                user_activity,
+                created_at,
+                updated_at,
+            } => {
+                let valid: Option<bool> = sqlx::query_scalar(
+                    "SELECT true FROM explore.place WHERE id=$1 AND NOT world AND origin='local' FOR SHARE",
+                ).bind(entity_id).fetch_optional(&mut **tx).await?;
+                ensure!(
+                    valid == Some(true),
+                    "catalogue identity is unavailable or not owned by this baseline"
+                );
+                sqlx::query(
+                    "INSERT INTO explore.user_likes(\"user\",entity_id,\"like\",user_activity,created_at,updated_at,source)
+                     VALUES($1,$2,$3,$4,$5,$6,'local') ON CONFLICT(\"user\",entity_id)
+                     DO UPDATE SET \"like\"=EXCLUDED.\"like\",user_activity=EXCLUDED.user_activity,
+                     created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at,source='local'",
+                ).bind(user).bind(entity_id).bind(r#like).bind(user_activity).bind(created_at.naive_utc())
+                 .bind(updated_at.naive_utc()).execute(&mut **tx).await?;
+                (user, entity_id, false)
+            }
+            FavoriteChange::LikeDelete { user, entity_id } => {
+                sqlx::query("DELETE FROM explore.user_likes WHERE \"user\"=$1 AND entity_id=$2")
+                    .bind(user)
+                    .bind(entity_id)
+                    .execute(&mut **tx)
+                    .await?;
+                (user, entity_id, true)
+            }
         };
         entities.insert(entity_id);
-        sqlx::query(
+        let version_sql = if matches!(
+            change,
+            FavoriteChange::LikeUpsert { .. } | FavoriteChange::LikeDelete { .. }
+        ) {
+            "INSERT INTO migration_sync.like_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted)
+             VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6)
+             ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted"
+        } else {
             "INSERT INTO migration_sync.favorite_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted)
              VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6)
-             ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted",
-        ).bind(&envelope.stream).bind(envelope.generation).bind(user).bind(entity_id).bind(&envelope.commit_lsn).bind(deleted)
-            .execute(&mut **tx).await?;
+             ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted"
+        };
+        sqlx::query(version_sql)
+            .bind(&envelope.stream)
+            .bind(envelope.generation)
+            .bind(user)
+            .bind(entity_id)
+            .bind(&envelope.commit_lsn)
+            .bind(deleted)
+            .execute(&mut **tx)
+            .await?;
     }
     for entity in entities {
         sqlx::query(

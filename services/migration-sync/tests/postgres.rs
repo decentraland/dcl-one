@@ -567,6 +567,191 @@ async fn dispatch_assertions(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
+async fn like_assertions(pool: &PgPool) -> Result<()> {
+    fixture(pool).await?;
+    let generation = Uuid::new_v4();
+    store::register(pool, "pilot", generation, "0/0").await?;
+    store::pause(pool, "pilot", false).await?;
+    let like = |entity: &str, vote: bool| {
+        json!({"op":"like_upsert","user":USER,"entity_id":entity,"like":vote,
+        "user_activity":7.0,"created_at":"2026-11-12T00:00:00Z","updated_at":"2026-11-12T01:00:00Z"})
+    };
+    let first = envelope(
+        generation,
+        "0/0",
+        "0/1",
+        "source_only",
+        json!([upsert(PLACE), like(PLACE, true)]),
+    );
+    let second = envelope(
+        generation,
+        "0/1",
+        "0/2",
+        "source_only",
+        json!([like(PLACE, false)]),
+    );
+    store::enqueue(pool, &second).await?;
+    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Idle);
+    store::enqueue(pool, &first).await?;
+    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
+    let counts = sqlx::query(
+        "SELECT favorites,likes,dislikes FROM explore.place_interaction_counts WHERE entity_id=$1",
+    )
+    .bind(PLACE)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        (
+            counts.try_get::<i32, _>("favorites")?,
+            counts.try_get::<i32, _>("likes")?,
+            counts.try_get::<i32, _>("dislikes")?
+        ),
+        (1, 2, 1)
+    );
+    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
+    let row=sqlx::query("SELECT \"like\",user_activity,source,created_at::text AS created,updated_at::text AS updated FROM explore.user_likes WHERE \"user\"=$1 AND entity_id=$2")
+        .bind(USER).bind(PLACE).fetch_one(pool).await?;
+    assert!(!row.try_get::<bool, _>("like")?);
+    assert_eq!(row.try_get::<f64, _>("user_activity")?, 7.0);
+    assert_eq!(row.try_get::<String, _>("source")?, "local");
+    assert_eq!(row.try_get::<String, _>("created")?, "2026-11-12 00:00:00");
+    assert_eq!(row.try_get::<String, _>("updated")?, "2026-11-12 01:00:00");
+    let third = envelope(
+        generation,
+        "0/2",
+        "0/3",
+        "source_only",
+        json!([{"op":"like_delete","user":USER,"entity_id":PLACE}]),
+    );
+    store::enqueue(pool, &third).await?;
+    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
+    assert!(!store::enqueue(pool, &first).await?);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM explore.user_favorites WHERE \"user\"=$1"
+        )
+        .bind(USER)
+        .fetch_one(pool)
+        .await?,
+        1
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_likes WHERE \"user\"=$1")
+            .bind(USER)
+            .fetch_one(pool)
+            .await?,
+        0
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT deleted FROM migration_sync.like_versions WHERE \"user\"=$1"
+        )
+        .bind(USER)
+        .fetch_one(pool)
+        .await?
+    );
+    assert!(
+        !sqlx::query_scalar::<_, bool>(
+            "SELECT deleted FROM migration_sync.favorite_versions WHERE \"user\"=$1"
+        )
+        .bind(USER)
+        .fetch_one(pool)
+        .await?
+    );
+    let counts = sqlx::query(
+        "SELECT favorites,likes,dislikes FROM explore.place_interaction_counts WHERE entity_id=$1",
+    )
+    .bind(PLACE)
+    .fetch_one(pool)
+    .await?;
+    assert_eq!(
+        (
+            counts.try_get::<i32, _>("favorites")?,
+            counts.try_get::<i32, _>("likes")?,
+            counts.try_get::<i32, _>("dislikes")?
+        ),
+        (1, 1, 1)
+    );
+    // A missing second catalogue rolls back both the earlier vote and favorite deletion.
+    let failed = envelope(
+        generation,
+        "0/3",
+        "0/4",
+        "source_only",
+        json!([delete(PLACE), like(PLACE, true), like(MISSING, false)]),
+    );
+    store::enqueue(pool, &failed).await?;
+    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Blocked);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_likes WHERE \"user\"=$1")
+            .bind(USER)
+            .fetch_one(pool)
+            .await?,
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM explore.user_favorites WHERE \"user\"=$1"
+        )
+        .bind(USER)
+        .fetch_one(pool)
+        .await?,
+        1
+    );
+    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/3");
+    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,captured_position,observed_position,last_contact_at) VALUES('pilot',$1,4,4,now())")
+        .bind(generation).execute(pool).await?;
+    sqlx::query("INSERT INTO migration_sync.capture_scope(stream,generation,entity_id) VALUES('pilot',$1,$2)")
+        .bind(generation).bind(Uuid::parse_str(PLACE)?).execute(pool).await?;
+    let escaped = envelope(
+        generation,
+        "0/4",
+        "0/5",
+        "source_only",
+        json!([like(MISSING, true)]),
+    );
+    assert!(store::enqueue(pool, &escaped).await.is_err());
+    Ok(())
+}
+
+async fn adapter_upgrade_assertions(pool: &PgPool) -> Result<()> {
+    let generation = Uuid::new_v4();
+    store::register(pool, "pilot", generation, "0/0").await?;
+    sqlx::raw_sql("ALTER TABLE migration_sync.capture_sources DROP CONSTRAINT capture_sources_adapter_check; ALTER TABLE migration_sync.capture_sources ADD CONSTRAINT capture_sources_adapter_check CHECK (adapter='places_outbox_v1')")
+        .execute(pool).await?;
+    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,captured_position,observed_position,last_contact_at) VALUES('pilot',$1,0,0,now())")
+        .bind(generation).execute(pool).await?;
+    let migration = include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/schemas/migrations/0039_migration_capture_adapter_v2.sql"
+    ));
+    for _ in 0..2 {
+        sqlx::raw_sql(migration).execute(pool).await?;
+        assert_eq!(
+            sqlx::query_scalar::<_, String>(
+                "SELECT adapter FROM migration_sync.capture_sources WHERE stream='pilot'"
+            )
+            .fetch_one(pool)
+            .await?,
+            "places_outbox_v1"
+        );
+    }
+    // Exercise the widened constraint without relabelling persisted old history.
+    let mut transaction = pool.begin().await?;
+    sqlx::query("UPDATE migration_sync.capture_sources SET adapter='places_outbox_v2'")
+        .execute(&mut *transaction)
+        .await?;
+    transaction.rollback().await?;
+    assert!(
+        sqlx::query("UPDATE migration_sync.capture_sources SET adapter='unreviewed_adapter'")
+            .execute(pool)
+            .await
+            .is_err()
+    );
+    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/0");
+    Ok(())
+}
+
 async fn schema(pool: &PgPool) -> Result<()> {
     let root = Path::new(env!("DCL_ONE_ROOT")).join("schemas");
     let mut files = std::fs::read_dir(root)?.collect::<std::io::Result<Vec<_>>>()?;
@@ -600,7 +785,7 @@ async fn ordered_postgres_apply_preserves_boundaries_and_atomicity() -> Result<(
     };
     let options = PgConnectOptions::from_str(&url)?;
     let mut admin = PgConnection::connect_with(&options).await?;
-    for scenario in 0..5 {
+    for scenario in 0..7 {
         let database = format!("migration_sync_test_{}", Uuid::new_v4().simple());
         admin
             .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -615,7 +800,9 @@ async fn ordered_postgres_apply_preserves_boundaries_and_atomicity() -> Result<(
                 1 => dual_assertions(&pool).await,
                 2 => native_assertions(&pool).await,
                 3 => native_failure_assertions(&pool).await,
-                _ => dispatch_assertions(&pool).await,
+                4 => dispatch_assertions(&pool).await,
+                5 => like_assertions(&pool).await,
+                _ => adapter_upgrade_assertions(&pool).await,
             }
         }
         .await;

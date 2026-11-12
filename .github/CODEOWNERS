@@ -142,3 +142,5 @@
 /services/migration-sync/ @decentraland/apis
 /schemas/70_migration_sync.sql @decentraland/apis
 /schemas/71_migration_capture.sql @decentraland/apis
+/schemas/72_migration_like_versions.sql @decentraland/apis
+/schemas/migrations/0039_migration_capture_adapter_v2.sql @decentraland/apis

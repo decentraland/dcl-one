@@ -1562,7 +1562,7 @@ revokes, whose `address` a catalog write does not have.
 
 ## Removable one-way migration worker
 
-`services/migration-sync` owns the `migration_sync` stream, inbox and favorite
+`services/migration-sync` owns the `migration_sync` stream, inbox, favorite and like
 version, command receipt and capture-progress tables. Its workload is a bounded, ordered source transaction (up to
 1,000 changes) applied to an isolated destination. One stream row lock serializes
 workers; facts, versions, receipt and position commit together. A predecessor gap
@@ -1570,7 +1570,7 @@ waits; a failed domain transaction rolls back before its head is marked blocked.
 The unique Places source owner prevents overlapping streams mutating the same
 scope. No throughput or production-load budget is claimed without measurement.
 
-The pilot changes Explore favorite facts and recomputes interaction counts from
+The pilot changes Explore favorite and like/dislike facts and recomputes interaction counts from
 facts. It reads canonical non-mirrored Genesis catalogue IDs and preserves
 delete history without an FK to a place that can disappear. Existing Explore
 writers/mirrors must remain off for this scope. Dual commands execute through the isolated follower native favorite helper and
@@ -1579,3 +1579,12 @@ reapplying domain rows. Capture reads a source-local transactional outbox and
 bootstrap aligns a repeatable-read baseline with its ordered boundary. The
 worker uses the single root schema bootstrap/object migration pass and has no
 automatic schema installer or history cleanup.
+
+The interaction capture adapter (`places_outbox_v2`) serializes both source tables
+under the same transaction lock. It imports a shared snapshot boundary and preserves
+like `created_at`/`updated_at`, activity and true/false vote values. Like versions
+use a separate table so deleting a like cannot overwrite a favorite tombstone.
+Target vote counts derive from mapped local facts. Older favorites-only adapter
+rows retain their identity; adding likes requires a reviewed new baseline, not a
+relabelled cursor. This source-only path needs no client operation ID or source
+HTTP handler deployment.

@@ -342,7 +342,9 @@
       "paths": [
         "/services/migration-sync/",
         "/schemas/70_migration_sync.sql",
-        "/schemas/71_migration_capture.sql"
+        "/schemas/71_migration_capture.sql",
+        "/schemas/72_migration_like_versions.sql",
+        "/schemas/migrations/0039_migration_capture_adapter_v2.sql"
       ]
     }
   ]

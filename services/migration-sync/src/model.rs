@@ -1,4 +1,4 @@
-//! The bounded, typed input contract for the Places favorites pilot.
+//! The bounded, typed input contract for the Places interactions pilot.
 //!
 //! An envelope represents one committed source transaction. Changes retain
 //! their source order, including multiple changes to the same favorite.
@@ -43,6 +43,18 @@ pub enum FavoriteChange {
         created_at: DateTime<Utc>,
     },
     Delete {
+        user: String,
+        entity_id: String,
+    },
+    LikeUpsert {
+        user: String,
+        entity_id: String,
+        r#like: bool,
+        user_activity: f64,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    },
+    LikeDelete {
         user: String,
         entity_id: String,
     },
@@ -138,6 +150,13 @@ impl Envelope {
             );
             command.validate()?;
             ensure!(
+                self.changes.iter().all(|change| matches!(
+                    change,
+                    FavoriteChange::Upsert { .. } | FavoriteChange::Delete { .. }
+                )),
+                "dual favorite transaction includes unsupported interaction changes"
+            );
+            ensure!(
                 self.changes
                     .iter()
                     .all(|change| change.key()
@@ -185,7 +204,11 @@ impl FavoriteChange {
             Self::Upsert {
                 user, entity_id, ..
             }
-            | Self::Delete { user, entity_id } => (user, entity_id),
+            | Self::Delete { user, entity_id }
+            | Self::LikeUpsert {
+                user, entity_id, ..
+            }
+            | Self::LikeDelete { user, entity_id } => (user, entity_id),
         }
     }
 
@@ -205,7 +228,7 @@ impl FavoriteChange {
             entity.hyphenated().to_string() == entity_id,
             "entity ID must be a canonical UUID"
         );
-        if let Self::Upsert { user_activity, .. } = self {
+        if let Self::Upsert { user_activity, .. } | Self::LikeUpsert { user_activity, .. } = self {
             ensure!(user_activity.is_finite(), "user activity must be finite");
         }
         Ok(())
@@ -278,6 +301,54 @@ mod tests {
         let envelope = envelope();
         envelope.validate().expect("valid source transaction");
         assert_eq!(envelope.classify(), Decision::Apply);
+    }
+
+    #[test]
+    fn like_changes_require_typed_vote_and_both_timestamps() {
+        let mut value = fixture();
+        value["changes"][0]["op"] = json!("like_upsert");
+        value["changes"][0]["like"] = json!(false);
+        value["changes"][0]["updated_at"] = json!("2026-11-12T11:00:00Z");
+        let parsed: Envelope = serde_json::from_value(value.clone()).unwrap();
+        parsed.validate().unwrap();
+        assert!(matches!(
+            parsed.changes[0],
+            FavoriteChange::LikeUpsert { r#like: false, .. }
+        ));
+        value["changes"][0]["like"] = json!("false");
+        assert!(serde_json::from_value::<Envelope>(value.clone()).is_err());
+        value["changes"][0]["like"] = json!(true);
+        value["changes"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("updated_at");
+        assert!(serde_json::from_value::<Envelope>(value).is_err());
+    }
+
+    #[test]
+    fn dual_favorite_cannot_suppress_same_key_like_changes() {
+        let mut value = fixture();
+        value["mode"] = json!("dual");
+        value["command"] = json!({
+            "operation_id":"10000000-0000-4000-8000-000000000003",
+            "request_hash":"a".repeat(64),
+            "user":value["changes"][0]["user"],"entity_id":value["changes"][0]["entity_id"],
+            "favorite":true,"user_activity":1.5,
+            "expected":{"user_activity":1.5,"created_at":"2026-11-12T10:00:00Z"}
+        });
+        let like_change = json!({"op":"like_delete","user":value["command"]["user"],"entity_id":value["command"]["entity_id"]});
+        // Place the like before the matching favorite final change: checking only
+        // the last event would silently suppress the vote deletion.
+        value["changes"]
+            .as_array_mut()
+            .unwrap()
+            .insert(0, like_change);
+        assert!(
+            serde_json::from_value::<Envelope>(value)
+                .unwrap()
+                .validate()
+                .is_err()
+        );
     }
 
     #[test]
