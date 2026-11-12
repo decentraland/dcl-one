@@ -8,7 +8,7 @@
 // in both, through different CDP calls, so both are proven.
 //
 // They are skipped when no Chrome is installed, unless DCL_WEB_DRIVER_REQUIRE_CHROME=1 (CI sets
-// it), and the ones that load the real HUD commands (react-web/src/lib/hudAutomation.ts, with
+// it), and the ones that load the real HUD commands (library/explorer-core/lib/hudAutomation.ts, with
 // its types stripped as each request is served) need a Node with module.stripTypeScriptTypes.
 
 import assert from 'node:assert/strict';
@@ -23,7 +23,7 @@ import { acceptsBinding, findChrome, launch, redact, secretOf } from './driver.m
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURE = path.join(HERE, 'fixture');
-const HUD_SOURCE = path.resolve(HERE, '../../react-web/src/lib/hudAutomation.ts');
+const HUD_SOURCE = path.resolve(HERE, '../../../../../library/explorer-core/lib/hudAutomation.ts');
 
 const chrome = findChrome();
 const noChrome =
@@ -63,7 +63,7 @@ describe('redact', () => {
     assert.equal(secretOf('/teleport 1 2'), undefined);
     assert.equal(secretOf('/hud_login --guest eyJhIjoxfQ== --look 1'), 'eyJhIjoxfQ==');
     assert.equal(secretOf('/hud_login --name tester --look 1 eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/login_identity --profiles https://x.example/lambdas eyJhIjoxfQ=='), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/login_identity --look 3 eyJhIjoxfQ=='), 'eyJhIjoxfQ==');
     assert.equal(secretOf('/hud_login "eyJhIjoxfQ==" --guest'), 'eyJhIjoxfQ==');
     assert.equal(redact('/hud_login "eyJhIjoxfQ=="', 'said eyJhIjoxfQ== and "eyJhIjoxfQ=="'), 'said <redacted> and "<redacted>"');
     assert.equal(redact('/hud_login eyJhIjoxfQ== --guest', '/hud_login eyJhIjoxfQ== --guest did not finish: eyJhIjoxfQ=='), '/hud_login <redacted> --guest did not finish: <redacted>');
@@ -290,7 +290,7 @@ for (const isolated of [true, false]) {
     });
   });
 
-  // The page's own commands (react-web/src/lib/hudAutomation.ts) with the driver answering them.
+  // The page's own commands (library/explorer-core/lib/hudAutomation.ts) with the driver answering them.
   describe(`HUD commands, ${kind}`, { skip: noChrome || noStrip }, () => {
     const page = openPage({ isolated, mode: 'hud' });
     beforeEach(() => reset(page.driver));

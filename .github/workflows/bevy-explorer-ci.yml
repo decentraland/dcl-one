@@ -12,6 +12,11 @@
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
+      - tooling/hud_shared_inputs.py
+      - tooling/tests/test_hud_shared_inputs.py
+      - tooling/tests/hud_manifest_fixture.py
+      - tooling/tests/hud_manifest_invalid_cases.json
+      - tooling/tests/check_hud_manifest_nix.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-*.yml
@@ -45,6 +50,11 @@
       - tooling/ci_paths.py
       - tooling/bevy-mtimes.py
       - tooling/play-artifact.py
+      - tooling/hud_shared_inputs.py
+      - tooling/tests/test_hud_shared_inputs.py
+      - tooling/tests/hud_manifest_fixture.py
+      - tooling/tests/hud_manifest_invalid_cases.json
+      - tooling/tests/check_hud_manifest_nix.py
       - tooling/tests/test_play_*.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-*.yml
@@ -99,6 +109,7 @@ jobs:
       - name: Check publication and selection guards
         run: |
           python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_hud_shared_inputs.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
       - name: Check the CI status comment scripts
@@ -260,17 +271,32 @@ jobs:
           fi
           if [ "$RUNNER_OS" = "Linux" ]; then echo "LD_LIBRARY_PATH=$HOME/.local/share/cef:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"; fi
       # Scope RUSTC_WRAPPER to compilation so the dependency-cache key stays unchanged.
-      - name: Install the Windows compiler cache
+      - name: Restore the Windows compiler cache tool
+        id: compiler-cache-tool
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/sccache/0.19.0
+          key: bevy-sccache-tool-${{ runner.os }}-${{ runner.arch }}-0.19.0
+      - name: Install the optional Windows compiler cache
         id: compiler-cache
         if: runner.os == 'Windows'
+        continue-on-error: true
         uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
         with:
           version: v0.19.0
+          disable_annotations: true
+      - name: Save the Windows compiler cache tool
+        if: runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && steps.compiler-cache-tool.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.tool_cache }}/sccache/0.19.0
+          key: ${{ steps.compiler-cache-tool.outputs.cache-primary-key }}
       - name: Test the texture decoder boundaries
         run: cargo test --manifest-path vendor/basisu/Cargo.toml --locked --lib --target-dir target
       - name: Run the native test suite
         env:
-          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
+          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
         run: |
           # macOS builds the workspace crates without optimization; the dependencies keep opt-level 3 from the cache.
           [ "$RUNNER_OS" != macOS ] || export CARGO_PROFILE_CI_TEST_OPT_LEVEL=0
@@ -310,7 +336,7 @@ jobs:
         # it and Bevy Explorer / Benchmark writes the report with the Linux one. Name:
         # bevy-explorer-benchmark-<os>-<arch>-<sha>, as the other products.
         env:
-          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
+          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && steps.compiler-cache.outcome == 'success' && 'sccache' || '' }}
         run: |
           if ! cargo build --package benchmark --release --locked; then
             export RUSTC_WRAPPER=
@@ -586,7 +612,7 @@ jobs:
           echo "key=$key" >> "$GITHUB_OUTPUT"
       - name: Restore compiled engine
         id: engine-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/bevy-engine
           # An unoptimized build may reuse main's optimized engine; an optimized one never reads an
@@ -611,6 +637,10 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: |
+            rendering/bevy-explorer/source/react-web/package-lock.json
+            rendering/bevy-explorer/source/react-web/bridge-scene/package-lock.json
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         if: steps.engine-cache.outputs.cache-matched-key == ''
         with:
@@ -625,7 +655,7 @@ jobs:
       - name: Restore wasm target cache
         if: steps.engine-cache.outputs.cache-matched-key == ''
         id: wasm-cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -638,20 +668,24 @@ jobs:
       - name: Restore the vendored Bevy's cached file times
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" restore target
-      - name: Install protoc and wasm-pack from the flake
+      - name: Install the web build tools from the flake
         if: steps.engine-cache.outputs.cache-matched-key == ''
         uses: ./.github/actions/bevy-explorer-tools
-      - name: Install Linux build dependencies
+        with:
+          package: bevy-web-tools
+      - name: Install the pinned WASM binding generator and optimizer
         if: steps.engine-cache.outputs.cache-matched-key == ''
-        run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang
+        run: python3 ../../../apps/bevy-explorer/install-web-tools.py ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
       - name: Build and test the local web app
-        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}
+        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build
+      - name: Test the checked shared-input generator
+        run: npm run test:shared-inputs --prefix react-web
       - name: Record the vendored Bevy's file times for the cache
         if: steps.engine-cache.outputs.cache-matched-key == ''
         run: python3 "$GITHUB_WORKSPACE/tooling/bevy-mtimes.py" record target
       - name: Save wasm target cache
         if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/registry/index/
@@ -661,7 +695,7 @@ jobs:
           key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
       - name: Save tested compiled engine
         if: steps.engine-cache.outputs.cache-matched-key == ''
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           # Small finished outputs may be saved on PRs; GitHub isolates their ref.
           # Multi-GB Cargo/Nix caches retain their main-only save policy.
@@ -683,26 +717,28 @@ jobs:
           cwd: ./rendering/bevy-explorer/source/deploy/web
           deterministic-snapshot: true
           only-update-versions: true
-      - name: Install
-        run: npm i
+      - name: Stamp the dependency-free web package
+        run: node scripts/prebuild.js
         working-directory: rendering/bevy-explorer/source/deploy/web
       # PUBLIC_URL = the versioned CDN base prebuild.js just wrote into package.json homepage.
       # build-web.py already built the page with relative URLs; vite does not empty deploy/web.
       - name: Build react-web HUD
         run: |
           rm -rf ./deploy/web/assets ./deploy/web/index.html ./deploy/web/app.html
-          export PUBLIC_URL=$(node -p "require('./deploy/web/package.json').homepage || ''")
+          PUBLIC_URL=$(node -p "require('./deploy/web/package.json').homepage || ''")
+          export PUBLIC_URL
           echo "PUBLIC_URL=$PUBLIC_URL"
           npm run build --prefix react-web
       - name: Test scene Fetch in Chromium
         env:
           DEBUG: pw:browser  # Chrome's own output, timestamped
-        run: CHROME_BIN="$(command -v google-chrome)" npm run test:scene-fetch --prefix react-web
-      - name: Bundle bridge scene
+        run: CHROME_BIN="$(command -v google-chrome)" dbus-run-session -- npm run test:scene-fetch --prefix react-web
+      - name: Export the compiled bridge scene for the CDN
         run: |
-          export SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
+          SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
+          export SCENE_BASE_URL
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
-          npm run bundle
+          npm run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
       # Same-repo PRs publish under the pr-<n> dist-tag as a preview, which the CI status comment
       # links; fork PRs have no secrets. oddish tags a main/master branch next whatever custom-tag

@@ -50,6 +50,14 @@ struct Upstream {
     /// While set, /about for this world cancels `hold_token` and then waits on `hold`.
     hold_world: Option<String>,
     hold_token: Option<CancellationToken>,
+    /// While set, `/scenes` answers this status instead of the listing.
+    scenes_status: Option<StatusCode>,
+    /// `/scenes` faults: every page from the start (a proxy that drops `offset`), a page without
+    /// its `scenes`, and a scene left out of the pages and the total but listed by id (a listing
+    /// that moved while it was read).
+    scenes_ignore_offset: bool,
+    scenes_without_rows: bool,
+    scenes_hide: Option<String>,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -147,9 +155,11 @@ async fn fake_about(
             .get(&name)
             .cloned()
             .unwrap_or_else(|| format!("{base}/contents/"));
+        // The newest scene only, as upstream's /about answers.
         let urns: Vec<String> = scenes
-            .iter()
+            .last()
             .map(|sc| format!("urn:decentraland:entity:{}?=&baseUrl={content_base}", sc.id))
+            .into_iter()
             .collect();
         let held = st.hold_world.as_deref() == Some(name.as_str());
         if held && let Some(token) = st.hold_token.take() {
@@ -166,6 +176,52 @@ async fn fake_about(
         "comms": {"adapter": "fixed-adapter:signed-login:https://x/comms"}
     }))
     .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct Page {
+    limit: Option<usize>,
+    offset: Option<usize>,
+    entity_id: Option<String>,
+}
+
+/// Every scene of the world, oldest first and paged, as upstream's `/scenes` answers.
+async fn fake_scenes(
+    State((s, _)): State<(Shared, String)>,
+    Path(name): Path<String>,
+    axum::extract::Query(page): axum::extract::Query<Page>,
+) -> axum::response::Response {
+    let st = s.lock();
+    if let Some(status) = st.scenes_status {
+        return status.into_response();
+    }
+    if st.scenes_without_rows {
+        return Json(json!({"total": 1})).into_response();
+    }
+    let all: Vec<&Scene> = st
+        .worlds
+        .get(&name)
+        .into_iter()
+        .flatten()
+        .filter(|sc| match &page.entity_id {
+            Some(wanted) => *wanted == sc.id,
+            None => st.scenes_hide.as_ref() != Some(&sc.id),
+        })
+        .collect();
+    let offset = match st.scenes_ignore_offset {
+        true => 0,
+        false => page.offset.unwrap_or(0),
+    };
+    let scenes: Vec<Value> = all
+        .iter()
+        .skip(offset)
+        .take(page.limit.unwrap_or(100))
+        .map(|sc| {
+            json!({"worldName": name, "entityId": sc.id, "entity": sc.entity,
+                   "deploymentAuthChain": [], "size": "0", "status": "DEPLOYED"})
+        })
+        .collect();
+    Json(json!({"scenes": scenes, "total": all.len()})).into_response()
 }
 
 async fn fake_contents(
@@ -186,6 +242,7 @@ async fn start_fake() -> Fake {
     let app = Router::new()
         .route("/index", get(fake_index))
         .route("/world/{name}/about", get(fake_about))
+        .route("/world/{name}/scenes", get(fake_scenes))
         .route("/contents/{hash}", get(fake_contents))
         .layer(axum::Extension(hold.clone()))
         .with_state((state.clone(), base.clone()));
@@ -995,6 +1052,98 @@ async fn a_catalogue_that_would_unlist_most_of_the_mirror_is_refused() {
         (58, 2, true)
     );
     assert_eq!(summary.scenes.retired_scenes, 2);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "paged").await;
+    let world = "many.dcl.eth";
+    // More scenes than one page of the listing, while /about names the newest only.
+    let specs: Vec<(String, String, Vec<u8>)> = (0..25)
+        .map(|i| {
+            (
+                format!("S{i}"),
+                format!("{i},0"),
+                format!("s{i}").into_bytes(),
+            )
+        })
+        .collect();
+    let add = |st: &mut Upstream, specs: &[(String, String, Vec<u8>)]| {
+        let files: Vec<[(&str, &[u8]); 1]> =
+            specs.iter().map(|s| [("s.txt", s.2.as_slice())]).collect();
+        let scenes: Vec<SceneSpec> = specs
+            .iter()
+            .zip(&files)
+            .map(|(s, f)| (s.0.as_str(), s.1.as_str(), f.as_slice()))
+            .collect();
+        set_scenes(st, world, &scenes)
+    };
+    let ids = add(&mut fake.state.lock(), &specs);
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!((summary.scenes.synced, summary.scenes.scenes), (1, 25));
+    let mut held: Vec<String> = node
+        .scene_rows(world)
+        .await
+        .into_iter()
+        .map(|r| r.0)
+        .collect();
+    let mut expected = ids.clone();
+    held.sort();
+    expected.sort();
+    assert_eq!(held, expected, "every scene, not only the one /about names");
+
+    // A new scene upstream, and a listing that cannot be trusted: nothing is retired and the
+    // world waits for the next pass. A refusal (503, or 404 from a source without the route), a
+    // proxy that drops `offset`, a page without its rows, or a listing that moved while it was
+    // read (a held scene left out of the pages that the source still lists by id).
+    add_scene(
+        &mut fake.state.lock(),
+        world,
+        "S25",
+        "25,0",
+        &[("s.txt", b"s25")],
+    );
+    let held_before = node.scene_rows(world).await;
+    let hidden = ids[3].clone();
+    let faults: Vec<Box<dyn Fn(&mut Upstream)>> = vec![
+        Box::new(|st| st.scenes_status = Some(StatusCode::SERVICE_UNAVAILABLE)),
+        Box::new(|st| st.scenes_status = Some(StatusCode::NOT_FOUND)),
+        Box::new(|st| st.scenes_ignore_offset = true),
+        Box::new(|st| st.scenes_without_rows = true),
+        Box::new(move |st| st.scenes_hide = Some(hidden.clone())),
+    ];
+    let clear = |st: &mut Upstream| {
+        st.scenes_status = None;
+        st.scenes_ignore_offset = false;
+        st.scenes_without_rows = false;
+        st.scenes_hide = None;
+    };
+    for (i, fault) in faults.iter().enumerate() {
+        {
+            let mut st = fake.state.lock();
+            clear(&mut st);
+            fault(&mut st);
+        }
+        let summary = node.pass(&ctx).await;
+        assert_eq!(summary.scenes.synced, 0, "fault {i}");
+        assert_eq!(node.scene_rows(world).await, held_before, "fault {i}");
+    }
+
+    clear(&mut fake.state.lock());
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1);
+    assert_eq!(node.scene_rows(world).await.len(), 26);
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

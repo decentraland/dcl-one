@@ -217,7 +217,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 78] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 79] {
         [
             ("SEGMENT_SIGNING_KEY", &mut self.social.segment_signing_key),
             ("ETH_RPC_URL", &mut self.content.eth_rpc_url),
@@ -396,6 +396,7 @@ impl Config {
             ),
             ("CREDITS_SIGNER_KEY", &mut self.shop.credits_signer_key),
             ("CREDITS_REVOKER_KEY", &mut self.shop.credits_revoker_key),
+            ("CREDITS_TRIAL_BUYERS", &mut self.shop.credits_trial_buyers),
             (
                 "CATALYRST_RPC_ADMIN_TOKEN",
                 &mut self.rpc.catalyrst_rpc_admin_token,
@@ -952,13 +953,37 @@ mod tests {
             "true",
             "--first-wear-enabled",
             "true",
+            "--badges-presence-enabled",
+            "true",
         ])
         .unwrap();
         assert!(
             cli.writes.social_writes_enabled
                 && cli.social.livekit_allow_dev_creds
                 && cli.social.first_wear_enabled
+                && cli.social.badges_presence_enabled
         );
+        assert!(
+            !parse(&["x", "--database-url", "postgres:///catalyst"])
+                .unwrap()
+                .social
+                .badges_presence_enabled
+        );
+    }
+
+    #[test]
+    fn the_badge_processor_runs_only_when_enabled() {
+        let off = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert!(!off.social.badges_processor_enabled);
+        let on = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--badges-processor-enabled",
+            "true",
+        ])
+        .unwrap();
+        assert!(on.social.badges_processor_enabled);
     }
 
     #[test]

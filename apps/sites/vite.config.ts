@@ -8,6 +8,15 @@ import { validateAliasObject } from "../ui3/vite.validate.js";
 const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
+const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
+// The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
+const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
+const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
+const hudHost = fileURLToPath(new URL("../ui3/src/play/host.ts", import.meta.url));
+// library/ui/apps/hud has no node_modules of its own: the @noble modules it imports resolve to this app's
+// copies. Only these specifiers: a dependency of this app keeps an older @noble of its own. Keep this list
+// to the @noble modules library/explorer-core imports; tsconfig.json maps all of @noble/* for the type check.
+const noble = (path: string) => fileURLToPath(new URL(`./node_modules/@noble/${path}`, import.meta.url));
 
 function watchUi3(ui3Src: string): Plugin {
   return {
@@ -80,7 +89,7 @@ function nodeProxy(): Record<string, ProxyOptions> {
     "/price/": to(),
     "/_play": to(),
     "/auth-api": to(),
-    // The NAME banned list (shop/names/api.ts) and the image derivatives
+    // The NAME banned list (library/shop/names/api.ts) and the image derivatives
     // (`/media/convert`) the cards request.
     "/dcl-lists": to(),
     "/media/": to(),
@@ -241,14 +250,22 @@ export default defineConfig({
     host: process.env.HOST || "127.0.0.1",
     port: Number(process.env.PORT) || 5212,
     strictPort: true,
-    fs: { allow: [".", "../ui3", "../../library/catalyst-api"] },
+    fs: { allow: [".", "../ui3", "../../library/catalyst-api", "../../library/shop", "../../library/ui", "../../library/explorer-core"] },
     proxy: nodeProxy(),
   },
   resolve: {
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
+      "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@catalyst-api": catalystApi,
+      "@shop": shopCore,
+      "@hud-host": hudHost,
+      "@noble/curves/secp256k1.js": noble("curves/secp256k1.js"),
+      "@noble/hashes/sha3.js": noble("hashes/sha3.js"),
+      "@noble/hashes/utils.js": noble("hashes/utils.js"),
+      "@hud": hud,
+      "@explorer-core": explorerCore,
       "@": src,
       "monaco-editor": monaco,
       three,

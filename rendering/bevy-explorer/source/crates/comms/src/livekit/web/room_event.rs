@@ -26,12 +26,12 @@ pub enum RoomEvent {
     },
     ParticipantConnected(RemoteParticipant),
     ParticipantDisconnected(RemoteParticipant),
-    RoomMetadataChanged {
-        metadata: String,
-    },
     ParticipantMetadataChanged {
         participant: Participant,
         old_metadata: String,
+        metadata: String,
+    },
+    RoomMetadataChanged {
         metadata: String,
     },
     ConnectionQualityChanged {
@@ -264,9 +264,6 @@ impl RoomEvent {
                 registry.release(participant.id);
                 RoomEvent::ParticipantDisconnected(participant)
             }
-            Some("roomMetadataChanged") => RoomEvent::RoomMetadataChanged {
-                metadata: get_string(js_value, "metadata").unwrap_or_default(),
-            },
             Some("participantMetadataChanged") => {
                 let Some(participant) = get_participant(js_value, "participant", room, registry)
                 else {
@@ -288,6 +285,13 @@ impl RoomEvent {
                     old_metadata,
                     metadata,
                 }
+            }
+            Some("roomMetadataChanged") => {
+                let Some(metadata) = get_string(js_value, "metadata") else {
+                    error!("RoomEvent::RoomMetadataChanged did not have metadata field.");
+                    return None;
+                };
+                RoomEvent::RoomMetadataChanged { metadata }
             }
             Some("connectionQualityChanged") => {
                 let Some(quality) = get_connection_quality(js_value, "connection_quality") else {

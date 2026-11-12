@@ -138,7 +138,7 @@ def pre_commit_steps(changed):
     if touches(changed, 'apps/dcl-scene-cli/*', 'library/*', '.cargo/*'):
         steps.append(Step('cargo check (sdk)', 'cd services/catalyst && cargo check --locked -p dcl-scene-cli --all-targets',
                           tools=('cargo',)))
-    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*'):
+    if touches(changed, 'apps/ui3/*', 'library/catalyst-api/*', 'library/shop/*', 'library/ui/apps/hud/*', 'library/explorer-core/*'):
         steps += web_steps()
     elif touches(changed, 'apps/sites/*'):
         steps += web_steps(changed_ui3=False)

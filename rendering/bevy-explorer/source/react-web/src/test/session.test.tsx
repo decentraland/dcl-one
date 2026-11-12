@@ -1,13 +1,14 @@
+import { expectConsoleOutput } from '@explorer-core/test/console'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, waitFor } from '@testing-library/react'
-import { renderSession, enterAsGuest, FakeDriver } from './harness'
-import { openProfileCard } from '../features/profileCard/ProfileCard'
-import { resetPopups } from '../design'
+import { renderSession, enterAsGuest, FakeDriver } from '@hud/test/harness'
+import { openProfileCard } from '@hud/features/profileCard/ProfileCard'
+import { resetPopups } from '@hud/design'
 import { DEFAULT_REALM } from '../lib/baseDomain'
 import { leave, visit } from './entryUrl'
 
 // The avatarClick handler opens the world profile card as a popup; stub it so we can assert the call.
-vi.mock('../features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
+vi.mock('@hud/features/profileCard/ProfileCard', () => ({ openProfileCard: vi.fn() }))
 afterEach(resetPopups)
 
 // Records launch() so tests can assert the realm/position the engine was booted with.
@@ -121,6 +122,7 @@ describe('session domain', () => {
   })
 
   it('a ?position login that fails retries to the same destination, not the lobby', async () => {
+    expectConsoleOutput('error', [['[login] post-launch login failed:', 'profile fetch failed']])
     const url = new URL(location.href)
     class FailOnceDriver extends LaunchRecordingDriver {
       failed = false
@@ -255,6 +257,7 @@ describe('session domain', () => {
   })
 
   it('a fetch the bridge failed is asked again on the next open', async () => {
+    expectConsoleOutput('error', [['[bridge] getWearables failed:', 'catalyst down']])
     const h = renderSession({ userId: null })
     await enterAsGuest(h)
     act(() => h.session().backpack.toggle())
@@ -333,9 +336,10 @@ describe('session domain', () => {
     )
   })
 
-  it('a nearby-avatar click (avatarClick) opens the profile-card popup at the cursor', () => {
+  it('a nearby-avatar click (avatarClick) opens the profile-card popup at the cursor', async () => {
     vi.mocked(openProfileCard).mockClear()
     const h = renderSession({ userId: null })
+    await waitFor(() => expect(h.session().login.status).toBe('sign-in-or-guest'))
     // avatarClick carries only the address; the card resolves name/avatar from the roster itself. The
     // handler anchors it at the DOM cursor (0,0 in jsdom, unlocked).
     act(() => h.driver.emit({ kind: 'avatarClick', address: '0xABC' }))
@@ -509,6 +513,7 @@ describe('autopilot boot (?autopilot)', () => {
   })
 
   it('a sign-in that fails is reported once to the engine, with no screen and no retry', async () => {
+    expectConsoleOutput('error', [['[login] post-launch login failed:', 'profile fetch failed: 503']])
     window.history.replaceState(null, '', '/?autopilot&realm=supportteam.dcl.eth')
     class RefusedDriver extends FakeDriver {
       async loginLocalGuest(): Promise<void> {

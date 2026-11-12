@@ -14,28 +14,28 @@
 
 import { useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import type { CatalogItem } from '../../../shop/discovery/lib/catalogItem'
-import { defaultWorn, wornUrns } from '../../../shop/discovery/lib/outfit'
-import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '../../../shop/detail/lib/bodyShape'
+import type { CatalogItem } from '@shop/discovery/lib/catalogItem'
+import { defaultWorn, wornUrns } from '@shop/discovery/lib/outfit'
+import { BASE_FEMALE, BASE_MALE, type BodyShapeUrn } from '@shop/detail/lib/bodyShape'
 import { hostOr } from '../../../shop/discovery/flags'
 import { REMOTE_FLAG } from '../../../shop/discovery/lib/remoteFlags'
-import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '../../../shop/names/names'
-import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '../../design'
-import { resolveNameColor, userNameColor } from '../../engine/nameColor'
-import { addressSuffix } from '../../engine/profileEdit'
-import type { PreviewFocus, Wearable } from '../../engine/protocol'
-import { registerCancelLayer } from '../../lib/cancelLayers'
-import { splitName } from '../../lib/identity'
-import { subscribeHudScale } from '../../lib/hudScale'
-import { AvatarDragSurface } from '../engine/AvatarDragSurface'
-import { EngineViewport } from '../engine/EngineViewport'
-import { MainMenuShell } from '../menu/MainMenuShell'
-import type { ProfileState, ShopState } from '../session/useEngineSession'
-import allIcon from '../../assets/category-icons/all.png'
-import upperBodyIcon from '../../assets/category-icons/upper_body.png'
-import emotesIcon from '../../assets/backpack/icon-emotes.webp'
-import filterIcon from '../../assets/backpack/icon-filter.webp'
-import emptySearchArt from '../../assets/backpack/empty-search.webp'
+import { NAME_MAX_LENGTH, NAME_MIN_LENGTH, sanitizeNameInput } from '@shop/names/name'
+import { Button, Chip, ChevronDown, ChevronLeft, EmptyState, MaskIcon, OptionMenu, Pager, ScrollThumb, SearchField, showConfirm, showToast, Spinner, Tabs, type TabItem } from '@hud/design'
+import { resolveNameColor, userNameColor } from '@explorer-core/engine/nameColor'
+import { addressSuffix } from '@explorer-core/engine/profileEdit'
+import type { PreviewFocus, Wearable } from '@explorer-core/engine/protocol'
+import { registerCancelLayer } from '@explorer-core/lib/cancelLayers'
+import { splitName } from '@explorer-core/lib/identity'
+import { subscribeHudScale } from '@explorer-core/lib/hudScale'
+import { AvatarDragSurface } from '@hud/features/engine/AvatarDragSurface'
+import { EngineViewport } from '@hud/features/engine/EngineViewport'
+import { MainMenuShell } from '@hud/features/menu/MainMenuShell'
+import type { ProfileState, ShopState } from '@hud/features/session/useEngineSession'
+import allIcon from '@hud/assets/category-icons/all.png'
+import upperBodyIcon from '@hud/assets/category-icons/upper_body.png'
+import emotesIcon from '@hud/assets/backpack/icon-emotes.webp'
+import filterIcon from '@hud/assets/backpack/icon-filter.webp'
+import emptySearchArt from '@hud/assets/backpack/empty-search.webp'
 import cartIcon from '../../assets/shop/cart.svg'
 import namesIcon from '../../assets/shop/names/names-tab.svg'
 import { cartRequestLines, cartUnits, inWorldCart, inWorldCartInputFor, useInWorldCart } from './cartStore'
@@ -48,7 +48,7 @@ import { purchaseQueries, useCreditsBalance, useShopPurchase } from './purchaseQ
 import { categoryGlyph, CreatorName, SelectedItemPanel, ShopCard } from './ShopItems'
 import { AvatarNametag, CreditsPill, EmoteControls, PriceTag, ShopCart, ShopCartBadge, ShopCartToast, ShopFilters, ShopHome, ShopItemSkeleton, ShopNameCard, ShopNames, type PressedWith, type ShopHomeOutfitOffer, type ShopNamesTab } from './ui'
 import styles from './InWorldShop.module.css'
-import { inShell } from '../../lib/shell'
+import { inShell } from '@explorer-core/lib/shell'
 
 type Section = 'all' | 'wearables' | 'emotes' | 'names'
 const SECTIONS: TabItem<Section>[] = [
@@ -387,10 +387,12 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
     previewing.current = true
     preview([...(body != null ? [body] : []), ...wornUrns(items, defaultWorn(items, shape), shape)])
   }
-  // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it.
+  // In the web shell the purchase dialog opens over the page; anywhere else the web Shop sells it. A purchase
+  // that couldn't open here (the shell refused it or didn't answer) is offered on the web; one the shell is
+  // busy with another purchase for (open, or still opening) goes nowhere: that purchase's dialog is what the
+  // buyer sees, as for every BUY, CHECKOUT and CLAIM NAME below.
   const buy = (item: CatalogItem, input: PressedWith): void => {
-    // A purchase that couldn't open here (the shell refused it or didn't answer) is offered on the web.
-    if (purchase.available) void purchase.buy(item, input).then((opened) => (opened ? undefined : openOnWeb(item)))
+    if (purchase.available) void purchase.buy(item, input).then((opening) => (opening === 'unavailable' ? openOnWeb(item) : undefined))
     else void openOnWeb(item)
   }
   // The cart is bought where purchases run (the web shell); elsewhere ADD TO CART stays off.
@@ -405,8 +407,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   }
   const checkout = (input: PressedWith): void => {
     setCartOpen(false)
-    void purchase.checkout(cartRequestLines(cart), input).then((opened) => {
-      if (!opened) showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
+    void purchase.checkout(cartRequestLines(cart), input).then((opening) => {
+      if (opening === 'unavailable') showToast("The purchase couldn't open. Try again in a moment.", { tone: 'error' })
     })
   }
   // An outfit's tile counts its items and prices them when every one of them has a credits price as a single
@@ -431,7 +433,7 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
       onBuy: !purchase.available
         ? onWeb
         : priced
-          ? (input) => void purchase.buyAll(lines, input).then((opened) => (opened ? undefined : onWeb()))
+          ? (input) => void purchase.buyAll(lines, input).then((opening) => (opening === 'unavailable' ? onWeb() : undefined))
           : read?.isPending === false
             ? onWeb
             : undefined
@@ -490,7 +492,8 @@ export default function InWorldShop({ shop, profile, onNavigate, setEngineViewpo
   // on its bid page on the Marketplace, listed or not; RESALE NAME browses the NAMEs on sale there. Only the
   // shell's simulation runs here: this page has no way yet to wear a NAME registered for real once it is
   // indexed, so a shell that says `live` still sends the buyer to the web Shop, as one that can't, or that
-  // refuses, does. A shell busy with another purchase (a second press, its dialog already up) sends nowhere.
+  // refuses, does. A shell busy with another purchase sends nowhere: a second press while this one's dialog is
+  // up, or one while an item's BUY is still opening, before its dialog shows.
   const claimName = (input: PressedWith): void => {
     const name = nameDraft
     const rehearse = capabilities?.namesMode === 'simulation' ? purchase.buyName(name, 'simulation', input) : Promise.resolve('unavailable' as const)

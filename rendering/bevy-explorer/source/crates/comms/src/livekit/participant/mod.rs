@@ -111,13 +111,6 @@ pub struct ParticipantPayload {
     pub topic: Option<String>,
 }
 
-/// A room's own metadata, at join and on every change.
-#[derive(Event)]
-pub struct RoomMetadataChanged {
-    pub room: Entity,
-    pub metadata: String,
-}
-
 #[derive(Event)]
 pub struct ParticipantMetadataChanged {
     pub room: Entity,

@@ -3,7 +3,7 @@
 
 import { useEffect, useRef } from "react";
 
-import { t } from "../intl";
+import { t } from "@shop/discovery/intl";
 import "./loadmore.css";
 
 export default function LoadMore({

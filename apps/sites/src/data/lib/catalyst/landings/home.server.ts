@@ -2,6 +2,7 @@ import { fetchEvents, type Event } from "../places/events";
 import { fetchMostActivePlaces } from "../places/index";
 import type { GetOptions } from "../client";
 import { ttlMemo } from "../../ttl-memo";
+import { withDeadline } from "../../request-deadline";
 import {
   eventToRitualItem,
   eventWeekday,
@@ -78,6 +79,8 @@ function loadHomeContent(): HomeContent {
 }
 
 const HOME_TTL_MS = 60_000;
+const HOME_EVENTS_TIMEOUT_MS = 2_000;
+const HOME_EVENTS_FAILURE_TTL_MS = 5_000;
 
 type HomeData = { content: HomeContent; live: boolean; unreadable: string[] };
 
@@ -91,6 +94,46 @@ const homeMemo = ttlMemo({
 // The rails are visitor-independent; a fully readable result serves a minute of requests.
 export function loadHome(opts: GetOptions = {}): Promise<HomeData> {
   return homeMemo(opts);
+}
+
+export function createHomeEventsLoader(
+  readEvents: typeof fetchEvents = fetchEvents,
+) {
+  const memo = ttlMemo({
+    ttlMs: HOME_TTL_MS,
+    ttlMsForValue: (data: HomeData) =>
+      data.unreadable.length === 0 ? HOME_TTL_MS : HOME_EVENTS_FAILURE_TTL_MS,
+    keyOf: (opts: GetOptions) => (opts.fetchImpl || opts.base ? null : ""),
+    load: async (opts: GetOptions): Promise<HomeData> => {
+      const events = await withDeadline(
+        (signal) =>
+          readEvents(
+            { list: "live", limit: LIVE_RAIL_LIMIT },
+            { ...opts, signal },
+          ),
+        HOME_EVENTS_TIMEOUT_MS,
+        opts.signal,
+      )
+        .then((result) => result.data)
+        .catch(() => null);
+      const content = loadHomeContent();
+      const live =
+        events?.filter((event) => event.live).slice(0, LIVE_RAIL_LIMIT) ?? [];
+      return {
+        content: withLiveEvents(content, live),
+        live: live.length > 0,
+        unreadable: events === null ? ["events"] : [],
+      };
+    },
+  });
+  return (opts: GetOptions = {}) => memo(opts);
+}
+
+const homeEventsMemo = createHomeEventsLoader();
+
+/** Home's live-event rail does not fetch the unused legacy hotspot and ritual feeds. */
+export function loadHomeEvents(opts: GetOptions = {}): Promise<HomeData> {
+  return homeEventsMemo(opts);
 }
 
 async function loadHomeLive(opts: GetOptions): Promise<HomeData> {
@@ -135,7 +178,9 @@ async function loadRailEvents(opts: GetOptions): Promise<Event[] | null> {
   return results.find((events) => events !== null && events.length > 0) ?? [];
 }
 
-async function loadHotspots(opts: GetOptions): Promise<HotspotRailItem[] | null> {
+async function loadHotspots(
+  opts: GetOptions,
+): Promise<HotspotRailItem[] | null> {
   const places = await fetchMostActivePlaces(
     { limit: HOTSPOT_RAIL_LIMIT },
     opts,

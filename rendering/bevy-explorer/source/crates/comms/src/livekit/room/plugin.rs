@@ -22,7 +22,7 @@ use crate::{
         participant::{
             ActiveSpeakersChanged, HostingParticipants, LivekitParticipant, ParticipantConnected,
             ParticipantConnectionQuality, ParticipantDisconnected, ParticipantMetadataChanged,
-            ParticipantPayload, RoomMetadataChanged,
+            ParticipantPayload,
         },
         room::{
             Connected, Connecting, ConnectingLivekitRoom, Disconnected, LivekitRoom, Reconnecting,
@@ -31,6 +31,7 @@ use crate::{
         track, ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage,
         LivekitRuntimeRes, LivekitTransport,
     },
+    voice_chat::{VoiceRoom, VoiceRoomDisconnected},
     NetworkMessageRecipient,
 };
 #[cfg(target_arch = "wasm32")]
@@ -80,17 +81,25 @@ fn initiate_room_connection(
     mut commands: Commands,
     mut livekit_transports: Query<&mut LivekitTransport>,
     paused: Query<(), With<RoomPaused>>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     livekit_runtime: LivekitRuntimeRes,
     connection_availability: Res<State<ConnectionAvailability>>,
 ) {
-    if paused.contains(trigger.target())
-        || *connection_availability.get() == ConnectionAvailability::Unavailable
-    {
+    let entity = trigger.target();
+    if paused.contains(entity) {
+        debug!("Can't connect because the room is paused.");
+        return;
+    }
+    if *connection_availability.get() == ConnectionAvailability::Unavailable {
         debug!("Can't connect because new connections are disabled.");
+        // a call's room reports the refusal, so the call spends its re-dials and ends instead
+        // of waiting on "connecting"
+        if voice_rooms.contains(entity) {
+            commands.entity(entity).try_insert(ConnectFailed);
+        }
         return;
     }
 
-    let entity = trigger.target();
     let Ok(mut livekit_transport) = livekit_transports.get_mut(entity) else {
         error!("{entity} does not have a LivekitRuntime.");
         return;
@@ -99,7 +108,16 @@ fn initiate_room_connection(
     livekit_transport.retries += 1;
     let remote_address = &livekit_transport.address;
 
-    let url = Uri::try_from(remote_address).unwrap();
+    // the address comes from a server (a realm, a scene room, a voice reply): a bad one is a
+    // refused connection, not a crash
+    let url = match Uri::try_from(remote_address) {
+        Ok(url) => url,
+        Err(e) => {
+            error!("Failed to connect to room: bad address ({e}).");
+            commands.entity(entity).try_insert(ConnectFailed);
+            return;
+        }
+    };
     let address = format!(
         "{}://{}{}",
         url.scheme_str().unwrap_or_default(),
@@ -138,12 +156,6 @@ fn poll_connecting_rooms(
 
             match poll {
                 Ok((room, room_event_receiver)) => {
-                    // livekit raises no change event for the metadata present at join
-                    #[cfg(not(target_arch = "wasm32"))]
-                    commands.trigger(RoomMetadataChanged {
-                        room: entity,
-                        metadata: room.metadata(),
-                    });
                     commands
                         .entity(entity)
                         .try_insert(LivekitRoom {
@@ -179,6 +191,27 @@ async fn connect_to_room(
     Room::connect(&address, &token, options).await
 }
 
+/// Parses the scene room's metadata into its moderation lists. Unreadable metadata keeps the
+/// lists the room had, or gives it empty ones.
+fn apply_scene_room_metadata(commands: &mut Commands, entity: Entity, metadata: &str) {
+    match crate::SceneRoomModeration::from_metadata(metadata) {
+        Ok(moderation) => {
+            debug!(
+                "scene room metadata: {} banned, {} admins",
+                moderation.banned_addresses.len(),
+                moderation.scene_admins.len()
+            );
+            commands.entity(entity).try_insert(moderation);
+        }
+        Err(err) => {
+            warn!("scene room metadata unreadable ({err:?}): {metadata}");
+            commands
+                .entity(entity)
+                .try_insert_if_new(crate::SceneRoomModeration::default());
+        }
+    }
+}
+
 /// Marker for a room that hit a terminal disconnect (kicked / identity conflict) while
 /// running as an authoritative server: no in-process reconnect is possible (the token is
 /// spent); the supervisor must tear the transport down and re-mint.
@@ -193,12 +226,19 @@ pub struct ConnectFailed;
 /// (LiveKit announces a joiner within a couple of seconds of its data channel opening).
 const UNANNOUNCED_GRACE_SECS: f64 = 15.0;
 
+#[expect(clippy::type_complexity)]
 fn process_room_events(
     mut commands: Commands,
-    livekit_rooms: Query<(Entity, &mut LivekitRoom, &mut UnannouncedParticipants)>,
+    livekit_rooms: Query<(
+        Entity,
+        &mut LivekitRoom,
+        &mut UnannouncedParticipants,
+        Has<crate::SceneRoom>,
+        Has<VoiceRoom>,
+    )>,
     time: Res<Time>,
 ) {
-    for (entity, mut livekit_room, mut unannounced) in livekit_rooms {
+    for (entity, mut livekit_room, mut unannounced, scene_room, is_voice_room) in livekit_rooms {
         while let Ok(room_event) = livekit_room.room_event_receiver.try_recv() {
             trace!("in: {:?}", room_event);
 
@@ -206,6 +246,9 @@ fn process_room_events(
                 RoomEvent::Connected {
                     participants_with_tracks,
                 } => {
+                    if scene_room {
+                        apply_scene_room_metadata(&mut commands, entity, &livekit_room.metadata());
+                    }
                     for (participant, publications) in participants_with_tracks {
                         unannounced.remove(participant.identity().as_str());
                         commands.trigger(ParticipantConnected {
@@ -221,7 +264,14 @@ fn process_room_events(
                     }
                 }
                 RoomEvent::Disconnected { reason } => {
-                    if matches!(
+                    if is_voice_room {
+                        // a call's room ends the call, never every other room's connection:
+                        // a community kick or a deleted call room is the voice module's to
+                        // handle (see `voice_chat`)
+                        commands
+                            .entity(entity)
+                            .try_insert(VoiceRoomDisconnected::new(&reason));
+                    } else if matches!(
                         reason,
                         DisconnectReason::DuplicateIdentity | DisconnectReason::ParticipantRemoved
                     ) {
@@ -286,17 +336,16 @@ fn process_room_events(
                         room: entity,
                     });
                 }
-                RoomEvent::RoomMetadataChanged { metadata, .. } => {
-                    commands.trigger(RoomMetadataChanged {
-                        room: entity,
-                        metadata,
-                    });
-                }
                 RoomEvent::ParticipantMetadataChanged { participant, .. } => {
                     commands.trigger(ParticipantMetadataChanged {
                         room: entity,
                         participant: participant.into(),
                     });
+                }
+                RoomEvent::RoomMetadataChanged { metadata, .. } => {
+                    if scene_room {
+                        apply_scene_room_metadata(&mut commands, entity, &metadata);
+                    }
                 }
                 RoomEvent::TrackPublished {
                     publication,
@@ -620,9 +669,13 @@ fn close_rooms_on_app_exit(rooms: Query<&LivekitRoom>, livekit_runtime: LivekitR
     }
 }
 
+/// Re-dials every dropped room but a paused one and the voice room, whose re-dial budget the
+/// voice module keeps (a call's token stays valid after the server deleted the room; re-dialling
+/// would recreate it).
+#[allow(clippy::type_complexity)]
 fn try_reconnect(
     mut commands: Commands,
-    rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>)>,
+    rooms: Populated<Entity, (With<Disconnected>, Without<RoomPaused>, Without<VoiceRoom>)>,
 ) {
     if common::structs::multi_tenant() {
         // orchestrated server: the adapter's token is long expired (the gatekeeper mints

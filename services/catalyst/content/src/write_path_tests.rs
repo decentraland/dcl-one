@@ -728,19 +728,15 @@ async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &
         .collect();
     let mut conn = pool.acquire().await.unwrap();
     indexer::insert_events(&mut conn, &events).await.unwrap();
-    indexer::set_cursor(&mut conn, crate::land_authz::NETWORK_MAINNET, start + 100)
+    indexer::set_cursor(&mut conn, &settings, start + 100)
         .await
         .unwrap();
     drop(conn);
     indexer::fold(pool, &settings, None).await.unwrap();
     assert!(
-        indexer::mark_folded(
-            pool,
-            crate::land_authz::NETWORK_MAINNET,
-            (start + 100) as u64
-        )
-        .await
-        .unwrap()
+        indexer::mark_folded(pool, &settings, (start + 100) as u64)
+            .await
+            .unwrap()
     );
 }
 

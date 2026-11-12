@@ -32,7 +32,7 @@ import { isSpeaking } from './voice'
 import { fetchProfile } from './profile'
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
-import { userNameColor } from '../../../src/engine/nameColor'
+import { userNameColor } from '@explorer-core/engine/nameColor'
 
 // unity-explorer colours (CommonStyles.uss): solid pill + border, white-40% wallet id.
 const PILL_BG = Color4.create(22 / 255, 21 / 255, 24 / 255, 1) // --dcl-color-shadow #161518
@@ -484,7 +484,8 @@ export function initNametags(): void {
     const present = new Set<string>()
     for (const [, data] of engine.getEntitiesWith(PlayerIdentityData)) if (data.address !== '') present.add(canon(data.address))
     if (meKey != null) present.add(meKey) // our own avatar is always present (no PlayerIdentityData for self)
-    for (const key of [...shown]) {
+    const shownKeys = [...shown]
+    for (const key of shownKeys) {
       if (present.has(key)) { absent.set(key, 0) }
       else {
         const n = (absent.get(key) ?? 0) + 1

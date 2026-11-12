@@ -1,0 +1,301 @@
+/* Create-a-Community modal — faithfully matches dcl-react-ui's CommunityCreate. Just the card: the
+   popup layer (PopupHost .dim/.pop) draws the scrim, DPI-scales it and animates it in. */
+.modal {
+  display: flex;
+  flex-direction: column;
+  width: clamp(440px, 38vw, 760px);
+  max-height: min(820px, calc(100dvh - 48px));
+  padding: 34px 40px 26px;
+  border-radius: var(--r-panel);
+  overflow: hidden;
+  color: #fff;
+  background: var(--modal-bg);
+  box-shadow: var(--shadow-modal);
+}
+.title {
+  margin: 0 0 24px;
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text);
+}
+.scroll {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 26px;
+  margin: 0 -40px;
+  padding: 0 40px;
+}
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.label {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  color: var(--ink-7);
+}
+.req {
+  color: var(--brand);
+}
+.hint {
+  margin-top: -4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: rgba(252, 252, 252, 0.5);
+}
+
+/* Profile picture. */
+.pfp {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  margin-top: 4px;
+}
+.pfpImg {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 80px;
+  height: 80px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.08) center/cover no-repeat;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.4);
+}
+.pfpEdit {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  background: #2a0a45;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+.pfpEdit:hover {
+  background: #3a1158;
+}
+
+/* White name input. */
+.input {
+  width: 100%;
+  box-sizing: border-box;
+  background: #fff;
+  border: 1px solid transparent;
+  border-radius: var(--r-control);
+  color: #1a1a1a;
+  font-family: inherit;
+  font-size: 14px;
+  padding: 12px 14px;
+  outline: none;
+}
+.input:focus {
+  border-color: var(--brand);
+}
+.input::placeholder {
+  color: rgba(0, 0, 0, 0.35);
+}
+
+/* Actions + policy. */
+.actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+}
+.primary {
+  background: var(--brand);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  padding: 13px 28px;
+  border-radius: var(--r-pill);
+}
+.primary:hover {
+  background: var(--brand-hover);
+}
+.primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.ghost {
+  background: transparent;
+  color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 13px 28px;
+  border-radius: var(--r-pill);
+}
+.ghost:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.cancel,
+.create {
+  flex: 1;
+}
+.policy {
+  margin: 16px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  color: rgba(252, 252, 252, 0.62);
+}
+
+/* A label with its character counter (shown while the field has focus, as in unity-explorer). */
+.labelRow {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* An inline link that is a button (opens the site in the browser). */
+.link {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-weight: 700;
+  color: var(--brand);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* The content check running, and its findings. */
+.checking {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  font-size: var(--fs-sm);
+  color: var(--ink-7);
+}
+.notice {
+  margin: 0 0 14px;
+  font-size: var(--fs-md);
+  line-height: 1.45;
+  color: var(--ink-85);
+}
+.issues {
+  margin: 0 0 14px;
+  padding: 12px 16px;
+  list-style: none;
+  border-radius: var(--r-control);
+  background: var(--white-10);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  line-height: 1.5;
+  color: var(--text);
+}
+
+/* NAME gate. */
+.gate {
+  width: min(440px, 100%);
+  border-radius: var(--r-panel);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--modal-bg);
+  box-shadow: var(--shadow-modal);
+  padding: 32px 28px;
+  text-align: center;
+}
+.gateArt {
+  color: var(--brand);
+  display: flex;
+  justify-content: center;
+  margin-bottom: 16px;
+}
+.gateTitle {
+  margin: 0 0 12px;
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--text);
+}
+.gateBody {
+  margin: 0 0 22px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-6);
+}
+.gateBtns {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* The form while its places load (unity-explorer's loading panel). */
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+}
+
+/* Linked places: one tag per place, its label over its owner's name, and a remove box. */
+.placeTags {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.placeTag {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--r-md);
+  background: var(--white-10);
+}
+.placeText {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.placeName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--fs-sm);
+  color: var(--text);
+}
+.placeOwner {
+  font-size: var(--fs-xs);
+  color: var(--ink-7);
+}
+.placeRemove {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  cursor: pointer;
+  color: var(--text);
+  background: var(--white-10);
+}
+.placeRemove:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

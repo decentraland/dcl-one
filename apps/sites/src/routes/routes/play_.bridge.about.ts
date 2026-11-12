@@ -1,9 +1,9 @@
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
-// The exported realm uses the standalone app's root-relative content URL. The
-// engine consumes baseUrl verbatim (including in native URL parsing), so expose
-// a realm for Sites with this deployment's absolute /play/ content address.
+// The exported realm uses the standalone app's relative content URL. Sites
+// exposes this deployment's absolute /play/ content address for both current
+// relative exports and older root-relative cached artifacts.
 // Nix fixes PLAY_WEB_DIR to the packaged client; dev uses the verified import.
 export async function loader({ request }: { request: Request }) {
   const directory = process.env.PLAY_WEB_DIR || "../../.cache/play/current";
@@ -12,7 +12,7 @@ export async function loader({ request }: { request: Request }) {
   if (!Array.isArray(urns) || urns.length !== 1 || typeof urns[0] !== "string") {
     throw new Response("Invalid bundled bridge realm", { status: 503 });
   }
-  const match = /^urn:decentraland:entity:(baf[a-z2-7]+)\?=&baseUrl=\/bridge-scene\/static\/$/.exec(urns[0]);
+  const match = /^urn:decentraland:entity:(baf[a-z2-7]+)\?=&baseUrl=(?:\.\.\/|\/bridge-scene\/static\/)$/.exec(urns[0]);
   if (!match) throw new Response("Invalid bundled bridge content URL", { status: 503 });
   const content = new URL("/play/bridge-scene/static/", request.url);
   // Sites is private behind the gateway, which overwrites this header with its

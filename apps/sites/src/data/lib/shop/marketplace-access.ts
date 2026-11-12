@@ -5,8 +5,8 @@ import { useEffect, useSyncExternalStore } from "react";
 
 import { hostOr } from "@ui/shop/discovery/flags";
 import { REMOTE_FLAG, useRemoteFlagState } from "@ui/shop/discovery/lib/remoteFlags";
-import { marketplaceAccess, marketplaceSession } from "@ui/shop/market/access-rule";
-import { SIGNED_OUT } from "@ui/shop/model/settlement";
+import { marketplaceAccess, marketplaceSession } from "@shop/market/access-rule";
+import { SIGNED_OUT } from "@shop/model/settlement";
 import { useShopCapabilities } from "@ui/shop/seller/lib/featureFlags";
 import { shopSession } from "@ui/shop/wallet/session";
 

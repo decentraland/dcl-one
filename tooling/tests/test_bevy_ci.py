@@ -1,5 +1,7 @@
 """Engine selection uses committed inputs; publication requires explicit producers."""
 import importlib.util
+import fnmatch
+import re
 import json
 import os
 from pathlib import Path
@@ -7,6 +9,7 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
+from hud_manifest_fixture import seal, SHARED
 
 SPEC = importlib.util.spec_from_file_location('bevy_ci', Path(__file__).parents[1] / 'bevy-ci.py')
 ci = importlib.util.module_from_spec(SPEC)
@@ -24,6 +27,49 @@ def producers(outcome='success'):
 
 
 class WorkflowTest(unittest.TestCase):
+    def test_nix_play_tooling_dependencies_are_watched_by_image_selection(self):
+        contract = (ci.ROOT / 'infra/packages/play.nix').read_text()
+        paths = set(re.findall(r'/tooling/[a-zA-Z0-9_-]+\.py', contract))
+        self.assertTrue(paths)
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatchcase(path.lstrip('/'), pattern) for pattern in ci.IMAGES_INPUTS))
+
+    def test_shared_reader_and_fixture_changes_schedule_both_workflow_events(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        for event, end in (('push', 'pull_request'), ('pull_request', 'workflow_dispatch')):
+            block = workflow.split('  ' + event + ':', 1)[1].split('  ' + end + ':', 1)[0]
+            patterns = [line.strip()[2:] for line in block.splitlines() if line.strip().startswith('- ')]
+            for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
+                         'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
+                with self.subTest(event=event, path=name):
+                    self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns))
+        self.assertIn("-p 'test_hud_shared_inputs.py' -v", workflow)
+
+    def test_pure_nix_hud_corpus_runs_after_nix_install_and_before_heavy_builds(self):
+        workflow = (ci.ROOT / '.github/workflows/apis-sites-images.yml').read_text()
+        install = workflow.index('cachix/install-nix-action@')
+        corpus = workflow.index('run: python3 tooling/tests/check_hud_manifest_nix.py')
+        build = workflow.index('run: nix build')
+        self.assertLess(install, corpus)
+        self.assertLess(corpus, build)
+        for name in ('tooling/tests/check_hud_manifest_nix.py', 'tooling/tests/hud_manifest_invalid_cases.json',
+                     'tooling/tests/hud_manifest_fixture.py', 'infra/packages/hud-shared-inputs.nix',
+                     'infra/packages/hud-shared-inputs-corpus.nix'):
+            self.assertTrue(any(fnmatch.fnmatchcase(name, pattern) for pattern in ci.IMAGES_INPUTS), name)
+
+    def test_generator_suite_is_a_ci_gate_after_build_and_before_artifact_upload(self):
+        workflow = (ci.ROOT / ci.WORKFLOW).read_text()
+        job = workflow.split('  build-deploy-web:', 1)[1].split('  headless-packages:', 1)[0]
+        build = job.index('run: python3 ../../../apps/bevy-explorer/build-web.py')
+        tests = job.index('run: npm run test:shared-inputs --prefix react-web')
+        upload = job.index('- name: Upload the complete web app')
+        self.assertLess(build, tests)
+        self.assertLess(tests, upload)
+        test_step = job[job.rfind('- name:', 0, tests):job.index('- name:', tests)]
+        self.assertNotIn('continue-on-error', test_step)
+        self.assertNotIn('if:', test_step)
+
     def test_main_runs_are_not_cancelled_by_the_next_push(self):
         workflow = (ci.ROOT / ci.WORKFLOW).read_text(encoding='utf-8')
         lines = workflow.split('\nconcurrency:\n', 1)[1].splitlines(True)
@@ -49,7 +95,7 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("verify-engine .cache/bevy-engine ${{ env.BEVY_WEB_OPT == 'optimized' && '--production' || '' }}\n",
                       job)
         self.assertIn("build-web.py --engine-cache ../../../.cache/bevy-engine "
-                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }}\n", job)
+                      "${{ env.BEVY_WEB_OPT == 'unoptimized' && '--no-opt' || '' }} --shared-build\n", job)
         self.assertIn('          path: .cache/bevy-engine\n'
                       '          key: ${{ steps.engine-cache.outputs.cache-primary-key }}\n', job)
 
@@ -94,15 +140,28 @@ class SelectionTest(unittest.TestCase):
         path.write_text(value)
 
     def commit(self):
+        seal(self.root)
         self.git('add', '.')
         self.git('commit', '-qm', 'fixture', '--allow-empty')
         return self.git('rev-parse', 'HEAD')
 
-    def test_sites_hud_review_does_not_select_engine_builds(self):
-        self.write('rendering/bevy-explorer/upstream.lock.json', json.dumps({'hud_source_sha256': 'e' * 64}))
-        result = ci.select(self.base, self.commit())
-        self.assertFalse(any(result[lane] for lane in ci.LANES))
-        self.assertFalse(result['scenes'])
+    def test_reader_changes_select_web_but_test_only_changes_do_not_build(self):
+        for name in ('tooling/hud_shared_inputs.py', 'tooling/tests/test_hud_shared_inputs.py',
+                     'tooling/tests/hud_manifest_fixture.py', 'tooling/tests/hud_manifest_invalid_cases.json', 'tooling/tests/check_hud_manifest_nix.py'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'reader input')
+                result = ci.select(before, self.commit())
+                self.assertEqual(result['web'], name == 'tooling/hud_shared_inputs.py')
+                self.assertFalse(any(result[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
+
+    def test_shared_reader_only_change_selects_images_without_engine_lanes(self):
+        self.write('tooling/hud_shared_inputs.py', 'changed image verification dependency')
+        head = self.commit()
+        self.assertTrue(ci.consumer_plan('pull_request', self.base, head, '')['images'])
+        selected = ci.select(self.base, head)
+        self.assertTrue(selected['web'])
+        self.assertFalse(any(selected[lane] for lane in ('clippy', 'test', 'headless', 'native-matrix', 'scenes')))
 
     def test_source_and_integration_inputs_select_builds(self):
         for name in ('rendering/bevy-explorer/source/src/lib.rs',
@@ -195,12 +254,30 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
 
-    def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
-        for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',
-                     'react-web/src/lib/hudAutomation.ts'):
+    def test_shared_hud_sources_validate_web_only(self):
+        for name in SHARED:
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
-                self.write('rendering/bevy-explorer/source/' + name, 'changed')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, {'web'})
+
+    def test_library_ui_outside_the_hud_entries_selects_nothing(self):
+        for name in ('library/ui/figma/src/cli.ts', 'library/ui/index.ts', 'library/ui/index.tsx',
+                     'library/ui/components/NavBar/NavBar.tsx',
+                     'library/ui/components/NavBar/NavBar.module.css', 'library/ui/upstream.lock.json'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes') if selected[lane]}, set())
+
+    def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
+        for name in ci.HARNESS_WEB_READS:
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write(name, 'changed')
                 selected = ci.select(before, self.commit())
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web', 'test'})
@@ -341,7 +418,7 @@ class SelectionTest(unittest.TestCase):
     def test_gateway_contract_inputs_select_only_the_linux_test_lane_on_prs(self):
         for name in ('infra/gateway/gateway.py', 'infra/gateway/routes.nix',
                      'apps/ui3/src/play/lib/baseDomain.ts',
-                     'apps/ui3/src/play/engine/generated/serviceTable.ts'):
+                     'library/explorer-core/engine/generated/serviceTable.ts'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write(name, 'changed')
@@ -511,6 +588,7 @@ class SelectionTest(unittest.TestCase):
             '.github/workflows/bevy-explorer-images.yml': {'web', 'headless'},
             'apps/bevy-explorer/prepare-native-cache.py': {'clippy', 'test', 'headless', 'native-matrix', 'scenes'},
             'apps/bevy-explorer/install-linux-deps.py': {*ci.LANES, 'scenes'},
+            'apps/bevy-explorer/install-web-tools.py': {'web'},
             ci.SCENES_WORKFLOW: {'scenes'},
             ci.WORKFLOW: {*ci.LANES, 'native-matrix'},
             'apps/bevy-explorer/README.md': set(),
@@ -590,6 +668,116 @@ class SelectionTest(unittest.TestCase):
         self.assertTrue(ci.scenes_plan('pull_request', self.base, head)['scenes'])
         self.assertEqual(ci.scenes_plan('push', self.base, head)['sha'], head)
         self.assertTrue(ci.scenes_plan('push', '0' * 40, head)['scenes'])
+
+    def test_allowed_failure_list_changes_select_only_the_graphical_suite(self):
+        self.write('apps/bevy-explorer/scene-tests.txt', '52,-52\n')
+        selected = ci.select(self.base, self.commit())
+        self.assertTrue(selected['scenes'])
+        self.assertFalse(any(selected[lane] for lane in (*ci.LANES, 'native-matrix')))
+
+
+class SceneSuiteTest(unittest.TestCase):
+    SCENES = ['52,-52', '52,-54', '52,-56', '52,-58', '52,-60', '52,-62', '52,-64', '52,-66', '52,-68',
+              '54,-52', '54,-54', '54,-56', '54,-58', '54,-60']
+
+    def test_suite_file_lists_the_fourteen_scenes_and_the_snapshot_subset(self):
+        full = ci.scene_suite('full').split(';')
+        self.assertEqual([scene.split('/')[0] for scene in full], self.SCENES)
+        self.assertEqual([scene.split('/')[0] for scene in ci.scene_suite('snapshots').split(';')],
+                         list(ci.SNAPSHOT_SCENES))
+        names = [name for scene in full for name in scene.split('/')[1:]]
+        self.assertTrue(all(name == name.strip() and ';' not in name for name in names))
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_malformed_suite_lines_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            for bad in ('52,-52/ trailing space ', '52,-52//', 'a,b', '52,-52/x;y'):
+                suite.write_text(f'# comment\n{bad}\n')
+                with self.assertRaises(ValueError, msg=bad):
+                    ci.scene_suite('full')
+            suite.write_text('52,-52/a: b\n52,-62\n')
+            self.assertEqual(ci.scene_suite('full'), '52,-52/a: b;52,-62')
+            self.assertEqual(ci.scene_suite('snapshots'), '52,-62')
+
+    def test_summary_reports_listed_unlisted_and_stale_failures(self):
+        log = ('INFO scene_runner::automatic_testing: test a: b: true [1 remaining]\n'
+               'INFO scene_runner::automatic_testing: test c: d: false [0 remaining]\n'
+               'INFO scene_runner::automatic_testing: test e: f: false [0 remaining]\n'
+               'INFO scene_runner::automatic_testing: some tests failed:\n [\n'
+               '    (\n        "[(52,-52) : c: d]",\n        "Error: image not found (it has been created)",\n'
+               '        true,\n    ),\n    (\n        "[(52,-62) : e: f]",\n'
+               '        "Error: method grey-diff was specified and greyPixelDiff similarity (0.97) is lower than threshold 0.9995",\n'
+               '        false,\n    ),\n]\n')
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            suite.write_text('52,-52/c: d/g: h\n52,-62\n')
+            text = ci.scene_summary('full', 'failure', log)
+            self.assertIn('1 assertion passed, 2 failed; 1 of them are listed', text)
+            self.assertIn('Not listed: (52,-62) e: f', text)
+            self.assertIn('Listed but passing, remove them: (52,-52) g: h', text)
+            self.assertNotIn('discarded', text)
+            self.assertIn('no assertion ran', ci.scene_summary('full', 'failure', ''))
+            self.assertIn('acceptance holds', ci.scene_summary('snapshots', 'success', 'INFO scene_runner::automatic_testing: test a: b: true [0 remaining]\nall tests passed!'))
+
+    def test_summary_of_a_run_that_stopped_early_determines_no_list(self):
+        log = ('INFO scene_runner::automatic_testing: test a: b: true [1 remaining]\n'
+               'INFO scene_runner::automatic_testing: test c: d: false [0 remaining]\n'
+               'INFO scene_runner::automatic_testing: test e: f: false [0 remaining]\n')
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            suite.write_text('52,-52/c: d/g: h\n52,-62\n')
+            text = ci.scene_summary('full', 'failure', log)
+            self.assertIn('1 assertion passed, 2 failed; the run stopped before its end', text)
+            self.assertIn('not determined', text)
+            for absent in ('of them are listed', 'Not listed', 'remove them'):
+                self.assertNotIn(absent, text)
+
+    def test_summary_matches_escaped_names_and_skips_discarded_failures(self):
+        log = ('INFO scene_runner::automatic_testing: test say "hi"\\now: false [0 remaining]\n'
+               'INFO scene_runner::automatic_testing: test outside: false [0 remaining]\n'
+               'WARN scene_runner::automatic_testing: location (52,-60) wasn\'t part of the required set, ignoring this failure\n'
+               'INFO scene_runner::automatic_testing: some tests failed:\n [\n'
+               '    (\n        "[(52,-52) : say \\"hi\\"\\\\now]",\n        "Error: image not found (it has been created)",\n'
+               '        true,\n    ),\n]\n'
+               'INFO scene_runner::automatic_testing: all failures were allowed\n')
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            suite.write_text('52,-52/say "hi"\\now\n')
+            text = ci.scene_summary('full', 'success', log)
+            self.assertIn('0 assertions passed, 1 failed; 1 of them are listed', text)
+            self.assertIn('the runner discarded 1 failure outside the suite', text)
+            for absent in ('Not listed', 'remove them'):
+                self.assertNotIn(absent, text)
+            suite.write_text('52,-52/say "hi"\\now/other\n')
+            self.assertIn('remove them: (52,-52) other', ci.scene_summary('full', 'success', log))
+            unlisted = log.replace('        true,', '        false,')
+            self.assertIn('Not listed: (52,-52) say "hi"\\now', ci.scene_summary('full', 'failure', unlisted))
+            suite.write_text('# nothing\n')
+            with self.assertRaisesRegex(ValueError, 'Empty full scene suite'):
+                ci.scene_suite('full')
+
+    def test_summary_reads_the_runner_log_with_its_colour_codes(self):
+        line = ('\x1b[2m2026-10-31T23:51:03.032696Z\x1b[0m \x1b[32m INFO\x1b[0m '
+                '\x1b[2mscene_runner::automatic_testing\x1b[0m\x1b[2m:\x1b[0m ')
+        log = line + 'test a: b: true [0 remaining]\n' + line + 'all tests passed!\n'
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            suite.write_text('52,-52\n')
+            self.assertIn('1 assertion passed, 0 failed; graphical acceptance holds',
+                          ci.scene_summary('full', 'success', log))
+
+    def test_scenes_workflow_builds_its_suite_from_the_listed_file(self):
+        text = (Path(__file__).parents[2] / ci.SCENES_WORKFLOW).read_text()
+        self.assertIn('bevy-ci.py scene-suite --suite "$SCENE_SUITE"', text)
+        self.assertIn('bevy-ci.py scene-summary --suite "$SCENE_SUITE" --outcome "$SCENE_OUTCOME"', text)
+        self.assertIn('--log scene-tests.log | tee -a "$GITHUB_STEP_SUMMARY"', text)
+        self.assertNotIn('52,-52;', text)
 
 
 class PublicationTest(unittest.TestCase):

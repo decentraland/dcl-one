@@ -839,14 +839,17 @@ where
 #[derive(Debug, Error)]
 pub enum MigrateError {
     #[error(transparent)]
+    Encoding(#[from] crate::EncodingError),
+    #[error(transparent)]
     Layout(#[from] LayoutError),
     #[error("meta.schema is missing: an empty database takes `catalyst schema apply`, not migrate")]
     NotStamped,
     #[error(
         "the database is stamped {identity:?} version {version}; this binary's schema is {expected_identity:?} \
          version {expected_version}. `schema migrate` only brings a database of the same identity and version up \
-         to this binary's layout; a version change is the explicit data-safe release procedure (deploy/README.md, \
-         Releases), never this command. Nothing was applied."
+         to this binary's layout; a database one version behind takes `schema migrate --release` with every \
+         writer stopped, and any other version change is the explicit data-safe release procedure (DATABASE.md). \
+         Nothing was applied."
     )]
     Incompatible {
         identity: String,
@@ -854,6 +857,13 @@ pub enum MigrateError {
         expected_identity: &'static str,
         expected_version: i32,
     },
+    #[error(
+        "the release to version {version} needs every other session of this database closed (stop every \
+         writer, poller and administrative path first); {count} connected, applications: {applications}. \
+         Nothing was applied.",
+        version = crate::SCHEMA_VERSION
+    )]
+    SessionsConnected { count: usize, applications: String },
     #[error(
         "the database has these tables without columns this binary's schema.sql declares, and no step of \
          schemas/migrations/ adds them: {0}. `schema migrate` only creates missing objects and applies the recorded \
@@ -899,12 +909,36 @@ pub struct Migrated {
     pub created: Vec<Object>,
     /// The views re-created in place (`CREATE OR REPLACE VIEW`).
     pub views: Vec<Object>,
+    /// The version the run released the database to, when `--release` found it one version behind.
+    pub released: Option<i32>,
 }
 
 impl Migrated {
     pub fn is_empty(&self) -> bool {
-        self.steps.is_empty() && self.created.is_empty()
+        self.released.is_none() && self.steps.is_empty() && self.created.is_empty()
     }
+}
+
+/// A stamp one version behind this binary's: what `RELEASE_SQL` accepts.
+fn release_pending(stamp: &Option<(String, i32)>) -> bool {
+    matches!(stamp, Some((identity, version))
+        if identity == crate::SCHEMA_IDENTITY && *version == crate::SCHEMA_VERSION - 1)
+}
+
+/// The application name of every other client session of this database
+/// (`-` when unset or hidden). PostgreSQL hides `backend_type` (NULL) for a
+/// session of a role the caller is not a member of, unless the caller has
+/// `pg_read_all_stats`; such a row counts as a client session.
+async fn other_sessions(conn: &mut sqlx::PgConnection) -> sqlx::Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT coalesce(nullif(application_name, ''), '-') \
+         FROM pg_stat_activity \
+         WHERE datname = current_database() AND pid <> pg_backend_pid() \
+           AND coalesce(backend_type, 'client backend') = 'client backend' \
+         ORDER BY 1",
+    )
+    .fetch_all(conn)
+    .await
 }
 
 async fn read_stamp(conn: &mut sqlx::PgConnection) -> sqlx::Result<Option<(String, i32)>> {
@@ -1036,18 +1070,66 @@ fn view_replacement(sql: &str) -> Option<String> {
 /// what it did. `sql` and `migrations` are this binary's own texts (`db::SCHEMA_SQL`,
 /// `db::MIGRATIONS_SQL`), never input.
 pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migrated, MigrateError> {
+    migrate_in_one(pool, sql, migrations, None).await
+}
+
+/// `migrate`, preceded by `release` (this binary's `db::RELEASE_SQL`) when the
+/// database is stamped one version behind, all in the same transaction: a
+/// refusal or failure anywhere leaves the database as it was. The release
+/// runs only when no other client session is connected to the database, so
+/// every writer, poller and administrative path is stopped first. A database
+/// already at this binary's version takes the plain `migrate`.
+pub async fn migrate_with_release(
+    pool: &PgPool,
+    sql: &str,
+    migrations: &str,
+    release: &str,
+) -> Result<Migrated, MigrateError> {
+    migrate_in_one(pool, sql, migrations, Some(release)).await
+}
+
+async fn migrate_in_one(
+    pool: &PgPool,
+    sql: &str,
+    migrations: &str,
+    release: Option<&str>,
+) -> Result<Migrated, MigrateError> {
+    crate::require_utf8(pool).await?;
     let steps = parse_steps(migrations);
     let linted = lint_steps(&steps)?;
     let plan = plan(sql)?;
     let mut tx = pool.begin().await?;
-    let stamp = read_stamp(&mut tx).await?;
+    let mut stamp = read_stamp(&mut tx).await?;
+    let mut done = Migrated::default();
+    if let Some(release) = release
+        && release_pending(&stamp)
+    {
+        let mut sessions = other_sessions(&mut tx).await?;
+        if !sessions.is_empty() {
+            let count = sessions.len();
+            sessions.dedup();
+            return Err(MigrateError::SessionsConnected {
+                count,
+                applications: sessions.join(", "),
+            });
+        }
+        // The release backfills and builds indexes; the pool's per-statement
+        // limit is for serving, not for this.
+        sqlx::query("SET LOCAL statement_timeout = 0")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(release.to_owned()))
+            .execute(&mut *tx)
+            .await?;
+        stamp = read_stamp(&mut tx).await?;
+        done.released = Some(crate::SCHEMA_VERSION);
+    }
     check_stamp(stamp.clone())?;
     let version = stamp.expect("checked stamp").1;
     let retired = retired_voice_objects(&mut tx).await?;
     if !retired.is_empty() {
         return Err(MigrateError::RetiredDrift(retired.join(", ")));
     }
-    let mut done = Migrated::default();
     let mut made: HashSet<Object> = HashSet::new();
 
     // 1. the steps, recorded in the ledger (created first on a database
@@ -1171,8 +1253,16 @@ impl SchemaStatus {
     /// 0: this binary can serve the database as it is. 3: `schema migrate`
     /// has work (steps to apply, objects to create) and nothing stands in
     /// its way. 4: no stamp, another identity or version, a drifted or
-    /// refused step, or a missing column no pending step adds.
+    /// refused step, or a missing column no pending step adds. 5: the
+    /// database is one version behind and `schema migrate --release` takes
+    /// it to this binary's version once every writer is stopped.
     pub fn exit_code(&self) -> i32 {
+        if release_pending(&self.stamp)
+            && self.drifted_steps.is_empty()
+            && self.refused_step.is_none()
+        {
+            return 5;
+        }
         if !self.compatible()
             || !self.drifted_steps.is_empty()
             || self.refused_step.is_some()
@@ -1201,6 +1291,8 @@ impl SchemaStatus {
                 crate::SCHEMA_VERSION,
                 if self.compatible() {
                     "compatible"
+                } else if release_pending(&self.stamp) {
+                    "one version behind (`schema migrate --release` with every writer stopped)"
                 } else {
                     "INCOMPATIBLE (the data-safe release procedure, not migrate)"
                 }
@@ -1252,6 +1344,7 @@ impl SchemaStatus {
             match self.exit_code() {
                 0 => "up to date",
                 3 => "catalyst schema migrate brings it up to date",
+                5 => "catalyst schema migrate --release brings it up to date once every writer is stopped",
                 _ => "not this binary's layout and migrate cannot make it so",
             }
         ));

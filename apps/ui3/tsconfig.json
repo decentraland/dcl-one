@@ -9,7 +9,24 @@
     "paths": {
       "dcl-validate-impl": ["./src/validate/checked.ts"],
       // The catalyst server's DTO shapes and OpenAPI documents, shared with sites.
-      "@catalyst-api/*": ["../../library/catalyst-api/*"]
+      "@catalyst-api/*": ["../../library/catalyst-api/*"],
+      // The Shop's portable core (model, prices, rules), shared with sites and the Explorer HUD.
+      "@shop/*": ["../../library/shop/*"],
+      // The Explorer HUD UI both HUD hosts compile, and the behaviours /play supplies to it.
+      "@hud/*": ["../../library/ui/apps/hud/*"],
+      "@explorer-core/*": ["../../library/explorer-core/*"],
+      "@hud-host": ["./src/play/host.ts"],
+      // library/ui/apps/hud has no node_modules of its own: React resolves to this app's copy.
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "react-dom": ["./node_modules/@types/react-dom"],
+      "react-dom/*": ["./node_modules/@types/react-dom/*"],
+      // the shared HUD's test harness, type-checked with /play's tests
+      "@testing-library/*": ["./node_modules/@testing-library/*"],
+      "@noble/*": ["./node_modules/@noble/*"],
+      // library/shop has no node_modules of its own: its packages resolve to this app's copy.
+      "viem": ["./node_modules/viem"],
+      "vitest": ["./node_modules/vitest"]
     },
     "target": "ES2023",
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
@@ -40,6 +57,8 @@
   },
   // src/play is the Explorer HUD moved from decentraland/bevy-explorer (react-web); it keeps that
   // project's compiler profile in tsconfig.play.json and `pnpm typecheck` runs both.
-  "include": ["src"],
+  // library/shop's tests, which ui3 runs (its sources come in through their imports; the core's own
+  // ES-only profile is library/shop/tsconfig.json).
+  "include": ["src", "../../library/shop/**/*.test.ts"],
   "exclude": ["src/play"]
 }

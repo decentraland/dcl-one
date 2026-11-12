@@ -4,7 +4,7 @@
 import { type Console, ConsoleError, redact, redactLine, secretOf } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
-import { until } from './wait.ts'
+import { sleep, until } from './wait.ts'
 
 /** `/photo_mode` and `/take_photo`: whether the in-world camera is open, where it is, the
  *  player's photo storage and this session's capture counters. */
@@ -42,6 +42,31 @@ export interface WorldState {
   worldHeld: boolean
   outOfWorld: boolean | null
   position: [number, number, number] | null
+  /** A text field (the HUD's or the engine's) holds the keyboard: keys are typed and resolve no
+   *  action. Null where the client takes no input; absent from builds older than the suite, which
+   *  the keyboard waits refuse. */
+  keyboardClaimed?: boolean | null
+}
+
+/**
+ * What `/hover_entity` and `/click_entity` report. A hit on an avatar or on another scene's
+ * entity reports `entity` and `container` as 4294967295.
+ */
+export interface PointerReport {
+  hit: { entity: number; container: number; scene: string; playerDistance: number; cameraDistance: number } | null
+  entries: { button: string; event: string; hoverText: string | null; enabled: boolean; tooFar: boolean }[]
+  events: { event: string; button: string; tick: number }[]
+  diagnosis: string | null
+}
+
+/** `/raycast_stats`: the capped tier's budget and last pass, and the uncapped tier's last pass. */
+export interface RaycastStats {
+  budgetMs: number
+  ran: number
+  deferred: number
+  spentMs: number
+  uncappedRan: number
+  uncappedSpentMs: number
 }
 
 export interface Control {
@@ -55,6 +80,8 @@ export interface Control {
   visible: boolean
   actionable: boolean
   reason?: string
+  /** Inside a region that says it is still loading (`aria-busy`): what it shows is not final. */
+  busy?: boolean
   x: number
   y: number
   width: number
@@ -79,7 +106,7 @@ export interface HudEntry {
   name: string
 }
 
-export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable'
+export type HudState = 'visible' | 'hidden' | 'enabled' | 'actionable' | 'ready'
 
 export interface UserData {
   name: string
@@ -99,6 +126,9 @@ export interface EmoteState {
   repeat: boolean
   finished: boolean
   mask: 'fullBody' | 'upperBody'
+  /** An idle pose, which a triggered emote takes over: a scene's movement animation outranks one
+   *  only while it is not idle. Absent from builds before it was reported. */
+  idle?: boolean
 }
 
 export interface AvatarReport {
@@ -123,6 +153,48 @@ export interface ChatHistory {
   messages: ChatMessage[]
 }
 
+/** A participant of the voice call or community stream the player is in (`/voice_state` `call`). */
+export interface VoiceCallParticipant {
+  address: string
+  name: string
+  role: string
+  isSpeaker: boolean
+  isRequestingToSpeak: boolean
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/** `/voice`'s actions: ring (`call`), answer (`accept` / `reject`), hang up or leave (`end`), open,
+ *  join or close a community stream, raise the hand, the call mic, and moderation (`deny` turns
+ *  down a raised hand). */
+export type VoiceAction =
+  | ['call', string]
+  | ['accept' | 'reject' | 'end' | 'close']
+  | ['start' | 'join', string]
+  | ['hand', 'up' | 'down']
+  | ['mic', 'on' | 'off']
+  | ['promote' | 'demote' | 'kick' | 'deny', string]
+
+/** The private call or community stream as the HUD sees it: its status
+ *  (`disconnected`, `receivedCall`, `startingCall`, `startedCall`, `inCall`, `endingCall`,
+ *  `rejectingCall`, `busy`, `genericError`) and kind (`none`, `private`, `community`). */
+export interface VoiceCallState {
+  status: string
+  kind: string
+  callId: string | null
+  communityId: string | null
+  peer: string | null
+  connection: string
+  participants: VoiceCallParticipant[]
+  micEnabled: boolean
+  localSpeaker: boolean
+  localRole: string
+  localRequestingToSpeak: boolean
+  error: string | null
+  /** `error` tells how the call ended (hung up, removed, joined elsewhere), not a failure. */
+  errorIsNotice: boolean
+}
+
 /** `/community_state`: community chat's routing and counters (no message bodies). */
 export interface CommunityState {
   routerIdentity: string
@@ -144,6 +216,51 @@ export interface VoiceState {
   connected: boolean | null
   rooms: { scene: boolean; state: string }[] | null
   speakers: string[] | null
+  /** Null without `livekit`. */
+  call: VoiceCallState | null
+}
+
+/** `/ban_block_state [address]`: the one answer to "is this user banned or blocked?", with every
+ *  `null` reading explained in `unavailable` by its field path. */
+export interface BanBlockState {
+  address: string | null
+  blocks: {
+    state: 'unavailable' | 'live'
+    reason: 'social_feature_off' | 'not_signed_in' | 'social_not_connected' | null
+    blocked: string[]
+    blockedBy: string[]
+  }
+  platformBan: {
+    state: 'unknown' | 'checked' | 'failed'
+    isBanned: boolean | null
+    source: 'ban_status_endpoint' | 'scene_admission_refusal' | null
+    reason: string | null
+    matchedOn: string | null
+    customMessage: string | null
+    expiresAt: string | null
+    checkedAgoSecs: number | null
+    error: string | null
+  }
+  sceneAdmission: {
+    state: 'unknown' | 'allowed' | 'refused'
+    scope: 'platform' | 'world' | 'scene' | null
+    message: string | null
+    sceneId: string | null
+  }
+  sceneRoom: {
+    state: 'not_connected' | 'connected'
+    sceneId: string | null
+    bannedAddresses: string[]
+    sceneAdmins: string[]
+  }
+  lookup: {
+    address: string
+    isBlockedEitherWay: boolean
+    direction: 'none' | 'local_user_blocked_them' | 'they_blocked_local_user' | 'mutual'
+    bannedInScene: boolean
+    adminPermissions: 'admin' | 'not_admin' | 'not_loaded_yet'
+  } | null
+  unavailable: Record<string, string>
 }
 
 export interface ScreenPosition {
@@ -189,11 +306,32 @@ export interface ExplorerOptions {
   /** Accept `"input": "synthetic"` from the HUD commands (a run without the web driver). Off by
    *  default: a spec that passed on DOM events proves nothing about the browser's input path. */
   allowSyntheticInput?: boolean
+  /** The catalyst's window between two deployments of one profile (`PROFILE_DEPLOY_WINDOW_MS`). */
+  profileDeployWindowMs?: number
 }
+
+/** The catalyst takes one deployment of a profile per window: the reference catalyst's rate limit,
+ *  3 s per address, which zone's peers apply (a second one inside it fails with `Entity rate
+ *  limited`, and the HUD shows "failed to deploy"), with a margin for the deployment going out
+ *  after the engine reports the new version. */
+export const PROFILE_DEPLOY_WINDOW_MS = 4_000
+
+/** How long the engine may take to hand the keyboard to a HUD text field, or to take it back once
+ *  the field lets it go: the HUD relays its focus through the bridge scene, which takes a few
+ *  frames. A ceiling: the wait ends as soon as `/world_state` reports the change. */
+export const KEYBOARD_TIMEOUT_MS = 10_000
 
 export type MouseButton = 'left' | 'right' | 'middle'
 
+/** Why a client whose `/world_state` has no `keyboardClaimed` cannot run the scenarios. */
+export const OLDER_CLIENT =
+  "the client's /world_state has no keyboardClaimed: it is older than this suite, which waits on it; run the suite against a web build of its own commit"
+
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
+/** How long a click, a fill or a hover waits for its control to take a click: uncovered and no
+ *  longer moving (a page slides and fades in, a button grows in on hover). */
+const ACTIONABLE_TIMEOUT_MS = 10_000
+
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
 
 /** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
@@ -210,12 +348,17 @@ export class Explorer {
   readonly hud: Hud
   readonly #listeners = new Set<CommandListener>()
   readonly #allowSynthetic: boolean
+  readonly #deployWindowMs: number
+  /** The own profile's version as last read, and when it was last seen to change. */
+  #ownVersion: number | undefined
+  #ownVersionChangedAt = 0
   /** The credentials the lines run so far carried (`secretOf`), for text that may quote them. */
   readonly #secrets = new Set<string>()
 
   constructor(console: Console, options: ExplorerOptions = {}) {
     this.console = console
     this.#allowSynthetic = options.allowSyntheticInput ?? false
+    this.#deployWindowMs = options.profileDeployWindowMs ?? PROFILE_DEPLOY_WINDOW_MS
     this.hud = new Hud(this, this.#allowSynthetic)
   }
 
@@ -351,14 +494,13 @@ export class Explorer {
 
   /** Sign in with an identity (while the world is held: the lobby, before any realm). `name` and
    *  `look` apply to a first login only. */
-  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean; profiles?: string } = {}): Promise<void> {
+  async loginIdentity(identity: AuthIdentity | string, options: { name?: string; look?: number; guest?: boolean; defaultOnError?: boolean } = {}): Promise<void> {
     const payload = typeof identity === 'string' ? identity : encodeIdentity(identity)
     const flags: string[] = []
     if (options.defaultOnError) flags.push('--default-on-error')
     if (options.guest) flags.push('--guest')
     if (options.name !== undefined) flags.push(`--name ${options.name}`)
     if (options.look !== undefined) flags.push(`--look ${options.look}`)
-    if (options.profiles !== undefined) flags.push(`--profiles ${options.profiles}`)
     await this.run(['/login_identity', payload, ...flags].join(' '))
   }
 
@@ -405,7 +547,27 @@ export class Explorer {
     const reply = await this.run(address ? `/get_user_data ${address}` : '/get_user_data')
     const match = /^(.*) \((0x[0-9a-fA-F]{40})\): v(\d+), web3=(true|false)$/s.exec(reply.trim())
     if (!match) throw new Error(`unparseable get_user_data: ${reply}`)
-    return { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    const data = { name: match[1]!, address: match[2]!, version: Number(match[3]), web3: match[4] === 'true' }
+    if (address === undefined) {
+      if (this.#ownVersion !== undefined && data.version !== this.#ownVersion) this.#ownVersionChangedAt = Date.now()
+      this.#ownVersion = data.version
+    }
+    return data
+  }
+
+  /** Count a deployment of the own profile from now that no version change showed: the sign-in,
+   *  whose first login deploys a new profile before any version was read. */
+  profileDeployed(): void {
+    this.#ownVersionChangedAt = Date.now()
+  }
+
+  /** Before a step that deploys the own profile (closing the Backpack on a changed look, saving
+   *  the passport): wait out the catalyst's window since the profile was last seen to change, a
+   *  deployment of its own. A change since the last read counts from now. */
+  async profileDeployWindow(): Promise<void> {
+    await this.userData()
+    const left = this.#ownVersionChangedAt + this.#deployWindowMs - Date.now()
+    if (left > 0) await sleep(left)
   }
 
   /** The profile version, which bumps on every avatar change (an equip is observable here). */
@@ -476,6 +638,27 @@ export class Explorer {
     return this.json<VoiceState>('/voice_state')
   }
 
+  /** The ban and block status; with an address, also that address's standing. */
+  banBlockState(address?: string): Promise<BanBlockState> {
+    return this.json<BanBlockState>(address ? `/ban_block_state ${address}` : '/ban_block_state')
+  }
+
+  /** Block a user through the social service; answers once the service has. */
+  async blockUser(address: string): Promise<void> {
+    await this.run(`/block_user ${address}`)
+  }
+
+  /** Lift a block through the social service; answers once the service has. */
+  async unblockUser(address: string): Promise<void> {
+    await this.run(`/unblock_user ${address}`)
+  }
+
+  /** A voice chat action, as the HUD's buttons do it (`/voice`, through the HUD's own path and
+   *  refusals). Only queues the request: `/voice_state` `call` follows. */
+  async voice(...action: VoiceAction): Promise<void> {
+    await this.run(['/voice', ...action].join(' '))
+  }
+
   /** The sky time: `/time` reports; with `hours` (and `speed`, 0 stops the clock) it sets. */
   async time(hours?: number, speed?: number): Promise<{ before: string; after: string; speed: number }> {
     const reply = await this.run(['/time', hours === undefined ? '' : String(hours), speed === undefined ? '' : String(speed)].join(' '))
@@ -500,6 +683,30 @@ export class Explorer {
     return this.key('Escape')
   }
 
+  /** After a HUD text field took the focus (a fill): wait for the engine to hand it the keyboard, as
+   *  `/world_state` reports it; until then a key is still the engine's (Enter opens the chat,
+   *  Escape closes the page) and not typed. A client that does not report it is not waited on. */
+  async keyboardTaken(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await this.#keyboard((claimed) => claimed !== false, timeoutMs, 'the engine to hand the keyboard to the HUD field')
+  }
+
+  /** After a HUD text field lost the focus (an Escape out of it, a click that closed it): wait for
+   *  the engine to let the keyboard go, as `/world_state` reports it; a key sent sooner is typed
+   *  into nothing. A client that does not report it (an older build) is not waited on. */
+  async keyboardReleased(timeoutMs = KEYBOARD_TIMEOUT_MS): Promise<void> {
+    await this.#keyboard((claimed) => claimed !== true, timeoutMs, 'the engine to let the keyboard go (a HUD field had it)')
+  }
+
+  /** Wait for the engine's word on the keyboard to be `done`. Null (a client that takes no input)
+   *  is its own answer; a client whose `/world_state` has no such word is older than the suite and
+   *  is refused, not raced. */
+  async #keyboard(done: (claimed: boolean | null) => boolean, timeoutMs: number, what: string): Promise<void> {
+    const first = await this.worldState()
+    if (first.keyboardClaimed === undefined) throw new Error(OLDER_CLIENT)
+    if (done(first.keyboardClaimed)) return
+    await until(() => this.worldState(), (state) => done(state.keyboardClaimed ?? null), { timeoutMs, intervalMs: 50, what })
+  }
+
   /** A click at window pixels (as `/entity_screen_position` and `/hud_read` report them). */
   async clickAt(x: number, y: number, button: MouseButton = 'left'): Promise<void> {
     await this.run(button === 'left' ? `/click_at ${x} ${y}` : `/click_at ${x} ${y} --button ${button}`)
@@ -519,6 +726,49 @@ export class Explorer {
 
   entityScreenPosition(entity: string | number, options: { bounds?: boolean } = {}): Promise<ScreenPosition> {
     return this.json<ScreenPosition>(`/entity_screen_position ${entity}${options.bounds ? ' --bounds' : ''}`)
+  }
+
+  /** Aims the pointer at an entity and reports what it hovers; a blocked outcome resolves with `diagnosis` set; a refusal rejects. */
+  hoverEntity(entity: string | number, options: { bounds?: boolean; frames?: number; timeoutFrames?: number } = {}): Promise<PointerReport> {
+    let line = `/hover_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.frames !== undefined) line += ` --frames ${options.frames}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  async clearPointer(): Promise<void> {
+    await this.run('/hover_entity --clear')
+  }
+
+  clickEntity(
+    entity: string | number,
+    options: { bounds?: boolean; button?: 'pointer' | 'primary' | 'secondary'; event?: 'click' | 'down' | 'up'; timeoutFrames?: number } = {}
+  ): Promise<PointerReport> {
+    let line = `/click_entity ${entity}`
+    if (options.bounds) line += ' --bounds'
+    if (options.button) line += ` --button ${options.button}`
+    if (options.event) line += ` --event ${options.event}`
+    if (options.timeoutFrames !== undefined) line += ` --timeout-frames ${options.timeoutFrames}`
+    return this.json<PointerReport>(line)
+  }
+
+  raycastStats(): Promise<RaycastStats> {
+    return this.json<RaycastStats>('/raycast_stats')
+  }
+
+  /** The capped raycast tier's budget in ms; with `ms`, overrides it first, and `'auto'` returns it to a tenth of the target frame. */
+  async raycastBudget(ms?: number | 'auto'): Promise<number> {
+    const reply = await this.run(ms === undefined ? '/raycast_budget' : `/raycast_budget ${ms}`)
+    const match = /^raycast budget: ([0-9.]+) ms \((auto|override)\)$/.exec(reply.trim())
+    if (!match) throw new Error(`unexpected /raycast_budget reply: ${reply}`)
+    return Number(match[1])
+  }
+
+  /** The target scene's last log lines, oldest first; a leading "(+N older entries not retained)" line is kept. */
+  async sceneLogs(count = 20): Promise<string[]> {
+    const reply = await this.run(`/scene_logs ${count}`)
+    return reply === '(no logs)' ? [] : reply.split('\n')
   }
 
   async close(): Promise<void> {
@@ -577,18 +827,23 @@ export class Hud {
     return control
   }
 
-  /** A real click on the control's centre. Fails on a synthetic (DOM-event) click unless the
-   *  explorer allows it. */
+  /** A real click on the control's centre, once a click would land there (`actionable`). Fails
+   *  on a synthetic (DOM-event) click unless the explorer allows it. */
   async click(selector: Selector): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_click ${selectorArg(selector)}`)
     this.#checkInput(result, `click on ${describeSelector(selector)}`)
     return result
   }
 
-  /** Replace a field's text; the reply holds the field as the typing left it. */
+  /** Replace a field's text, once a click would land on it; the reply holds the field as the
+   *  typing left it. A real fill leaves the field focused: it returns once the engine has handed
+   *  the field the keyboard, so the next key is the field's. */
   async fill(selector: Selector, text: string): Promise<HudInput> {
+    await this.waitActionable(selector)
     const result = await this.#explorer.json<HudInput>(`/hud_fill ${JSON.stringify({ ...toSelectorObject(selector), text })}`)
     this.#checkInput(result, `fill of ${describeSelector(selector)}`)
+    if (result.input === 'trusted') await this.#explorer.keyboardTaken()
     return result
   }
 
@@ -602,11 +857,28 @@ export class Hud {
     return this.wait(selector, { state: 'hidden', timeoutMs })
   }
 
+  /** The control once a click would land on it: visible, enabled, in the viewport, uncovered and
+   *  no longer moving (the HUD reports a control on its way in, or growing in, as still moving: a
+   *  click aimed at it there lands where it no longer is). */
+  async waitActionable(selector: Selector, timeoutMs = ACTIONABLE_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'actionable', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
+  /** The control once nothing around it is still loading (`ready`: no `aria-busy` region holds
+   *  it), such as a grid whose newest page has arrived. */
+  async waitReady(selector: Selector, timeoutMs = DEFAULT_HUD_TIMEOUT_MS): Promise<Control> {
+    const read = await this.wait(selector, { state: 'ready', timeoutMs })
+    if (!read.found) throw new Error(`no visible HUD control matches ${describeSelector(selector)}`)
+    return read
+  }
+
   /** Put the pointer on a control, for the controls that appear on hover: a real click at its
-   *  centre, which the browser precedes with a move. It also selects the control, as a user's
-   *  click would. */
+   *  centre once a click would land there, which the browser precedes with a move. It also
+   *  selects the control, as a user's click would. */
   async hover(selector: Selector): Promise<Control> {
-    const control = await this.get(selector)
+    const control = await this.waitActionable(selector)
     await this.#explorer.clickAt(control.x + control.width / 2, control.y + control.height / 2)
     return control
   }

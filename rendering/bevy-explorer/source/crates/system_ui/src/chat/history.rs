@@ -55,8 +55,7 @@ fn update_chat_history(
     mut private_chats: EventReader<DirectChatEvent>,
     mut nearby_chats: EventReader<ChatEvent>,
     users: Query<&UserProfile>,
-    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
-    #[cfg(feature = "livekit")] scene_bans: Query<&comms::scene_bans::SceneBans>,
+    #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
     #[cfg(feature = "livekit")] primary_player: Res<common::structs::PrimaryPlayerRes>,
     mut pending_friends: Local<Vec<FriendshipEventBody>>,
     mut pending_private_chats: Local<Vec<DirectChatMessage>>,
@@ -89,9 +88,8 @@ fn update_chat_history(
         };
 
         #[cfg(feature = "livekit")]
-        if super::dm_state::blocked_either_way(&social, partner)
-            || (ev.sender != primary_player.0
-                && scene_bans.iter().any(|bans| bans.is_banned(partner)))
+        if ban_block.is_blocked_either_way(partner)
+            || (ev.sender != primary_player.0 && ban_block.is_addr_banned_in_scene(partner))
         {
             return None;
         }
