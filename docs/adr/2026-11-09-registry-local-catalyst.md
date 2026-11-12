@@ -70,9 +70,10 @@ path the URL parser would normalize, such as an encoded `..`, returns 400.
 Responses preserve status, body, content type, cache directives, validators,
 `Allow` and `Retry-After`. Local `/status`, `/health` and the status-check probes
 (`/health/live`, `/health/ready`, `/health/startup`) describe the Catalyst
-gateway; they do not establish native worker readiness. Both halves of the
-prefix answer the Registry's CORS: a 204 preflight with origin `*`, its method
-list, the requested headers and a one-day max-age. The existing gateway
+gateway; they do not establish native worker readiness. Every path under the
+prefix, routed by either half or not, answers the Registry's CORS: a 204
+preflight with origin `*`, its method list, the requested headers and a one-day
+max-age. The existing gateway
 routes Registry traffic to Catalyst, so no additional Nginx upstream or new
 service is introduced here, and this change does not select an abgen release.
 

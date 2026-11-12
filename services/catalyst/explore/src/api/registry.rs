@@ -14,9 +14,10 @@
 //! operations go through the ops console. No `Authorization` header is forwarded.
 //!
 //! Both halves of `/asset-bundle-registry` answer CORS as the Registry's own
-//! http-server does ([`cors`]) and the read half also answers the
+//! http-server does ([`cors`]). The read half also answers the
 //! well-known-components status checks (`/health/live`, `/health/ready`,
-//! `/health/startup`).
+//! `/health/startup`) and holds the prefix's fallback, so a path neither half
+//! routes still gets the Registry's CORS and its `404 Not found`.
 
 use std::sync::LazyLock;
 use std::time::Duration;
@@ -57,8 +58,18 @@ pub fn routes(state: Shared) -> Router {
         .route("/status", get(status))
         .route("/health", get(health))
         .with_state(state)
-        .merge(crate::shared::health::status_checks_router())
+        // The Registry names its http server `server` (`components.ts`).
+        .merge(crate::shared::health::status_checks_router_with(
+            crate::shared::health::SERVER_PASS,
+        ))
+        .fallback(not_found)
         .layer(axum::middleware::from_fn(cors))
+}
+
+/// `@dcl/http-server`'s answer for a path no route serves
+/// (`captures/abr/AB-12-unknown-route.json`).
+async fn not_found() -> Response {
+    (StatusCode::NOT_FOUND, "Not found").into_response()
 }
 
 /// The methods the Registry's `createServerComponent` lists (`components.ts`).
@@ -405,21 +416,88 @@ mod tests {
         assert_eq!(other.headers()["access-control-allow-headers"], "*");
     }
 
-    /// `createStatusCheckComponent`'s probes under the Registry prefix.
+    /// The Registry's CORS runs before its routing: a path no route serves
+    /// still answers the captured preflight, and its 404 (the captured
+    /// unknown-route answer) gets origin `*` for a cross-origin request.
+    #[tokio::test]
+    async fn registry_cors_covers_unrouted_paths() {
+        let preflight: Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/content-lambdas/captures/abr/AB-12-preflight.json"
+        )))
+        .unwrap();
+        let unknown: Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/content-lambdas/captures/abr/AB-12-unknown-route.json"
+        )))
+        .unwrap();
+        let request_headers: Vec<(&str, &str)> = preflight["request"]["headers"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.as_str().unwrap()))
+            .collect();
+        let app = app().await;
+        for path in ["/asset-bundle-registry/nope", "/asset-bundle-registry"] {
+            let response = send(&app, "OPTIONS", path, &request_headers).await;
+            assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+            let headers: serde_json::Map<String, Value> = response
+                .headers()
+                .iter()
+                .filter(|(name, _)| name.as_str().starts_with("access-control-") || *name == "vary")
+                .map(|(name, value)| (name.to_string(), Value::from(value.to_str().unwrap())))
+                .collect();
+            assert_eq!(
+                Value::Object(headers),
+                preflight["response"]["headers"],
+                "{path}"
+            );
+        }
+        for origin in [None, Some("https://example.org")] {
+            let headers: Vec<(&str, &str)> = origin.map(|o| ("origin", o)).into_iter().collect();
+            let response = send(&app, "GET", "/asset-bundle-registry/nope", &headers).await;
+            assert_eq!(
+                response.status().as_u16() as u64,
+                unknown["response"]["status"].as_u64().unwrap()
+            );
+            assert_eq!(
+                response.headers()["content-type"],
+                unknown["response"]["headers"]["content-type"]
+                    .as_str()
+                    .unwrap()
+            );
+            assert_eq!(
+                response
+                    .headers()
+                    .get("access-control-allow-origin")
+                    .map(|value| value.to_str().unwrap()),
+                origin.map(|_| "*"),
+                "{origin:?}"
+            );
+            assert_eq!(
+                to_bytes(response.into_body(), 1024).await.unwrap().as_ref(),
+                unknown["response"]["body"].as_str().unwrap().as_bytes()
+            );
+        }
+    }
+
+    /// `createStatusCheckComponent`'s probes under the Registry prefix; its
+    /// only probe-capable component is the http server it names `server`.
     #[tokio::test]
     async fn registry_answers_the_status_check_probes() {
+        let pass = r#"{"details":{"server":{"status":"pass"}},"status":"pass"}"#;
         let app = app().await;
         for (path, content_type, body) in [
             ("/health/live", "text/plain; charset=utf-8", "alive"),
             (
                 "/health/ready",
                 "application/health+json; charset=utf-8",
-                crate::shared::health::PASS,
+                pass,
             ),
             (
                 "/health/startup",
                 "application/health+json; charset=utf-8",
-                crate::shared::health::PASS,
+                pass,
             ),
         ] {
             let response = send(&app, "GET", &format!("/asset-bundle-registry{path}"), &[]).await;

@@ -117,10 +117,10 @@ Upstream routes: `decentraland/asset-bundle-registry:src/controllers/routes.ts:3
 | handler 400/404 | `{"ok":false,"message":<msg>}` (`decentraland/asset-bundle-registry:src/controllers/handlers/get-active-entities.ts:13-21`) | `{"error":<msg>}` | DIVERGENT |
 | unhandled error (unparseable JSON, empty body) | `500 {"error":"Internal Server Error"}` ([`AB-3-not-json.json`](captures/abr/AB-3-not-json.json), [`AB-3-empty-body.json`](captures/abr/AB-3-empty-body.json)) | axum `Json` rejection: `400` `text/plain` | DIVERGENT |
 | `Content-Type` | ignored: `text/plain` with a JSON body answers `200` ([`AB-3-text-plain.json`](captures/abr/AB-3-text-plain.json)) | axum `Json`: `415` `text/plain` | DIVERGENT |
-| unknown route | `404 Not found` `text/plain; charset=utf-8` ([`AB-12-unknown-route.json`](captures/abr/AB-12-unknown-route.json)) | falls through to the content 404 (`text/plain` `Not found`) | MATCH |
+| unknown route | `404 Not found` `text/plain; charset=utf-8` ([`AB-12-unknown-route.json`](captures/abr/AB-12-unknown-route.json)) | the gateway half's fallback (`services/catalyst/explore/src/api/registry.rs:65-73`): `404` `text/plain; charset=utf-8` `Not found`, inside the Registry's CORS | MATCH |
 | wrong method | `405`, empty body, `Allow: POST` ([`AB-1-get.json`](captures/abr/AB-1-get.json), [`AB-1-put.json`](captures/abr/AB-1-put.json)) | axum `405`, empty body, `Allow: POST` | MATCH |
 | trailing slash | `POST /profiles/metadata/` answers as without it ([`AB-1-trailing-slash.json`](captures/abr/AB-1-trailing-slash.json)) | trimmed for the whole app (`services/catalyst/src/serve.rs:1369`) | MATCH |
-| CORS preflight | `204`, `allow-origin: *`, `allow-methods: GET,HEAD,OPTIONS,DELETE,POST,PUT`, `allow-headers` reflected, `max-age: 86400`, `vary: Access-Control-Request-Headers` ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)) | `registry::cors` (`services/catalyst/explore/src/api/registry.rs:64-111`) on both halves of the prefix (`registry.rs:61`, `services/catalyst/shop/src/market/profiles/registry.rs:29`; `services/catalyst/explore/src/api/mod.rs:743-761` nests the Registry outside the gateway's permissive CORS): every `OPTIONS` is `204` with the captured headers; other responses get `allow-origin: *` only when the request has an `Origin`, and no exposed headers. axum also adds `Allow` to a preflight on a route without an `OPTIONS` handler | MATCH |
+| CORS preflight | `204`, `allow-origin: *`, `allow-methods: GET,HEAD,OPTIONS,DELETE,POST,PUT`, `allow-headers` reflected, `max-age: 86400`, `vary: Access-Control-Request-Headers` ([`AB-12-preflight.json`](captures/abr/AB-12-preflight.json)) | `registry::cors` (`services/catalyst/explore/src/api/registry.rs:78-122`) on both halves of the prefix and on the gateway half's fallback (`registry.rs:65-66`, `services/catalyst/shop/src/market/profiles/registry.rs:29`; `services/catalyst/explore/src/api/mod.rs:743-761` nests the Registry outside the gateway's permissive CORS): every `OPTIONS` under the prefix, routed or not, is `204` with the captured headers; other responses get `allow-origin: *` only when the request has an `Origin`, and no exposed headers. axum also adds `Allow` to a preflight on a route without an `OPTIONS` handler | MATCH |
 | upstream failure | n/a | `502 {"error":"asset-bundle registry upstream: <route> failed"}` `services/catalyst/explore/src/api/registry.rs:149-155` | dcl-one only |
 | no source configured | n/a | every POST answers `200 []` `services/catalyst/explore/src/api/registry.rs:165-167`; `EXPLORER_REGISTRY_SOURCE_URL` is set only by `NODE_POSTURE=mirror` (`services/catalyst/config/src/posture.rs:427-431`) | dcl-one only |
 | rate limits | none in ABR | gateway limit by IP (README "Rate limits") | as the other areas |
@@ -416,7 +416,8 @@ In dcl-one the operator console reaches the external abgen runtime for these
     `allow-headers`, `vary: Access-Control-Request-Headers`, `max-age: 86400`) and add `allow-origin: *`
     to other responses only when the request has an `Origin` (`@dcl/http-server` `cors.js` with
     `decentraland/asset-bundle-registry@3608576f1ff8f76ffa43cfa47f3b1fe0449ac528:src/components.ts:54-62`;
-    `services/catalyst/explore/src/api/registry.rs:64-111`). Remaining difference: axum adds an `Allow`
+    `services/catalyst/explore/src/api/registry.rs:78-122`), on paths neither half routes too: the gateway
+    half holds the prefix's fallback (`registry.rs:65-73`), as ABR's CORS middleware runs before its router. Remaining difference: axum adds an `Allow`
     header to a preflight on a route without an `OPTIONS` handler.
 13. **AB-13** error envelopes on the ABR host: `{"ok":false,"message":…}` from handlers, the
     http-commons `{"error":"Bad request","message":…}` for invalid requests,
@@ -439,8 +440,11 @@ The status-check probes of ABR's `createStatusCheckComponent`
 (`decentraland/asset-bundle-registry@3608576f1ff8f76ffa43cfa47f3b1fe0449ac528:src/components.ts:64`) are
 served under the prefix as ABR answers them: `GET /asset-bundle-registry/health/live` → `200 alive`,
 `/health/ready` and `/health/startup` → the `application/health+json` pass document
-(`services/catalyst/explore/src/api/registry.rs:60`, `services/catalyst/shared/src/health.rs`). They
-describe the Catalyst gateway, not the abgen runtime.
+`{"details":{"server":{"status":"pass"}},"status":"pass"}` (`services/catalyst/explore/src/api/registry.rs:62-64`,
+`services/catalyst/shared/src/health.rs`). `@dcl/http-server`'s `status-checks.js` keys `details` by the
+component's name in the service's component map, and ABR names its http server `server`
+(`src/components.ts:54,226`; `@dcl/http-server` 2.2.1, `yarn.lock:1247-1249`), its only component with a
+probe. They describe the Catalyst gateway, not the abgen runtime.
 - `POST /entities/active` and `/entities/versions` with `{"ids":[…]}` (forwarded; ABR answers 400).
 - Every route again under the `/asset-bundle-registry` prefix on the main host; production answers that
   prefix with the gateway 404 ([`AB-14-peer-get-abr-prefix-status.json`](captures/abr/AB-14-peer-get-abr-prefix-status.json)).

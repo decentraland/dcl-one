@@ -2264,7 +2264,12 @@ mod registry_mount_tests {
             Outbound::for_tests(),
             crate::shop::market::Settings::for_tests(),
         ));
-        let app = registry_profiles(market).merge(crate::explore::api::router(api));
+        // `serve` merges both halves into an app with a fallback of its own
+        // (the content 404); the Registry prefix keeps the gateway's.
+        let app = axum::Router::new()
+            .fallback(|| async { (StatusCode::IM_A_TEAPOT, "app fallback") })
+            .merge(registry_profiles(market))
+            .merge(crate::explore::api::router(api));
         for (method, path, body, expected) in [
             (
                 "POST",
@@ -2323,11 +2328,11 @@ mod registry_mount_tests {
             ("/asset-bundle-registry/health/live", "alive"),
             (
                 "/asset-bundle-registry/health/ready",
-                crate::shared::health::PASS,
+                crate::shared::health::SERVER_PASS,
             ),
             (
                 "/asset-bundle-registry/health/startup",
-                crate::shared::health::PASS,
+                crate::shared::health::SERVER_PASS,
             ),
         ] {
             let response = app
@@ -2342,6 +2347,8 @@ mod registry_mount_tests {
         for path in [
             "/asset-bundle-registry/profiles/metadata",
             "/asset-bundle-registry/entities/active",
+            // A path neither half routes: the gateway half's fallback.
+            "/asset-bundle-registry/nope",
         ] {
             let response = app
                 .clone()
@@ -2369,6 +2376,37 @@ mod registry_mount_tests {
                 "{path}"
             );
             assert_eq!(headers["access-control-max-age"], "86400", "{path}");
+        }
+        for (path, status, body, origin) in [
+            (
+                "/asset-bundle-registry/nope",
+                StatusCode::NOT_FOUND,
+                "Not found",
+                Some("*"),
+            ),
+            ("/nope", StatusCode::IM_A_TEAPOT, "app fallback", None),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get(path)
+                        .header("origin", "https://example.org")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{path}");
+            assert_eq!(
+                response
+                    .headers()
+                    .get("access-control-allow-origin")
+                    .map(|value| value.to_str().unwrap()),
+                origin,
+                "{path}"
+            );
+            let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(bytes.as_ref(), body.as_bytes(), "{path}");
         }
         let _ = std::fs::remove_dir_all(&files);
     }
