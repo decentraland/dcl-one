@@ -84,8 +84,9 @@ ends that much earlier for spawning and glTF processing.
   costs nothing outside the charges. Removals are handled before that loop and drop the marker,
   unless the component was put back in the same tick: the entity then keeps waiting. Every path
   that gives up on an item (no scene context, a glTF mesh the resolver rejects) drops it too.
-  A refused material leaves no new components: `BaseMaterial`, `MaterialSource` and the texture
-  camera's cursor are inserted once it is admitted.
+  A refused material leaves only its resolved glTF base (`BaseMaterial`), so a retry does not
+  resolve it again; `MaterialSource` and the texture camera's cursor are inserted once it is
+  admitted.
 - **A new primitive brings its material.** When `update_mesh` admits a first mesh for an entity
   that has a `PbMaterialComponent` and no material yet, it charges a new material too and marks
   the entity `MaterialPrepaid`; `update_materials` creates a prepaid material without asking the
@@ -180,6 +181,10 @@ Per run, frames over 50 ms went from 3 to 0 and the worst 1 % mean from 29.6 to 
   for the spawner.
 - Texture tweens create a new `SceneMaterial` for each tweened entity every frame; reusing or
   updating the material in place is separate work.
+- Charging a primitive's first material at the cache's price when the cache holds it: hash
+  `PbMaterialComponent` in `update_mesh`, or have `update_materials` refund the difference to the
+  frame's charges. A refund frees the rest of the slice for spawning and processing, not for more
+  primitives that frame.
 
 ## Appendix: the stress scene
 

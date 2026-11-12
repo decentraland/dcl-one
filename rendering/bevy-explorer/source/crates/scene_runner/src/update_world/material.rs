@@ -638,8 +638,6 @@ pub fn update_materials(
             }
             None => {
                 let new_base;
-                // inserted only once the material is admitted, like the source and the cursor
-                let mut resolved_base = None;
                 let base = if let Some(gltf_def) = mat.0.gltf.as_ref() {
                     if base.is_some_and(|b| b.gltf == gltf_def.gltf_src && b.name == gltf_def.name)
                     {
@@ -674,7 +672,9 @@ pub fn update_materials(
                                     gltf: gltf_def.gltf_src.clone(),
                                     name: gltf_def.name.clone(),
                                 };
-                                resolved_base = Some(new_base.clone());
+                                // kept even if the material then waits (a texture's source, the
+                                // slice), so a retry finds its base without resolving it again
+                                commands.entity(ent).try_insert(new_base.clone());
                                 Some(&new_base)
                             }
                         }
@@ -737,9 +737,6 @@ pub fn update_materials(
                 if gated && !gate.admit(NEW_MATERIAL_COST) {
                     mark_waiting(&mut commands, ent, PendingMaterial, pending);
                     continue;
-                }
-                if let Some(new_base) = resolved_base {
-                    commands.entity(ent).try_insert(new_base);
                 }
                 if let Some(source) = source {
                     commands.entity(ent).try_insert(MaterialSource(source));
