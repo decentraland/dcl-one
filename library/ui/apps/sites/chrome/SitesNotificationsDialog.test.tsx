@@ -76,6 +76,41 @@ describe('Sites notifications presentation', () => {
     expect(current).toHaveBeenCalledTimes(3)
     expect(previous).not.toHaveBeenCalled()
   })
+  it('owns focused Escape before outer document handlers and dismisses once', () => {
+    const dismiss = vi.fn()
+    const outer = vi.fn()
+    document.addEventListener('keydown', outer)
+    try {
+      render(<SitesNotificationsDialog {...props} onClose={dismiss} />)
+      const button = screen.getByRole('button', { name: 'Close' })
+      button.focus()
+      fireEvent.keyDown(button, { key: 'Escape' })
+      expect(dismiss).toHaveBeenCalledOnce()
+      expect(outer).not.toHaveBeenCalled()
+    } finally {
+      document.removeEventListener('keydown', outer)
+    }
+  })
+  it('leaves Escape claimed by a child to that child', () => {
+    const dismiss = vi.fn()
+    const ChildLink = (input: NavBarLinkProps) => (
+      <a {...input} onKeyDown={(event) => event.preventDefault()} />
+    )
+    render(
+      <SitesNotificationsDialog
+        {...props}
+        onClose={dismiss}
+        Link={ChildLink}
+        state="ready"
+        rows={[row]}
+      />
+    )
+    const link = screen.getByRole('link')
+    link.focus()
+    fireEvent.keyDown(link, { key: 'Escape' })
+    expect(dismiss).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Notifications' })).toBeVisible()
+  })
   it('renders loading, error, empty and read/unread linked or plain rows', () => {
     const view = render(<SitesNotificationsDialog {...props} />)
     expect(screen.getByRole('status')).toHaveTextContent('Loading notifications')

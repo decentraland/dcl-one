@@ -38,6 +38,12 @@ export default function SitesNotificationsDialog({
       ref={ref}
       className={styles.dialog}
       aria-labelledby={titleId}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || event.defaultPrevented) return
+        event.preventDefault()
+        event.stopPropagation()
+        onClose()
+      }}
       onCancel={(event) => {
         event.preventDefault()
         onClose()
