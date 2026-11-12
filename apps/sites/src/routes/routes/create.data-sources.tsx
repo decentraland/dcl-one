@@ -31,12 +31,12 @@ function parseFilter(raw: string | null): SourceFilter {
   return hit ? hit.id : "all";
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const filter = parseFilter(url.searchParams.get("filter"));
 
   const readAt = new Date().toISOString();
-  const { sid, wrap, data: probed } = await pageLoaderWith(request,  FALLBACK,
+  const { sid, wrap, data: probed } = await pageLoaderWith(request, context,  FALLBACK,
     () => probeSources({ signal: request.signal }));
 
   const results: LedgerResults = {};

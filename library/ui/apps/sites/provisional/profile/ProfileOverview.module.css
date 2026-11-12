@@ -1,0 +1,128 @@
+/* TODO(figma-ds): replace with the Figma-generated profile overview's styles.
+ * The source's link color #57C2FF has no token; the link token stands in for it. */
+.root {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-24);
+  padding-top: var(--dcl-space-8);
+}
+
+.surface {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dcl-space-24);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-16);
+  border-radius: var(--dcl-radius-lg);
+  background: var(--dcl-transparencies-black-20);
+}
+
+.section {
+  width: 100%;
+}
+
+.title {
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-label-md-caps);
+  font-weight: 600;
+  line-height: normal;
+  text-transform: uppercase;
+}
+
+.bio {
+  margin: var(--dcl-space-8) 0 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.empty {
+  margin: var(--dcl-space-8) 0 0;
+  color: var(--dcl-text-disabled);
+  font-size: var(--dcl-font-size-body-sm);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.info {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--dcl-space-16);
+  margin: var(--dcl-space-16) 0 0;
+}
+
+.infoItem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--dcl-space-4);
+  width: 200px;
+}
+
+.infoLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  color: var(--dcl-neutrals-gray);
+  font-size: var(--dcl-font-size-body-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.infoIcon {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+}
+
+.infoValue {
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: var(--dcl-space-8) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-radius: var(--dcl-radius-md);
+  background: var(--dcl-transparencies-black-20);
+  color: var(--dcl-text-link);
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.link:hover {
+  background: var(--dcl-transparencies-black-40);
+}
+
+.link:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+@media (min-width: 1024px) {
+  .surface {
+    gap: var(--dcl-space-32);
+    padding: 30px 40px;
+  }
+}

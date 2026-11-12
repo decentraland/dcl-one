@@ -15,8 +15,8 @@ export const handle = { agentMarkdown: "blogIndex" } satisfies AgentMarkdownHand
 
 export const headers = blogHeaders;
 
-export function loader({ request }: Route.LoaderArgs) {
-  return blogResponse(request, loadBlogHome(request));
+export function loader({ request, context }: Route.LoaderArgs) {
+  return blogResponse(request, context, loadBlogHome(request));
 }
 
 export default function BlogIndexRoute({ loaderData }: Route.ComponentProps) {
