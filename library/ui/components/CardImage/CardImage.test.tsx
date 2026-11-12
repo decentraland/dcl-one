@@ -99,3 +99,30 @@ describe('when public card images enforce the shared URL policy', () => {
     expect(screen.getByRole('img', { name: 'Artwork' })).toBeInTheDocument()
   })
 })
+
+describe('when an image attempt is replaced or incomplete', () => {
+  afterEach(() => vi.restoreAllMocks())
+  it('should ignore late errors from the detached previous image', () => {
+    const { container, rerender } = render(<CardImage src="/old.webp" alt="Artwork" />)
+    const oldImage = container.querySelector('img')!
+    rerender(<CardImage src="/new.webp" alt="Artwork" />)
+    const newImage = container.querySelector('img')!
+    expect(newImage).not.toBe(oldImage)
+    fireEvent.error(oldImage)
+    expect(container.querySelector('img')).toBe(newImage)
+    expect(newImage).toHaveAttribute('src', '/new.webp')
+    fireEvent.load(newImage)
+    expect(container.firstElementChild).toHaveAttribute('data-state', 'ready')
+  })
+  it('should wait for an incomplete request instead of marking it failed', () => {
+    vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(false)
+    const { container } = render(<CardImage src="/pending.webp" alt="Artwork" />)
+    expect(container.querySelector('img')).toHaveAttribute('src', '/pending.webp')
+    expect(container.firstElementChild).toHaveAttribute('data-state', 'loading')
+  })
+  it('should render caller-provided fallback content with the owned accessible name', () => {
+    const { container } = render(<CardImage alt="Artwork" fallback={<span>No artwork</span>} />)
+    expect(screen.getByRole('img', { name: 'Artwork' })).toHaveTextContent('No artwork')
+    expect(container.querySelector('img, svg')).toBeNull()
+  })
+})
