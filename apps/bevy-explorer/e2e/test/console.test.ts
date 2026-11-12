@@ -64,9 +64,15 @@ describe('ConsoleError', () => {
     const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9'
     const afterWhitespace = ['IHsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CnsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CXsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'DQp7ImVwaGVtZXJhbElkZW50aXR5IjoxfQ==']
     const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}'
-    // an identity long enough to wrap, as `base64` wraps it at 76 characters, or split by spaces
-    const long = Buffer.from(JSON.stringify({ ephemeralIdentity: { address: '0x' + '12'.repeat(20), publicKey: '0x04' + '34'.repeat(64), privateKey: '0x' + '56'.repeat(32) } })).toString('base64')
+    // an identity long enough to wrap, as `base64` wraps it at 76 characters, or split by spaces;
+    // its JSON padded to whole groups, so no `=` ends it and only its content tells where it stops
+    const json = JSON.stringify({ ephemeralIdentity: { address: '0x' + '12'.repeat(20), publicKey: '0x04' + '34'.repeat(64), privateKey: '0x' + '56'.repeat(32) } })
+    const long = Buffer.from(json + ' '.repeat((3 - (json.length % 3)) % 3)).toString('base64')
+    assert.ok(!long.endsWith('='))
     const pieces = long.match(/.{1,76}/g) ?? []
+    // a character mistyped in the first piece: `/` starting a group decodes to a byte no JSON has
+    const mistyped = [pieces[0]!.slice(0, 40) + '/' + pieces[0]!.slice(41), ...pieces.slice(1)]
+    assert.ok(Buffer.from(mistyped[0]!, 'base64').some((byte) => byte > 0x7e))
     // each case: the line, and the line as it may be logged
     const cases: [string, string][] = [
       [`/hud_login ${id} --guest`, '/hud_login <redacted> --guest'],
@@ -84,10 +90,15 @@ describe('ConsoleError', () => {
       [`/hud_login ${id} --realm ezra-test-world-2025.dcl.eth --default-on-error`, '/hud_login <redacted> --realm ezra-test-world-2025.dcl.eth --default-on-error'],
       // in a flag's value slot: the identity, never the word the flags leave over
       [`/hud_login --name ${id} --look 1`, '/hud_login --name <redacted> --look 1'],
-      // pasted twice, wrapped or split: all of it, up to the next flag
-      [`/hud_login ${id} ${pretty}`, '/hud_login <redacted>'],
+      // pasted twice, wrapped or split, the first piece short too: all of it
+      [`/hud_login ${id} ${pretty}`, '/hud_login <redacted> <redacted>'],
       [`/hud_login ${pieces.join('\n')} --guest`, '/hud_login <redacted> --guest'],
       [`/hud_login ${pieces.join(' ')}`, '/hud_login <redacted>'],
+      [`/hud_login ${long.slice(0, 8)} ${long.slice(8)}`, '/hud_login <redacted>'],
+      // ...but not the words after it that do not go on with its JSON: a bare realm name, a flag's typo
+      [`/hud_login ${long} my-long-world-name-2025.dcl.eth`, '/hud_login <redacted> my-long-world-name-2025.dcl.eth'],
+      [`/hud_login ${long} tester`, '/hud_login <redacted> tester'],
+      [`/hud_login ${long} -default-on-error`, '/hud_login <redacted> -default-on-error'],
       // raw JSON, which the commands refuse after it was logged, closed or cut
       [`/hud_login ${raw} --guest`, '/hud_login <redacted>'],
       [`/hud_login ${raw.slice(0, 30)}`, '/hud_login <redacted>'],
@@ -98,16 +109,20 @@ describe('ConsoleError', () => {
       ['/hud_login --look 1', '/hud_login --look 1'],
       ['/hud_login eyJhIjoxfQ==', '/hud_login eyJhIjoxfQ=='],
       ['/hud_login {}', '/hud_login {}'],
-      // the shape inside a longer base64 run is not where an identity starts
-      [`/hud_login x${id}`, `/hud_login x${id}`],
+      // glued to other text: from where it starts
+      [`/hud_login x${id}`, '/hud_login x<redacted>'],
+      [`/hud_login -${id}`, '/hud_login -<redacted>'],
+      [`/hud_login https://a/${id}`, '/hud_login https://a/<redacted>'],
       [`/teleport ${id}`, `/teleport ${id}`],
       ['/teleport 1 2', '/teleport 1 2'],
       ['/hud_login', '/hud_login']
     ]
     for (const [line, logged] of cases) assert.equal(redactLine(line), logged, line)
-    // a later piece of a wrapped identity is a secret of its own, wherever text quotes it
+    // a later piece of a wrapped identity is a secret of its own, wherever text quotes it, and a
+    // character mistyped before it does not end the identity there
     assert.ok(pieces.length >= 3)
     assert.equal(redact(`/hud_login ${pieces.join('\n')}`, `bad piece ${pieces[2]}`), 'bad piece <redacted>')
+    assert.equal(redactLine(`/hud_login ${mistyped.join('\n')}`), '/hud_login <redacted>')
     // the web driver's command line redacts by the same rule
     const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretsOf: (line: string) => string[] }
     const lines = cases.map(([line]) => line)

@@ -66,6 +66,36 @@ class LaunchingDriver extends IdentityDriver {
   launch(): void {}
 }
 
+/** An engine whose boot panic (`panic`) surfaces only after its launch returned, as the boot
+ *  poll then finds it. */
+class PanickingDriver extends LaunchingDriver {
+  panic: string | null = null
+  enginePanic(): { message: string } | null {
+    return this.panic == null ? null : { message: this.panic }
+  }
+  clearEnginePanic(): void {
+    super.clearEnginePanic()
+    this.panic = null
+  }
+}
+
+/** A driver whose welcome-page answers wait for `answerWelcome`, one per ask. */
+class HeldWelcomeDriver extends IdentityDriver {
+  private readonly answers: (() => void)[] = []
+  answerWelcome(): void {
+    this.answers.shift()?.()
+  }
+  send(msg: PageToScene): void {
+    const welcome = this.welcome
+    if (msg.kind !== 'getWelcome' || welcome == null) return super.send(msg)
+    // recorded as sent, but not answered until asked to
+    this.welcome = null
+    super.send(msg)
+    this.welcome = welcome
+    this.answers.push(() => this.emit({ kind: 'welcome', ...welcome }))
+  }
+}
+
 /** An engine whose launch panics at once (the generic wasm trap), so `launchEngine` fails. */
 class LaunchFailingDriver extends IdentityDriver {
   launch(): void {
@@ -557,6 +587,29 @@ describe('/hud_login through the session', () => {
     expect(h.session().login.account).toBe(ADDRESS)
   })
 
+  it("is answered by a boot panic found after the launch returned, the page's stored account put back", async () => {
+    // a link's page: the launch is the sign-in's own
+    const leave = onPage('/?position=1,2')
+    try {
+      const previous = '0x' + 'Cd'.repeat(20)
+      localStorage.setItem(`single-sign-on-${previous.toLowerCase()}`, JSON.stringify(identityOf(previous)))
+      const driver = new PanickingDriver()
+      driver.hold = true
+      const h = await ready(driver)
+      await waitFor(() => expect(h.session().login.account).toBe(previous))
+      const ended = expect(login(ENCODED)).rejects.toThrow('boom')
+      await waitFor(() => expect(driver.identityLogins).toHaveLength(1))
+      expect(h.session().login.account).toBe(ADDRESS)
+      driver.panic = 'boom'
+      await ended
+      expect(h.session().fatalError).toMatchObject({ source: 'launch' })
+      await waitFor(() => expect(h.session().login.account).toBe(previous))
+      driver.release()
+    } finally {
+      leave()
+    }
+  })
+
   it('is refused with the crash once the engine has failed', async () => {
     const driver = new IdentityDriver()
     const h = await ready(driver)
@@ -725,6 +778,26 @@ describe('/hud_logout', () => {
     expect(driver.sentOf('getWelcome')).toHaveLength(welcomes)
     expect(h.session().phase).toBe('login')
     expect(h.session().login.account).toBeNull()
+  })
+
+  it("a welcome answer that comes after /hud_logout shows no page to the next sign-in", async () => {
+    const driver = new HeldWelcomeDriver()
+    driver.welcome = { terms: true, newProfile: false }
+    const h = await ready(driver)
+    const ended = expect(login(ENCODED)).rejects.toThrow('signed out')
+    await waitFor(() => expect(driver.sentOf('getWelcome')).toHaveLength(1))
+    await act(async () => expect(await logout()).toBe('signed out'))
+    await ended
+    // the signed-out account's answer arrives late
+    await act(async () => driver.answerWelcome())
+    const next = login(ENCODED)
+    await waitFor(() => expect(driver.sentOf('getWelcome')).toHaveLength(2))
+    // waiting for its own answer, with no page from the last one meanwhile
+    expect(h.session().welcome.pending).toBe(true)
+    expect(driver.sentOf('acceptWelcome')).toEqual([])
+    await act(async () => driver.answerWelcome())
+    await expect(next).resolves.toMatchObject({ phase: 'lobby' })
+    expect(driver.sentOf('acceptWelcome')).toEqual([{ kind: 'acceptWelcome' }])
   })
 
   it('a sign-in the engine refuses after /hud_logout puts no error on the start page', async () => {

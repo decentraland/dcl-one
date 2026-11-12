@@ -104,6 +104,19 @@ describe('redact', () => {
     assert.equal(redact(line, line), '/hud_login <redacted> --guest');
     assert.equal(redact(line, `the second piece ${pieces[1]}`), 'the second piece <redacted>');
   });
+
+  test('stops where the JSON does not go on, and finds an identity glued to other text', () => {
+    // padded to whole groups, so no `=` ends it
+    const json = JSON.stringify({ ephemeralIdentity: { privateKey: '0x' + '56'.repeat(32) } });
+    const long = Buffer.from(json + ' '.repeat((3 - (json.length % 3)) % 3)).toString('base64');
+    assert.ok(!long.endsWith('='));
+    for (const after of ['my-long-world-name-2025.dcl.eth', 'tester', '-default-on-error']) {
+      const line = `/hud_login ${long} ${after}`;
+      assert.deepEqual(secretsOf(line), [long], after);
+      assert.equal(redact(line, `connected to ${after}`), `connected to ${after}`);
+    }
+    assert.equal(redact(`/hud_login x${id}`, `x${id}`), 'x<redacted>');
+  });
 });
 
 describe('findChrome', () => {

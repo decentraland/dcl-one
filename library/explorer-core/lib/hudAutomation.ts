@@ -968,8 +968,8 @@ export const LOGIN_COMMANDS: Record<string, PageCommand> = {
 }
 
 /** Web: hand engine.js the commands it runs in the page instead of sending them to the engine, and
- *  the hook a test runner answers its trusted input requests through; the sign-in command only
- *  when such a runner is driving the browser. */
+ *  the hook a test runner answers its trusted input requests through; the sign-in and sign-out
+ *  commands only when such a runner is driving the browser. */
 export function installHudAutomation(): void {
   const w = window as Window & { __dclPageCommands?: Record<string, PageCommand> } & TrustedInputWindow
   w.__dclPageCommands = { ...(w.__dclPageCommands ?? {}), ...PAGE_COMMANDS, ...(trustedInputAvailable() ? LOGIN_COMMANDS : {}) }

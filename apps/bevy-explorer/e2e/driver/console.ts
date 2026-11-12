@@ -11,40 +11,65 @@ export interface Console {
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
 }
 
-/** A whole run of base64 characters (either alphabet), long enough that it is no ordinary word;
- *  an identity's is hundreds of characters long. */
-const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}/g
+/** A whole run of base64 characters (either alphabet). */
+const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{4,}={0,2}/g
+/** The next word on the line, when it is base64 through to the next space. */
+const NEXT_WORD = /^\s+([A-Za-z0-9+/_-]+={0,2})(?=\s|$)/
 /** How an AuthIdentity's JSON starts once its base64 is decoded, as the commands parse it: any
  *  whitespace, then an object and the quote of its first key. Only the start is read, so a
  *  mistyped identity is still found. */
 const JSON_OBJECT_START = /^\s*\{\s*"/
-/** What follows an identity wrapped (as `base64` wraps at 76 characters) or split by spaces: more
- *  base64, up to the first flag. */
-const CONTINUATION = /^(?:\s+(?!--)[A-Za-z0-9+/_-]+={0,2})+/
+/** What the rest of it decodes to: JSON text, printable ASCII and whitespace. */
+const JSON_TEXT = /^[\t\n\r\x20-\x7e]*$/
 /** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
  *  `{` to its end, closed or cut. */
 const RAW_JSON = /\{.*/s
+/** Shorter than this, it could be part of other text; an identity is hundreds of characters. */
 const MIN_SECRET = 16
 
-const encodesJsonObject = (run: string): boolean => JSON_OBJECT_START.test(Buffer.from(run.slice(0, 64), 'base64').toString('latin1'))
+const decodesTo = (base64: string, text: RegExp): boolean => text.test(Buffer.from(base64, 'base64').toString('latin1'))
+
+/** Whether `piece` goes on with the JSON text `joined` decodes to: only the bytes it adds are read,
+ *  so a mistyped character before it does not end the identity there. */
+const continues = (joined: string, piece: string): boolean =>
+  JSON_TEXT.test(Buffer.from(joined + piece, 'base64').subarray(Math.max(0, Math.floor((joined.length * 3) / 4) - 1)).toString('latin1'))
+
+/** Where in a base64 run an identity starts, after whatever a hand-typed line glued to its front
+ *  (`x<id>`, `https://a/<id>`), or -1. */
+function identityStart(run: string): number {
+  for (let at = 0; at + 4 <= run.length; at++) if (decodesTo(run.slice(at, at + 64), JSON_OBJECT_START)) return at
+  return -1
+}
 
 /** The credentials a line carries: the payload of `/login_identity` or `/hud_login`, an
  *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
  *  found by what it decodes to wherever a hand-typed line puts it: after flags, as a flag's value,
- *  quoted, twice, wrapped or split (with its every piece), or as raw JSON (the commands refuse
- *  such a line, but after it was logged). Nothing else is one, so an empty or short word, or a
- *  realm's name, never turns lines into `<redacted>`. The web driver's `driver.mjs` has the same
- *  rule, which a test keeps in step. */
+ *  quoted, glued to other text, twice, wrapped or split (whole, and each long piece), or as raw
+ *  JSON (the commands refuse such a line, but after it was logged). Nothing else is one, so an
+ *  empty or short word, or a realm's name, never turns lines into `<redacted>`. The web driver's
+ *  `driver.mjs` has the same rule, which a test keeps in step. */
 export function secretsOf(line: string): string[] {
   if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return []
   const secrets = new Set<string>()
   for (const { 0: run, index } of line.matchAll(BASE64_RUN)) {
-    if (!encodesJsonObject(run)) continue
-    secrets.add(run)
-    const rest = CONTINUATION.exec(line.slice(index + run.length))?.[0]
-    if (rest === undefined) continue
-    secrets.add(run + rest)
-    for (const piece of rest.split(/\s+/)) if (piece.length >= MIN_SECRET) secrets.add(piece)
+    const start = identityStart(run)
+    if (start < 0) continue
+    // wrapped (as `base64` wraps at 76 characters) or split by spaces, it goes on in the next
+    // words for as long as they continue its JSON: never past its padding, a flag or a typo of
+    // one (`-`), or a word such as a realm's name
+    let joined = run.slice(start)
+    let end = index + run.length
+    const pieces = [joined]
+    for (let next = NEXT_WORD.exec(line.slice(end)); next != null && !joined.endsWith('='); next = NEXT_WORD.exec(line.slice(end))) {
+      const piece = next[1]!
+      if (piece.startsWith('-') || !continues(joined, piece)) break
+      joined += piece
+      end += next[0].length
+      pieces.push(piece)
+    }
+    if (joined.length < MIN_SECRET) continue
+    secrets.add(line.slice(index + start, end))
+    for (const piece of pieces) if (piece.length >= MIN_SECRET) secrets.add(piece)
   }
   const raw = RAW_JSON.exec(line)?.[0].trimEnd()
   if (raw !== undefined && raw.length >= MIN_SECRET) secrets.add(raw)

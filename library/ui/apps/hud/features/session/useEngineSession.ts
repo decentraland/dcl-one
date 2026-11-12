@@ -2164,6 +2164,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setPendingLook((pending) => (pending === msg.look ? null : pending))
           break
         case 'welcome': {
+          // asked only once a sign-in is submitted: an answer that comes after a sign-out is the
+          // signed-out account's, and no page of the next sign-in
+          if (!submittedRef.current) break
           // ACCEPT AND PLAY's pick accepted the terms already, and a /hud_login's sign-in stands
           // for them too (lib/hudAutomation.ts): the page is answered, with the pick's name. A
           // first login deploys its profile under the pick's name, so without one a /hud_login
@@ -3985,6 +3988,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         setBusy(false)
         pendingLogin.current = null
         setSubmitted(true)
+        // at once: the welcome page's answer may come before the next render
+        submittedRef.current = true
         welcomeLink.current = urlDestination.current
         if (welcomeShown()) driverRef.current?.send({ kind: 'getWelcome' })
         // the engine booted holding the world, as for Jump in: the pick is the lobby's
@@ -4128,9 +4133,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
 
   // A pending /hud_login is answered at once with the error (the launch and realm-check failures
   // have answered theirs by the time this runs). Only a failed launch leaves no engine to answer
-  // the sign-in, so only then does its stored sign-in go back here. The bridge's dialog leaves the
-  // world running, and the watchdog's stall or a HUD crash may pass, so the engine can still land
-  // or refuse the sign-in, and its answer decides (runPendingLogin).
+  // the sign-in, so only then does its stored sign-in go back here: a boot panic the poll reports
+  // after launch() returned (a launch that throws has put it back already). The bridge's dialog
+  // leaves the world running, and the watchdog's stall may pass, so the engine can still land or
+  // refuse the sign-in, and its answer decides (runPendingLogin).
   useEffect(() => {
     if (fatalError == null) return
     if (fatalError.source === 'launch') restoreHudSignIn()
