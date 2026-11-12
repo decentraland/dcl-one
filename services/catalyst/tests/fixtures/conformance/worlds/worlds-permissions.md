@@ -179,7 +179,7 @@ dcl-one: `permissions.rs:75-127`. It reads `store::get_world`, `store::permissio
 | World with a stored owner whose NAME was sold | 200 | upstream: the **stored** owner; dcl-one: the live holder | `getOwner` reads `metadata.owner` first | `current_owner` | DIVERGENT: intended (same entry) |
 | Invalid world name | upstream 200 defaults; dcl-one 400 | | none | `parse_world` | intended (worlds-compatibility.md "Invalid world names") |
 | Deny-listed name | 200; access read as `unrestricted` when `getRawWorldRecords` filters the record out, summary still listed | | `access/component.ts:34-40`; `worlds-manager.ts:327,345-349`: `name != ALL(getBannedNames())`, the `BLOCKED_WORLD_NAMES` entries whole plus the list entries without their first `.eth`/`.dcl`, so a list entry leaves out only a bare name equal to it, a plain `<label>` entry nothing | `store::raw_records_exclude` (`store.rs:446-452`) over `BannedNames::banned_names` (`names.rs:67-77`) | MATCH (WP-11, WP-20; tests `deleting_an_address_grant_requires_a_valid_world`, `configured_world_names_are_invalid_on_the_permission_routes`) |
-| Mirrored world (`mirror_source` set) | 200; upstream reads the world's own rows. dcl-one: the access setting the source's `/permissions` reports, copied by every mirror pass (`mirror.rs:1018-1064,1454-1459,1698-1700`; a shared secret stored as one no secret matches); `deployment.wallets`, `streaming.wallets` and `summary` list only grants made on this node, so they are empty | | `permissions-handlers.ts:50-107` | `get_permissions` over the copied rows | access MATCH; grants GAP (WP-21; test `tests/worlds_mirror.rs` `a_mirror_pass_copies_the_upstream_access_setting`) |
+| Mirrored world (`mirror_source` set) | 200; upstream reads the world's own rows. dcl-one: the access setting the source's `/permissions` reports, copied by every mirror pass (`mirror.rs:1027-1073,1688-1694,1940-1942`; a shared secret stored as one no secret matches); `deployment.wallets`, `streaming.wallets` and `summary` list only grants made on this node, so they are empty | | `permissions-handlers.ts:50-107` | `get_permissions` over the copied rows | access MATCH; grants GAP (WP-21; test `tests/worlds_mirror.rs` `a_mirror_pass_copies_the_upstream_access_setting`) |
 
 ## 2. POST /world/:world_name/permissions/:permission_name
 
@@ -698,8 +698,8 @@ filter keeps it (`store::raw_records_exclude`), and no operator disable or quota
     - dcl-one, access: every mirror pass that reaches a world, changed scenes or not, and every read-through
       fill reads `{source}/world/{name}/permissions` and copies `permissions.access` onto the world while the
       row is the mirror's (`mirror_source` set, not disabled): `upstream_access`, `parse_upstream_access`
-      (`mirror.rs:1018-1064`) and `store::replace_mirrored_access` (`store.rs:1746`), inside the world's sync
-      transaction (`mirror.rs:1698-1700`) or, for unchanged scenes, its own (`mirror.rs:1454-1459`). Only a
+      (`mirror.rs:1027-1073`) and `store::replace_mirrored_access` (`store.rs:1746`), inside the world's sync
+      transaction (`mirror.rs:1940-1942`) or, for unchanged scenes, its own (`mirror.rs:1688-1694`). Only a
       difference is written; it queues the access recheck and sends no notice. An unreadable answer or an
       unknown type fails the world's sync and keeps the stored setting, so a world restricted upstream is never
       stored open. A shared-secret world is stored with a hash no secret matches, since the hash is not on the

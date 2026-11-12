@@ -6,8 +6,8 @@
 //! pass making no /about calls, a local publish refused (never overwritten,
 //! also when it lands mid-download), a world unlisted upstream retired, an
 //! interrupted pass resumed from its persisted cursor, the loop/hash guards,
-//! and the deploy times, signed chains, world settings and access setting a pass
-//! copies.
+//! and the deploy times, signed chains, world settings, thumbnails and access
+//! setting a pass copies, also for a world whose scenes are all held.
 //! Needs CATALYST_TEST_DATABASE_URL; skipped without it.
 
 use std::collections::{BTreeMap, HashMap};
@@ -605,9 +605,8 @@ async fn mirror_passes_are_complete_resumable_and_never_touch_local_publishes() 
         "a mirrored world keeps its ENS name"
     );
     assert_eq!(
-        about["configurations"]["skybox"]["fixedHour"], 36000.0,
-        "the scene's fixedTime: the source answers no world settings, and its /about's \
-         fixedHour is not one"
+        about["configurations"]["skybox"]["fixedHour"], 43200.0,
+        "the source's /about fixedHour while it answers no world settings"
     );
     assert_eq!(about["spawnCoordinates"], "0,0");
     assert_eq!(
@@ -1707,6 +1706,196 @@ async fn a_mirror_pass_copies_the_upstream_access_setting() {
         permissions["permissions"]["access"],
         json!({"type": "nft-ownership", "nft": "urn:x"})
     );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+async fn world_row(pool: &PgPool, world: &str) -> (Option<String>, Option<i32>, i64) {
+    sqlx::query_as("SELECT title, skybox_time, settings_version FROM worlds.worlds WHERE name = $1")
+        .bind(world)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Upstream changes a world's settings and access without a deployment and bumps
+/// `settings_version` (`worlds-manager.ts:143-164`, `:768-776`), and its `/index` carries neither,
+/// so a pass that finds every scene held still reads the settings and the `/scenes` listing:
+/// a settings edit lands, a first pass without a settings answer is caught up, and rows written
+/// before the listing's times, chain and deployer were kept take them. The copied version never
+/// goes back.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_unchanged_mirrored_world_takes_settings_and_listing_updates() {
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "unchanged").await;
+    let world = "still.dcl.eth";
+    let id = add_scene(
+        &mut fake.state.lock(),
+        world,
+        "S",
+        "0,0",
+        &[("s.txt", b"still")],
+    );
+    let ctx = node.ctx().await;
+
+    // 1. No settings answer and a listing without times or chain: the `/about` fallback.
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (None, Some(43200), 0),
+        "the source's /about fixed hour"
+    );
+    assert_eq!(node.scene_rows(world).await[0].1, ZERO_ADDRESS);
+
+    // 2. Nothing redeployed; the source now answers settings and lists the deployment's
+    // times, chain and deployer.
+    let chain = chain(DEPLOYER_KEY, &id, &id).await;
+    {
+        let mut st = fake.state.lock();
+        st.settings.insert(
+            world.to_string(),
+            json!({"title": "Still", "skybox_time": null, "settings_version": 3}),
+        );
+        let scene = scene_mut(&mut st, world, &id);
+        scene.chain = chain.clone();
+        scene.deployer = Some(address(DEPLOYER_KEY));
+        scene.created_at = Some("2026-01-02T03:04:05.000Z".into());
+        scene.size = "77".into();
+    }
+    let about_before = about_calls(&fake, world);
+    let summary = node.pass(&ctx).await;
+    assert_eq!(
+        (summary.scenes.synced, summary.scenes.unchanged),
+        (0, 1),
+        "{summary:?}"
+    );
+    assert_eq!(about_calls(&fake, world), about_before, "no /about read");
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (Some("Still".into()), None, 3)
+    );
+    let (_, scenes) = node.get(&format!("/world/{world}/scenes")).await;
+    let row = &scenes["scenes"][0];
+    assert_eq!(row["deployer"], json!(address(DEPLOYER_KEY)), "{scenes}");
+    assert_eq!(row["deploymentAuthChain"], chain);
+    assert_eq!(row["createdAt"], "2026-01-02T03:04:05.000Z");
+    assert_eq!(row["size"], "77");
+
+    // 3. A settings edit upstream, no deployment.
+    fake.state.lock().settings.insert(
+        world.to_string(),
+        json!({"title": "Edited", "skybox_time": 600, "settings_version": 4}),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (Some("Edited".into()), Some(600), 4)
+    );
+
+    // 4. A row ahead of its source (bumped by earlier ingests) never goes back: an unchanged
+    // answer leaves it, a change moves it one past.
+    sqlx::query("UPDATE worlds.worlds SET settings_version = 9 WHERE name = $1")
+        .bind(world)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    node.pass(&ctx).await;
+    assert_eq!(world_row(&node.pool, world).await.2, 9);
+    fake.state.lock().settings.insert(
+        world.to_string(),
+        json!({"title": "Again", "skybox_time": 600, "settings_version": 5}),
+    );
+    node.pass(&ctx).await;
+    assert_eq!(
+        world_row(&node.pool, world).await,
+        (Some("Again".into()), Some(600), 10)
+    );
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// A thumbnail the source took from an upload is stored there under the SHA-256 hex of its
+/// bytes (`logic/settings/component.ts:65`) and served only by the source. The mirror fetches it,
+/// checks the digest and keeps it under its CIDv1, which `/contents` and Places' `image` serve
+/// here; a key whose bytes are not an image, or that the source does not serve, is not kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mirrored_world_holds_the_thumbnail_its_settings_name() {
+    use sha2::Digest;
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "thumbs").await;
+    let png = [
+        &[0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a][..],
+        &[7u8; 300_000],
+    ]
+    .concat();
+    let sha = hex::encode(sha2::Sha256::digest(&png));
+    let text = b"not an image".to_vec();
+    let text_sha = hex::encode(sha2::Sha256::digest(&text));
+    {
+        let mut st = fake.state.lock();
+        for (world, key) in [
+            ("upload.dcl.eth", sha.as_str()),
+            ("text.dcl.eth", text_sha.as_str()),
+            ("missing.dcl.eth", &"0".repeat(64)),
+        ] {
+            add_scene(&mut st, world, "T", "0,0", &[("t.txt", world.as_bytes())]);
+            st.settings.insert(
+                world.to_string(),
+                json!({"title": "Thumb", "thumbnail_hash": key, "settings_version": 1}),
+            );
+        }
+        st.blobs.insert(sha.clone(), png.clone());
+        st.blobs.insert(text_sha.clone(), text);
+    }
+    let summary = node.pass(&node.ctx().await).await;
+    assert_eq!(summary.scenes.synced, 3, "{summary:?}");
+
+    let cid = hash_bytes_v1(&png);
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+    assert_eq!(
+        node.storage.retrieve(&cid).await.unwrap().as_deref(),
+        Some(&png[..])
+    );
+    for world in ["text.dcl.eth", "missing.dcl.eth"] {
+        let (_, settings) = node.get(&format!("/world/{world}/settings")).await;
+        assert_eq!(settings["title"], "Thumb", "{settings}");
+        assert!(
+            settings.get("thumbnail_hash").is_none(),
+            "{world}: {settings}"
+        );
+    }
+
+    // A later pass keeps the copy without fetching it again.
+    fake.state.lock().blobs.remove(&sha);
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
+
+    // A row that stored the source's hex key itself takes the held copy on the next pass.
+    sqlx::query("UPDATE worlds.worlds SET thumbnail_hash = $2 WHERE name = $1")
+        .bind("upload.dcl.eth")
+        .bind(&sha)
+        .execute(&node.pool)
+        .await
+        .unwrap();
+    fake.state.lock().blobs.insert(sha.clone(), png.clone());
+    node.pass(&node.ctx().await).await;
+    let (_, settings) = node.get("/world/upload.dcl.eth/settings").await;
+    assert_eq!(settings["thumbnail_hash"], json!(cid), "{settings}");
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

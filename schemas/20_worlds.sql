@@ -67,8 +67,10 @@ CREATE SCHEMA worlds;
 -- nft-ownership; an allow-list's wallets are world_permissions rows with
 -- permission = 'access' and its communities world_access_communities rows.
 -- `settings_version` is bumped by every settings-affecting write (deploy
--- refresh, PUT /settings, access edits, mirror ingest) under the row lock so
--- a settings consumer can refuse an out-of-order update.
+-- refresh, PUT /settings, access edits) under the row lock so a settings
+-- consumer can refuse an out-of-order update. A mirrored row takes its
+-- source's counter, or its own plus one when a copied setting changes and the
+-- source's is not ahead, so it never goes back.
 CREATE TABLE worlds.worlds (
     name text NOT NULL,
     owner text,

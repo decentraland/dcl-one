@@ -723,13 +723,13 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
       scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
     - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
-      (`listed_scenes`, `worlds/src/mirror.rs:1790`) and keeps `/about` for the world's spawn and the
+      (`listed_scenes`, `worlds/src/mirror.rs:2108`) and keeps `/about` for the world's spawn and the
       content `baseUrl`. The listing decides what is retired, so any doubt stops that world's sync until the
       next pass and retires nothing: a refusal (404 and 405 included), a page without `scenes`, a repeated id,
       a count other than `total`, or a held scene missing from the pages that `?entity_id=` still lists (the
       listing moved while it was read). A world over 2,000 scenes is refused on every pass. The read-through
       fill takes the same path and stores the world only when every listed scene verifies. Pinned by
-      `tests/worlds_mirror.rs:1165` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
+      `tests/worlds_mirror.rs:1195` `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`; the fakes
       in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
     - Severity: none (closed).
 
@@ -739,43 +739,59 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       `created_at` ascending (`:1015-1019`) and serves `createdAt`/`updatedAt` from the row (`toWorldScene`,
       `:60-73`), and `/worlds` reads `last_deployed_at` as the newest deploy time (`:1366-1404`).
     - dcl-one: `listed_scenes` keeps each listed row's `createdAt` and `updatedAt`, read as RFC 3339 into UTC
-      (`worlds/src/mirror.rs:1732-1770,1790`), and the world's transaction writes them onto its rows; a row the
-      listing gives no time keeps this node's (`mirror.rs:1673-1690`). `/about` breaks a remaining tie by the greater
-      entity id (`queries.rs:93`). Pinned by `tests/worlds_mirror.rs:1261`
+      (`worlds/src/mirror.rs:2050-2088,2108`), and the world's transaction writes them onto its rows; a row the
+      listing gives no time keeps this node's (`mirror.rs:1991-2007`). `/about` breaks a remaining tie by the
+      greater entity id (`queries.rs:93`). Pinned by `tests/worlds_mirror.rs:1291`
       `a_mirrored_world_keeps_the_upstream_deploy_times`: three scenes whose newest is the smallest id; `/about`
       names it, `/scenes` lists the source's order and times, and `/worlds` its `last_deployed_at`.
-    - A world the pass finds unchanged (every listed scene held) is not read again, so its rows keep the times
-      they were written with until its scene set changes upstream.
+    - A world the pass finds unchanged (every listed scene held, `mirror.rs:1662`) is still read for its
+      `/scenes` listing, and its held rows take the listed times, size, chain and deployer
+      (`refresh_listed_scenes`, `mirror.rs:1567`), so rows written before these were kept catch up without a
+      redeploy. Pinned by `tests/worlds_mirror.rs:1730`
+      `an_unchanged_mirrored_world_takes_settings_and_listing_updates`.
     - Severity: none (closed).
 
 41. **WW-41 · mirror · `/scenes` · `deployer`, `deploymentAuthChain`, `size`.** Status: MATCH, no work.
     - Upstream: each row's `deployer`, `deployment_auth_chain` and `size` are what its deployment stored
       (`toWorldScene`, `worlds-manager.ts:60-73`); `scenes-handler.ts:73-84` serves them, the size as a string.
-    - dcl-one: a pass keeps the listed size (`mirror.rs:1547`) and stores the listed chain and deployer when the
+    - dcl-one: a pass keeps the listed size (`mirror.rs:1865`) and stores the listed chain and deployer when the
       chain's ECDSA links sign the scene id and its first link names the listed deployer, checked with
-      `verify_auth_chain` (`listed_signature`, `mirror.rs:1776-1788`); otherwise the row carries `[]` and the zero
-      address. A read-through stores the chain and signer it checked against the world's publishers. No grant here
-      reads `worlds.world_scenes.deployer`. Pinned by `tests/worlds_mirror.rs:1362`
+      `verify_auth_chain` (`listed_signature`, `mirror.rs:2094`); otherwise the row carries `[]` and the zero
+      address. A read-through stores the chain and signer it checked against the world's publishers. A pass over
+      an unchanged world fills a held row that has no chain the same way (WW-40). No grant here reads
+      `worlds.world_scenes.deployer`. Pinned by `tests/worlds_mirror.rs:1392`
       `a_mirror_pass_keeps_the_upstream_deployer_and_chain` (a signed scene; a chain over another id; a chain whose
-      signer is not the listed deployer).
+      signer is not the listed deployer) and `tests/worlds_mirror.rs:1730`.
     - Severity: none (closed).
 
-42. **WW-42 · mirror · `/settings`, `/worlds` · a mirrored world's settings.** Status: MATCH, no work.
+42. **WW-42 · mirror · `/settings`, `/worlds`, `/about` · a mirrored world's settings.** Status: MATCH, no work.
     - Upstream: `GET /world/:world_name/settings` is public (`routes.ts:213`) and answers the stored row
       (`world-settings-handler.ts:155-178`, `worlds-manager.ts:1222-1262`); its comments (`:1242-1243,1254-1255`)
       say `skybox_time: null` and the version are exposed so that a mirror can copy them. `/worlds` serves the same
-      columns (`:1381-1404`).
-    - dcl-one: a world the pass syncs also reads `GET {source}/world/{name}/settings` (one body of at most 256 KiB,
-      `upstream_settings`, `mirror.rs:1313-1335`) and writes `title`, `description`, `content_rating` (one of
-      `RP`, `E`, `T`, `A`, `R`), `categories` (the first 20), `show_in_places`, `single_player`, `skybox_time` (`null`
-      clears) and `thumbnail_hash`, and takes `settings_version` from the source (`WorldSettingsCopy`,
-      `mirror.rs:1253-1310`; the upsert at `:1568`). No answer, a refusal or a body that is not an object leaves the
-      stored settings as they are. The fixed hour and offline adapter of the source's `/about` are not copied:
-      they can be the scene's own, which `/about` reads from the scene here too. `access_type` is not copied.
-      Pinned by `mirror.rs:1976` `upstream_settings_are_copied_as_the_columns_accept_them` and
-      `tests/worlds_mirror.rs:1438` `a_mirror_pass_copies_the_upstream_world_settings`.
-    - A thumbnail key the source took from an upload (SHA-256 hex) is kept as it is; worlds-compatibility.md,
-      "Thumbnails". Like WW-40, an unchanged world is not read again.
+      columns (`:1381-1404`). Settings change without a deployment: a settings write bumps `settings_version`
+      (`:143-164`), and so does an access change, "because mirrors read the access type through
+      getWorldSettings" (`:768-776`); `/index` carries neither. `/about` serves the row's `skybox_time` when it is
+      not null, else the scene's, and `offline:offline` when `single_player` (`:409-419`).
+    - dcl-one: every pass that reaches a mirrored world, changed or not, reads
+      `GET {source}/world/{name}/settings` (one body of at most 256 KiB, `upstream_settings`, `mirror.rs:1385`) and
+      writes `title`, `description`, `content_rating` (one of `RP`, `E`, `T`, `A`, `R`), `categories` (the first
+      20), `show_in_places`, `single_player`, `skybox_time` (`null` clears) and `thumbnail_hash`
+      (`WorldSettingsCopy`, `mirror.rs:1323`; `apply_settings`, `mirror.rs:1514`). `settings_version` takes the
+      source's counter and never goes back: a row ahead of its source (bumped by earlier ingests) moves one past
+      its own value when a copied column changes. No answer, a refusal or a body that is not an object leaves
+      the stored settings as they are; a new row then takes the fixed hour and offline adapter the source's
+      `/about` serves (`mirror.rs:1743`), which is the source's stored value whenever it has one, until a later
+      pass reads the settings. `access_type` is copied from `/permissions` (worlds-permissions.md, WP-21).
+      Pinned by `mirror.rs:2332` `upstream_settings_are_copied_as_the_columns_accept_them`,
+      `tests/worlds_mirror.rs:1468` `a_mirror_pass_copies_the_upstream_world_settings`, `:1730`
+      `an_unchanged_mirrored_world_takes_settings_and_listing_updates` (an edit with no redeploy, a first pass
+      without an answer, a version ahead of the source) and `:608` (the `/about` fallback).
+    - The thumbnail is held here (`mirrored_thumbnail`, `mirror.rs:1423`): a CID key is fetched from the source's
+      `/contents` when not held; a SHA-256 hex key (an upload upstream, `logic/settings/component.ts:65`) is
+      fetched, checked against its digest and kept under the CIDv1 of its bytes, so `/settings` names that CID and
+      Places' `image` and `/contents` serve it; worlds-compatibility.md, "Thumbnails". A key the source does not
+      serve, or whose bytes are not an image, leaves the world without a thumbnail. Pinned by
+      `tests/worlds_mirror.rs:1831` `a_mirrored_world_holds_the_thumbnail_its_settings_name`.
     - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
