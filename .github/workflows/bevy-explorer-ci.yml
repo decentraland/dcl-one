@@ -754,7 +754,6 @@ jobs:
         with:
           name: bevy-explorer-npm-package-${{ github.sha }}
           path: rendering/bevy-explorer/source/deploy/web/
-          include-hidden-files: true
           if-no-files-found: error
           retention-days: 7
     defaults:
@@ -805,6 +804,8 @@ jobs:
         env:
           # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
           BRANCH_NAME: ${{ github.head_ref }}
+          # The package comes from the build job; none of its scripts run beside the publish tokens.
+          NPM_CONFIG_IGNORE_SCRIPTS: 'true'
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
         run: echo '::warning::The PR preview did not publish; see the Publish step log.'
