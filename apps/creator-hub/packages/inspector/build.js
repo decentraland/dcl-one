@@ -64,6 +64,7 @@ async function main() {
 
   await buildCommonJsDistributable();
   await buildAnsiDistributable();
+  await buildIconsDistributable();
   await runTypeChecker();
 }
 
@@ -201,6 +202,28 @@ async function buildCommonJsDistributable() {
     await context.rebuild();
     await context.dispose();
     console.timeEnd('> Building NodeJs bundle');
+  }
+}
+
+async function buildIconsDistributable() {
+  const context = await esbuild.context({
+    entryPoints: ['src/icons.ts'],
+    bundle: true,
+    platform: 'browser',
+    format: 'esm',
+    outfile: 'dist/icons.mjs',
+    external: ['react', 'react/jsx-runtime'],
+    sourcemap: 'linked',
+    minify: PRODUCTION,
+  });
+
+  if (WATCH_MODE) {
+    await context.watch();
+  } else {
+    console.time('> Building icons bundle');
+    await context.rebuild();
+    await context.dispose();
+    console.timeEnd('> Building icons bundle');
   }
 }
 
