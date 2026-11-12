@@ -73,11 +73,17 @@ async function openSession(executable, { signal } = {}) {
       if (browser.exitCode !== null || browser.signalCode !== null)
         throw new Error('Capture browser exited during startup')
       try {
-        port = (await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]
-        break
+        const contents = await readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')
+        // A numeric prefix can still be an incomplete first line.
+        const match = /^([0-9]{1,5})\r?\n/.exec(contents)
+        if (match && Number(match[1]) > 0 && Number(match[1]) <= 65535) {
+          port = match[1]
+          break
+        }
       } catch {
-        await delay(100)
+        // The port file can be absent while Chrome is starting.
       }
+      await delay(100)
     }
     if (!port) throw new Error('Capture browser did not start')
     const tab = await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, {
