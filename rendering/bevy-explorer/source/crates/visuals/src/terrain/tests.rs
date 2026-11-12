@@ -449,3 +449,35 @@ fn terrain_vertex_compiles() {
     }
     panic!("the terrain pipelines did not finish compiling ({seen} seen)");
 }
+
+/// The landscape's systems (terrain, grass, trees, props, coast) fit the explorer's PostUpdate
+/// ordering: the transform and collider sets, which run before the realm's scene lifecycle, and
+/// the realm lifecycle itself. A cycle among them would panic the client at start-up.
+#[test]
+fn landscape_schedule_is_acyclic() {
+    use bevy::ecs::schedule::ScheduleLabel;
+    use common::sets::RealmLifecycle;
+    use scene_runner::{
+        initialize_scene::process_scene_lifecycle,
+        update_world::transform_and_parent::configure_post_update_sets,
+    };
+
+    let mut app = App::new();
+    app.add_plugins((MinimalPlugins, AssetPlugin::default()))
+        .init_asset::<Shader>()
+        .init_asset::<Mesh>()
+        .init_asset::<Image>();
+    // the explorer's own order of the transform, collider and camera sets, before the realm's
+    // scene lifecycle
+    configure_post_update_sets(&mut app);
+    app.add_systems(PostUpdate, process_scene_lifecycle.in_set(RealmLifecycle));
+    TerrainPlugin.build(&mut app);
+    crate::grass::GrassPlugin.build(&mut app);
+    crate::trees::TreesPlugin.build(&mut app);
+    crate::props::PropsPlugin.build(&mut app);
+    crate::coast::CoastPlugin.build(&mut app);
+    let label = PostUpdate.intern();
+    app.world_mut()
+        .schedule_scope(label, |world, schedule| schedule.initialize(world))
+        .unwrap_or_else(|error| panic!("PostUpdate does not build: {error}"));
+}

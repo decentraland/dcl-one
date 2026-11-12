@@ -27,7 +27,7 @@ use bevy::{
     transform::TransformSystem,
 };
 use common::{
-    sets::{PostUpdateSets, RealmLifecycle, SetupSets},
+    sets::{PostUpdateSets, SetupSets},
     structs::{
         CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser, GROUND_RENDERLAYER,
     },
@@ -72,7 +72,6 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
 
-        order_after_pointers(app);
         app.init_resource::<TerrainSurface>()
             .init_resource::<LandscapeDistance>()
             .init_resource::<PlayerTerrainHeight>()
@@ -108,16 +107,10 @@ impl Plugin for TerrainPlugin {
     }
 }
 
-/// The terrain, and what stands on it, takes the pointers the realm resolved in the same frame.
-fn order_after_pointers(app: &mut App) {
-    app.configure_sets(PostUpdate, TerrainSet.after(RealmLifecycle));
-}
-
 /// The surface's per-frame systems alone, without the ground, its material or the collider: for
 /// tests elsewhere that need a surface following `ScenePointers`.
 #[cfg(test)]
 pub(crate) fn add_surface_systems(app: &mut App) {
-    order_after_pointers(app);
     app.init_resource::<TerrainSurface>()
         .init_resource::<LandscapeDistance>()
         .add_systems(PostUpdate, (sync, ease).chain().in_set(TerrainSet));

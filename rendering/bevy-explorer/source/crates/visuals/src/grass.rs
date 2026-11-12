@@ -23,7 +23,10 @@ use bevy::{
         view::VisibilityRange,
     },
 };
-use common::structs::{LandscapeDistance, ParcelGrassConfig, PrimaryUser};
+use common::{
+    sets::RealmLifecycle,
+    structs::{LandscapeDistance, ParcelGrassConfig, PrimaryUser},
+};
 use scene_runner::{
     initialize_scene::{PointerResult, ScenePointers},
     vec3_to_parcel,
@@ -85,12 +88,16 @@ pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "grass_wind.wgsl");
 }
 
-/// Spawning, dropping and building the parcels' grass, after the terrain has taken this frame's
-/// pointers.
+/// Spawning, dropping and building the parcels' grass, after the realm has resolved this frame's
+/// pointers, so a parcel resolved empty has its grass in that frame. Ordering the terrain itself
+/// after the realm would close a cycle through the collider update.
 pub(crate) fn add_parcel_systems(app: &mut App) {
     app.add_systems(
         PostUpdate,
-        (update_parcels, build_parcels).chain().after(TerrainSet),
+        (update_parcels, build_parcels)
+            .chain()
+            .after(TerrainSet)
+            .after(RealmLifecycle),
     );
 }
 

@@ -237,6 +237,22 @@ fn no_grass_on_occupied() {
     assert!(grass_parcels(Vec2::splat(8.0), 180.0, empty)
         .iter()
         .all(|p| *p != scene && *p != unknown));
+
+    // a parcel that becomes a scene's after its grass grew loses it, meshes and all; the rest stay
+    let before = grass_parcels_of(&mut app);
+    let taken = IVec2::new(-1, 0);
+    assert!(!meshes_of(&mut app, taken).is_empty());
+    let mut meshes = app.world_mut().query_filtered::<Entity, With<GrassMesh>>();
+    let mesh_count = meshes.iter(app.world()).count();
+    pointers(&mut app).insert(taken, occupied());
+    app.update();
+    let after = grass_parcels_of(&mut app);
+    let expected: Vec<_> = before.into_iter().filter(|(_, p)| *p != taken).collect();
+    assert_eq!(
+        after, expected,
+        "only the taken parcel goes, nothing is respawned"
+    );
+    assert_eq!(meshes.iter(app.world()).count(), mesh_count - 1);
 }
 
 /// Lowering the Landscape Distance below 180 m drops the grass beyond it, and the next frame

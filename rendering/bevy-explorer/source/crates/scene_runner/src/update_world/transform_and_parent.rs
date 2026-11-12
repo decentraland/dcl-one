@@ -33,25 +33,7 @@ pub struct TransformAndParentPlugin;
 
 impl Plugin for TransformAndParentPlugin {
     fn build(&self, app: &mut App) {
-        app.configure_sets(
-            PostUpdate,
-            (
-                PostUpdateSets::EarlyTransformPropagate,
-                PostUpdateSets::EarlyBillboard,
-                PostUpdateSets::ColliderUpdate,
-                PostUpdateSets::PlayerUpdate,
-                PostUpdateSets::CameraUpdate,
-                PostUpdateSets::InverseKinematics,
-                PostUpdateSets::Nametag,
-                PostUpdateSets::AttachSync,
-                PostUpdateSets::Billboard,
-            )
-                .chain()
-                .after(GltfLinkSet)
-                .after(anim_last_system!())
-                .before(TransformSystem::TransformPropagate)
-                .before(process_scene_lifecycle),
-        );
+        configure_post_update_sets(app);
 
         app.add_crdt_lww_interface::<DclTransformAndParent>(
             SceneComponentId::TRANSFORM,
@@ -86,6 +68,30 @@ impl Plugin for TransformAndParentPlugin {
                 .in_set(PostUpdateSets::EarlyTransformPropagate),
         );
     }
+}
+
+/// The order of the PostUpdate sets around transform propagation, the collider update and the
+/// camera, all before the realm's scene lifecycle.
+pub fn configure_post_update_sets(app: &mut App) {
+    app.configure_sets(
+        PostUpdate,
+        (
+            PostUpdateSets::EarlyTransformPropagate,
+            PostUpdateSets::EarlyBillboard,
+            PostUpdateSets::ColliderUpdate,
+            PostUpdateSets::PlayerUpdate,
+            PostUpdateSets::CameraUpdate,
+            PostUpdateSets::InverseKinematics,
+            PostUpdateSets::Nametag,
+            PostUpdateSets::AttachSync,
+            PostUpdateSets::Billboard,
+        )
+            .chain()
+            .after(GltfLinkSet)
+            .after(anim_last_system!())
+            .before(TransformSystem::TransformPropagate)
+            .before(process_scene_lifecycle),
+    );
 }
 
 #[allow(clippy::type_complexity)]

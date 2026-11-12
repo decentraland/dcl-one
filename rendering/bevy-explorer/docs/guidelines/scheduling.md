@@ -129,8 +129,7 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in
-`visuals` (after `RealmLifecycle`, so the terrain and the grass on it take the scene pointers
-resolved in the same frame), `GltfLinkSet` for gltf instance linking, `ConsoleSet` (`ConsoleUI`, `Commands`,
+`visuals`, `GltfLinkSet` for gltf instance linking, `ConsoleSet` (`ConsoleUI`, `Commands`,
 `PostCommands`) in `console`.
 
 ## Render world

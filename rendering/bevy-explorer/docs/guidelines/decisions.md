@@ -366,7 +366,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     every parcel. Unity's textures ship in the build.
   - Instances fade out between 50 and 100 m by shrinking toward their roots, so no blending or
     discard is needed, and a parcel more than 100 m plus half its diagonal from the camera is not
-    drawn. Nothing casts shadows, as in Unity.
+    drawn. Nothing casts shadows, as in Unity; the grass, like the ground, receives the softened
+    sun shadows of the scene materials.
 - **Bevy's procedural cliffs stay and take Unity's cliff rock texture.** Unity places cliff
   prefabs along the terrain bounds; the procedural cliff keeps its shape and has no uvs, so the
   rock texture (Unity's cliff material: its colour and normal map, its moss colour on upward
