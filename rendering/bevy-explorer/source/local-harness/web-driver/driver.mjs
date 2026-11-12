@@ -87,12 +87,15 @@ function noChromeMessage(env) {
  *  an identity's is hundreds of characters long. */
 const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}/g;
 /** How an AuthIdentity's JSON starts once its base64 is decoded, as the commands parse it: any
- *  whitespace, then an object and the quote of its first key. Only the start is read, so a cut or
+ *  whitespace, then an object and the quote of its first key. Only the start is read, so a
  *  mistyped identity is still found. */
 const JSON_OBJECT_START = /^\s*\{\s*"/;
+/** What follows an identity wrapped (as `base64` wraps at 76 characters) or split by spaces: more
+ *  base64, up to the first flag. */
+const CONTINUATION = /^(?:\s+(?!--)[A-Za-z0-9+/_-]+={0,2})+/;
 /** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
- *  `{` to its last `}`. */
-const RAW_JSON = /\{.*\}/s;
+ *  `{` to its end, closed or cut. */
+const RAW_JSON = /\{.*/s;
 const MIN_SECRET = 16;
 
 const encodesJsonObject = (run) => JSON_OBJECT_START.test(Buffer.from(run.slice(0, 64), 'base64').toString('latin1'));
@@ -100,15 +103,23 @@ const encodesJsonObject = (run) => JSON_OBJECT_START.test(Buffer.from(run.slice(
 /** The credentials a console line carries: the payload of `/login_identity` or `/hud_login`, an
  *  AuthIdentity (an ephemeral private key and a signed delegation valid for days), found by what
  *  it decodes to wherever a hand-typed line puts it (after flags, as a flag's value, quoted,
- *  twice, or as raw JSON). Nothing else is one, so an empty or short word, or a realm's name,
- *  never becomes a secret. The e2e suite's `driver/console.ts` has the same rule, which its tests
- *  keep in step. */
+ *  twice, wrapped or split with its every piece, or as raw JSON). Nothing else is one, so an
+ *  empty or short word, or a realm's name, never becomes a secret. The e2e suite's
+ *  `driver/console.ts` has the same rule, which its tests keep in step. */
 export function secretsOf(line) {
   if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return [];
-  const secrets = (line.match(BASE64_RUN) ?? []).filter(encodesJsonObject);
-  const raw = RAW_JSON.exec(line)?.[0];
-  if (raw !== undefined && raw.length >= MIN_SECRET) secrets.push(raw);
-  return secrets;
+  const secrets = new Set();
+  for (const { 0: run, index } of line.matchAll(BASE64_RUN)) {
+    if (!encodesJsonObject(run)) continue;
+    secrets.add(run);
+    const rest = CONTINUATION.exec(line.slice(index + run.length))?.[0];
+    if (rest === undefined) continue;
+    secrets.add(run + rest);
+    for (const piece of rest.split(/\s+/)) if (piece.length >= MIN_SECRET) secrets.add(piece);
+  }
+  const raw = RAW_JSON.exec(line)?.[0].trimEnd();
+  if (raw !== undefined && raw.length >= MIN_SECRET) secrets.add(raw);
+  return [...secrets];
 }
 
 /** `text` with each of `secrets` replaced wherever it appears, the longest first, so one that

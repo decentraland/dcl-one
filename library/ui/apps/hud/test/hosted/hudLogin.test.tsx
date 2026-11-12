@@ -516,6 +516,28 @@ describe('/hud_login through the session', () => {
     expect(driver.calls).not.toContain('jumpIn')
   })
 
+  it("the engine's previous login, failing after a sign-out, does not bring the page's stored account back either", async () => {
+    const previous = '0x' + 'Cd'.repeat(20)
+    localStorage.setItem(`single-sign-on-${previous.toLowerCase()}`, JSON.stringify(identityOf(previous)))
+    let fail!: (error: Error) => void
+    class FailingPreviousDriver extends IdentityDriver {
+      async getPreviousLogin(): Promise<{ userId: string | null }> {
+        this.calls.push('getPreviousLogin')
+        return new Promise((_, reject) => (fail = reject))
+      }
+    }
+    const driver = new FailingPreviousDriver()
+    const h = renderSession({ userId: null }, driver)
+    await waitFor(() => expect(h.session().login.engineReady).toBe(true))
+    await waitFor(() => expect(h.session().login.account).toBe(previous))
+    await act(async () => expect(await logout()).toBe('signed out'))
+    // the fallback reads the stored sign-in the page had before the sign-out
+    await act(async () => fail(new Error('engine busy')))
+    expect(h.session().login.status).toBe('sign-in-or-guest')
+    expect(h.session().login.account).toBeNull()
+    expect(driver.calls).not.toContain('jumpIn')
+  })
+
   it('a stored sign-in read late at startup does not bring back an account a sign-out cleared', async () => {
     let readArrives!: (login: StoredLogin | null) => void
     read.late = new Promise((resolve) => (readArrives = resolve))

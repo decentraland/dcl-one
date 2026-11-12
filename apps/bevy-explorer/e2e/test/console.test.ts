@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
 import { pathToFileURL } from 'node:url'
-import { ConsoleError, FakeConsole, commandOf, normalizeLine, redactLine, scrubCredentials, secretsOf } from '../driver/console.ts'
+import { ConsoleError, FakeConsole, commandOf, normalizeLine, redact, redactLine, scrubCredentials, secretsOf } from '../driver/console.ts'
 import { WEB_DRIVER } from '../driver/paths.ts'
 
 describe('normalizeLine', () => {
@@ -64,52 +64,54 @@ describe('ConsoleError', () => {
     const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9'
     const afterWhitespace = ['IHsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CnsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CXsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'DQp7ImVwaGVtZXJhbElkZW50aXR5IjoxfQ==']
     const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}'
-    const cases: [string, string[]][] = [
-      [`/hud_login ${id} --guest`, [id]],
-      [`/hud_login --guest ${id} --look 1`, [id]],
-      [`/hud_login --name tester --look 1 ${id} --guest`, [id]],
-      [`/login_identity --look 3 ${id}`, [id]],
-      [`login_identity ${id}`, [id]],
-      [`/hud_login "${id}" --guest`, [id]],
-      [`/hud_login '${id}'`, [id]],
-      [`/hud_login ${spaced}`, [spaced]],
-      [`/login_identity ${pretty} --guest`, [pretty]],
-      ...afterWhitespace.map((encoded): [string, string[]] => [`/hud_login ${encoded}`, [encoded]]),
+    // an identity long enough to wrap, as `base64` wraps it at 76 characters, or split by spaces
+    const long = Buffer.from(JSON.stringify({ ephemeralIdentity: { address: '0x' + '12'.repeat(20), publicKey: '0x04' + '34'.repeat(64), privateKey: '0x' + '56'.repeat(32) } })).toString('base64')
+    const pieces = long.match(/.{1,76}/g) ?? []
+    // each case: the line, and the line as it may be logged
+    const cases: [string, string][] = [
+      [`/hud_login ${id} --guest`, '/hud_login <redacted> --guest'],
+      [`/hud_login --guest ${id} --look 1`, '/hud_login --guest <redacted> --look 1'],
+      [`/hud_login --name tester --look 1 ${id} --guest`, '/hud_login --name tester --look 1 <redacted> --guest'],
+      [`/login_identity --look 3 ${id}`, '/login_identity --look 3 <redacted>'],
+      [`login_identity ${id}`, 'login_identity <redacted>'],
+      [`/hud_login "${id}" --guest`, '/hud_login "<redacted>" --guest'],
+      [`/hud_login '${id}'`, "/hud_login '<redacted>'"],
+      [`/hud_login ${spaced}`, '/hud_login <redacted>'],
+      [`/login_identity ${pretty} --guest`, '/login_identity <redacted> --guest'],
+      ...afterWhitespace.map((encoded): [string, string] => [`/hud_login ${encoded}`, '/hud_login <redacted>']),
       // a realm's long name is no identity, though base64 characters spell it
-      [`/hud_login ${id} --realm example-world-name.dcl.eth`, [id]],
-      [`/hud_login ${id} --realm ezra-test-world-2025.dcl.eth --default-on-error`, [id]],
+      [`/hud_login ${id} --realm example-world-name.dcl.eth`, '/hud_login <redacted> --realm example-world-name.dcl.eth'],
+      [`/hud_login ${id} --realm ezra-test-world-2025.dcl.eth --default-on-error`, '/hud_login <redacted> --realm ezra-test-world-2025.dcl.eth --default-on-error'],
       // in a flag's value slot: the identity, never the word the flags leave over
-      [`/hud_login --name ${id} --look 1`, [id]],
-      // pasted twice: both
-      [`/hud_login ${id} ${pretty}`, [id, pretty]],
-      // raw JSON, which the commands refuse after it was logged
-      [`/hud_login ${raw} --guest`, [raw]],
+      [`/hud_login --name ${id} --look 1`, '/hud_login --name <redacted> --look 1'],
+      // pasted twice, wrapped or split: all of it, up to the next flag
+      [`/hud_login ${id} ${pretty}`, '/hud_login <redacted>'],
+      [`/hud_login ${pieces.join('\n')} --guest`, '/hud_login <redacted> --guest'],
+      [`/hud_login ${pieces.join(' ')}`, '/hud_login <redacted>'],
+      // raw JSON, which the commands refuse after it was logged, closed or cut
+      [`/hud_login ${raw} --guest`, '/hud_login <redacted>'],
+      [`/hud_login ${raw.slice(0, 30)}`, '/hud_login <redacted>'],
       // an empty or short word is no identity: nothing would be safe to replace
-      ['/hud_login ""', []],
-      ["/hud_login ''", []],
-      ['/hud_login "', []],
-      ['/hud_login --look 1', []],
-      ['/hud_login eyJhIjoxfQ==', []],
-      ['/hud_login {}', []],
+      ['/hud_login ""', '/hud_login ""'],
+      ["/hud_login ''", "/hud_login ''"],
+      ['/hud_login "', '/hud_login "'],
+      ['/hud_login --look 1', '/hud_login --look 1'],
+      ['/hud_login eyJhIjoxfQ==', '/hud_login eyJhIjoxfQ=='],
+      ['/hud_login {}', '/hud_login {}'],
       // the shape inside a longer base64 run is not where an identity starts
-      [`/hud_login x${id}`, []],
-      [`/teleport ${id}`, []],
-      ['/teleport 1 2', []],
-      ['/hud_login', []]
+      [`/hud_login x${id}`, `/hud_login x${id}`],
+      [`/teleport ${id}`, `/teleport ${id}`],
+      ['/teleport 1 2', '/teleport 1 2'],
+      ['/hud_login', '/hud_login']
     ]
-    const lines = cases.map(([line]) => line)
-    const expected = cases.map(([, secrets]) => secrets)
-    assert.deepEqual(lines.map(secretsOf), expected)
-    assert.equal(redactLine(`/hud_login --guest ${id}`), '/hud_login --guest <redacted>')
-    assert.equal(redactLine(`/hud_login --name tester --look 1 ${id}`), '/hud_login --name tester --look 1 <redacted>')
-    assert.equal(redactLine(`/hud_login --name ${id} --look 1`), '/hud_login --name <redacted> --look 1')
-    assert.equal(redactLine(`/hud_login ${id} ${pretty}`), '/hud_login <redacted> <redacted>')
-    assert.equal(redactLine(`/hud_login ${raw} --guest`), '/hud_login <redacted> --guest')
-    // a line with no identity is left as it was, not split between every character
-    assert.equal(redactLine('/hud_login ""'), '/hud_login ""')
+    for (const [line, logged] of cases) assert.equal(redactLine(line), logged, line)
+    // a later piece of a wrapped identity is a secret of its own, wherever text quotes it
+    assert.ok(pieces.length >= 3)
+    assert.equal(redact(`/hud_login ${pieces.join('\n')}`, `bad piece ${pieces[2]}`), 'bad piece <redacted>')
     // the web driver's command line redacts by the same rule
     const driver = (await import(pathToFileURL(WEB_DRIVER).href)) as { secretsOf: (line: string) => string[] }
-    assert.deepEqual(lines.map(driver.secretsOf), expected)
+    const lines = cases.map(([line]) => line)
+    assert.deepEqual(lines.map(driver.secretsOf), lines.map(secretsOf))
   })
 
   test('keeps a /hud_login payload out as well', () => {

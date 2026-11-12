@@ -91,10 +91,18 @@ describe('redact', () => {
     assert.deepEqual(secretsOf(`/hud_login ${id} --realm example-world-name.dcl.eth`), [id]);
     const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}';
     assert.deepEqual(secretsOf(`/hud_login ${spaced}`), [spaced]);
-    assert.deepEqual(secretsOf(`/hud_login ${id} ${pretty}`), [id, pretty]);
     assert.equal(redact(`/hud_login ${id} ${pretty}`, `${pretty} then ${id}`), '<redacted> then <redacted>');
-    assert.deepEqual(secretsOf(`/hud_login ${raw} --guest`), [raw]);
-    assert.equal(redact(`/hud_login ${raw} --guest`, `/hud_login ${raw} --guest failed`), '/hud_login <redacted> --guest failed');
+    // raw JSON from its `{` to the end of the line, closed or cut
+    assert.equal(redact(`/hud_login ${raw} --guest`, `/hud_login ${raw} --guest failed`), '/hud_login <redacted> failed');
+    assert.equal(redact(`/hud_login ${raw.slice(0, 30)}`, `/hud_login ${raw.slice(0, 30)}`), '/hud_login <redacted>');
+  });
+
+  test('takes a wrapped identity whole, and each of its pieces', () => {
+    const long = Buffer.from(JSON.stringify({ ephemeralIdentity: { privateKey: '0x' + '56'.repeat(32) }, expiration: '2099-01-01T00:00:00.000Z' })).toString('base64');
+    const pieces = long.match(/.{1,76}/g);
+    const line = `/hud_login ${pieces.join('\n')} --guest`;
+    assert.equal(redact(line, line), '/hud_login <redacted> --guest');
+    assert.equal(redact(line, `the second piece ${pieces[1]}`), 'the second piece <redacted>');
   });
 });
 

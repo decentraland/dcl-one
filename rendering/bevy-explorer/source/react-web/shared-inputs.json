@@ -6914,7 +6914,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
-      "sha256": "4a67a90809b533a2572dc30ef610cd351b278a81043eeb0a179f6b583bee7dcd"
+      "sha256": "afd001ce99fe097bbca0fb0d7d3fa671a345b419660678c10ea6255d24063d69"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",
