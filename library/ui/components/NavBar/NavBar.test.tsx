@@ -1097,3 +1097,22 @@ it('should focus the notification opener before a pointer activation callback', 
   fireEvent.click(bell)
   expect(opener).toBe(bell)
 })
+
+describe('when the mobile menu trigger renders its navigation glyph', () => {
+  it('should use the maintained three horizontal strokes without changing its accessible name', async () => {
+    render(<NavBar sections={sections} signIn={{ onSelect: vi.fn() }} />)
+    const trigger = screen.getByRole('button', { name: 'Open menu' })
+    const svg = trigger.querySelector('svg')
+    expect(svg).toHaveAttribute('viewBox', '0 0 24 24')
+    expect(svg).toHaveAttribute('aria-hidden', 'true')
+    expect(svg?.querySelector('path')).toHaveAttribute('d', 'M3 6h18M3 12h18M3 18h18')
+    expect(svg).toHaveAttribute('focusable', 'false')
+    expect(svg?.querySelector('circle')).toBeNull()
+    const user = userEvent.setup()
+    await user.click(trigger)
+    expect(screen.getByRole('dialog', { name: 'Menu' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('dialog', { name: 'Menu' })).not.toBeInTheDocument()
+    expect(trigger).toHaveFocus()
+  })
+})
