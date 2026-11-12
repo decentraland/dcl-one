@@ -241,8 +241,9 @@ fn add_booth_camera(
             render_layers.clone(),
             default_camera_components(),
         ));
-        // the avatar outline reads the depth prepass, which the settings only add to cameras
-        // they track; each booth open spawns its own camera, so it takes the setting here
+        // the avatar outline reads the depth and normal prepasses, which the settings only add
+        // to cameras they track; each booth open spawns its own camera, so it takes the setting
+        // here
         sync_prepasses(&mut cmds, graphics);
         camera = Some(cmds.id());
 

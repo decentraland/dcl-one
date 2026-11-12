@@ -66,7 +66,8 @@ pub(super) fn register(app: &mut App) {
             ("Scene resolution (width / height)", "scene"),
             ("Window resolution (width / height)", "window"),
             ("FSR compositor", "compositor"),
-            ("Depth and normal prepasses", "prepasses"),
+            ("Depth prepass", "depth_prepass"),
+            ("Normal prepass", "normal_prepass"),
         ],
         actions: &[(
             "Back to the player's setting",
@@ -272,10 +273,10 @@ fn render_scale_state(
     } else {
         window
     };
-    let prepasses = camera.single().ok().map(|(depth, normal)| depth && normal);
+    let (depth, normal) = camera.single().ok().unzip();
     cmd.reply_ok(
         json!({"scale": scene_target.scale, "scene": scene, "window": window,
-            "compositor": compositor, "prepasses": prepasses})
+            "compositor": compositor, "depth_prepass": depth, "normal_prepass": normal})
         .to_string(),
     );
 }
