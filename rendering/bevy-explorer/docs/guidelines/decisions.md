@@ -17,6 +17,29 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Sun shadows keep bevy's default bias.** Unity's `DepthBias` (1.75 or 1.56 texels, times
+  URP's soft kernel radius 2.5) is a depth bias, not a normal bias, and carried over as bevy's
+  normal bias it offset each lookup about half a metre on Low at 60 m, dropping thin and contact
+  shadows. On the 1024 map, acne showed below a normal bias of 0.5 on Low and about 1 on High
+  (Genesis Plaza, low sun), so both qualities keep bevy's 0.02 m depth and 1.8 texel normal
+  bias.
+- **Sun shadow map stays at 4096.** Unity's main shadow resolution is 1024. Low's single
+  cascade spreads that over the whole shadow distance, and the bias is in texels, so past about
+  75 m on 1024 the avatar's shadow disappeared, and on 2048 it was a smudge at the feet. 4096
+  keeps it.
+- **Sun shadows block 0.65 of the sun.** Unity's sun shadow strength is 1, and its Trilight
+  ambient fills the shadow in. Our ambient is darker, so a full-strength shadow comes out far
+  darker than Unity's. `SHADOW_OPACITY` in `shadow_softening.wgsl` stays at 0.65 until Unity's
+  ambient lands, and the two get tuned together after that.
+- **Sun shadows hold a floor past the shadow distance.** URP fades the shadow out completely at
+  the shadow distance. We fade over the same squared-distance curve, but towards a partial
+  shadow (`CASCADE_FAR_SHADOW` in `shadow_softening.wgsl`) that holds past the distance, so the
+  worst-case change between near and far is smaller. Fading to no shadow looked worse about
+  half the time.
+- **Low shadows keep hardware 2x2 filtering.** Unity's soft shadows filter every quality. Low is
+  the default preset and the filter applies per view, spot shadows included, so Low keeps
+  bevy's `Hardware2x2` (one PCF sample) instead of `Gaussian` (nine) to stay cheap on weak GPUs
+  and web. High uses `Gaussian`.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,
