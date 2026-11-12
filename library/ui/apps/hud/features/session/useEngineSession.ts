@@ -3068,6 +3068,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [engineReady])
   // Nor does a pick that leaves the lobby before its stage reported (a stored session's stage is
   // only built after its sign-in): the stage goes unreported, and the scene's loader takes over.
+  // It stays set if the travel fails back to the lobby: the bar has gone by then.
   useEffect(() => {
     if (destinationPicked) setAvatarLoaded(true)
   }, [destinationPicked])
