@@ -4,7 +4,7 @@
 // (members/posts/places/events) arrives via the bridge `communityDetail` relay.
 
 import { useEffect, useState } from 'react'
-import { Avatar, BanIcon, Button, ControlButton, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
+import { Avatar, BanIcon, Button, ControlButton, EmptyState, SwapLabel, DemoteModeratorIcon, Kebab, MaskIcon, Pencil, Plus, PromoteModeratorIcon, RemoveMemberIcon, Tabs, TransferIcon, Trash, openPopup, showConfirm, type TabItem } from '../../design'
 import joinStreamIcon from '../../assets/voice/join-stream.png'
 import streamIcon from '../../assets/voice/stream-small.png'
 import endStreamIcon from '../../assets/voice/end-stream.png'
@@ -14,6 +14,7 @@ import { knownUserColor } from '../session/profileStore'
 import { isMemberRole, memberActions, roleLabel } from '@explorer-core/features/communities/roles'
 import { useSession } from '../session/SessionContext'
 import { openCommunityEditModal } from './CommunityCreateModal'
+import { RequestRowActions } from './RequestRowActions'
 import { openPassport } from '../profile/Passport'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { confirmUnblock } from '../friends/friendDialogs'
@@ -25,11 +26,14 @@ import type {
   CommunityEvent,
   CommunityMember,
   CommunityMemberAction,
+  CommunityMemberSection,
+  CommunityMemberSectionMessage,
+  CommunityRequestMember,
   CommunityPhoto,
   CommunityPlace,
   CommunityPost
 } from '@explorer-core/engine/protocol'
-import { inCommunityStream, streamAct, streamLive, streamPending } from '../voiceChat/callGate'
+import { inCommunityStream, startCallWith, streamAct, streamLive, streamPending } from '../voiceChat/callGate'
 import styles from './CommunityModal.module.css'
 import { siteUrl } from '@hud-host'
 
@@ -167,25 +171,29 @@ function FriendButton({ relationship, onAction }: { relationship: Relationship; 
   return null
 }
 
-function MemberRow({
+export function MemberRow({
   member,
   self,
-  relationship,
+  relationship = 'none',
   busy,
   menuOpen,
+  actions,
   onView,
-  onFriend,
+  onFriend = () => undefined,
   onMenu
 }: {
   member: CommunityMember
   /** The signed-in user's own row, or the user is not known yet: no friendship button and no menu. */
   self: boolean
-  relationship: Relationship
+  relationship?: Relationship
   /** An action on this member is running. */
   busy: boolean
   menuOpen: boolean
+  /** The row's own buttons (a request's ACCEPT and REJECT, an invite's CANCEL, a ban's UNBAN),
+   *  shown instead of the friendship button. */
+  actions?: React.ReactNode
   onView: () => void
-  onFriend: (action: FriendAction) => void
+  onFriend?: (action: FriendAction) => void
   onMenu: (anchor: HTMLElement) => void
 }): React.JSX.Element {
   const label = roleLabel(member.role)
@@ -203,7 +211,7 @@ function MemberRow({
           {label && <span className={styles.memberRole}>{label}</span>}
         </span>
       </button>
-      {!self && <FriendButton relationship={relationship} onAction={onFriend} />}
+      {actions != null ? <span className={styles.rowActions}>{actions}</span> : !self && <FriendButton relationship={relationship} onAction={onFriend} />}
       {!self && (
         <ControlButton
           shape="circle"
@@ -222,6 +230,11 @@ function MemberRow({
       )}
     </div>
   )
+}
+
+function MemberTabs({ tabs, value, requests, onChange }: { tabs: MemberTab[]; value: MemberTab; requests: number; onChange: (tab: MemberTab) => void }): React.JSX.Element {
+  const items: TabItem<MemberTab>[] = tabs.map((t) => ({ id: t, label: SECTION_LABEL[t], ...(t === 'requests' && requests > 0 ? { badge: requests } : {}) }))
+  return <Tabs variant="subtab" className={styles.memberTabs} items={items} value={value} onChange={onChange} aria-label="Member sections" />
 }
 
 function PlaceCard({ place, onDelete, deleting = false }: { place: CommunityPlace; onDelete?: () => void; deleting?: boolean }): React.JSX.Element {
@@ -294,6 +307,30 @@ const MEMBER_ACTION_ICON: Record<CommunityMemberAction, React.ReactNode> = {
 }
 const TRANSFER_NEEDS_NAME = 'Community ownership can only be transferred to users who own a NAME.'
 
+// The Members tab's sections for owners and moderators, Join Requests for private communities
+// only, each with its empty text
+type MemberTab = 'members' | CommunityMemberSection
+const SECTION_LABEL: Record<MemberTab, string> = { members: 'MEMBERS', banned: 'BANNED', requests: 'JOIN REQUESTS', invites: 'INVITED' }
+const SECTION_EMPTY: Record<CommunityMemberSection, { title: string; body?: string }> = {
+  banned: { title: 'No Banned Accounts', body: "Banned accounts won't be able to find your Community." },
+  requests: { title: 'No Requests' },
+  invites: { title: 'No Invites' }
+}
+export const SECTION_LOAD_ERROR = 'There was an error loading this list. Please try again.'
+
+// one object, so a card without sections keeps the same props between renders
+const NO_SECTIONS: Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>> = {}
+
+/** The question before rejecting an invite, on the card and on a browse card. */
+export function confirmRejectInvite(community: Community): Promise<boolean> {
+  return showConfirm({
+    title: `Are you sure you want to delete your invitation to the [${community.name}] Community?`,
+    body: community.thumbnail != null && community.thumbnail !== '' ? <img className={styles.confirmThumb} src={community.thumbnail} alt="" /> : undefined,
+    confirmLabel: 'YES',
+    cancelLabel: 'NO'
+  })
+}
+
 export function CommunityModal({
   community,
   detail,
@@ -313,6 +350,12 @@ export function CommunityModal({
   onEdit,
   onDelete,
   onRemovePlace,
+  onAcceptInvite,
+  onRejectInvite,
+  sections = NO_SECTIONS,
+  onLoadSection,
+  onManageRequest,
+  onUnban,
   onClose
 }: {
   community: Community
@@ -346,6 +389,16 @@ export function CommunityModal({
   onDelete?: (id: string) => void
   /** Unlink a place the user owns (owners and moderators; asked first). */
   onRemovePlace?: (id: string, placeId: string) => void
+  /** Accept or reject the user's pending invite (a reject is asked first). */
+  onAcceptInvite?: (id: string, inviteId: string) => void
+  onRejectInvite?: (id: string, inviteId: string) => void
+  /** The Members tab's other sections, for owners and moderators, as last read. */
+  sections?: Partial<Record<CommunityMemberSection, CommunityMemberSectionMessage>>
+  /** Read one of those sections (on opening it, and Join Requests on opening a private card). */
+  onLoadSection?: (section: CommunityMemberSection) => void
+  /** Answer a member's join request, or cancel an invite sent to them. */
+  onManageRequest?: (member: CommunityRequestMember, intention: 'accepted' | 'rejected' | 'cancelled') => void
+  onUnban?: (member: CommunityRequestMember) => void
   onClose: () => void
 }): React.JSX.Element {
   const [tab, setTab] = useState<Tab>('announcements')
@@ -360,7 +413,7 @@ export function CommunityModal({
   useEffect(() => {
     setRemoving(new Set())
     setActing(new Set())
-  }, [detail])
+  }, [detail, sections])
   useEffect(() => {
     if (error == null) return
     setRemoving(new Set())
@@ -369,6 +422,34 @@ export function CommunityModal({
   const [menuFor, setMenuFor] = useState<string | null>(null)
   const member = isMemberRole(community.role)
   const isPrivate = community.privacy === 'private'
+  // a pending invite replaces the join, chat and edit buttons
+  const inviteId = !member ? community.pendingInviteId : undefined
+  const [memberTab, setMemberTab] = useState<MemberTab>('members')
+  const manager = community.role === 'owner' || community.role === 'moderator'
+  const memberTabs: MemberTab[] = manager ? ['members', 'banned', ...(isPrivate ? (['requests'] as const) : []), 'invites'] : ['members']
+  const shownTab: MemberTab = memberTabs.includes(memberTab) ? memberTab : 'members'
+  const requestsCount = sections.requests?.total ?? 0
+  // the Join Requests counter is read when a private card opens for its owner or moderator
+  const wantsRequestsCount = manager && isPrivate
+  useEffect(() => {
+    if (wantsRequestsCount) onLoadSection?.('requests')
+  }, [wantsRequestsCount, community.id]) // eslint-disable-line react-hooks/exhaustive-deps
+  const openMemberTab = (tab: MemberTab): void => {
+    setMemberTab(tab)
+    if (tab !== 'members') onLoadSection?.(tab)
+  }
+  const runRowAction = (row: CommunityRequestMember, run: () => void): void => {
+    setActing((prev) => new Set(prev).add(row.address))
+    run()
+  }
+  const rowActions = (section: CommunityMemberSection, row: CommunityRequestMember): React.ReactNode => (
+    <RequestRowActions
+      section={section}
+      busy={acting.has(row.address)}
+      onAnswer={(intention) => runRowAction(row, () => onManageRequest?.(row, intention))}
+      onUnban={() => runRowAction(row, () => onUnban?.(row))}
+    />
+  )
   const showCover = community.thumbnail != null && !coverFailed
   const loading = detail == null
 
@@ -483,17 +564,25 @@ export function CommunityModal({
             ) : stream != null && stream.canStart ? (
               <Button size="sm" variant="secondary" disabled={stream.pending} onClick={stream.onStart}><MaskIcon src={streamIcon} size={14} /> Start stream</Button>
             ) : null}
+            {inviteId != null && (
+              <>
+                <Button size="sm" onClick={() => onAcceptInvite?.(community.id, inviteId)}>ACCEPT INVITE</Button>
+                <Button size="sm" variant="secondary" onClick={() => void confirmRejectInvite(community).then((yes) => yes && onRejectInvite?.(community.id, inviteId))}>
+                  REJECT INVITE
+                </Button>
+              </>
+            )}
             {(community.role === 'owner' || community.role === 'moderator') && onEdit != null && (
               <button type="button" className={styles.iconBtn} aria-label="Edit Community" onClick={onEdit}><Pencil size={16} /></button>
             )}
             {member && (
               <button type="button" className={styles.iconBtn} aria-label="Open chat" onClick={onOpenChat}><ChatIcon /></button>
             )}
-            {member ? (
+            {inviteId != null ? null : member ? (
               <Button size="sm" variant="ghost" className={styles.joined} disabled>✓ Joined</Button>
             ) : isPrivate && community.pendingRequestId != null ? (
               <Button size="sm" variant="ghost" aria-label="Cancel join request" onClick={() => onCancelRequest(community.id, community.pendingRequestId!)}>
-                Requested
+                <SwapLabel idle="Request Sent" hover="Cancel Request" />
               </Button>
             ) : isPrivate ? (
               <Button size="sm" onClick={() => onRequestToJoin(community.id)}>Request to Join</Button>
@@ -529,8 +618,52 @@ export function CommunityModal({
             <div className={styles.empty}>Loading…</div>
           ) : tab === 'announcements' ? (
             detail.posts.length > 0 ? detail.posts.map((p) => <PostRow key={p.id} post={p} />) : <div className={styles.empty}>No announcements yet.</div>
+          ) : tab === 'members' && memberTabs.length > 1 && shownTab !== 'members' ? (
+            <>
+              <MemberTabs tabs={memberTabs} value={shownTab} requests={requestsCount} onChange={openMemberTab} />
+              {(() => {
+                const read = sections[shownTab]
+                if (read == null) return <div className={styles.empty}>Loading…</div>
+                // a list that could not be read says so, rather than claiming there is nothing in it
+                if (read.failed === true) {
+                  return (
+                    <EmptyState
+                      variant="inline"
+                      tone="error"
+                      title={SECTION_LOAD_ERROR}
+                      actions={[{ label: 'RETRY', variant: 'outline', onClick: () => onLoadSection?.(shownTab) }]}
+                    />
+                  )
+                }
+                if (read.members.length === 0) {
+                  const empty = SECTION_EMPTY[shownTab]
+                  return <EmptyState variant="inline" title={empty.title} subtitle={empty.body} />
+                }
+                return (
+                  <div className={`${styles.memberGrid} ${styles.sectionGrid}`}>
+                    {read.members.map((m) => (
+                      <MemberRow
+                        key={m.address}
+                        member={m}
+                        self={noControls(m.address)}
+                        busy={acting.has(m.address)}
+                        menuOpen={menuFor === m.address}
+                        actions={rowActions(shownTab, m)}
+                        onView={() => onViewProfile(m.address)}
+                        onMenu={(anchor) => {
+                          setMenuFor(m.address)
+                          onMemberMenu(m, anchor, [], () => setMenuFor(null))
+                        }}
+                      />
+                    ))}
+                  </div>
+                )
+              })()}
+            </>
           ) : tab === 'members' ? (
-            detail.members.length > 0 ? (
+            <>
+            {memberTabs.length > 1 && <MemberTabs tabs={memberTabs} value={shownTab} requests={requestsCount} onChange={openMemberTab} />}
+            {detail.members.length > 0 ? (
               <div className={styles.memberGrid}>
                 {detail.members.map((m) => (
                   <MemberRow
@@ -546,7 +679,8 @@ export function CommunityModal({
                   />
                 ))}
               </div>
-            ) : <div className={styles.empty}>No members to show.</div>
+            ) : <div className={styles.empty}>No members to show.</div>}
+            </>
           ) : tab === 'places' ? (
             detail.places.length > 0 || (canModify && onEdit != null) ? (
               <div className={styles.placeGrid}>
@@ -598,15 +732,21 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
 
   const { fetch } = communities
   // My Communities and the browse grid only hold what the Communities page read; a card opened
-  // from elsewhere (the chat's "View Community") has its community fetched by id
+  // from elsewhere (the chat's "View Community") has its community fetched by id. Every opening
+  // reads the community again, with the user's pending invite and request: one listed earlier can
+  // have changed since (an invite arrived, a request was accepted).
   const community =
     communities.list.find((c) => c.id === communityId) ??
     communities.browse.items.find((c) => c.id === communityId) ??
     communities.cards[communityId]
-  const listed = community != null
   useEffect(() => {
-    if (!listed) fetch(communityId)
-  }, [listed, fetch, communityId])
+    fetch(communityId)
+  }, [fetch, communityId])
+  const { cardOpen } = communities
+  useEffect(() => {
+    cardOpen(communityId)
+    return () => cardOpen(null)
+  }, [cardOpen, communityId])
   useEffect(() => {
     loadDetail(communityId)
   }, [loadDetail, communityId])
@@ -673,6 +813,11 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
             onClose()
             chat.openConversation(address)
           },
+          // a call opens the DM too, so it closes the card first as well
+          onCall: (address) => {
+            onClose()
+            startCallWith(session, address)
+          },
           onClose: closed
         })
       }}
@@ -680,6 +825,12 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
       onEdit={() => openCommunityEditModal(community)}
       onDelete={communities.remove}
       onRemovePlace={communities.removePlace}
+      onAcceptInvite={(id, inviteId) => communities.manageRequest(id, inviteId, 'accepted')}
+      onRejectInvite={(id, inviteId) => communities.manageRequest(id, inviteId, 'rejected')}
+      sections={communities.memberSections}
+      onLoadSection={(section) => communities.loadMemberSection(communityId, section)}
+      onManageRequest={(m, intention) => communities.manageRequest(communityId, m.requestId, intention, m.address)}
+      onUnban={(m) => communities.unban(communityId, m.address)}
       onOpenChat={() => {
         onClose()
         chat.openCommunity({ id: community.id, name: community.name, thumbnail: community.thumbnail ?? '', role: community.role })

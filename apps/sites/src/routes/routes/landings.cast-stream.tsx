@@ -14,7 +14,7 @@ const DEFAULT_ASSIGNMENT: PageDefaults = {
 
 const DEFAULT_TOKEN = "demo-stream-key";
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const url = new URL(request.url);
   const step = url.searchParams.get("step")?.trim() || null;
   const tokenParam = url.searchParams.get("token");
@@ -23,7 +23,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const { sid, assignment, wrap } = await pageLoader(
     request,
-    
+    context,
     DEFAULT_ASSIGNMENT,
   );
 

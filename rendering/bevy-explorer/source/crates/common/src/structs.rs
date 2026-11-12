@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -1008,8 +1009,46 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// one cascade, hardware 2x2 filtering
     Low,
+    /// four soft cascades
     High,
+}
+
+/// The far bounds of High's first three cascades, as fractions of the shadow distance.
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// How far from the player a spot light can cast shadows, in metres.
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1932,6 +1971,20 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sun_cascades_split_the_shadow_distance() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
 
     #[test]
     fn a_config_saved_before_the_voice_chat_volume_keeps_its_audio() {

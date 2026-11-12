@@ -24,7 +24,8 @@
   animation: toastIn var(--dur-fast) ease-out;
 }
 .toast:hover {
-  background: var(--fill-1);
+  /* a tint over the panel, so the toast stays opaque over the world */
+  background: linear-gradient(var(--fill-3), var(--fill-3)), var(--panel);
 }
 .toast:focus-visible {
   outline: 2px solid var(--accent);
