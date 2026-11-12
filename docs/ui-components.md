@@ -16,7 +16,7 @@ NavBar integration follow-ups: consolidate the legacy notification inbox cache w
 
 The [local review manifest](../library/ui/figma/review/src/generated/components/manifest.ts) owns preview names, node identities, variants and `needsManual` flags. It is not an application import surface. Do not duplicate its records here or infer visual parity from a passing build.
 
-To make another component available, follow the [verified port workflow](../library/ui/figma/MAINTENANCE.md#refresh-workflow), then confirm its local implementation, public export, mapping and accepted limits. Keep unresolved blockers in the authoritative component records.
+To make another component available, write it by hand from the component template in [UI standards](ui-standards.md), then confirm its public export and mapping. Generated review previews are not a source for public components. A hand-written component records its accepted limits and unresolved blockers in its row of the table above; the resolver repeats limits (`resolved.limits`) only for registry entries.
 
 ## Pending work
 
@@ -30,4 +30,4 @@ Import shared public contracts from `@dcl/one-ui`. Do not import components from
 
 ## Recording adoption
 
-The author of each verified port or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and the port verification record.
+The author of each new public component or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and its tests, and against the applicable port verification record.
