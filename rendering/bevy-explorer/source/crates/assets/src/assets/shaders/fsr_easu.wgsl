@@ -87,7 +87,7 @@ fn FsrEasuCon(
     return con;
 }
 
-// Input callbacks (FSRCommon.hlsl): gather4 of one channel at 'p'.
+// Input callbacks: gather4 of one channel at 'p'.
 fn FsrEasuRF(p: vec2<f32>) -> vec4<f32> {
     return textureGather(0, source, source_sampler, p);
 }
