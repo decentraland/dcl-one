@@ -3271,7 +3271,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return null
     })()
   )
-  const validatingRealm = useRef(false)
+  // The sign-out count the realm check in flight started under (null = none): a sign-in after a
+  // sign-out starts its own check rather than wait for one whose answer is dropped.
+  const validatingRealm = useRef<number | null>(null)
   useEffect(() => {
     if (!submitted || destinationPicked || urlDestination.current == null) return
     const dest = urlDestination.current
@@ -3290,9 +3292,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       return
     }
     if (dest != null && dest.kind === 'world') {
-      if (validatingRealm.current) return
-      validatingRealm.current = true
+      if (validatingRealm.current === signOuts.current) return
       const signOut = signOuts.current
+      validatingRealm.current = signOut
       // Launching against an unreachable realm strands the engine in a cryptic login failure, so
       // block up front: 404 → not found, no/failed answer (incl. timeout) → unreachable.
       checkRealm(dest.realm)
@@ -3309,7 +3311,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           }
         })
         .finally(() => {
-          validatingRealm.current = false
+          if (validatingRealm.current === signOut) validatingRealm.current = null
         })
       return
     }

@@ -579,22 +579,27 @@ describe('/hud_logout', () => {
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
   })
 
-  it("on a link's page, a realm check that answers after /hud_logout is dropped", async () => {
+  it("on a link's page, a realm check that answers after /hud_logout is dropped, and the next sign-in checks again", async () => {
     const leave = onPage('/?realm=http://127.0.0.1:9999')
-    let realmAnswers!: (response: Response) => void
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => (realmAnswers = resolve)))
+    const answers: ((response: Response) => void)[] = []
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise<Response>((resolve) => answers.push(resolve)))
     try {
       const driver = new LaunchingDriver()
       const h = await ready(driver)
       const ended = expect(login(ENCODED)).rejects.toThrow('signed out')
-      await waitFor(() => expect(fetchSpy).toHaveBeenCalled())
+      await waitFor(() => expect(answers).toHaveLength(1))
       await act(async () => expect(await logout()).toBe('signed out'))
       await ended
-      await act(async () => realmAnswers(new Response('', { status: 404 })))
-      // no "World not found" over the start page, and nothing launched or signed in
+      // signed in again while the first check is still out: it starts its own
+      const second = login(ENCODED)
+      await waitFor(() => expect(answers).toHaveLength(2))
+      await act(async () => answers[0](new Response('', { status: 404 })))
+      // no "World not found" from the dropped check, and nothing launched or signed in for it
       expect(h.session().fatalError).toBeNull()
       expect(driver.identityLogins).toEqual([])
-      expect(h.session().phase).toBe('login')
+      await act(async () => answers[1](new Response('{}', { status: 200 })))
+      await expect(second).resolves.toMatchObject({ address: ADDRESS.toLowerCase() })
+      expect(driver.identityLogins).toHaveLength(1)
     } finally {
       fetchSpy.mockRestore()
       leave()
