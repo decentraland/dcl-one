@@ -26,7 +26,7 @@ pub(super) fn register(app: &mut App) {
                 ("Thresholds (MiB)", "thresholds"),
                 ("Refusing new loads", "refusal.refusing"),
                 ("Scenes in range not spawned", "refusal.refusedScenes"),
-                ("Players' avatars not loaded", "refusal.refusedAvatars"),
+                ("Avatars not loaded", "refusal.refusedAvatars"),
                 ("Downloads held from tier", "refusal.heldFrom"),
                 ("GPU memory pools", "gpu"),
             ],

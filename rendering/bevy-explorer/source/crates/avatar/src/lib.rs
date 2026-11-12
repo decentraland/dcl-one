@@ -552,8 +552,8 @@ pub struct AvatarRenderDefinition {
 #[derive(Component)]
 pub struct RetryRenderAvatar;
 
-/// How many other players' avatars were not started this frame because engine memory is full
-/// ([`LoadRefusal`]); zero while loads are admitted.
+/// How many avatars (other players' and scene-placed ones) were not started this frame because
+/// engine memory is full ([`LoadRefusal`]); zero while loads are admitted.
 #[derive(Resource, Default)]
 pub struct RefusedAvatars(pub usize);
 
@@ -637,11 +637,12 @@ fn update_render_avatar(
         is_foreign_player,
     ) in &query
     {
-        // while engine memory is full no other player's avatar starts: nothing of it is
-        // resolved or downloaded, and it is looked at again every frame until the refusal
-        // ends. One that has started (its downloads are filed) carries on, as a spawned scene
-        // does; the player's own avatar, scene avatars and previews are not refused.
-        if refusing && is_foreign_player && maybe_downloads.is_none() {
+        // while engine memory is full no other player's avatar and no scene-placed avatar
+        // starts: nothing of it is resolved or downloaded, and it is looked at again every
+        // frame until the refusal ends. One that has started (its downloads are filed) carries
+        // on, as a spawned scene does; the player's own avatar and previews are not refused.
+        let refusable = is_foreign_player || maybe_scene_ent.is_some();
+        if refusing && refusable && maybe_downloads.is_none() {
             refused += 1;
             commands.entity(entity).try_insert(RetryRenderAvatar);
             continue;

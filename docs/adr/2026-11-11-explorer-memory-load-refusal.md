@@ -21,18 +21,19 @@ download, however close the engine was to running out. On the web that ends in a
 - **Scenes.** While refusing, `process_scene_lifecycle` spawns no new world scene. The scene the
   player stands in, portables and system scenes are still admitted. Scenes already spawned are
   kept and keep loading; how many were held back is published as `RefusedScenes`.
-- **Avatars.** While refusing, no other player's avatar starts loading (`update_render_avatar`):
-  its wearables are neither resolved nor downloaded and nothing is shown for it; how many were
-  held back is published as `RefusedAvatars`. An avatar that had started is kept and keeps
-  loading, an outfit change included, as a spawned scene is. The player's own avatar, the
-  avatars a live scene places and avatar previews are still admitted. Avatar levels of detail
-  will be implemented, so that a refused avatar is shown by a cheap stand-in; until then it is
-  not shown.
+- **Avatars.** While refusing, no other player's avatar and no avatar a scene places starts
+  loading (`update_render_avatar`): its wearables are neither resolved nor downloaded and
+  nothing is shown for it; how many were held back is published as `RefusedAvatars`. An avatar
+  that had started is kept and keeps loading, an outfit change included, as a spawned scene is.
+  The player's own avatar and avatar previews are still admitted. Avatar levels of detail will
+  be implemented, so that a refused avatar is shown by a cheap stand-in; until then it is not
+  shown.
 - **Downloads.** While refusing, the request slots hold every request ranked in the `Other` tier
   or later: requests no live scene or avatar owns (imposter tiles, NFT images, URL fonts) and
   those of departed scenes. A held request keeps its place and is granted once the refusal ends.
   The player's scenes, the avatars already admitted and the other live scenes keep downloading,
-  so a scene already spawned finishes loading rather than stalling half-built.
+  so a scene already spawned finishes loading rather than stalling half-built, apart from the
+  avatars it places after the refusal began.
 - **Entity resolution is never held.** Requests that resolve pointers to entities
   (`entities/active`) stay outside the request slots and outside the refusal: the player's own
   scene and every admitted avatar need them, and a refused avatar asks for none.
@@ -56,10 +57,10 @@ download, however close the engine was to running out. On the web that ends in a
 
 ## Consequences
 
-- A session that reaches full memory stops growing from new scenes, other players' new avatars
-  and background downloads, and resumes once memory falls below the warning threshold.
-- A player who arrives while memory is full is not shown until the refusal ends. Avatar levels
-  of detail will replace that gap with a stand-in.
+- A session that reaches full memory stops growing from new scenes, new avatars and background
+  downloads, and resumes once memory falls below the warning threshold.
+- A player who arrives, or an avatar a scene places, while memory is full is not shown until the
+  refusal ends. Avatar levels of detail will replace that gap with a stand-in.
 - On native the reading counts the engine process only, not the scene runtime process or other
   applications, so refusal starts late on a machine whose memory other programs already use.
 - The refusal releases nothing by itself; freeing memory under pressure is separate work.
