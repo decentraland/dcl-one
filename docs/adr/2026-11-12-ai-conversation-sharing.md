@@ -144,10 +144,12 @@ A record is rejected with a fixed `reason` code, never a parser message
 (which can quote the value): `malformed`, `missing_field`, `too_long`,
 `too_large`, `address_mismatch`, `consent_version`, `secret_detected`. The
 node checks shape and size, and refuses (`secret_detected`) any record
-whose text holds one of the two highest-risk secrets: a `0x`-prefixed
-64-hex-digit private key, or a run of twelve or more BIP-39 English words.
-Every other secret and personal detail is removed by the client alone,
-before upload.
+whose text holds one of the two highest-risk secrets: a 64-hex-digit
+private key, with or without `0x` (wallets export it without), or a run of
+twelve or more BIP-39 English words, however separated (spaces, commas,
+quotes and brackets of a JSON array, list numbering). Every other secret and
+personal detail is removed by the client alone, before upload; a hex SHA-256
+has a private key's shape and is refused too.
 
 ### Writes and erasure
 
