@@ -2,6 +2,7 @@ mod batch_sizes;
 pub mod content_hash;
 mod debug_panel;
 mod download;
+mod metadata_cache;
 use download::{InFlightDownloads, RequestMetrics};
 mod priority_gate;
 pub use priority_gate::{PriorityGate, Ticket};
@@ -14,6 +15,7 @@ pub mod web_cache;
 
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     io::ErrorKind,
     marker::PhantomData,
     path::{Path, PathBuf},
@@ -62,6 +64,7 @@ use bevy::asset::io::wasm::HttpWasmAssetReader;
 
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    memory_reclaim::{AddMemoryReclaimer, ReclaimDomains, ReclaimSpec},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
@@ -605,6 +608,10 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
+        app.add_memory_reclaimer(
+            ReclaimSpec::new("entity_metadata", 25, ReclaimDomains::Ram),
+            metadata_cache::reclaim_metadata,
+        );
         app.insert_resource(RealmInitialLocation::Base);
 
         #[cfg(feature = "hot_reload")]
@@ -933,7 +940,8 @@ pub struct IpfsEntity {
 pub struct IpfsContext {
     about_url: String,
     base_url: String,
-    entities: HashMap<String, IpfsEntity>,
+    entities: BTreeMap<String, metadata_cache::RegisteredEntity>,
+    metadata_retention: metadata_cache::MetadataRetention,
     about: Option<ServerAbout>,
     modifiers: HashMap<String, IpfsModifier>,
     failed_remotes: HashMap<String, Instant>,
@@ -1372,7 +1380,7 @@ impl IpfsIo {
             write.modifiers.insert(hash.clone(), modifier);
         }
 
-        write.entities.insert(hash, entity);
+        write.register_entity(hash, entity);
     }
 
     /// Merge additional path→hash entries into an existing collection (creating it if absent),
@@ -1383,7 +1391,7 @@ impl IpfsIo {
         match write.entities.get_mut(hash) {
             Some(entity) => entity.collection.0.extend(extra.0),
             None => {
-                write.entities.insert(
+                write.register_entity(
                     hash.to_owned(),
                     IpfsEntity {
                         collection: extra,
@@ -1527,12 +1535,8 @@ impl IpfsIo {
         ipfs_path.hash(&*self.context.read().await)
     }
 
-    pub async fn entity_definition(&self, hash: &str) -> Option<(IpfsEntity, String)> {
-        let context = self.context.read().await;
-        Some((
-            context.entities.get(hash)?.clone(),
-            context.contents_base_url(hash).unwrap_or_default(),
-        ))
+    pub async fn entity_definition(self: &Arc<Self>, hash: &str) -> Option<(IpfsEntity, String)> {
+        metadata_cache::entity_definition(self, hash).await
     }
 
     pub fn base_urls(&self) -> HashMap<String, String> {
@@ -1656,14 +1660,8 @@ impl IpfsIo {
     }
 
     /// The stored entity metadata (the scene's scene.json) for a scene, if any.
-    pub async fn scene_metadata(&self, scene_hash: &str) -> Option<String> {
-        self.context
-            .read()
-            .await
-            .entities
-            .get(scene_hash)?
-            .metadata
-            .clone()
+    pub async fn scene_metadata(self: &Arc<Self>, scene_hash: &str) -> Option<String> {
+        self.entity_definition(scene_hash).await?.0.metadata
     }
 
     /// The sorted file paths in a scene's content map (the collection keys), or empty if the scene
@@ -1693,11 +1691,9 @@ impl IpfsIo {
         }
         // the scene's base parcel pointer, from its stored scene.json
         let pointer = {
-            let read = self.context.read().await;
-            read.entities
-                .get(scene_hash)
-                .and_then(|e| e.metadata.as_deref())
-                .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
+            self.scene_metadata(scene_hash)
+                .await
+                .and_then(|m| serde_json::from_str::<serde_json::Value>(&m).ok())
                 .and_then(|j| {
                     j.get("scene")
                         .and_then(|s| s.get("base"))

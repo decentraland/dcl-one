@@ -297,7 +297,9 @@ Kept from explorer-automation's guides:
 `/memory_reclaim` simulation modes, reset and budget validation.
 A separate scenario measures the active emote baseline, observes wave
 playing with cache-pin growth, waits for the observed playback to finish or yield
-its slot and idle pins to leave, then verifies replay with renewed pin growth.
+its slot and idle cache pins to leave, then verifies replay with renewed pin growth.
+The graph continues owning the stopped emote after its cache pin is released;
+managed asset-loader tests verify replay does not fetch or parse it again.
 Both full URNs and short emote names are accepted. Active scene movement animations
 may keep the baseline nonzero. Per-asset ownership is checked by the native library tests.
 Simulation is preview-only; the
@@ -310,7 +312,10 @@ scenario. The registered command's preview gate, numeric validation and atomic
 settings changes run as root-crate unit tests in the Explorer CI Test Suite
 (`cargo test --all --profile ci-test --locked -- --test-threads=1`). Cache release
 and scene-emote recovery also run there as native library regressions, including
-real Bevy asset tracking and the collectible manager.
+real Bevy asset tracking and the collectible manager. Those regressions cover
+graph reuse, local movement-scene ownership beyond cached graph nodes, and scene
+despawn. Metadata tests cover both collectible types, full/compact profiles, raw
+entity JSON and the editor catalogue, including pressure eviction and reload.
 
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.

@@ -1307,6 +1307,7 @@ fn resolve_remote_anim(
     let transition_seconds = anim.transition_seconds.unwrap_or(0.2);
 
     Some(SceneDrivenAnimationRequest {
+        scene: None,
         src: String::new(),
         urn,
         scene_hash,

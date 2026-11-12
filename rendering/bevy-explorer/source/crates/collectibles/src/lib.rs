@@ -4,6 +4,8 @@ mod cache;
 mod dynamic_lifecycle_tests;
 pub mod emotes;
 pub mod ext;
+#[cfg(test)]
+mod metadata_lifecycle_tests;
 pub mod urn;
 pub mod wearables;
 
@@ -316,22 +318,16 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
         urn: impl AsRef<CollectibleUrn<T>>,
     ) -> Result<&CollectibleData<T>, CollectibleError> {
         let urn = urn.as_ref();
-        if T::is_dynamic(urn)
-            || matches!(
-                self.collectibles.pointers.get(urn),
-                Some(PointerResult::Builtin(_))
-            )
-        {
-            let handle = self.representation_handle(urn)?;
-            return self
-                .assets
-                .get(handle.id())
-                .map(|asset| &asset.data)
-                .ok_or(CollectibleError::Loading);
-        }
-        match self.collectibles.pointers.get(urn) {
-            Some(PointerResult::Missing) => Err(CollectibleError::Missing),
-            Some(PointerResult::Hash(hash)) => {
+        match (T::is_dynamic(urn), self.collectibles.pointers.get(urn)) {
+            (true, _) | (_, Some(PointerResult::Builtin(_))) => {
+                let handle = self.representation_handle(urn)?;
+                self.assets
+                    .get(handle.id())
+                    .map(|asset| &asset.data)
+                    .ok_or(CollectibleError::Loading)
+            }
+            (_, Some(PointerResult::Missing)) => Err(CollectibleError::Missing),
+            (_, Some(PointerResult::Hash(hash))) => {
                 let hash = hash.clone();
                 let handle =
                     self.collectibles
@@ -354,8 +350,7 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
                     }
                 })
             }
-            Some(PointerResult::Builtin(_)) => unreachable!(),
-            None => {
+            (_, None) => {
                 self.collectibles.pointer_request.insert(urn.clone());
                 Err(CollectibleError::Loading)
             }

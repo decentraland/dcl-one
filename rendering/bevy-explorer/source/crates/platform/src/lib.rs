@@ -42,3 +42,21 @@ pub struct DmHistoryReaction {
 
 pub mod http;
 pub use http::{fetch, FetchError, FetchedResponse, TracedJsonResponse};
+
+#[cfg(test)]
+mod lock_tests {
+    use super::AsyncRwLock;
+
+    #[test]
+    fn try_lock_yields_on_contention() {
+        let lock = AsyncRwLock::new(0);
+        let read = lock.try_read().unwrap();
+        assert!(lock.try_write().is_err());
+        drop(read);
+        let write = lock.try_write().unwrap();
+        assert!(lock.try_read().is_err());
+        assert!(lock.try_write().is_err());
+        drop(write);
+        assert!(lock.try_write().is_ok());
+    }
+}

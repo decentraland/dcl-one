@@ -390,6 +390,32 @@ impl PlaybackFixture {
             });
     }
 
+    fn request_movement(&mut self, scene: Option<Entity>, content: &str) {
+        self.app
+            .world_mut()
+            .entity_mut(self.avatar)
+            .insert(SceneDrivenAnim {
+                active: Some(SceneDrivenAnimationRequest {
+                    scene,
+                    src: format!("{content}.glb"),
+                    urn: scene_emote(content).to_string(),
+                    scene_hash: SCENE.to_owned(),
+                    content_hash: content.to_owned(),
+                    speed: 1.0,
+                    r#loop: true,
+                    ..Default::default()
+                }),
+            });
+    }
+
+    fn stop_nodes(&mut self) {
+        self.app
+            .world_mut()
+            .get_mut::<AnimationPlayer>(self.avatar)
+            .unwrap()
+            .stop_all();
+    }
+
     fn pending(&self, content: &str) -> Weak<StrongHandle> {
         let server = self.app.world().resource::<AssetServer>();
         let Handle::Strong(handle) = server.get_handle::<Gltf>(path(content)).unwrap() else {
@@ -584,7 +610,7 @@ fn actual_playback_owns_full_and_masked_aggregates_after_pressure_releases_cache
 }
 
 #[test]
-fn stopped_cached_clip_releases_its_aggregate_and_replays_after_pressure_unloads_it() {
+fn stopped_graph_node_keeps_its_aggregate_and_replays_without_loading() {
     let mut fixture = PlaybackFixture::with_pressure();
     let mut gate = fixture.gate("wave");
     fixture.request("wave", 1, EmoteMask::FullBody);
@@ -633,13 +659,13 @@ fn stopped_cached_clip_releases_its_aggregate_and_replays_after_pressure_unloads
     fixture.expire_without_resolution();
     assert_eq!(
         fixture.aggregate_id("wave"),
-        None,
-        "a stopped cached node must not pin the aggregate"
+        Some(aggregate),
+        "a stopped graph node owns its aggregate until its node is reused"
     );
     assert_eq!(
         fixture.gltf_id("wave"),
-        None,
-        "a cached clip must not pin the managed GLTF"
+        Some(gltf),
+        "graph membership must keep the managed GLTF loaded"
     );
     assert_eq!(
         fixture
@@ -652,19 +678,16 @@ fn stopped_cached_clip_releases_its_aggregate_and_replays_after_pressure_unloads
         node
     );
 
-    let mut replay = fixture.gate("wave");
     fixture
         .app
         .world_mut()
         .resource_mut::<PausePlaybackResolution>()
         .0 = false;
     fixture.request("wave", 3, EmoteMask::FullBody);
-    fixture.wait_for_load(&mut replay);
-    replay.result.send(true).unwrap();
     fixture.wait_for_playback("wave", EmoteMask::FullBody);
-    assert_ne!(fixture.aggregate_id("wave").unwrap(), aggregate);
-    assert_ne!(fixture.gltf_id("wave").unwrap(), gltf);
-    assert_eq!(fixture.loads.lock().unwrap()["wave"], 2);
+    assert_eq!(fixture.aggregate_id("wave"), Some(aggregate));
+    assert_eq!(fixture.gltf_id("wave"), Some(gltf));
+    assert_eq!(fixture.loads.lock().unwrap()["wave"], 1);
     assert!(fixture
         .app
         .world()
@@ -674,12 +697,12 @@ fn stopped_cached_clip_releases_its_aggregate_and_replays_after_pressure_unloads
     fixture.expire_without_resolution();
     assert!(
         fixture.aggregate_id("wave").is_some(),
-        "replayed animation owns the rebuilt aggregate"
+        "replayed animation keeps the original aggregate"
     );
 }
 
 #[test]
-fn suspended_loop_releases_its_aggregate_after_fading_and_reloads_when_resumed() {
+fn suspended_loop_keeps_its_graph_aggregate_and_resumes_without_loading() {
     let mut fixture = PlaybackFixture::with_pressure();
     fixture
         .app
@@ -693,6 +716,7 @@ fn suspended_loop_releases_its_aggregate_after_fading_and_reloads_when_resumed()
     fixture.wait_for_playback("wave", EmoteMask::UpperBody);
     fixture.app.update();
     let aggregate = fixture.aggregate_id("wave").unwrap();
+    let gltf = fixture.gltf_id("wave").unwrap();
     let mut full = fixture.gate("dance");
     fixture.request("dance", 2, EmoteMask::FullBody);
     fixture.wait_for_load(&mut full);
@@ -710,28 +734,182 @@ fn suspended_loop_releases_its_aggregate_after_fading_and_reloads_when_resumed()
     assert_eq!(masked.request.as_ref().unwrap().urn, scene_emote("wave"));
     assert_eq!(
         fixture.aggregate_id("wave"),
-        None,
-        "suspended loop must not pin an inactive aggregate"
+        Some(aggregate),
+        "suspended loop remains a graph member"
     );
-    assert_eq!(fixture.gltf_id("wave"), None);
+    assert_eq!(fixture.gltf_id("wave"), Some(gltf));
 
-    let mut resumed = fixture.gate("wave");
     // Removing the full-body command leaves the suspended looping request intact.
     fixture
         .app
         .world_mut()
         .entity_mut(fixture.avatar)
         .remove::<EmoteCommand>();
-    fixture.wait_for_load(&mut resumed);
-    resumed.result.send(true).unwrap();
     fixture.wait_for_playback("wave", EmoteMask::UpperBody);
-    assert_ne!(fixture.aggregate_id("wave").unwrap(), aggregate);
-    assert_eq!(fixture.loads.lock().unwrap()["wave"], 2);
+    assert_eq!(fixture.aggregate_id("wave"), Some(aggregate));
+    assert_eq!(fixture.loads.lock().unwrap()["wave"], 1);
     fixture.expire_without_resolution();
     assert!(
         fixture.aggregate_id("wave").is_some(),
-        "resumed slot must retain the new aggregate"
+        "resumed slot keeps the original aggregate"
     );
+}
+
+#[test]
+fn movement_scene_keeps_rare_clips_after_graph_reuse_and_avatar_despawn() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    fixture
+        .app
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+    let scene = fixture.app.world_mut().spawn_empty().id();
+    let mut loaded = Vec::new();
+    for index in 0..MAX_CLIP_NODES + 2 {
+        let content = format!("step{index}");
+        let mut gate = fixture.gate(&content);
+        fixture.stop_nodes();
+        fixture.request_movement(Some(scene), &content);
+        fixture.wait_for_load(&mut gate);
+        gate.result.send(true).unwrap();
+        fixture.wait_for_playback(&content, EmoteMask::FullBody);
+        loaded.push((
+            content.clone(),
+            fixture.aggregate_id(&content).unwrap(),
+            fixture.gltf_id(&content).unwrap(),
+        ));
+    }
+    let (rare, rare_aggregate, rare_gltf) = &loaded[0];
+    assert!(
+        !fixture
+            .app
+            .world()
+            .get::<Clips>(fixture.avatar)
+            .unwrap()
+            .named
+            .contains_key(scene_emote(rare).as_str()),
+        "the rare clip must actually leave the graph before checking scene retention"
+    );
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id(rare), Some(*rare_aggregate));
+    assert_eq!(fixture.gltf_id(rare), Some(*rare_gltf));
+
+    fixture
+        .app
+        .world_mut()
+        .resource_mut::<PausePlaybackResolution>()
+        .0 = false;
+    fixture.stop_nodes();
+    fixture.request_movement(Some(scene), rare);
+    fixture.wait_for_playback(rare, EmoteMask::FullBody);
+    assert_eq!(fixture.aggregate_id(rare), Some(*rare_aggregate));
+    assert_eq!(fixture.loads.lock().unwrap()[rare], 1);
+
+    let other_scene = fixture.app.world_mut().spawn_empty().id();
+    let (shared, shared_aggregate, shared_gltf) = loaded.last().unwrap();
+    fixture.request_movement(Some(scene), shared);
+    fixture.wait_for_playback(shared, EmoteMask::FullBody);
+    // A controller switch must acquire ownership even when the clip does not change.
+    fixture.request_movement(Some(other_scene), shared);
+    fixture.app.update();
+    fixture.wait_for_playback(shared, EmoteMask::FullBody);
+    fixture.app.world_mut().despawn(fixture.avatar);
+    fixture.expire_without_resolution();
+    for (content, aggregate, gltf) in &loaded {
+        assert_eq!(fixture.aggregate_id(content), Some(*aggregate));
+        assert_eq!(fixture.gltf_id(content), Some(*gltf));
+    }
+
+    fixture.app.world_mut().despawn(scene);
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id(rare), None);
+    assert_eq!(fixture.gltf_id(rare), None);
+    assert_eq!(fixture.aggregate_id(shared), Some(*shared_aggregate));
+    assert_eq!(fixture.gltf_id(shared), Some(*shared_gltf));
+
+    fixture.app.world_mut().despawn(other_scene);
+    fixture.expire_without_resolution();
+    for (content, _, _) in &loaded {
+        assert_eq!(fixture.aggregate_id(content), None);
+        assert_eq!(fixture.gltf_id(content), None);
+    }
+}
+
+#[test]
+fn remote_movement_emotes_release_when_their_graph_nodes_are_reused() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    fixture
+        .app
+        .insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
+            Duration::from_millis(100),
+        ));
+    for index in 0..MAX_CLIP_NODES + 2 {
+        let content = format!("step{index}");
+        let mut gate = fixture.gate(&content);
+        fixture.stop_nodes();
+        fixture.request_movement(None, &content);
+        fixture.wait_for_load(&mut gate);
+        gate.result.send(true).unwrap();
+        fixture.wait_for_playback(&content, EmoteMask::FullBody);
+    }
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id("step0"), None);
+    assert_eq!(fixture.gltf_id("step0"), None);
+    let recent = format!("step{}", MAX_CLIP_NODES + 1);
+    let aggregate = fixture.aggregate_id(&recent).unwrap();
+    fixture.stop_nodes();
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id(&recent), Some(aggregate));
+    fixture.app.world_mut().despawn(fixture.avatar);
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id(&recent), None);
+    assert_eq!(fixture.gltf_id(&recent), None);
+}
+
+#[test]
+fn delayed_movement_resolution_belongs_to_the_current_scene() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    let old_scene = fixture.app.world_mut().spawn_empty().id();
+    let current_scene = fixture.app.world_mut().spawn_empty().id();
+    let mut gate = fixture.gate("stride");
+    fixture.request_movement(Some(old_scene), "stride");
+    fixture.wait_for_load(&mut gate);
+    // The content is shared, but only the scene controlling playback when it resolves owns it.
+    fixture.request_movement(Some(current_scene), "stride");
+    gate.result.send(true).unwrap();
+    fixture.wait_for_playback("stride", EmoteMask::FullBody);
+    let aggregate = fixture.aggregate_id("stride").unwrap();
+    fixture.app.world_mut().despawn(fixture.avatar);
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id("stride"), Some(aggregate));
+    assert_eq!(fixture.loads.lock().unwrap()["stride"], 1);
+
+    fixture.app.world_mut().despawn(current_scene);
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id("stride"), None);
+    assert_eq!(fixture.gltf_id("stride"), None);
+    assert!(fixture.app.world().get_entity(old_scene).is_ok());
+}
+
+#[test]
+fn despawned_movement_scene_cannot_acquire_a_late_resolved_emote() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    let scene = fixture.app.world_mut().spawn_empty().id();
+    let mut gate = fixture.gate("stride");
+    fixture.request_movement(Some(scene), "stride");
+    fixture.wait_for_load(&mut gate);
+    fixture.app.world_mut().despawn(scene);
+    let replacement = fixture.app.world_mut().spawn_empty().id();
+    gate.result.send(true).unwrap();
+    fixture.wait_for_playback("stride", EmoteMask::FullBody);
+    fixture.expire_without_resolution();
+    assert!(fixture.aggregate_id("stride").is_some());
+
+    fixture.app.world_mut().despawn(fixture.avatar);
+    fixture.expire_without_resolution();
+    assert_eq!(fixture.aggregate_id("stride"), None);
+    assert_eq!(fixture.gltf_id("stride"), None);
+    assert!(fixture.app.world().get_entity(replacement).is_ok());
 }
 
 #[test]

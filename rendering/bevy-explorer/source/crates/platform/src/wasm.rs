@@ -206,11 +206,11 @@ impl<T> AsyncRwLock<T> {
     }
 
     pub fn try_read(&self) -> Result<spin::RwLockReadGuard<'_, T>, NoError> {
-        Ok(self.0.read())
+        self.0.try_read().ok_or(NoError)
     }
 
     pub fn try_write(&self) -> Result<spin::RwLockWriteGuard<'_, T>, NoError> {
-        Ok(self.0.write())
+        self.0.try_write().ok_or(NoError)
     }
 }
 

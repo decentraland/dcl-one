@@ -2394,6 +2394,35 @@ mod tests {
     }
 
     #[test]
+    fn pressure_evicts_both_profile_dto_tiers_and_a_revisit_requests_them_again() {
+        use common::memory_reclaim::ReclaimTurn;
+        let now = web_time::Instant::now();
+        let full = Address::repeat_byte(0xd1);
+        let compact_address = Address::repeat_byte(0xd2);
+        let mut cache = ProfileCache::default();
+        let entry = cache.touch(full, ProfileTier::Full);
+        entry.apply(profile(1, "full DTO"), ProfileSource::Catalyst);
+        entry.last_access = Some(now - PROFILE_PRESSURE_GRACE - std::time::Duration::from_secs(1));
+        let entry = cache.touch(compact_address, ProfileTier::Compact);
+        entry.apply_compact(Some(compact("compact DTO")), now);
+        entry.last_access = Some(now - PROFILE_PRESSURE_GRACE - std::time::Duration::from_secs(1));
+
+        cache.reclaim(now, None, &mut ReclaimTurn::bounded(10, 64));
+        assert!(!cache.entries.contains_key(&full));
+        assert!(!cache.entries.contains_key(&compact_address));
+        for (address, tier) in [
+            (full, ProfileTier::Full),
+            (compact_address, ProfileTier::Compact),
+        ] {
+            let entry = cache.touch(address, tier);
+            assert!(entry.profile().is_none());
+            assert!(entry.compact.is_none());
+            assert!(entry.wants_fetch(web_time::Instant::now()));
+            assert_eq!(entry.fetch_tier(false), tier);
+        }
+    }
+
+    #[test]
     fn evicts_only_stale_idle_entries() {
         let now = web_time::Instant::now();
         let mut entry = ProfileEntry {

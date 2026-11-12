@@ -50,8 +50,7 @@ mod ownership_tests;
 #[require(PendingEmoteLoads)]
 pub struct AvatarAnimPlayer(pub Entity);
 
-/// Playing, paused and fading graph nodes own their aggregate emotes. Stopped
-/// cached nodes retain only their animation clips.
+/// Graph nodes own their aggregate emotes until the node or graph is replaced.
 #[derive(Component, Default)]
 pub(crate) struct EmoteGraphAssets {
     graph: Option<AssetId<AnimationGraph>>,
@@ -76,6 +75,11 @@ impl EmoteGraphAssets {
         self.nodes.insert(node, emote);
     }
 }
+
+/// Movement animations remain available for the controlling scene's lifetime,
+/// including clips that have been replaced in an avatar's graph.
+#[derive(Component, Default)]
+struct SceneMovementEmoteAssets(HashSet<Handle<Collectible<Emote>>>);
 
 #[derive(Default)]
 struct PendingEmoteGltf(Option<(EmoteUrn, Handle<Gltf>)>);
@@ -111,11 +115,10 @@ fn synchronize_emote_ownership(
         Option<&ActiveEmote>,
         Option<&MaskedEmote>,
         Option<&AnimationGraphHandle>,
-        Option<&AnimationPlayer>,
         Option<&mut EmoteGraphAssets>,
     )>,
 ) {
-    for (mut pending, full, masked, graph, player, owner) in &mut avatars {
+    for (mut pending, full, masked, graph, owner) in &mut avatars {
         pending
             .full
             .synchronize(full.filter(|emote| !emote.finished).map(|emote| &emote.urn));
@@ -127,9 +130,6 @@ fn synchronize_emote_ownership(
         );
         if let Some(mut owner) = owner {
             owner.set_graph(graph.map(|graph| graph.0.id()));
-            owner
-                .nodes
-                .retain(|node, _| player.is_some_and(|player| player.is_playing_animation(*node)));
         }
     }
 }
@@ -487,6 +487,8 @@ pub struct ActiveEmote {
     /// Source path from `MovementAnimation.src`; used to populate feedback and detect
     /// cross-fade boundaries between scene-driven animations.
     scene_anim_src: Option<String>,
+    /// Local controlling scene; remote movement requests have no scene entity here.
+    scene: Option<Entity>,
     /// Alternate state to play if the primary URN fails to resolve. Populated by
     /// `animate` for scene-driven selections with the velocity-based choice;
     /// `play_current_emote` swaps to it on resolution failure.
@@ -504,6 +506,7 @@ impl Default for ActiveEmote {
             pending_seek: None,
             source: ActiveEmoteSource::VelocitySelected,
             scene_anim_src: None,
+            scene: None,
             fallback: None,
         }
     }
@@ -938,6 +941,7 @@ fn animate(
                 pending_seek: if scene_anim_changed { req.seek } else { None },
                 source: ActiveEmoteSource::SceneMovementAnim,
                 scene_anim_src: Some(req.src.clone()),
+                scene: req.scene,
                 fallback: Some(Box::new(velocity_emote)),
             }
         } else {
@@ -1073,6 +1077,7 @@ struct PlayParams<'w, 's> {
     ipfas: IpfsAssetServer<'w, 's>,
     pending: Query<'w, 's, &'static mut PendingEmoteLoads>,
     owners: Query<'w, 's, &'static mut EmoteGraphAssets>,
+    scene_owners: Query<'w, 's, &'static mut SceneMovementEmoteAssets>,
     time: Res<'w, Time>,
 }
 
@@ -1498,7 +1503,7 @@ enum Slot<'a> {
 }
 
 /// Clip nodes an avatar's graph holds per slot kind before a new clip replaces one: the graph
-/// can't drop nodes, and each keeps its clip loaded.
+/// can't drop nodes, and each keeps its emote loaded.
 const MAX_CLIP_NODES: usize = 16;
 
 /// `urn`'s clip node in the avatar graph, stamped as played at `now`. A new urn gets `clip` under
@@ -1617,6 +1622,7 @@ fn play_slot(
     speed: f32,
     seek: &mut Option<f32>,
     default_mark: Option<f32>,
+    scene: Option<Entity>,
 ) -> Result<Played, Hold> {
     let ResolvedPlayback {
         emote,
@@ -1640,6 +1646,26 @@ fn play_slot(
             &params.anim_clips,
         )?
     };
+
+    if let Some(scene) = scene {
+        if let Ok(mut owner) = params.scene_owners.get_mut(scene) {
+            if !owner.0.contains(&emote_handle) {
+                owner.0.insert(emote_handle.clone());
+            }
+        } else if let Ok(mut scene) = commands.get_entity(scene) {
+            let handle = emote_handle.clone();
+            // Accumulate at command application so concurrent first resolutions cannot
+            // replace one another. A scene may despawn before this command applies.
+            scene.queue_silenced(move |mut entity: EntityWorldMut| {
+                entity
+                    .entry::<SceneMovementEmoteAssets>()
+                    .or_default()
+                    .get_mut()
+                    .0
+                    .insert(handle);
+            });
+        }
+    }
 
     // extract props and prop anim
     let (prop_fresh, prop_player_and_clip) = match ensure_prop(
@@ -1946,6 +1972,7 @@ fn play_current_emote(
                 active_emote.speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
+                active_emote.scene,
             ) {
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
@@ -2009,6 +2036,7 @@ fn play_current_emote(
                     fb.speed,
                     &mut fb.pending_seek,
                     fb.initial_audio_mark,
+                    None,
                 )
                 .ok()
             }),
@@ -2158,6 +2186,7 @@ fn play_masked_emote(
                 },
                 1.0,
                 &mut None,
+                None,
                 None,
             ) {
                 Ok(_) => 1.0,

@@ -408,14 +408,26 @@ cache handles and does not force-remove assets from `Assets`.
 
 Collectible pins share content-hash identity across aliases. Permanent engine
 builtins remain pinned; synthesized scene emotes use idle pins and ownership on
-playing, paused and fading graph nodes. Stopped cached nodes keep only animation
-clips. Avatar definitions retain body and rendered wearable aggregates until
-despawn, including during outfit replacement. Profiles have a five-second pressure
+every cached animation graph node, including stopped nodes. Reusing a node replaces
+its aggregate handle. Each local movement scene also owns its resolved movement
+emotes until the scene despawns, even when their graph nodes are reused. Remote
+movement emotes rely on their avatar's graph ownership. Avatar definitions retain
+body and rendered wearable aggregates until despawn, including during outfit
+replacement. Profiles have a five-second pressure
 grace and retain local, live-peer, and in-flight data. Unresolved entries keep their
 fetch-retry deadline within the normal 300-second idle lifetime so pressure cleanup
 cannot accelerate retries. When due, idle
 entries yield to bounded cleanup instead of starting another fetch; recently
-accessed entries still fetch. Entity routing contexts and scene limits are unaffected.
+accessed entries still fetch.
+
+RAM cleanup covers both wearable/emote metadata caches, full/compact profile DTOs,
+registered-entity JSON (`entity_metadata`) and the editor catalogue (`editor_catalog`).
+The last two become eligible after five seconds without access. JSON reloads through
+the content reader on the next metadata query; `/init_asset` reloads a reclaimed
+catalogue automatically. Active readers retain their own values or snapshots.
+Failed reloads remain retryable, and late replies cannot overwrite newer cached
+data. Content maps and routing indexes remain available for asset dependencies.
+Current realm/account state and scene-owned DTOs follow their owners' lifetimes.
 
 ## Tests
 

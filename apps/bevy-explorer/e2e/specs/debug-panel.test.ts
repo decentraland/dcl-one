@@ -91,6 +91,8 @@ scenario('memory pressure releases an idle emote pin and preserves replay', asyn
       emote(state).entries <= emote(baseline).entries && emote(state).released > emote(loaded).released &&
       emote(state).completedScans > emote(loaded).completedScans,
     { timeoutMs: 30_000, what: 'idle emote pins to release after wave while active scene emotes remain' })
+    // Releasing the cache's pin leaves the stopped graph node's aggregate intact.
+    // Managed asset-loader tests assert that this replay does not load it again.
     await explorer.run('/memory_reclaim off')
     await waitForEmoteSlot()
     await explorer.run('/emote ' + wave)
