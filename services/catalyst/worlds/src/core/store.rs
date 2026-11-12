@@ -452,15 +452,19 @@ pub async fn raw_records_exclude(
     banned.iter().any(|n| n == world.key())
 }
 
-/// Upstream's `isWorldValid`: the `worlds` row exists, `getRawWorldRecords`
-/// keeps it ([`raw_records_exclude`]), and it is neither disabled nor its
-/// owner quota-blocked past the grace. A deployed scene is not required.
+/// Upstream's `isWorldValid`: `checkNameDenyList` passes the name, the
+/// `worlds` row exists, `getRawWorldRecords` keeps it
+/// ([`raw_records_exclude`]), and it is neither disabled nor its owner
+/// quota-blocked past the grace. A deployed scene is not required.
 pub async fn world_is_valid(
     pool: &PgPool,
     policy: &crate::policy::Policy,
     names: &super::names::NameDenyList,
     world: &WorldName,
 ) -> Result<bool, ApiError> {
+    if !names.check_name_deny_list(pool, world.key()).await {
+        return Ok(false);
+    }
     let disabled: Option<Option<NaiveDateTime>> =
         sqlx::query_scalar("SELECT blocked_since FROM worlds.worlds WHERE name = $1")
             .bind(world.key())
@@ -1640,23 +1644,11 @@ pub async fn addresses_for_parcel_permission(
     Ok((total, rows.into_iter().map(|r| r.get("address")).collect()))
 }
 
-/// Ensures the worlds row and replaces the access setting in one
-/// transaction: the typed columns, then the `access` grants and the
-/// communities (deleted on every write, whatever the previous type, so a
-/// list never resurfaces after a round trip through another type). A fresh
-/// row lands at settings_version 1.
-pub async fn store_access_for_owner(
-    pool: &PgPool,
-    world: &WorldName,
-    owner: &Address,
-    access: &AccessSetting,
-) -> Result<(), ApiError> {
-    let (secret_hash, nft, wallets, communities): (
-        Option<&str>,
-        Option<&str>,
-        Vec<Address>,
-        Vec<Uuid>,
-    ) = match access {
+/// The typed columns and the `access` lists of `access`: the secret hash,
+/// the NFT urn, and an allow-list's wallets and community ids, each parsed
+/// and deduplicated (an unparsable entry is dropped).
+fn access_columns(access: &AccessSetting) -> (Option<&str>, Option<&str>, Vec<Address>, Vec<Uuid>) {
+    match access {
         AccessSetting::Unrestricted => (None, None, Vec::new(), Vec::new()),
         AccessSetting::SharedSecret { secret_hash } => {
             (Some(secret_hash), None, Vec::new(), Vec::new())
@@ -1680,7 +1672,21 @@ pub async fn store_access_for_owner(
                 .collect();
             (None, None, wallets, communities)
         }
-    };
+    }
+}
+
+/// Ensures the worlds row and replaces the access setting in one
+/// transaction: the typed columns, then the `access` grants and the
+/// communities (deleted on every write, whatever the previous type, so a
+/// list never resurfaces after a round trip through another type). A fresh
+/// row lands at settings_version 1.
+pub async fn store_access_for_owner(
+    pool: &PgPool,
+    world: &WorldName,
+    owner: &Address,
+    access: &AccessSetting,
+) -> Result<(), ApiError> {
+    let (secret_hash, nft, wallets, communities) = access_columns(access);
     let mut tx = pool.begin().await?;
     sqlx::query(
         r#"INSERT INTO worlds.worlds AS w (name, owner, access_type, access_secret_hash, access_nft, settings_version)
@@ -1728,6 +1734,85 @@ pub async fn store_access_for_owner(
     queue_access_recheck(&mut tx, world).await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// The mirror's copy of the source's access setting, in the transaction that
+/// syncs `world`: written only while the row is the mirror's (`mirror_source`
+/// set, not disabled; the row is locked here), and only where it differs, so
+/// an unchanged pass writes nothing. No settings version bump (the mirror
+/// copies the source's) and no notice; a change queues the access recheck,
+/// as an owner's edit does, so a connected wallet the new setting refuses
+/// leaves. Returns whether anything changed.
+pub async fn replace_mirrored_access(
+    conn: &mut sqlx::PgConnection,
+    world: &WorldName,
+    access: &AccessSetting,
+) -> Result<bool, sqlx::Error> {
+    let held: Option<bool> = sqlx::query_scalar(
+        "SELECT true FROM worlds.worlds \
+         WHERE name = $1 AND mirror_source IS NOT NULL AND blocked_since IS NULL FOR UPDATE",
+    )
+    .bind(world.key())
+    .fetch_optional(&mut *conn)
+    .await?;
+    if held.is_none() {
+        return Ok(false);
+    }
+    let (secret_hash, nft, wallets, communities) = access_columns(access);
+    let mut changed = sqlx::query(
+        r#"UPDATE worlds.worlds
+           SET access_type = $2, access_secret_hash = $3, access_nft = $4
+           WHERE name = $1
+             AND (access_type, access_secret_hash, access_nft)
+                 IS DISTINCT FROM ($2::text, $3::text, $4::text)"#,
+    )
+    .bind(world.key())
+    .bind(access.access_type().as_str())
+    .bind(secret_hash)
+    .bind(nft)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    changed += sqlx::query(
+        "DELETE FROM worlds.world_permissions \
+         WHERE world_name = $1 AND permission = 'access' AND address <> ALL($2::text[])",
+    )
+    .bind(world.key())
+    .bind(&wallets)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    changed += sqlx::query(
+        "INSERT INTO worlds.world_permissions (world_name, permission, address) \
+         SELECT $1, 'access', addr FROM unnest($2::text[]) AS addr ON CONFLICT DO NOTHING",
+    )
+    .bind(world.key())
+    .bind(&wallets)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    changed += sqlx::query(
+        "DELETE FROM worlds.world_access_communities \
+         WHERE world_name = $1 AND community_id <> ALL($2::uuid[])",
+    )
+    .bind(world.key())
+    .bind(&communities)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    changed += sqlx::query(
+        "INSERT INTO worlds.world_access_communities (world_name, community_id) \
+         SELECT $1, c FROM unnest($2::uuid[]) AS c ON CONFLICT DO NOTHING",
+    )
+    .bind(world.key())
+    .bind(&communities)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if changed > 0 {
+        queue_access_recheck(conn, world).await?;
+    }
+    Ok(changed > 0)
 }
 
 /// One allow-list edit under the world row's lock: refused unless the row

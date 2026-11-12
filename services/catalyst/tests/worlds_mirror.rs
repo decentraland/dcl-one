@@ -1,11 +1,13 @@
 //! The worlds mirror against an in-process upstream (`/index`,
 //! `/world/{name}/about`, `/world/{name}/scenes`, `/world/{name}/settings`,
-//! `/contents/{hash}`) on a scratch database and a temp blob store: a complete
+//! `/world/{name}/permissions`, `/contents/{hash}`) on a scratch database and a
+//! temp blob store: a complete
 //! pass with its marker, the read routes over the mirrored rows, an unchanged
 //! pass making no /about calls, a local publish refused (never overwritten,
 //! also when it lands mid-download), a world unlisted upstream retired, an
 //! interrupted pass resumed from its persisted cursor, the loop/hash guards,
-//! and the deploy times, signed chains and world settings a pass copies.
+//! and the deploy times, signed chains, world settings and access setting a pass
+//! copies.
 //! Needs CATALYST_TEST_DATABASE_URL; skipped without it.
 
 use std::collections::{BTreeMap, HashMap};
@@ -86,6 +88,12 @@ struct Upstream {
     scenes_hide: Option<String>,
     /// name -> the `/world/{name}/settings` body; a world without one answers 404.
     settings: HashMap<String, Value>,
+    /// name -> the `/world/{name}/permissions` body; a world without one answers the default
+    /// (unrestricted, no grants), as upstream does for any name.
+    permissions: HashMap<String, Value>,
+    /// While set, `/permissions` answers this status instead.
+    permissions_status: Option<StatusCode>,
+    permissions_calls: usize,
 }
 
 type Shared = Arc<Mutex<Upstream>>;
@@ -316,6 +324,28 @@ async fn fake_settings(
     }
 }
 
+async fn fake_permissions(
+    State((s, _)): State<(Shared, String)>,
+    Path(name): Path<String>,
+) -> axum::response::Response {
+    let mut st = s.lock();
+    st.permissions_calls += 1;
+    if let Some(status) = st.permissions_status {
+        return status.into_response();
+    }
+    let body = st.permissions.get(&name).cloned().unwrap_or_else(|| {
+        json!({
+            "permissions": {
+                "deployment": {"type": "allow-list", "wallets": []},
+                "streaming": {"type": "allow-list", "wallets": []},
+                "access": {"type": "unrestricted"}
+            },
+            "summary": {}
+        })
+    });
+    Json(body).into_response()
+}
+
 async fn fake_contents(
     State((s, _)): State<(Shared, String)>,
     Path(hash): Path<String>,
@@ -336,6 +366,7 @@ async fn start_fake() -> Fake {
         .route("/world/{name}/about", get(fake_about))
         .route("/world/{name}/scenes", get(fake_scenes))
         .route("/world/{name}/settings", get(fake_settings))
+        .route("/world/{name}/permissions", get(fake_permissions))
         .route("/contents/{hash}", get(fake_contents))
         .layer(axum::Extension(hold.clone()))
         .with_state((state.clone(), base.clone()));
@@ -1502,6 +1533,180 @@ async fn a_mirror_pass_copies_the_upstream_world_settings() {
     assert_eq!(summary.scenes.synced, 1, "{summary:?}");
     let (_, kept) = node.get(&format!("/world/{world}/settings")).await;
     assert_eq!(kept, expected);
+
+    node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
+    drop(node);
+    scratch.teardown().await;
+}
+
+/// The source's access setting (`GET /world/{name}/permissions`, `permissions.access`) is
+/// copied onto a world the mirror holds on every pass, changed scenes or not, and comms
+/// admission follows it; its deployment and streaming grants are not copied. A shared secret
+/// is stored as one no secret matches, an unreadable answer fails the world's sync and keeps
+/// the stored setting, and a world published here keeps its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_mirror_pass_copies_the_upstream_access_setting() {
+    use catalyst::comms::world_identity::WorldName;
+    use catalyst::shared::identity::Address;
+    use catalyst::worlds::policy::{Access, AccessGrant};
+
+    let Some(scratch) = db::scratch_database().await else {
+        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
+        return;
+    };
+    let fake = start_fake().await;
+    let node = Node::new(scratch.pool.clone(), &fake.base, "access").await;
+    let world = "gated.dcl.eth";
+    let (a, b, c, d) = (
+        "0x00000000000000000000000000000000000000a1",
+        "0x00000000000000000000000000000000000000b2",
+        "0x00000000000000000000000000000000000000c3",
+        "0x00000000000000000000000000000000000000d4",
+    );
+    let community = "6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f";
+    {
+        let mut st = fake.state.lock();
+        add_scene(&mut st, world, "G", "0,0", &[("g.txt", b"gated")]);
+        st.permissions.insert(
+            world.to_string(),
+            json!({
+                "owner": "0x00000000000000000000000000000000000000ee",
+                "permissions": {
+                    "deployment": {"type": "allow-list", "wallets": [a]},
+                    "streaming": {"type": "allow-list", "wallets": [b]},
+                    "access": {"type": "allow-list", "wallets": [c.to_uppercase().replace("0X", "0x")],
+                               "communities": [community]}
+                },
+                "summary": {
+                    a: [{"permission": "deployment", "world_wide": true}],
+                    b: [{"permission": "streaming", "world_wide": true}]
+                }
+            }),
+        );
+    }
+
+    let ctx = node.ctx().await;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.synced, 1, "{summary:?}");
+    let (status, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(status, StatusCode::OK, "{permissions}");
+    assert_eq!(
+        permissions["permissions"]["access"],
+        json!({"type": "allow-list", "wallets": [c], "communities": [community]})
+    );
+    // Grants are this node's: none is taken from the source.
+    assert_eq!(
+        permissions["permissions"]["deployment"]["wallets"],
+        json!([])
+    );
+    assert_eq!(
+        permissions["permissions"]["streaming"]["wallets"],
+        json!([])
+    );
+    assert_eq!(permissions["summary"], json!({}));
+
+    let policy = Policy::new(scratch.pool.clone(), PersonalWorldsPolicy::disabled(), None);
+    let name = WorldName::parse(world).unwrap();
+    let now = chrono::Utc::now().naive_utc();
+    let (p, n) = (&policy, &name);
+    let access = move |who: &'static str| async move {
+        p.can_access(n, &Address::parse(who).unwrap(), None, None, None, now)
+            .await
+            .unwrap()
+    };
+    assert_eq!(access(c).await, Access::Allowed(AccessGrant::AllowListed));
+    assert_eq!(access(d).await, Access::NotAllowed);
+    let rechecks: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.world_access_rechecks WHERE world_name = $1",
+    )
+    .bind(world)
+    .fetch_one(&scratch.pool)
+    .await
+    .unwrap();
+    assert_eq!(rechecks, 1, "the change queues the access recheck");
+
+    // The scenes are unchanged; the setting changes upstream and the next pass copies it.
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        json!({"permissions": {"access": {"type": "shared-secret"}}, "summary": {}}),
+    );
+    let calls = fake.state.lock().permissions_calls;
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.unchanged, 1, "{summary:?}");
+    assert_eq!(fake.state.lock().permissions_calls, calls + 1);
+    let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(
+        permissions["permissions"]["access"],
+        json!({"type": "shared-secret"})
+    );
+    let presented = policy
+        .can_access(
+            &name,
+            &Address::parse(d).unwrap(),
+            Some("any secret"),
+            None,
+            None,
+            now,
+        )
+        .await
+        .unwrap();
+    assert_eq!(presented, Access::InvalidSecret, "no secret admits");
+    let listed: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM worlds.world_permissions WHERE world_name = $1")
+            .bind(world)
+            .fetch_one(&scratch.pool)
+            .await
+            .unwrap();
+    assert_eq!(listed, 0, "the allow-list goes with its type");
+
+    // An unreadable or unknown setting fails the world and keeps what is stored.
+    for (status, body) in [
+        (Some(StatusCode::INTERNAL_SERVER_ERROR), json!({})),
+        (
+            None,
+            json!({"permissions": {"access": {"type": "members-only"}}}),
+        ),
+    ] {
+        {
+            let mut st = fake.state.lock();
+            st.permissions_status = status;
+            st.permissions.insert(world.to_string(), body);
+        }
+        let summary = node.pass(&ctx).await;
+        assert_eq!(summary.scenes.failed, 1, "{summary:?}");
+        let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+        assert_eq!(
+            permissions["permissions"]["access"]["type"],
+            "shared-secret"
+        );
+    }
+    fake.state.lock().permissions_status = None;
+
+    // A world published here keeps its own setting.
+    sqlx::query("UPDATE worlds.world_scenes SET mirror_source = NULL WHERE world_name = $1")
+        .bind(world)
+        .execute(&scratch.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE worlds.worlds SET mirror_source = NULL, access_type = 'nft-ownership', \
+         access_secret_hash = NULL, access_nft = 'urn:x' WHERE name = $1",
+    )
+    .bind(world)
+    .execute(&scratch.pool)
+    .await
+    .unwrap();
+    fake.state.lock().permissions.insert(
+        world.to_string(),
+        json!({"permissions": {"access": {"type": "unrestricted"}}, "summary": {}}),
+    );
+    let summary = node.pass(&ctx).await;
+    assert_eq!(summary.scenes.refused, 1, "{summary:?}");
+    let (_, permissions) = node.get(&format!("/world/{world}/permissions")).await;
+    assert_eq!(
+        permissions["permissions"]["access"],
+        json!({"type": "nft-ownership", "nft": "urn:x"})
+    );
 
     node.jobs.shutdown(std::time::Duration::from_secs(1)).await;
     drop(node);

@@ -405,6 +405,12 @@ difference not listed here is a gap, not a decision.
   not only recorded.
 - **Shared-secret hashes** use bcrypt cost 12 (upstream: 10); existing
   hashes verify unchanged.
+- **Mirrored worlds' access.** A mirrored world takes the access setting
+  its source's `GET /world/{name}/permissions` reports, on every mirror pass
+  and read-through fill. The source does not publish a shared-secret hash,
+  so a shared-secret world is stored with a hash no secret matches: only
+  the owner enters it here. An allow-list's communities are matched against
+  this node's communities.
 
 ## World metadata and settings
 

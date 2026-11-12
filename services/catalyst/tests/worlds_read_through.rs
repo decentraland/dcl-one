@@ -1,5 +1,5 @@
 //! A world's read-through against an in-process worlds content server (`/world/{name}/about`,
-//! `/world/{name}/scenes`, `/world/{name}/settings`, `/contents/{hash}`) and marketplace subgraph (`POST /subgraph`, the
+//! `/world/{name}/scenes`, `/world/{name}/settings`, `/world/{name}/permissions`, `/contents/{hash}`) and marketplace subgraph (`POST /subgraph`, the
 //! NAMEs each address holds) on a scratch database and a temp blob store: a world held with no
 //! scene is mirrored on its first read through the mirror's single-world path, with the chain
 //! and signer it was published with and only the files the scene host reads (the rest are left to
@@ -80,7 +80,8 @@ struct Upstream {
     requests: usize,
     /// Requests to a path the fake does not route (the catalogue `/index` among them).
     unrouted: usize,
-    /// world -> its `/permissions` answer; a world without one answers 500.
+    /// world -> its `/permissions` answer; `null` answers 500, and a world without one answers
+    /// the default (unrestricted, no grants), as upstream does for any name.
     permissions: HashMap<String, Value>,
     permissions_calls: usize,
 }
@@ -203,10 +204,13 @@ async fn fake_permissions(
     st.requests += 1;
     st.permissions_calls += 1;
     match st.permissions.get(&name) {
+        Some(Value::Null) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Some(body) => Json(body.clone()).into_response(),
-        None => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        None => Json(permissions(ZERO_OWNER, &[])).into_response(),
     }
 }
+
+const ZERO_OWNER: &str = "0x0000000000000000000000000000000000000000";
 
 /// The upstream's `/permissions` for a world: `owner` and the deployment allow-list.
 fn permissions(owner: &str, deployers: &[&str]) -> Value {
@@ -697,9 +701,8 @@ async fn a_grantee_signed_world_is_taken_on_the_upstream_grant_only_when_its_own
             let signed = chain(INTRUDER_KEY, &id, &id).await;
             let mut st = fake.lock();
             st.chains.insert(id.clone(), signed);
-            if let Some(perms) = perms {
-                st.permissions.insert(world.to_string(), perms);
-            }
+            st.permissions
+                .insert(world.to_string(), perms.unwrap_or(Value::Null));
             (id, file_hash)
         }
     };
@@ -743,9 +746,10 @@ async fn a_grantee_signed_world_is_taken_on_the_upstream_grant_only_when_its_own
         assert!(!node.storage.exist(&id).await.unwrap(), "{world}");
         assert_eq!(content_calls(&fake, &id), 0, "{world}");
     }
-    // Asked once per fill, and a refused world is not asked again while its miss is remembered.
+    // Asked once per fill for the grant, once more by the accepted fill for its access setting,
+    // and a refused world is not asked again while its miss is remembered.
     let calls = fake.lock().permissions_calls;
-    assert_eq!(calls, 4);
+    assert_eq!(calls, 5);
     let (status, _) = node.get("/world/unreadable.dcl.eth/about").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(fake.lock().permissions_calls, calls);

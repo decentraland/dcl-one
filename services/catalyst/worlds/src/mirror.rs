@@ -8,7 +8,11 @@
 //! world whose advertised scene set differs from what is held, the scene entities and
 //! every file they reference into the ONE blob store (hash-verified, so a
 //! lying upstream cannot plant bytes under a CID), and the `worlds.worlds` +
-//! `worlds.world_scenes` rows in one transaction per world.
+//! `worlds.world_scenes` rows in one transaction per world. Every world the walk
+//! reaches, changed or not, also gets the access setting its
+//! `GET {source}/world/{name}/permissions` reports (a shared secret stored as one no secret
+//! matches); an unreadable or unknown setting fails that world's sync, so a world restricted
+//! upstream is never stored open. The deployment and streaming grants it lists are not copied.
 //!
 //! Resumable: the scenes walk persists its cursor (the last world name
 //! completed) after every batch in `worlds.mirror_passes`, so a restart
@@ -33,7 +37,8 @@
 //! not) or a `blocked_since`. The scheduled pass keeps the
 //! catalogue's trust: a row carries the listed chain and deployer only when that chain's ECDSA
 //! links sign the scene and its signer is the listed deployer, else no chain and the zero
-//! address; no right here is granted from either.
+//! address; no right here is granted from either (nor from the access setting, which only
+//! narrows who may enter).
 //! Deletion: a complete catalogue pass that no longer lists a world stamps
 //! `unlisted_at`; the next scenes pass retires its mirrored scenes. A pass
 //! that would unlist more than max(50, 20%) of the catalogue is refused, so
@@ -55,6 +60,7 @@ use crate::auth::{AuthChain, is_canonical_cid, verify_auth_chain, verify_hash};
 use crate::comms::world_identity::WorldName;
 use crate::content::read_through::{DownloadSlot, Downloads};
 use crate::core::settings_policy::{MAX_CATEGORIES, VALID_RATINGS, storable_skybox_time};
+use crate::core::store::{AccessSetting, replace_mirrored_access};
 use crate::explore::places::scene_identity;
 use crate::http::{is_safe_http_url, read_body_capped};
 use crate::jobs::JobContext;
@@ -79,6 +85,9 @@ const MAX_SCENES_PAGE_BYTES: usize = 64 * 1024 * 1024;
 const MAX_LISTED_SCENES: usize = 2_000;
 /// One `/world/{name}/permissions` answer: the owner and a few allow-lists of addresses.
 const MAX_PERMISSIONS_BYTES: usize = 256 * 1024;
+/// The stored secret hash of a mirrored shared-secret world: not a bcrypt hash, so no secret
+/// verifies against it (the source never publishes its hash).
+const NO_SECRET_MATCHES: &str = "mirrored: the source keeps the secret";
 /// One `/world/{name}/settings` answer: a handful of short columns.
 const MAX_SETTINGS_BYTES: usize = 256 * 1024;
 /// A thumbnail key longer than a CID or a SHA-256 hex is not copied.
@@ -989,6 +998,71 @@ fn world_url(source: &str, name: &str, tail: &str) -> Result<String> {
     Ok(url.into())
 }
 
+/// `{source}/world/{name}/permissions` (at most [`MAX_PERMISSIONS_BYTES`]); anything but a 2xx
+/// JSON answer is an error.
+async fn fetch_permissions(client: &crate::http::Outbound, url: &str) -> Result<Value> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .with_context(|| format!("GET {url}"))?;
+    if !resp.status().is_success() {
+        bail!("GET {url} answered {}", resp.status());
+    }
+    serde_json::from_slice(&read_body_capped(resp, MAX_PERMISSIONS_BYTES).await?)
+        .with_context(|| format!("parsing {url}"))
+}
+
+/// The world's access setting at the source ([`parse_upstream_access`]), read on every pass that
+/// reaches the world, a changed one or not; an error stops the world's sync.
+async fn upstream_access(
+    client: &crate::http::Outbound,
+    source: &str,
+    name: &str,
+) -> Result<AccessSetting> {
+    let url = world_url(source, name, "permissions")?;
+    parse_upstream_access(&fetch_permissions(client, &url).await?)
+}
+
+/// The access setting the source's `/permissions` reports (`permissions.access`, upstream's
+/// `getAccessForWorld` without secrets), as this node stores it. The shared secret's hash is not
+/// on the wire, so a shared-secret world is stored with [`NO_SECRET_MATCHES`]: no secret admits
+/// and only the owner enters. An allow-list keeps the wallets and community ids that parse. Any
+/// other answer is an error, so a world is never stored open on a doubtful reading.
+fn parse_upstream_access(body: &Value) -> Result<AccessSetting> {
+    let access = &body["permissions"]["access"];
+    let strings = |key: &str| -> Vec<String> {
+        access[key]
+            .as_array()
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(String::from)
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    Ok(match access["type"].as_str() {
+        Some("unrestricted") => AccessSetting::Unrestricted,
+        Some("shared-secret") => AccessSetting::SharedSecret {
+            secret_hash: NO_SECRET_MATCHES.to_string(),
+        },
+        Some("nft-ownership") => AccessSetting::NftOwnership {
+            nft: access["nft"]
+                .as_str()
+                .filter(|nft| !nft.is_empty())
+                .context("the nft-ownership access names no nft")?
+                .to_string(),
+        },
+        Some("allow-list") => AccessSetting::AllowList {
+            wallets: strings("wallets"),
+            communities: strings("communities"),
+        },
+        other => bail!("the permissions name no known access type: {other:?}"),
+    })
+}
+
 /// Who published each scene of the world a read-through fills, asked of the upstream one scene
 /// at a time.
 struct Signatures<'a> {
@@ -1070,23 +1144,10 @@ impl<'a> Signatures<'a> {
         let grant = self
             .grant
             .get_or_init(|| async {
-                let fetched: Result<UpstreamGrant> = async {
-                    let resp = client
-                        .get(url.as_str())
-                        .send()
-                        .await
-                        .with_context(|| format!("GET {url}"))?;
-                    if !resp.status().is_success() {
-                        bail!("GET {url} answered {}", resp.status());
-                    }
-                    let body: Value = serde_json::from_slice(
-                        &read_body_capped(resp, MAX_PERMISSIONS_BYTES).await?,
-                    )
-                    .with_context(|| format!("parsing {url}"))?;
-                    parse_upstream_grant(&body)
-                }
-                .await;
-                fetched.map_err(|e| format!("{e:#}"))
+                fetch_permissions(client, url.as_str())
+                    .await
+                    .and_then(|body| parse_upstream_grant(&body))
+                    .map_err(|e| format!("{e:#}"))
             })
             .await
             .as_ref()
@@ -1389,6 +1450,13 @@ async fn mirror_world(
             .iter()
             .all(|hash| present.get(*hash).copied().unwrap_or(false))
         {
+            // The scenes are current; the access setting can change without a deployment.
+            let access = upstream_access(client, source, name).await?;
+            let mut tx = pool.begin().await.context("begin tx")?;
+            replace_mirrored_access(&mut tx, &WorldName::parse(name)?, &access)
+                .await
+                .with_context(|| format!("access setting of {name}"))?;
+            tx.commit().await.context("commit tx")?;
             return Ok(Outcome::Unchanged);
         }
     }
@@ -1468,6 +1536,8 @@ async fn mirror_world(
         };
         scenes.push((listed, file, entity, signed));
     }
+    // Asked once the scenes check, so a refused read-through asks nothing more.
+    let access = upstream_access(client, source, name).await?;
 
     let mut new_blobs = 0usize;
     let mut scene_base_spawn: Option<String> = None;
@@ -1625,6 +1695,9 @@ async fn mirror_world(
         let retired = retire_beside_local(pool, name).await?;
         return Ok(Outcome::RefusedLocalPublish { retired });
     }
+    replace_mirrored_access(&mut tx, &WorldName::parse(name)?, &access)
+        .await
+        .with_context(|| format!("access setting of {name}"))?;
 
     let cids: Vec<&str> = records.iter().map(|r| r.cid.as_str()).collect();
     let entities: Vec<Value> = records.iter().map(|r| r.entity.clone()).collect();
@@ -1969,6 +2042,44 @@ async fn fetch_checked(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// `permissions.access` as upstream's `removeSecrets` answers it, stored as this node can:
+    /// a shared secret no secret matches, an allow-list as listed, anything else refused.
+    #[test]
+    fn upstream_access_is_copied_or_refused() {
+        let access =
+            |value: Value| parse_upstream_access(&json!({"permissions": {"access": value}}));
+        assert_eq!(
+            access(json!({"type": "unrestricted"})).unwrap(),
+            AccessSetting::Unrestricted
+        );
+        let secret = access(json!({"type": "shared-secret"})).unwrap();
+        let AccessSetting::SharedSecret { secret_hash } = &secret else {
+            panic!("{secret:?}");
+        };
+        assert!(!bcrypt::verify("", secret_hash).unwrap_or(false));
+        assert_eq!(
+            access(json!({"type": "nft-ownership", "nft": "urn:x"})).unwrap(),
+            AccessSetting::NftOwnership {
+                nft: "urn:x".into()
+            }
+        );
+        assert_eq!(
+            access(json!({"type": "allow-list", "wallets": ["0xA", 1], "communities": ["c"]}))
+                .unwrap(),
+            AccessSetting::AllowList {
+                wallets: vec!["0xA".into()],
+                communities: vec!["c".into()],
+            }
+        );
+        for refused in [
+            json!({"type": "nft-ownership"}),
+            json!({"type": "members-only"}),
+            json!(null),
+        ] {
+            assert!(access(refused.clone()).is_err(), "{refused}");
+        }
+    }
 
     /// `toSnakeCaseSettings` leaves out empty text and NULL categories and answers
     /// `skybox_time: null`; only what the columns accept is copied.

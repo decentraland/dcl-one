@@ -5632,6 +5632,32 @@ async fn deleting_an_address_grant_requires_a_valid_world() {
             json!(format!("World \"{}\" not found.", world.display()))
         );
     }
+    {
+        // `isWorldValid` first asks `checkNameDenyList` (`component.ts:71-74`):
+        // the name lowercased without its first `.eth` and `.dcl` against each
+        // entry lowercased, so a plain label entry in any case answers 404,
+        // while `getAccessForWorld` (route 1) still reads the stored access.
+        store::store_access_for_owner(
+            &f.pool,
+            &world,
+            &owner.address,
+            &AccessSetting::NftOwnership {
+                nft: "urn:x".into(),
+            },
+        )
+        .await
+        .unwrap();
+        let _denied = DenyListed::seed(&f.state.names, vec![world.label().to_uppercase()]);
+        let body = expect(&f.app, delete(&world).signed(&owner).await, 404).await;
+        assert_eq!(
+            body["message"],
+            json!(format!("World \"{}\" not found.", world.display()))
+        );
+        let path = format!("/world/{}/permissions", world.display());
+        let body = expect(&f.app, Case::new("get", path), 200).await;
+        assert_eq!(body["permissions"]["access"]["type"], "nft-ownership");
+    }
+    expect(&f.app, delete(&world).signed(&owner).await, 204).await;
     assert!(
         store::admin_set_world_blocked(&f.pool, &world, true)
             .await
@@ -6406,6 +6432,58 @@ async fn configured_world_names_are_hidden_from_the_world_reads() {
         200,
     )
     .await;
+}
+
+/// `BLOCKED_WORLD_NAMES` on the permission routes: `getAccessForWorld` reads
+/// a blocked world as the default `unrestricted` (`getBannedNames` keeps the
+/// whole configured name, `worlds-manager.ts:327,345-349`), and the owner's
+/// DELETE answers 404 through `isWorldValid` (`component.ts:71-74`).
+#[tokio::test]
+async fn configured_world_names_are_invalid_on_the_permission_routes() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    store::store_access_for_owner(
+        &f.pool,
+        &world,
+        &owner.address,
+        &AccessSetting::NftOwnership {
+            nft: "urn:x".into(),
+        },
+    )
+    .await
+    .unwrap();
+    let blocking = fixture_on_pool(
+        f.pool.clone(),
+        PersonalWorldsPolicy::disabled(),
+        None,
+        None,
+        test_settings()
+            .with_blocked_world_names(&format!(" , {} ", world.display().to_uppercase())),
+    )
+    .await;
+    blocking.names.set(&owner.address, world.label());
+    let w = world.display();
+    let delete = || {
+        Case::new(
+            "delete",
+            format!(
+                "/world/{w}/permissions/deployment/{}",
+                Wallet::random().address.as_str()
+            ),
+        )
+    };
+    let read = || Case::new("get", format!("/world/{w}/permissions"));
+
+    let body = expect(&blocking.app, read(), 200).await;
+    assert_eq!(body["permissions"]["access"]["type"], "unrestricted");
+    let body = expect(&blocking.app, delete().signed(&owner).await, 404).await;
+    assert_eq!(body["message"], json!(format!("World \"{w}\" not found.")));
+
+    // The unblocked node reads the stored access and accepts the DELETE.
+    let body = expect(&f.app, read(), 200).await;
+    assert_eq!(body["permissions"]["access"]["type"], "nft-ownership");
+    expect(&f.app, delete().signed(&owner).await, 204).await;
 }
 
 /// `JSON.stringify` of `JSON.parse(<jsonb text>)`: an object's members in

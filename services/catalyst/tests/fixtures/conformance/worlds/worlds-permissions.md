@@ -7,7 +7,7 @@ what `GET .../permissions` reveals.
 
 Pinned revisions:
 
-- Upstream: `decentraland/worlds-content-server` @ `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21).
+- Upstream: `decentraland/worlds-content-server` @ `ebbf8d41d07973e317892067c765107d3512938e` (2026-11-12).
 - dcl-one: this tree, Rust workspace `services/catalyst`.
 
 Everything below comes from reading the code. Nothing was built or run, and no line is "verified".
@@ -34,6 +34,7 @@ Files read:
   - `src/logic/participant-kicker/{component,constants}.ts`
   - `src/logic/coordinates/component.ts` (`canonicalizeParcels`)
   - `src/logic/worlds/component.ts` (`isWorldValid`, `isWorldBlocked`)
+  - `src/adapters/name-deny-list-checker.ts` (`BLOCKED_WORLD_NAMES`, `checkNameDenyList`, `getBannedNames`)
   - `src/adapters/permissions-manager.ts`
   - `src/adapters/dcl-name-checker.ts`
   - `src/adapters/worlds-manager.ts` (`getRawWorldRecords`, `modifyAccessAtomically`)
@@ -48,6 +49,7 @@ Files read:
   - `test/unit/access-change-handler.spec.ts`
   - `test/unit/access-checker-component.spec.ts` (descriptions)
   - `test/unit/permissions-component.spec.ts` (descriptions)
+  - `test/unit/worlds-component.spec.ts`, `test/unit/name-deny-list-checker.spec.ts`
 - dcl-one (`services/catalyst/`):
   - `worlds/src/core/permissions.rs`
   - `worlds/src/core/auth.rs`
@@ -56,6 +58,8 @@ Files read:
   - `worlds/src/core/store.rs` (`AccessSetting`, `WORLD_SELECT`, `world_is_valid`, `permission_records`, the
     grant, parcel and allow-list writers)
   - `worlds/src/core/notices.rs` (`permission_changed`)
+  - `worlds/src/core/names.rs` (`BlockedNames`, `BannedNames::allows`, `banned_names`)
+  - `worlds/src/mirror.rs` (`upstream_access`, `parse_upstream_access`; the mirrored world's access setting)
   - `worlds/src/policy.rs` (`member_communities`, the access rules table)
   - `worlds/src/writes.rs`
   - `worlds/src/lib.rs` (`app_router`)
@@ -129,7 +133,7 @@ Common notes:
 
 | # | method | upstream path (upstream `routes.ts`) | dcl-one handler (`worlds/src/core/permissions.rs`) | status |
 |---|---|---|---|---|
-| 1 | GET | `/world/:world_name/permissions` (`:255`) | `get_permissions` | MATCH |
+| 1 | GET | `/world/:world_name/permissions` (`:255`) | `get_permissions` | GAP |
 | 2 | POST | `/world/:world_name/permissions/:permission_name` (`:256-260`, legacy-payload instance) | `post_permissions` `:242` | DIVERGENT |
 | 3 | GET | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:264-267`) | `get_allowed_parcels_for_permission` | MATCH |
 | 4 | POST | `/world/:world_name/permissions/:permission_name/address/:address/parcels` (`:269-274`) | `post_permission_parcels` `:676` | DIVERGENT |
@@ -140,7 +144,8 @@ Common notes:
 | 9 | PUT | `/world/:world_name/permissions/:permission_name/:address` (`:304-308`) | `put_permissions_address` `:475` | DIVERGENT |
 | 10 | DELETE | `/world/:world_name/permissions/:permission_name/:address` (`:311-315`) | `delete_permissions_address` `:520` | DIVERGENT |
 
-Counts: 10 endpoints. MATCH 2, GAP 0, DIVERGENT 8, MISSING 0. Every route exists in dcl-one at the same method
+Counts: 10 endpoints. MATCH 1, GAP 1, DIVERGENT 8, MISSING 0. Route 1 is a GAP for mirrored worlds only
+(WP-21: the source's deployment and streaming grants are not copied). Every route exists in dcl-one at the same method
 and path, on both mounts. On the success path, each route answers the upstream status and body shape.
 Routes 1 and 3, two of the three unsigned routes (1, 3 and 6), differ only where
 `docs/worlds-compatibility.md` says so. The seven signed routes (six strict, one legacy) share the
@@ -173,7 +178,8 @@ dcl-one: `permissions.rs:75-127`. It reads `store::get_world`, `store::permissio
 | Owner lookup fails | upstream 200 with `owner` absent; dcl-one 503 | | `permissions-manager.ts:25-31` | `current_owner` `?` (`permissions.rs:87`; test `permissions_answer_503_while_the_owner_is_undetermined`, `tests.rs:5687`) | DIVERGENT: intended (worlds-compatibility.md "Owner admission") |
 | World with a stored owner whose NAME was sold | 200 | upstream: the **stored** owner; dcl-one: the live holder | `getOwner` reads `metadata.owner` first | `current_owner` | DIVERGENT: intended (same entry) |
 | Invalid world name | upstream 200 defaults; dcl-one 400 | | none | `parse_world` | intended (worlds-compatibility.md "Invalid world names") |
-| Deny-listed name | 200; access read as `unrestricted` when `getRawWorldRecords` filters the record out, summary still listed | | `worlds-manager.ts:344-349`: `name != ALL(<entries without .eth/.dcl>)`, which only leaves out a bare name equal to a stripped entry | `store::raw_records_exclude` | MATCH (WP-11; test `deleting_an_address_grant_requires_a_valid_world`) |
+| Deny-listed name | 200; access read as `unrestricted` when `getRawWorldRecords` filters the record out, summary still listed | | `access/component.ts:34-40`; `worlds-manager.ts:327,345-349`: `name != ALL(getBannedNames())`, the `BLOCKED_WORLD_NAMES` entries whole plus the list entries without their first `.eth`/`.dcl`, so a list entry leaves out only a bare name equal to it, a plain `<label>` entry nothing | `store::raw_records_exclude` (`store.rs:446-452`) over `BannedNames::banned_names` (`names.rs:67-77`) | MATCH (WP-11, WP-20; tests `deleting_an_address_grant_requires_a_valid_world`, `configured_world_names_are_invalid_on_the_permission_routes`) |
+| Mirrored world (`mirror_source` set) | 200; upstream reads the world's own rows. dcl-one: the access setting the source's `/permissions` reports, copied by every mirror pass (`mirror.rs:1018-1064,1454-1459,1698-1700`; a shared secret stored as one no secret matches); `deployment.wallets`, `streaming.wallets` and `summary` list only grants made on this node, so they are empty | | `permissions-handlers.ts:50-107` | `get_permissions` over the copied rows | access MATCH; grants GAP (WP-21; test `tests/worlds_mirror.rs` `a_mirror_pass_copies_the_upstream_access_setting`) |
 
 ## 2. POST /world/:world_name/permissions/:permission_name
 
@@ -435,19 +441,21 @@ Upstream: `permissions-handlers.ts:403-450`. Stage order:
    real removal;
 7. access: `removeWalletFromAccessAllowList` + `handleAccessChange`.
 
-`isWorldValid` passes when the `worlds` row exists, the name is not deny-listed, and the owner is not blocked past
-the two-day grace (`logic/worlds/component.ts:68-81`, `worlds-manager.ts:322-356`). It does **not** require a
-deployed scene, even though the comment above it says it does.
+`isWorldValid` first asks `checkNameDenyList`, then passes when the `worlds` row exists, `getRawWorldRecords`'s
+deny-list filter keeps it, and the world is not blocked past the two-day grace (`logic/worlds/component.ts:71-87`,
+`worlds-manager.ts:322-356`). It does **not** require a deployed scene, even though the comment above it says it
+does.
 
-dcl-one: `delete_permissions_address`. `store::world_is_valid` requires the row, that `getRawWorldRecords`'s
-deny-list filter keeps it (`store::raw_records_exclude`), and no operator disable or quota block past the grace.
+dcl-one: `delete_permissions_address` (`permissions.rs:520-565`). `store::world_is_valid` (`store.rs:459-480`)
+asks `NameDenyList::check_name_deny_list` first, then requires the row, that `getRawWorldRecords`'s deny-list
+filter keeps it (`store::raw_records_exclude`), and no operator disable or quota block past the grace.
 
 | trigger | status | body | upstream | dcl-one | verdict |
 |---|---|---|---|---|---|
 | Grant or wallet removed, or absent | 204, empty | | `:449` | `:515` | MATCH (parcel-scoped grants are dropped whole in both) |
 | World row missing | 404 `World "<w>" not found.` | | `:428-432` | `:487-492` | MATCH |
 | World row exists with no deployed scene (permissions set before the first deploy, or every scene undeployed) | 204 | | `isWorldValid` | `world_is_valid` | MATCH (WP-11; test `deleting_an_address_grant_requires_a_valid_world`, for `deployment` and `access`) |
-| Deny-listed name | 404 when `getRawWorldRecords` filters it out: the stored name equals a deny-list entry with its first `.eth` and first `.dcl` removed. A plain `<label>` entry leaves `<label>.dcl.eth` in (204); a bare world name has no owner, so its DELETE answers 401 first | | `getRawWorldRecords` filter | `raw_records_exclude` | MATCH (WP-11; test `deleting_an_address_grant_requires_a_valid_world`) |
+| Deny-listed name | 404 when `checkNameDenyList` refuses the name (a `BLOCKED_WORLD_NAMES` entry equal to it, case-insensitively, or a list entry equal to it lowercased without its first `.eth` and first `.dcl`, so a plain `<label>` entry in any case refuses `<label>.dcl.eth`), or when `getRawWorldRecords` filters it out (the stored name equals a list entry with its first `.eth` and first `.dcl` removed). A bare world name has no owner, so its DELETE answers 401 first | | `component.ts:72-74`, `name-deny-list-checker.ts:45-59`; `getRawWorldRecords` filter | `check_name_deny_list` (`names.rs:123-125`, `BannedNames::allows` `:51-54`), then `raw_records_exclude` | MATCH (WP-11, WP-20; tests `deleting_an_address_grant_requires_a_valid_world`, `configured_world_names_are_invalid_on_the_permission_routes`) |
 | Invalid permission name | 400 `Permission '<p>' does not support allow-list. Only 'deployment', 'streaming', and 'access' do.` | | `:420-424` | `:473-477` | MATCH |
 | `access`, world not an allow-list | 400, the same text | | `access/component.ts:180-183` | `:505-511,792-795` | MATCH |
 | `access` kick | Upstream: `handleAccessChange`, rule (3), over every participant. dcl-one: `revoke_unless_admitted` for the removed wallet only (`core/mod.rs:371-389`). The result is the same: only the removed wallet can lose admission. | | | `:513` | intended (WP-14) |
@@ -580,15 +588,21 @@ deny-list filter keeps it (`store::raw_records_exclude`), and no operator disabl
     - Severity: none (closed).
 
 11. **WP-11 · route 10 (and route 1 for the deny list) · `isWorldValid` semantics.** Status: MATCH, no work.
-    - Upstream: valid when the `worlds` row exists, `getRawWorldRecords`'s deny-list filter keeps it
-      (`name != ALL(<entries without .eth/.dcl>)`), and the owner is not blocked past the two-day grace. A scene is
-      **not** required (`logic/worlds/component.ts:68-81`, `adapters/worlds-manager.ts:322-356`).
-    - dcl-one: `store::world_is_valid` (`store.rs:454-474`; its only caller is route 10, after the owner check,
-      `permissions.rs:520-565`) requires the row, applies the same filter (`store::raw_records_exclude`,
-      `store.rs:442-449`) and the operator disable and quota grace. Route 1 reads a filtered-out world's access as
-      the default. Pinned by the test `deleting_an_address_grant_requires_a_valid_world`: a world with no scene
-      answers 204 on the `deployment` and `access` branches (the latter revokes the removed wallet), a
-      deny-listed world's DELETE answers 404, a bare name 401.
+    - Upstream: `checkNameDenyList` first (`logic/worlds/component.ts:71-74`; the name lowercased without its
+      first `.eth` and first `.dcl` against each list entry lowercased, `name-deny-list-checker.ts:50-58`), then
+      valid when the `worlds` row exists, `getRawWorldRecords`'s deny-list filter keeps it
+      (`name != ALL(getBannedNames())`), and the world is not blocked past the two-day grace. A scene is **not**
+      required (`logic/worlds/component.ts:71-87`, `adapters/worlds-manager.ts:322-356`). So a list entry `foo`
+      or `FOO` makes the owner's DELETE on `foo.dcl.eth` answer 404 (unit `worlds-component.spec.ts:169`).
+    - dcl-one: `store::world_is_valid` (`store.rs:459-480`; its only caller is route 10, after the owner check,
+      `permissions.rs:536`) asks `NameDenyList::check_name_deny_list` first (`names.rs:123-125`), then requires
+      the row, applies the same filter (`store::raw_records_exclude`, `store.rs:446-452`) and the operator
+      disable and quota grace. Route 1 reads a filtered-out world's access as the default; a world only
+      `checkNameDenyList` refuses keeps its stored access there, as upstream. Pinned by the test
+      `deleting_an_address_grant_requires_a_valid_world`: a world with no scene answers 204 on the `deployment`
+      and `access` branches (the latter revokes the removed wallet), a deny-listed world's DELETE answers 404
+      (an upper-cased plain label entry included, while route 1 still reads the stored `nft-ownership`), a bare
+      name 401.
     - Severity: none (closed).
 
 12. **WP-12 · all owner-gated routes · name authority unavailable.** Status: intended (worlds-compatibility.md).
@@ -659,6 +673,47 @@ deny-list filter keeps it (`store::raw_records_exclude`), and no operator disabl
       None breaks a Decentraland client: the social service issues UUID community ids, and world names come from
       NAMEs.
     - Severity: none (closed).
+
+20. **WP-20 · routes 1, 10 · `BLOCKED_WORLD_NAMES`.** Status: MATCH, no work.
+    - Upstream: `BLOCKED_WORLD_NAMES` (`.env.default`, empty) is split on commas, trimmed, lowercased and
+      stripped of empty entries (`name-deny-list-checker.ts:8-13`). `checkNameDenyList` refuses an exact match
+      before it reads the list, also while the list cannot be read (`:45-49`), and `getBannedNames` returns the
+      entries whole ahead of the stripped list entries (`:61-65`). So route 1 reads a blocked world's access as
+      `{"type":"unrestricted"}` (`worlds-manager.ts:327,345-349`) and route 10 answers 404 through
+      `isWorldValid` (`component.ts:72-74`).
+    - dcl-one: the one `NameDenyList` every area shares holds the parsed entries (`BlockedNames::parse`,
+      `names.rs:31-39`); `BannedNames::allows` and `banned_names` apply them as upstream (`names.rs:51-77`),
+      so routes 1 and 10 follow through `raw_records_exclude` and `world_is_valid`. The setting itself is WR-35
+      (worlds-reads.md). Pinned by the test `configured_world_names_are_invalid_on_the_permission_routes`
+      (route 1 `unrestricted` and route 10 404 on a node blocking the upper-cased name; the stored
+      `nft-ownership` and a 204 on a node that does not) and the unit tests in `names.rs`.
+    - Severity: none (closed).
+
+21. **WP-21 · route 1 and comms admission · a mirrored world's access and grants.** Status: access MATCH; grants
+    GAP (open, needs a decision).
+    - Upstream: the source reads the world's own rows: the access JSONB (`access/component.ts:34-40`), and the
+      deployment and streaming grants with their summary (`permissions-handlers.ts:50-107`,
+      `permissions/component.ts:422-440`). A replay of `globalpx.dcl.eth` on 2026-11-12 listed three
+      deployment and three streaming wallets.
+    - dcl-one, access: every mirror pass that reaches a world, changed scenes or not, and every read-through
+      fill reads `{source}/world/{name}/permissions` and copies `permissions.access` onto the world while the
+      row is the mirror's (`mirror_source` set, not disabled): `upstream_access`, `parse_upstream_access`
+      (`mirror.rs:1018-1064`) and `store::replace_mirrored_access` (`store.rs:1746`), inside the world's sync
+      transaction (`mirror.rs:1698-1700`) or, for unchanged scenes, its own (`mirror.rs:1454-1459`). Only a
+      difference is written; it queues the access recheck and sends no notice. An unreadable answer or an
+      unknown type fails the world's sync and keeps the stored setting, so a world restricted upstream is never
+      stored open. A shared-secret world is stored with a hash no secret matches, since the hash is not on the
+      wire, so only the owner enters (worlds-compatibility.md "Mirrored worlds' access"). A world published here
+      keeps its own setting. Pinned by `tests/worlds_mirror.rs` `a_mirror_pass_copies_the_upstream_access_setting`
+      (allow-list copied, `Policy::can_access` admits the listed wallet and refuses another, a later
+      shared-secret copied on an unchanged pass and refusing any secret, failures keeping the setting, a local
+      publish kept) and the unit `upstream_access_is_copied_or_refused`.
+    - dcl-one, grants: not copied, so `deployment.wallets`, `streaming.wallets` and `summary` are empty for a
+      mirrored world. A copied grant would let its holder deploy or stream on this node on the source's word,
+      which the mirror's trust rule refuses (`mirror.rs` module doc; `Policy::may_have_published`;
+      `WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS` is the only opt-in, and only for a read-through signer). The
+      owner decides between copying them (with that trust) and recording the difference as intended.
+    - Severity: P2 (open; the access half, the security part, is closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 
