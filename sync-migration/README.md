@@ -29,6 +29,8 @@ Caller-supplied stable IDs remain the default. For these idempotent setters only
 
 ## Evidence and follow-up
 
+- [Worlds background and multiplayer storage contracts](worlds-background-contract.md): uncovered player writes, minimal owner/quota sync, and why eviction is primarily retention cleanup.
+
 - [Repository-wide coverage and priorities](repository-service-inventory.md): in-scope Worlds/content/storage priorities, explicit scope exclusions, retained services and missing source checkouts. Includes the complete 246-checkout screening catalog.
 
 - [Places command protocol](places-hybrid-commands.md) and [POI residual justification](places-poi-residual.md): exact implemented boundaries and source-change reasons.
