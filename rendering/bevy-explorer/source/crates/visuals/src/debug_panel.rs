@@ -8,9 +8,8 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, PrimaryCamera, SceneLoadDistance, TimeOfDay};
+use common::structs::{CurrentRealm, PrimaryCamera, SceneLoadDistance, TimeOfDay, WorldHold};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
-use scene_runner::initialize_scene::ScenePointers;
 use serde_json::json;
 
 use crate::{
@@ -170,7 +169,7 @@ fn landscape_command(
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
-    (realm, pointers): (Res<CurrentRealm>, Res<ScenePointers>),
+    (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
     trees: Query<(), With<Tree>>,
     grass: Query<(), With<ParcelGrass>>,
 ) {
@@ -187,7 +186,7 @@ fn landscape_command(
             _ => layers.grass = value,
         }
     }
-    let satellite_shown = satellite_floor::shown(layers.satellite, &realm, pointers.terrain());
+    let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
         "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "satelliteShown":satellite_shown}).to_string());
 }

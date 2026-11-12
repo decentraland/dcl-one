@@ -27,15 +27,20 @@ fn app(setup: impl FnOnce(&mut App)) -> App {
     app
 }
 
+/// A loaded realm: a World lists its scenes up front, a city does not.
+fn realm(world: bool) -> CurrentRealm {
+    let mut realm = CurrentRealm {
+        about_url: "https://realm.example/about".to_owned(),
+        ..default()
+    };
+    realm.config.scenes_urn =
+        world.then(|| vec!["urn:decentraland:entity:bafkreiexample".to_owned()]);
+    realm
+}
+
 fn floor_app(world: bool) -> App {
-    let mut pointers = ScenePointers::default();
-    pointers.reset_terrain(world);
     let mut app = app(|app| {
-        app.insert_resource(pointers)
-            .insert_resource(CurrentRealm {
-                about_url: "https://realm.example/about".to_owned(),
-                ..default()
-            })
+        app.insert_resource(realm(world))
             .insert_resource(layers())
             .add_plugins(SatelliteFloorPlugin);
     });
@@ -56,10 +61,9 @@ fn tiles(app: &mut App) -> usize {
     tiles.iter(app.world()).count()
 }
 
+/// A realm change, as the realm system writes it.
 fn set_world(app: &mut App, world: bool) {
-    app.world_mut()
-        .resource_mut::<ScenePointers>()
-        .reset_terrain(world);
+    *app.world_mut().resource_mut::<CurrentRealm>() = realm(world);
     app.update();
 }
 
@@ -175,8 +179,7 @@ fn chunks_cut_at_the_city_square() {
 #[test]
 fn waits_for_a_realm() {
     let mut app = app(|app| {
-        app.insert_resource(ScenePointers::default())
-            .init_resource::<CurrentRealm>()
+        app.init_resource::<CurrentRealm>()
             .insert_resource(layers())
             .add_plugins(SatelliteFloorPlugin);
     });
@@ -227,4 +230,35 @@ fn toggle_hides() {
     assert_eq!(floor_visibility(&mut app), None);
     set_toggle(&mut app, true);
     assert_eq!(tiles(&mut app), 64);
+}
+
+/// While the world is held (the lobby before the first realm change request), the realm is known
+/// but nothing of it loads, the floor included; the terrain's realm kind is stale meanwhile.
+#[test]
+fn hidden_while_the_world_is_held() {
+    for world in [false, true] {
+        let mut app = app(|app| {
+            app.insert_resource(realm(world))
+                .insert_resource(WorldHold)
+                .insert_resource(layers())
+                .add_plugins(SatelliteFloorPlugin);
+        });
+        app.update();
+        assert_eq!(floor_visibility(&mut app), None, "held, world: {world}");
+
+        app.world_mut().remove_resource::<WorldHold>();
+        app.update();
+        let expected = (!world).then_some(Visibility::Inherited);
+        assert_eq!(
+            floor_visibility(&mut app),
+            expected,
+            "released, world: {world}"
+        );
+    }
+
+    // held again after it showed (a new hold is not expected, but hides rather than shows)
+    let mut app = floor_app(false);
+    app.world_mut().insert_resource(WorldHold);
+    app.update();
+    assert_eq!(floor_visibility(&mut app), Some(Visibility::Hidden));
 }

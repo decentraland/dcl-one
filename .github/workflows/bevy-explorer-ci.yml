@@ -173,8 +173,6 @@ jobs:
       CEF_EXPORT_VERSION: 139.8.0+139.0.40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          lfs: true
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -386,8 +384,6 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          lfs: true
       - name: Reserve disk space on the hosted Linux runner
         if: runner.os == 'Linux'
         working-directory: .
@@ -607,8 +603,6 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          lfs: true
       - name: Identify compiled engine inputs
         id: engine-inputs
         working-directory: .

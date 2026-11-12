@@ -10,8 +10,10 @@ use bevy::{
     prelude::*,
     render::mesh::{Indices, PrimitiveTopology},
 };
-use common::{partition::PARCEL_SIZE, structs::CurrentRealm, terrain::TerrainTargets};
-use scene_runner::initialize_scene::ScenePointers;
+use common::{
+    partition::PARCEL_SIZE,
+    structs::{CurrentRealm, WorldHold},
+};
 
 use crate::debug_panel::LandscapeLayers;
 
@@ -46,9 +48,16 @@ pub(crate) struct SatelliteFloor;
 #[derive(Component)]
 pub(crate) struct SatelliteTile;
 
-/// Shown only in a city (not a World) once a realm is known, while its toggle is on.
-pub(crate) fn shown(enabled: bool, realm: &CurrentRealm, terrain: &TerrainTargets) -> bool {
-    enabled && !realm.about_url.is_empty() && !terrain.is_world()
+/// Shown only in a city (a realm that does not list its scenes up front, unlike a World) once the
+/// realm is known and the world is not held, while its toggle is on. Read from the realm itself:
+/// the terrain's copy of the realm kind is not updated while the world is held.
+pub(crate) fn shown(enabled: bool, realm: &CurrentRealm, held: bool) -> bool {
+    let world = realm
+        .config
+        .scenes_urn
+        .as_ref()
+        .is_some_and(|urns| !urns.is_empty());
+    enabled && !held && !realm.about_url.is_empty() && !world
 }
 
 /// Centre of tile (x, y) in unity x/z; y grows northwards.
@@ -112,13 +121,13 @@ fn update_floor(
     mut commands: Commands,
     layers: Res<LandscapeLayers>,
     realm: Res<CurrentRealm>,
-    pointers: Res<ScenePointers>,
+    held: Option<Res<WorldHold>>,
     mut floor: Query<&mut Visibility, With<SatelliteFloor>>,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let shown = shown(layers.satellite, &realm, pointers.terrain());
+    let shown = shown(layers.satellite, &realm, held.is_some());
     if let Ok(mut visibility) = floor.single_mut() {
         visibility.set_if_neq(if shown {
             Visibility::Inherited
