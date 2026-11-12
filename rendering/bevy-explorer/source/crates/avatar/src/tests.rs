@@ -18,6 +18,7 @@ fn app_with_render_avatar() -> App {
         .init_resource::<Collectibles<Wearable>>()
         .init_resource::<MonotonicTimestamp<PbAssetLoadLoadingState>>()
         .init_resource::<AppConfig>()
+        .init_resource::<RefusedAvatars>()
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(
                 false,
@@ -68,4 +69,69 @@ fn a_removed_selection_releases_the_avatars_downloads() {
         None,
         "the outfit's hashes are no longer registered"
     );
+}
+
+fn selection() -> AvatarSelection {
+    AvatarSelection {
+        scene: None,
+        shape: AvatarShape(PbAvatarShape::default()),
+        automatic_delete: true,
+        disable_dither: false,
+    }
+}
+
+fn foreign_player(world: &mut World) -> ForeignPlayer {
+    let context = world.spawn_empty().id();
+    ForeignPlayer::for_test(Default::default(), context, SceneEntityId::PLAYER)
+}
+
+#[test]
+fn full_memory_refuses_another_players_new_avatar_until_it_is_lifted() {
+    let mut app = app_with_render_avatar();
+    let world = app.world_mut();
+    world.insert_resource(LoadRefusal { refusing: true });
+    let player = foreign_player(world);
+    let avatar = world.spawn((selection(), player)).id();
+
+    world.run_system_once(update_render_avatar).unwrap();
+
+    assert!(
+        world.get::<PartitionedDownloads>(avatar).is_none(),
+        "nothing of the avatar is filed, so nothing of it is resolved or downloaded"
+    );
+    assert!(world.get::<RetryRenderAvatar>(avatar).is_some());
+    assert_eq!(world.resource::<RefusedAvatars>().0, 1);
+
+    world.insert_resource(LoadRefusal { refusing: false });
+    world.run_system_once(update_render_avatar).unwrap();
+
+    assert!(
+        world.get::<PartitionedDownloads>(avatar).is_some(),
+        "the avatar starts once the refusal ends, with no change to its selection"
+    );
+    assert_eq!(world.resource::<RefusedAvatars>().0, 0);
+}
+
+#[test]
+fn full_memory_keeps_an_avatar_that_had_started_and_admits_those_that_are_not_players() {
+    let mut app = app_with_render_avatar();
+    let world = app.world_mut();
+    // another player's avatar that started before memory filled, and its outfit then changed
+    let player = foreign_player(world);
+    let started = world.spawn((selection(), player)).id();
+    world.run_system_once(update_render_avatar).unwrap();
+    assert!(world.get::<PartitionedDownloads>(started).is_some());
+    world.insert_resource(LoadRefusal { refusing: true });
+    world
+        .get_mut::<AvatarSelection>(started)
+        .unwrap()
+        .set_changed();
+    // the player's own avatar, a scene's avatar or a preview: a selection with no foreign player
+    let own = world.spawn(selection()).id();
+
+    world.run_system_once(update_render_avatar).unwrap();
+
+    assert!(world.get::<PartitionedDownloads>(own).is_some());
+    assert!(world.get::<PartitionedDownloads>(started).is_some());
+    assert_eq!(world.resource::<RefusedAvatars>().0, 0);
 }

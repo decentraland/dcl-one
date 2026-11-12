@@ -1,3 +1,4 @@
+use avatar::RefusedAvatars;
 use bevy::{
     diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
     prelude::*,
@@ -25,6 +26,7 @@ pub(super) fn register(app: &mut App) {
                 ("Thresholds (MiB)", "thresholds"),
                 ("Refusing new loads", "refusal.refusing"),
                 ("Scenes in range not spawned", "refusal.refusedScenes"),
+                ("Players' avatars not loaded", "refusal.refusedAvatars"),
                 ("Downloads held from tier", "refusal.heldFrom"),
                 ("GPU memory pools", "gpu"),
             ],
@@ -129,6 +131,7 @@ fn debug_memory(
     gpu: Option<Res<GpuMemoryBudget>>,
     refusal: Option<Res<LoadRefusal>>,
     refused_scenes: Option<Res<RefusedScenes>>,
+    refused_avatars: Option<Res<RefusedAvatars>>,
     ipfs: Option<Res<IpfsResource>>,
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
@@ -155,6 +158,7 @@ fn debug_memory(
         "refusal": {
             "refusing": refusal.is_some_and(|r| r.refusing),
             "refusedScenes": refused_scenes.map_or(0, |n| n.0),
+            "refusedAvatars": refused_avatars.map_or(0, |n| n.0),
             "heldFrom": ipfs.and_then(|ipfs| ipfs.downloads_held_from()).map_or("none".to_owned(), |tier| format!("{tier:?}")),
         },
         "unavailable": {

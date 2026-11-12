@@ -526,6 +526,21 @@ pub enum ChannelControl {
     VoiceUnsubscribe(Address),
 }
 
+#[cfg(feature = "test-support")]
+impl ForeignPlayer {
+    /// A player on no transport, with nothing listening to its audio.
+    pub fn for_test(address: Address, context: Entity, scene_id: SceneEntityId) -> Self {
+        Self {
+            address,
+            context,
+            transports: HashSet::default(),
+            scene_id,
+            profile_version: 0,
+            audio_sender: mpsc::channel(1).0,
+        }
+    }
+}
+
 pub enum ForeignAudioData {
     TransportAvailable(Entity),
     TransportUnavailable(Entity),

@@ -7,6 +7,8 @@ edition = "2021"
 livekit = ["dep:livekit", "media/html"]
 room_debug = []
 transport_debug = ["bevy/bevy_picking"]
+# constructors for other crates' tests
+test-support = []
 
 [dependencies]
 common = { workspace = true }

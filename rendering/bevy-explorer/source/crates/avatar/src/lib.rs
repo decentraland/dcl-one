@@ -57,6 +57,7 @@ mod tests;
 
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
+    memory::LoadRefusal,
     sets::SetupSets,
     structs::{AppConfig, AttachPoints, EmoteCommand, EmoteMask, MonotonicTimestamp, PrimaryUser},
     util::{JoinRelativeExt, SceneSpawnerPlus, TaskExt, TryPushChildrenEx},
@@ -142,6 +143,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.add_plugins(JumpMarkerPlugin);
+        app.init_resource::<RefusedAvatars>();
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
         app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
         app.add_systems(
@@ -550,6 +552,11 @@ pub struct AvatarRenderDefinition {
 #[derive(Component)]
 pub struct RetryRenderAvatar;
 
+/// How many other players' avatars were not started this frame because engine memory is full
+/// ([`LoadRefusal`]); zero while loads are admitted.
+#[derive(Resource, Default)]
+pub struct RefusedAvatars(pub usize);
+
 // when an avatar style setting (cel shading, outline) is toggled, re-render every
 // avatar so their meshes are respawned with the right mesh tags. the tags are set
 // once at mesh creation in process_avatar, so an in-place flip isn't enough.
@@ -583,6 +590,7 @@ fn update_render_avatar(
             Option<&SceneEntity>,
             Option<&PreviousAvatar>,
             Option<&PartitionedDownloads>,
+            Has<ForeignPlayer>,
         ),
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
@@ -594,6 +602,8 @@ fn update_render_avatar(
     ipfas: IpfsAssetServer,
     timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
     config: Res<AppConfig>,
+    load_refusal: Option<Res<LoadRefusal>>,
+    mut refused_avatars: ResMut<RefusedAvatars>,
 ) {
     // remove renderable entities when avatar selection is removed
     for entity in removed_selections.read() {
@@ -613,6 +623,9 @@ fn update_render_avatar(
         }
     }
 
+    let refusing = load_refusal.is_some_and(|refusal| refusal.refusing);
+    let mut refused = 0;
+
     for (
         entity,
         selection,
@@ -621,8 +634,19 @@ fn update_render_avatar(
         maybe_scene_ent,
         maybe_prev,
         maybe_downloads,
+        is_foreign_player,
     ) in &query
     {
+        // while engine memory is full no other player's avatar starts: nothing of it is
+        // resolved or downloaded, and it is looked at again every frame until the refusal
+        // ends. One that has started (its downloads are filed) carries on, as a spawned scene
+        // does; the player's own avatar, scene avatars and previews are not refused.
+        if refusing && is_foreign_player && maybe_downloads.is_none() {
+            refused += 1;
+            commands.entity(entity).try_insert(RetryRenderAvatar);
+            continue;
+        }
+
         commands.entity(entity).try_remove::<RetryRenderAvatar>();
 
         debug!("updating render avatar");
@@ -1002,6 +1026,10 @@ fn update_render_avatar(
                 }
             }
         }
+    }
+
+    if refused_avatars.0 != refused {
+        refused_avatars.0 = refused;
     }
 }
 

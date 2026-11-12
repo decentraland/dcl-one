@@ -43,3 +43,5 @@ assets = { workspace = true }
 naga_oil = { workspace = true }
 # the request-slot gate's channel, for the download-priority test
 tokio = { workspace = true }
+# a foreign player, for the load-refusal tests
+comms = { workspace = true, features = ["test-support"] }

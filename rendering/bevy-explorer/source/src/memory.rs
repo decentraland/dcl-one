@@ -10,7 +10,7 @@ fn update_load_refusal(status: Res<MemoryStatus>, mut refusal: ResMut<LoadRefusa
     if next != *refusal {
         match status.reading() {
             Some(reading) if next.refusing => warn!(
-                "engine memory full ({} of {} MiB): refusing new scenes and low-priority downloads",
+                "engine memory full ({} of {} MiB): refusing new scenes, new avatars and low-priority downloads",
                 reading.used_bytes >> 20,
                 reading.cap_mib
             ),
