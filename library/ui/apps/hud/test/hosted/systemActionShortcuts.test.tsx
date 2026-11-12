@@ -53,7 +53,6 @@ describe('system-action menu shortcuts', () => {
     h.driver.emit(action('Events'))
     expect(h.session().events.open).toBe(true)
     expect(pending().slice(before).filter((e) => e.event === 'events_section_opened').map((e) => e.properties.source)).toEqual(['shortcut'])
-    // exclusive with the other pages, and the key closes it again
     h.driver.emit(action('Places'))
     expect(h.session().events.open).toBe(false)
     h.driver.emit(action('Events'))

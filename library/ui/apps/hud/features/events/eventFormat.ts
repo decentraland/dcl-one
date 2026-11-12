@@ -13,7 +13,6 @@ const DAY = 24 * HOUR
 
 const two = (n: number): string => String(n).padStart(2, '0')
 
-/** Local midnight of the day `date` falls on. */
 export function startOfDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate())
 }
@@ -27,7 +26,6 @@ export function sameDay(a: Date, b: Date): boolean {
   return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate()
 }
 
-/** `yyyy-MM-dd` of a local day, for analytics. */
 export function dayKey(day: Date): string {
   return `${day.getFullYear()}-${two(day.getMonth() + 1)}-${two(day.getDate())}`
 }
@@ -49,7 +47,6 @@ function paddedClock(date: Date): string {
   return `${two(h % 12 === 0 ? 12 : h % 12)}:${two(date.getMinutes())}${h < 12 ? 'am' : 'pm'}`
 }
 
-/** A day's name on the calendar: "Today", "Tomorrow", else "Tue, Sep 08". */
 export function dayLabel(day: Date, now: Date = new Date()): string {
   const today = startOfDay(now)
   if (sameDay(day, today)) return 'Today'
@@ -76,7 +73,6 @@ export function eventTimeText(event: EventData, onlyHours: boolean, now: Date = 
   return (onlyHours ? clock(start) : `${shortDay(start)} @ ${clock(start)}`).toUpperCase()
 }
 
-/** "TUE, SEP 08". */
 export function eventDayText(event: EventData): string {
   const start = eventStart(event)
   return start == null ? '' : shortDay(start).toUpperCase()
@@ -89,7 +85,6 @@ export function scheduleText(start: Date, durationMs: number): string {
   return `${WEEKDAYS[start.getDay()]}, ${MONTHS[start.getMonth()]} ${two(start.getDate())} from ${paddedClock(start)} to ${paddedClock(end)} (UTC${offsetHours >= 0 ? '+' : ''}${offsetHours})`
 }
 
-/** The occurrences the detail lists: those from the next start on. */
 export function scheduleDates(event: EventData): Date[] {
   const next = eventStart(event)
   if (next == null) return []
@@ -109,7 +104,6 @@ export function calendarRange(startDay: Date, days: number): { from: string; to:
   return { from: rangeParam(addDays(startDay, -1)), to: rangeParam(new Date(addDays(startDay, days).getTime() - 1000)) }
 }
 
-/** The range one day reads. */
 export function dayRange(day: Date): { from: string; to: string } {
   return { from: rangeParam(day), to: rangeParam(new Date(addDays(day, 1).getTime() - 1000)) }
 }
@@ -131,10 +125,8 @@ export function emptySlotCount(occupancy: number): number {
   if (occupancy <= 1.5) return 2
   return 1
 }
-/** A column offers its scroll arrows from this occupancy up. */
 export const SCROLL_ARROWS_OCCUPANCY = 1.5
 
-// ---- links -----------------------------------------------------------------
 
 const CAMPAIGN = 'utm_campaign=discover'
 const out = (url: string): string => `${withUtm(url)}&${CAMPAIGN}`
@@ -160,7 +152,6 @@ export function eventShareUrl(event: EventData, referrer: string | null): string
 
 const calendarStamp = (date: Date): string => `${date.toISOString().slice(0, 19).replace(/[-:]/g, '')}Z`
 
-/** Google Calendar's new-event page for the event's next occurrence, or for the one at `start`. */
 export function eventCalendarUrl(event: EventData, referrer: string | null, start?: Date): string | null {
   const from = start ?? eventStart(event)
   if (from == null) return null
@@ -172,14 +163,12 @@ export function eventCalendarUrl(event: EventData, referrer: string | null, star
   )
 }
 
-/** Where the detail says the event is held. */
 export function eventPlaceText(event: EventData, place: EventPlace | undefined): string {
   if (place == null) return `${event.scene_name ?? ''} (${event.x},${event.y})`
   if (event.world) return `${place.title} (${place.world_name ?? ''})`
   return `${place.title} (${event.x},${event.y})`
 }
 
-// ---- analytics -------------------------------------------------------------
 
 export function eventAnalytics(event: EventData): Record<string, unknown> {
   return { event_id: event.id, event_name: event.name, event_coords: `(${event.x}, ${event.y})`, highlighted: event.highlighted }

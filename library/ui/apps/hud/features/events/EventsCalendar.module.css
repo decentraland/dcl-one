@@ -5,7 +5,6 @@
   inset: 0;
 }
 
-/* ---- day bar ---- */
 .dayBar {
   position: absolute;
   top: 15px;
@@ -49,10 +48,10 @@
 }
 .dayPill:hover::before,
 .dayPill:focus-visible::before {
-  background: var(--events-day-hover);
+  background: var(--tint-clear-hover);
 }
 .dayPill:active::before {
-  background: var(--events-day-press);
+  background: var(--tint-clear-press);
 }
 .dayPill:focus-visible {
   outline: 2px solid var(--text);
@@ -87,7 +86,6 @@
   right: 6px;
 }
 
-/* ---- columns ---- */
 .columns {
   position: absolute;
   top: 80px;
@@ -98,6 +96,7 @@
   gap: 20.5px;
 }
 .failed {
+  width: calc(var(--days) * 380.5px - 20.5px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -136,7 +135,6 @@
   overflow-x: hidden;
   overflow-y: auto;
   scrollbar-width: none;
-  /* the cards fade towards the column's top and out over its last 150px */
   -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.47) 0, var(--black) 80px, var(--black) calc(100% - 155px), transparent calc(100% - 5px));
   mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0.47) 0, var(--black) 80px, var(--black) calc(100% - 155px), transparent calc(100% - 5px));
 }
@@ -155,9 +153,6 @@
 .column:hover .more,
 .column:focus-within .more {
   opacity: 1;
-}
-.columnThumb > span {
-  background: var(--events-scroll-handle);
 }
 .more {
   position: absolute;
@@ -195,7 +190,6 @@
   mask-image: linear-gradient(to top, var(--black) calc(100% - 30.5px), transparent 100%);
 }
 
-/* ---- highlighted carousel: over the last day's place, from the day bar's top down ---- */
 .carousel {
   position: absolute;
   top: 15px;

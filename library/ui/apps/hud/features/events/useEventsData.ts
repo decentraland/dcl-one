@@ -19,12 +19,10 @@ const REMINDER_ERROR = 'There was an error changing your interest on the event. 
 
 export interface EventsData {
   store: EventsStore
-  /** Read a calendar of `days` days from `startDay`; `withHighlighted` reads the banner's events too. */
   loadCalendar: (startDay: Date, days: number, withHighlighted: boolean) => void
   loadDay: (day: Date) => void
   /** Set or clear the user's reminder; the store changes when the service confirms. */
   setAttending: (event: EventData, attending: boolean) => void
-  /** Drop everything held and stop waiting for answers. */
   clear: () => void
 }
 

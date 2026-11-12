@@ -9,11 +9,8 @@ import { useSession } from '../session/SessionContext'
 import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, createEventUrl } from './eventFormat'
 
 export interface EventActions {
-  /** Set the reminder, or clear it when set. */
   remind: (event: EventData) => void
-  /** Whether the event's reminder change is on its way. */
   reminding: (event: EventData) => boolean
-  /** Google Calendar's new-event page for the next occurrence, or the one at `start`. */
   addToCalendar: (event: EventData, start?: Date) => void
   /** Travel to the event and close the Events page. */
   jumpIn: (event: EventData) => void

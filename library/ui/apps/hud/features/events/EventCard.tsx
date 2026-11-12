@@ -1,7 +1,7 @@
 // The cards an event shows as: small and big in a calendar column, big in a day's grid, the
 // banner in the highlighted carousel, and the empty slot that offers to create one.
 
-import { useState } from 'react'
+import { useState, type CSSProperties } from 'react'
 import { TintButton, Avatar, ContextMenu, MaskIcon, Skeleton, Tooltip, openPopup } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
@@ -23,10 +23,8 @@ import { eventDayText, eventTimeText } from './eventFormat'
 import type { EventActions } from './useEventActions'
 import styles from './EventCard.module.css'
 
-/** How many friends' faces a card shows before "+N". */
 const FRIEND_FACES = 3
 
-/** The user's friends who are at the event now. */
 export function friendsAtEvent(event: EventData, friends: Friend[]): Friend[] {
   if (event.connected_addresses.length === 0 || friends.length === 0) return []
   const here = new Set(event.connected_addresses.map((a) => a.toLowerCase()))
@@ -35,16 +33,12 @@ export function friendsAtEvent(event: EventData, friends: Friend[]): Friend[] {
 
 export interface EventCardProps {
   event: EventData
-  /** The user's friends at the event now. */
   friends: Friend[]
-  /** The event's community, when the user is a member of it. */
   community?: EventCommunity
   actions: EventActions
-  /** Open the event's detail. */
   onOpen: () => void
 }
 
-// ---- pieces ----------------------------------------------------------------
 
 /** The event's picture over a loading sweep; the place art when it has none or it fails. */
 export function EventImage({ src, className = '' }: { src: string | null; className?: string }): React.JSX.Element {
@@ -96,7 +90,6 @@ function FriendsHere({ event, friends }: { event: EventData; friends: Friend[] }
   )
 }
 
-/** The LIVE badge, who is there now and which friends: a big card's and the banner's top row. */
 function SocialInfo({ event, friends }: { event: EventData; friends: Friend[] }): React.JSX.Element {
   return (
     <span className={styles.social}>
@@ -128,7 +121,7 @@ function openShareMenu(anchor: HTMLElement, event: EventData, actions: EventActi
   card?.setAttribute('data-menu-open', '')
   openPopup(
     (dismiss) => (
-      <div className={styles.shareMenu} style={{ left: rect.right, top: rect.top }} onClick={(e) => e.stopPropagation()}>
+      <div className={styles.shareMenu} style={{ '--menu-left': `${rect.right}px`, '--menu-top': `${rect.top}px` } as CSSProperties} onClick={(e) => e.stopPropagation()}>
         <ContextMenu
           items={[
             {
@@ -157,31 +150,34 @@ function openShareMenu(anchor: HTMLElement, event: EventData, actions: EventActi
 
 type ActionsSize = 'small' | 'large'
 
-/** A card's buttons: the reminder and the calendar while the event is to come, the jump while
- *  it is live, and share. `remindLabel` writes "REMIND ME" beside the bell. */
 export function EventActionButtons({
   event,
   actions,
   size,
   remindLabel = false,
+  variant = 'card',
   className = ''
 }: {
   event: EventData
   actions: EventActions
   size: ActionsSize
   remindLabel?: boolean
+  /** `detail` sits over the detail's picture: its own fill, and a reminder of a set width. */
+  variant?: 'card' | 'detail'
   className?: string
 }): React.JSX.Element {
   const radius = size === 'small' ? 9.6 : 12
   const icon = 24
+  const tone = variant === 'detail' ? 'veil' : 'faint'
   const box = size === 'small' ? styles.actionSmall : styles.actionLarge
+  const remind = variant === 'detail' ? styles.remindDetail : remindLabel ? styles.remindWide : box
   return (
     <span className={`${styles.actions} ${size === 'small' ? styles.actionsSmall : styles.actionsLarge} ${className}`.trim()}>
       {!event.live && (
         <TintButton
           radius={radius}
-          tone="faint"
-          className={`${remindLabel ? styles.remindWide : box} ${styles.remind}`}
+          tone={tone}
+          className={`${remind} ${styles.remind}`}
           aria-label="Remind me"
           aria-pressed={event.attending}
           aria-busy={actions.reminding(event)}
@@ -193,35 +189,38 @@ export function EventActionButtons({
         </TintButton>
       )}
       {!event.live && (
-        <TintButton radius={radius} tone="faint" className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
+        <TintButton radius={radius} tone={tone} className={box} aria-label="Add to calendar" onClick={() => actions.addToCalendar(event)}>
           <MaskIcon src={calendarAddIcon} size={icon} />
         </TintButton>
       )}
       {event.live && (
-        <TintButton radius={radius} tone="brand" className={styles.jumpIn} onClick={() => actions.jumpIn(event)}>
+        <TintButton radius={radius} tone="brand" className={variant === 'detail' ? styles.jumpInDetail : styles.jumpIn} onClick={() => actions.jumpIn(event)}>
           <span>JUMP IN</span>
           <MaskIcon src={jumpInIcon} size={24} />
         </TintButton>
       )}
-      <TintButton radius={radius} tone="faint" className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
+      <TintButton radius={radius} tone={tone} className={box} aria-label="Share" aria-haspopup="menu" onClick={(e) => openShareMenu(e.currentTarget, event, actions)}>
         <MaskIcon src={shareIcon} size={icon} />
       </TintButton>
     </span>
   )
 }
 
+function CommunityThumb({ src }: { src: string }): React.JSX.Element {
+  const [failed, setFailed] = useState(false)
+  return <span className={styles.communityThumb}>{src !== '' && !failed && <img src={src} alt="" draggable={false} onError={() => setFailed(true)} />}</span>
+}
+
 const cardState = (event: EventData): string => (event.live ? styles.live : event.attending ? styles.reminded : '')
 
-/** The card's own click target, under its buttons: opens the detail. */
 function OpenButton({ event, onOpen }: { event: EventData; onOpen: () => void }): React.JSX.Element {
   return <button type="button" className={styles.open} aria-label={`Event: ${event.name}`} onClick={onOpen} />
 }
 
-// ---- cards -----------------------------------------------------------------
 
 export function EventCardSmall({ event, actions, onOpen }: EventCardProps): React.JSX.Element {
   return (
-    <article className={`${styles.card} ${styles.small} ${cardState(event)}`.trim()} data-event={event.id}>
+    <article className={`${styles.card} ${styles.small} ${cardState(event)}`.trim()} aria-label={event.name}>
       <span className={styles.surface}>
         <span className={styles.glow} />
         <EventImage src={event.image} className={styles.smallImage} />
@@ -252,7 +251,7 @@ export function EventCardSmall({ event, actions, onOpen }: EventCardProps): Reac
 
 export function EventCardBig({ event, friends, community, actions, onOpen, wide = false }: EventCardProps & { wide?: boolean }): React.JSX.Element {
   return (
-    <article className={`${styles.card} ${styles.big} ${wide ? styles.wide : ''} ${cardState(event)}`.trim()} data-event={event.id}>
+    <article className={`${styles.card} ${styles.big} ${wide ? styles.wide : ''} ${cardState(event)}`.trim()} aria-label={event.name}>
       <span className={styles.surface}>
         <span className={styles.glow} />
         <span className={styles.watermark} />
@@ -265,9 +264,7 @@ export function EventCardBig({ event, friends, community, actions, onOpen, wide 
       </span>
       {community != null && (
         <Tooltip label={community.name} side="top" className={styles.community}>
-          <span className={styles.communityThumb}>
-            {community.thumbnail !== '' && <img src={community.thumbnail} alt="" draggable={false} onError={(e) => (e.currentTarget.style.visibility = 'hidden')} />}
-          </span>
+          <CommunityThumb src={community.thumbnail} />
         </Tooltip>
       )}
       <span className={styles.bigFooter}>
@@ -286,7 +283,7 @@ export function EventCardBig({ event, friends, community, actions, onOpen, wide 
 
 export function EventCardBanner({ event, friends, actions, onOpen, withDots }: EventCardProps & { withDots: boolean }): React.JSX.Element {
   return (
-    <article className={`${styles.banner} ${withDots ? styles.bannerDots : ''}`.trim()} data-event={event.id}>
+    <article className={`${styles.banner} ${withDots ? styles.bannerDots : ''}`.trim()} aria-label={event.name}>
       <span className={styles.bannerSurface}>
         <EventImage src={event.image_vertical ?? event.image} className={styles.bannerImage} />
         <span className={styles.bannerShade} />
@@ -313,7 +310,6 @@ export function EventCardBanner({ event, friends, actions, onOpen, withDots }: E
   )
 }
 
-/** A free slot in a column: shows "CREATE EVENT" under the pointer. */
 export function EventCardEmptySlot({ onClick }: { onClick: () => void }): React.JSX.Element {
   return (
     <button type="button" className={styles.emptySlot} aria-label="Create event on this day" onClick={onClick}>
@@ -324,7 +320,6 @@ export function EventCardEmptySlot({ onClick }: { onClick: () => void }): React.
   )
 }
 
-/** A card's place while its column loads. */
 export function EventCardSkeleton({ wide = false }: { wide?: boolean }): React.JSX.Element {
   return (
     <span className={`${styles.skeletonCard} ${wide ? styles.wide : ''}`.trim()} aria-hidden="true">

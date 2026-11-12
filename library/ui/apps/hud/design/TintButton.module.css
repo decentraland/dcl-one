@@ -7,7 +7,7 @@
   gap: 8px;
   padding: 0;
   border: 0;
-  background: none;
+  border-radius: var(--tint-radius);
   color: var(--text);
   font-family: var(--font-family);
   font-weight: 600;
@@ -32,18 +32,29 @@
 }
 .dark {
   --tint: var(--scrim-40);
-  --tint-hover: var(--events-button-hover);
-  --tint-press: var(--events-button-press);
+  --tint-hover: var(--tint-dark-hover);
+  --tint-press: var(--tint-dark-press);
 }
 .faint {
-  --tint: var(--events-icon-button);
-  --tint-hover: var(--events-icon-button-hover);
-  --tint-press: var(--events-icon-button);
+  --tint: var(--tint-faint);
+  --tint-hover: var(--tint-faint-hover);
+  --tint-press: var(--tint-faint);
+}
+/* over a picture's dark shade */
+.veil {
+  --tint: var(--tint-veil);
+  --tint-hover: var(--tint-veil-hover);
+  --tint-press: var(--tint-veil);
+}
+.shade {
+  --tint: var(--tint-shade);
+  --tint-hover: var(--black-80);
+  --tint-press: var(--tint-shade);
 }
 .glass {
-  --tint: var(--events-today-button);
-  --tint-hover: var(--events-icon-button-hover);
-  --tint-press: var(--events-today-button);
+  --tint: var(--tint-glass);
+  --tint-hover: var(--tint-faint-hover);
+  --tint-press: var(--tint-glass);
 }
 .brand {
   --tint: var(--brand);
@@ -53,8 +64,8 @@
 /* nothing at rest: the surface shows under the pointer */
 .clear {
   --tint: transparent;
-  --tint-hover: var(--events-day-hover);
-  --tint-press: var(--events-day-press);
+  --tint-hover: var(--tint-clear-hover);
+  --tint-press: var(--tint-clear-press);
 }
 .clear:disabled {
   background: transparent;

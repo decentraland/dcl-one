@@ -4580,7 +4580,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockEvents.ts",
-      "sha256": "f3b6a76e1cdd6b5eb6b2072f1f3f240db8437347c2d6d1b2cf97c40c4db05739"
+      "sha256": "0c5b62277a7b4933ab5c90d6dbc9e4bfcb7dba76abaa1292aa73e85131216347"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -6172,11 +6172,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/ScrollThumb.module.css",
-      "sha256": "71a7e0eac72d66af5adcd5371c90f1e1983742d97af36feb2784a7e57286f727"
+      "sha256": "2483362e3fdc9bac25f42bbd5785a1c9812afd7efa71fb72ea4f5bce9b9d9a1f"
     },
     {
       "path": "library/ui/apps/hud/design/ScrollThumb.tsx",
-      "sha256": "16b07d632db6ea67c9b79527797bff0ad3ed7a1a2d723f3057b9d1169f25741d"
+      "sha256": "0aef2b7cd8897a634ce10e236a463ce5b1ad33f89001b39a5c18ccd69da8e144"
     },
     {
       "path": "library/ui/apps/hud/design/SearchField.module.css",
@@ -6196,11 +6196,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/Showcase.tsx",
-      "sha256": "37efd11813074d2837534b4de32743cf418162f266ec2ac3781d57c09c651da2"
+      "sha256": "e0ac08ad987025e716068c86ba76d590af590e13826c70e01903b4d29e39fc1d"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.module.css",
-      "sha256": "ec2d385ec0a7c1feebf0435fd8f7a44d67a7d23b40ff6b587eb339b0d7572987"
+      "sha256": "82f6898e265a7071528fcdbd672f92e97cb2fcf75ffbc41aeacc673c55497a47"
     },
     {
       "path": "library/ui/apps/hud/design/Skeleton.tsx",
@@ -6264,11 +6264,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/TintButton.module.css",
-      "sha256": "d8ef8fadbf1591d2e414ce1847d46f2218f92d492b4b0bb3563456410ce5446e"
+      "sha256": "1bd399974b6c2a38546defd75040cc5a2f82be6c5790e4cfac2dcee490f4b28a"
     },
     {
       "path": "library/ui/apps/hud/design/TintButton.tsx",
-      "sha256": "c33228a10b9c3831f28e4a816f56385b5ad4ee148f5974ecb87748efda74a14c"
+      "sha256": "9b222f9fcc655e2faabf21aa531d769ee40efb5825e0b455c62c4e6d451f876b"
     },
     {
       "path": "library/ui/apps/hud/design/Toast.module.css",
@@ -6320,11 +6320,11 @@
     },
     {
       "path": "library/ui/apps/hud/design/popups.module.css",
-      "sha256": "1416ed7c88ade3ca122189859d3346f04b438921aa3afe925c8b61dacbfbde55"
+      "sha256": "9c6733f0c550db0e27896609f81a0b78faf684d5249f5da883f98e52c55dcef6"
     },
     {
       "path": "library/ui/apps/hud/design/popups.tsx",
-      "sha256": "7e4f03f7bac396269ce21c10575dc5ff6b30e7a1b5cdeebe73c45704629b0aa7"
+      "sha256": "e128e6938cd9da1ae59751cce7525ce62df43e18072e18b26cbed47a27b837c6"
     },
     {
       "path": "library/ui/apps/hud/design/rarityArt.ts",
@@ -6572,23 +6572,23 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.module.css",
-      "sha256": "016c5608e0bc9e93aef1efe7ace060e699d93053583c30e3e2ba9721de5a970d"
+      "sha256": "cfa71722511f1ebdeabd523b12c55ef6a606978bc8d54dab2b81901efaadbb79"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "sha256": "af756de3a46a27d773368f43c76f2036914b8bffc7adcb00ef90456b3f407d1f"
+      "sha256": "fa8c07ab6084d31dc40ba237adb99860ec473490d6628505e86d64984ea2e27f"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.module.css",
-      "sha256": "1b04c9a7d4ddb087f0bc32a343295ad3eac54ceb4e4a263bd747b92b5b2f5d69"
+      "sha256": "ac08553bffb987f9fda1d158d2fd3995d236ed7f8e8ff1d7006a27e557d6ac67"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.tsx",
-      "sha256": "03a616a3995445a9d22676046046782b5d6da1755652ad84a854c70727bcdab8"
+      "sha256": "11154e353df0c02ee7987b55e9844a0208ef526e2160c81d5bf93328b1bd450d"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.module.css",
-      "sha256": "b0bdb5d66438bd5bd4a2943bb92ee1544bd71b348351f293fff5f3aab6a2c17b"
+      "sha256": "1ab9648af75698d70ac3bbec51197f43ebd42f3da77202329ee3039be18b5df0"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.tsx",
@@ -6596,15 +6596,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
-      "sha256": "201a4236ae55456e139908897fe16ec095bb8427b4ceb5ff18e717dc49a53a8f"
+      "sha256": "d6e412570ab7d5f86175fdab7dd1d312d60e7621be1846f04a72ba271e82e2e0"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
-      "sha256": "1f0d8af8ce80cebd364e5c1a92e56ed6565c5f1709c47c35c147609c6609fe27"
+      "sha256": "e06359af92ec4855e8a50c942bc5df1720601e2ffd698945c29811fc435d69f2"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.module.css",
-      "sha256": "9ab62ba723fef149240372387c6ad397e8bee50070e51a47fb81d6b49be6c00e"
+      "sha256": "bffe17a71a92fade558bf913ae759f6a2761177ffec85da4debb67b7f1574e21"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.tsx",
@@ -6612,19 +6612,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/eventFormat.ts",
-      "sha256": "a674eaefcb0aacddfb3c8ea57d7be88daff0561103d5fa10973cf082f42c1b66"
+      "sha256": "30c07ee6cff76afcc3c894f08ac4946e8a57d2d7e60dd06d972cf2098df970fc"
     },
     {
       "path": "library/ui/apps/hud/features/events/eventsStore.ts",
-      "sha256": "c4bb4d0f6416585126387bbb38744b32c62d509bccc36ffa18eebe02f77c8323"
+      "sha256": "d90ff4e7e0e8e7131555c2723959c2d7e4db2e2dffb4017b746895f4b805dbc5"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventActions.ts",
-      "sha256": "467521ec784aeeb35d0c04202bb0bb078f88b2fefbdeb1507403ec7f0c0cf6a5"
+      "sha256": "6b63b55552b7b93705e93f722b5301b9b87ce6e21cb847e883b87b11bd342c83"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventsData.ts",
-      "sha256": "b61ac5becb2d31020aa89652d756dda1575e3fbb0010c2785c5397cb9c8487ca"
+      "sha256": "bad9971fa194c03831092b87875f462c29389d8fff5e2d9a6af7d52430f9e8e7"
     },
     {
       "path": "library/ui/apps/hud/features/events/useLiveEventCount.ts",
@@ -6960,7 +6960,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "c5a1dcca8fa6218d89e001c33a5f5d8572e2003b3b892ed17528a83b6b92d62b"
+      "sha256": "85f0ab1e941e95bdfa5b72e0e2c9f57ad29175871a7427b24e9072d868f326fb"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -7080,7 +7080,7 @@
     },
     {
       "path": "library/ui/apps/hud/styles/tokens.css",
-      "sha256": "b7fd368278e7cf230786301cef8896a4c42f6101a8028ac69911e5aae6618055"
+      "sha256": "c3c68fd777364db9d3c092bf440d2fd7ec027f2bc6a914b21dcf738239c42f68"
     },
     {
       "path": "library/ui/apps/hud/test/avatar.test.tsx",
@@ -7264,19 +7264,19 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventFixtures.ts",
-      "sha256": "eb9d0b0a78a4f8fb52b2562790c4df8cace96e6c021ed62203151916ea358dfb"
+      "sha256": "78d9ab2efcd77d069fe3438e94906e5b9ab2cf6f05eb7e540c12dcdb71997f46"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
-      "sha256": "7a6deca01c242e6748f09dae69d59eb1c961878d1d439715459ba7f0586d5929"
+      "sha256": "7be37f48332a288238de1e1673c5db6bbc1fdf2490f1fc1bea145b33a60008b5"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
-      "sha256": "d11084dd6ec0c2292bce19d6af8d189d14a47f1853c6038462611719f0528064"
+      "sha256": "6f331b89fa25f547a59eb89fd7339f4d17e7f2acb6a30d85028c8f63f9d3435b"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",
-      "sha256": "3f3633543114e7136e30346489a539b695be67e133525dc443ec3e409d3ab222"
+      "sha256": "ba183fbbb0c0c4871d22f18443e135629ff597437453b66fbc1a8c9dbb1400c9"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/friends.test.tsx",
@@ -7428,7 +7428,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/systemActionShortcuts.test.tsx",
-      "sha256": "ad491740dec9c6f40fee77188687968d0d239e6917217e824dedaed140aa8364"
+      "sha256": "7faeaf0fb2c736d26390a19a277c56cd244550e8e67275755c6f8a6a8a50e496"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/voiceChat.test.tsx",

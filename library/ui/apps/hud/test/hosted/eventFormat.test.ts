@@ -94,7 +94,6 @@ describe('event cards', () => {
     expect(eventCardSize(plain, true, false)).toBe('big')
     expect(eventCardSize({ ...plain, highlighted: true }, false, false)).toBe('big')
     expect(eventCardSize({ ...plain, live: true }, false, false)).toBe('big')
-    // a reminder set after the list was read does not change the card
     expect(eventCardSize({ ...plain, attending: true }, false, false)).toBe('small')
   })
 

@@ -18,7 +18,7 @@
   animation: sweep var(--dur-shimmer) linear infinite;
 }
 .band::after {
-  background: var(--events-skeleton-band);
+  background: var(--skeleton-band);
   mask: url('../assets/backpack/gradient-loading.webp') center / 100% 100% no-repeat;
   -webkit-mask: url('../assets/backpack/gradient-loading.webp') center / 100% 100% no-repeat;
 }

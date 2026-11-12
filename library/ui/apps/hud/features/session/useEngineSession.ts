@@ -430,7 +430,6 @@ export interface PlacesState {
 /** What opened the Events page: its key, the menu's top bar, or the sidebar. */
 export type EventsOpenSource = 'shortcut' | 'start_menu' | 'sidebar'
 
-/** A community the user is a member of, as an event card names it. */
 export interface EventCommunity {
   id: string
   name: string
@@ -441,10 +440,8 @@ export interface EventCommunity {
 // reminder.
 export interface EventsState {
   open: boolean
-  /** Open or close the page; `source` is what opened it. */
   toggle: (source?: EventsOpenSource) => void
   data: EventsData
-  /** The communities the user is a member of. */
   memberOf: EventCommunity[]
 }
 

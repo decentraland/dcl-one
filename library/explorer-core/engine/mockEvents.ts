@@ -78,7 +78,6 @@ function all(now: number): EventData[] {
   return list.map((e) => (reminders.has(e.id) ? { ...e, attending: reminders.get(e.id) === true } : e))
 }
 
-/** The mock service's answer to a list request. */
 export function mockEventList(msg: GetEventsRequest, now: number = Date.now()): EventData[] {
   const events = all(now)
   if (msg.list === 'live') return events.filter((e) => e.live)

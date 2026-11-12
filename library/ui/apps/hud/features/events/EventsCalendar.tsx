@@ -1,7 +1,7 @@
 // The calendar: a bar of day names over one column of event cards a day, with the highlighted
 // events' carousel in place of the last day when there are any.
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { TintButton, EmptyState, MaskIcon, ScrollThumb } from '../../design'
 import type { EventData, Friend } from '@explorer-core/engine/protocol'
 import type { EventCommunity } from '../session/useEngineSession'
@@ -14,16 +14,13 @@ import { SCROLL_ARROWS_OCCUPANCY, addDays, columnOccupancy, dayLabel, emptySlotC
 import type { EventActions } from './useEventActions'
 import styles from './EventsCalendar.module.css'
 
-/** How far a column's arrow scrolls it. */
 const SCROLL_STEP_PX = 300
-/** How long the carousel stays on an event. */
 export const CAROUSEL_DELAY_MS = 10_000
 const SKELETON_CARDS = 3
 
 export interface EventCardContext {
   friends: Friend[]
   memberOf: EventCommunity[]
-  /** The events that were reminded when their list was read. */
   remindedWhenRead: string[]
   actions: EventActions
   onOpen: (event: EventData) => void
@@ -44,7 +41,7 @@ function DayPill({ day, onClick }: { day: Date; onClick: () => void }): React.JS
   )
 }
 
-function Column({ events, loading, context }: { events: EventData[]; loading: boolean; context: EventCardContext }): React.JSX.Element {
+function Column({ day, events, loading, context }: { day: Date; events: EventData[]; loading: boolean; context: EventCardContext }): React.JSX.Element {
   const scroller = useRef<HTMLDivElement>(null)
   const [edge, setEdge] = useState({ top: true, bottom: true })
   const sizes = events.map((e) => eventCardSize(e, context.remindedWhenRead.includes(e.id), communityOf(e, context.memberOf) != null))
@@ -58,7 +55,6 @@ function Column({ events, loading, context }: { events: EventData[]; loading: bo
     const next = { top: range <= 0 || el.scrollTop <= range * 0.01, bottom: range <= 0 || el.scrollTop >= range * 0.99 }
     setEdge((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next))
   }
-  // a column shows its new events from the top
   useEffect(() => {
     if (scroller.current != null) scroller.current.scrollTop = 0
     measure()
@@ -68,7 +64,7 @@ function Column({ events, loading, context }: { events: EventData[]; loading: bo
   const arrows = !loading && occupancy > SCROLL_ARROWS_OCCUPANCY
 
   return (
-    <div className={styles.column} aria-busy={loading}>
+    <section className={styles.column} aria-label={`${dayLabel(day)} events`} aria-busy={loading}>
       <span className={styles.columnOutline} />
       {loading ? (
         <div className={styles.columnLoading}>
@@ -97,7 +93,7 @@ function Column({ events, loading, context }: { events: EventData[]; loading: bo
               <EventCardEmptySlot key={`empty-${i}`} onClick={() => context.actions.createEvent(false)} />
             ))}
           </div>
-          <ScrollThumb target={scroller} className={styles.columnThumb} />
+          <ScrollThumb target={scroller} tone="dark" className={styles.columnThumb} />
           {arrows && !edge.top && (
             <button type="button" className={`${styles.more} ${styles.moreUp}`} aria-label="Earlier events" onClick={() => scroll(-SCROLL_STEP_PX)}>
               <MaskIcon src={arrowUpIcon} size={20} />
@@ -110,7 +106,7 @@ function Column({ events, loading, context }: { events: EventData[]; loading: bo
           )}
         </>
       )}
-    </div>
+    </section>
   )
 }
 
@@ -159,13 +155,10 @@ export function EventsCalendar({
   onRetry
 }: {
   startDay: Date
-  /** One list of events a day shown, from `startDay`. */
   columns: EventData[][]
-  /** The carousel's events; none shows a day in its place. */
   highlighted: EventData[]
   loading: boolean
   failed: boolean
-  /** The range arrows wait for the first read. */
   arrowsLocked: boolean
   context: EventCardContext
   onStartDay: (day: Date) => void
@@ -204,11 +197,11 @@ export function EventsCalendar({
       </div>
       <div className={styles.columns}>
         {failed ? (
-          <div className={styles.failed} style={{ width: days * 380.5 - 20.5 }}>
+          <div className={styles.failed} style={{ '--days': days } as CSSProperties}>
             <EmptyState variant="inline" tone="error" title="Couldn't load events" subtitle="There was an error loading events. Please try again." actions={[{ label: 'Retry', onClick: onRetry }]} />
           </div>
         ) : (
-          columns.map((events, i) => <Column key={addDays(startDay, i).getTime()} events={events} loading={loading} context={context} />)
+          columns.map((events, i) => <Column key={addDays(startDay, i).getTime()} day={addDays(startDay, i)} events={events} loading={loading} context={context} />)
         )}
       </div>
       {highlighted.length > 0 && <Carousel events={highlighted} context={context} />}

@@ -2,7 +2,6 @@
    the rounded shape (background, picture, live stripe), and the text and buttons sit over it, so
    a tooltip can leave the card. */
 
-/* ---- shared pieces ---- */
 .card,
 .banner {
   position: relative;
@@ -117,7 +116,7 @@
   gap: 4px;
   height: 24px;
   padding: 2px 4px;
-  background: var(--events-icon-button);
+  background: var(--tint-faint);
   font-size: var(--type-16);
   font-weight: 600;
   white-space: nowrap;
@@ -182,7 +181,6 @@
   font-weight: 600;
 }
 
-/* ---- buttons ---- */
 .actions {
   position: relative;
   display: flex;
@@ -206,6 +204,11 @@
   flex: 1;
   font-size: var(--type-14);
 }
+.remindDetail {
+  flex: none;
+  width: 300px;
+  font-size: var(--type-15);
+}
 .remind[aria-busy='true'] {
   opacity: 0.5;
 }
@@ -216,14 +219,23 @@
   font-weight: 700;
 }
 
+.jumpInDetail {
+  flex: none;
+  gap: 8px;
+  width: 156px;
+  font-size: var(--type-15);
+  font-weight: 700;
+}
+
 .shareMenu {
   position: fixed;
+  top: var(--menu-top);
+  left: var(--menu-left);
   width: 180px;
   transform: scale(var(--ui-scale));
   transform-origin: top left;
 }
 
-/* ---- small card: 340 × 135 ---- */
 .small {
   width: 340px;
   height: 135px;
@@ -312,7 +324,6 @@
   pointer-events: auto;
 }
 
-/* ---- big card: 340 × 280 (358 wide in a day's grid) ---- */
 .big {
   width: 340px;
   height: 280px;
@@ -429,7 +440,6 @@
   opacity: 0;
 }
 
-/* ---- banner: the highlighted carousel's card, 358 wide, as tall as its column ---- */
 .banner {
   width: 358px;
   height: 100%;
@@ -509,7 +519,6 @@
   font-size: var(--type-16);
 }
 
-/* ---- empty slot ---- */
 .emptySlot {
   position: relative;
   display: flex;
@@ -543,7 +552,6 @@
   border-radius: 22.5px;
 }
 
-/* ---- loading ---- */
 .skeletonCard {
   border-radius: 16px;
   position: relative;

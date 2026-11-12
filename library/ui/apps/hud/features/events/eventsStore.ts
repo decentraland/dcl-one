@@ -5,8 +5,6 @@
 import type { EventData, EventPlace } from '@explorer-core/engine/protocol'
 import { addDays, eventStart, sameDay, startOfDay } from './eventFormat'
 
-/** The lists the page reads: a calendar's range, the events live now, the highlighted ones, and
- *  one day's. */
 export type EventsQuery = 'range' | 'live' | 'highlighted' | 'day'
 export type QueryStatus = 'idle' | 'loading' | 'loaded' | 'failed'
 
@@ -22,7 +20,6 @@ export interface EventsStore {
   /** The events that were reminded when their list was read. A card keeps the size it was given
    *  then: a reminder set afterwards changes its background, not its size. */
   remindedWhenRead: string[]
-  /** Events whose reminder change is on its way to the service. */
   pending: string[]
 }
 
@@ -106,7 +103,6 @@ export function calendarColumns(store: EventsStore, startDay: Date, days: number
   return columns
 }
 
-/** The ids of the places `list` is held at. */
 export function placeIds(list: EventData[]): string[] {
   return [...new Set(list.flatMap((e) => (e.place_id != null && e.place_id !== '' ? [e.place_id] : [])))]
 }

@@ -227,7 +227,7 @@ export function Showcase(): React.JSX.Element {
 
       <Section title="TintButton (a translucent fill, by tone)">
         <div style={row}>
-          {(['dark', 'faint', 'glass', 'brand', 'clear'] as const).map((tone) => (
+          {(['dark', 'faint', 'veil', 'glass', 'shade', 'brand', 'clear'] as const).map((tone) => (
             <TintButton key={tone} tone={tone} style={{ height: 46, padding: '0 20px' }}>
               {tone}
             </TintButton>

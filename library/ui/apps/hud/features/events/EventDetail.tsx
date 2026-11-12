@@ -2,6 +2,7 @@
 // repeats on, over a dark scrim. Opened from a card; reads the event from the session, so a
 // reminder set here shows on the card too.
 
+import { useEffect } from 'react'
 import { TintButton, MaskIcon, openPopup } from '../../design'
 import closeIcon from '../../assets/events/close-icn-thin.png'
 import calendarAddIcon from '../../assets/events/add-to-calendar-icn.png'
@@ -18,7 +19,11 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
   const { store } = useSession().events.data
   const actions = useEventActions()
   const event = store.byId[eventId]
-  // the page closed under it (a jump) and dropped its events
+  // the page closed under it and dropped its events
+  const gone = event == null
+  useEffect(() => {
+    if (gone) onClose()
+  }, [gone, onClose])
   if (event == null) return null
   const place = event.place_id != null ? store.places[event.place_id] : undefined
   const jumpIn = (): void => {
@@ -26,8 +31,7 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
     actions.jumpIn(event)
   }
   return (
-    <div className={styles.scrim} onClick={onClose}>
-      <div className={styles.panel} role="dialog" aria-modal="true" aria-label={event.name} onClick={(e) => e.stopPropagation()}>
+    <div className={styles.panel} role="dialog" aria-modal="true" aria-label={event.name} onClick={(e) => e.stopPropagation()}>
         <span className={styles.glow} />
         <div className={styles.scroll}>
           <div className={styles.hero}>
@@ -40,7 +44,7 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
               <p className={styles.host}>
                 Hosted by <b>{event.user_name}</b>
               </p>
-              <EventActionButtons event={event} actions={{ ...actions, jumpIn }} size="large" remindLabel className={styles.buttons} />
+              <EventActionButtons event={event} actions={{ ...actions, jumpIn }} size="large" remindLabel variant="detail" className={styles.buttons} />
             </div>
           </div>
           <div className={styles.body}>
@@ -71,15 +75,13 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
             </div>
           </div>
         </div>
-        <TintButton radius={12} tone="dark" className={styles.close} aria-label="Close event detail" onClick={onClose}>
+        <TintButton radius={12} tone="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
           <MaskIcon src={closeIcon} size={14} />
         </TintButton>
-      </div>
     </div>
   )
 }
 
-/** Open an event's detail over the page. */
 export function openEventDetail(eventId: string): void {
-  openPopup((close) => <EventDetail eventId={eventId} onClose={close} />, { backdrop: false })
+  openPopup((close) => <EventDetail eventId={eventId} onClose={close} />, { deep: true })
 }

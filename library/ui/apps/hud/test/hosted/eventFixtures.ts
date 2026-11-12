@@ -2,7 +2,6 @@ import type { EventData } from '@explorer-core/engine/protocol'
 
 const HOUR = 60 * 60 * 1000
 
-/** An event starting at `start`, two hours long unless `extra` says otherwise. */
 export function eventAt(id: string, start: Date, extra: Partial<EventData> = {}): EventData {
   const duration = extra.duration ?? 2 * HOUR
   return {

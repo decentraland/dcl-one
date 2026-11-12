@@ -35,7 +35,6 @@ scenario('a day name opens that day of events and Today returns to the calendar'
   await openFromRail(explorer, 'events')
   await calendarLoaded(explorer)
   await explorer.hud.click(TOMORROW)
-  // the day's heading is "Tomorrow", then "Tomorrow (N)" once its events are read
   await explorer.hud.wait({ name: 'Tomorrow (', role: 'heading', exact: false }, { timeoutMs: EVENTS_TIMEOUT_MS })
   assert.ok(await explorer.hud.isVisible(BACK), 'the day view should offer the way back')
   assert.equal(await explorer.hud.isVisible(NEXT_DAYS), false, 'the calendar should be gone while a day is open')
@@ -50,7 +49,6 @@ scenario('an event card opens the event detail with the same name', async ({ exp
   await calendarLoaded(explorer)
   const cards = (await explorer.hud.list('button')).map((button) => button.name).filter((name) => name.startsWith(CARD_PREFIX))
   if (cards.length === 0) {
-    // no event in the days shown: the calendar offers its empty slots instead
     assert.ok(await explorer.hud.isVisible({ name: 'Create event on this day', role: 'button', index: 0 }), 'an empty calendar should offer its slots')
     await closePage(explorer, 'events')
     return

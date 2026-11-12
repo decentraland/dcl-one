@@ -21,7 +21,6 @@ describe('events store', () => {
     let store = loaded(emptyEventsStore(), 'range', [eventAt('liveToday', at(0, 11), { live: true }), eventAt('later', at(0, 20))])
     store = loaded(store, 'live', [eventAt('liveToday', at(0, 11), { live: true }), eventAt('liveSinceYesterday', at(-1, 9), { live: true })])
     expect(ids(calendarColumns(store, today, 2, now))).toEqual([['liveToday', 'liveSinceYesterday', 'later'], []])
-    // a calendar that starts on another day leaves them out
     expect(ids(calendarColumns(store, addDays(today, 1), 2, now))).toEqual([[], []])
   })
 

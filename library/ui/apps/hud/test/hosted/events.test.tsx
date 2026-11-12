@@ -27,7 +27,6 @@ const FRIEND = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
 interface Hud {
   driver: FakeDriver
   session: () => EngineSession
-  /** Answer the request of a list still waiting, by what it asked for. */
   answer: (which: 'range' | 'live' | 'highlight', events: EventData[] | 'failed') => void
   open: () => void
 }
@@ -62,7 +61,6 @@ function renderHud(): Hud {
   }
 }
 
-/** Open the page and answer its three first reads. */
 function openWith(range: EventData[], extra: { live?: EventData[]; highlighted?: EventData[] } = {}): Hud {
   const hud = renderHud()
   hud.open()
@@ -72,7 +70,7 @@ function openWith(range: EventData[], extra: { live?: EventData[]; highlighted?:
   return hud
 }
 
-const card = (name: string): HTMLElement => screen.getByRole('button', { name: `Event: ${name}` }).closest('article')!
+const card = (name: string): HTMLElement => screen.getByRole('article', { name })
 // the analytics queue outlives a test: each reads what was queued since it began
 let queuedBefore = 0
 const queued = (): ReturnType<typeof pending> => pending().slice(queuedBefore)
@@ -116,8 +114,7 @@ describe('events: the calendar', () => {
     expect(sent.some((m) => m.list === 'live')).toBe(true)
     expect(sent.find((m) => m.list === 'highlight')).toMatchObject({ limit: 10, offset: 0 })
     expect(screen.getByRole('heading', { name: 'Events' })).toBeInTheDocument()
-    // loading: every column is busy, and the range arrows wait
-    expect(document.querySelectorAll('[aria-busy="true"]')).toHaveLength(5)
+    expect(screen.getAllByRole('region', { busy: true })).toHaveLength(5)
     expect(screen.getByRole('button', { name: 'Next days' })).toBeDisabled()
   })
 
@@ -134,14 +131,12 @@ describe('events: the calendar', () => {
     )
     hud.driver.emit({ kind: 'communityChannels', communities: [{ id: 'c1', name: 'Builders', thumbnail: '', role: 'member' }] })
     expect(['Today', 'Tomorrow', 'Thu, Sep 10', 'Fri, Sep 11', 'Sat, Sep 12'].every((name) => screen.getByRole('button', { name }) != null)).toBe(true)
-    const order = [...document.querySelectorAll('article')].map((a) => a.getAttribute('data-event'))
-    expect(order).toEqual(['live', 'old', 'plain', 'reminded', 'mine', 'theirs'])
+    const order = screen.getAllByRole('article').map((a) => a.getAttribute('aria-label'))
+    expect(order).toEqual(['Live show', 'Since yesterday', 'Plain talk', 'Reminded meetup', 'My community night', 'Their community night'])
     expect(within(card('Live show')).getByText('Started 1 hour ago')).toBeInTheDocument()
     expect(within(card('Plain talk')).getByText('6:00PM')).toBeInTheDocument()
-    // the community's name shows only for the one the user is a member of
     expect(within(card('My community night')).getByRole('tooltip')).toHaveTextContent('Builders')
     expect(within(card('Their community night')).queryByRole('tooltip')).toBeNull()
-    // live: jump in, no reminder; to come: the reminder and the calendar, no jump
     expect(within(card('Live show')).getByRole('button', { name: /jump in/i })).toBeInTheDocument()
     expect(within(card('Live show')).queryByRole('button', { name: 'Remind me' })).toBeNull()
     expect(within(card('Plain talk')).getByRole('button', { name: 'Remind me' })).toHaveAttribute('aria-pressed', 'false')
@@ -154,7 +149,6 @@ describe('events: the calendar', () => {
     expect(screen.getByRole('button', { name: 'Previous days' })).toBeDisabled()
     await userEvent.click(screen.getByRole('button', { name: 'Next days' }))
     expect(hud.driver.last('getEvents')).toMatchObject(calendarRange(addDays(today, 5), 5))
-    // only a calendar that starts today reads the live events
     expect(hud.driver.sentOf('getEvents').filter((m) => m.list === 'live')).toHaveLength(1)
     hud.answer('range', [])
     expect(screen.getByRole('button', { name: 'Sun, Sep 13' })).toBeInTheDocument()
@@ -175,7 +169,7 @@ describe('events: the calendar', () => {
     hud.answer('live', [])
     hud.answer('range', 'failed')
     expect(screen.getAllByText('There was an error loading events. Please try again.').length).toBeGreaterThan(0)
-    expect(document.querySelectorAll('[aria-busy="true"]')).toHaveLength(0)
+    expect(screen.queryAllByRole('region', { busy: true })).toHaveLength(0)
     const before = hud.driver.sentOf('getEvents').length
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(hud.driver.sentOf('getEvents').length).toBe(before + 3)
@@ -298,7 +292,6 @@ describe('events: the reminder', () => {
     expect(remind()).toHaveAttribute('aria-busy', 'true')
     hud.driver.emit({ kind: 'eventAttending', eventId: 'a', attending: true })
     expect(remind()).toHaveAttribute('aria-pressed', 'true')
-    // the card keeps its size: only its background says it is reminded
     expect(within(card('Evening set')).queryByText('REMIND ME')).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Event: Evening set' }))
     const detail = screen.getByRole('dialog', { name: 'Evening set' })
