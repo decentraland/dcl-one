@@ -250,6 +250,16 @@ function settle(page) {
         return image.decode().catch(() => {});
       }),
     );
+    if (!document.getElementById('ch-capture-caret')) {
+      const style = document.createElement('style');
+      style.id = 'ch-capture-caret';
+      style.textContent = '* { caret-color: transparent !important; }';
+      document.head.append(style);
+    }
+    for (const animation of document.getAnimations()) {
+      if (animation.effect?.getComputedTiming().endTime === Infinity) animation.cancel();
+      else animation.finish();
+    }
     await new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done)));
   });
 }
@@ -276,7 +286,12 @@ async function capture({ app, side, config, entries, out }) {
   const electronApp = await timed(`${side} launch`, () =>
     _electron.launch({
       executablePath: createRequire(join(pkg, 'package.json'))('electron'),
-      args: [pkg, `--user-data-dir=${data}`, '--force-color-profile=srgb'],
+      args: [
+        pkg,
+        `--user-data-dir=${data}`,
+        '--force-color-profile=srgb',
+        '--force-device-scale-factor=1',
+      ],
       cwd: pkg,
       env: {
         ...process.env,
@@ -322,7 +337,6 @@ async function capture({ app, side, config, entries, out }) {
           path: shotPath(out, entry, side),
           scale: 'css',
           animations: 'disabled',
-          caret: 'hide',
         });
         log(`${side} ${entry.prefix} ${Date.now() - started} ms`);
       } catch (error) {

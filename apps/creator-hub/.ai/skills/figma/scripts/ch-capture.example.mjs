@@ -1,5 +1,7 @@
 /** Example states for ch-capture.mjs: the signed-out Home page and the update check in App Settings. */
 
+const CREATE = '[data-testid="create-button"]';
+
 const openUpdateCheck = async ({ page }) => {
   await page.click('[data-testid="logo-menu-button"]');
   await page.click('[data-testid="logo-menu-check-updates"]');
@@ -46,6 +48,13 @@ export default {
       },
       steps: openUpdateCheck,
       ready: '.update-settings__release-notes-header',
+    },
+    { name: 'create-rest', component: 'create-button', ready: CREATE },
+    {
+      name: 'create-hover',
+      component: 'create-button',
+      steps: ({ page }) => page.hover(CREATE),
+      ready: CREATE,
     },
   ],
 };

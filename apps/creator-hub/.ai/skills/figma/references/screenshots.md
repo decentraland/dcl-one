@@ -10,7 +10,7 @@
 
 ## Capturing the render
 
-- **Screenshots are ground truth.** `getComputedStyle` over CDP is unreliable for `:hover` / `:focus-within`.
+- **Screenshots are ground truth.** `getComputedStyle` over CDP is unreliable for `:hover` / `:focus-within`. Capture hover and press states only after their transitions have finished, and in Electron launch with `--force-device-scale-factor=1`. On a Retina display, `page.screenshot({ scale: 'css' })` switches the page to DPR 1 for the shot. That re-layout drops the synthetic hover, so the shot shows the rest paint and the computed style reads rest right after it. With the flag, `scale: 'css'` has nothing to switch and the hover survives.
 - **Compare the full window at Figma's frame size, DPR 1.** Size the window to the frame (1920 × 1080): Playwright `page.setViewportSize` or CDP `Emulation.setDeviceMetricsOverride`, then `screenshot({ scale: 'css' })`; launch Electron with `--force-color-profile=srgb`. A window capped by the display height (953 on a laptop) is not a valid capture. Never compare crops at mismatched scales. Compare side by side, as a 50% overlay, and as per-row pixel profiles, and report measured numbers (px, alpha, ratio), not impressions.
 - **Render traps that move pixels against Figma:**
   - Variable Inter applies its optical-size axis automatically (`opsz` = font size), rendering 2–3% narrower than Figma. `font-optical-sizing: none` gives Figma's widths.
@@ -62,7 +62,7 @@ Run it from any directory. Grids are composed in Playwright's headless Chromium,
 
 ### States file
 
-An ES module whose default export is the config. [`scripts/ch-capture.example.mjs`](../scripts/ch-capture.example.mjs) shoots the signed-out Home page in English and Spanish, plus the App Settings update check in three IPC-stubbed states.
+An ES module whose default export is the config. [`scripts/ch-capture.example.mjs`](../scripts/ch-capture.example.mjs) shoots the signed-out Home page in English and Spanish, the App Settings update check in three IPC-stubbed states, and the Create button at rest and on hover.
 
 | Field | Where | Meaning |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ An ES module whose default export is the config. [`scripts/ch-capture.example.mj
 - **Segment and Sentry stay off.** Builds run with every `VITE_SEGMENT_*` name and `VITE_SENTRY_DSN` blank, and with `DRY_RUN=1`, so Sentry gets no source-map upload either. Before each launch the script greps `main`, `preload` and `renderer/dist` for every Segment key value it can see, in the environment and in the After checkout's `.env*` files. A `dist` that holds one is rebuilt. If the key is still there after the rebuild, the run aborts. It can't catch a key it never sees, such as one exported only in another shell.
 - **Capture rules are built in:**
   - a temp `HOME` and `--user-data-dir`, signed out, with `Scenes/` created before launch (otherwise the legacy-paths migration copies your real scenes in);
-  - `--force-color-profile=srgb`, `screenshot({ scale: 'css' })`, with animations disabled and the caret hidden;
+  - `--force-color-profile=srgb` and `--force-device-scale-factor=1` (without it, every hover shot on a Retina Mac comes out at rest), then `page.screenshot({ scale: 'css', animations: 'disabled' })` at the emulated viewport, with the caret hidden;
   - `SHELL=/usr/bin/true`, and `PATH` set to `bin`, then Node's own bin folder, then the system folders, so Volta's shim and your login shell's `PATH` stay out of it;
   - animated images frozen on their first frame (`webContents.setImageAnimationPolicy('noAnimation')`);
   - remote media pinned. Every URL matching `pin` is fetched once, saved under `<out>/.pinned/`, and replayed to both sides on every later round. The default pins YouTube thumbnails, whose CDN edges serve different JPEG encodes, which turned every Home pair into a false diff. Delete `.pinned/` to refresh them.
@@ -96,7 +96,7 @@ An ES module whose default export is the config. [`scripts/ch-capture.example.mj
   2. It reloads the renderer and waits for the navbar.
   3. It waits for the startup update check and the feature flags to settle, then clears the snackbar the update check always pushes. `updater.checkForUpdates` is stubbed to "up to date" unless the state overrides it; that snackbar used to cost a 20 s wait per launch. Flag-gated UI (the ANALYTICS tab) is only on screen once the flags land.
   4. It applies the locale, parks the mouse at 0,0, then runs `steps` and waits for `ready`.
-  5. It settles: fonts, every `<img>`, CSS `background-image` and video poster decoded, then two animation frames.
+  5. It settles: fonts, every `<img>`, CSS `background-image` and video poster decoded. Finite animations and transitions are finished and infinite ones cancelled, so hover and press states are captured after the settle step finishes their transitions, never mid-transition. Then two animation frames.
 
   Stubs are in place before the reload, so the startup check and the page's mount see them too. One unshot reset runs before the first state to warm the image decode cache.
 
@@ -111,4 +111,4 @@ An ES module whose default export is the config. [`scripts/ch-capture.example.mj
 - **The stub swap reads Electron's private `ipcMain._invokeHandlers`** to restore originals, and fails loudly if a future Electron drops it.
 - **Full-window shots only.** For an element that can scroll, apply the fully-visible guard above in `steps` before trusting the shot.
 - **Live data is live.** Feature flags and remote content come from the network. Both sides of one round see the same values, but a later round may not. Pin or route anything that has to hold still (`pin`, or `page.route` in `setup`).
-- **Residual noise.** With Before and After on the same code, 24 of 25 pairs across five rounds were byte-identical. The rest was ±1 dither on the Home page's background gradient in the first state of a session (≈38k px, every one at delta 1). Judge a diff with a threshold above 1, never by byte equality.
+- **Residual noise.** With Before and After on the same code, 15 of 21 pairs across three rounds were byte-identical. The rest, all on the Home page, differed in at most 141 px by at most 5 per channel. Judge a diff with a per-channel threshold above 5, never by byte equality.
