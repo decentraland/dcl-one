@@ -4,7 +4,7 @@ Reviewed 2026-11-12 against Places `ba6674f6f13c2715be3e480d4b01b6979cde79fc` an
 
 ## Decision
 
-Follow the [decision summary](README.md): favorites and likes are duplicate-command candidates. Catalogue job/consumer outputs are residual candidates only after deterministic input replay is assessed. The broad source-only adapters were removed; this inventory justifies further classification, not installation. Production retains consumers, schedulers and provider effects. The retained favorite receipt protocol requires a source handler change and stable retry identity.
+Follow the [decision summary](README.md): favorites and likes now use native command replay. Only the POI job membership bit has an approved residual mapper; other catalogue job/consumer outputs remain candidates pending deterministic input replay assessment. The broad source-only adapters were removed; this inventory justifies further classification, not installation. Production retains consumers, schedulers and provider effects. The command receipt protocol requires a source handler change and stable acceptance identity; see the [current implementation contract](places-hybrid-commands.md).
 
 ## Tables and writers
 

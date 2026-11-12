@@ -3,14 +3,11 @@
 A separately deployable, removable **production → dcl-one** coordinator. Production
 remains the write authority and owns jobs and external effects. The gateway returns
 production's result. Its production transaction records the command durably; the
-coordinator executes the equivalent native target command in source order. Changes
-without an accepted command are retained as evidence and block progress. There is
-currently no approved residual database-sync mapping: compatible requests must
-be executed through both services before considering a selective fallback.
+coordinator executes the equivalent native target command in source order. The only residual mapping is the POI job’s committed membership bit; it has no equivalent inbound request. Unrecognized changes block progress. Compatible operations use native execution, never continuous interaction-row copying.
 
 ## Supported pilot
 
-Only favorites for explicitly selected Genesis Places UUIDs. Shop and credits are
+Favorites, tri-state votes and trusted POI-job membership for explicitly selected Genesis Places UUIDs. Shop and credits are
 excluded for security reasons, including marketplace imports. Worlds, social/voice,
 notifications, other aggregates and arbitrary SQL replication are not implemented.
 The asset-bundle rewriter is unrelated and unchanged.
@@ -41,9 +38,8 @@ nix build .#image-migration-sync
 Use the normal schema migration procedure to install
 [worker state](../../schemas/70_migration_sync.sql) and
 [capture progress](../../schemas/71_migration_capture.sql). Migrate the canonical
-Genesis catalogue before bootstrap. Bootstrap imports a consistent scoped favorite
-snapshot and rejects existing target favorites in that scope; omit that scoped
-favorite batch from the initial import or use a clean rehearsal destination.
+Genesis catalogue before bootstrap. Bootstrap imports a consistent scoped favorite/vote snapshot and aligns the POI bit. It rejects existing target interactions in that scope; omit that scoped
+interaction batch from the initial import or use a clean rehearsal destination.
 Catalogue changes are not continuously mapped by this pilot: freeze reviewed
 catalogue identities or stop the pilot when dependencies change.
 
@@ -64,7 +60,7 @@ source role; subsequent capture uses a read-only source role. See
 ```sh
 # Explicit source mutation: install only in the approved source rehearsal DB.
 dcl-migration-sync install-source --entity 22222222-2222-4222-8222-222222222222
-# Imports favorites at a consistent capture boundary and registers a paused stream.
+# Imports interactions and POI membership at a consistent capture boundary and registers a paused stream.
 dcl-migration-sync bootstrap --stream places
 # Copy committed source transactions; supervise separately from application.
 dcl-migration-sync capture --stream places --poll-ms 1000
@@ -94,22 +90,21 @@ dcl-migration-sync metrics --stream places
 ```
 
 Enable the Places application's `MIGRATION_CAPTURE_ENABLED=true` only after source
-installation. Its authenticated favorite handler requires a stable client-generated
-`x-dcl-operation-id` for captured commands. Client retries reuse that ID and payload.
+installation. Its authenticated favorite/vote handlers require `x-dcl-operation-id` for captured commands. Stable client IDs remain the default; retries reuse that ID and payload. The gateway can opt into per-attempt IDs for these setters only, preserving each actual source acceptance without deduplicating separate client retries. Enable `MIGRATION_POI_CAPTURE_ENABLED=true` separately for trusted POI-job results after installing version 4; see the [POI contract](../../sync-migration/places-poi-residual.md).
 Configure the alb-router hybrid allowlist to match the installed UUID scope. Writes
 without that protocol are captured but block the ordered head with
 `unreceipted_mutation`; they are never copied into target business tables. Direct independent target writes stay denied.
 
 ## Ordering and failure handling
 
-- A command receipt, favorite mutation and source outbox entry commit together.
+- A command receipt, interaction mutation and source outbox entry commit together.
   Conflicting operation-ID reuse fails; an identical retry returns the stored result.
 - Capture persists each complete transaction before advancing its durable offset.
   Snapshot-covered commands never replay. A source generation change or history gap
   stops capture rather than silently starting over.
-- One stream lock coordinates native target execution and progress.
+- One stream lock coordinates native target execution, approved POI outcomes and progress.
   Native state and receipt commit together. The coordinator validates that receipt
-  and advances without applying those captured favorite rows again.
+  and advances without applying those captured interaction rows again.
 - A timeout may hide success. Retry the same pointer and resolve the durable target
   receipt. Later deletes cannot be overtaken by a delayed earlier command.
 - Unreceipted mutations or native invariant failures block the head. No later transaction skips it.
@@ -144,8 +139,7 @@ thresholds are examples, not measured production budgets.
 Readiness requires current source contact, matching generation, fully caught-up
 capture/application, no blocked head and an unpaused stream. Idle capture polls
 refresh contact. Readiness is sampled, not linearizable cross-database consistency.
-Reconciliation compares scoped favorite rows and target favorite counts derived
-from source facts, and rejects a moving source or target boundary. It never repairs data; catalogue/effects/API equivalence still
+Reconciliation compares scoped favorite/vote rows, favorite counts and POI membership, and rejects a moving source or target boundary. It never repairs data; catalogue/effects/API equivalence still
 need separate verification.
 
 For a repeatable stable-window soak, run `scripts/soak.sh places 1440 60` with

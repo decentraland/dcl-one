@@ -8,7 +8,7 @@ const USER: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PLACE: &str = "a1111111-1111-4111-8111-111111111111";
 
 async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Result<()> {
-    source.execute(sqlx::raw_sql("CREATE TABLE places(id char(36) PRIMARY KEY,world boolean NOT NULL DEFAULT false,disabled boolean NOT NULL DEFAULT false,favorites integer NOT NULL DEFAULT 0); CREATE TABLE user_favorites(\"user\" char(42),entity_id char(36),user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); INSERT INTO places(id) VALUES('a1111111-1111-4111-8111-111111111111');")).await?;
+    source.execute(sqlx::raw_sql("CREATE TABLE places(id char(36) PRIMARY KEY,world boolean NOT NULL DEFAULT false,disabled boolean NOT NULL DEFAULT false,favorites integer NOT NULL DEFAULT 0,likes integer NOT NULL DEFAULT 0,dislikes integer NOT NULL DEFAULT 0,like_rate double precision,like_score double precision,categories text[] NOT NULL DEFAULT ARRAY[]::text[]); CREATE TABLE place_categories(place_id char(36),category_id text,PRIMARY KEY(place_id,category_id)); CREATE TABLE user_likes(\"user\" char(42),entity_id char(36),\"like\" boolean NOT NULL,user_activity double precision NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); CREATE TABLE user_favorites(\"user\" char(42),entity_id char(36),user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); INSERT INTO places(id) VALUES('a1111111-1111-4111-8111-111111111111');")).await?;
     let mut files = std::fs::read_dir(Path::new(env!("DCL_ONE_ROOT")).join("schemas"))?
         .collect::<std::io::Result<Vec<_>>>()?;
     files.sort_by_key(|e| e.file_name());
@@ -22,7 +22,7 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
         }
     }
     sqlx::query(
-        "INSERT INTO explore.place(id,base_position,raw,origin) VALUES($1,'0,0','{}','local')",
+        "INSERT INTO explore.place(id,base_position,raw,origin) VALUES($1,'0,0','{\"source\":\"places\",\"local\":true,\"world\":false,\"categories\":[]}','local')",
     )
     .bind(PLACE)
     .execute(target)
@@ -124,6 +124,45 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
         generation: capture::source_info(source).await?.generation,
         commit_lsn: "0/2".into(),
     };
+    // The private follower validates inbox evidence independently of the worker.
+    // A mixed residual marker or another actor must fail before domain writes.
+    let original: serde_json::Value = sqlx::query_scalar(
+        "SELECT payload FROM migration_sync.inbox WHERE stream='pilot' AND commit_lsn='0/2'",
+    )
+    .fetch_one(target)
+    .await?;
+    for field in ["poi_result", "changes"] {
+        let mut invalid = original.clone();
+        if field == "poi_result" {
+            invalid[field] = serde_json::json!({"producer":"places_poi_category_update_v1","entity_id":PLACE,"poi":true});
+        } else {
+            invalid[field][0]["user"] =
+                serde_json::json!("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
+        }
+        sqlx::query(
+            "UPDATE migration_sync.inbox SET payload=$1 WHERE stream='pilot' AND commit_lsn='0/2'",
+        )
+        .bind(invalid)
+        .execute(target)
+        .await?;
+        assert!(
+            catalyst_explore::migration_replay::replay(target, &pointer)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_favorites")
+                .fetch_one(target)
+                .await?,
+            1
+        );
+    }
+    sqlx::query(
+        "UPDATE migration_sync.inbox SET payload=$1 WHERE stream='pilot' AND commit_lsn='0/2'",
+    )
+    .bind(original)
+    .execute(target)
+    .await?;
     catalyst_explore::migration_replay::replay(target, &pointer).await?;
     assert_eq!(
         store::process_next(target, "pilot").await?,
@@ -140,6 +179,79 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
         0
     );
 
+    // Distinct gateway attempt IDs preserve no-op metadata, while a stale
+    // retry after the opposite vote reproduces the accepted source ordering.
+    let like_call = "SELECT migration_capture.execute_like($1,$2,$3,$4,$5,$6)";
+    let mut first_state = serde_json::Value::Null;
+    for (offset, vote) in [Some(true), Some(true), Some(false), Some(true), None, None]
+        .into_iter()
+        .enumerate()
+    {
+        let attempt = Uuid::new_v4();
+        let response: serde_json::Value = sqlx::query_scalar(like_call)
+            .bind(attempt)
+            .bind("d".repeat(64))
+            .bind(USER)
+            .bind(id)
+            .bind(vote)
+            .bind(if offset == 0 { 120.0 } else { 250.0 })
+            .fetch_one(source)
+            .await?;
+        assert_eq!(response["user_like"], vote == Some(true));
+        assert_eq!(response["user_dislike"], vote == Some(false));
+        assert!(capture::pump_once(source, target, "pilot").await?);
+        assert_eq!(
+            store::process_next(target, "pilot").await?,
+            store::Outcome::AwaitingCommand
+        );
+        let receipt = catalyst_explore::migration_replay::replay(
+            target,
+            &catalyst_explore::migration_replay::ReplayRequest {
+                commit_lsn: format!("0/{:X}", offset + 3),
+                ..pointer.clone()
+            },
+        )
+        .await?;
+        if offset == 0 {
+            first_state = serde_json::to_value(&receipt)?["state"].clone();
+        }
+        if offset == 1 {
+            assert_eq!(serde_json::to_value(&receipt)?["state"], first_state);
+        }
+        assert_eq!(
+            store::process_next(target, "pilot").await?,
+            store::Outcome::Applied
+        );
+        assert_eq!(
+            capture::reconcile(source, target, "pilot").await?["matches"],
+            true
+        );
+        let counts: (i32, i32) = sqlx::query_as(
+            "SELECT likes,dislikes FROM explore.place_interaction_counts WHERE entity_id=$1",
+        )
+        .bind(PLACE)
+        .fetch_one(target)
+        .await?;
+        assert_eq!(
+            counts,
+            (
+                i32::from(vote == Some(true)),
+                i32::from(vote == Some(false))
+            )
+        );
+        // Cross-kind reuse must not return another route's retained response.
+        assert!(
+            sqlx::query_scalar::<_, serde_json::Value>(call)
+                .bind(attempt)
+                .bind("d".repeat(64))
+                .bind(USER)
+                .bind(id)
+                .fetch_one(source)
+                .await
+                .is_err()
+        );
+    }
+
     // A direct writer is observable but is not approved for selective DB sync.
     sqlx::query("INSERT INTO user_favorites VALUES($1,$2,9,now())")
         .bind(USER)
@@ -155,7 +267,7 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
         store::status(target, "pilot").await?["head_error"],
         "unreceipted_mutation"
     );
-    assert_eq!(store::status(target, "pilot").await?["applied_lsn"], "0/2");
+    assert_eq!(store::status(target, "pilot").await?["applied_lsn"], "0/8");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_favorites")
             .fetch_one(target)
@@ -175,7 +287,7 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
         catalyst_explore::migration_replay::replay(
             target,
             &catalyst_explore::migration_replay::ReplayRequest {
-                commit_lsn: "0/4".into(),
+                commit_lsn: "0/A".into(),
                 ..pointer.clone()
             }
         )
@@ -183,13 +295,13 @@ async fn assertions(source: &PgPool, target: &PgPool, noncanonical: bool) -> Res
         .is_err()
     );
     store::pause(target, "pilot", true).await?;
-    dcl_migration_sync::ops::retry_blocked(target, "pilot", "0/3").await?;
+    dcl_migration_sync::ops::retry_blocked(target, "pilot", "0/9").await?;
     store::pause(target, "pilot", false).await?;
     assert_eq!(
         store::process_next(target, "pilot").await?,
         store::Outcome::Blocked
     );
-    assert_eq!(store::status(target, "pilot").await?["applied_lsn"], "0/2");
+    assert_eq!(store::status(target, "pilot").await?["applied_lsn"], "0/8");
     assert!(
         sqlx::query("TRUNCATE user_favorites")
             .execute(source)

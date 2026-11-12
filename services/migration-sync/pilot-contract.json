@@ -1,7 +1,7 @@
 {
-  "version": 1,
+  "version": 2,
   "source": "places",
-  "adapter": "places_outbox_v1",
+  "adapter": "places_hybrid_commands_v1",
   "direction": "production_to_dcl_one",
   "authority": {
     "writes": "production",
@@ -14,36 +14,37 @@
     "catalogue": "Existing canonical Genesis places; no worlds or mirrored target identities",
     "command": {
       "method": "PATCH",
-      "path": "/api/places/{uuid}/favorites",
       "operation_header": "x-dcl-operation-id",
-      "actor": "verified source authentication"
+      "actor": "verified source authentication",
+      "paths": [
+        "/api/places/{uuid}/favorites",
+        "/api/places/{uuid}/likes"
+      ],
+      "identity": "Stable caller ID by default; opt-in gateway per-attempt IDs for these setters only"
     },
-    "source_table": "public.user_favorites",
-    "source_fields": [
-      "user",
-      "entity_id",
-      "user_activity",
-      "created_at"
+    "native_interactions": [
+      "favorites",
+      "likes",
+      "dislikes",
+      "vote_withdrawal"
     ],
-    "target_table": "explore.user_favorites",
-    "target_key": [
-      "user",
-      "entity_id"
-    ],
-    "derived_target_table": "explore.place_interaction_counts",
-    "derived_field": "favorites"
+    "residual": {
+      "producer": "places_poi_category_update_v1",
+      "field": "POI membership only",
+      "target": "existing strictly owned Genesis place categories and raw.categories"
+    }
   },
   "classification": {
     "transaction_with_atomic_source_command": "native_replay_then_verify_receipt_without_domain_reapply",
-    "transaction_without_command": "block_unreceipted_mutation_no_approved_residual_mapping",
+    "transaction_without_command": "only_approved_poi_producer_result_else_block",
     "unrecognized_mapping_or_conflict": "block_ordered_head",
     "truncate": "reject_at_source_while_capture_installed",
     "ddl": "operator_change_requires_stop_and_compatibility_review",
-    "residual_database_sync": "disabled_until_case_specific_non_replicability_and_mapping_are_approved"
+    "residual_database_sync": "poi_membership_only"
   },
   "dependencies": [
     "frozen_or_reviewed_catalogue",
-    "target_like_facts_for_counter_recomputation"
+    "consistent_interaction_and_poi_baseline"
   ],
   "excluded": [
     "shop",
@@ -68,5 +69,6 @@
     "permission_and_notification_workflow",
     "failover_restore_retention_and_multi_day_soak"
   ],
-  "baseline": "one_time_consistent_favorite_snapshot_before_activation"
+  "baseline": "one_time_consistent_interaction_and_poi_snapshot_before_activation",
+  "capture_control_version": 4
 }

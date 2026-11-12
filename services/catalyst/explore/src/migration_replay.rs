@@ -1,4 +1,4 @@
-//! Ordered native favorite replay for the dedicated migration follower.
+//! Ordered native interaction replay for the dedicated migration follower.
 //!
 //! The request names durable captured evidence; it never supplies a mutation.
 //! Native facts and their receipt commit together under the stream's apply lock.
@@ -37,12 +37,32 @@ struct Command {
     expected: Option<FavoriteState>,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LikeState {
+    like: bool,
+    user_activity: f64,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct LikeCommand {
+    operation_id: Uuid,
+    request_hash: String,
+    user: String,
+    entity_id: String,
+    like: Option<bool>,
+    user_activity: f64,
+    expected: Option<LikeState>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ReplayReceipt {
     pub operation_id: Uuid,
     pub commit_lsn: String,
     pub request_hash: String,
-    pub state: Option<FavoriteState>,
+    pub state: Value,
 }
 
 fn canonical_lsn(value: &str) -> bool {
@@ -75,7 +95,8 @@ fn validate(request: &ReplayRequest, command: &Command) -> Result<(), ApiError> 
         && wallet[2..]
             .bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-        && Uuid::parse_str(&command.entity_id).is_ok_and(|id| id.to_string() == command.entity_id)
+        && Uuid::parse_str(&command.entity_id)
+            .is_ok_and(|id| !id.is_nil() && id.to_string() == command.entity_id)
         && command.user_activity.is_finite()
         && command.favorite == command.expected.is_some()
         && command.request_hash.len() == 64
@@ -88,6 +109,120 @@ fn validate(request: &ReplayRequest, command: &Command) -> Result<(), ApiError> 
         });
     if !valid {
         return Err(ApiError::bad_request("Invalid captured favorite command"));
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum CapturedChange {
+    Upsert {
+        user: String,
+        entity_id: String,
+        user_activity: f64,
+        created_at: DateTime<Utc>,
+    },
+    Delete {
+        user: String,
+        entity_id: String,
+    },
+    LikeUpsert {
+        user: String,
+        entity_id: String,
+        like: bool,
+        user_activity: f64,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    },
+    LikeDelete {
+        user: String,
+        entity_id: String,
+    },
+}
+
+// Revalidate the retained evidence before calling native mutation code, even if
+// the normal ingestion path already validated it. Never execute a mixed outcome.
+fn validate_changes(
+    payload: &Value,
+    command: &Command,
+    like: Option<&LikeCommand>,
+) -> Result<(), ApiError> {
+    let raw = payload["changes"]
+        .as_array()
+        .ok_or_else(|| ApiError::bad_request("Missing captured changes"))?;
+    if raw.len() > 1000 {
+        return Err(ApiError::bad_request("Too many captured changes"));
+    }
+    let changes: Vec<CapturedChange> = serde_json::from_value(payload["changes"].clone())
+        .map_err(|_| ApiError::bad_request("Unsupported captured changes"))?;
+    for change in &changes {
+        let (user, entity, valid) = match change {
+            CapturedChange::Upsert {
+                user,
+                entity_id,
+                user_activity,
+                created_at,
+            } => (
+                user,
+                entity_id,
+                like.is_none()
+                    && user_activity.is_finite()
+                    && created_at.timestamp_subsec_nanos() % 1000 == 0,
+            ),
+            CapturedChange::Delete { user, entity_id } => (user, entity_id, like.is_none()),
+            CapturedChange::LikeUpsert {
+                user,
+                entity_id,
+                user_activity,
+                created_at,
+                updated_at,
+                ..
+            } => (
+                user,
+                entity_id,
+                like.is_some()
+                    && user_activity.is_finite()
+                    && created_at.timestamp_subsec_nanos() % 1000 == 0
+                    && updated_at.timestamp_subsec_nanos() % 1000 == 0
+                    && updated_at >= created_at,
+            ),
+            CapturedChange::LikeDelete { user, entity_id } => (user, entity_id, like.is_some()),
+        };
+        if !valid || user != &command.user || entity != &command.entity_id {
+            return Err(ApiError::bad_request(
+                "Captured changes escape command scope",
+            ));
+        }
+    }
+    let agrees = match changes.last() {
+        None => true, // Accepted no-op still has a source receipt.
+        Some(CapturedChange::Upsert {
+            user_activity,
+            created_at,
+            ..
+        }) => command
+            .expected
+            .as_ref()
+            .is_some_and(|v| v.user_activity == *user_activity && v.created_at == *created_at),
+        Some(CapturedChange::Delete { .. }) => command.expected.is_none(),
+        Some(CapturedChange::LikeUpsert {
+            like: vote,
+            user_activity,
+            created_at,
+            updated_at,
+            ..
+        }) => like.and_then(|c| c.expected.as_ref()).is_some_and(|v| {
+            v.like == *vote
+                && v.user_activity == *user_activity
+                && v.created_at == *created_at
+                && v.updated_at == *updated_at
+        }),
+        Some(CapturedChange::LikeDelete { .. }) => like.is_some_and(|c| c.expected.is_none()),
+    };
+    if !agrees {
+        return Err(ApiError::bad_request(
+            "Captured changes disagree with command receipt",
+        ));
     }
     Ok(())
 }
@@ -110,6 +245,7 @@ pub async fn replay(pool: &PgPool, request: &ReplayRequest) -> Result<ReplayRece
     if payload["version"] != 1
         || payload["source"] != "places"
         || payload["mode"] != "dual"
+        || !payload["poi_result"].is_null()
         || payload["stream"] != request.stream
         || payload["generation"] != request.generation.to_string()
         || payload["commit_lsn"] != request.commit_lsn
@@ -119,9 +255,51 @@ pub async fn replay(pool: &PgPool, request: &ReplayRequest) -> Result<ReplayRece
             "Captured transaction is not an approved command",
         ));
     }
-    let command: Command = serde_json::from_value(payload["command"].clone())
-        .map_err(|_| ApiError::bad_request("Missing or malformed source command receipt"))?;
+    let is_like = !payload["like_command"].is_null();
+    if is_like && !payload["command"].is_null() {
+        return Err(ApiError::bad_request("Multiple captured commands"));
+    }
+    let command_value = if is_like {
+        &payload["like_command"]
+    } else {
+        &payload["command"]
+    };
+    let like_command: Option<LikeCommand> = if is_like {
+        Some(
+            serde_json::from_value(command_value.clone())
+                .map_err(|_| ApiError::bad_request("Malformed vote command"))?,
+        )
+    } else {
+        None
+    };
+    let command: Command = if let Some(c) = &like_command {
+        if c.like != c.expected.as_ref().map(|v| v.like)
+            || c.expected.as_ref().is_some_and(|v| {
+                v.updated_at.timestamp_subsec_nanos() % 1000 != 0 || v.updated_at < v.created_at
+            })
+        {
+            return Err(ApiError::bad_request(
+                "Vote command disagrees with source receipt",
+            ));
+        }
+        Command {
+            operation_id: c.operation_id,
+            request_hash: c.request_hash.clone(),
+            user: c.user.clone(),
+            entity_id: c.entity_id.clone(),
+            favorite: c.like.is_some(),
+            user_activity: c.user_activity,
+            expected: c.expected.as_ref().map(|v| FavoriteState {
+                user_activity: v.user_activity,
+                created_at: v.created_at,
+            }),
+        }
+    } else {
+        serde_json::from_value(command_value.clone())
+            .map_err(|_| ApiError::bad_request("Missing or malformed source command receipt"))?
+    };
     validate(request, &command)?;
+    validate_changes(&payload, &command, like_command.as_ref())?;
     let allowed: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2) OR EXISTS(SELECT 1 FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 AND entity_id=$3)")
         .bind(&request.stream).bind(request.generation).bind(Uuid::parse_str(&command.entity_id).map_err(|_|ApiError::bad_request("Invalid entity identity"))?)
         .fetch_one(&mut *tx).await?;
@@ -133,7 +311,7 @@ pub async fn replay(pool: &PgPool, request: &ReplayRequest) -> Result<ReplayRece
 
     let receipt = sqlx::query("SELECT commit_lsn::text AS position, command=$4 AS matches, state FROM migration_sync.command_receipts WHERE stream=$1 AND generation=$2 AND operation_id=$3")
         .bind(&request.stream).bind(request.generation).bind(command.operation_id)
-        .bind(&payload["command"]).fetch_optional(&mut *tx).await?;
+        .bind(command_value).fetch_optional(&mut *tx).await?;
     if let Some(receipt) = receipt {
         if !receipt.try_get::<bool, _>("matches")?
             || receipt.try_get::<String, _>("position")? != request.commit_lsn
@@ -172,38 +350,75 @@ pub async fn replay(pool: &PgPool, request: &ReplayRequest) -> Result<ReplayRece
             "Command catalogue identity is unavailable",
         ));
     }
-    let created_at = command
-        .expected
-        .as_ref()
-        .map(|state| state.created_at.naive_utc())
-        .unwrap_or_else(|| Utc::now().naive_utc());
-    crate::places::interactions::set_favorite_at_in(
-        &mut tx,
-        &command.entity_id,
-        &command.user,
-        command.favorite,
-        command.user_activity,
-        created_at,
-    )
-    .await?;
-    let row = sqlx::query("SELECT user_activity, created_at FROM explore.user_favorites WHERE \"user\"=$1 AND entity_id=$2")
-        .bind(&command.user).bind(&command.entity_id).fetch_optional(&mut *tx).await?;
-    let state = row
-        .map(|row| {
-            Ok::<_, sqlx::Error>(FavoriteState {
-                user_activity: row.try_get("user_activity")?,
-                created_at: row.try_get::<NaiveDateTime, _>("created_at")?.and_utc(),
+    let state = if let Some(c) = &like_command {
+        let timestamp = c
+            .expected
+            .as_ref()
+            .map(|v| v.updated_at.naive_utc())
+            .unwrap_or_else(|| Utc::now().naive_utc());
+        crate::places::interactions::set_like_at_in(
+            &mut tx,
+            &c.entity_id,
+            &c.user,
+            c.like,
+            c.user_activity,
+            timestamp,
+        )
+        .await?;
+        let row=sqlx::query("SELECT \"like\",user_activity,created_at,updated_at FROM explore.user_likes WHERE \"user\"=$1 AND entity_id=$2")
+            .bind(&c.user).bind(&c.entity_id).fetch_optional(&mut *tx).await?;
+        let state = row
+            .map(|row| {
+                Ok::<_, sqlx::Error>(LikeState {
+                    like: row.try_get("like")?,
+                    user_activity: row.try_get("user_activity")?,
+                    created_at: row.try_get::<NaiveDateTime, _>("created_at")?.and_utc(),
+                    updated_at: row.try_get::<NaiveDateTime, _>("updated_at")?.and_utc(),
+                })
             })
-        })
-        .transpose()?;
-    if state != command.expected {
-        return Err(ApiError::conflict(
-            "Native favorite result diverged from the source receipt",
-        ));
-    }
+            .transpose()?;
+        if state != c.expected {
+            return Err(ApiError::conflict(
+                "Native vote result diverged from source receipt",
+            ));
+        }
+        serde_json::to_value(state).map_err(|_| ApiError::internal("Cannot encode vote receipt"))?
+    } else {
+        let created_at = command
+            .expected
+            .as_ref()
+            .map(|v| v.created_at.naive_utc())
+            .unwrap_or_else(|| Utc::now().naive_utc());
+        crate::places::interactions::set_favorite_at_in(
+            &mut tx,
+            &command.entity_id,
+            &command.user,
+            command.favorite,
+            command.user_activity,
+            created_at,
+        )
+        .await?;
+        let row=sqlx::query("SELECT user_activity,created_at FROM explore.user_favorites WHERE \"user\"=$1 AND entity_id=$2")
+            .bind(&command.user).bind(&command.entity_id).fetch_optional(&mut *tx).await?;
+        let state = row
+            .map(|row| {
+                Ok::<_, sqlx::Error>(FavoriteState {
+                    user_activity: row.try_get("user_activity")?,
+                    created_at: row.try_get::<NaiveDateTime, _>("created_at")?.and_utc(),
+                })
+            })
+            .transpose()?;
+        if state != command.expected {
+            return Err(ApiError::conflict(
+                "Native favorite result diverged from source receipt",
+            ));
+        }
+        serde_json::to_value(state)
+            .map_err(|_| ApiError::internal("Cannot encode favorite receipt"))?
+    };
     sqlx::query("INSERT INTO migration_sync.command_receipts(stream,generation,operation_id,commit_lsn,command,state) VALUES($1,$2,$3,$4::text::pg_lsn,$5,$6)")
         .bind(&request.stream).bind(request.generation).bind(command.operation_id).bind(&request.commit_lsn)
-        .bind(&payload["command"]).bind(serde_json::to_value(&state).map_err(|_| ApiError::internal("Cannot encode operation receipt"))?)
+        .bind(command_value).bind(serde_json::to_value(&state).map_err(|_| ApiError::internal("Cannot encode operation receipt"))?)
         .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(ReplayReceipt {

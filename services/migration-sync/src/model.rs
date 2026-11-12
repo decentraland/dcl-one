@@ -24,6 +24,10 @@ pub struct Envelope {
     pub changes: Vec<FavoriteChange>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<FavoriteCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub like_command: Option<LikeCommand>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub poi_result: Option<crate::poi::PoiResult>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -36,6 +40,22 @@ pub enum Mode {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FavoriteChange {
+    PoiMembership {
+        entity_id: String,
+        poi: bool,
+    },
+    LikeUpsert {
+        user: String,
+        entity_id: String,
+        like: bool,
+        user_activity: f64,
+        created_at: DateTime<Utc>,
+        updated_at: DateTime<Utc>,
+    },
+    LikeDelete {
+        user: String,
+        entity_id: String,
+    },
     Upsert {
         user: String,
         entity_id: String,
@@ -50,6 +70,7 @@ pub enum FavoriteChange {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Decision {
+    ApplyPoi,
     ExecuteCommand,
     Blocked(&'static str),
 }
@@ -72,6 +93,54 @@ pub struct FavoriteCommand {
 pub struct FavoriteState {
     pub user_activity: f64,
     pub created_at: DateTime<Utc>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LikeState {
+    pub like: bool,
+    pub user_activity: f64,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LikeCommand {
+    pub operation_id: Uuid,
+    pub request_hash: String,
+    pub user: String,
+    pub entity_id: String,
+    pub like: Option<bool>,
+    pub user_activity: f64,
+    pub expected: Option<LikeState>,
+}
+impl LikeCommand {
+    pub fn validate(&self) -> Result<()> {
+        FavoriteCommand {
+            operation_id: self.operation_id,
+            request_hash: self.request_hash.clone(),
+            user: self.user.clone(),
+            entity_id: self.entity_id.clone(),
+            favorite: self.like.is_some(),
+            user_activity: self.user_activity,
+            expected: self.expected.as_ref().map(|v| FavoriteState {
+                user_activity: v.user_activity,
+                created_at: v.created_at,
+            }),
+        }
+        .validate()?;
+        ensure!(
+            self.like == self.expected.as_ref().map(|v| v.like),
+            "source vote disagrees with command"
+        );
+        if let Some(state) = &self.expected {
+            ensure!(
+                state.updated_at.timestamp_subsec_nanos() % 1000 == 0,
+                "source timestamp precision unsupported"
+            );
+        }
+        Ok(())
+    }
 }
 
 impl FavoriteCommand {
@@ -130,6 +199,70 @@ impl Envelope {
         for change in &self.changes {
             change.validate()?;
         }
+        ensure!(
+            usize::from(self.command.is_some())
+                + usize::from(self.like_command.is_some())
+                + usize::from(self.poi_result.is_some())
+                <= 1,
+            "multiple transaction execution mechanisms"
+        );
+        if let Some(result) = &self.poi_result {
+            ensure!(
+                self.mode == Mode::SourceOnly,
+                "POI result cannot be native replay"
+            );
+            result.validate()?;
+            ensure!(self.changes.iter().all(|change|matches!(change,FavoriteChange::PoiMembership {entity_id,..} if entity_id==&result.entity_id)),"POI result contains unrelated changes");
+            if let Some(FavoriteChange::PoiMembership { poi, .. }) = self.changes.last() {
+                ensure!(*poi == result.poi, "POI evidence disagrees with result");
+            }
+        }
+        ensure!(
+            self.command.is_none() || self.like_command.is_none(),
+            "transaction has multiple command kinds"
+        );
+        if let Some(command) = &self.like_command {
+            ensure!(
+                self.mode == Mode::Dual,
+                "source-only transactions cannot carry commands"
+            );
+            command.validate()?;
+            for change in &self.changes {
+                ensure!(
+                    change.key() == (command.user.as_str(), command.entity_id.as_str()),
+                    "like command changes escape scope"
+                );
+                ensure!(
+                    matches!(
+                        change,
+                        FavoriteChange::LikeUpsert { .. } | FavoriteChange::LikeDelete { .. }
+                    ),
+                    "like command contains another operation"
+                );
+            }
+            if let Some(change) = self.changes.last() {
+                match (change, &command.expected) {
+                    (
+                        FavoriteChange::LikeUpsert {
+                            like,
+                            user_activity,
+                            created_at,
+                            updated_at,
+                            ..
+                        },
+                        Some(v),
+                    ) => ensure!(
+                        *like == v.like
+                            && *user_activity == v.user_activity
+                            && *created_at == v.created_at
+                            && *updated_at == v.updated_at,
+                        "captured vote disagrees with receipt"
+                    ),
+                    (FavoriteChange::LikeDelete { .. }, None) => {}
+                    _ => anyhow::bail!("captured vote disagrees with receipt"),
+                }
+            }
+        }
         if let Some(command) = &self.command {
             ensure!(
                 self.mode == Mode::Dual,
@@ -137,10 +270,12 @@ impl Envelope {
             );
             command.validate()?;
             ensure!(
-                self.changes
-                    .iter()
-                    .all(|change| change.key()
-                        == (command.user.as_str(), command.entity_id.as_str())),
+                self.changes.iter().all(|change| change.key()
+                    == (command.user.as_str(), command.entity_id.as_str())
+                    && matches!(
+                        change,
+                        FavoriteChange::Upsert { .. } | FavoriteChange::Delete { .. }
+                    )),
                 "dual transaction changes escape command scope"
             );
             if let Some(change) = self.changes.last() {
@@ -171,8 +306,11 @@ impl Envelope {
     /// dispatch; advancement separately requires its atomic native receipt.
     pub fn classify(&self) -> Decision {
         match self.mode {
+            Mode::SourceOnly if self.poi_result.is_some() => Decision::ApplyPoi,
             Mode::SourceOnly => Decision::Blocked("unreceipted_mutation"),
-            Mode::Dual if self.command.is_some() => Decision::ExecuteCommand,
+            Mode::Dual if self.command.is_some() || self.like_command.is_some() => {
+                Decision::ExecuteCommand
+            }
             Mode::Dual => Decision::Blocked("dual_receipts_required"),
         }
     }
@@ -181,14 +319,50 @@ impl Envelope {
 impl FavoriteChange {
     pub fn key(&self) -> (&str, &str) {
         match self {
+            Self::PoiMembership { entity_id, .. } => ("", entity_id),
             Self::Upsert {
                 user, entity_id, ..
             }
-            | Self::Delete { user, entity_id } => (user, entity_id),
+            | Self::Delete { user, entity_id }
+            | Self::LikeUpsert {
+                user, entity_id, ..
+            }
+            | Self::LikeDelete { user, entity_id } => (user, entity_id),
         }
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Self::PoiMembership { entity_id, poi } = self {
+            return crate::poi::PoiResult {
+                producer: crate::poi::PRODUCER.into(),
+                entity_id: entity_id.clone(),
+                poi: *poi,
+            }
+            .validate();
+        }
+
+        if let Self::LikeUpsert {
+            user,
+            entity_id,
+            user_activity,
+            created_at,
+            updated_at,
+            ..
+        } = self
+        {
+            ensure!(
+                updated_at.timestamp_subsec_nanos() % 1000 == 0,
+                "source timestamp precision unsupported"
+            );
+            return Self::Upsert {
+                user: user.clone(),
+                entity_id: entity_id.clone(),
+                user_activity: *user_activity,
+                created_at: *created_at,
+            }
+            .validate();
+        }
+
         let (user, entity_id) = self.key();
         ensure!(
             user.len() == 42

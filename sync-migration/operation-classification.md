@@ -14,9 +14,9 @@ Before implementing a lane, record the operation, every writer, source and targe
 
 | Operation/writer | Proposed lane | Evidence still needed |
 | --- | --- | --- |
-| Places favorite set/unset | Duplicate execution; bounded receipt protocol retained | Real handler/gateway integration, existing-client retry identity, concurrent set/unset ordering and loss/retry scenarios |
-| Places like/dislike/delete | Duplicate candidate; no continuous row adapter retained | Native behavior, stable identity, activity/timestamps, derived counts and retry tests |
-| Places POI categories, ranking replacement, scene-consumer catalogue outcomes | Residual candidates | Determine whether source job/deployment inputs can be replayed deterministically; otherwise capture exact effective outputs, replacement IDs and deletes, not all catalogue writes by default |
+| Places favorite set/unset | Duplicate execution implemented for bounded scope | Staging real ingress/signatures and measured load; optional request-attempt identity follows each accepted source attempt |
+| Places like/dislike/delete | Native tri-state replay implemented; no continuous row adapter | Local state/timestamp/count/retry tests pass; staging ingress and source-role validation remain |
+| Places POI categories, ranking replacement, scene-consumer catalogue outcomes | POI membership implemented; ranking/deployment still candidates | POI job depends on mutable feed/catalogue with no equivalent API; other writers still need replay assessment and exact outcomes |
 | Events schedule edits and RSVP/cancel | Duplicate candidates | Shared generated IDs, source's separate counter commits, authorization and target response compatibility |
 | Events recurrence job | Residual candidate | Replaying the same occurrence computation versus copying source outcome; repair unawaited source write before using job completion as evidence |
 | Social settings, mutes, friendship/community commands | Duplicate candidates, not proven | WebSocket command adaptation or durable source command capture, pair/history/role invariants; suppress repeated provider and notification effects |
@@ -37,9 +37,9 @@ Detailed source links and writer evidence are in the four service audits linked 
 
 ## Ordered next work
 
-1. Prove the retained favorite native replay end to end; reject unreceipted source mutations rather than silently copying their rows.
-2. Classify and implement like/dislike native execution if compatible. Resolve the unchanged-client identity constraint explicitly; no invented guarantee that repeated HTTP calls are exactly once.
-3. Select one residual writer after comparing deterministic input replay with outcome mapping. Add only its source capture, provenance classifier, transformation and tests.
+1. Rehearse the implemented favorite/vote command and POI residual paths through actual gateway/source roles. Untagged mutations remain blocked.
+2. Validate the optional per-request-attempt gateway policy under real retries; it mirrors actual accepted setter attempts and does not provide logical client retry deduplication.
+3. Classify the next writer after comparing deterministic input replay with outcome mapping. The POI bit is the only approved residual; do not broaden it to the rest of the catalogue.
 4. Test replay and residual updates touching the same entity, mixed transactions, deletes, delayed retries, source rejection and unknown target commit outcomes. No second application of native results.
 5. Build a public read surface that runs without target jobs/providers and validates every dependency's scope and freshness. The current private follower is not this surface.
 6. Rehearse against disposable source clones, then verify actual deployed routing/writers and measure contention, lag, retention and recovery before a public cohort.

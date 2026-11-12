@@ -48,7 +48,7 @@ enum Command {
         #[arg(long, required = true, num_args = 1..)]
         entity: Vec<Uuid>,
     },
-    /// Import the scoped favorite baseline after catalogue migration; starts paused.
+    /// Import the scoped interaction/POI baseline after catalogue migration; starts paused.
     Bootstrap {
         #[arg(long)]
         stream: String,
@@ -62,7 +62,7 @@ enum Command {
         #[arg(long, default_value_t = 1000, value_parser = clap::value_parser!(u64).range(100..=60000))]
         poll_ms: u64,
     },
-    /// Compare scoped favorite rows at an unchanged, caught-up source boundary.
+    /// Compare scoped interaction rows and POI membership at an unchanged, caught-up source boundary.
     Reconcile {
         #[arg(long)]
         stream: String,
@@ -252,7 +252,7 @@ async fn execute(args: Args) -> Result<()> {
             println!("{}", serde_json::to_string_pretty(&report)?);
             source.close().await;
             if report["matches"] != true {
-                bail!("favorite reconciliation found a mismatch");
+                bail!("scoped reconciliation found a mismatch");
             }
         }
         Command::Capture {

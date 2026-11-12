@@ -2,7 +2,7 @@
 
 The gateway is **`cloudflare-workers/workers/alb-router`**. The asset-bundle rewriter is outside this work. Follow the [decision summary](README.md): reproduce compatible operations, then synchronize only demonstrated residual outcomes.
 
-The retained gateway implementation is local `ce3ad4a5b07581fa004446ad7e6bab22d067859d`. A subsequent read-activation mode was removed in local `bd3b75f`; it did not establish duplicate-command compatibility. These changes were not pushed or deployed by this work. Links to local commits become remotely available only when published; published baseline routing is at `487a8f2dfa9bba7e5d607cb3b291d7c38e0aead2`.
+The current gateway implementation is local `25e4193`, adding native vote ingress and optional per-attempt identity to the durable production-receipt flow. Generic read activation remains excluded. These changes were not pushed or deployed by this work. Links to local commits become remotely available only when published; published baseline routing is at `487a8f2dfa9bba7e5d607cb3b291d7c38e0aead2`.
 
 ## What exists
 
@@ -10,7 +10,7 @@ The retained gateway implementation is local `ce3ad4a5b07581fa004446ad7e6bab22d0
 | --- | --- |
 | Public host/prefix routing | [Router](https://dcl.tools/ops/cloudflare-workers/-/blob/487a8f2dfa9bba7e5d607cb3b291d7c38e0aead2/workers/alb-router/routing.ts) chooses one upstream. Explicit route attachments and existing-Worker bindings are separate configuration. Checked-in stack files do not establish live Cloudflare routes or middleware. |
 | Read shadowing | [Shadow comparator](https://dcl.tools/ops/cloudflare-workers/-/blob/487a8f2dfa9bba7e5d607cb3b291d7c38e0aead2/workers/alb-router/shadow.ts) samples exact GET paths and compares bounded JSON. Writes, Upgrade, Range and body traffic are excluded. Production response remains authoritative. Read shadowing does not synchronize data or prove command compatibility. |
-| Favorite command ingress | `hybrid-production` admits stable operation IDs only for exact `PATCH /api/places/{UUID}/favorites` paths and sends the request to production. The source handler commits mutation, response and receipt; the coordinator later invokes native target execution. Other operations have no replay contract. |
+| Favorite/vote command ingress | `hybrid-production` admits operation IDs only for exact `PATCH /api/places/{UUID}/favorites` and `/likes` paths and sends the request to production. The source handler commits mutation, response and receipt; the coordinator later invokes native target execution. The same path now supports tri-state vote setters; other operations have no replay contract. |
 | Full target routing | `dcl-one` mode transfers all matching requests, including writes and new WebSockets. It is a cutover control, not a safe read-only coexistence switch. No automatic write failback. |
 | WebSockets | The original 101 and one upstream connection are preserved. Frames are not inspected, copied or replayed; existing connections stay on their original backend. |
 
@@ -27,6 +27,10 @@ The gateway does not provide generic durable command delivery by itself. A respo
 
 ## Required next gateway work
 
-Prove the retained favorite flow end to end before adding more routes. For each next command record exact public path/method, authentication, source/target body/response compatibility, generated IDs, retry identity, native target receipt and side effects. Test production rejection, lost responses after either commit, later deletes and ordering with any approved residual mutation.
+Rehearse the integrated favorite/vote flow and POI ordering before adding more routes. For each next command record exact public path/method, authentication, source/target body/response compatibility, generated IDs, retry identity, native target receipt and side effects. Test production rejection, lost responses after either commit, later deletes and ordering with any approved residual mutation.
 
 No generic “send all requests twice” mode is approved. No newly added read-activation mode remains. The existing gateway/Places receipt changes are retained because they support native duplicate execution; see [PR rationale](repository-changes.md). Live DNS/route attachments, real signatures, Worker chains, session draining and readiness integration remain unverified.
+
+## Current setter extension
+
+The exact allowlist now covers favorites and tri-state likes. Optional `hybridOperationIds: "request-attempt"` supports unchanged clients for these setters; required caller IDs remain the default. See the [command protocol](places-hybrid-commands.md) for the distinction between accepted-attempt convergence and logical retry deduplication. No generic dual-write mode or public read-activation mode is added.

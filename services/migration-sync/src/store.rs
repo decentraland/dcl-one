@@ -243,17 +243,51 @@ pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
         _ => return block(tx, name, generation, &position, "invalid_envelope").await,
     };
     match envelope.classify() {
+        Decision::ApplyPoi => {
+            let result = envelope
+                .poi_result
+                .as_ref()
+                .context("POI outcome missing")?;
+            sqlx::query("SAVEPOINT poi_mapping")
+                .execute(&mut *tx)
+                .await?;
+            if crate::poi::apply(&mut tx, result).await.is_err() {
+                sqlx::query("ROLLBACK TO SAVEPOINT poi_mapping")
+                    .execute(&mut *tx)
+                    .await?;
+                return block(tx, name, generation, &position, "poi_mapping_conflict").await;
+            }
+            sqlx::query("RELEASE SAVEPOINT poi_mapping")
+                .execute(&mut *tx)
+                .await?;
+        }
         Decision::Blocked(code) => return block(tx, name, generation, &position, code).await,
         Decision::ExecuteCommand => {
-            let command = envelope
-                .command
-                .as_ref()
-                .context("validated command missing")?;
+            let (operation_id, command_value, expected_value, user, entity_id) =
+                if let Some(c) = &envelope.command {
+                    (
+                        c.operation_id,
+                        serde_json::to_value(c)?,
+                        serde_json::to_value(&c.expected)?,
+                        c.user.as_str(),
+                        c.entity_id.as_str(),
+                    )
+                } else {
+                    let c = envelope
+                        .like_command
+                        .as_ref()
+                        .context("validated command missing")?;
+                    (
+                        c.operation_id,
+                        serde_json::to_value(c)?,
+                        serde_json::to_value(&c.expected)?,
+                        c.user.as_str(),
+                        c.entity_id.as_str(),
+                    )
+                };
             let receipt = sqlx::query(
-                "SELECT commit_lsn::text AS position, command=$4 AS matches_command, state=$5 AS matches_state
-                 FROM migration_sync.command_receipts WHERE stream=$1 AND generation=$2 AND operation_id=$3",
-            ).bind(name).bind(generation).bind(command.operation_id)
-             .bind(serde_json::to_value(command)?).bind(serde_json::to_value(&command.expected)?)
+                "SELECT commit_lsn::text AS position, command=$4 AS matches_command, state=$5 AS matches_state FROM migration_sync.command_receipts WHERE stream=$1 AND generation=$2 AND operation_id=$3",
+            ).bind(name).bind(generation).bind(operation_id).bind(command_value).bind(expected_value)
              .fetch_optional(&mut *tx).await?;
             let Some(receipt) = receipt else {
                 return Ok(Outcome::AwaitingCommand);
@@ -264,28 +298,47 @@ pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
             {
                 return block(tx, name, generation, &position, "command_receipt_conflict").await;
             }
-            let state = sqlx::query("SELECT user_activity, created_at FROM explore.user_favorites WHERE \"user\"=$1 AND entity_id=$2")
-                .bind(&command.user).bind(&command.entity_id).fetch_optional(&mut *tx).await?;
-            let equivalent = match (state, &command.expected) {
-                (None, None) => true,
-                (Some(row), Some(expected)) => {
-                    row.try_get::<f64, _>("user_activity")? == expected.user_activity
-                        && row.try_get::<chrono::NaiveDateTime, _>("created_at")?
-                            == expected.created_at.naive_utc()
+            let equivalent = if let Some(c) = &envelope.like_command {
+                let row=sqlx::query("SELECT \"like\",user_activity,created_at,updated_at FROM explore.user_likes WHERE \"user\"=$1 AND entity_id=$2")
+                    .bind(user).bind(entity_id).fetch_optional(&mut *tx).await?;
+                match (row, &c.expected) {
+                    (None, None) => true,
+                    (Some(row), Some(v)) => {
+                        row.try_get::<bool, _>("like")? == v.like
+                            && row.try_get::<f64, _>("user_activity")? == v.user_activity
+                            && row.try_get::<chrono::NaiveDateTime, _>("created_at")?
+                                == v.created_at.naive_utc()
+                            && row.try_get::<chrono::NaiveDateTime, _>("updated_at")?
+                                == v.updated_at.naive_utc()
+                    }
+                    _ => false,
                 }
-                _ => false,
+            } else {
+                let c = envelope
+                    .command
+                    .as_ref()
+                    .context("favorite command missing")?;
+                let row=sqlx::query("SELECT user_activity,created_at FROM explore.user_favorites WHERE \"user\"=$1 AND entity_id=$2")
+                    .bind(user).bind(entity_id).fetch_optional(&mut *tx).await?;
+                match (row, &c.expected) {
+                    (None, None) => true,
+                    (Some(row), Some(v)) => {
+                        row.try_get::<f64, _>("user_activity")? == v.user_activity
+                            && row.try_get::<chrono::NaiveDateTime, _>("created_at")?
+                                == v.created_at.naive_utc()
+                    }
+                    _ => false,
+                }
             };
             if !equivalent {
                 return block(tx, name, generation, &position, "native_state_diverged").await;
             }
-            sqlx::query(
-                "INSERT INTO migration_sync.favorite_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted)
-                 VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6)
-                 ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted",
-            ).bind(name).bind(generation).bind(&command.user).bind(&command.entity_id).bind(&position).bind(!command.favorite)
-             .execute(&mut *tx).await?;
-            // Native mutation and receipt already committed together. Do not
-            // reapply captured favorite writes or increment counters again.
+            if let Some(command) = &envelope.command {
+                sqlx::query("INSERT INTO migration_sync.favorite_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted) VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6) ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted")
+                    .bind(name).bind(generation).bind(user).bind(entity_id).bind(&position).bind(!command.favorite).execute(&mut *tx).await?;
+            }
+            // Native facts and receipt committed together; never apply captured
+            // favorite/like rows again. Stream order also fences delayed deletes.
         }
     }
     sqlx::query(

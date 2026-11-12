@@ -143,3 +143,4 @@
 /sync-migration/ @decentraland/apis
 /schemas/70_migration_sync.sql @decentraland/apis
 /schemas/71_migration_capture.sql @decentraland/apis
+/schemas/migrations/0039_places_hybrid_command_adapter.sql @decentraland/apis

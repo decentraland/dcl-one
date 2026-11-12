@@ -343,7 +343,8 @@
         "/services/migration-sync/",
         "/sync-migration/",
         "/schemas/70_migration_sync.sql",
-        "/schemas/71_migration_capture.sql"
+        "/schemas/71_migration_capture.sql",
+        "/schemas/migrations/0039_places_hybrid_command_adapter.sql"
       ]
     }
   ]

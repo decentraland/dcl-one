@@ -28,6 +28,6 @@ Some forward mappings merge identities or histories: friendship pairs, badge pro
 
 ## Why not have the gateway invent every operation ID?
 
-A gateway-generated ID can deduplicate downstream retries of one accepted request, but a new client retry generally receives a new ID. It therefore cannot guarantee that the retry is the same logical operation. This may be acceptable for a separately tested set/unset command, but it is not a generic contract for resource creation, payments or effects. No gateway-generated-ID mode was selected or implemented; the retry-identity requirement must be resolved explicitly rather than choosing DB sync merely to avoid client work.
+A gateway-generated ID can deduplicate downstream retries of one accepted request, but a new client retry generally receives a new ID. It therefore cannot guarantee that the retry is the same logical operation. This may be acceptable for a separately tested set/unset command, but it is not a generic contract for resource creation, payments or effects. The gateway now offers an opt-in request-attempt policy only for the proven favorite/vote setters. Each source acceptance gets its own ordered replay; it does not deduplicate separate client retries or extend to resource creation, payments or provider effects. Required caller IDs remain the default.
 
 Longer coexistence makes these constraints more important: schema drift, retained history, operational ownership and restore behavior must be tested for the intended duration. See [operation backlog](operation-classification.md).

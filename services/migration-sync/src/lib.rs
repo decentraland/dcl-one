@@ -5,3 +5,5 @@ pub mod model;
 pub mod store;
 
 pub mod ops;
+
+pub mod poi;

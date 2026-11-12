@@ -1566,13 +1566,15 @@ revokes, whose `address` a catalog write does not have.
 and native execution receipts. A stream row lock serializes replay. Source acceptance
 and target native mutations each commit with their own durable receipt. Progress
 advances only after verified execution; unreceipted mutations block without changing
-business rows. The one-time favorite baseline is pre-activation migration, not a
-continuous row-copy mapping.
+business rows. The one-time favorite/vote/POI baseline is pre-activation migration, not a
+continuous interaction row-copy mapping.
 
 Duplicate compatible operations first. Any future residual DB mapping must identify
 its non-replayable writer/result and preserve mixed-transaction ordering without
-reapplying native results. No residual mapping is currently approved. The broad
-likes/catalogue/schedules/settings metadata and adapters were local-only and removed.
+reapplying native results. The only residual mapping is the POI job membership bit: it preserves unrelated
+category/raw fields and shares ordering with accepted favorite/vote commands.
+Untyped or unmarked POI changes block; no broad catalogue adapter is enabled.
+The previous broad likes/catalogue/schedules/settings metadata was removed.
 Never reset or downgrade an existing rehearsal database to fit these changes.
 
 Source capture uses an explicit local transactional outbox with read-only polling;
