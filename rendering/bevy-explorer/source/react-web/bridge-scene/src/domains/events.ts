@@ -6,7 +6,7 @@
 //       + the places service for an event's place (POST /api/destinations with the ids).
 import { serviceBase, signed } from '../http'
 import type { Ctx } from '../bridge'
-import type { EventData, EventPlace, GetEventsRequest } from '../../../src/engine/protocol'
+import type { EventData, EventPlace, GetEventsRequest } from '@explorer-core/engine/protocol'
 
 type EventRaw = Partial<EventData> & { id: string }
 type PlaceRaw = { id: string; title?: string | null; world_name?: string | null; base_position?: string | null }
