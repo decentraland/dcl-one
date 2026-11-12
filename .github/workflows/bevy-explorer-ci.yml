@@ -589,8 +589,6 @@ jobs:
     if: needs.changes.outputs.web == 'true'
     name: Web engine, HUD and bridge scene
     runs-on: ubuntu-24.04-16core
-    concurrency:
-      group: ${{ github.workflow }}-deploy-web-${{ github.ref }}
     env:
       # The Segment source the engine reports to (crates/analytics); unset, the shared key. Part
       # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
@@ -598,8 +596,13 @@ jobs:
       # Bevy Explorer / Benchmark refuses unoptimized web apps; while its fleet is off ('none'),
       # nothing measures a PR's, so PR builds skip wasm-opt.
       BEVY_WEB_OPT: ${{ github.event_name == 'pull_request' && vars.BENCHMARK_ENABLED_RUNNERS == 'none' && 'unoptimized' || 'optimized' }}
+      # Same-repo PRs publish under the pr-<n> dist-tag as a preview, which the CI status comment
+      # links; fork PRs have no secrets. oddish tags a main/master branch next whatever custom-tag
+      # says, so a PR from one never publishes.
+      BEVY_WEB_PUBLISH: ${{ (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish-tag != '') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref != 'main' && github.head_ref != 'master') }}
+    outputs:
+      publish: ${{ env.BEVY_WEB_PUBLISH }}
     permissions:
-      id-token: write
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -636,7 +639,6 @@ jobs:
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           cache: npm
           cache-dependency-path: |
             rendering/bevy-explorer/source/react-web/package-lock.json
@@ -717,6 +719,9 @@ jobs:
           cwd: ./rendering/bevy-explorer/source/deploy/web
           deterministic-snapshot: true
           only-update-versions: true
+        # This step only stamps; without a token or OIDC, oddish warns on every run.
+        env:
+          NODE_AUTH_TOKEN: unused
       - name: Stamp the dependency-free web package
         run: node scripts/prebuild.js
         working-directory: rendering/bevy-explorer/source/deploy/web
@@ -740,13 +745,49 @@ jobs:
           echo "SCENE_BASE_URL=$SCENE_BASE_URL"
           npm run export-web
         working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
-      # Same-repo PRs publish under the pr-<n> dist-tag as a preview, which the CI status comment
-      # links; fork PRs have no secrets. oddish tags a main/master branch next whatever custom-tag
-      # says, so a PR from one never publishes.
+      # Publishing waits minutes for the registry; publish-web does it on a standard runner so
+      # APIs + Sites starts as soon as the web app is tested.
+      - name: Upload the stamped package for publication
+        if: env.BEVY_WEB_PUBLISH == 'true'
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-npm-package-${{ github.sha }}
+          path: rendering/bevy-explorer/source/deploy/web/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+    needs:
+      - source
+      - changes
+  publish-web:
+    if: needs.build-deploy-web.outputs.publish == 'true'
+    name: Publish the web package
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      # oddish reads the commit from git; the artifact is written over the checkout's deploy/web.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bevy-explorer-npm-package-${{ github.sha }}
+          path: rendering/bevy-explorer/source/deploy/web
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
       - name: Publish
         id: publish
         continue-on-error: ${{ github.event_name == 'pull_request' }}
-        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish-tag != '') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref != 'main' && github.head_ref != 'master')
         uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
         with:
           cwd: ./rendering/bevy-explorer/source/deploy/web
@@ -767,14 +808,11 @@ jobs:
       - name: Report a failed PR preview
         if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
         run: echo '::warning::The PR preview did not publish; see the Publish step log.'
-    defaults:
-      run:
-        working-directory: rendering/bevy-explorer/source
-        shell: bash
-    timeout-minutes: 100
+    # A PR preview never fails the run; oddish waits up to about 50 minutes for the registry.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 60
     needs:
-      - source
-      - changes
+      - build-deploy-web
   headless-packages:
     name: Headless packages
     needs: [source, changes]
