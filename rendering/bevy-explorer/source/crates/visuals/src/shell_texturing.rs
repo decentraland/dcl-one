@@ -15,10 +15,7 @@ use bevy::{
     },
     transform::TransformSystem,
 };
-use common::{
-    sets::SetupSets,
-    structs::{CurrentRealm, ParcelGrassConfig, PrimaryUser, GROUND_RENDERLAYER},
-};
+use common::structs::{CurrentRealm, ParcelGrassConfig, PrimaryUser, GROUND_RENDERLAYER};
 use scene_runner::{
     initialize_scene::{PointerResult, ScenePointers},
     vec3_to_parcel,
@@ -26,9 +23,9 @@ use scene_runner::{
 
 use crate::landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures};
 use crate::terrain::{
-    ground_extent, ground_mesh, ground_origin, parcel_mesh, terrain_vertex_shader,
-    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface, GROUND_RINGS,
-    TERRAIN_TEXTURE,
+    ground_aabb, parcel_mesh, terrain_vertex_shader, Ground, TerrainFlatMaterial, TerrainParams,
+    TerrainSet, TerrainSurface, GROUND_MATERIAL_FLAT_COLOR, GROUND_MAX_Y, GROUND_MESH,
+    GROUND_MIN_Y, TERRAIN_TEXTURE,
 };
 
 const PARCEL_GRASS_MESH: Handle<Mesh> = weak_handle!("75b4bc5b-7523-4d7c-a42f-d2ddb93ac169");
@@ -41,15 +38,9 @@ const PARCEL_GRASS_GRID_MESHES: [Handle<Mesh>; 3] = [
 const PARCEL_GRASS_MATERIAL: Handle<ShellTexture> =
     weak_handle!("18c8dd1e-081d-452a-9c00-327775a239ff");
 
-const GROUND_MESH: Handle<Mesh> = weak_handle!("e2002cd1-4a0b-4944-ad26-97d64d72e5f9");
 const GROUND_MATERIAL: Handle<ShellTexture> = weak_handle!("a7b403bc-917b-424e-878a-9714243bd4ce");
-const GROUND_MATERIAL_FLAT_COLOR: Handle<TerrainFlatMaterial> =
-    weak_handle!("3e91f222-a374-4f7f-ba1a-4a239c9734ae");
 const GROUND_LAYERS: u32 = 5;
 const GROUND_DISPLACEMENT: f32 = 0.01;
-// terrain rises at most 8 steps of 1.8 m plus ~4.4 m of noise
-const GROUND_MIN_Y: f32 = -5.0;
-const GROUND_MAX_Y: f32 = 25.0;
 
 // the snap grid's phase is only coherent near its anchor and the coherent band is visible, so
 // the anchor sits off to one side of the player rather than under them
@@ -117,10 +108,6 @@ pub struct ParcelGrassShell;
 #[derive(Component, PartialEq, Eq, Clone, Copy)]
 struct ParcelGrassFlat(bool);
 
-/// Huge plane that covers a huge area
-#[derive(Component)]
-pub(super) struct Ground;
-
 #[derive(Clone, Asset, TypePath, AsBindGroup)]
 pub struct ShellTexture {
     // one uniform buffer: webgpu allows 12 per stage, shared with the view and mesh bindings
@@ -171,11 +158,9 @@ pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "shell_texturing.wgsl");
 }
 
-/// The ground and grass materials bind the landscape textures: prepare them again when one is
-/// replaced.
+/// The grass material binds the landscape textures: prepare it again when one is replaced.
 pub(crate) fn rebind_materials(app: &mut App) {
     rebind_on_replace::<ShellTexture>(app);
-    rebind_on_replace::<TerrainFlatMaterial>(app);
 }
 
 impl Material for ShellTexture {
@@ -238,10 +223,7 @@ impl Plugin for ShellTexturingPlugin {
 
         app.add_plugins(MaterialPlugin::<ShellTexture>::default());
 
-        app.add_systems(
-            Startup,
-            (setup_grass_meshes, spawn_ground.in_set(SetupSets::Main)),
-        );
+        app.add_systems(Startup, setup_grass_meshes);
         app.add_systems(OnEnter(ParcelGrassState::Off), swap_ground);
         app.add_systems(OnEnter(ParcelGrassState::On), swap_ground);
         app.add_systems(
@@ -252,7 +234,6 @@ impl Plugin for ShellTexturingPlugin {
                 parcel_grass_config_updated
                     .run_if(resource_changed::<ParcelGrassConfig>.and(shells_need_updating)),
                 (update_terrain_params, refresh_parcel_grass_meshes).after(TerrainSet),
-                follow_player.before(TransformSystem::TransformPropagate),
             ),
         );
         app.add_systems(
@@ -304,28 +285,11 @@ fn setup_grass_meshes(mut meshes: ResMut<Assets<Mesh>>) {
     {
         meshes.insert(handle.id(), parcel_mesh(grid_segments(lod)));
     }
-    // the ground under the parcel grass uses the grass's own lod, relative to the player's parcel
-    let segments = |offset| {
-        grid_segments(match ParcelGrassLod::from_distance(IVec2::ZERO, offset) {
-            ParcelGrassLod::High | ParcelGrassLod::Off => HIGH_LOD,
-            ParcelGrassLod::Mid => MID_LOD,
-            ParcelGrassLod::Low => LOW_LOD,
-        })
-    };
-    meshes.insert(GROUND_MESH.id(), ground_mesh(segments, GROUND_RINGS));
 }
 
 /// Cells per parcel side of sloped parcel grass (and the ground under it) at a shell lod.
 fn grid_segments(lod: usize) -> u32 {
     16 / lod as u32
-}
-
-fn ground_aabb() -> Aabb {
-    let extent = ground_extent(GROUND_RINGS);
-    Aabb::from_min_max(
-        Vec3::new(-extent, GROUND_MIN_Y, -extent),
-        Vec3::new(extent, GROUND_MAX_Y, extent),
-    )
 }
 
 fn parcel_grass_aabb() -> Aabb {
@@ -335,56 +299,7 @@ fn parcel_grass_aabb() -> Aabb {
     )
 }
 
-fn spawn_ground(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<TerrainFlatMaterial>>,
-    textures: Res<LandscapeTextures>,
-) {
-    commands.spawn((
-        Name::new("Ground"),
-        // follows the player's parcel, see `follow_player`
-        Transform::from_translation(Vec3::new(0., -0.05, 0.)),
-        Visibility::Inherited,
-        ground_aabb(),
-        Ground,
-    ));
-    materials.insert(
-        GROUND_MATERIAL_FLAT_COLOR.id(),
-        TerrainFlatMaterial {
-            base: StandardMaterial {
-                perceptual_roughness: 1.0,
-                metallic: 0.0,
-                depth_bias: -100.0,
-                fog_enabled: false,
-                ..Default::default()
-            },
-            extension: TerrainExtension::new(&textures),
-        },
-    );
-}
-
-fn follow_player(
-    player: Query<&GlobalTransform, With<PrimaryUser>>,
-    mut ground: Query<&mut Transform, With<Ground>>,
-) {
-    let (Ok(player), Ok(mut ground)) = (player.single(), ground.single_mut()) else {
-        return;
-    };
-    let translation = player.translation();
-    if !translation.is_finite() {
-        return;
-    }
-    let origin = ground_origin(translation).with_y(ground.translation.y);
-    if ground.translation != origin {
-        ground.translation = origin;
-    }
-}
-
-fn update_terrain_params(
-    surface: Res<TerrainSurface>,
-    mut shells: ResMut<Assets<ShellTexture>>,
-    mut flat: ResMut<Assets<TerrainFlatMaterial>>,
-) {
+fn update_terrain_params(surface: Res<TerrainSurface>, mut shells: ResMut<Assets<ShellTexture>>) {
     let changes = surface.changes();
     if !changes.params && !changes.relayout && !changes.player {
         return;
@@ -395,9 +310,6 @@ fn update_terrain_params(
         if let Some(material) = shells.get_mut(handle) {
             material.terrain = params;
         }
-    }
-    if let Some(material) = flat.get_mut(&GROUND_MATERIAL_FLAT_COLOR) {
-        material.extension.terrain = params;
     }
 }
 

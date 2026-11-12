@@ -291,7 +291,7 @@ fn materials_are_touched_when_a_texture_is_replaced() {
     use crate::{
         coast::{self, CliffMaterial},
         shell_texturing::{self, ShellTexture},
-        terrain::{TerrainExtension, TerrainFlatMaterial, TerrainParams},
+        terrain::{self, TerrainExtension, TerrainFlatMaterial, TerrainParams},
     };
     use common::structs::ParcelGrassSetting;
 
@@ -300,6 +300,7 @@ fn materials_are_touched_when_a_texture_is_replaced() {
         .init_asset::<ShellTexture>()
         .init_asset::<CliffMaterial>();
     shell_texturing::rebind_materials(&mut app);
+    terrain::rebind_materials(&mut app);
     coast::rebind_materials(&mut app);
     let textures = app.world().resource::<LandscapeTextures>().clone();
     let world = app.world_mut();

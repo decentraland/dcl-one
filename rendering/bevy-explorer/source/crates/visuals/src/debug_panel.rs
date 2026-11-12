@@ -17,7 +17,8 @@ use serde_json::json;
 use crate::{
     landscape_textures::{self, LandscapeTextures},
     satellite_floor,
-    shell_texturing::{Ground, ParcelGrass},
+    shell_texturing::ParcelGrass,
+    terrain::Ground,
     trees::Tree,
     CloudCover,
 };

@@ -54,8 +54,8 @@ const ROCK_RINGS: usize = 3;
 const ROCK_SPLIT: usize = 4;
 /// Walls stand on every this many columns: the crest is smooth, so they stay on it.
 const WALL_EVERY: usize = 4;
-/// The ground's visual offset (shell_texturing), where the cliff crest meets it.
-const GROUND_LEVEL: f32 = -0.05;
+/// The ground.s visual offset, where the cliff crest meets it.
+const GROUND_LEVEL: f32 = crate::terrain::GROUND_Y;
 /// Hidden shadow casters for the land stand just below the ground: the ground doesn't cast
 /// shadows, which would otherwise leave only the ring of cliffs shading the shore.
 const UNDERGROUND: f32 = -0.5;
