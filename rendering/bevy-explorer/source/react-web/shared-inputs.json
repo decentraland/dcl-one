@@ -2317,6 +2317,10 @@
           "kind": "directory"
         },
         {
+          "name": "portables",
+          "kind": "directory"
+        },
+        {
           "name": "profile",
           "kind": "directory"
         },
@@ -2981,6 +2985,23 @@
       ]
     },
     {
+      "path": "library/ui/apps/hud/features/portables",
+      "entries": [
+        {
+          "name": "PortablesPopover.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "PortablesPopover.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "portableToasts.tsx",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
       "path": "library/ui/apps/hud/features/profile",
       "entries": [
         {
@@ -3123,6 +3144,10 @@
         },
         {
           "name": "useAutoHide.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "useRailPopover.ts",
           "kind": "regular"
         }
       ]
@@ -3327,6 +3352,10 @@
         },
         {
           "name": "popups.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "portables.test.tsx",
           "kind": "regular"
         },
         {
@@ -3918,7 +3947,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
-      "sha256": "bf0997044aea94b0fb26d4b8ad9aed0d2b4bf7852ca7ff7fc395af22688287b3"
+      "sha256": "439b51d41c7808c2a5494fe37633fb3264901a6f177544a2d0a3962989932be7"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/avatarDraft.ts",
@@ -4046,7 +4075,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/entryParams.ts",
-      "sha256": "305495d569ecf8f6e77434e7edbb190ce3eb51803b481292c05b7b72ce13ccc6"
+      "sha256": "b62b10d0d020c97d082aef9e69f682c095461b029794568da99e209aea7b2f2e"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/launchGate.ts",
@@ -4378,7 +4407,7 @@
     },
     {
       "path": "library/explorer-core/engine/mockBridge.ts",
-      "sha256": "d5694625e312b57229b7ad8f20a4d32506740f9af9b49abd09a474f5250d620b"
+      "sha256": "7b20086f2906a0d7999a58fef4826c663d0d93723ef29550a44f4058fd6df05e"
     },
     {
       "path": "library/explorer-core/engine/nameColor.ts",
@@ -4402,7 +4431,7 @@
     },
     {
       "path": "library/explorer-core/engine/protocol.ts",
-      "sha256": "7c4d7ecc501d802a3a2b99e6d720a9102a297f99e4821283d3aeb96614c2bab3"
+      "sha256": "0cbb5c9ee1a19b116747235c9b5f367c9ad3a0823941871cb399be5f56dff57b"
     },
     {
       "path": "library/explorer-core/features/auth/authReturn.ts",
@@ -5806,7 +5835,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/IconButton.tsx",
-      "sha256": "3b63633997507f3a152b7ca55fd8e1f60ef251ffde2dbb7f94c2308752d507ec"
+      "sha256": "6608bb5fc5b90b46eab1ce46cd23fd38c8aceb46823b6fd8ce723aa3d48106c1"
     },
     {
       "path": "library/ui/apps/hud/design/KebabMenu.module.css",
@@ -5998,7 +6027,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/icons.tsx",
-      "sha256": "643459adca222cb25b4317e93cefaa942ef3b1ba9f779e894a2812d124bcae1f"
+      "sha256": "215d27df9d9b862b02590c3481a8d5e5ec7127925371b37c5af035775e8955bf"
     },
     {
       "path": "library/ui/apps/hud/design/index.ts",
@@ -6450,7 +6479,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.tsx",
-      "sha256": "f56279388a7816b7cd6f6c8b6c4b9b9de9e69172e7ee29719dcd7dd5493bac2e"
+      "sha256": "0cb79616b9cf2bafeb4294500f5392ce4510602df365652e30f064047455602e"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
@@ -6458,7 +6487,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "sha256": "c51955fcae4644d4cc68ea25f5396bece521c7334304f4bf0270f6808a46bc65"
+      "sha256": "6f86265c2ac0a7a1b96f09713dae14f1a9e9d36f8b4b131cd2845993a1197e93"
     },
     {
       "path": "library/ui/apps/hud/features/photoMode/PhotoModeOverlay.module.css",
@@ -6519,6 +6548,18 @@
     {
       "path": "library/ui/apps/hud/features/pointer/Pointer.tsx",
       "sha256": "b3c63e59b02390ea6062b7d8a5a2d0a3d74112536f26465c55558f2520565641"
+    },
+    {
+      "path": "library/ui/apps/hud/features/portables/PortablesPopover.module.css",
+      "sha256": "23dfa4c72b43891ae887a252dbb370756ccdc6a318620b3b754d08ef7aee564a"
+    },
+    {
+      "path": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "sha256": "e8c2a354212ef87e43b9c9fa7606ed97d9027793bef5624dab3bbdf8a3a14e9e"
+    },
+    {
+      "path": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "sha256": "067987a9ee150d284965467cdb30c6666ce5c38d7250d1cf13e3e0f91679cca0"
     },
     {
       "path": "library/ui/apps/hud/features/profile/NameEditModal.module.css",
@@ -6594,7 +6635,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "2a769c3b524c0f95cb77f8b38e77aecd4f3feced54f2f5fbc6e8575c94dc6f1f"
+      "sha256": "c08019cecc4f167e97af43dfe9ccc023c5e40ff44c79684279f9f5ecb17bdbdd"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6626,11 +6667,15 @@
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
-      "sha256": "c9681aaa3f3c4f86661b5e1c7b20f21ff5a919ab57b8685b07c5645fb204a806"
+      "sha256": "00b86728a7b7dbcc40e8fa4f3a3cdfb806ba2accd6a2b1ea51d5e8b946b3bbea"
     },
     {
       "path": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
       "sha256": "72e8bec371758576b16914ddd2c1def9cc75df57ad33a910e89d26aee84d2108"
+    },
+    {
+      "path": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "sha256": "d701e44ff7177f9b000da3a79d3c5d5d7e073418cfa586243bad9c890ad44c57"
     },
     {
       "path": "library/ui/apps/hud/features/skybox/SkyboxMenu.module.css",
@@ -6758,7 +6803,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "709a43e096c70c3aba171e36776aa48193a73322507adec5711d43ec0bd90ae1"
+      "sha256": "ddf939b9499a7ac278c63bdc7a528cf95b363d968d16def250cf163a4dbc5d22"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
@@ -7103,6 +7148,10 @@
     {
       "path": "library/ui/apps/hud/test/popups.test.tsx",
       "sha256": "44008aa82288968d5f84c7d11f1c30ce38ce865383cdb3f9b8da72fafbd5ee04"
+    },
+    {
+      "path": "library/ui/apps/hud/test/portables.test.tsx",
+      "sha256": "3d8114981449783a4fccefa786423e9d638ecbafbe2a3120178ec1c3a410e635"
     },
     {
       "path": "library/ui/apps/hud/test/profile.edit.test.tsx",
@@ -18720,21 +18769,6 @@
     },
     {
       "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
-      "kind": "native:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
-      "kind": "production:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
-      "to": "library/explorer-core/lib/cancelLayers.ts",
-      "kind": "test:runtime"
-    },
-    {
-      "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -18776,6 +18810,21 @@
     {
       "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
       "to": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/permissions/PermissionsPopover.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
       "kind": "test:runtime"
     },
     {
@@ -19331,6 +19380,81 @@
     {
       "from": "library/ui/apps/hud/features/pointer/Pointer.tsx",
       "to": "library/ui/apps/hud/lib/bindingLabels.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/permissions/PermissionsPopover.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
       "kind": "test:runtime"
     },
     {
@@ -20940,6 +21064,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/ui/apps/hud/features/profileCard/ProfileCard.tsx",
       "kind": "native:runtime"
     },
@@ -21690,6 +21829,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
       "to": "library/ui/apps/hud/features/sidebar/Sidebar.module.css",
       "kind": "native:runtime"
     },
@@ -21791,6 +21945,21 @@
     {
       "from": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
       "to": "library/explorer-core/lib/prefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
+      "to": "library/explorer-core/lib/cancelLayers.ts",
       "kind": "test:runtime"
     },
     {
@@ -26639,6 +26808,51 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/features/sidebar/Sidebar.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/portables.test.tsx",
+      "to": "library/ui/apps/hud/test/harness.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/test/profile.edit.test.tsx",
       "to": "library/explorer-core/engine/profileEdit.ts",
       "kind": "native:runtime"
@@ -29095,6 +29309,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/portables/PortablesPopover.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/portables/portableToasts.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/profile/NameEditModal.tsx",
       "kind": "type"
     },
@@ -29181,6 +29405,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/sidebar/useAutoHide.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/sidebar/useRailPopover.ts",
       "kind": "type"
     },
     {
@@ -29741,6 +29970,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/popups.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/portables.test.tsx",
       "kind": "type"
     },
     {

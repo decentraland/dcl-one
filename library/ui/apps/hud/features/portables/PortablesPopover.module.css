@@ -1,13 +1,8 @@
-/* The scene permissions popover's panel (PermissionsPopover.module.css), one row per portable. */
-.panel {
-  composes: panel from '../permissions/PermissionsPopover.module.css';
-}
+/* The rows of the portables popover. Its panel, title and divider are the scene permissions
+   popover's classes (PermissionsPopover.module.css), applied beside these: the HUD input contract
+   does not allow CSS Modules composition. */
 .title {
-  composes: title from '../permissions/PermissionsPopover.module.css';
   margin: 0;
-}
-.divider {
-  composes: divider from '../permissions/PermissionsPopover.module.css';
 }
 .row {
   display: flex;

@@ -7,6 +7,7 @@
 import { Button } from '../../design'
 import type { PortableInfo, PortableInfoKind, PortableState } from '@explorer-core/engine/generated'
 import { useRailPopover } from '../sidebar/useRailPopover'
+import popover from '../permissions/PermissionsPopover.module.css'
 import styles from './PortablesPopover.module.css'
 
 const STATE_LABEL: Record<PortableState, string> = {
@@ -56,11 +57,11 @@ export function PortablesPopover({
   const { ref, style } = useRailPopover(anchor, onClose)
 
   return (
-    <div ref={ref} className={styles.panel} role="dialog" aria-labelledby="portables-title" style={style}>
-      <h2 id="portables-title" className={styles.title}>
+    <div ref={ref} className={popover.panel} role="dialog" aria-labelledby="portables-title" style={style}>
+      <h2 id="portables-title" className={`${popover.title} ${styles.title}`}>
         Portable experiences
       </h2>
-      <div className={styles.divider} />
+      <div className={popover.divider} />
       {list.map((p) => {
         const { hash } = p
         return (
