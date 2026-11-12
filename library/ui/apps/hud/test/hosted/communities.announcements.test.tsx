@@ -212,6 +212,13 @@ describe('announcements tab', () => {
     expect(screen.getByRole('button', { name: 'Post announcement' })).toBeDisabled()
   })
 
+  it('posts the text without its leading and trailing whitespace', async () => {
+    const card = renderCard('owner', posts([]))
+    await userEvent.type(screen.getByRole('textbox', { name: 'New announcement' }), '{Enter}  Hello  ')
+    await userEvent.click(screen.getByRole('button', { name: 'Post announcement' }))
+    expect(card.onPost).toHaveBeenCalledWith('Hello')
+  })
+
   it('counts an emoji as two characters, as the field limit does', async () => {
     renderCard('owner', posts([]))
     await userEvent.type(screen.getByRole('textbox', { name: 'New announcement' }), 'hi 😀')

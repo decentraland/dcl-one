@@ -3,7 +3,9 @@
 // the addresses. Read once from the deployment's feature-flags service; a failed read marks no one
 // and is tried again on a call a minute or more later.
 //   from: the feature-flags service's `/explorer.json` (the catalyst mirrors the Foundation's)
-import { getJson, serviceBase } from './http'
+// The document is public, so it is read with a plain GET: no signature (nothing of the player's goes
+// to a host a link can override) and no custom header, which a CORS preflight could refuse on web.
+import { serviceBase } from './http'
 
 const FLAG = 'explorer-alfa-official-wallets'
 const VARIANT = 'wallets'
@@ -33,7 +35,11 @@ let retryAt = 0
 export function officialWallets(now = Date.now()): Promise<Set<string>> {
   if (read == null && now < retryAt) return Promise.resolve(new Set())
   read ??= serviceBase('featureFlags')
-    .then((b) => getJson<FlagsDocument>(`${b}/explorer.json`))
+    .then((b) => fetch(`${b}/explorer.json`))
+    .then(async (r) => {
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      return (await r.json()) as FlagsDocument
+    })
     .then(parseOfficialWallets)
     .catch((e: unknown) => {
       console.error('[officialWallets] feature flags read failed', e)

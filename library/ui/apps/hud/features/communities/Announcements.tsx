@@ -217,7 +217,7 @@ function Composer({
               {draft.length}/{ANNOUNCEMENT_MAX}
             </span>
           )}
-          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => onPost(draft)} aria-label="Post announcement">
+          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => onPost(draft.trim())} aria-label="Post announcement">
             {posting ? <Spinner size={14} /> : 'POST'}
           </Button>
         </div>

@@ -2,14 +2,16 @@
 // once.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
-const { getJson, serviceBase } = vi.hoisted(() => ({ getJson: vi.fn(), serviceBase: vi.fn(async () => 'https://feature-flags.example') }))
-vi.mock('../../bridge-scene/src/http', () => ({ getJson, serviceBase }))
+const { fetchMock, serviceBase } = vi.hoisted(() => ({ fetchMock: vi.fn(), serviceBase: vi.fn(async () => 'https://feature-flags.example') }))
+vi.mock('../../bridge-scene/src/http', () => ({ serviceBase }))
+vi.stubGlobal('fetch', fetchMock)
+const answer = (body: unknown, ok = true) => ({ ok, status: ok ? 200 : 500, json: async () => body })
 
 const doc = (variant: { name?: string; payload?: { type?: string; value?: string } }) => ({ flags: { 'explorer-alfa-official-wallets': true }, variants: { 'explorer-alfa-official-wallets': variant } })
 
 beforeEach(() => {
   vi.resetModules()
-  getJson.mockReset()
+  fetchMock.mockReset()
 })
 
 describe('official wallets', () => {
@@ -26,22 +28,22 @@ describe('official wallets', () => {
     expect(parseOfficialWallets(undefined).size).toBe(0)
   })
 
-  it("reads the deployment's explorer.json once", async () => {
-    getJson.mockResolvedValue(doc({ name: 'wallets', payload: { type: 'csv', value: '0xaa' } }))
+  it("reads the deployment's explorer.json once, with a plain GET", async () => {
+    fetchMock.mockResolvedValue(answer(doc({ name: 'wallets', payload: { type: 'csv', value: '0xaa' } })))
     const { officialWallets } = await import('../../bridge-scene/src/officialWallets')
     expect(await officialWallets()).toEqual(new Set(['0xaa']))
     await officialWallets()
-    expect(getJson).toHaveBeenCalledTimes(1)
-    expect(getJson).toHaveBeenCalledWith('https://feature-flags.example/explorer.json')
+    // no signature and no custom header: just the url
+    expect(fetchMock.mock.calls).toEqual([['https://feature-flags.example/explorer.json']])
   })
 
   it('a failed read marks no one and is tried again a minute later', async () => {
-    getJson.mockRejectedValueOnce(new Error('HTTP 500')).mockResolvedValue(doc({ name: 'wallets', payload: { type: 'csv', value: '0xaa' } }))
+    fetchMock.mockResolvedValueOnce(answer(undefined, false)).mockResolvedValue(answer(doc({ name: 'wallets', payload: { type: 'csv', value: '0xaa' } })))
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const { officialWallets } = await import('../../bridge-scene/src/officialWallets')
     expect((await officialWallets(1000)).size).toBe(0)
     expect((await officialWallets(30_000)).size).toBe(0)
-    expect(getJson).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(await officialWallets(61_000)).toEqual(new Set(['0xaa']))
   })
 })

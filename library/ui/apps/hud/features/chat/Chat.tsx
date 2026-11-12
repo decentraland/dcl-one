@@ -116,7 +116,6 @@ type Suggestions =
   | { kind: 'emoji'; items: Emoji[]; start: number; end: number; sel: number }
   | { kind: 'mention'; items: NearbyMember[]; start: number; end: number; sel: number }
 
-export { tokenAtCaret }
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
