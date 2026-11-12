@@ -141,6 +141,7 @@ pub fn assemble(
         })
         .add_plugins(WalletPlugin)
         .add_plugins(CommsPlugin)
+        .add_plugins(ban_block::BanBlockPlugin)
         // emote metadata (the loop flag scenes are told) resolves through the collectible
         // manager; no clip or sound is ever loaded here
         .add_plugins(EmoteMetadataPlugin)

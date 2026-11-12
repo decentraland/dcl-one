@@ -161,6 +161,19 @@ same-origin Chrome page contexts, recreates those contexts to check recovery, an
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
 Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
 
+`specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
+and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
+"Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+`specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
+boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
+gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
+every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
+`session.nativeArgs` is what starts that client, on an automation port of its own. On the web
+a service override stops the boot at the launch gate, so those scenarios are todos there.
+`specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
+their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
+adapter reported as a scene ban.
+
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
