@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import cx from 'classnames';
 
 import type { NewsItem } from '/shared/types/creator-fund';
 
@@ -6,27 +7,38 @@ import { useSelector } from '#store';
 import { t } from '/@/modules/store/translation/utils';
 
 import { formatDate } from './format';
-import { Entry, EntryBody, EntryDate, EntryTitle, Heading, Panel } from './NewsPanel.styled';
+import styles from './NewsPanel.module.css';
 
 /** The latest Creator Fund news, plain text. */
 export function NewsPanel({ items, className }: { items: NewsItem[]; className?: string }) {
   const headingId = useId();
   const locale = useSelector(state => state.translation.locale);
   return (
-    <Panel
+    <aside
       aria-labelledby={headingId}
-      className={className}
+      className={cx(styles.panel, className)}
     >
-      <Heading id={headingId}>{t('earn.joined.news.title')}</Heading>
+      <h2
+        className={styles.heading}
+        id={headingId}
+      >
+        {t('earn.joined.news.title')}
+      </h2>
       {items.map(item => (
-        <Entry key={item.id}>
-          <EntryDate dateTime={item.published_at}>
+        <article
+          key={item.id}
+          className={styles.entry}
+        >
+          <time
+            className={styles.entryDate}
+            dateTime={item.published_at}
+          >
             {formatDate(item.published_at, locale)}
-          </EntryDate>
-          <EntryTitle>{item.title}</EntryTitle>
-          <EntryBody>{item.body}</EntryBody>
-        </Entry>
+          </time>
+          <h3 className={styles.entryTitle}>{item.title}</h3>
+          <p className={styles.entryBody}>{item.body}</p>
+        </article>
       ))}
-    </Panel>
+    </aside>
   );
 }

@@ -1,0 +1,151 @@
+.banner {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  column-gap: 40px;
+  height: 270px;
+  margin-bottom: 48px;
+  box-sizing: border-box;
+  border: 1px solid var(--white-10);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  background-color: var(--creator-fund-banner-bg);
+}
+
+.glow {
+  position: absolute;
+  z-index: 0;
+  border-radius: 50%;
+  background-color: var(--rar-mythic);
+  pointer-events: none;
+}
+
+.bottomGlow {
+  left: -87px;
+  top: 202px;
+  width: 485px;
+  height: 167px;
+  opacity: 0.5;
+  filter: blur(75px);
+}
+
+.topGlow {
+  left: -177px;
+  top: -431px;
+  width: 677px;
+  height: 590px;
+  opacity: 0.4;
+  filter: blur(100px);
+}
+
+.information {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  align-self: center;
+  padding-left: 58px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.title {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  margin: 0;
+  font-size: 32px;
+  font-weight: var(--fw-bold);
+  line-height: normal;
+  letter-spacing: 0;
+  white-space: nowrap;
+  color: var(--palette-neutral-softWhite);
+}
+
+.description {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h5-regular-size);
+  font-weight: var(--type-h5-regular-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h5-regular-letter-spacing);
+  margin: 0;
+  min-height: 40px;
+  max-width: 100%;
+  color: var(--pearl);
+}
+
+.cta.cta.cta.cta.cta.cta.cta.cta {
+  font-family: var(--font-family);
+  font-optical-sizing: none;
+  font-size: var(--type-h6-semi-size);
+  font-weight: var(--type-h6-semi-weight);
+  line-height: normal;
+  letter-spacing: var(--type-h6-semi-letter-spacing);
+  line-height: 22px;
+  min-width: 0;
+  padding: 12px 24px;
+  border-radius: var(--shape-borderRadiusLarge);
+  text-transform: uppercase;
+  color: var(--palette-neutral-softWhite);
+  background-color: var(--primary);
+  box-shadow: none;
+}
+
+.cta.cta.cta.cta.cta.cta.cta.cta:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}
+
+.cta.cta.cta.cta.cta.cta.cta.cta:hover {
+  background-color: var(--primary-hover);
+}
+
+.artworkSlot {
+  position: relative;
+  flex: 0 1 769px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.artwork {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 85% bottom;
+  border-radius: var(--r-card) 0 0 var(--r-card);
+  mask-image: linear-gradient(to right, transparent -0.85%, black 48.4%);
+  -webkit-mask-image: linear-gradient(to right, transparent -0.85%, black 48.4%);
+  pointer-events: none;
+}
+
+.closeButton {
+  position: absolute;
+  z-index: 2;
+  top: 18px;
+  right: 18px;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--r-pill);
+  background-color: var(--black-60);
+  color: var(--gray);
+  cursor: pointer;
+}
+
+.closeButton:hover {
+  background-color: var(--black-80);
+}
+
+.closeButton:focus-visible {
+  outline: 2px solid var(--palette-info-light);
+  outline-offset: 2px;
+}

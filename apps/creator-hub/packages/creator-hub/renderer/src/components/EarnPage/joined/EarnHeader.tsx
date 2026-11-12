@@ -1,5 +1,5 @@
 import { useId, useState } from 'react';
-import { MenuItem } from 'decentraland-ui2';
+import { Chip, IconButton, Menu, MenuItem } from 'decentraland-ui2';
 
 import { analytics, misc } from '#preload';
 import { useSelector } from '#store';
@@ -14,17 +14,7 @@ import { t } from '/@/modules/store/translation/utils';
 import { CheckmarkIcon, InfoIcon, KebabIcon, SupportIcon, TermsIcon } from '../icons';
 
 import { formatDate } from './format';
-import {
-  Beta,
-  Header,
-  JoinedLine,
-  Kebab,
-  KebabMenu,
-  Title,
-  TitleColumn,
-  TitleDot,
-  TitleRow,
-} from './EarnHeader.styled';
+import styles from './EarnHeader.module.css';
 
 /** The More options (⋮) button and menu. Every item opens a page in the browser. */
 export function EarnMenu() {
@@ -39,7 +29,8 @@ export function EarnMenu() {
 
   return (
     <>
-      <Kebab
+      <IconButton
+        className={styles.kebab}
         aria-label={t('earn.joined.more_options')}
         aria-haspopup="menu"
         aria-controls={anchor ? menuId : undefined}
@@ -47,8 +38,9 @@ export function EarnMenu() {
         onClick={event => setAnchor(event.currentTarget)}
       >
         <KebabIcon />
-      </Kebab>
-      <KebabMenu
+      </IconButton>
+      <Menu
+        className={styles.kebabMenu}
         anchorEl={anchor}
         open={!!anchor}
         onClose={() => setAnchor(null)}
@@ -93,7 +85,7 @@ export function EarnMenu() {
           <SupportIcon />
           {t('earn.joined.contact_support')}
         </MenuItem>
-      </KebabMenu>
+      </Menu>
     </>
   );
 }
@@ -108,22 +100,27 @@ export function EarnHeader() {
       : null;
 
   return (
-    <Header>
-      <TitleColumn>
-        <TitleRow>
-          <Title>
+    <header className={styles.header}>
+      <div className={styles.titleColumn}>
+        <div className={styles.titleRow}>
+          <h1 className={styles.title}>
             {t('earn.joined.title_prefix')}
-            <TitleDot> · </TitleDot>
+            <span className={styles.titleDot}> · </span>
             {t('earn.joined.title')}
-          </Title>
-          <Beta
+          </h1>
+          <Chip
+            className={styles.beta}
             size="small"
             label={t('earn.joined.beta')}
           />
-        </TitleRow>
-        {joinedOn && <JoinedLine>{t('earn.joined.joined_on', { date: joinedOn })}</JoinedLine>}
-      </TitleColumn>
+        </div>
+        {joinedOn && (
+          <span className={styles.joinedLine}>
+            {t('earn.joined.joined_on', { date: joinedOn })}
+          </span>
+        )}
+      </div>
       <EarnMenu />
-    </Header>
+    </header>
   );
 }

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Button } from 'decentraland-ui2';
 
 import { analytics, misc } from '#preload';
 
@@ -19,29 +20,9 @@ import {
   WalletIcon,
   WarningIcon,
 } from './icons';
-import {
-  CtaArea,
-  CtaEmoji,
-  CtaRow,
-  Description,
-  Feature,
-  FeatureBody,
-  Features,
-  FeatureTitle,
-  Hero,
-  HeroCta,
-  HeroImage,
-  Highlight,
-  Information,
-  Intro,
-  KnowMore,
-  Tagline,
-  Title,
-  TitleBlock,
-  TitleDot,
-} from './Landing.styled';
 import { SnackbarAction, StatusSnackbar } from './StatusSnackbar';
 import { TermsModal } from './TermsModal';
+import styles from './Landing.module.css';
 
 const FEATURES: {
   key: string;
@@ -96,8 +77,9 @@ export function Landing({
   const copy = COPY[audience];
 
   return (
-    <Hero>
-      <HeroImage
+    <section className={styles.hero}>
+      <img
+        className={styles.heroImage}
         src={heroImage}
         alt=""
         aria-hidden
@@ -105,26 +87,32 @@ export function Landing({
         height={965}
         {...{ fetchpriority: 'high' }}
       />
-      <Information>
-        <Intro>
-          <TitleBlock>
-            <Title>
+      <div className={styles.information}>
+        <div className={styles.intro}>
+          <div className={styles.titleBlock}>
+            <h1 className={styles.title}>
               {t('earn.landing.title_prefix')}
-              <TitleDot> · </TitleDot>
+              <span className={styles.titleDot}> · </span>
               {t('earn.landing.title')}
-            </Title>
-            <Tagline>{t(copy.tagline)}</Tagline>
-          </TitleBlock>
-          <Description>
+            </h1>
+            <p className={styles.tagline}>{t(copy.tagline)}</p>
+          </div>
+          <p className={styles.description}>
             {getCurrentLocale().formatMessage(
               { id: 'earn.landing.description' },
               {
                 hl: (chunks: React.ReactNode[]) => (
-                  <Highlight key={String(chunks)}>{chunks}</Highlight>
+                  <span
+                    className={styles.highlight}
+                    key={String(chunks)}
+                  >
+                    {chunks}
+                  </span>
                 ),
               },
             )}{' '}
-            <KnowMore
+            <a
+              className={styles.knowMore}
               href={CREATOR_FUND_URL}
               onClick={event => {
                 event.preventDefault();
@@ -132,23 +120,26 @@ export function Landing({
               }}
             >
               {t('earn.landing.know_more')}
-            </KnowMore>
-          </Description>
-        </Intro>
-        <Features>
+            </a>
+          </p>
+        </div>
+        <ul className={styles.features}>
           {FEATURES.map(({ key, Icon, title, body }) => (
-            <Feature key={key}>
-              <FeatureTitle>
+            <li
+              className={styles.feature}
+              key={key}
+            >
+              <span className={styles.featureTitle}>
                 <Icon />
                 {t(title)}
-              </FeatureTitle>
-              <FeatureBody>{t(body)}</FeatureBody>
-            </Feature>
+              </span>
+              <span className={styles.featureBody}>{t(body)}</span>
+            </li>
           ))}
-        </Features>
-      </Information>
-      <CtaArea>{children}</CtaArea>
-    </Hero>
+        </ul>
+      </div>
+      <div className={styles.ctaArea}>{children}</div>
+    </section>
   );
 }
 
@@ -166,22 +157,25 @@ export function LandingCtas({
   const [readingTerms, setReadingTerms] = useState(false);
   return (
     <>
-      <CtaRow>
-        <HeroCta
+      <div className={styles.ctaRow}>
+        <Button
+          className={styles.heroCta}
           variant="contained"
           color="primary"
           disableRipple
           onClick={onJoin}
         >
-          <CtaEmoji
+          <img
+            className={styles.ctaEmoji}
             src={moneyMouth}
             alt=""
             width={18}
             height={18}
           />
           {t(COPY[audience].cta)}
-        </HeroCta>
-        <HeroCta
+        </Button>
+        <Button
+          className={styles.heroCta}
           variant="contained"
           color="secondary"
           disableRipple
@@ -191,8 +185,8 @@ export function LandingCtas({
           }}
         >
           {t('earn.landing.read_terms')}
-        </HeroCta>
-      </CtaRow>
+        </Button>
+      </div>
       {readingTerms && (
         <TermsModal
           variant="read"

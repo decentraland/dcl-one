@@ -3,12 +3,13 @@ import { cleanup, fireEvent, render, screen, within } from '@testing-library/rea
 import { flatten } from 'flat';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { dark, ThemeProvider } from 'decentraland-ui2/dist/theme';
+import { Modal as MuiModal } from 'decentraland-ui2';
 
 import { en } from '/@/modules/store/translation/locales';
 import { setCurrentLocale } from '/@/modules/store/translation/utils';
 
 import { ContactInfoForm } from './ContactInfoForm';
-import { WelcomePaper, WelcomeRoot } from './EarnModal.styled';
+import modal from './EarnModal.module.css';
 
 type Props = Partial<React.ComponentProps<typeof ContactInfoForm>>;
 
@@ -73,14 +74,17 @@ describe('ContactInfoForm', () => {
       render(
         <StrictMode>
           <ThemeProvider theme={dark}>
-            <WelcomeRoot open>
-              <WelcomePaper>
+            <MuiModal
+              className={modal.welcomeRoot}
+              open
+            >
+              <div className={modal.welcomePaper}>
                 <ContactInfoForm
                   onSubmit={vi.fn()}
                   onCancel={vi.fn()}
                 />
-              </WelcomePaper>
-            </WelcomeRoot>
+              </div>
+            </MuiModal>
           </ThemeProvider>
         </StrictMode>,
       );

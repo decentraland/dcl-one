@@ -1,22 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { Button, TextField } from 'decentraland-ui2';
 
 import type { EnrollmentRequest } from '/shared/types/creator-fund';
 
 import { t } from '/@/modules/store/translation/utils';
 import { EMAIL_MAX_LENGTH, isEmail } from '/@/modules/utils';
 
-import {
-  FieldError,
-  FieldGroup,
-  Fields,
-  Form,
-  Input,
-  Intro,
-  Label,
-  NameRow,
-  Required,
-} from './ContactInfoForm.styled';
-import { Actions, ErrorLine, ModalCta, ModalTitle } from './EarnModal.styled';
+import styles from './ContactInfoForm.module.css';
+import modal from './EarnModal.module.css';
 
 const NAME_MAX_LENGTH = 100;
 
@@ -49,12 +40,21 @@ function Field({ name, label, error, maxLength, onChange, autoFocus, ...input }:
   }, []);
 
   return (
-    <FieldGroup>
-      <Label htmlFor={id}>
+    <div className={styles.fieldGroup}>
+      <label
+        className={styles.label}
+        htmlFor={id}
+      >
         {label}
-        <Required aria-hidden> *</Required>
-      </Label>
-      <Input
+        <span
+          className={styles.required}
+          aria-hidden
+        >
+          {' *'}
+        </span>
+      </label>
+      <TextField
+        className={styles.input}
         {...input}
         inputRef={inputRef}
         id={id}
@@ -68,13 +68,14 @@ function Field({ name, label, error, maxLength, onChange, autoFocus, ...input }:
           'aria-describedby': error ? errorId : undefined,
         }}
       />
-      <FieldError
+      <span
+        className={styles.fieldError}
         id={errorId}
         aria-live="polite"
       >
         {error}
-      </FieldError>
-    </FieldGroup>
+      </span>
+    </div>
   );
 }
 
@@ -122,14 +123,20 @@ export function ContactInfoForm({
   };
 
   return (
-    <Form
+    <form
+      className={styles.form}
       noValidate
       onSubmit={handleSubmit}
     >
-      <ModalTitle id={titleId}>{t('earn.contact.title')}</ModalTitle>
-      <Intro>{t('earn.contact.body')}</Intro>
-      <Fields>
-        <NameRow>
+      <h2
+        className={modal.modalTitle}
+        id={titleId}
+      >
+        {t('earn.contact.title')}
+      </h2>
+      <p className={styles.intro}>{t('earn.contact.body')}</p>
+      <div className={styles.fields}>
+        <div className={styles.nameRow}>
           <Field
             name="first_name"
             label={t('earn.contact.first_name')}
@@ -149,7 +156,7 @@ export function ContactInfoForm({
             maxLength={NAME_MAX_LENGTH}
             onChange={set('last_name')}
           />
-        </NameRow>
+        </div>
         <Field
           name="email"
           type="email"
@@ -162,16 +169,22 @@ export function ContactInfoForm({
           onChange={set('email')}
           onBlur={() => setEmailBlurred(true)}
         />
-      </Fields>
+      </div>
       {errors?.length ? (
         <div role="alert">
           {errors.map(line => (
-            <ErrorLine key={line}>{line}</ErrorLine>
+            <p
+              className={modal.errorLine}
+              key={line}
+            >
+              {line}
+            </p>
           ))}
         </div>
       ) : null}
-      <Actions>
-        <ModalCta
+      <div className={modal.actions}>
+        <Button
+          className={modal.modalCta}
           type="button"
           variant="contained"
           color="secondary"
@@ -179,8 +192,9 @@ export function ContactInfoForm({
           onClick={onCancel}
         >
           {t('earn.contact.cancel')}
-        </ModalCta>
-        <ModalCta
+        </Button>
+        <Button
+          className={modal.modalCta}
           type="submit"
           variant="contained"
           color="primary"
@@ -189,8 +203,8 @@ export function ContactInfoForm({
           aria-busy={status === 'submitting' || undefined}
         >
           {t('earn.contact.submit')}
-        </ModalCta>
-      </Actions>
-    </Form>
+        </Button>
+      </div>
+    </form>
   );
 }

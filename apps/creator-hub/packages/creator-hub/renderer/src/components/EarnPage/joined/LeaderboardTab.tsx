@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import cx from 'classnames';
 
 import type { LeaderboardCycle, LeaderboardEntry } from '/shared/types/creator-fund';
 
@@ -8,37 +9,17 @@ import { actions, selectors } from '/@/modules/store/creatorFund';
 import { formatCycleLabel } from '/@/modules/store/creatorFund/utils';
 import { t } from '/@/modules/store/translation/utils';
 
-import { VisuallyHidden } from '../EarnModal.styled';
+import modal from '../EarnModal.module.css';
 import { MapPinIcon } from '../icons';
 
-import { FilterBar, FilterSentence } from './parts.styled';
 import { CycleSelect, JumpInButton, ListState } from './parts';
 import { formatUsdc, placeLocation, placeTitle } from './format';
 import { GetReady } from './GetReady';
 import { useWorldSceneCounts } from './useWorldSceneCounts';
-import {
-  Body,
-  Earned,
-  Head,
-  HeaderCell,
-  HeaderRow,
-  Medal,
-  News,
-  Panel,
-  PlaceCell,
-  PlaceName,
-  PlaceText,
-  PlaceWhere,
-  PlaceWhereText,
-  Places,
-  Rank,
-  Row,
-  Scrolldown,
-  Table,
-  Thumbnail,
-  Toolbar,
-} from './LeaderboardTab.styled';
+import { NewsPanel } from './NewsPanel';
 import { SNAPSHOT_BANNER_ENABLED, SnapshotBanner } from './SnapshotBanner';
+import parts from './parts.module.css';
+import styles from './LeaderboardTab.module.css';
 
 const MEDALS = ['🥇', '🥈', '🥉'];
 const NEWS_SHOWN = 4;
@@ -53,40 +34,62 @@ function LeaderboardRow({
   scenesInWorld?: number;
 }) {
   return (
-    <Row role="row">
-      <Rank role="cell">
+    <div
+      className={styles.row}
+      role="row"
+    >
+      <span
+        className={styles.rank}
+        role="cell"
+      >
         {entry.rank <= MEDALS.length ? (
-          <Medal
+          <span
+            className={styles.medal}
             role="img"
             aria-label={t('earn.joined.leaderboard.rank_label', { rank: entry.rank })}
           >
             {MEDALS[entry.rank - 1]}
-          </Medal>
+          </span>
         ) : (
           entry.rank
         )}
-      </Rank>
-      <PlaceCell role="cell">
-        <Thumbnail
+      </span>
+      <div
+        className={styles.placeCell}
+        role="cell"
+      >
+        <img
+          className={styles.thumbnail}
           src={entry.place.image ?? undefined}
           alt=""
           width={89}
           height={50}
           loading="lazy"
         />
-        <PlaceText>
-          <PlaceName title={placeTitle(entry.place)}>{placeTitle(entry.place)}</PlaceName>
-          <PlaceWhere>
+        <div className={styles.placeText}>
+          <span
+            className={styles.placeName}
+            title={placeTitle(entry.place)}
+          >
+            {placeTitle(entry.place)}
+          </span>
+          <span className={styles.placeWhere}>
             <MapPinIcon />
-            <PlaceWhereText title={placeLocation(entry.place, scenesInWorld)}>
+            <span
+              className={styles.placeWhereText}
+              title={placeLocation(entry.place, scenesInWorld)}
+            >
               {placeLocation(entry.place, scenesInWorld)}
-            </PlaceWhereText>
-          </PlaceWhere>
-        </PlaceText>
-      </PlaceCell>
-      <Earned role="cell">
+            </span>
+          </span>
+        </div>
+      </div>
+      <span
+        className={styles.earned}
+        role="cell"
+      >
         {t('earn.joined.leaderboard.amount', { amount: formatUsdc(entry.earned_usdc, locale) })}
-      </Earned>
+      </span>
       <span
         role="cell"
         className="JumpInCell"
@@ -102,7 +105,7 @@ function LeaderboardRow({
           }
         />
       </span>
-    </Row>
+    </div>
   );
 }
 
@@ -228,25 +231,32 @@ export function LeaderboardTab() {
   const newsItems = news.status === 'succeeded' ? (news.data?.news.slice(0, NEWS_SHOWN) ?? []) : [];
 
   return (
-    <Panel>
+    <div className={styles.panel}>
       {SNAPSHOT_BANNER_ENABLED && banner.status === 'succeeded' && banner.data?.markdown && (
         <SnapshotBanner markdown={banner.data.markdown} />
       )}
-      <Scrolldown>
-        <Places ref={placesRef}>
-          <Toolbar
+      <div className={styles.scrolldown}>
+        <div
+          className={styles.places}
+          ref={placesRef}
+        >
+          <div
+            className={cx(parts.pageBackdrop, styles.toolbar)}
             ref={toolbarRef}
             role="toolbar"
             aria-labelledby={sentenceId}
           >
-            <FilterBar>
-              <FilterSentence id={sentenceId}>
+            <div className={parts.filterBar}>
+              <p
+                className={parts.filterSentence}
+                id={sentenceId}
+              >
                 {t(
                   selected === 'all'
                     ? 'earn.joined.leaderboard.sentence_all'
                     : 'earn.joined.leaderboard.sentence',
                 )}
-              </FilterSentence>
+              </p>
               <CycleSelect
                 value={String(selected)}
                 options={options}
@@ -259,23 +269,53 @@ export function LeaderboardTab() {
                   setChosen(cycleId);
                 }}
               />
-            </FilterBar>
-          </Toolbar>
-          <Table
+            </div>
+          </div>
+          <div
+            className={styles.table}
             role="table"
             aria-labelledby={sentenceId}
           >
-            <Head role="rowgroup">
-              <HeaderRow role="row">
-                <HeaderCell role="columnheader">{t('earn.joined.leaderboard.rank')}</HeaderCell>
-                <HeaderCell role="columnheader">{t('earn.joined.leaderboard.place')}</HeaderCell>
-                <HeaderCell role="columnheader">{t('earn.joined.leaderboard.earned')}</HeaderCell>
-                <HeaderCell role="columnheader">
-                  <VisuallyHidden>{t('earn.joined.leaderboard.jump_in')}</VisuallyHidden>
-                </HeaderCell>
-              </HeaderRow>
-            </Head>
-            <Body role="rowgroup">
+            <div
+              className={cx(parts.pageBackdrop, styles.head)}
+              role="rowgroup"
+            >
+              <div
+                className={styles.headerRow}
+                role="row"
+              >
+                <span
+                  className={styles.headerCell}
+                  role="columnheader"
+                >
+                  {t('earn.joined.leaderboard.rank')}
+                </span>
+                <span
+                  className={styles.headerCell}
+                  role="columnheader"
+                >
+                  {t('earn.joined.leaderboard.place')}
+                </span>
+                <span
+                  className={styles.headerCell}
+                  role="columnheader"
+                >
+                  {t('earn.joined.leaderboard.earned')}
+                </span>
+                <span
+                  className={styles.headerCell}
+                  role="columnheader"
+                >
+                  <span className={modal.visuallyHidden}>
+                    {t('earn.joined.leaderboard.jump_in')}
+                  </span>
+                </span>
+              </div>
+            </div>
+            <div
+              className={styles.body}
+              role="rowgroup"
+            >
               {rows.map(entry => (
                 <LeaderboardRow
                   key={entry.place.id}
@@ -284,12 +324,17 @@ export function LeaderboardTab() {
                   scenesInWorld={sceneCounts[entry.place.world_name ?? '']}
                 />
               ))}
-            </Body>
-          </Table>
+            </div>
+          </div>
           {state}
-        </Places>
-        {newsItems.length > 0 && <News items={newsItems} />}
-      </Scrolldown>
-    </Panel>
+        </div>
+        {newsItems.length > 0 && (
+          <NewsPanel
+            className={styles.news}
+            items={newsItems}
+          />
+        )}
+      </div>
+    </div>
   );
 }

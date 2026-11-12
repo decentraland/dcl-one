@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import cx from 'classnames';
 import { Snackbar } from 'decentraland-ui2';
 
 import { analytics } from '#preload';
@@ -7,16 +8,16 @@ import { actions } from '/@/modules/store/creatorFund';
 import type { TranslationPath } from '/@/modules/store/translation/types';
 import { t } from '/@/modules/store/translation/utils';
 
-import { VisuallyHidden } from '../EarnModal.styled';
+import modalStyles from '../EarnModal.module.css';
 import { SnackbarCheckIcon } from '../icons';
 
 import { ListState } from './parts';
 import { ContactCard, WalletCard } from './PayoutCards';
 import { PayoutsEmpty } from './PayoutsEmpty';
-import { CardsRow, EmptyPanel, Notice, Panel } from './PayoutsTab.styled';
 import { PayoutsTable } from './PayoutsTable';
 import { VerifyEmailModal } from './VerifyEmailModal';
 import { WalletModal } from './WalletModal';
+import styles from './PayoutsTab.module.css';
 
 const SNACKBAR_MS = 5_000;
 
@@ -88,7 +89,6 @@ export function PayoutsTab() {
 
   const failed = [payouts, wallet, enrollment].some(resource => resource.status === 'failed');
   const empty = loaded && !failed && payouts.data?.payouts.length === 0;
-  const Shell = empty ? EmptyPanel : Panel;
 
   let body: React.ReactNode;
   if (!loaded) {
@@ -107,7 +107,7 @@ export function PayoutsTab() {
     else if (payouts.data) list = <PayoutsTable payouts={payouts.data.payouts} />;
     body = (
       <>
-        <CardsRow>
+        <div className={styles.cardsRow}>
           <WalletCard
             wallet={wallet.status === 'succeeded' ? wallet.data : undefined}
             editRef={editRef}
@@ -122,14 +122,14 @@ export function PayoutsTab() {
               setModal('verify_email');
             }}
           />
-        </CardsRow>
+        </div>
         {list}
       </>
     );
   }
 
   return (
-    <Shell>
+    <div className={cx(styles.panel, empty && styles.emptyPanel)}>
       {body}
       {(modal === 'add_wallet' || modal === 'change_wallet') && (
         <WalletModal
@@ -145,7 +145,12 @@ export function PayoutsTab() {
           onDone={done}
         />
       )}
-      <VisuallyHidden role="status">{notice?.open && t(notice.message)}</VisuallyHidden>
+      <span
+        className={modalStyles.visuallyHidden}
+        role="status"
+      >
+        {notice?.open && t(notice.message)}
+      </span>
       <Snackbar
         open={!!notice?.open}
         autoHideDuration={SNACKBAR_MS}
@@ -156,11 +161,14 @@ export function PayoutsTab() {
         anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         sx={{ '&&': { bottom: 20 } }}
       >
-        <Notice aria-hidden>
+        <div
+          className={styles.notice}
+          aria-hidden
+        >
           <SnackbarCheckIcon />
           {notice && t(notice.message)}
-        </Notice>
+        </div>
       </Snackbar>
-    </Shell>
+    </div>
   );
 }

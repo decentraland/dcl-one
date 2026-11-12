@@ -1,6 +1,8 @@
 import { useCallback, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import cx from 'classnames';
 import CloseIcon from '@mui/icons-material/Close';
+import { Button } from 'decentraland-ui2';
 
 import { analytics } from '#preload';
 import artwork from '/assets/images/earn/home-banner.webp';
@@ -8,18 +10,7 @@ import { useFeatureFlags } from '/@/hooks/useFeatureFlags';
 import { FeatureFlag } from '/@/modules/store/featureFlags';
 import { t } from '/@/modules/store/translation/utils';
 
-import {
-  Artwork,
-  ArtworkSlot,
-  Banner,
-  BottomGlow,
-  CloseButton,
-  Cta,
-  Description,
-  Information,
-  Title,
-  TopGlow,
-} from './CreatorFundBanner.styled';
+import styles from './CreatorFundBanner.module.css';
 
 /** Once closed, the banner stays closed on this machine. */
 export const BANNER_DISMISSED_KEY = 'creator-hub:creator-fund-banner-dismissed';
@@ -60,34 +51,51 @@ export function CreatorFundBanner() {
   if (dismissed || !isEnabled(FeatureFlag.CREATOR_FUND)) return null;
 
   return (
-    <Banner aria-labelledby="creator-fund-banner-title">
-      <BottomGlow aria-hidden />
-      <Information>
-        <Title id="creator-fund-banner-title">{t('home.creator_fund_banner.title')}</Title>
-        <Description>{t('home.creator_fund_banner.description')}</Description>
-        <Cta
+    <section
+      className={styles.banner}
+      aria-labelledby="creator-fund-banner-title"
+    >
+      <div
+        className={cx(styles.glow, styles.bottomGlow)}
+        aria-hidden
+      />
+      <div className={styles.information}>
+        <h2
+          className={styles.title}
+          id="creator-fund-banner-title"
+        >
+          {t('home.creator_fund_banner.title')}
+        </h2>
+        <p className={styles.description}>{t('home.creator_fund_banner.description')}</p>
+        <Button
+          className={styles.cta}
           variant="contained"
           color="primary"
           disableRipple
           onClick={handleLearnMore}
         >
           {t('home.creator_fund_banner.cta')}
-        </Cta>
-      </Information>
-      <ArtworkSlot aria-hidden>
-        <TopGlow />
-        <Artwork
+        </Button>
+      </div>
+      <div
+        className={styles.artworkSlot}
+        aria-hidden
+      >
+        <div className={cx(styles.glow, styles.topGlow)} />
+        <img
+          className={styles.artwork}
           src={artwork}
           alt=""
         />
-      </ArtworkSlot>
-      <CloseButton
+      </div>
+      <button
+        className={styles.closeButton}
         type="button"
         aria-label={t('home.creator_fund_banner.close')}
         onClick={handleClose}
       >
         <CloseIcon />
-      </CloseButton>
-    </Banner>
+      </button>
+    </section>
   );
 }

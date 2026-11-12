@@ -1,0 +1,10 @@
+.stickyNavbar {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  padding-bottom: 30px;
+}
+
+.stickyNavbar > :global(.Header.Navbar) {
+  margin-bottom: 0;
+}

@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Tab } from 'decentraland-ui2';
+import { Tab, Tabs } from 'decentraland-ui2';
 
 import { analytics } from '#preload';
 import { useSelector } from '#store';
@@ -14,7 +14,7 @@ import { LeaderboardTab } from './joined/LeaderboardTab';
 import { MyPlacesTab } from './joined/MyPlacesTab';
 import { PayoutsLocked } from './joined/PayoutsLocked';
 import { PayoutsTab } from './joined/PayoutsTab';
-import { GradientDefs, Page, SectionTabs, TabPanel } from './JoinedPage.styled';
+import styles from './JoinedPage.module.css';
 
 export type JoinedTab = 'leaderboard' | 'my_places' | 'payouts';
 
@@ -48,8 +48,14 @@ export function JoinedPage({
         (!payoutEnabled || state.creatorFund.payouts.data?.payouts.length === 0),
   );
   return (
-    <Page bottom={fillsWindow ? 'flush' : 'padded'}>
-      <GradientDefs aria-hidden>
+    <div
+      className={styles.page}
+      data-bottom={fillsWindow ? 'flush' : 'padded'}
+    >
+      <svg
+        className={styles.gradientDefs}
+        aria-hidden
+      >
         <defs>
           <linearGradient
             id="cf-cerise"
@@ -68,9 +74,10 @@ export function JoinedPage({
             />
           </linearGradient>
         </defs>
-      </GradientDefs>
+      </svg>
       <EarnHeader />
-      <SectionTabs
+      <Tabs
+        className={styles.sectionTabs}
         value={tab}
         onChange={(_, value: JoinedTab) => {
           void analytics.track('Creator Fund Tab Viewed', {
@@ -90,14 +97,15 @@ export function JoinedPage({
             disableRipple
           />
         ))}
-      </SectionTabs>
-      <TabPanel
+      </Tabs>
+      <div
+        className={styles.tabPanel}
         role="tabpanel"
         id={`${id}-panel`}
         aria-labelledby={`${id}-${tab}`}
       >
         {PANELS[tab](payoutEnabled)}
-      </TabPanel>
-    </Page>
+      </div>
+    </div>
   );
 }
