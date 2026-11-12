@@ -130,9 +130,10 @@ this engine's design using its requirements and tests.
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.
-- A change to what runs each frame (budgets, slicing, instantiation) is tried in the web build by
-  hand, where frames are slowest and a fixed cost takes the largest share of one; CI only shows
-  that it compiles. Say in the description what you saw and the worst frames.
+- A change that limits per-frame work (a budget, slicing) is tried in the web build by hand,
+  where frames are slowest and a fixed cost takes the largest share of one: that run is part of
+  the case for the change, and CI only shows that it compiles. Say in the description what you
+  saw and the worst frames. Other changes to per-frame work need no manual web run.
 - Web-only engine switches are a page param plus a wasm export, not a launch option.
 
 ## Dependencies

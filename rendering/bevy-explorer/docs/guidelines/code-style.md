@@ -17,10 +17,6 @@ side map is not allowed and will fail a review.
   inspector; `if thing.playing` hides it.
 - One-shot facts are events. State is components. Bevy `States` are reserved for the handful
   of platform toggles (microphone, transmitter, parcel grass).
-- Work that spans frames keeps its progress in a component inserted when the work starts,
-  updated in place each frame and removed once when it ends. Don't take it out with `mem::take`
-  and write it back, and don't split one population over two queries only to order it: order
-  from the state itself, as glTF processing takes models whose cursor has moved first.
 - Scene data arrives as proto `Pb*` types and becomes an engine component through `TryFrom`.
   Keep the two apart: the proto type is the wire shape, the component is what systems read.
   Never redeclare a type whose shape already exists in the protocol or SDK crates; import it.
@@ -57,9 +53,10 @@ side map is not allowed and will fail a review.
   registration; tests insert the resource instead.
 - A membership check reads as one: `Query<(), Without<C>>` and `.contains(entity)`, not
   `Query<Has<C>>` with `let Ok(false) = … else`.
-- A system that loops over items calls a function for each item. When the item needs several
-  resources, bundle them in a `SystemParam` with the function as its method, so the system shows
-  the loop and the function shows the work.
+- A system whose loop over items has grown too long moves the per-item work into a function.
+  When the item needs several resources, bundle them in a `SystemParam` with the function as its
+  method, so the system shows the loop and the function shows the work. A short loop stays as it
+  is.
 - Time with `bevy::platform::time::Instant`, which works on every platform.
 - An operation that refuses (a panic or an error) checks before it changes anything, so a
   caller that recovers finds the state as it was; a test of the refusal checks that state too,
