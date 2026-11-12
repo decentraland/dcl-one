@@ -244,12 +244,13 @@ State, in every build:
   as `--deep-link` does at launch, and answers once the realm or the teleport is set. Sign-in links
   are not handled.
 
-- `/tree_wind [true|false]`: whether the landscape's trees and bushes sway in the wind. Still,
-  they stand in their rest pose, so two frames of them agree whenever they were taken; the visual
-  scenarios hold them still for their frames.
+- `/tree_wind [true|false]`: whether the landscape's trees, bushes, grass, flowers and reeds sway
+  in the wind. Still, they stand in their rest pose, so two frames of them agree whenever they
+  were taken; the visual scenarios hold them still for their frames.
 - `/landscape [ground|trees|grass|satellite] [true|false]`: the landscape layers as JSON:
-  `ground`, `trees`, `grass` and `satellite` (each layer's toggle), `treeCount`, `grassParcels`,
-  `loadDistance`, `satelliteShown` (the satellite floor is drawn: a realm is loaded, the world is
+  `ground`, `trees`, `grass` and `satellite` (each layer's toggle; `grass` covers the grass,
+  flowers and reeds), `treeCount`, `grassParcels` (empty parcels carrying grass), `grassTufts`
+  (grass tufts in their meshes), `loadDistance`, `landscapeDistance`, `satelliteShown` (the satellite floor is drawn: a realm is loaded, the world is
   not held, the realm is not a World, and its toggle is on), and `groundTextures` (`loading`,
   `loaded` or `failed`: the ground, sand and cliff textures; until one loads, or if it fails, its
   part of the ground or cliffs is drawn in a flat colour). With a layer and a value it shows or hides that layer, in preview

@@ -44,7 +44,7 @@ fn heightfield_split_matches_unity() {
 #[test]
 fn mesh_split_matches_unity() {
     for mesh in [
-        parcel_mesh(16),
+        ground_mesh(|_| 16, 0),
         ground_mesh(|offset| 16 >> (offset.x.abs() % 3), 2),
     ] {
         let Some(VertexAttributeValues::Float32x3(positions)) =
@@ -231,9 +231,8 @@ fn scene_casts_hit_the_heightfield() {
     }
 }
 
-/// The textured ground compiles in every pipeline it is drawn with: the flat ground (grass off)
-/// and a ground shell (grass on), each with the prepasses and shadows. Needs a GPU, so `#[ignore]`d
-/// and skipped by CI:
+/// The textured ground compiles in every pipeline it is drawn with: the main pass, the prepasses
+/// and shadows. Needs a GPU, so `#[ignore]`d and skipped by CI:
 ///
 /// ```text
 /// cargo test -p visuals ground_shader_compiles -- --ignored --nocapture
@@ -241,21 +240,11 @@ fn scene_casts_hit_the_heightfield() {
 #[test]
 #[ignore = "needs a GPU; run with --ignored"]
 fn ground_shader_compiles() {
-    use crate::{
-        landscape_textures::LandscapeTextures,
-        pipeline_test,
-        shell_texturing::{self, ShellTexture},
-    };
-    use bevy::render::mesh::MeshTag;
-    use common::structs::ParcelGrassSetting;
+    use crate::{landscape_textures::LandscapeTextures, pipeline_test};
 
     let mut app = pipeline_test::app();
     embed_shaders(&mut app);
-    shell_texturing::embed_shaders(&mut app);
-    app.add_plugins((
-        MaterialPlugin::<TerrainFlatMaterial>::default(),
-        MaterialPlugin::<ShellTexture>::default(),
-    ));
+    app.add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default());
     app.finish();
     app.cleanup();
 
@@ -265,38 +254,22 @@ fn ground_shader_compiles() {
     world
         .resource_mut::<Assets<Image>>()
         .insert(TERRAIN_TEXTURE.id(), steps);
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(parcel_mesh(4));
+    let mesh = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(ground_mesh(ground_segments, 0));
     let flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
             base: StandardMaterial::default(),
             extension: TerrainExtension::new(&textures),
         });
-    let shell = world
-        .resource_mut::<Assets<ShellTexture>>()
-        .add(ShellTexture::new(
-            &ParcelGrassSetting::Low,
-            3,
-            TerrainParams::default(),
-            &textures,
-        ));
-    world.spawn((
-        Mesh3d(mesh.clone()),
-        MeshMaterial3d(flat),
-        Transform::default(),
-    ));
-    world.spawn((
-        Mesh3d(mesh),
-        MeshMaterial3d(shell),
-        MeshTag(1),
-        Transform::from_xyz(0.0, 0.1, 0.0),
-    ));
+    world.spawn((Mesh3d(mesh), MeshMaterial3d(flat), Transform::default()));
 
     pipeline_test::assert_pipelines_compile(
         &mut app,
         Vec3::new(0.0, 3.0, 6.0),
         Vec3::ZERO,
-        &["terrain_flat.wgsl", "shell_texturing.wgsl"],
+        &["terrain_flat.wgsl"],
     );
 }
 
@@ -350,7 +323,7 @@ fn ring_origins_snap_to_cell_size() {
     assert_eq!(ground_origin(player), Vec3::new(corner.x, 0.0, -corner.y));
 }
 
-/// Every terrain vertex shader variant (flat ground and grass shells, main pass, prepasses and
+/// Every terrain vertex shader variant (the ground and a parcel grid, main pass, prepasses and
 /// shadows) compiles. Needs a GPU:
 /// `cargo test -p visuals terrain_vertex_compiles -- --ignored --nocapture`.
 #[test]
@@ -361,7 +334,6 @@ fn terrain_vertex_compiles() {
         log::LogPlugin,
         render::{
             camera::RenderTarget,
-            mesh::MeshTag,
             pipelined_rendering::PipelinedRenderingPlugin,
             render_resource::{
                 CachedPipelineState, PipelineCache, PipelineCacheError, PipelineDescriptor,
@@ -372,10 +344,7 @@ fn terrain_vertex_compiles() {
         winit::WinitPlugin,
     };
 
-    use crate::{
-        landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin},
-        shell_texturing::{self, ShellTexture},
-    };
+    use crate::landscape_textures::{LandscapeTextures, LandscapeTexturesPlugin};
 
     let mut app = App::new();
     app.add_plugins(
@@ -391,12 +360,8 @@ fn terrain_vertex_compiles() {
             }),
     )
     .add_plugins((assets::EmbedAssetsPlugin, LandscapeTexturesPlugin))
-    .add_plugins((
-        MaterialPlugin::<TerrainFlatMaterial>::default(),
-        MaterialPlugin::<ShellTexture>::default(),
-    ));
+    .add_plugins(MaterialPlugin::<TerrainFlatMaterial>::default());
     embed_shaders(&mut app);
-    shell_texturing::embed_shaders(&mut app);
     app.finish();
     app.cleanup();
 
@@ -435,30 +400,14 @@ fn terrain_vertex_compiles() {
         Transform::from_xyz(1.0, 2.0, 1.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
     let mut meshes = world.resource_mut::<Assets<Mesh>>();
-    let ground = meshes.add(ground_mesh(|_| 4, GROUND_RINGS));
-    let parcel = meshes.add(parcel_mesh(4));
+    let ground = meshes.add(ground_mesh(ground_segments, GROUND_RINGS));
     let flat = world
         .resource_mut::<Assets<TerrainFlatMaterial>>()
         .add(TerrainFlatMaterial {
             base: StandardMaterial::default(),
             extension: TerrainExtension::new(&textures),
         });
-    let shells = world
-        .resource_mut::<Assets<ShellTexture>>()
-        .add(ShellTexture::new(
-            &default(),
-            4,
-            TerrainParams::default(),
-            &textures,
-        ));
-    world.spawn((Mesh3d(ground.clone()), MeshMaterial3d(flat)));
-    for mesh in [ground, parcel] {
-        world.spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(shells.clone()),
-            MeshTag(1 << 16),
-        ));
-    }
+    world.spawn((Mesh3d(ground), MeshMaterial3d(flat)));
     let ShaderRef::Path(path) = terrain_vertex_shader() else {
         unreachable!("the terrain vertex shader is embedded");
     };
@@ -492,8 +441,8 @@ fn terrain_vertex_compiles() {
         let ready = terrain
             .iter()
             .all(|pipeline| matches!(pipeline.state, CachedPipelineState::Ok(_)));
-        // each material's main pass, prepass and shadow pass
-        if seen >= 4 && ready && cache.waiting_pipelines().next().is_none() {
+        // the main pass, the prepass and the shadow pass
+        if seen >= 3 && ready && cache.waiting_pipelines().next().is_none() {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));

@@ -1,7 +1,7 @@
 //! The coast around the terrain, after eordano's procedural landscape (#1342): cliffs dropping from
 //! the ground to a sandy shelf, the sea, and invisible walls along the cliff crest. Unity places
 //! cliff prefabs along the terrain bounds; this builds a rounded, varying cliff instead. The ground
-//! and grass end just past the cliff crest (`beyond_coast` in coast_profile.wgsl).
+//! ends just past the cliff crest (`beyond_coast` in coast_profile.wgsl).
 //!
 //! Coordinates in the geometry are unity x/z metres (bevy z = -unity z).
 

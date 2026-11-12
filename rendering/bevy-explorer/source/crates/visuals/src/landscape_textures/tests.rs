@@ -290,16 +290,15 @@ fn modified<M: Asset>(event: &AssetEvent<M>) -> bool {
 fn materials_are_touched_when_a_texture_is_replaced() {
     use crate::{
         coast::{self, CliffMaterial},
-        shell_texturing::{self, ShellTexture},
+        grass::{self, grass_base, GrassExtension, GrassMaterial},
         terrain::{self, TerrainExtension, TerrainFlatMaterial, TerrainParams},
     };
-    use common::structs::ParcelGrassSetting;
 
     let mut app = app();
     app.init_asset::<TerrainFlatMaterial>()
-        .init_asset::<ShellTexture>()
+        .init_asset::<GrassMaterial>()
         .init_asset::<CliffMaterial>();
-    shell_texturing::rebind_materials(&mut app);
+    grass::rebind_materials(&mut app);
     terrain::rebind_materials(&mut app);
     coast::rebind_materials(&mut app);
     let textures = app.world().resource::<LandscapeTextures>().clone();
@@ -311,21 +310,19 @@ fn materials_are_touched_when_a_texture_is_replaced() {
             base: StandardMaterial::default(),
             extension: TerrainExtension::new(&textures),
         });
-    let _shell = world
-        .resource_mut::<Assets<ShellTexture>>()
-        .add(ShellTexture::new(
-            &ParcelGrassSetting::Low,
-            3,
-            TerrainParams::default(),
-            &textures,
-        ));
+    let _grass = world
+        .resource_mut::<Assets<GrassMaterial>>()
+        .add(GrassMaterial {
+            base: grass_base(),
+            extension: GrassExtension::new(&textures, TerrainParams::default(), true),
+        });
     let _cliff = world
         .resource_mut::<Assets<CliffMaterial>>()
         .add(coast::cliff_material(&textures));
 
     let mut replaced = EventCursor::<LandscapeTexturesReplaced>::default();
     let mut flat = EventCursor::<AssetEvent<TerrainFlatMaterial>>::default();
-    let mut shell = EventCursor::<AssetEvent<ShellTexture>>::default();
+    let mut grass = EventCursor::<AssetEvent<GrassMaterial>>::default();
     let mut cliff = EventCursor::<AssetEvent<CliffMaterial>>::default();
     // quiet frames are counted once every texture has loaded, when nothing is left to replace
     let (mut frames_replaced, mut frames_quiet) = (0, 0);
@@ -333,7 +330,7 @@ fn materials_are_touched_when_a_texture_is_replaced() {
         let was_replaced = read_new(app, &mut replaced, |_| true);
         let touched = [
             read_new(app, &mut flat, modified),
-            read_new(app, &mut shell, modified),
+            read_new(app, &mut grass, modified),
             read_new(app, &mut cliff, modified),
         ];
         assert_eq!(touched, [was_replaced; 3]);
@@ -354,4 +351,42 @@ fn materials_are_touched_when_a_texture_is_replaced() {
         "loaded"
     );
     assert!(frames_replaced > 0 && frames_quiet > 3);
+}
+
+/// The scatter's ground repeats with the splat, every 1024 m, and its rows run along Unity -z as
+/// the textures are laid.
+#[test]
+fn scatter_ground_repeats_with_the_splat() {
+    let green = GroundGreen::from_fn(|corner| (corner.x + 1000 * corner.y) as f32);
+    assert_eq!(green.at(IVec2::new(8, -12)), (8 - 12_000) as f32);
+    for corner in [IVec2::new(8, -12), IVec2::new(-516, 1000), IVec2::new(4, 4)] {
+        for tiles in [IVec2::new(1, 0), IVec2::new(-3, 2), IVec2::new(0, -7)] {
+            assert_eq!(
+                green.at(corner + tiles * 1024),
+                green.at(corner),
+                "{corner} {tiles}"
+            );
+        }
+    }
+}
+
+/// The scatter's ground is read from the loaded files: no stand-in is ever read, and on the real
+/// ground most corners grow flowers and some, on the sand, reeds.
+#[test]
+fn scatter_ground_is_read_from_the_loaded_files() {
+    let mut app = app();
+    assert!(app.world().resource::<ScatterGround>().0.is_none());
+    settle(&mut app);
+    let ground = app.world().resource::<ScatterGround>().0.clone().unwrap();
+    let corners: Vec<f32> = (0..256)
+        .flat_map(|row| (0..256).map(move |x| IVec2::new(x * 4, -row * 4)))
+        .map(|corner| ground.at(corner))
+        .collect();
+    let flowers = corners.iter().filter(|green| **green < 0.08).count();
+    let reeds = corners.iter().filter(|green| **green > 0.1).count();
+    assert!(flowers > corners.len() / 2, "{flowers} flower corners");
+    assert!(
+        reeds > 0 && reeds < corners.len() / 4,
+        "{reeds} reed corners"
+    );
 }

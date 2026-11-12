@@ -2,13 +2,13 @@ mod atmosphere_params;
 mod coast;
 mod day_night;
 mod debug_panel;
+mod grass;
 mod landscape_textures;
 mod nishita_cloud;
 #[cfg(test)]
 mod pipeline_test;
 mod props;
 mod satellite_floor;
-pub mod shell_texturing;
 mod sky_envmap;
 mod solids;
 mod stars;
@@ -47,10 +47,10 @@ use scene_runner::update_world::lights::{moon_direction, SUN_COLOR_NOON};
 use crate::{
     coast::CoastPlugin,
     day_night::DayNightPlugin,
+    grass::GrassPlugin,
     landscape_textures::LandscapeTexturesPlugin,
     props::PropsPlugin,
     satellite_floor::SatelliteFloorPlugin,
-    shell_texturing::ShellTexturingPlugin,
     sky_envmap::{SkyEnvmapPlugin, SkyEnvmapSettings},
     solids::SolidsPlugin,
     terrain::TerrainPlugin,
@@ -82,8 +82,8 @@ impl Plugin for VisualsPlugin {
             .add_plugins(WireframePlugin::default())
             .add_plugins(DayNightPlugin)
             .add_plugins(LandscapeTexturesPlugin)
-            .add_plugins(ShellTexturingPlugin)
             .add_plugins(TerrainPlugin)
+            .add_plugins(GrassPlugin)
             .add_plugins(CoastPlugin)
             .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin, SatelliteFloorPlugin))
             .add_systems(Update, apply_global_light)

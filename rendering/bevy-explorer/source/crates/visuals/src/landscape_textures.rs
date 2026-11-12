@@ -3,6 +3,8 @@
 //! seen out to the horizon, so each gets a mip chain as it loads (the PNG and JPEG loaders build
 //! none, and without one the distance shimmers) and a repeating, trilinear sampler.
 
+use std::sync::Arc;
+
 use bevy::{
     asset::{LoadState, RenderAssetUsages},
     image::{
@@ -41,6 +43,7 @@ impl Plugin for LandscapeTexturesPlugin {
     fn build(&self, app: &mut App) {
         // in Update, before the frame's asset events, so the first upload already has the mips
         app.init_resource::<LandscapeTextures>()
+            .init_resource::<ScatterGround>()
             .add_event::<LandscapeTexturesReplaced>()
             .add_systems(Update, resolve_textures.in_set(ResolveLandscapeTextures));
     }
@@ -116,6 +119,9 @@ pub(crate) struct LandscapeTextures {
     /// The loading files, dropped once resolved.
     sources: [Option<Handle<Image>>; 5],
     states: [TextureState; 5],
+    /// What the flower and reed scatter reads of the splat, ground and sand files, taken as each
+    /// loads: the drawn copies keep no main-world data.
+    scatter_samples: [Option<Arc<[f32]>>; 3],
 }
 
 impl FromWorld for LandscapeTextures {
@@ -161,6 +167,7 @@ impl LandscapeTextures {
             cliff_normal,
             sources,
             states: [TextureState::Loading; 5],
+            scatter_samples: Default::default(),
         }
     }
 
@@ -206,6 +213,7 @@ fn resolve_textures(
     server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut replaced: EventWriter<LandscapeTexturesReplaced>,
+    mut scatter: ResMut<ScatterGround>,
 ) {
     if !textures.states.contains(&TextureState::Loading) {
         return;
@@ -226,6 +234,9 @@ fn resolve_textures(
                     // drawn only, never read back: no main-world copy once uploaded
                     image.asset_usage = RenderAssetUsages::RENDER_WORLD;
                 }
+                if let Some(samples) = textures.scatter_samples.get_mut(i) {
+                    *samples = scatter_samples(&image, i);
+                }
                 images.insert(target, image);
                 replaced.write(LandscapeTexturesReplaced);
                 TextureState::Ready
@@ -237,6 +248,12 @@ fn resolve_textures(
             _ => continue,
         };
         textures.sources[i] = None;
+    }
+    if scatter.0.is_none() {
+        if let [Some(splat), Some(ground), Some(sand)] = &textures.scatter_samples {
+            scatter.0 = Some(Arc::new(GroundGreen::from_samples(splat, ground, sand)));
+            textures.scatter_samples = Default::default();
+        }
     }
 }
 
@@ -309,5 +326,144 @@ fn encode(texel: Vec4, kind: TexelKind) -> [u8; 4] {
         .map(|value| (value.clamp(0.0, 1.0) * 255.0).round() as u8)
 }
 
+/// Spacing in metres of the corners at which the flower and reed scatter reads the ground.
+const SCATTER_CELL: u32 = 4;
+/// Scatter corners along each side of the splat's tile.
+const SCATTER_CORNERS: usize = (GROUND_SPLAT_METRES / SCATTER_CELL) as usize;
+/// The splat level the scatter reads: one texel per scatter cell.
+const SCATTER_SPLAT_LEVEL: u32 = 2;
+
+/// What the flower and reed scatter reads of the ground. None until the splat and both colours
+/// have loaded, and for good if one fails: their one-texel stand-ins would read as sand
+/// everywhere.
+#[derive(Resource, Default, Clone)]
+pub(crate) struct ScatterGround(pub(crate) Option<Arc<GroundGreen>>);
+
+/// The green of the splat-weighted ground and sand colour at every 4 m corner of the splat's
+/// tile, as unity-explorer's flower and reed scatter reads it: the splat at its 4 m level, the
+/// ground and sand colours at their full level and laid at the splat's tiling, not the ground's.
+/// The scatter tests that green against its flower and reed limits.
+#[derive(Debug, PartialEq)]
+pub(crate) struct GroundGreen {
+    /// Rows along bevy +z (unity -z), as the textures are laid.
+    values: Vec<f32>,
+}
+
+impl GroundGreen {
+    /// The green at each corner, given its Unity x/z in metres within the first tile.
+    #[cfg(test)]
+    pub(crate) fn from_fn(green: impl Fn(IVec2) -> f32) -> Self {
+        let cell = SCATTER_CELL as i32;
+        Self {
+            values: (0..SCATTER_CORNERS * SCATTER_CORNERS)
+                .map(|i| {
+                    let (x, row) = ((i % SCATTER_CORNERS) as i32, (i / SCATTER_CORNERS) as i32);
+                    green(IVec2::new(x * cell, -row * cell))
+                })
+                .collect(),
+        }
+    }
+
+    /// `splat` holds red and green per corner, `ground` and `sand` their colour's green.
+    fn from_samples(splat: &[f32], ground: &[f32], sand: &[f32]) -> Self {
+        Self {
+            values: (0..SCATTER_CORNERS * SCATTER_CORNERS)
+                .map(|i| ground[i] * splat[2 * i] + sand[i] * splat[2 * i + 1])
+                .collect(),
+        }
+    }
+
+    /// The green at a corner, given its Unity x/z in metres (a multiple of 4).
+    pub(crate) fn at(&self, unity: IVec2) -> f32 {
+        let cell = SCATTER_CELL as i32;
+        let corners = SCATTER_CORNERS as i32;
+        let x = (unity.x / cell).rem_euclid(corners);
+        let row = (-unity.y / cell).rem_euclid(corners);
+        self.values[(row * corners + x) as usize]
+    }
+}
+
+/// What the scatter reads of the splat (`index` 0: red and green per corner) or of the ground or
+/// sand colour (1, 2: green per corner). None if the image has too few levels or is not RGBA8.
+fn scatter_samples(image: &Image, index: usize) -> Option<Arc<[f32]>> {
+    let format = image.texture_descriptor.format;
+    if !matches!(
+        format,
+        TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb
+    ) {
+        return None;
+    }
+    let corner = |i: usize| {
+        let (x, row) = (i % SCATTER_CORNERS, i / SCATTER_CORNERS);
+        Vec2::new(x as f32, row as f32) * (SCATTER_CELL as f32 / GROUND_SPLAT_METRES as f32)
+    };
+    let corners = 0..SCATTER_CORNERS * SCATTER_CORNERS;
+    Some(if index == 0 {
+        let level = level_texels(image, SCATTER_SPLAT_LEVEL)?;
+        corners
+            .flat_map(|i| {
+                let uv = corner(i);
+                [0, 1].map(|channel| level.bilinear(uv, channel, |texel| texel as f32 / 255.0))
+            })
+            .collect()
+    } else {
+        let level = level_texels(image, 0)?;
+        let linear = |texel: u8| Srgba::gamma_function(texel as f32 / 255.0);
+        corners
+            .map(|i| level.bilinear(corner(i), 1, linear))
+            .collect()
+    })
+}
+
+/// One mip level of an RGBA8 image.
+struct LevelTexels<'a> {
+    texels: &'a [u8],
+    width: usize,
+    height: usize,
+}
+
+fn level_texels(image: &Image, level: u32) -> Option<LevelTexels<'_>> {
+    if level >= image.texture_descriptor.mip_level_count {
+        return None;
+    }
+    let data = image.data.as_ref()?;
+    let size = |level: u32| {
+        (
+            (image.width() as usize >> level).max(1),
+            (image.height() as usize >> level).max(1),
+        )
+    };
+    let start: usize = (0..level)
+        .map(|level| {
+            let (width, height) = size(level);
+            width * height * 4
+        })
+        .sum();
+    let (width, height) = size(level);
+    let texels = data.get(start..start + width * height * 4)?;
+    Some(LevelTexels {
+        texels,
+        width,
+        height,
+    })
+}
+
+impl LevelTexels<'_> {
+    /// A repeating bilinear sample of one channel at `uv`, as a GPU sampler takes it.
+    fn bilinear(&self, uv: Vec2, channel: usize, decode: impl Fn(u8) -> f32) -> f32 {
+        let size = Vec2::new(self.width as f32, self.height as f32);
+        let position = uv * size - 0.5;
+        let base = position.floor();
+        let fraction = position - base;
+        let texel = |dx: i32, dy: i32| {
+            let x = (base.x as i32 + dx).rem_euclid(self.width as i32) as usize;
+            let y = (base.y as i32 + dy).rem_euclid(self.height as i32) as usize;
+            decode(self.texels[(y * self.width + x) * 4 + channel])
+        };
+        let top = texel(0, 0) + (texel(1, 0) - texel(0, 0)) * fraction.x;
+        let bottom = texel(0, 1) + (texel(1, 1) - texel(0, 1)) * fraction.x;
+        top + (bottom - top) * fraction.y
+    }
+}
 #[cfg(test)]
 mod tests;

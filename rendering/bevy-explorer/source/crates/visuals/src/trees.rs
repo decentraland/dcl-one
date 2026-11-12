@@ -67,8 +67,9 @@ impl Plugin for TreesPlugin {
     }
 }
 
-/// Whether the trees and bushes sway. Still, they stand in their rest pose, so two frames of them
-/// agree whenever they were taken (the end-to-end suite's visual references need that).
+/// Whether the trees, bushes, grass, flowers and reeds sway. Still, they stand in their rest pose,
+/// so two frames of them agree whenever they were taken (the end-to-end suite's visual references
+/// need that).
 #[derive(Resource)]
 pub(crate) struct TreeWind(pub(crate) bool);
 
@@ -78,7 +79,7 @@ impl Default for TreeWind {
     }
 }
 
-/// Read or set whether the landscape's trees and bushes sway in the wind.
+/// Read or set whether the landscape's trees, bushes, grass, flowers and reeds sway in the wind.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/tree_wind")]
 struct TreeWindCommand {

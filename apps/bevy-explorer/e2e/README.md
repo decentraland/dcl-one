@@ -219,9 +219,10 @@ header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed`
 `scenes/` holds the 17 SDK7 scenes, each at its own parcels ([scenes/README.md](scenes/README.md)).
 `specs/visual/visual.test.ts` builds their entities, serves them as a realm on loopback
 (`driver/realm.ts`: `/about`, `/content/contents/<hash>`), boots the client on it as a guest in a
-960x540 window, turns the nametags off and holds the landscape's trees still (`/nametags false`:
+960x540 window, turns the nametags off and holds the landscape still (`/nametags false`:
 the scenes hide avatars, not the nametag over the hidden guest, whose name changes every run;
-`/tree_wind false`: the trees and bushes sway in the wind, so no two frames of them agree),
+`/tree_wind false`: the trees, bushes, grass, flowers and reeds sway in the wind, so no two frames
+of them agree),
 teleports to each scene, waits for its entities and its settle time, and compares the engine's frame (`/screenshot`, the canvas without the HUD) with `references/<id>.png`: a pixel
 differs when any RGB channel differs by more than 8, and the scene passes when at most 0.3% of the
 pixels differ (1.5% for `avatar-shape`), as explorer-automation compared.

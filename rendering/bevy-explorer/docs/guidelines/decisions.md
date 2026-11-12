@@ -321,7 +321,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Each tile appears once its own image has loaded, and a tile that fails to load is simply
     missing. Unity waits for all 64 and shows nothing if one fails.
 - **The ground, sand and cliff textures** are unity-explorer's own files, and differ in how they
-  reach the GPU and in the grass.
+  reach the GPU.
   - They ship as JPEG (colour) and PNG (splat, cliff normal) at 1024 by 1024, the ground texture
     scaled down from Unity's 2048, and the engine builds their mip chains on the CPU as each
     loads (box filter, colour averaged in linear light, normals renormalised). KTX2 with prebuilt
@@ -331,9 +331,42 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   - Until a texture has loaded, and for good if it fails (an LFS pointer embedded in place of the
     image, say), its one-texel stand-in is drawn: the ground in its former flat green, the rock in
     its former grey. Unity has no such state; its textures ship in the build.
-  - Until the scattered grass replaces them, every grass shell takes the ground's colour under it
-    rather than the grass colours, so the ground looks the same with grass on or off. Unity has
-    no shells.
+- **Grass, flowers and reeds** are placed by unity-explorer's scatter rules (its hash, its 16 by
+  16 jittered grid of 256 grass instances a parcel, 16 flowers of each of two kinds where the
+  ground is not sandy, 16 reeds shared out over the sandy 4 m cells), its 180 m and 256-parcel
+  limits and its wind and fade values, and differ in these ways.
+  - The meshes are lookalikes built in code, and the wind and colour shader is written from the
+    meaning of the material's values: Unity's grass and flower meshes, textures and shader come
+    from commercial packages that cannot be redistributed. A grass instance is a tuft of three
+    single-triangle blades, a flower a stem under a five-petal daisy or a four-petal bell, a reed
+    a stem, a leaf and a seed head.
+  - The scatter runs on the CPU once per parcel, and each parcel draws one mesh of its blades and
+    one of its flowers and reeds, where Unity scatters every frame on the GPU and draws
+    instanced. The vertex shader stands each instance on the eased terrain, so a change of
+    heights rebuilds nothing. Reeds take the sandy cells in cell order, where Unity's GPU threads
+    list them in whatever order they run, so here a parcel's reeds are the same every time.
+  - The bevy-only grass density setting stays: High is Unity's density, Mid and Low thin the
+    grid to 128 and 64 instances a parcel (flowers and reeds in proportion) by an ordered
+    dither, and Off grows nothing.
+  - Grass grows on the parcels whose square comes within the reach of the player, the nearest
+    256, where Unity takes those in the camera's view. Only parcels the realm has confirmed empty
+    and that lie inside the coast carry grass.
+  - Instances stand upright, where Unity tilts each to the terrain's normal: the normal would
+    cost the vertex shader four more height samples per vertex. They are lit with an upward
+    normal, as the ground under them.
+  - A blade takes the ground's drawn colour under its root (the ground and sand textures at the
+    ground's tiling), darkened toward its root by the material's 0.487, where Unity's scatter
+    reads those textures at the splat's 1024 m tiling. The material's vertex darkening and
+    colour-map height are not carried: they act on vertex data and textures of the packages'
+    meshes. Flowers and reeds blend toward the ground by 0.241 over their lowest 0.178.
+  - Flowers and reeds use the grass material's wind; the flower material's own wind values act
+    through the package's shader, whose meaning is not known here.
+  - Until the splat and both ground textures have loaded, and for good if one fails, no flowers
+    or reeds grow: their one-texel stand-ins would read as sand everywhere and grow reeds on
+    every parcel. Unity's textures ship in the build.
+  - Instances fade out between 50 and 100 m by shrinking toward their roots, so no blending or
+    discard is needed, and a parcel more than 100 m plus half its diagonal from the camera is not
+    drawn. Nothing casts shadows, as in Unity.
 - **Bevy's procedural cliffs stay and take Unity's cliff rock texture.** Unity places cliff
   prefabs along the terrain bounds; the procedural cliff keeps its shape and has no uvs, so the
   rock texture (Unity's cliff material: its colour and normal map, its moss colour on upward

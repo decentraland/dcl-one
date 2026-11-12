@@ -15,9 +15,9 @@ use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddCo
 use serde_json::json;
 
 use crate::{
+    grass::ParcelGrass,
     landscape_textures::{self, LandscapeTextures},
     satellite_floor,
-    shell_texturing::ParcelGrass,
     terrain::Ground,
     trees::Tree,
     CloudCover,
@@ -70,6 +70,7 @@ pub(super) fn register(app: &mut App) {
             ("Landscape distance (m)", "landscapeDistance"),
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
+            ("Grass tufts", "grassTufts"),
             ("Satellite floor shown", "satelliteShown"),
             ("Ground and cliff textures", "groundTextures"),
         ],
@@ -177,7 +178,7 @@ fn landscape_command(
     (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
     (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
     textures: Res<LandscapeTextures>,
-    (trees, grass): (Query<(), With<Tree>>, Query<(), With<ParcelGrass>>),
+    (trees, grass): (Query<(), With<Tree>>, Query<&ParcelGrass>),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
     if let (Some(layer), Some(value)) = (args.layer.as_deref(), args.visible) {
@@ -195,7 +196,7 @@ fn landscape_command(
     let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
     let ground_textures = landscape_textures::load_state(&textures);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0,
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "grassTufts":grass.iter().map(|grass| grass.tufts).sum::<u32>(), "loadDistance":load.load, "landscapeDistance":landscape.0,
         "satelliteShown":satellite_shown, "groundTextures":ground_textures}).to_string());
 }
 

@@ -1,6 +1,6 @@
 //! Empty-parcel terrain. Step targets are resolved in `ScenePointers`; this eases them, feeds the
-//! eased values to the ground and grass vertex shader, and builds the player's ground collider from
-//! the same values so what you see is what you stand on.
+//! eased values to the shaders that stand on the terrain (the ground and the grass), and builds
+//! the player's ground collider from the same values so what you see is what you stand on.
 
 use crate::landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures};
 use bevy::{
@@ -27,7 +27,7 @@ use bevy::{
     transform::TransformSystem,
 };
 use common::{
-    sets::{PostUpdateSets, SetupSets},
+    sets::{PostUpdateSets, RealmLifecycle, SetupSets},
     structs::{
         CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser, GROUND_RENDERLAYER,
     },
@@ -72,6 +72,7 @@ impl Plugin for TerrainPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
 
+        order_after_pointers(app);
         app.init_resource::<TerrainSurface>()
             .init_resource::<LandscapeDistance>()
             .init_resource::<PlayerTerrainHeight>()
@@ -107,6 +108,21 @@ impl Plugin for TerrainPlugin {
     }
 }
 
+/// The terrain, and what stands on it, takes the pointers the realm resolved in the same frame.
+fn order_after_pointers(app: &mut App) {
+    app.configure_sets(PostUpdate, TerrainSet.after(RealmLifecycle));
+}
+
+/// The surface's per-frame systems alone, without the ground, its material or the collider: for
+/// tests elsewhere that need a surface following `ScenePointers`.
+#[cfg(test)]
+pub(crate) fn add_surface_systems(app: &mut App) {
+    order_after_pointers(app);
+    app.init_resource::<TerrainSurface>()
+        .init_resource::<LandscapeDistance>()
+        .add_systems(PostUpdate, (sync, ease).chain().in_set(TerrainSet));
+}
+
 /// The flat ground binds the landscape textures: prepare it again when one is replaced.
 pub(crate) fn rebind_materials(app: &mut App) {
     rebind_on_replace::<TerrainFlatMaterial>(app);
@@ -115,6 +131,7 @@ pub(crate) fn rebind_materials(app: &mut App) {
 pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "terrain_vertex.wgsl");
     embedded_asset!(app, "terrain_params.wgsl");
+    embedded_asset!(app, "terrain_height.wgsl");
     embedded_asset!(app, "terrain_flat.wgsl");
     embedded_asset!(app, "coast_profile.wgsl");
     embedded_asset!(app, "landscape_ground.wgsl");
@@ -145,7 +162,7 @@ mod decl {
         pub size: IVec2,
         pub max_steps: f32,
         pub uv_size: f32,
-        /// ground and grass resolution follows parcel grass lod around this parcel (x, unity z)
+        /// the ground's grids are finer around this parcel (x, unity z)
         pub player_parcel: IVec2,
         /// the player's position within that parcel, 0 to 1 (x, unity z)
         pub player_offset: Vec2,
@@ -176,8 +193,7 @@ mod decl {
 }
 pub use decl::*;
 
-/// The ground without grass shells (used when parcel grass is off), textured from the splat and
-/// displaced like the grass.
+/// The ground, textured from the splat and displaced by the terrain.
 pub type TerrainFlatMaterial = ExtendedMaterial<TerrainExtension>;
 
 #[derive(Asset, AsBindGroup, TypePath, Clone)]
@@ -561,7 +577,7 @@ impl TerrainSurface {
         bytes
     }
 
-    fn image(&self) -> Image {
+    pub(crate) fn image(&self) -> Image {
         let (size, bytes) = match self.bounds {
             Some((min, max)) => (max - min + 1, self.rect_bytes(min, max)),
             None => (IVec2::ONE, f32::from(ZERO).to_le_bytes().to_vec()),
@@ -947,20 +963,8 @@ impl MeshBuilder {
     }
 }
 
-/// Parcel-sized grid centred on the origin.
-pub(crate) fn parcel_mesh(segments: u32) -> Mesh {
-    let mut builder = MeshBuilder::new();
-    builder.grid(
-        Vec2::splat(-8.0),
-        16.0 / segments as f32,
-        segments,
-        |_, _| Vec2::ZERO,
-    );
-    builder.build()
-}
-
-/// Parcel offsets from the player's parcel that the ground covers with per-parcel grids at the
-/// parcel grass resolution: every parcel that can hold grass (it is dropped beyond 150 parcels²).
+/// Parcel offsets from the player's parcel that the ground covers with per-parcel grids, finer
+/// near the player (`ground_segments`).
 pub(crate) const GROUND_NEAR_MIN: i32 = -13;
 pub(crate) const GROUND_NEAR_MAX: i32 = 12;
 /// Cell size of the first rings around the per-parcel grids; each further ring doubles it.
@@ -969,7 +973,7 @@ const RING_CELL: f32 = 16.0;
 /// the same terrain points; terrain_vertex.wgsl snaps each coarser ring to its own cell size
 /// (`ring_origin`) so that its cells do too.
 const TERRAIN_RINGS: u32 = 2;
-/// Rings beyond the parcel grass area, out to 13 km, covering the old 1024-parcel ground plane and
+/// Rings beyond the per-parcel grids, out to 13 km, covering the old 1024-parcel ground plane and
 /// the highest `hill_reach`.
 pub(crate) const GROUND_RINGS: u32 = 6;
 
@@ -986,7 +990,7 @@ pub(crate) fn ring_origin(player: Vec2, cell: f32) -> Vec2 {
 }
 
 /// Flat ground relative to the player's parcel corner (Unity x/z). Parcels near the player get
-/// `segments(offset)` cells a side, matching the parcel grass over them, so both share vertices.
+/// `segments(offset)` cells a side.
 /// Beyond, `rings` square rings each double the extent, with cells doubling after the first
 /// `TERRAIN_RINGS`.
 pub(crate) fn ground_mesh(segments: impl Fn(IVec2) -> u32, rings: u32) -> Mesh {
