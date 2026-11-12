@@ -5,12 +5,12 @@ use std::{
     collections::BTreeMap,
     f32::consts::{PI, TAU},
     hash::{Hash, Hasher},
-    time::Duration,
 };
 
 use bevy::{
     animation::AnimationTarget,
     asset::{LoadState, RenderAssetTransferPriority},
+    ecs::system::SystemParam,
     gltf::{Gltf, GltfExtras, GltfLoaderSettings},
     pbr::{ExtendedMaterial, NotShadowCaster},
     platform::{
@@ -37,7 +37,10 @@ use serde::Deserialize;
 use crate::{
     initialize_scene::SceneEntityDefinitionHandle,
     renderer_context::RendererSceneContext,
-    scene_spawn_slice::ProcessingDeadline,
+    scene_spawn_slice::{
+        spawn_timing::{ProcessedModel, SlowestProcessing},
+        ProcessingDeadline,
+    },
     update_world::{
         lights::LightSource,
         material::{
@@ -64,7 +67,7 @@ use dcl_component::{
 };
 use dcl_types::interface::{ComponentPosition, CrdtType};
 use ipfs::{EntityDefinition, IpfsAssetServer};
-use scene_material::{SceneBound, SceneMaterial};
+use scene_material::{SceneBound, SceneBounds, SceneMaterial};
 
 use super::{
     animation::Clips,
@@ -73,8 +76,6 @@ use super::{
     transform_and_parent::TransformHelperPub,
     AddCrdtInterfaceExt, ComponentTracker,
 };
-
-mod spawn_timing;
 
 pub struct GltfDefinitionPlugin;
 
@@ -87,6 +88,13 @@ pub struct GltfDefinition(PbGltfContainer);
 impl From<PbGltfContainer> for GltfDefinition {
     fn from(value: PbGltfContainer) -> Self {
         Self(value)
+    }
+}
+
+impl GltfDefinition {
+    /// The model's file, as the scene names it.
+    pub fn src(&self) -> &str {
+        &self.0.src
     }
 }
 
@@ -197,7 +205,6 @@ impl Plugin for GltfDefinitionPlugin {
         );
         app.add_systems(Update, maintain_gltf_name_cache);
         app.add_systems(SpawnScene, update_ready_gltfs.after(scene_spawner_system));
-        spawn_timing::register(app);
         app.add_systems(Update, check_gltfs_ready.in_set(SceneSets::PostInit));
         app.add_systems(
             Update,
@@ -225,7 +232,15 @@ pub struct GltfEntity {
 }
 
 #[derive(Component)]
-struct GltfLoaded(Option<InstanceId>);
+pub(crate) struct GltfLoaded(Option<InstanceId>);
+
+impl GltfLoaded {
+    /// A container whose file has loaded, with its model's instance if it has one: processing
+    /// starts with the first node.
+    fn start(instance: Option<InstanceId>) -> (Self, GltfProcessing) {
+        (Self(instance), GltfProcessing::default())
+    }
+}
 
 /// The value the model was loaded for: a scene may put the same value again, which keeps it.
 #[derive(Component)]
@@ -236,13 +251,15 @@ pub struct GltfProcessed {
     pub named_nodes: HashMap<String, Entity>,
 }
 
-/// A glTF instance `update_ready_gltfs` has processed part of: it resumes on the next frame, and
-/// the instance stays hidden until it is done. A node is processed once it has a
+/// A loaded glTF container `update_ready_gltfs` has not finished: it comes with [`GltfLoaded`],
+/// is updated in place as the model's nodes are processed, a slice a frame, and goes once they all
+/// are. The instance stays hidden until then. A node is processed once it has a
 /// [`ContainerEntity`], which processing gives it first.
 #[derive(Component, Default)]
 pub(crate) struct GltfProcessing {
     /// The instance's nodes before this position, in `iter_instance_entities` order, are
-    /// processed or gone: each frame resumes there.
+    /// processed or gone: each frame resumes there. Above 0, processing has started, and the
+    /// model goes before those that have not.
     next: usize,
     /// Collider indices handed out so far, per collider name.
     collider_counter: HashMap<Option<String>, u32>,
@@ -478,7 +495,7 @@ fn update_gltf(
                 // is repaired and reloaded (see below)
                 commands
                     .entity(ent)
-                    .try_insert((GltfLoaded(None), GltfAssetFailed));
+                    .try_insert((GltfLoaded::start(None), GltfAssetFailed));
                 continue;
             }
             bevy::asset::LoadState::Loading => continue,
@@ -491,7 +508,7 @@ fn update_gltf(
         let Some(gltf) = gltfs.get(h_gltf.0.id()) else {
             warn!("gltf {} unloaded between load state and lookup", def.0.src);
             set_state(scene_ent, LoadingState::FinishedWithError);
-            commands.entity(ent).try_insert(GltfLoaded(None));
+            commands.entity(ent).try_insert(GltfLoaded::start(None));
             continue;
         };
         let gltf_scene_handle = gltf.default_scene.as_ref();
@@ -528,12 +545,12 @@ fn update_gltf(
                     scene_spawner.spawn_as_child_hidden(gltf_scene_handle.clone_weak(), ent);
                 commands
                     .entity(ent)
-                    .try_insert(GltfLoaded(Some(instance_id)));
+                    .try_insert(GltfLoaded::start(Some(instance_id)));
             }
             None => {
                 warn!("no default scene found in gltf.");
                 set_state(scene_ent, LoadingState::FinishedWithError);
-                commands.entity(ent).try_insert(GltfLoaded(None));
+                commands.entity(ent).try_insert(GltfLoaded::start(None));
             }
         }
     }
@@ -610,42 +627,555 @@ pub struct SceneResourceLookup {
     pub mesh_hashes_by_id: HashMap<AssetId<Mesh>, u64>,
 }
 
-/// A glTF container `update_ready_gltfs` has not processed yet.
+/// A loaded glTF container `update_ready_gltfs` has not finished processing.
 type UnprocessedGltf = (
     Entity,
     &'static SceneEntity,
     &'static GltfLoaded,
     &'static GltfDefinition,
     &'static GltfHandle,
-    Option<&'static mut GltfProcessing>,
+    &'static mut GltfProcessing,
 );
 
-#[allow(clippy::too_many_arguments, clippy::type_complexity)]
-fn update_ready_gltfs(
+/// The components of a glTF node processing reads.
+type GltfNode = (
+    Option<&'static Name>,
+    &'static Transform,
+    &'static ChildOf,
+    Option<&'static AnimationPlayer>,
+    Option<&'static Mesh3d>,
+    Option<&'static GltfExtras>,
+    Option<&'static SkinnedMesh>,
+    Option<&'static MeshMaterial3d<StandardMaterial>>,
+    Option<&'static AnimationTarget>,
+    Option<&'static DirectionalLight>,
+    Option<&'static PointLight>,
+    Option<&'static SpotLight>,
+);
+
+/// What processing a node reads and writes, besides its model's progress and its scene's
+/// resources.
+#[derive(SystemParam)]
+pub(crate) struct NodeProcessing<'w, 's> {
+    nodes: Query<'w, 's, GltfNode>,
+    base_mats: Res<'w, Assets<StandardMaterial>>,
+    bound_mats: ResMut<'w, Assets<SceneMaterial>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    asset_server: Res<'w, AssetServer>,
+    config: Res<'w, AppConfig>,
+}
+
+/// The model a node belongs to.
+#[derive(Clone, Copy)]
+struct Model<'a> {
+    container: Entity,
+    scene_entity: &'a SceneEntity,
+    definition: &'a GltfDefinition,
+    gltf: &'a Gltf,
+    scene_bounds: &'a SceneBounds,
+}
+
+/// A material of the model is not loaded: the model is spawned again.
+struct MissingMaterial;
+
+impl NodeProcessing<'_, '_> {
+    /// Prepares one node of `model` for the scene: the scene's material instead of bevy's, its
+    /// collider, shadows for its light, its name and animation target, and the rotation of a
+    /// root's children.
+    fn process(
+        &mut self,
+        commands: &mut Commands,
+        model: Model,
+        spawned_ent: Entity,
+        progress: &mut GltfProcessing,
+        resource_lookup: &mut SceneResourceLookup,
+        tracker: &mut ComponentTracker,
+    ) -> Result<(), MissingMaterial> {
+        let Model {
+            container: bevy_scene_entity,
+            scene_entity: dcl_scene_entity,
+            definition,
+            gltf,
+            scene_bounds,
+        } = model;
+        let NodeProcessing {
+            nodes: gltf_spawned_entities,
+            base_mats,
+            bound_mats,
+            meshes,
+            asset_server,
+            config,
+        } = self;
+
+        // special behaviours, mainly from ADR-215
+        // position
+        // - children of root nodes -> rotate (why ?! - probably bevy rhs coordinate system specific)
+        // skinned mesh
+        // - fix zero bone weights (bevy specific, unity and three.js do this automatically)
+        // - ignore any mask bits, never create collider
+        // colliders
+        // - name == *_collider -> not visible
+        // - node extras.dcl_collider_mask -> specifies collider mask
+        // - name != *_collider -> default collider mask 0
+        // - name == *_collider -> default collider mask CL_PHYSICS
+        // - PbGltfContainer.disable_physics_colliders -> mask &= ~CL_PHYSICS (switch off physics bit)
+        // - PbGltfContainer.create_pointer_colliders && name != *collider -> mask |= CL_POINTERS (switch on pointers bit)
+        // - if mask != 0 create collider
+
+        // delete any base materials
+        commands
+            .entity(spawned_ent)
+            .try_remove::<(MeshMaterial3d<StandardMaterial>,)>();
+
+        // add a container node so other systems can reference the root
+        commands.entity(spawned_ent).try_insert(ContainerEntity {
+            container: bevy_scene_entity,
+            root: dcl_scene_entity.root,
+            container_id: dcl_scene_entity.id,
+        });
+
+        if let Ok((
+            maybe_name,
+            transform,
+            parent,
+            maybe_player,
+            maybe_h_mesh,
+            maybe_extras,
+            maybe_skin,
+            maybe_material,
+            maybe_target,
+            maybe_directional,
+            maybe_point,
+            maybe_spot,
+        )) = gltf_spawned_entities.get(spawned_ent)
+        {
+            // remove directional lights
+            if maybe_directional.is_some() {
+                commands.entity(spawned_ent).despawn();
+                return Ok(());
+            }
+
+            // enable shadows for other lights
+            if let Some(point) = maybe_point {
+                commands.entity(spawned_ent).try_insert((
+                    PointLight {
+                        shadows_enabled: true,
+                        ..*point
+                    },
+                    LightEntity {
+                        scene: dcl_scene_entity.root,
+                        enabled: true,
+                        shadows_enabled: true,
+                        range: point.range,
+                    },
+                ));
+            }
+            if let Some(spot) = maybe_spot {
+                commands.entity(spawned_ent).try_insert((
+                    SpotLight {
+                        shadows_enabled: true,
+                        ..*spot
+                    },
+                    LightEntity {
+                        scene: dcl_scene_entity.root,
+                        enabled: true,
+                        shadows_enabled: true,
+                        range: spot.range,
+                    },
+                ));
+            }
+
+            // collect named nodes to push to scene on request
+            if let Some(name) = maybe_name {
+                let mut name = name.to_string();
+                let mut ptr = parent.parent();
+                while ptr != bevy_scene_entity {
+                    let (maybe_name, _, parent, ..) = gltf_spawned_entities.get(ptr).unwrap();
+                    if let Some(parent_name) = maybe_name {
+                        name = format!("{parent_name}/{name}");
+                    }
+                    ptr = parent.parent();
+                }
+                progress.named_nodes.insert(name, spawned_ent);
+            }
+
+            // children of root nodes -> rotate
+            if parent.parent() == bevy_scene_entity {
+                let mut rotated = *transform;
+                rotated.rotate_around(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
+                commands.entity(spawned_ent).try_insert(rotated);
+            }
+
+            // retarget animations to our manually added root player
+            if let Some(target) = maybe_target {
+                commands.entity(spawned_ent).try_insert(AnimationTarget {
+                    player: bevy_scene_entity,
+                    ..*target
+                });
+            }
+
+            // if there is an animation player, record the entity (bevy-specific hack)
+            if maybe_player.is_some() {
+                if let Some(name) = maybe_name {
+                    debug!("animator found on {name} node of {}", definition.0.src);
+                    // animation_roots.try_insert((spawned_ent, name.clone()));
+                    progress.has_animations = true;
+                    commands.entity(spawned_ent).remove::<AnimationPlayer>();
+                    *tracker.0.entry("embedded://animations").or_default() += 1;
+                }
+            }
+
+            // if there is no mesh, there's nothing further to do
+            let Some(h_gltf_mesh) = maybe_h_mesh else {
+                return Ok(());
+            };
+
+            let Some(read_only_mesh_data) = meshes.get(h_gltf_mesh) else {
+                error!("gltf contained mesh not loaded?!");
+                return Ok(());
+            };
+
+            if read_only_mesh_data.count_vertices() == 0 {
+                commands.entity(spawned_ent).try_remove::<Mesh3d>();
+                return Ok(());
+            }
+
+            // get or create hash
+            // note we must use the handle lookup rather than recomputing the hash as we may modify the mesh on first load,
+            // then recalculating would yield a different hash result
+            let maybe_hash = if read_only_mesh_data.has_morph_targets() {
+                // we can't include morph targets in the hash, so just skip hashing for them
+                // TODO: this means we reprocess these meshes even if already loaded which is not optimal
+                None
+            } else {
+                Some(
+                    *resource_lookup
+                        .mesh_hashes_by_id
+                        .entry(h_gltf_mesh.id())
+                        .or_insert_with(|| {
+                            let hasher = &mut std::hash::DefaultHasher::new();
+
+                            for (attr, data) in read_only_mesh_data.attributes() {
+                                attr.id.hash(hasher);
+                                data.get_bytes().hash(hasher);
+                            }
+
+                            let has_joints = read_only_mesh_data
+                                .attribute(Mesh::ATTRIBUTE_JOINT_INDEX)
+                                .is_some();
+                            let has_weights = read_only_mesh_data
+                                .attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT)
+                                .is_some();
+                            let has_skin = maybe_skin.is_some();
+                            let is_skinned = has_skin && has_joints && has_weights;
+
+                            is_skinned.hash(hasher);
+
+                            read_only_mesh_data.primitive_topology().hash(hasher);
+
+                            if let Some(indices) = read_only_mesh_data.indices() {
+                                indices.iter().for_each(|index| index.hash(hasher));
+                            }
+
+                            hasher.finish()
+                        }),
+                )
+            };
+
+            // try and get existing mesh/collider data from hash
+            let existing_data = maybe_hash
+                .and_then(|hash| resource_lookup.meshes_by_hash.get(&hash))
+                .and_then(|data| asset_server.get_id_handle(data.mesh_id).map(|h| (h, data)));
+
+            let (h_mesh, data) = if let Some((h_mesh, cached_data)) = existing_data {
+                if h_mesh.id() != h_gltf_mesh.0.id() {
+                    // overwrite with cached handle
+                    commands
+                        .entity(spawned_ent)
+                        .try_insert(Mesh3d(h_mesh.clone()));
+                }
+                (h_mesh, cached_data.clone())
+            } else {
+                // fix up the mesh
+                let mesh_data = meshes.get_mut(h_gltf_mesh.0.id()).unwrap();
+                mesh_data.normalize_joint_weights();
+
+                if maybe_hash.is_some() {
+                    // if we won't need the mesh data again, we can push it only to gpu
+                    mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                } else {
+                    // if we can't make a hash to reuse the mesh, we need to keep the data cpu-side as well,
+                    // to rebuild everything next time
+                    mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                }
+
+                let has_joints = mesh_data.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some();
+                let has_weights = mesh_data.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT).is_some();
+                let has_skin = maybe_skin.is_some();
+                let is_skinned = has_skin && has_joints && has_weights;
+
+                if !is_skinned {
+                    // bevy crashes if unskinned models have joints and weights, or if skinned models don't
+                    if has_joints {
+                        mesh_data.remove_attribute(Mesh::ATTRIBUTE_JOINT_INDEX);
+                    }
+                    if has_weights {
+                        mesh_data.remove_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT);
+                    }
+                }
+
+                let shape = mesh_to_parry_shape(mesh_data).unwrap_or_else(|| {
+                    warn!("gltf mesh has no positions; using placeholder collider");
+                    SharedShape::ball(0.01)
+                });
+
+                let maybe_collider = if is_skinned {
+                    let mut new_mesh = Mesh::new(
+                        mesh_data.primitive_topology(),
+                        RenderAssetUsages::RENDER_WORLD,
+                    );
+                    if let Some(indices) = mesh_data.indices().cloned() {
+                        new_mesh.insert_indices(indices);
+                    }
+                    for (attribute, data) in mesh_data.attributes() {
+                        let attribute = match attribute.id {
+                            id if id == Mesh::ATTRIBUTE_JOINT_INDEX.id => continue,
+                            id if id == Mesh::ATTRIBUTE_JOINT_WEIGHT.id => continue,
+                            id if id == Mesh::ATTRIBUTE_POSITION.id => Mesh::ATTRIBUTE_POSITION,
+                            id if id == Mesh::ATTRIBUTE_NORMAL.id => Mesh::ATTRIBUTE_NORMAL,
+                            id if id == Mesh::ATTRIBUTE_UV_0.id => Mesh::ATTRIBUTE_UV_0,
+                            id if id == Mesh::ATTRIBUTE_UV_1.id => Mesh::ATTRIBUTE_UV_1,
+                            id if id == Mesh::ATTRIBUTE_TANGENT.id => Mesh::ATTRIBUTE_TANGENT,
+                            id if id == Mesh::ATTRIBUTE_COLOR.id => Mesh::ATTRIBUTE_COLOR,
+                            _ => continue,
+                        };
+
+                        new_mesh.insert_attribute(attribute, data.clone());
+                    }
+                    Some(meshes.add(new_mesh))
+                } else {
+                    None
+                };
+
+                let data = CachedMeshData {
+                    mesh_id: h_gltf_mesh.id(),
+                    is_skinned,
+                    shape,
+                    maybe_collider,
+                };
+
+                if let Some(hash) = maybe_hash {
+                    // and store it for next time
+                    resource_lookup.meshes_by_hash.insert(hash, data.clone());
+                }
+                *tracker.0.entry("Unique Meshes").or_default() += 1;
+                (h_gltf_mesh.0.clone(), data)
+            };
+
+            *tracker.0.entry("Total Meshes").or_default() += 1;
+
+            if data.is_skinned {
+                // bevy doesn't calculate culling correctly for skinned entities
+                commands.entity(spawned_ent).try_insert(NoFrustumCulling);
+            } else if maybe_skin.is_some() {
+                // remove skin data if mesh doesn't have all required data
+                commands.entity(spawned_ent).remove::<SkinnedMesh>();
+            }
+
+            // substitute material
+            if let Some(h_material) = maybe_material {
+                let material_name = gltf
+                    .named_materials
+                    .iter()
+                    .find(|(_, handle)| *handle == &h_material.0)
+                    .map(|(name, _)| name.to_string())
+                    .unwrap_or_else(|| {
+                        let ix = gltf
+                            .materials
+                            .iter()
+                            .enumerate()
+                            .find(|(_, handle)| *handle == &h_material.0)
+                            .map(|(ix, _)| ix)
+                            .unwrap_or(usize::MAX); // TODO handle inverted materials (make a list in Gltf, choose based on scale of the target?)
+                        format!("Material{ix}")
+                    });
+
+                let h_scene_material =
+                    if let Some(h_scene_material) = resource_lookup.materials.get(&h_material.0) {
+                        h_scene_material.clone()
+                    } else {
+                        let Some(base) = base_mats.get(h_material) else {
+                            warn!("error acquiring gltf material; retrying full gltf next frame");
+                            return Err(MissingMaterial);
+                        };
+
+                        // materials with anisotropy were causing issues
+                        // see https://github.com/decentraland/bevy-explorer/issues/424
+                        let mut base_clone = base.clone();
+                        base_clone.anisotropy_strength = 0.;
+
+                        let h_scene_material = bound_mats.add(ExtendedMaterial {
+                            base: base_clone,
+                            extension: SceneBound::new(scene_bounds, config.graphics.oob),
+                        });
+                        resource_lookup
+                            .materials
+                            .insert(h_material.0.clone(), h_scene_material.clone());
+
+                        *tracker.0.entry("Unique Materials").or_default() += 1;
+                        h_scene_material
+                    };
+                if bound_mats
+                    .get(&h_scene_material)
+                    .is_some_and(|mat| mat.base.unlit)
+                {
+                    commands.entity(spawned_ent).try_insert(NotShadowCaster);
+                }
+                commands
+                    .entity(spawned_ent)
+                    .try_insert(MeshMaterial3d(h_scene_material))
+                    .try_insert(GltfMaterialName(material_name));
+            }
+            *tracker.0.entry("Materials").or_default() += 1;
+
+            // process collider
+            let mut collider_base_name = maybe_name
+                .map(Name::as_str)
+                .filter(|name| name.to_ascii_lowercase().contains("_collider"));
+            if collider_base_name.is_none() {
+                // check parent name also
+                collider_base_name = gltf_spawned_entities
+                    .get(parent.parent())
+                    .ok()
+                    .and_then(|(name, ..)| name)
+                    .map(|name| name.as_str())
+                    .filter(|name| name.to_ascii_lowercase().contains("_collider"))
+            }
+            let is_collider = collider_base_name.is_some();
+
+            // process trigger
+            let mut trigger_base_name = maybe_name
+                .map(Name::as_str)
+                .filter(|name| name.to_ascii_lowercase().contains("_trigger"));
+            if trigger_base_name.is_none() {
+                // check parent name also
+                trigger_base_name = gltf_spawned_entities
+                    .get(parent.parent())
+                    .ok()
+                    .and_then(|(name, ..)| name)
+                    .map(|name| name.as_str())
+                    .filter(|name| name.to_ascii_lowercase().contains("_trigger"))
+            }
+            let is_trigger = trigger_base_name.is_some();
+
+            if is_collider || is_trigger {
+                // make invisible by removing mesh handle
+                // TODO - this will break with toggling, we need to store the handle somewhere
+                commands.entity(spawned_ent).remove::<Mesh3d>();
+            }
+
+            // get specified or default collider bits
+            // try mesh node first
+            let collider_bits = maybe_extras
+                .and_then(|extras| serde_json::from_str::<DclNodeExtras>(&extras.value).ok())
+                .and_then(|extras| extras.dcl_collision_mask)
+                .or_else(|| {
+                    // then try parent node
+                    gltf_spawned_entities
+                        .get(parent.parent())
+                        .ok()
+                        .and_then(|tpl| tpl.5)
+                        .and_then(|extras| {
+                            serde_json::from_str::<DclNodeExtras>(&extras.value).ok()
+                        })
+                        .map(|extras| extras.dcl_collision_mask)
+                        .unwrap_or({
+                            //fall back to container-specified default
+                            if is_collider || is_trigger {
+                                definition.0.invisible_meshes_collision_mask.or(
+                                    // colliders default to physics + pointers
+                                    if data.is_skinned {
+                                        // if skinned, maybe foundation uses 0 default?
+                                        Some(0)
+                                    } else {
+                                        None
+                                    },
+                                )
+                            } else {
+                                definition.0.visible_meshes_collision_mask.or(
+                                    // non-colliders default to nothing
+                                    Some(0),
+                                )
+                            }
+                        })
+                });
+
+            // when `visible_meshes_collision_mask` is specified, we should treat all meshes as colliders but NOT make
+            // them invisible, so we recalculate `is_collider` here
+            let is_collider = is_collider || definition.0.visible_meshes_collision_mask.is_some();
+
+            if is_collider && collider_bits != Some(0) {
+                let collider_bits = collider_bits
+                    .unwrap_or(ColliderLayer::ClPhysics as u32 | ColliderLayer::ClPointer as u32);
+                let index = progress
+                    .collider_counter
+                    .entry(collider_base_name.map(ToOwned::to_owned))
+                    .or_default();
+                *index += 1u32;
+
+                let h_collider = if data.is_skinned {
+                    data.maybe_collider.clone().unwrap()
+                } else {
+                    h_mesh.clone()
+                };
+
+                commands
+                    .entity(spawned_ent)
+                    .try_insert(MeshCollider::<CtCollider> {
+                        shape: MeshColliderShape::Shape(data.shape.clone(), h_collider),
+                        collision_mask: collider_bits,
+                        mesh_name: collider_base_name.map(ToOwned::to_owned),
+                        index: *index,
+                        _p: Default::default(),
+                    });
+            }
+
+            if is_trigger && collider_bits != Some(0) {
+                let collider_bits = collider_bits.unwrap_or(ColliderLayer::ClPlayer as u32);
+                let index = progress
+                    .collider_counter
+                    .entry(collider_base_name.map(ToOwned::to_owned))
+                    .or_default();
+                *index += 1u32;
+
+                let h_collider = if data.is_skinned {
+                    data.maybe_collider.clone().unwrap()
+                } else {
+                    h_mesh.clone()
+                };
+
+                commands
+                    .entity(spawned_ent)
+                    .try_insert(MeshCollider::<CtTrigger> {
+                        shape: MeshColliderShape::Shape(data.shape.clone(), h_collider),
+                        collision_mask: collider_bits,
+                        mesh_name: collider_base_name.map(ToOwned::to_owned),
+                        index: *index,
+                        _p: Default::default(),
+                    });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn update_ready_gltfs(
     mut commands: Commands,
-    mut gltfs_in_progress: Query<UnprocessedGltf, (With<GltfProcessing>, Without<GltfProcessed>)>,
-    mut gltfs_to_start: Query<UnprocessedGltf, (Without<GltfProcessing>, Without<GltfProcessed>)>,
-    processed_nodes: Query<Has<ContainerEntity>>,
-    gltf_spawned_entities: Query<(
-        Option<&Name>,
-        &Transform,
-        &ChildOf,
-        Option<&AnimationPlayer>,
-        Option<&Mesh3d>,
-        Option<&GltfExtras>,
-        Option<&SkinnedMesh>,
-        Option<&MeshMaterial3d<StandardMaterial>>,
-        Option<&AnimationTarget>,
-        Option<&DirectionalLight>,
-        Option<&PointLight>,
-        Option<&SpotLight>,
-    )>,
-    (base_mats, mut bound_mats, mut graphs, mut meshes): (
-        Res<Assets<StandardMaterial>>,
-        ResMut<Assets<SceneMaterial>>,
-        ResMut<Assets<AnimationGraph>>,
-        ResMut<Assets<Mesh>>,
-    ),
+    mut models: Query<UnprocessedGltf, Without<GltfProcessed>>,
+    unprocessed_nodes: Query<(), Without<ContainerEntity>>,
+    mut node_processing: NodeProcessing,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
     mut scene_spawner: SceneSpawnerPlus,
     mut contexts: Query<(
         &mut RendererSceneContext,
@@ -659,47 +1189,46 @@ fn update_ready_gltfs(
         Option<&SkinnedMesh>,
         &Transform,
     )>,
-    asset_server: Res<AssetServer>,
-    config: Res<AppConfig>,
     mut gltfs: ResMut<Assets<Gltf>>,
     animation_clips: Res<Assets<AnimationClip>>,
     mut name_cache: ResMut<GltfNameCache>,
-    processing_deadline: Option<Res<ProcessingDeadline>>,
+    processing_deadline: Res<ProcessingDeadline>,
+    mut slowest: ResMut<SlowestProcessing>,
 ) {
     let mut failed = Vec::default();
     // sources are dropped after the loop: `gltf` is borrowed from `gltfs` throughout it
     let mut drop_sources = Vec::default();
 
     // nodes are processed until the frame's processing deadline, at least one a frame; the rest
-    // resume next frame, instances already in progress first
-    let deadline = processing_deadline.and_then(|deadline| deadline.0);
+    // resume next frame
+    let deadline = processing_deadline.0;
     let has_time = |processed_any: bool| {
         !processed_any || deadline.is_none_or(|deadline| Instant::now() < deadline)
     };
     let mut processed_any = false;
-    let mut slowest: Option<(Duration, usize, String)> = None;
-    let log_slowest = bevy::log::tracing::enabled!(target: "spawn_timing", bevy::log::Level::DEBUG);
 
     // models already in progress first
-    'outer: for (bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing) in
-        gltfs_in_progress
-            .iter_mut()
-            .chain(gltfs_to_start.iter_mut())
-    {
-        if loaded.0.is_none() {
-            // nothing to process: done whatever the deadline
-            commands
-                .entity(bevy_scene_entity)
-                .try_insert(GltfProcessed::default())
-                .try_remove::<(GltfReady, GltfProcessing)>();
-            continue;
-        }
-        if !has_time(processed_any) {
-            continue;
-        }
-        let instance = *loaded.0.as_ref().unwrap();
-        // a model in progress was ready when its processing started
-        if processing.is_some() || scene_spawner.instance_is_really_ready(instance) {
+    'outer: for in_progress in [true, false] {
+        for (bevy_scene_entity, dcl_scene_entity, loaded, definition, h_gltf, mut processing) in
+            models.iter_mut()
+        {
+            if (processing.next > 0) != in_progress {
+                continue;
+            }
+            let Some(instance) = loaded.0 else {
+                // nothing to process: done whatever the deadline
+                commands
+                    .entity(bevy_scene_entity)
+                    .try_insert(GltfProcessed::default())
+                    .try_remove::<(GltfReady, GltfProcessing)>();
+                continue;
+            };
+            // a model in progress was ready when its processing started
+            if !has_time(processed_any)
+                || !in_progress && !scene_spawner.instance_is_really_ready(instance)
+            {
+                continue;
+            }
             let Some(gltf) = gltfs.get(h_gltf.0.id()) else {
                 commands
                     .entity(bevy_scene_entity)
@@ -714,549 +1243,68 @@ fn update_ready_gltfs(
             // println!("{bevy_scene_entity:?}");
             // println!("{graph}");
 
-            // special behaviours, mainly from ADR-215
-            // position
-            // - children of root nodes -> rotate (why ?! - probably bevy rhs coordinate system specific)
-            // skinned mesh
-            // - fix zero bone weights (bevy specific, unity and three.js do this automatically)
-            // - ignore any mask bits, never create collider
-            // colliders
-            // - name == *_collider -> not visible
-            // - node extras.dcl_collider_mask -> specifies collider mask
-            // - name != *_collider -> default collider mask 0
-            // - name == *_collider -> default collider mask CL_PHYSICS
-            // - PbGltfContainer.disable_physics_colliders -> mask &= ~CL_PHYSICS (switch off physics bit)
-            // - PbGltfContainer.create_pointer_colliders && name != *collider -> mask |= CL_POINTERS (switch on pointers bit)
-            // - if mask != 0 create collider
-
             let Ok((mut context, mut resource_lookup, mut tracker)) =
                 contexts.get_mut(dcl_scene_entity.root)
             else {
                 continue;
             };
+            let model = Model {
+                container: bevy_scene_entity,
+                scene_entity: dcl_scene_entity,
+                definition,
+                gltf,
+                scene_bounds: &context.scene_bounds,
+            };
 
-            // resume where the last frame stopped; the collider counter (unique collider handles
-            // per name), the animation flag and the named nodes carry over
-            let mut progress = processing
-                .as_deref_mut()
-                .map(std::mem::take)
-                .unwrap_or_default();
-            let slice_started = Instant::now();
+            // resume where the last frame stopped
+            let started = Instant::now();
             let mut processed_now = 0;
             let mut complete = true;
-
-            let resume = progress.next;
             for (position, spawned_ent) in scene_spawner
                 .iter_instance_entities(instance)
                 .enumerate()
-                .skip(resume)
+                .skip(processing.next)
             {
                 // processed nodes have a ContainerEntity, and lights are despawned
-                let Ok(false) = processed_nodes.get(spawned_ent) else {
+                if !unprocessed_nodes.contains(spawned_ent) {
                     continue;
-                };
+                }
                 if !has_time(processed_any) {
                     // every node before this one is processed or gone
-                    progress.next = position;
+                    processing.next = position;
                     complete = false;
                     break;
                 }
                 processed_now += 1;
                 processed_any = true;
-
-                // delete any base materials
-                commands
-                    .entity(spawned_ent)
-                    .try_remove::<(MeshMaterial3d<StandardMaterial>,)>();
-
-                // add a container node so other systems can reference the root
-                commands.entity(spawned_ent).try_insert(ContainerEntity {
-                    container: bevy_scene_entity,
-                    root: dcl_scene_entity.root,
-                    container_id: dcl_scene_entity.id,
-                });
-
-                if let Ok((
-                    maybe_name,
-                    transform,
-                    parent,
-                    maybe_player,
-                    maybe_h_mesh,
-                    maybe_extras,
-                    maybe_skin,
-                    maybe_material,
-                    maybe_target,
-                    maybe_directional,
-                    maybe_point,
-                    maybe_spot,
-                )) = gltf_spawned_entities.get(spawned_ent)
-                {
-                    // remove directional lights
-                    if maybe_directional.is_some() {
-                        commands.entity(spawned_ent).despawn();
-                        continue;
-                    }
-
-                    // enable shadows for other lights
-                    if let Some(point) = maybe_point {
-                        commands.entity(spawned_ent).try_insert((
-                            PointLight {
-                                shadows_enabled: true,
-                                ..*point
-                            },
-                            LightEntity {
-                                scene: dcl_scene_entity.root,
-                                enabled: true,
-                                shadows_enabled: true,
-                                range: point.range,
-                            },
-                        ));
-                    }
-                    if let Some(spot) = maybe_spot {
-                        commands.entity(spawned_ent).try_insert((
-                            SpotLight {
-                                shadows_enabled: true,
-                                ..*spot
-                            },
-                            LightEntity {
-                                scene: dcl_scene_entity.root,
-                                enabled: true,
-                                shadows_enabled: true,
-                                range: spot.range,
-                            },
-                        ));
-                    }
-
-                    // collect named nodes to push to scene on request
-                    if let Some(name) = maybe_name {
-                        let mut name = name.to_string();
-                        let mut ptr = parent.parent();
-                        while ptr != bevy_scene_entity {
-                            let (maybe_name, _, parent, ..) =
-                                gltf_spawned_entities.get(ptr).unwrap();
-                            if let Some(parent_name) = maybe_name {
-                                name = format!("{parent_name}/{name}");
-                            }
-                            ptr = parent.parent();
-                        }
-                        progress.named_nodes.insert(name, spawned_ent);
-                    }
-
-                    // children of root nodes -> rotate
-                    if parent.parent() == bevy_scene_entity {
-                        let mut rotated = *transform;
-                        rotated
-                            .rotate_around(Vec3::ZERO, Quat::from_rotation_y(std::f32::consts::PI));
-                        commands.entity(spawned_ent).try_insert(rotated);
-                    }
-
-                    // retarget animations to our manually added root player
-                    if let Some(target) = maybe_target {
-                        commands.entity(spawned_ent).try_insert(AnimationTarget {
-                            player: bevy_scene_entity,
-                            ..*target
-                        });
-                    }
-
-                    // if there is an animation player, record the entity (bevy-specific hack)
-                    if maybe_player.is_some() {
-                        if let Some(name) = maybe_name {
-                            debug!("animator found on {name} node of {}", definition.0.src);
-                            // animation_roots.try_insert((spawned_ent, name.clone()));
-                            progress.has_animations = true;
-                            commands.entity(spawned_ent).remove::<AnimationPlayer>();
-                            *tracker.0.entry("embedded://animations").or_default() += 1;
-                        }
-                    }
-
-                    // if there is no mesh, there's nothing further to do
-                    let Some(h_gltf_mesh) = maybe_h_mesh else {
-                        continue;
-                    };
-
-                    let Some(read_only_mesh_data) = meshes.get(h_gltf_mesh) else {
-                        error!("gltf contained mesh not loaded?!");
-                        continue;
-                    };
-
-                    if read_only_mesh_data.count_vertices() == 0 {
-                        commands.entity(spawned_ent).try_remove::<Mesh3d>();
-                        continue;
-                    }
-
-                    // get or create hash
-                    // note we must use the handle lookup rather than recomputing the hash as we may modify the mesh on first load,
-                    // then recalculating would yield a different hash result
-                    let maybe_hash = if read_only_mesh_data.has_morph_targets() {
-                        // we can't include morph targets in the hash, so just skip hashing for them
-                        // TODO: this means we reprocess these meshes even if already loaded which is not optimal
-                        None
-                    } else {
-                        Some(
-                            *resource_lookup
-                                .mesh_hashes_by_id
-                                .entry(h_gltf_mesh.id())
-                                .or_insert_with(|| {
-                                    let hasher = &mut std::hash::DefaultHasher::new();
-
-                                    for (attr, data) in read_only_mesh_data.attributes() {
-                                        attr.id.hash(hasher);
-                                        data.get_bytes().hash(hasher);
-                                    }
-
-                                    let has_joints = read_only_mesh_data
-                                        .attribute(Mesh::ATTRIBUTE_JOINT_INDEX)
-                                        .is_some();
-                                    let has_weights = read_only_mesh_data
-                                        .attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT)
-                                        .is_some();
-                                    let has_skin = maybe_skin.is_some();
-                                    let is_skinned = has_skin && has_joints && has_weights;
-
-                                    is_skinned.hash(hasher);
-
-                                    read_only_mesh_data.primitive_topology().hash(hasher);
-
-                                    if let Some(indices) = read_only_mesh_data.indices() {
-                                        indices.iter().for_each(|index| index.hash(hasher));
-                                    }
-
-                                    hasher.finish()
-                                }),
-                        )
-                    };
-
-                    // try and get existing mesh/collider data from hash
-                    let existing_data = maybe_hash
-                        .and_then(|hash| resource_lookup.meshes_by_hash.get(&hash))
-                        .and_then(|data| {
-                            asset_server.get_id_handle(data.mesh_id).map(|h| (h, data))
-                        });
-
-                    let (h_mesh, data) = if let Some((h_mesh, cached_data)) = existing_data {
-                        if h_mesh.id() != h_gltf_mesh.0.id() {
-                            // overwrite with cached handle
-                            commands
-                                .entity(spawned_ent)
-                                .try_insert(Mesh3d(h_mesh.clone()));
-                        }
-                        (h_mesh, cached_data.clone())
-                    } else {
-                        // fix up the mesh
-                        let mesh_data = meshes.get_mut(h_gltf_mesh.0.id()).unwrap();
-                        mesh_data.normalize_joint_weights();
-
-                        if maybe_hash.is_some() {
-                            // if we won't need the mesh data again, we can push it only to gpu
-                            mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                        } else {
-                            // if we can't make a hash to reuse the mesh, we need to keep the data cpu-side as well,
-                            // to rebuild everything next time
-                            mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
-                        }
-
-                        let has_joints = mesh_data.attribute(Mesh::ATTRIBUTE_JOINT_INDEX).is_some();
-                        let has_weights =
-                            mesh_data.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT).is_some();
-                        let has_skin = maybe_skin.is_some();
-                        let is_skinned = has_skin && has_joints && has_weights;
-
-                        if !is_skinned {
-                            // bevy crashes if unskinned models have joints and weights, or if skinned models don't
-                            if has_joints {
-                                mesh_data.remove_attribute(Mesh::ATTRIBUTE_JOINT_INDEX);
-                            }
-                            if has_weights {
-                                mesh_data.remove_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT);
-                            }
-                        }
-
-                        let shape = mesh_to_parry_shape(mesh_data).unwrap_or_else(|| {
-                            warn!("gltf mesh has no positions; using placeholder collider");
-                            SharedShape::ball(0.01)
-                        });
-
-                        let maybe_collider = if is_skinned {
-                            let mut new_mesh = Mesh::new(
-                                mesh_data.primitive_topology(),
-                                RenderAssetUsages::RENDER_WORLD,
-                            );
-                            if let Some(indices) = mesh_data.indices().cloned() {
-                                new_mesh.insert_indices(indices);
-                            }
-                            for (attribute, data) in mesh_data.attributes() {
-                                let attribute = match attribute.id {
-                                    id if id == Mesh::ATTRIBUTE_JOINT_INDEX.id => continue,
-                                    id if id == Mesh::ATTRIBUTE_JOINT_WEIGHT.id => continue,
-                                    id if id == Mesh::ATTRIBUTE_POSITION.id => {
-                                        Mesh::ATTRIBUTE_POSITION
-                                    }
-                                    id if id == Mesh::ATTRIBUTE_NORMAL.id => Mesh::ATTRIBUTE_NORMAL,
-                                    id if id == Mesh::ATTRIBUTE_UV_0.id => Mesh::ATTRIBUTE_UV_0,
-                                    id if id == Mesh::ATTRIBUTE_UV_1.id => Mesh::ATTRIBUTE_UV_1,
-                                    id if id == Mesh::ATTRIBUTE_TANGENT.id => {
-                                        Mesh::ATTRIBUTE_TANGENT
-                                    }
-                                    id if id == Mesh::ATTRIBUTE_COLOR.id => Mesh::ATTRIBUTE_COLOR,
-                                    _ => continue,
-                                };
-
-                                new_mesh.insert_attribute(attribute, data.clone());
-                            }
-                            Some(meshes.add(new_mesh))
-                        } else {
-                            None
-                        };
-
-                        let data = CachedMeshData {
-                            mesh_id: h_gltf_mesh.id(),
-                            is_skinned,
-                            shape,
-                            maybe_collider,
-                        };
-
-                        if let Some(hash) = maybe_hash {
-                            // and store it for next time
-                            resource_lookup.meshes_by_hash.insert(hash, data.clone());
-                        }
-                        *tracker.0.entry("Unique Meshes").or_default() += 1;
-                        (h_gltf_mesh.0.clone(), data)
-                    };
-
-                    *tracker.0.entry("Total Meshes").or_default() += 1;
-
-                    if data.is_skinned {
-                        // bevy doesn't calculate culling correctly for skinned entities
-                        commands.entity(spawned_ent).try_insert(NoFrustumCulling);
-                    } else if maybe_skin.is_some() {
-                        // remove skin data if mesh doesn't have all required data
-                        commands.entity(spawned_ent).remove::<SkinnedMesh>();
-                    }
-
-                    // substitute material
-                    if let Some(h_material) = maybe_material {
-                        let material_name = gltf
-                            .named_materials
-                            .iter()
-                            .find(|(_, handle)| *handle == &h_material.0)
-                            .map(|(name, _)| name.to_string())
-                            .unwrap_or_else(|| {
-                                let ix = gltf
-                                    .materials
-                                    .iter()
-                                    .enumerate()
-                                    .find(|(_, handle)| *handle == &h_material.0)
-                                    .map(|(ix, _)| ix)
-                                    .unwrap_or(usize::MAX); // TODO handle inverted materials (make a list in Gltf, choose based on scale of the target?)
-                                format!("Material{ix}")
-                            });
-
-                        let h_scene_material = if let Some(h_scene_material) =
-                            resource_lookup.materials.get(&h_material.0)
-                        {
-                            h_scene_material.clone()
-                        } else {
-                            let Some(base) = base_mats.get(h_material) else {
-                                warn!(
-                                    "error acquiring gltf material; retrying full gltf next frame"
-                                );
-                                failed.push((bevy_scene_entity, instance));
-                                break 'outer;
-                            };
-
-                            // materials with anisotropy were causing issues
-                            // see https://github.com/decentraland/bevy-explorer/issues/424
-                            let mut base_clone = base.clone();
-                            base_clone.anisotropy_strength = 0.;
-
-                            let h_scene_material = bound_mats.add(ExtendedMaterial {
-                                base: base_clone,
-                                extension: SceneBound::new(
-                                    &context.scene_bounds,
-                                    config.graphics.oob,
-                                ),
-                            });
-                            resource_lookup
-                                .materials
-                                .insert(h_material.0.clone(), h_scene_material.clone());
-
-                            *tracker.0.entry("Unique Materials").or_default() += 1;
-                            h_scene_material
-                        };
-                        if bound_mats
-                            .get(&h_scene_material)
-                            .is_some_and(|mat| mat.base.unlit)
-                        {
-                            commands.entity(spawned_ent).try_insert(NotShadowCaster);
-                        }
-                        commands
-                            .entity(spawned_ent)
-                            .try_insert(MeshMaterial3d(h_scene_material))
-                            .try_insert(GltfMaterialName(material_name));
-                    }
-                    *tracker.0.entry("Materials").or_default() += 1;
-
-                    // process collider
-                    let mut collider_base_name = maybe_name
-                        .map(Name::as_str)
-                        .filter(|name| name.to_ascii_lowercase().contains("_collider"));
-                    if collider_base_name.is_none() {
-                        // check parent name also
-                        collider_base_name = gltf_spawned_entities
-                            .get(parent.parent())
-                            .ok()
-                            .and_then(|(name, ..)| name)
-                            .map(|name| name.as_str())
-                            .filter(|name| name.to_ascii_lowercase().contains("_collider"))
-                    }
-                    let is_collider = collider_base_name.is_some();
-
-                    // process trigger
-                    let mut trigger_base_name = maybe_name
-                        .map(Name::as_str)
-                        .filter(|name| name.to_ascii_lowercase().contains("_trigger"));
-                    if trigger_base_name.is_none() {
-                        // check parent name also
-                        trigger_base_name = gltf_spawned_entities
-                            .get(parent.parent())
-                            .ok()
-                            .and_then(|(name, ..)| name)
-                            .map(|name| name.as_str())
-                            .filter(|name| name.to_ascii_lowercase().contains("_trigger"))
-                    }
-                    let is_trigger = trigger_base_name.is_some();
-
-                    if is_collider || is_trigger {
-                        // make invisible by removing mesh handle
-                        // TODO - this will break with toggling, we need to store the handle somewhere
-                        commands.entity(spawned_ent).remove::<Mesh3d>();
-                    }
-
-                    // get specified or default collider bits
-                    // try mesh node first
-                    let collider_bits = maybe_extras
-                        .and_then(|extras| {
-                            serde_json::from_str::<DclNodeExtras>(&extras.value).ok()
-                        })
-                        .and_then(|extras| extras.dcl_collision_mask)
-                        .or_else(|| {
-                            // then try parent node
-                            gltf_spawned_entities
-                                .get(parent.parent())
-                                .ok()
-                                .and_then(|tpl| tpl.5)
-                                .and_then(|extras| {
-                                    serde_json::from_str::<DclNodeExtras>(&extras.value).ok()
-                                })
-                                .map(|extras| extras.dcl_collision_mask)
-                                .unwrap_or({
-                                    //fall back to container-specified default
-                                    if is_collider || is_trigger {
-                                        definition.0.invisible_meshes_collision_mask.or(
-                                            // colliders default to physics + pointers
-                                            if data.is_skinned {
-                                                // if skinned, maybe foundation uses 0 default?
-                                                Some(0)
-                                            } else {
-                                                None
-                                            },
-                                        )
-                                    } else {
-                                        definition.0.visible_meshes_collision_mask.or(
-                                            // non-colliders default to nothing
-                                            Some(0),
-                                        )
-                                    }
-                                })
-                        });
-
-                    // when `visible_meshes_collision_mask` is specified, we should treat all meshes as colliders but NOT make
-                    // them invisible, so we recalculate `is_collider` here
-                    let is_collider =
-                        is_collider || definition.0.visible_meshes_collision_mask.is_some();
-
-                    if is_collider && collider_bits != Some(0) {
-                        let collider_bits = collider_bits.unwrap_or(
-                            ColliderLayer::ClPhysics as u32 | ColliderLayer::ClPointer as u32,
-                        );
-                        let index = progress
-                            .collider_counter
-                            .entry(collider_base_name.map(ToOwned::to_owned))
-                            .or_default();
-                        *index += 1u32;
-
-                        let h_collider = if data.is_skinned {
-                            data.maybe_collider.clone().unwrap()
-                        } else {
-                            h_mesh.clone()
-                        };
-
-                        commands
-                            .entity(spawned_ent)
-                            .try_insert(MeshCollider::<CtCollider> {
-                                shape: MeshColliderShape::Shape(data.shape.clone(), h_collider),
-                                collision_mask: collider_bits,
-                                mesh_name: collider_base_name.map(ToOwned::to_owned),
-                                index: *index,
-                                _p: Default::default(),
-                            });
-                    }
-
-                    if is_trigger && collider_bits != Some(0) {
-                        let collider_bits = collider_bits.unwrap_or(ColliderLayer::ClPlayer as u32);
-                        let index = progress
-                            .collider_counter
-                            .entry(collider_base_name.map(ToOwned::to_owned))
-                            .or_default();
-                        *index += 1u32;
-
-                        let h_collider = if data.is_skinned {
-                            data.maybe_collider.clone().unwrap()
-                        } else {
-                            h_mesh.clone()
-                        };
-
-                        commands
-                            .entity(spawned_ent)
-                            .try_insert(MeshCollider::<CtTrigger> {
-                                shape: MeshColliderShape::Shape(data.shape.clone(), h_collider),
-                                collision_mask: collider_bits,
-                                mesh_name: collider_base_name.map(ToOwned::to_owned),
-                                index: *index,
-                                _p: Default::default(),
-                            });
-                    }
+                let processed = node_processing.process(
+                    &mut commands,
+                    model,
+                    spawned_ent,
+                    &mut processing,
+                    &mut resource_lookup,
+                    &mut tracker,
+                );
+                if processed.is_err() {
+                    failed.push((bevy_scene_entity, instance));
+                    break 'outer;
                 }
             }
-
-            let slice = slice_started.elapsed();
-            if log_slowest
-                && slowest
-                    .as_ref()
-                    .is_none_or(|(longest, ..)| slice > *longest)
-            {
-                slowest = Some((slice, processed_now, definition.0.src.clone()));
-            }
+            slowest.record(ProcessedModel {
+                container: bevy_scene_entity,
+                nodes: processed_now,
+                time: started.elapsed(),
+            });
             if !complete {
                 // out of time: the rest waits for the next frame
-                match processing {
-                    Some(mut processing) => *processing = progress,
-                    None => {
-                        commands.entity(bevy_scene_entity).try_insert(progress);
-                    }
-                }
                 continue;
             }
-            if processing.is_some() {
-                commands
-                    .entity(bevy_scene_entity)
-                    .try_remove::<GltfProcessing>();
-            }
-            let GltfProcessing {
-                named_nodes,
-                has_animations,
-                ..
-            } = progress;
+
+            commands
+                .entity(bevy_scene_entity)
+                .try_remove::<GltfProcessing>();
+            let named_nodes = std::mem::take(&mut processing.named_nodes);
+            let has_animations = processing.has_animations;
 
             // names for the loading-state message; extracted once, then the source is
             // dropped after this loop (see GltfNames)
@@ -1331,7 +1379,7 @@ fn update_ready_gltfs(
             *tracker.0.entry("Live Meshes").or_default() = resource_lookup
                 .meshes_by_hash
                 .iter()
-                .filter(|(_, data)| meshes.get(data.mesh_id).is_some())
+                .filter(|(_, data)| node_processing.meshes.get(data.mesh_id).is_some())
                 .count();
         }
     }
@@ -1351,16 +1399,6 @@ fn update_ready_gltfs(
         if let Some(gltf) = gltfs.get_mut(id) {
             gltf.source = None;
         }
-    }
-
-    if let Some((slice, nodes, src)) =
-        slowest.filter(|(slice, ..)| *slice >= Duration::from_millis(1))
-    {
-        debug!(
-            target: "spawn_timing",
-            "slowest glTF processing this frame: {:.1} ms for {nodes} nodes of {src}",
-            slice.as_secs_f64() * 1000.0
-        );
     }
 }
 

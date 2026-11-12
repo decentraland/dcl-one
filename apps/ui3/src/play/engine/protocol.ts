@@ -206,8 +206,14 @@ export type PageToScene =
   | SetAvatarColorRequest
   | SetForceRenderRequest
   | GetCommunitiesRequest
+  | BrowseCommunitiesRequest
   | GetCommunityRequest
   | CreateCommunityRequest
+  | UpdateCommunityRequest
+  | GetCommunityPlaceOptionsRequest
+  | RemoveCommunityPlaceRequest
+  | CommunityMemberActionRequest
+  | DeleteCommunityRequest
   | JoinCommunityRequest
   | LeaveCommunityRequest
   | RequestToJoinCommunityRequest
@@ -1094,8 +1100,21 @@ export interface Community {
   ownerName: string
   /** 'public' | 'private' — gates the join flow (public = join, private = request). */
   privacy?: string
+  /** 'all' (listed in browse and search) | 'unlisted' (members and invitees only). */
+  visibility?: string
   /** Id of the local user's pending request to join (private communities). */
   pendingRequestId?: string
+  /** The first three of the user's friends who are members, for the browse card. Only the paged
+   *  browse read carries them. */
+  friends?: CommunityFriend[]
+}
+
+/** A friend who is a member of a community, for the browse card. */
+export interface CommunityFriend {
+  address: string
+  name: string
+  picture?: string
+  hasClaimedName: boolean
 }
 
 /** A page request's handler threw, so its reply never came (scene → page). */
@@ -1111,6 +1130,7 @@ export interface AvatarSaveFailedMessage {
   message: string
 }
 
+/** The communities the user is a member of: My Communities (scene → page). */
 export interface CommunitiesMessage {
   kind: 'communities'
   communities: Community[]
@@ -1118,6 +1138,29 @@ export interface CommunitiesMessage {
 
 export interface GetCommunitiesRequest {
   kind: 'getCommunities'
+}
+
+/** One page of the browse grid: 20 communities a page, by name on the
+ *  server when `search` is set (page → scene → social-api GET /v2/communities). */
+export interface BrowseCommunitiesRequest {
+  kind: 'browseCommunities'
+  /** '' lists every community. */
+  search: string
+  /** From 1. */
+  page: number
+}
+
+/** The answer to BrowseCommunitiesRequest, naming the search and page it is for, so the page drops
+ *  an answer to an older search (scene → page). */
+export interface CommunityBrowseMessage {
+  kind: 'communityBrowse'
+  search: string
+  page: number
+  communities: Community[]
+  /** How many communities the search has in all. */
+  total: number
+  /** The read failed; `communities` is empty. */
+  failed?: boolean
 }
 
 /** One community by id (page → scene → social-api GET /v2/communities/{id}), for a card opened
@@ -1139,6 +1182,93 @@ export interface CreateCommunityRequest {
   privacy: 'public' | 'private'
   /** Discoverable in the directory → visibility 'all', otherwise 'unlisted'. */
   discoverable: boolean
+  /** The picture as a data URL (PNG or JPEG, at most 500 KB and 512×512 px), sent as the form's
+   *  `thumbnail` file part. */
+  thumbnail?: string
+  /** The linked places (lands first, then worlds), sent as the form's `placeIds` JSON array. */
+  placeIds: string[]
+}
+
+/** Edit a community (page → scene → signed multipart PUT to the social-api). As unity-explorer,
+ *  only what changed is sent; a field left out keeps its value. */
+export interface UpdateCommunityRequest {
+  kind: 'updateCommunity'
+  id: string
+  name?: string
+  description?: string
+  privacy?: 'public' | 'private'
+  /** Listed in browse and search → visibility 'all', otherwise 'unlisted'. */
+  discoverable?: boolean
+  /** A new picture as a data URL (same limits as on create). */
+  thumbnail?: string
+  /** The whole new set of linked places (lands first, then worlds), when it changed; absent keeps
+   *  the current set. */
+  placeIds?: string[]
+}
+
+/** A LAND or World the form can link, or one already linked (unity-explorer's CommunityPlace). */
+export interface CommunityPlaceOption {
+  id: string
+  isWorld: boolean
+  /** "title (world name)" or "title (x,y)". */
+  label: string
+  /** The place owner's name, or empty when it could not be read. */
+  ownerName: string
+}
+
+/** The form opened (page → scene): read the places the user owns or operates, and, when editing,
+ *  the community's linked places. */
+export interface GetCommunityPlaceOptionsRequest {
+  kind: 'getCommunityPlaceOptions'
+  /** The community being edited; absent on create. */
+  communityId?: string
+}
+/** The places for the form (scene → page). */
+export interface CommunityPlaceOptionsMessage {
+  kind: 'communityPlaceOptions'
+  communityId?: string
+  /** The places the user owns or operates: the picker's options. */
+  owned: CommunityPlaceOption[]
+  /** The community's linked places (edit only). */
+  linked: CommunityPlaceOption[]
+  /** Linked places the places service did not return (a disabled one, say): never shown, but kept
+   *  on every save so the form cannot unlink them. */
+  hiddenLinkedIds: string[]
+  /** The linked places could not be read (edit only): the form must not replace them. */
+  linkedFailed: boolean
+  /** unity-explorer's messages for the reads that failed, each shown as a toast. */
+  errors: string[]
+}
+
+/** Delete a community the user owns (page → scene → signed DELETE to the social-api). */
+export interface DeleteCommunityRequest {
+  kind: 'deleteCommunity'
+  id: string
+}
+/** A community was deleted (scene → page): its card closes. */
+export interface CommunityDeletedMessage {
+  kind: 'communityDeleted'
+  id: string
+}
+
+/** The content check's findings per field: short tags, at most three each. */
+export interface CommunityModerationIssues {
+  name: string[]
+  description: string[]
+  image: string[]
+}
+
+/** How a community create or update ended (scene → page). Exactly one of `id`, `moderation`, `error`. */
+export interface CommunitySaveResultMessage {
+  kind: 'communitySaveResult'
+  mode: 'create' | 'update'
+  /** The community created or updated, on success. */
+  id?: string
+  /** The social-api refused it (HTTP 400): the content check's findings, which may be empty, or
+   *  `unavailable` when the check itself could not run. */
+  moderation?: { issues: CommunityModerationIssues; unavailable: boolean }
+  /** Any other failure. */
+  error?: string
 }
 
 export interface JoinCommunityRequest {
@@ -1163,7 +1293,20 @@ export interface CancelJoinRequestRequest {
   requestId: string
 }
 
-export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch'
+/** What an owner or moderator can do to a member from the card's member menu (unity-explorer's
+ *  MembersListView): promote to moderator, demote to member, hand over ownership, remove, ban. */
+export type CommunityMemberAction = 'promote' | 'demote' | 'transfer' | 'kick' | 'ban'
+
+/** A member action from the card's member menu (page → scene → signed social-api write). */
+export interface CommunityMemberActionRequest {
+  kind: 'communityMemberAction'
+  id: string
+  /** The member acted on. */
+  address: string
+  action: CommunityMemberAction
+}
+
+export type CommunityAction = 'join' | 'requestToJoin' | 'cancelJoinRequest' | 'leave' | 'fetch' | 'delete' | 'removePlace' | CommunityMemberAction
 
 /** A community write, or the read of one community, the social-api rejected (scene → page), so the UI can say so. */
 export interface CommunityActionFailedMessage {
@@ -1181,8 +1324,6 @@ export interface CommunityMember {
   role: string
   picture?: string
   hasClaimedName?: boolean
-  /** the local user already follows them (hides "Add Friend"). */
-  isFriend?: boolean
 }
 
 /** A place shared by a community (Places tab). */
@@ -1190,10 +1331,19 @@ export interface CommunityPlace {
   id: string
   title: string
   thumbnail?: string
-  /** e.g. "-66,56" */
+  /** e.g. "-66,56", or the world's name for a World */
   positions?: string
   /** 0..1 like rate. */
   likeRate?: number
+  /** The signed-in user owns the place: an owner or moderator may unlink it from the card. */
+  isMine?: boolean
+}
+
+/** Unlink a place from a community (page → scene → signed DELETE to the social-api). */
+export interface RemoveCommunityPlaceRequest {
+  kind: 'removeCommunityPlace'
+  id: string
+  placeId: string
 }
 
 /** An announcement post (Announcements tab). */
@@ -1837,9 +1987,13 @@ export type SceneToPage =
   | OutfitsMessage
   | OutfitHistoryMessage
   | CommunitiesMessage
+  | CommunityBrowseMessage
   | CommunityMessage
   | VoiceActivityMessage
   | CommunityActionFailedMessage
+  | CommunitySaveResultMessage
+  | CommunityPlaceOptionsMessage
+  | CommunityDeletedMessage
   | TravelResultMessage
   | AvatarSaveFailedMessage
   | RequestFailedMessage

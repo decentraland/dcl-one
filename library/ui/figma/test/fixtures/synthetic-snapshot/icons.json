@@ -1,0 +1,290 @@
+{
+  "icons": [
+    {
+      "name": "sample/star",
+      "nodeId": "3:1",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-1.svg"
+    },
+    {
+      "name": "sample/heart",
+      "nodeId": "3:2",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-2.svg"
+    },
+    {
+      "name": "sample/arrow-down",
+      "nodeId": "3:3",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-3.svg"
+    },
+    {
+      "name": "sample/like",
+      "nodeId": "3:4",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-4.svg"
+    },
+    {
+      "name": "sample/dot-01",
+      "nodeId": "3:5",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-5.svg"
+    },
+    {
+      "name": "sample/dot-02",
+      "nodeId": "3:6",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-6.svg"
+    },
+    {
+      "name": "sample/dot-03",
+      "nodeId": "3:7",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-7.svg"
+    },
+    {
+      "name": "sample/dot-04",
+      "nodeId": "3:8",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-8.svg"
+    },
+    {
+      "name": "sample/dot-05",
+      "nodeId": "3:9",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-9.svg"
+    },
+    {
+      "name": "sample/dot-06",
+      "nodeId": "3:10",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-10.svg"
+    },
+    {
+      "name": "sample/dot-07",
+      "nodeId": "3:11",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-11.svg"
+    },
+    {
+      "name": "sample/dot-08",
+      "nodeId": "3:12",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-12.svg"
+    },
+    {
+      "name": "sample/dot-09",
+      "nodeId": "3:13",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-13.svg"
+    },
+    {
+      "name": "sample/dot-10",
+      "nodeId": "3:14",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-14.svg"
+    },
+    {
+      "name": "sample/dot-11",
+      "nodeId": "3:15",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-15.svg"
+    },
+    {
+      "name": "sample/dot-12",
+      "nodeId": "3:16",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-16.svg"
+    },
+    {
+      "name": "sample/dot-13",
+      "nodeId": "3:17",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-17.svg"
+    },
+    {
+      "name": "sample/dot-14",
+      "nodeId": "3:18",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-18.svg"
+    },
+    {
+      "name": "sample/dot-15",
+      "nodeId": "3:19",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-19.svg"
+    },
+    {
+      "name": "sample/dot-16",
+      "nodeId": "3:20",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-20.svg"
+    },
+    {
+      "name": "sample/dot-17",
+      "nodeId": "3:21",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-21.svg"
+    },
+    {
+      "name": "sample/dot-18",
+      "nodeId": "3:22",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-22.svg"
+    },
+    {
+      "name": "toggle/bell",
+      "nodeId": "3:23",
+      "section": "Toggle",
+      "category": "toggle",
+      "group": "toggle",
+      "variant": "active=false",
+      "width": 24,
+      "height": 24,
+      "file": "3-23.svg"
+    },
+    {
+      "name": "toggle/bell",
+      "nodeId": "3:24",
+      "section": "Toggle",
+      "category": "toggle",
+      "group": "toggle",
+      "variant": "active=true",
+      "width": 24,
+      "height": 24,
+      "file": "3-24.svg"
+    },
+    {
+      "name": "sample/photo",
+      "nodeId": "3:25",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": null,
+      "width": 24,
+      "height": 24,
+      "file": "3-25.svg"
+    },
+    {
+      "name": "sample/ambiguous",
+      "nodeId": "3:26",
+      "section": "Sample",
+      "category": "sample",
+      "group": "sample",
+      "variant": "size=large",
+      "width": 24,
+      "height": 24,
+      "file": "3-26.svg"
+    }
+  ]
+}

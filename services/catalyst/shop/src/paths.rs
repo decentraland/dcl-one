@@ -17,7 +17,7 @@
 //!
 //! A legacy alias is the same handler with the same wire shape: a signed
 //! request is verified over the method and path it was signed for, never
-//! redirected or rewritten. `ui3/src/shop/api/endpoints.ts` is the client's
+//! redirected or rewritten. `library/shop/api/endpoints.ts` is the client's
 //! table of the same paths.
 
 /// The canonical backend prefix.

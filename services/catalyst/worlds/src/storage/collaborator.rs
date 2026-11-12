@@ -2,7 +2,7 @@
 //! lists the signer, self-scoped by the signed fetch (upstream
 //! world-storage-service's collaborations listing). Derived at read time from
 //! the local world scenes and the live Genesis scenes through
-//! `worlds.logs_permissions` and its GIN indexes. Genesis membership also
+//! `worlds.logs_permissions_decoded` and its GIN indexes. Genesis membership also
 //! requires the shared ownership-history predicate, applied before counting
 //! and pagination; the grant is re-checked on every storage request.
 
@@ -59,8 +59,13 @@ fn normalize_title(raw: Option<&str>) -> Option<String> {
     (!cleaned.is_empty()).then(|| cleaned.chars().take(MAX_TITLE_CHARS).collect())
 }
 
-/// The signer's page, newest deployment first, and the exact total. Bases and
-/// titles come back as raw JSON text so no stored escape can fail the read.
+/// The signer's page and the exact total, both over the same filtered rows.
+/// Ordered as upstream's index (`updated_at DESC, scene_id`): the time this
+/// node stored the deployment (`world_scenes.created_at`,
+/// `content.deployments.local_timestamp`), then the scene id. Mirrored world
+/// scenes are left out: their collaborators get no storage grant here
+/// (`has_logs_access` admits local scenes only). Bases and titles
+/// come back as raw JSON text so no stored escape can fail the read.
 pub async fn list(
     pool: &PgPool,
     land: Option<&crate::land_authz::Settings>,
@@ -70,26 +75,24 @@ pub async fn list(
 ) -> Result<(Vec<CollaboratorScene>, i64), ApiError> {
     let rows = sqlx::query(
         "WITH candidates AS (
-             SELECT entity_id AS scene_id, world_name, 'world' AS realm_kind, CASE WHEN entity ->> 'timestamp' ~ '^[0-9]{1,15}$'
-                         THEN (entity ->> 'timestamp')::double precision
-                         ELSE extract(epoch FROM created_at) * 1000 END AS deployed_at,
+             SELECT entity_id AS scene_id, world_name, 'world' AS realm_kind, created_at AS indexed_at,
                     parcels,
                     (entity #> '{metadata,scene,base}')::text AS base,
                     (entity #> '{metadata,display,title}')::text AS title
              FROM worlds.world_scenes
              WHERE mirror_source IS NULL AND cardinality(parcels) > 0
-               AND worlds.logs_permissions((entity #> '{metadata,logsPermissions}')::text) @> ARRAY[$1::text]
+               AND worlds.logs_permissions_decoded((entity #> '{metadata,logsPermissions}')::text) @> ARRAY[$1::text]
 
              UNION ALL
-             SELECT d.entity_id, 'main', 'genesis', extract(epoch FROM d.entity_timestamp) * 1000,
+             SELECT d.entity_id, 'main', 'genesis', d.local_timestamp,
                     d.entity_pointers,
                     (d.entity_metadata #> '{scene,base}')::text,
                     (d.entity_metadata #> '{display,title}')::text
              FROM content.deployments d
              WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND cardinality(d.entity_pointers) > 0
-               AND worlds.logs_permissions((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
+               AND worlds.logs_permissions_decoded((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
 
-               AND CASE WHEN worlds.logs_permissions((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
+               AND CASE WHEN worlds.logs_permissions_decoded((d.entity_metadata -> 'logsPermissions')::text) @> ARRAY[$1::text]
                    THEN land_authz.scene_collaborators_current($4, $5, $6, d.entity_pointers, d.entity_timestamp)
                    ELSE false END
                AND EXISTS (SELECT 1 FROM content.active_pointers ap WHERE ap.entity_id = d.entity_id)
@@ -106,7 +109,7 @@ pub async fn list(
          SELECT t.total, m.scene_id, m.world_name, m.realm_kind, m.base, m.title, m.parcels
          FROM (SELECT count(*)::bigint AS total FROM matched) t
          LEFT JOIN LATERAL (
-             SELECT * FROM matched ORDER BY deployed_at DESC, scene_id LIMIT $2 OFFSET $3
+             SELECT * FROM matched ORDER BY indexed_at DESC, scene_id LIMIT $2 OFFSET $3
          ) m ON true",
     )
     .bind(signer)

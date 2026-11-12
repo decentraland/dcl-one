@@ -42,6 +42,7 @@ import { NearbyVoiceWidget } from '../voice/NearbyVoiceWidget'
 import { PermissionsPopover } from '../permissions/PermissionsPopover'
 import { useNearbyVoice, type NearbyVoice } from '../voice/useNearbyVoice'
 import { withUtm } from '../../lib/utm'
+import streamBadge from '../../assets/voice/stream-badge.png'
 
 // `hotkey` names the engine SystemAction whose live binding renders as the tooltip hint.
 type Item =
@@ -195,6 +196,7 @@ function renderItem(item: Item, i: number, session: EngineSession, snap: Binding
         shortcut={shortcut}
         active={session.communities.open}
         onClick={session.communities.toggle}
+        cornerArt={session.voiceChat.active.some((c) => c.isMember) ? { src: streamBadge, label: 'A community stream is live' } : undefined}
       />
     )
   if (item.kind === 'places')

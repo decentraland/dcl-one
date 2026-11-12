@@ -5,17 +5,24 @@
 //! Decentraland Authoritative Storage Delegation
 //! Ephemeral: <the request signer>
 //! World: <world name or "main">
-//! SceneId: <scene entity id>
-//! Parcel: <parcel as the scene metadata spells it>
-//! Expiration: <RFC 3339>
+//! SceneId: <the request metadata's sceneId>
+//! Parcel: <parcel as the request metadata spells it>
+//! Expiration: <a date `Date.parse` reads, ISO 8601 from the minter>
 //! ```
 //!
-//! signed (EIP-191) by the authoritative server. A verified claim admits its
-//! ephemeral signer to exactly that scene's env values and nothing else
-//! (`mod.rs`, `AuthPolicy::AUTHORIZED_ADDRESSES_OR_SCOPED_DELEGATION`): the
-//! guest never holds SQL, a key, or another scene's namespace.
+//! signed (EIP-191) by the authoritative server. The header is read as
+//! upstream's Node service reads it (`Buffer.from(_, 'base64')`, `JSON.parse`,
+//! `Date.parse`, ethers-style recovery that also takes a high-s signature).
+//! A verified claim admits its ephemeral signer to that scene's storage on
+//! the routes whose `AuthPolicy` allows a scoped delegation (`mod.rs`): the
+//! per-key and list `/values*` and `/players*` routes (not the clears),
+//! `GET /env/{key}`, `GET /usage/world` and `GET /usage/players/{address}`.
+//! The guest never holds SQL, a key, or another scene's namespace.
 
+use alloy_primitives::Signature;
 use chrono::{DateTime, Utc};
+
+use super::js::{date_parse, js_trim, node_base64_decode};
 
 pub const AUTHORITATIVE_SCOPE_HEADER: &str = "x-authoritative-scope";
 
@@ -31,7 +38,8 @@ struct ParsedClaim {
     world: String,
     scene_id: String,
     parcel: String,
-    expiration: DateTime<Utc>,
+    /// `Date.parse` milliseconds.
+    expiration: f64,
 }
 
 pub struct StorageDelegationTarget<'a> {
@@ -54,19 +62,20 @@ fn parse_claim(payload: &str) -> Option<ParsedClaim> {
         if values[idx].is_some() {
             return None;
         }
-        values[idx] = Some(line[CLAIM_FIELDS[idx].len()..].trim());
+        values[idx] = Some(js_trim(&line[CLAIM_FIELDS[idx].len()..]));
     }
 
-    let [ephemeral, world, scene_id, parcel, expiration_iso] =
+    let [ephemeral, world, scene_id, parcel, expiration_raw] =
         values.map(|v| v.filter(|s| !s.is_empty()));
-    let expiration = DateTime::parse_from_rfc3339(expiration_iso?).ok()?;
+    let (ephemeral, world, scene_id, parcel) = (ephemeral?, world?, scene_id?, parcel?);
+    let expiration = date_parse(expiration_raw?)?;
 
     Some(ParsedClaim {
-        ephemeral: ephemeral?.to_lowercase(),
-        world: world?.to_lowercase(),
-        scene_id: scene_id?.to_string(),
-        parcel: parcel?.to_string(),
-        expiration: expiration.with_timezone(&Utc),
+        ephemeral: ephemeral.to_lowercase(),
+        world: world.to_lowercase(),
+        scene_id: scene_id.to_string(),
+        parcel: parcel.to_string(),
+        expiration,
     })
 }
 
@@ -89,14 +98,17 @@ pub fn verify_storage_delegation_at(
         return Err("scope header too large");
     }
 
-    let decoded = base64_decode(scope_header.trim()).ok_or("malformed scope header")?;
-    let parsed: serde_json::Value =
-        serde_json::from_slice(&decoded).map_err(|_| "malformed scope header")?;
-    let obj = parsed.as_object().ok_or("malformed scope header")?;
+    let decoded = node_base64_decode(scope_header);
+    let parsed: serde_json::Value = serde_json::from_str(&String::from_utf8_lossy(&decoded))
+        .map_err(|_| "malformed scope header")?;
+    // `typeof parsed === 'object'`: an array passes and lacks both fields.
+    if !(parsed.is_object() || parsed.is_array()) {
+        return Err("malformed scope header");
+    }
 
     let (Some(payload), Some(signature)) = (
-        obj.get("payload").and_then(|v| v.as_str()),
-        obj.get("signature").and_then(|v| v.as_str()),
+        parsed.get("payload").and_then(|v| v.as_str()),
+        parsed.get("signature").and_then(|v| v.as_str()),
     ) else {
         return Err("scope missing payload or signature");
     };
@@ -115,12 +127,13 @@ pub fn verify_storage_delegation_at(
     if claim.parcel != target.parcel {
         return Err("claim parcel does not match target parcel");
     }
-    if claim.expiration <= now {
+    // `Date.parse` never yields NaN here (`date_parse` returns None instead).
+    if claim.expiration <= now.timestamp_millis() as f64 {
         return Err("delegation expired");
     }
 
-    let recovered = crate::auth::recover_address(payload.as_bytes(), signature)
-        .map_err(|_| "claim not signed by a trusted authoritative address")?;
+    let recovered = recover_personal_signer(payload.as_bytes(), signature)
+        .ok_or("claim not signed by a trusted authoritative address")?;
     if target
         .trusted_signers
         .iter()
@@ -131,40 +144,24 @@ pub fn verify_storage_delegation_at(
     Err("claim not signed by a trusted authoritative address")
 }
 
-fn base64_val(b: u8) -> Option<u8> {
-    match b {
-        b'A'..=b'Z' => Some(b - b'A'),
-        b'a'..=b'z' => Some(b - b'a' + 26),
-        b'0'..=b'9' => Some(b - b'0' + 52),
-        b'+' => Some(62),
-        b'/' => Some(63),
-        _ => None,
-    }
-}
-
-fn base64_decode(input: &str) -> Option<Vec<u8>> {
-    let data = input.as_bytes();
-    let data = match data.iter().position(|&b| b == b'=') {
-        Some(pos) if data[pos..].iter().all(|&b| b == b'=') && data.len() - pos <= 2 => {
-            &data[..pos]
-        }
-        Some(_) => return None,
-        None => data,
-    };
-    if data.len() % 4 == 1 {
+/// `@dcl/crypto`'s personal-signature recovery: 65 hex bytes, `v` in
+/// {0, 1, 27, 28}, and, unlike the shared chain verifier, a high-s
+/// signature recovers too (noble's `recoverPublicKey` does not require low s).
+fn recover_personal_signer(message: &[u8], signature: &str) -> Option<String> {
+    let hex = signature.strip_prefix("0x").unwrap_or(signature);
+    let bytes = hex::decode(hex).ok()?;
+    if bytes.len() != 65 {
         return None;
     }
-    let mut out = Vec::with_capacity(data.len() * 3 / 4);
-    for chunk in data.chunks(4) {
-        let mut acc: u32 = 0;
-        for &b in chunk {
-            acc = (acc << 6) | base64_val(b)? as u32;
-        }
-        acc <<= 6 * (4 - chunk.len()) as u32;
-        let bytes = acc.to_be_bytes();
-        out.extend_from_slice(&bytes[1..chunk.len()]);
-    }
-    Some(out)
+    let parity = match bytes[64] {
+        0 | 27 => false,
+        1 | 28 => true,
+        _ => return None,
+    };
+    let sig = Signature::from_bytes_and_parity(&bytes[..64], parity);
+    sig.recover_address_from_msg(message)
+        .ok()
+        .map(|a| format!("{a:#x}"))
 }
 
 /// The base64 the tests and the host encode the header with (standard
@@ -367,7 +364,7 @@ mod tests {
     fn rejects_null_and_primitive_json_payloads() {
         let wallet = wallet(AUTHORITATIVE_KEY);
         let t = trusted(&wallet);
-        for raw in ["null", "42", "\"str\"", "[1,2]"] {
+        for raw in ["null", "42", "\"str\""] {
             let header = base64_encode(raw.as_bytes());
             assert_eq!(
                 verify_storage_delegation_at(&header, &target(&t), now()),
@@ -375,11 +372,12 @@ mod tests {
                 "payload {raw:?} must be rejected"
             );
         }
-        let header = base64_encode(br#"{"payload": 1, "signature": "0xff"}"#);
-        assert_eq!(
-            verify_storage_delegation_at(&header, &target(&t), now()),
-            Err("scope missing payload or signature")
-        );
+        for raw in [&br#"{"payload": 1, "signature": "0xff"}"#[..], b"[1,2]"] {
+            assert_eq!(
+                verify_storage_delegation_at(&base64_encode(raw), &target(&t), now()),
+                Err("scope missing payload or signature")
+            );
+        }
         assert_eq!(
             verify_storage_delegation_at("!!!not-base64!!!", &target(&t), now()),
             Err("malformed scope header")
@@ -408,7 +406,10 @@ mod tests {
         let bad_exp = format!(
             "{STORAGE_DELEGATION_PREFIX}\nEphemeral: {EPHEMERAL}\nWorld: {WORLD}\nSceneId: {SCENE_ID}\nParcel: {PARCEL}\nExpiration: tomorrow"
         );
-        assert!(parse_claim(&bad_exp).is_none(), "non-RFC3339 expiration");
+        assert!(
+            parse_claim(&bad_exp).is_none(),
+            "an expiration Date.parse refuses"
+        );
 
         let reordered = format!(
             "{STORAGE_DELEGATION_PREFIX}\nExpiration: {exp}\nParcel: {PARCEL}\nSceneId: {SCENE_ID}\nWorld: {WORLD}\nEphemeral: {EPHEMERAL}"
@@ -416,28 +417,81 @@ mod tests {
         assert!(parse_claim(&reordered).is_some(), "field order is free");
     }
 
-    #[test]
-    fn base64_roundtrip_and_rejection() {
-        for data in [
-            &b""[..],
-            b"a",
-            b"ab",
-            b"abc",
-            b"abcd",
-            b"{\"payload\":\"x\"}",
+    /// What the upstream Node service accepts: `Date.parse` expirations, the
+    /// URL-safe alphabet, missing padding, whitespace, and a high-s signature.
+    #[tokio::test]
+    async fn accepts_what_node_and_ethers_accept() {
+        use alloy::signers::Signer as _;
+        use alloy_primitives::U256;
+
+        let wallet = wallet(AUTHORITATIVE_KEY);
+        let t = trusted(&wallet);
+        let base = format!(
+            "{STORAGE_DELEGATION_PREFIX}\nEphemeral: {EPHEMERAL}\nWorld: {WORLD}\nSceneId: {SCENE_ID}\nParcel: {PARCEL}\nExpiration: "
+        );
+        for expiration in [
+            "2999-01-01T00:00:00.000Z",
+            "2999-01-01",
+            "Tue, 01 Jan 2999 00:00:00 GMT",
+            "January 1, 2999 10:00 PM",
         ] {
+            let header = scope_header(&wallet, &format!("{base}{expiration}")).await;
             assert_eq!(
-                base64_decode(&base64_encode(data)).as_deref(),
-                Some(data),
-                "roundtrip {data:?}"
+                verify_storage_delegation_at(&header, &target(&t), now()),
+                Ok(()),
+                "{expiration}"
             );
         }
+
+        let payload = payload(now() + Duration::hours(1));
+        let header = scope_header(&wallet, &payload).await;
+        let url_safe: String = header
+            .trim_end_matches('=')
+            .chars()
+            .map(|c| match c {
+                '+' => '-',
+                '/' => '_',
+                c => c,
+            })
+            .collect();
+        let spaced = format!(" {}\n{} ", &header[..10], &header[10..]);
+        for variant in [url_safe, spaced] {
+            assert_eq!(
+                verify_storage_delegation_at(&variant, &target(&t), now()),
+                Ok(()),
+                "{variant}"
+            );
+        }
+
+        let mut raw = wallet
+            .sign_message(payload.as_bytes())
+            .await
+            .unwrap()
+            .as_bytes();
+        let n = U256::from_str_radix(
+            "fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141",
+            16,
+        )
+        .unwrap();
+        let high_s = n - U256::from_be_slice(&raw[32..64]);
+        raw[32..64].copy_from_slice(&high_s.to_be_bytes::<32>());
+        raw[64] = if raw[64] == 27 { 28 } else { 27 };
+        let json = serde_json::json!({ "payload": payload, "signature": format!("0x{}", hex::encode(raw)) });
+        let header = base64_encode(json.to_string().as_bytes());
         assert_eq!(
-            base64_decode("eyJhIjoxfQ").as_deref(),
-            Some(&b"{\"a\":1}"[..])
+            verify_storage_delegation_at(&header, &target(&t), now()),
+            Ok(()),
+            "a high-s twin recovers the same signer"
         );
-        assert!(base64_decode("a").is_none());
-        assert!(base64_decode("ab=c").is_none());
-        assert!(base64_decode("a b c").is_none());
+        raw[64] = 29;
+        let json = serde_json::json!({ "payload": payload, "signature": format!("0x{}", hex::encode(raw)) });
+        assert_eq!(
+            verify_storage_delegation_at(
+                &base64_encode(json.to_string().as_bytes()),
+                &target(&t),
+                now()
+            ),
+            Err("claim not signed by a trusted authoritative address")
+        );
     }
 }

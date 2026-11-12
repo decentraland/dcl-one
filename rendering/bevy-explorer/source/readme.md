@@ -78,6 +78,8 @@ just setup-cef                 # once per machine: exports the CEF distribution 
 export CEF_PATH=$HOME/.local/share/cef
 # linux only, to run from the target dir:
 export LD_LIBRARY_PATH=$CEF_PATH:$LD_LIBRARY_PATH
+# nixos only, when running without just: lets CEF's bundled vulkan loader find the drivers
+export XDG_DATA_DIRS=/run/opengl-driver/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}
 
 just native-release            # bundles the HUD if stale, then builds + runs everything
 ```
@@ -169,17 +171,28 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
 (loopback), with no marker in the text. Arguments split on whitespace.
 
 - State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
-  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`
+  after a teleport reads it first; `keyboardClaimed`, true while a text field holds the keys),
+  `/avatar_state [all|<address>]`, `/chat_history [count]`
   (Nearby only), `/dm_history <address|community:<id>> [count]` (a DM partner's or a community's
   stored lines), `/community_state` (community chat's router, channels and counters),
-  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, `/photo_mode [on|off]` (the camera
-  reel's in-world camera: its state, or open or close it) and `/take_photo` (a photo, captured
-  and uploaded; the reply is the state, a refusal names why), plus the older `/player_position`,
-  `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+  `/voice_state` (the nearby voice rooms and, as `call`, the private call or community stream the
+  player is in: `status`, `kind`, `peer`, `communityId`, `connection`, `participants`,
+  `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`), `/entity_screen_position <entity>
+  [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or open or
+  close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a refusal
+  names why), plus the older `/player_position`, `/get_user_data`, `/connected_players`, `/time`
+  and the scene commands.
 - Chat: `/chat <channel> <word>`, `/dm <address> <message>`, `/community_chat <id> <message>`
   and `/react <channel> <message id> <emoji>` send as the HUD does; `/community_channels [add
   <id>|remove <id>|clear]` lists or edits the community channels the engine listens to, which
   the HUD sets from the user's communities (the engine drops community messages on any other).
+- Voice chat, as the HUD's buttons do it and through the same refusals: `/voice call <address>`
+  rings a user, `/voice accept` and `/voice reject` answer a ringing call, `/voice end` hangs up
+  or leaves a stream, `/voice start|join <community id>` opens or joins a stream, `/voice close`
+  ends it for everyone, `/voice hand up|down`, `/voice mic on|off` (the call microphone; the
+  nearby one is the `Microphone` key) and `/voice promote|demote|kick|deny <address>`. Each only
+  queues the request; read `/voice_state` `call` for the outcome. The debug panel's "Voice call"
+  section shows the call and binds these actions.
 - In development builds the lower-right bug button toggles the debug panel. In all builds,
   open **Sidebar settings (•••) → Debug panel** or type `/debug` in chat. Search by
   section or control, or enter `/debug Performance` directly. Expanded sections refresh
@@ -192,8 +205,11 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   frame-rate target and session override independently of the panel.
 - The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
   `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
-  `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
-  `{"name", "role", "index", "exact"}`; several matches need an `index`.
+  `hidden`, `enabled`, `actionable`, `ready`; `"timeout"` ms). A selector is the name or JSON
+  `{"name", "role", "index", "exact"}`; several matches need an `index`. A control still moving
+  (a CSS animation or transition), or under a pointer lock that takes every click, is not
+  `actionable`; one inside an `aria-busy` region reads
+  `"busy"`, and `ready` waits it out.
 - Signing in through the HUD (web, under a test runner driving the browser): `/hud_login
   <identity> [--name <name> --look <n>] [--guest] [--default-on-error] [--realm <realm>]
   [--position <x,y>]`, with an AuthIdentity encoded as `/login_identity` takes it, lands in the
@@ -203,6 +219,16 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
   CEF and the window's own input, always real. On the web the page needs a DevTools client to make
   them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
+- Scene pointer: `/hover_entity <entity>` and `/click_entity <entity>` hover and click a scene
+  entity by id through the pointer pipeline, on native and web alike, and answer with the hit, the
+  hover entries, the scene's pointer events and a diagnosis (`docs/guidelines/running.md`). A hover
+  lasts at most 1800 frames (`--frames`) and is never cut short by `--timeout-frames`.
+- Raycasts: `/raycast_stats` (the capped tier's `budgetMs`, `ran`, `deferred`, `spentMs` and the
+  uncapped tier's `uncappedRan`, `uncappedSpentMs`) and `/raycast_budget [ms|auto]` (override the
+  capped budget, a tenth of the target frame, from 0 to 10 ms). On the web, these and the two pointer commands go
+  to the engine through `engine_console_command` and write Bevy input events, unlike `/press_key`
+  and `/click_at`, which need a DevTools client for real input. `docs/guidelines/interaction.md`
+  has the options, replies and diagnoses.
 - The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
 
 **The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC

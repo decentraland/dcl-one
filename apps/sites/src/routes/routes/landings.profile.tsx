@@ -31,7 +31,15 @@ import {
   fetchMyCommunities,
   type ProfileCommunity,
 } from "@/data/lib/catalyst/social/profile-communities";
-import { fetchUserPhotos, type GalleryImage } from "@/data/lib/catalyst/social/photos";
+import { fetchUserPhotos } from "@/data/lib/catalyst/social/photos";
+import {
+  EMPTY_ASSETS,
+  mapAssets,
+  mapPhotos,
+  type PhotoVM,
+  type ProfileAssets,
+} from "@/data/lib/profile/view";
+import { PROFILE_PAGE, PROFILE_PLACES_LIMIT } from "@/data/lib/profile/queries";
 import {
   fetchProfilePlaces,
   withContactName,
@@ -85,68 +93,6 @@ function tabModel(own: boolean): { id: string; label: string }[] {
       ];
 }
 
-type PhotoVM = {
-  id: string;
-  grad: string;
-  metadata: {
-    userName: string;
-    userAddress: string;
-    dateTime: string;
-    realm: string;
-    scene: { name: string; location: { x: string; y: string } };
-    visiblePeople: {
-      userName: string;
-      userAddress: string;
-      isGuest: boolean;
-      wearables: string[];
-    }[];
-  };
-};
-
-function photoGrad(img: GalleryImage, i: number): string {
-  const src = img.thumbnailUrl || img.url;
-  if (src) return `#000 url("${src.replace(/"/g, "%22")}") center / cover no-repeat`;
-  const h = (i * 47 + 196) % 360;
-  return `linear-gradient(150deg, hsl(${h} 62% 48%) 0%, hsl(${(h + 38) % 360} 55% 26%) 100%)`;
-}
-
-function mapPhotos(images: GalleryImage[]): PhotoVM[] {
-  return images.map((img, i) => {
-    const meta = ((img as { metadata?: Record<string, unknown> }).metadata ??
-      {}) as Record<string, unknown>;
-    const scene = (meta.scene ?? {}) as {
-      name?: unknown;
-      location?: { x?: unknown; y?: unknown };
-    };
-    const loc = (scene.location ?? {}) as { x?: unknown; y?: unknown };
-    const people = Array.isArray(meta.visiblePeople)
-      ? (meta.visiblePeople as Record<string, unknown>[])
-      : [];
-    return {
-      id: img.id,
-      grad: photoGrad(img, i),
-      metadata: {
-        userName: String(meta.userName ?? ""),
-        userAddress: String(meta.userAddress ?? ""),
-        dateTime: String(meta.dateTime ?? img.dateTime ?? ""),
-        realm: String(meta.realm ?? ""),
-        scene: {
-          name: String(scene.name ?? "Decentraland"),
-          location: { x: String(loc.x ?? "0"), y: String(loc.y ?? "0") },
-        },
-        visiblePeople: people.map((p) => ({
-          userName: String(p.userName ?? ""),
-          userAddress: String(p.userAddress ?? ""),
-          isGuest: Boolean(p.isGuest ?? false),
-          wearables: Array.isArray(p.wearables)
-            ? (p.wearables as unknown[]).map(String)
-            : [],
-        })),
-      },
-    };
-  });
-}
-
 const FALLBACK: PageDefaults = {
   variant: "default",
 };
@@ -194,7 +140,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         try {
           const creations = await fetchCreations(
             address,
-            { first: 48 },
+            { first: PROFILE_PAGE },
             { signal: request.signal },
           );
           return { creations, creationsFallback: false };
@@ -203,37 +149,21 @@ export async function loader({ request, params }: Route.LoaderArgs) {
         }
       })(),
       wantPlaces && ethAddr
-        ? fetchProfilePlaces(address, { limit: 100 }, { signal: request.signal }).catch(
+        ? fetchProfilePlaces(address, { limit: PROFILE_PLACES_LIMIT }, { signal: request.signal }).catch(
             () => [] as ProfilePlace[],
           )
         : Promise.resolve([] as ProfilePlace[]),
-    (async (): Promise<{ wearables: unknown[]; names: unknown[] }> => {
-      if (!wantAssets || !ethAddr) return { wearables: [], names: [] };
+    (async (): Promise<ProfileAssets> => {
+      if (!wantAssets || !ethAddr) return EMPTY_ASSETS;
       const [ownedW, ownedN] = await Promise.all([
-        fetchOwnedWearables(address, { first: 48 }, { signal: request.signal }).catch(
+        fetchOwnedWearables(address, { first: PROFILE_PAGE }, { signal: request.signal }).catch(
           () => ({ elements: [] as OwnedItem[], total: 0 }),
         ),
-        fetchOwnedNames(address, { first: 48 }, { signal: request.signal }).catch(
+        fetchOwnedNames(address, { first: PROFILE_PAGE }, { signal: request.signal }).catch(
           () => ({ elements: [] as OwnedName[], total: 0 }),
         ),
       ]);
-      return {
-        wearables: ownedW.elements.map((w) => ({
-          id: w.id,
-          name: w.name ?? "Unnamed",
-          rarity: w.rarity ?? "common",
-          price: w.price ?? "",
-          network: w.urn?.includes(":matic:")
-            ? "MATIC"
-            : w.urn?.includes(":ethereum:")
-              ? "ETHEREUM"
-              : "MATIC",
-          category: w.category ?? "wearable",
-          bodyShape: "unisex",
-          isSmart: false,
-        })),
-        names: ownedN.elements.map((n) => ({ id: n.tokenId ?? n.name, stem: n.name })),
-      };
+      return mapAssets(ownedW, ownedN);
     })(),
     (async (): Promise<{ photos: PhotoVM[]; photosFallback: boolean }> => {
       if (!wantPhotos) return { photos: [], photosFallback: false };
@@ -290,7 +220,7 @@ type LoaderData = {
   places: ProfilePlace[];
   photos: PhotoVM[];
   photosFallback: boolean;
-  assets: { wearables: unknown[]; names: unknown[] };
+  assets: ProfileAssets;
 };
 
 export default function LandingsProfile({ loaderData }: Route.ComponentProps) {

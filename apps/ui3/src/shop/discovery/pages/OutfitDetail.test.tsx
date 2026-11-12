@@ -2,7 +2,7 @@
 import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createShopClient } from "../../api/shop";
+import { createShopClient } from "@shop/api/shop";
 import { shopCart } from "../../cart/store";
 import { catalogClient, catalogTransport, COLLECTION, defaultAnswers, ShopHarness, type CatalogAnswers, type CatalogScenario } from "../fixtures";
 import OutfitDetail from "./OutfitDetail";

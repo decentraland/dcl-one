@@ -15,7 +15,9 @@ use scene_material::SceneBounds;
 use super::*;
 use crate::{
     scene_spawn_slice::{
-        slice_scene_spawning, InstantiationCharges, ProcessingDeadline, SCENE_SPAWN_SLICE,
+        slice, slice_scene_spawning,
+        tests::{scene_updates, SIXTY_FPS},
+        InstantiationCharges, ProcessingDeadline,
     },
     update_world::material::{MaterialPrepaid, PbMaterialComponent, NEW_MATERIAL_COST},
 };
@@ -43,6 +45,7 @@ pub(crate) fn test_app() -> (App, Entity) {
         .init_resource::<InstantiationCharges>()
         .init_resource::<ProcessingDeadline>()
         .init_resource::<Charged>()
+        .insert_resource(scene_updates(Some(SIXTY_FPS)))
         .insert_resource(IpfsResource {
             inner: Arc::new(IpfsIo::new(
                 false,
@@ -145,7 +148,7 @@ fn waiting(app: &App, entities: &[Entity]) -> usize {
 
 /// How many primitives with a shared mesh fit in one slice.
 pub(crate) fn fit(cost: Duration) -> usize {
-    (SCENE_SPAWN_SLICE.as_nanos() / cost.as_nanos()) as usize
+    (slice(Some(SIXTY_FPS)).as_nanos() / cost.as_nanos()) as usize
 }
 
 fn preset_charges(app: &mut App, charges: Duration) {

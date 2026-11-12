@@ -8,11 +8,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import type { CartLine, PurchaseOffer } from "../model/purchase";
-import { offerQuote } from "../model/purchase";
-import type { MissingFact, PaymentMethod, Quote, Session } from "../model/settlement";
-import { presentPayment } from "../payment/present";
-import { lineUnits } from "./partition";
+import type { CartLine, PurchaseOffer } from "@shop/model/purchase";
+import { offerQuote } from "@shop/model/purchase";
+import type { MissingFact, PaymentMethod, Quote, Session } from "@shop/model/settlement";
+import { presentPayment } from "@shop/payment/present";
+import { lineUnits } from "@shop/cart/partition";
 
 export type LineChange =
   | { lineId: string; kind: "unavailable" }

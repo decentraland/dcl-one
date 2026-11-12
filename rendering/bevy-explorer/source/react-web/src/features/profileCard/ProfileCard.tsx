@@ -7,10 +7,11 @@ import { relationshipOf } from '../../lib/relationship'
 import { useSession } from '../session/SessionContext'
 import { useProfile } from '../session/profileStore'
 import { openPassport } from '../profile/Passport'
-import { ProfileCardPresentation, type ChatUser, type MenuContext } from '../chat/ProfileCardPresentation'
+import { ProfileCardPresentation, type CardAction, type ChatUser, type MenuContext } from '../chat/ProfileCardPresentation'
 import { confirmBlock, confirmUnfriend, reportUser } from '../friends/friendDialogs'
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { splitName } from '../../lib/identity'
+import { startCallWith } from '../voiceChat/callGate'
 
 export function ProfileCard({
   userId,
@@ -18,6 +19,8 @@ export function ProfileCard({
   y,
   above,
   context,
+  communityActions,
+  onMessage,
   onClose
 }: {
   userId: string
@@ -25,6 +28,9 @@ export function ProfileCard({
   y: number
   above?: boolean
   context?: MenuContext
+  communityActions?: CardAction[]
+  /** Replaces opening the DM (a card opened over another popup closes that one first). */
+  onMessage?: (address: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const session = useSession()
@@ -38,8 +44,10 @@ export function ProfileCard({
       y={y}
       above={above}
       context={context}
+      communityActions={communityActions}
       me={session.profile.data}
       relationship={relationshipOf(session.friends, userId)}
+      blockedBy={session.friends.blockedBy.includes(userId.toLowerCase())}
       onAddFriend={(u) => openFriendRequest('send', u)}
       onUnfriend={(u) => void confirmUnfriend(u).then((ok) => ok && act('delete', u.address))}
       onCancelRequest={(u) => act('cancel', u.address)}
@@ -47,7 +55,8 @@ export function ProfileCard({
       onBlock={(u) => void confirmBlock(splitName(u.name).base).then((ok) => ok && act('block', u.address))}
       onReport={(u) => void reportUser(session.profile.data?.address, u.address)}
       onMention={session.chat.mention}
-      onMessage={(u) => session.chat.openConversation(u.address)}
+      onMessage={(u) => (onMessage != null ? onMessage(u.address) : session.chat.openConversation(u.address))}
+      onCall={(u) => startCallWith(session, u.address)}
       onViewProfile={() => openPassport(userId)}
       onClose={onClose}
     />
@@ -58,6 +67,10 @@ export interface ProfileCardOptions {
   /** (x, y) is the card's bottom-left; it grows upward (a row's menu button). */
   above?: boolean
   context?: MenuContext
+  /** 'community': the owner's or moderator's actions on the member. */
+  communityActions?: CardAction[]
+  /** Replaces opening the DM with the user. */
+  onMessage?: (address: string) => void
   /** Runs when the card closes by any path. */
   onClose?: () => void
 }
@@ -65,7 +78,7 @@ export interface ProfileCardOptions {
 /** Open the world profile card as a popup, anchored at the given screen coords. */
 export function openProfileCard(userId: string, x: number, y: number, opts: ProfileCardOptions = {}): () => void {
   return openPopup(
-    (close) => <ProfileCard userId={userId} x={x} y={y} above={opts.above} context={opts.context} onClose={close} />,
+    (close) => <ProfileCard userId={userId} x={x} y={y} above={opts.above} context={opts.context} communityActions={opts.communityActions} onMessage={opts.onMessage} onClose={close} />,
     { dim: false, onClose: opts.onClose }
   ) // anchored popover, no scrim dim
 }

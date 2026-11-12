@@ -3,7 +3,7 @@
 // formatter is model/money's exact one (every significant digit, grouped). `manaWeiToNumber` stays for
 // charts and sorting only: it loses precision past 2^53 wei and must never size a charge.
 
-import { formatMana as exact, type ManaWei } from "../../model/money";
+import { formatMana as exact, type ManaWei } from "@shop/model/money";
 
 /** MANA wei to a JS number, for DISPLAY arithmetic only. */
 export function manaWeiToNumber(wei: bigint): number {

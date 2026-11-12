@@ -11,6 +11,7 @@ import { Rail } from './Rail'
 import { HeaderButton } from './HeaderButton'
 import { OptionMenu } from './OptionMenu'
 import { ContextMenu } from './ContextMenu'
+import { KebabMenu } from './KebabMenu'
 import { HintsButton, KeyCap } from './HintsButton'
 import { useRef, useState } from 'react'
 import { ControlButton } from './ControlButton'
@@ -35,6 +36,7 @@ import { ChatBubble, DaySeparator, MemberRow } from '../features/chat/Chat'
 import { seedProfiles } from '../features/session/profileStore'
 import { EmoteSlot } from '../features/emotes/EmoteSlot'
 import { catalystThumbUrl } from '../lib/identity'
+import streamBadge from '../assets/voice/stream-badge.png'
 
 // A chat bubble resolves its sender through the profile store, so the demo line's author is seeded.
 const MOJITO = '0x5854cce95d5e25817b41f4c41f06b695a83bc495'
@@ -369,6 +371,19 @@ export function Showcase(): React.JSX.Element {
               ]}
             />
           </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 14 }}>Picker (placeholder)</span>
+            <Select
+              value=""
+              onChange={() => undefined}
+              aria-label="Add a place"
+              placeholder="Select LAND or World"
+              options={[
+                { value: 'a', label: 'Genesis Plaza (0,0)' },
+                { value: 'b', label: 'My World (example.dcl.eth)' }
+              ]}
+            />
+          </div>
         </div>
       </Section>
 
@@ -436,6 +451,7 @@ export function Showcase(): React.JSX.Element {
           ))}
           <IconButton icon="profile" label="Profile (avatar)" avatar={{ name: 'Mojito', color: 'var(--lavender)' }} />
           <IconButton icon="voice-hearing" label="Voice (connected)" indicator />
+          <IconButton icon="communities" label="Communities (live stream)" cornerArt={{ src: streamBadge, label: 'A community stream is live' }} />
         </Panel>
       </Section>
 
@@ -479,6 +495,13 @@ export function Showcase(): React.JSX.Element {
             { label: 'Delete chat history', danger: true }
           ]}
         />
+      </Section>
+
+      <Section title="KebabMenu (md · sm)">
+        <div style={{ display: 'flex', gap: 16, paddingBottom: 120 }}>
+          <KebabMenu label="Conversation options" items={(close) => [{ label: 'View Community', onClick: close }, { label: 'Delete chat history', danger: true, onClick: close }]} />
+          <KebabMenu size="sm" label="Participant options" items={(close) => [{ label: 'View profile', onClick: close }]} />
+        </div>
       </Section>
 
       <Section title="HintsButton (opens upward)">

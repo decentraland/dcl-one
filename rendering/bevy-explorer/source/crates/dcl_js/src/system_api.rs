@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use bevy::{log::debug, math::Vec4};
 use common::{
     inputs::{Action, BindingsData, HudPanel, InputIdentifier, SystemActionEvent},
-    profile::SerializedProfile,
+    profile::{CompactProfile, SerializedProfile},
     rpc::{RpcCall, RpcResultReceiver, RpcResultSender, RpcStreamReceiver, RpcStreamSender},
     structs::{
         MicState, PermissionLevel, PermissionStrings, PermissionType, PermissionUsed,
@@ -16,11 +16,12 @@ use strum::IntoEnumIterator;
 use system_bridge::{
     settings::SettingInfo, AnalyticsEvent, AvatarModifierState, BlockUpdateData, BlockedUserData,
     BlockingStatusData, ChatMessage, ChatReactionData, CommunityMemberConnectivityData,
-    DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData, FriendRequestData,
-    FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent, LiveSceneInfo,
-    PermanentPermissionItem, PermissionRequestEvent, PhotoModeState, ProfileChangedEvent,
-    ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData, SetPermanentPermission,
-    SetSinglePermission, SystemApi, VoiceMessage, WelcomeState, WorldAccessEvent,
+    CommunityVoiceUpdate, DmHistoryEntryData, DmUserStateData, FriendConnectivityEvent, FriendData,
+    FriendRequestData, FriendStatusData, FriendshipEventUpdate, HomeScene, HoverEvent,
+    LiveSceneInfo, PermanentPermissionItem, PermissionRequestEvent, PhotoModeState,
+    ProfileChangedEvent, ProximityEvent, SatelliteView, SceneLoadingUi, SetAvatarData,
+    SetPermanentPermission, SetSinglePermission, SystemApi, VoiceChatAction, VoiceChatState,
+    VoiceMessage, WelcomeState, WorldAccessEvent,
 };
 use tokio::sync::Notify;
 
@@ -659,10 +660,16 @@ pub async fn op_read_bridge_stream(
 /// same cache and fetch cascade as nametags and `getPlayerData` — but unlike the latter, not
 /// squeezed into the SDK's `UserData`, so `extra_fields`, `name_color` and emotes survive.
 /// Rejects once the cascade has concluded with nothing.
+/// Only the system scene may call it (the web worker exposes every op to every scene): other
+/// scenes read players through `getPlayerData`.
 pub async fn op_get_user_profile(
     state: Rc<RefCell<impl State>>,
     address: String,
 ) -> Result<SerializedProfile, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("getUserProfile is only available to the system scene");
+    }
+
     let (sx, rx) = RpcResultSender::channel();
 
     let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
@@ -679,6 +686,48 @@ pub async fn op_get_user_profile(
     rx.await
         .map_err(|e| anyhow::anyhow!(e))?
         .map_err(|_| anyhow::anyhow!("Not found"))
+}
+
+/// The most addresses one `getCompactProfiles` call may ask about.
+pub const COMPACT_PROFILES_MAX: usize = 200;
+
+/// The compact profiles (name, claimed-name flag, name colour, face) of a list of addresses
+/// in one call, through the engine's profile cache: what a list row shows, without fetching
+/// whole profiles. In request order; an address that can't be resolved is left out.
+/// Only the system scene may call it (the web worker exposes every op to every scene), with at
+/// most `COMPACT_PROFILES_MAX` addresses: one call bypasses the per-tick RPC limit, and every
+/// address it names stays cached and fetched until the answer is complete.
+pub async fn op_get_compact_profiles(
+    state: Rc<RefCell<impl State>>,
+    addresses: Vec<String>,
+) -> Result<Vec<CompactProfile>, anyhow::Error> {
+    if !state.borrow().has::<SuperUserScene>() {
+        anyhow::bail!("getCompactProfiles is only available to the system scene");
+    }
+    if addresses.len() > COMPACT_PROFILES_MAX {
+        anyhow::bail!(
+            "getCompactProfiles takes at most {COMPACT_PROFILES_MAX} addresses, got {}",
+            addresses.len()
+        );
+    }
+
+    let (sx, rx) = RpcResultSender::channel();
+
+    let scene = state.borrow().borrow::<CrdtContext>().scene_id.0;
+    debug!(
+        "[{scene:?}] -> op_get_compact_profiles ({} addresses)",
+        addresses.len()
+    );
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::GetCompactProfiles {
+            addresses,
+            response: sx,
+        })?;
+
+    rx.await.map_err(|e| anyhow::anyhow!(e))
 }
 
 pub fn op_quit(state: Rc<RefCell<impl State>>) {
@@ -1318,6 +1367,71 @@ pub fn op_close_dm_user_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
     close_stream::<DmUserStateData>(&mut *state.borrow_mut(), rid);
 }
 
+/// The voice chat state (private calls, community streams): a snapshot now, then on change.
+/// The HUD keeps it open for the session; `close` ends it.
+pub fn op_get_voice_chat_state_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetVoiceChatStateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_voice_chat_state_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<VoiceChatState>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_voice_chat_state_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<VoiceChatState>(&mut *state.borrow_mut(), rid);
+}
+
+/// Every community voice chat started / ended broadcast the social service sends.
+pub fn op_get_community_voice_update_stream(state: Rc<RefCell<impl State>>) -> u32 {
+    let (sx, rx) = RpcStreamSender::channel();
+
+    let mut state = state.borrow_mut();
+    let rid = open_stream(&mut *state, rx);
+
+    state
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::GetCommunityVoiceUpdateStream(sx))
+        .unwrap();
+
+    rid
+}
+
+pub async fn op_read_community_voice_update_stream(
+    state: Rc<RefCell<impl State>>,
+    rid: u32,
+) -> Result<Option<CommunityVoiceUpdate>, anyhow::Error> {
+    Ok(read_stream(state, rid).await)
+}
+
+pub fn op_close_community_voice_update_stream(state: Rc<RefCell<impl State>>, rid: u32) {
+    close_stream::<CommunityVoiceUpdate>(&mut *state.borrow_mut(), rid);
+}
+
+/// A voice chat command; its outcome shows on the state stream.
+pub fn op_voice_chat_action(
+    state: Rc<RefCell<impl State>>,
+    action: VoiceChatAction,
+) -> Result<(), anyhow::Error> {
+    state
+        .borrow_mut()
+        .borrow_mut::<SuperUserScene>()
+        .send(SystemApi::VoiceChatAction(action))?;
+    Ok(())
+}
+
 pub async fn op_get_dm_history(
     state: Rc<RefCell<impl State>>,
     address: String,
@@ -1429,6 +1543,53 @@ mod kernel_fetch_tests {
 
         let result = catch_unwind(AssertUnwindSafe(|| block_on(poll_once(fetch(&state)))));
         assert!(result.is_err());
+        assert!(state.borrow().borrow::<RpcCalls>().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod profile_read_tests {
+    use super::*;
+    use crate::test_state::TestState;
+    use futures_lite::future::{block_on, poll_once};
+
+    fn scene(system: bool) -> Rc<RefCell<TestState>> {
+        let mut state = TestState::default();
+        state.put(RpcCalls::default());
+        state.put(CrdtContext::new(
+            dcl_types::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            false,
+        ));
+        if system {
+            state.put(SuperUserScene(tokio::sync::mpsc::unbounded_channel().0));
+        }
+        Rc::new(RefCell::new(state))
+    }
+
+    #[test]
+    fn the_system_scene_reads_profiles() {
+        let state = scene(true);
+        let full = op_get_user_profile(state.clone(), "0x1".to_owned());
+        assert!(block_on(poll_once(full)).is_none());
+        let compact = op_get_compact_profiles(state.clone(), vec!["0x1".to_owned()]);
+        assert!(block_on(poll_once(compact)).is_none());
+
+        let state = state.borrow();
+        let calls = state.borrow::<RpcCalls>();
+        assert!(matches!(calls[0], RpcCall::GetUserData { .. }));
+        assert!(matches!(calls[1], RpcCall::GetCompactProfiles { .. }));
+    }
+
+    #[test]
+    fn an_ordinary_scene_reads_no_profiles() {
+        let state = scene(false);
+        let address = || "0x1".to_owned();
+        assert!(block_on(op_get_user_profile(state.clone(), address())).is_err());
+        assert!(block_on(op_get_compact_profiles(state.clone(), vec![address()])).is_err());
         assert!(state.borrow().borrow::<RpcCalls>().is_empty());
     }
 }

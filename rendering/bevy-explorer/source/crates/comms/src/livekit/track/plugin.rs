@@ -34,6 +34,8 @@ use crate::livekit::{
     track::HtmlMediaEntity,
     web::{RemoteTrack, TrackKind, TrackSource},
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::voice_chat::VoiceRoom;
 use crate::{
     global_crdt::{PlayerMessage, PlayerUpdate},
     livekit::{
@@ -494,6 +496,9 @@ fn audio_track_is_now_subscribed(
         ),
         With<Subscribed>,
     >,
+    published_by: Query<&PublishedBy>,
+    participants: Query<&HostedBy>,
+    voice_rooms: Query<(), With<VoiceRoom>>,
     mut livekit_audio_manager: ResMut<LivekitAudioManager>,
 ) {
     let entity = trigger.target();
@@ -522,7 +527,19 @@ fn audio_track_is_now_subscribed(
 
     let decoder = AudioTrackKiraBridge::new(audio, 48_000);
 
-    let Ok(handle) = livekit_audio_manager.play(StreamingSoundData::from_decoder(decoder)) else {
+    // a call's voices follow the voice chat volume, casts and streams the scene's
+    let in_voice_room = published_by
+        .get(entity)
+        .ok()
+        .and_then(|published_by| participants.get(published_by.get()).ok())
+        .is_some_and(|hosted_by| voice_rooms.contains(hosted_by.get()));
+    let destination: kira::OutputDestination = if in_voice_room {
+        (&livekit_audio_manager.voice_track).into()
+    } else {
+        (&livekit_audio_manager.scene_track).into()
+    };
+    let sound = StreamingSoundData::from_decoder(decoder).output_destination(destination);
+    let Ok(handle) = livekit_audio_manager.play(sound) else {
         error!("Failed to play track audio in LivekitAudioManager.");
         return;
     };

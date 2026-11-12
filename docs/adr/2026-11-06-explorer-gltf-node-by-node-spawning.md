@@ -21,11 +21,9 @@ So a large model, or many models arriving together, cost one long frame, and not
 schedules could split that work. A Genesis Plaza arrival on `main` spent 57 ms in the spawner and
 406 ms in processing over seven frames, with one frame at 328 ms of processing.
 
-unity-explorer bounds its instantiation with a frame-time cap checked before each asset
-(`FrameTimeCapBudget`, 33 ms, bypassed behind the loading screen). An earlier dcl-one engine, a
-Bevy 0.20 fork, found that a budget per instance is not enough for large models and patched Bevy
-to spawn a model a node at a time (`WorldSpawnerThrottle`, a per-node resumable cursor). That
-source is no longer available; Bevy 0.20 itself still writes an instance in one call. Since PR
+An earlier dcl-one engine, a Bevy 0.20 fork, found that a budget per instance is not enough
+for large models and patched Bevy to spawn a model a node at a time (`WorldSpawnerThrottle`, a
+per-node resumable cursor). That source is no longer available; Bevy 0.20 itself still writes an instance in one call. Since PR
 #274 the Explorer's Bevy is vendored in this repository, so the spawner can be changed here.
 
 ## Decision
@@ -89,28 +87,31 @@ next frame, and a model stays hidden until both steps are done.
 - **Resumable processing.** `update_ready_gltfs` processes a model's nodes until its deadline
   (`scene_spawn_slice::ProcessingDeadline`). A node is processed once it has a
   `ContainerEntity`, which processing gives it first; the model's running state stays on the
-  container (`GltfProcessing`: where the next frame resumes in the instance's nodes, the collider
-  counter, the animation flag and the named nodes). Models already in progress go first; at least
+  container (`GltfProcessing`, which comes with the loaded model and is updated in place: where the
+  next frame resumes in the instance's nodes, the collider counter, the animation flag and the
+  named nodes). Models already in progress (resuming past their first node) go first; at least
   one node is processed a frame, and containers with nothing to process finish whatever the
   deadline. Resetting or removing the container drops the progress and despawns a model not
   processed yet. A container put again with the value last acted on keeps its model, or, if
   that value could not load, is not tried again; only a different value starts over.
-- **The Explorer's slice.** `scene_runner::scene_spawn_slice` gives instantiation 4 ms a frame
-  from when it runs (`SpawnScene`, before `scene_spawner_system`). The spawner stops 1 ms before
-  the end and processing at the end, so processing always has time, even while spawns are queued.
-  There is no slice while the player is `OutOfWorld` (the loading backdrop covers the arrival, as
-  unity-explorer's loading screen does) or on headless (`NoRenderApp`), so arrival and servers
-  instantiate whole.
-- **Diagnostics.** The runtime debug panel's *Instantiation* section (`/instantiation_state`)
-  shows the slice in effect, the spawner's queue and the instance it is writing, and how many glTF
-  models are being processed. `spawn_timing` logs, under target `spawn_timing` at debug level,
-  each frame that spends a millisecond or more in the scene spawner or in glTF processing, and the
-  frame's slowest glTF slice: its time, how many nodes and which model; its systems run only when
-  that target is logged.
+- **The Explorer's slice.** `scene_runner::scene_spawn_slice` gives instantiation a quarter of
+  the target frame (`SceneUpdates::frame_target`; 60 fps when uncapped), 4.2 ms at 60 fps, from
+  when it runs (`SpawnScene`, before `scene_spawner_system`), as the raycast budget takes a share
+  of the same target. The spawner stops a quarter of the slice before the end and processing at
+  the end, so processing always has time, even while spawns are queued. There is no slice while
+  the player is `OutOfWorld` (the loading backdrop covers the arrival) or on headless
+  (`NoRenderApp`), so arrival and servers instantiate whole.
+- **Diagnostics.** `spawn_timing` measures each frame's scene spawner and glTF processing into
+  the Bevy diagnostics `instantiation/scene_spawner` and `instantiation/gltf_processing` (ms).
+  The runtime debug panel's *Instantiation* section (`/instantiation_state`) shows the slice in
+  effect, both measurements smoothed, the spawner's queue and the instance it is writing, and how
+  many glTF models are spawning or being processed. Under target `spawn_timing` at debug level it
+  also logs the frame's slowest model when it took a millisecond or more: its time, how many
+  nodes and which model. One plugin, `SceneSpawnSlicePlugin`, owns all of it.
 
 ## Rejected
 
-- **A budget per instance only** (the earlier engine's first step, unity-explorer's granularity):
+- **A budget per instance only** (the earlier engine's first step):
   one large model still costs its whole spawn and processing in one frame.
 - **Slicing spawning alone**: processing cost seven times more than spawning on the arrival
   measured, so bounding the spawner alone would leave the hitch.
@@ -168,9 +169,20 @@ next frame, and a model stays hidden until both steps are done.
   runs, frames over 50 ms went from 85 to 16, and over 200 ms from 5 to 1.
 
   The walk-in measures processing, which dominates: commit `a89eb9343` against `main`
-  `a71ee5602`, on 2026-11-09. The spawner's own cost on this change is measured next. The table
-  is to be re-run on the final commit once the walk-in loads content again (scenes that spawn
-  during the walk did not start on `main` at `9be147649`).
+  `a71ee5602`, on 2026-11-09. The spawner's own cost on this change is measured next. Re-run on
+  2026-11-11 at `1e57af9ac` (merged with `main` `435bf3096`) against that `main`, it measured no
+  instantiation in either build: two of the 60 scenes spawned started their sandbox, and Genesis
+  Plaza's main JS file had not loaded when the 90 s ended. The table stays this change's
+  measurement on a native build until the native walk-in loads content again.
+- **The web build** (the PR's CI build of `1e57af9ac` merged with `main` `62712769f`, without
+  wasm-opt, Chrome 152 driven by `local-harness/web-driver`): the same walk with a movement key
+  held, about 24 s, then standing in the plaza; slowest frames from `/performance_state` per 1,000
+  frames, three runs. Walking in, the slowest frame was about 170 to 200 ms, with 1 to 4 frames
+  over 50 ms; standing while the plaza's models arrived, about 55 to 90 ms. The heaviest moment
+  was the plaza's scene starting (about 90 to 250 ms), which shows its content at once. The
+  spawner and processing stayed under 1 ms a frame each, smoothed: on the web, models wait for
+  their meshes and textures, not the slice. Models appeared whole, avatars built and colliders
+  held once models showed.
 - **The spawner alone** (`scene_spawner/spawn_bench.rs`, an ignored test, release): a 5,051-entity
   hierarchy spawned seven times after a warm-up, medians:
 
@@ -187,18 +199,19 @@ next frame, and a model stays hidden until both steps are done.
 
 **What else follows:**
 
-- A model appears after about (its spawning and processing time) / 4 ms frames once it is
+- A model appears after about (its spawning and processing time) / (the slice) frames once it is
   requested, instead of in the frame it is requested; scenes that block their first ticks on their
   glTFs (`check_gltfs_ready`) start that much later.
 - Avatars, emote props, the ghost and NFT frames are spawned in slices too, and appear
   correspondingly later.
 - One node is the smallest unit: a single mesh whose collision shape takes longer than the slice
-  still costs that time in one frame. The `spawn_timing` slowest-slice line shows when it happens.
+  still costs that time in one frame. The `spawn_timing` slowest-model line shows when it happens.
 - The cost per entity and per node is unchanged: the same work, spread out.
 
 ## Follow-ups
 
-- The frame-time budget (E2): replace the fixed 4 ms with a deadline after the scene loop, order
+- The frame-time budget (E2): replace the share of the target frame with a deadline after the
+  scene loop, order
   requests nearest first, and gate avatar builds.
 - Collision shapes and mesh hashing off the main thread, as the earlier engine did: the walk-in
   shows single nodes of about 40 ms.

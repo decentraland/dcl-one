@@ -14,6 +14,7 @@ use common::{
     sets::PostUpdateSets,
     structs::{PrimaryCamera, PrimaryUser},
 };
+use scene_runner::parcel_to_vec3;
 
 /// Metres a second, a jog.
 pub const WALK_SPEED: f32 = 6.0;
@@ -31,14 +32,6 @@ pub(super) fn register(app: &mut App) {
             .after(PostUpdateSets::PlayerUpdate)
             .before(PostUpdateSets::CameraUpdate),
     );
-}
-
-/// The centre of a parcel on the ground plane (world x, world z), where a teleport lands.
-fn parcel_centre(parcel: IVec2) -> Vec2 {
-    Vec2::new(
-        parcel.x as f32 * 16.0 + 8.0,
-        -(parcel.y as f32 * 16.0 + 8.0),
-    )
 }
 
 /// Where the walk is `elapsed` seconds after it began: on the line from `from` to `to` at `speed`,
@@ -80,7 +73,8 @@ fn walk(
     let Ok(mut transform) = player.single_mut() else {
         return;
     };
-    let to = parcel_centre(target.to);
+    // the parcel's centre on the ground plane (world x, world z), where a teleport lands
+    let to = parcel_to_vec3(target.to).xz();
     let now = time.elapsed_secs_f64();
     let (from, began) = *state.began.get_or_insert_with(|| {
         let from = transform.translation.xz();

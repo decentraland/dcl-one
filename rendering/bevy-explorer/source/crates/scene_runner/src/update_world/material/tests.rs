@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use common::structs::{OutOfWorld, PrimaryUser};
-use comms::profile::{ProfileCache, ProfileMetaCache};
+use comms::profile::ProfileCache;
 use dcl_component::proto_components::{
     common::Color4,
     sdk::components::pb_material::{self, PbrMaterial},
@@ -9,7 +9,7 @@ use dcl_component::proto_components::{
 
 use super::*;
 use crate::{
-    scene_spawn_slice::{InstantiationCharges, SCENE_SPAWN_SLICE},
+    scene_spawn_slice::{slice, tests::SIXTY_FPS, InstantiationCharges},
     update_world::mesh_renderer::{
         tests::{a_box, fit, record_charges, scene_entity, test_app, Charged},
         PendingPrimitive, PRIMITIVE_COST,
@@ -23,7 +23,6 @@ fn material_app() -> (App, Entity) {
     app.init_asset::<Image>()
         .init_asset::<StandardMaterial>()
         .init_resource::<ProfileCache>()
-        .init_resource::<ProfileMetaCache>()
         .init_resource::<CachedMaterialOwners>()
         .add_systems(
             Update,
@@ -266,7 +265,7 @@ fn a_primitive_and_its_new_material_appear_in_the_same_frame() {
     // room for exactly two primitives with their new materials
     preset_charges(
         &mut app,
-        SCENE_SPAWN_SLICE - 2 * (PRIMITIVE_COST + NEW_MATERIAL_COST),
+        slice(Some(SIXTY_FPS)) - 2 * (PRIMITIVE_COST + NEW_MATERIAL_COST),
     );
 
     app.update();
