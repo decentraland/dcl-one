@@ -101,7 +101,11 @@ function ProfileCollectiblesProgress({ label }: { label: string }) {
 }
 
 /** The app's router link, so following it is a client navigation; a plain anchor otherwise. */
-type ProfileCollectiblesLinkProps = { to: string; className: string; children: ReactNode }
+type ProfileCollectiblesLinkProps = {
+  to: string
+  className?: string | undefined
+  children: ReactNode
+}
 
 function AnchorLink({ to, ...props }: ProfileCollectiblesLinkProps) {
   return <a href={to} {...props} />

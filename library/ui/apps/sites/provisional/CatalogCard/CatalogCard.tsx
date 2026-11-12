@@ -35,7 +35,7 @@ type CatalogCardRarity =
   'common' | 'uncommon' | 'rare' | 'epic' | 'legendary' | 'exotic' | 'mythic' | 'unique'
 
 /** The app's router link, so opening the item is a client navigation; a plain anchor otherwise. */
-type CatalogCardLinkProps = { to: string; className: string; children: ReactNode }
+type CatalogCardLinkProps = { to: string; className?: string | undefined; children: ReactNode }
 
 type CatalogCardProps = {
   title: string
