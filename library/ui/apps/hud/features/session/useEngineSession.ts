@@ -3031,7 +3031,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       })
       .catch((e: unknown) => {
         console.error('[login] post-launch login failed:', e)
-        if (stale()) return
+        // an unattended run's host still hears of the failure, which ends the run
+        if (boot.current.autoLogin !== 'unattended' && stale()) return
         restoreHudSignIn()
         // The engine driver rejects with a RAW STRING (wasm-bindgen JsValue), not an Error —
         // e.message would be undefined and the login screen would show no error at all.
@@ -3190,12 +3191,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // Boot the engine straight at the chosen destination, then run the deferred login. `engine_run`
     // is heavy and runs on the shared main thread, so defer it a paint (rAF, setTimeout fallback) so
     // the loading overlay is on screen before the freeze — same trick as the login loader. Run once.
+    const signOut = signOuts.current
     let ran = false
     const run = (): void => {
       // Bail if the session unmounted during the deferred kick — cleanup nulls driverRef, so this
       // guards against launching on a disposed driver (the rAF/timeout aren't otherwise cancellable).
       if (ran || driverRef.current == null) return
       ran = true
+      // signed out before the deferred run: neither the launch nor the sign-in runs
+      if (signOuts.current !== signOut) return setBusy(false)
       if (driver.launch == null) {
         travelInPlace(driver, dest)
         runPendingLogin(driver)
@@ -3288,10 +3292,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     if (dest != null && dest.kind === 'world') {
       if (validatingRealm.current) return
       validatingRealm.current = true
+      const signOut = signOuts.current
       // Launching against an unreachable realm strands the engine in a cryptic login failure, so
       // block up front: 404 → not found, no/failed answer (incl. timeout) → unreachable.
       checkRealm(dest.realm)
         .then((result) => {
+          // signed out meanwhile: the next sign-in checks the realm again
+          if (signOuts.current !== signOut) return
           if (result === 'ok') pickDestination(dest)
           else {
             urlDestination.current = null
@@ -3748,10 +3755,13 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       if (!launchedRef.current) setLobbyStageReady(false)
       setBusy(true)
       busyRef.current = true
+      const signOut = signOuts.current
       let ran = false
       const run = (): void => {
         if (ran || driverRef.current == null) return
         ran = true
+        // signed out before the deferred run: the sign-in never runs
+        if (signOuts.current !== signOut) return setBusy(false)
         if (driver.launch != null && !launchedRef.current) {
           const home = driver.homeScene?.()
           if (!launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })) {

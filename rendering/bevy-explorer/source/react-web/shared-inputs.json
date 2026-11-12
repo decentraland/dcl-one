@@ -4206,7 +4206,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/session.test.tsx",
-      "sha256": "c2e05163e50d77e02fd09019484fb2f81428db3b9cc58caf48698573f94b891e"
+      "sha256": "94013ce7b410d820a6c6f1adb1a8262a02780765d9e139f5b25af192fc31ee01"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/test/setup.ts",
@@ -6594,7 +6594,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "c11d02125ff8f80f6edeb485713e6b015baa4d5dd5c67a8c43a8a6ef216e1ea9"
+      "sha256": "d03ee3a1608ce0d292ab45ea4327fb7bd9b0b00eb2d6b9f1a659630f81e82453"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6914,7 +6914,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/hudLogin.test.tsx",
-      "sha256": "ff85ab4d313f87316013088306715382901992b40b580013ca9594e8e7a16ef9"
+      "sha256": "164d9b4800a05d67cb1100b8574169326a54564c085402d22dbce64b7b8eaa2a"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/inWorldConversion.test.tsx",

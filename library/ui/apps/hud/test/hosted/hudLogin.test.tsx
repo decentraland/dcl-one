@@ -560,6 +560,47 @@ describe('/hud_logout', () => {
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
   })
 
+  it('a /hud_logout before the deferred sign-in has run drops it, and the start page stays as it is', async () => {
+    const driver = new IdentityDriver()
+    driver.welcome = { terms: true, newProfile: false }
+    const h = await ready(driver)
+    const welcomes = driver.sentOf('getWelcome').length
+    let ended!: Promise<void>
+    // in one task: the sign-in waits a paint before it runs, and the sign-out comes first
+    await act(async () => {
+      ended = expect(login(ENCODED)).rejects.toThrow('signed out')
+      expect(await logout()).toBe('signed out')
+    })
+    await ended
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    expect(driver.identityLogins).toEqual([])
+    expect(driver.sentOf('getWelcome')).toHaveLength(welcomes)
+    expect(h.session().phase).toBe('login')
+    await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
+  })
+
+  it("on a link's page, a realm check that answers after /hud_logout is dropped", async () => {
+    const leave = onPage('/?realm=http://127.0.0.1:9999')
+    let realmAnswers!: (response: Response) => void
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => (realmAnswers = resolve)))
+    try {
+      const driver = new LaunchingDriver()
+      const h = await ready(driver)
+      const ended = expect(login(ENCODED)).rejects.toThrow('signed out')
+      await waitFor(() => expect(fetchSpy).toHaveBeenCalled())
+      await act(async () => expect(await logout()).toBe('signed out'))
+      await ended
+      await act(async () => realmAnswers(new Response('', { status: 404 })))
+      // no "World not found" over the start page, and nothing launched or signed in
+      expect(h.session().fatalError).toBeNull()
+      expect(driver.identityLogins).toEqual([])
+      expect(h.session().phase).toBe('login')
+    } finally {
+      fetchSpy.mockRestore()
+      leave()
+    }
+  })
+
   it('a sign-in the engine lands after /hud_logout is signed out again, and the start page stays as it is', async () => {
     const driver = new IdentityDriver()
     driver.hold = true
