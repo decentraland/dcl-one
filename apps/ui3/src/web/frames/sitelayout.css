@@ -47,3 +47,7 @@
   .site-layout[data-header-layout="native"] > .site-layout__sidebar { display: none; }
   .site-layout[data-header-layout="native"] > .site-layout__content { flex: 1 1 auto; }
 }
+
+.site-layout[data-header-layout="native"][data-header-overlay] { grid-template-rows: minmax(0, 1fr); }
+.site-layout[data-header-layout="native"][data-header-overlay] > .site-layout__navigation { grid-area: 1 / 1 / 2 / -1; height: 0; flex: 0 0 0; }
+.site-layout[data-header-layout="native"][data-header-overlay] > .site-layout__content { grid-area: 1 / 1 / 2 / -1; }

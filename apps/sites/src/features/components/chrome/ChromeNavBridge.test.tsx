@@ -3,6 +3,7 @@ import { renderToString } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
+import SiteLayout from "@ui/web/frames/SiteLayout";
 import DclTopBar from "@ui/web/frames/DclTopBar";
 import ChromeLink from "@ui/web/frames/ChromeLink";
 import { useChromeNav } from "@ui/web/frames/chrome-nav";
@@ -95,4 +96,13 @@ describe("ChromeNavBridge", () => {
     expect(html).not.toContain("data-discover");
     expect(html).toContain('href="/shop"');
   });
+});
+
+
+it("selects overlay geometry only for the explicit native header policy", () => {
+  const legacy = renderToString(<SiteLayout overlayNavigation>Hero</SiteLayout>);
+  expect(legacy).not.toContain('data-header-overlay');
+  const native = renderToString(<MemoryRouter><ChromeNavBridge><SiteLayout overlayNavigation>Hero</SiteLayout></ChromeNavBridge></MemoryRouter>);
+  expect(native).toContain('data-header-layout="native"');
+  expect(native).toContain('data-header-overlay="true"');
 });

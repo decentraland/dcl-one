@@ -236,7 +236,7 @@ export default function SitesChrome({
   };
 
   return (
-    <SiteLayout navigation={!hideNav ? <DclTopBar
+    <SiteLayout overlayNavigation={overlayNav} navigation={!hideNav ? <DclTopBar
       variant="sites" active={ACTIVE_MAP[active]} signedIn={isIn} account={acct}
       onSignIn={signIn} fetchNotifications={auth.fetchNotifications}
     /> : null} sections={profileNav ? closeMenu => <SiteSectionNavigation
