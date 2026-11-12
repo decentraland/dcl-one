@@ -26,7 +26,7 @@ use bevy::{
 };
 use common::{
     sets::PostUpdateSets,
-    structs::{CurrentRealm, EngineMovementControl, PrimaryUser},
+    structs::{CurrentRealm, EngineMovementControl, LandscapeDistance, PrimaryUser},
     terrain::{
         height, texel_value, uv_size, PlayerTerrainHeight, TerrainChange, TerrainTargets,
         MAX_STEPS, ZERO,
@@ -60,6 +60,7 @@ impl Plugin for TerrainPlugin {
         embed_shaders(app);
 
         app.init_resource::<TerrainSurface>()
+            .init_resource::<LandscapeDistance>()
             .init_resource::<PlayerTerrainHeight>()
             .init_resource::<TerrainTextureWrites>()
             .add_plugins(ExtractResourcePlugin::<TerrainTextureWrites>::default())
@@ -130,6 +131,8 @@ mod decl {
         /// coast bounds in unity x/z metres (min x, min z, max x, max z); the ground ends at the
         /// cliffs
         pub coast: Vec4,
+        /// hills are displaced out to this many metres from the player (`hill_reach`)
+        pub hill_reach: f32,
     }
 
     /// Coast bounds that no point is beyond.
@@ -145,6 +148,7 @@ mod decl {
                 player_parcel: IVec2::ZERO,
                 player_offset: Vec2::ZERO,
                 coast: NO_COAST,
+                hill_reach: super::hill_reach(super::LandscapeDistance::default().0),
             }
         }
     }
@@ -253,6 +257,7 @@ pub struct TerrainSurface {
     player_parcel: IVec2,
     player_offset: Vec2,
     coast: Vec4,
+    hill_reach: f32,
     changes: SurfaceChanges,
 }
 
@@ -272,6 +277,7 @@ impl Default for TerrainSurface {
             player_parcel: IVec2::ZERO,
             player_offset: Vec2::ZERO,
             coast: NO_COAST,
+            hill_reach: TerrainParams::default().hill_reach,
             changes: SurfaceChanges::default(),
         }
     }
@@ -287,6 +293,15 @@ fn union(rect: Option<(IVec2, IVec2)>, min: IVec2, max: IVec2) -> Option<(IVec2,
 impl TerrainSurface {
     pub fn changes(&self) -> &SurfaceChanges {
         &self.changes
+    }
+
+    /// Displace the hills out to `hill_reach(distance)`.
+    pub fn set_landscape_distance(&mut self, distance: f32) {
+        let reach = hill_reach(distance);
+        if reach != self.hill_reach {
+            self.hill_reach = reach;
+            self.changes.params = true;
+        }
     }
 
     /// Coast bounds in unity x/z metres (min x, min z, max x, max z), if there is a coast.
@@ -317,6 +332,7 @@ impl TerrainSurface {
                 player_parcel: self.player_parcel,
                 player_offset: self.player_offset,
                 coast: self.coast,
+                hill_reach: self.hill_reach,
             },
             None => TerrainParams {
                 min: IVec2::ZERO,
@@ -326,6 +342,7 @@ impl TerrainSurface {
                 player_parcel: self.player_parcel,
                 player_offset: self.player_offset,
                 coast: self.coast,
+                hill_reach: self.hill_reach,
             },
         }
     }
@@ -586,9 +603,11 @@ fn sync(
     // when the scene unloads
     mut enabled: Local<Option<bool>>,
     mut surface: ResMut<TerrainSurface>,
+    distance: Res<LandscapeDistance>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
 ) {
     surface.changes = SurfaceChanges::default();
+    surface.set_landscape_distance(distance.0);
     if let Ok(player) = player.single() {
         let translation = player.translation();
         let parcel = vec3_to_parcel(translation);
@@ -925,10 +944,25 @@ pub(crate) const GROUND_NEAR_MIN: i32 = -13;
 pub(crate) const GROUND_NEAR_MAX: i32 = 12;
 /// Cell size of the first rings around the per-parcel grids; each further ring doubles it.
 const RING_CELL: f32 = 16.0;
-/// Rings at `RING_CELL`, which follow the terrain: their cells move with the player in whole cells,
-/// so they sit on the same points. Coarser rings beyond would slide over it, so the ground there is
-/// flat (terrain_vertex.wgsl FLAT_REACH).
+/// Rings at `RING_CELL`. The ground moves with the player in whole parcels, so their cells sit on
+/// the same terrain points; terrain_vertex.wgsl snaps each coarser ring to its own cell size
+/// (`ring_origin`) so that its cells do too.
 const TERRAIN_RINGS: u32 = 2;
+/// Rings beyond the parcel grass area, out to 13 km, covering the old 1024-parcel ground plane and
+/// the highest `hill_reach`.
+pub(crate) const GROUND_RINGS: u32 = 6;
+
+/// How far the hills are displaced for a Landscape Distance: never short of the `RING_CELL` rings,
+/// which always followed the terrain.
+pub(crate) fn hill_reach(distance_m: f32) -> f32 {
+    distance_m.max(ground_extent(TERRAIN_RINGS))
+}
+
+/// Origin of a ground ring with `cell`-sized cells (Unity x/z): the corner of the player's cell,
+/// so the ring moves only in whole cells. terrain_vertex.wgsl's `ring_origin` does the same.
+pub(crate) fn ring_origin(player: Vec2, cell: f32) -> Vec2 {
+    (player / cell).floor() * cell
+}
 
 /// Flat ground relative to the player's parcel corner (Unity x/z). Parcels near the player get
 /// `segments(offset)` cells a side, matching the parcel grass over them, so both share vertices.
@@ -997,10 +1031,10 @@ pub(crate) fn ground_extent(rings: u32) -> f32 {
     (-GROUND_NEAR_MIN * 16) as f32 * (1 << rings) as f32
 }
 
-/// Ground placement: the corner of the player's parcel.
+/// Ground placement: the corner of the player's parcel, the origin of the `RING_CELL` rings.
 pub(crate) fn ground_origin(player: Vec3) -> Vec3 {
-    let parcel = vec3_to_parcel(player);
-    Vec3::new(parcel.x as f32 * 16.0, 0.0, -(parcel.y as f32) * 16.0)
+    let corner = ring_origin(Vec2::new(player.x, -player.z), RING_CELL);
+    Vec3::new(corner.x, 0.0, -corner.y)
 }
 
 #[cfg(test)]

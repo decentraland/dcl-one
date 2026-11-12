@@ -27,7 +27,7 @@ use scene_runner::{
 use crate::landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures};
 use crate::terrain::{
     ground_extent, ground_mesh, ground_origin, parcel_mesh, terrain_vertex_shader,
-    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface,
+    TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface, GROUND_RINGS,
     TERRAIN_TEXTURE,
 };
 
@@ -47,8 +47,6 @@ const GROUND_MATERIAL_FLAT_COLOR: Handle<TerrainFlatMaterial> =
     weak_handle!("3e91f222-a374-4f7f-ba1a-4a239c9734ae");
 const GROUND_LAYERS: u32 = 5;
 const GROUND_DISPLACEMENT: f32 = 0.01;
-// rings beyond the parcel grass area, out to 13 km, covering the old 1024-parcel ground plane
-const GROUND_RINGS: u32 = 6;
 // terrain rises at most 8 steps of 1.8 m plus ~4.4 m of noise
 const GROUND_MIN_Y: f32 = -5.0;
 const GROUND_MAX_Y: f32 = 25.0;

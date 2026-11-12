@@ -340,6 +340,24 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   faces and its smoothness) is projected along the three world axes, at the texel density of
   Unity's cliff mesh (17.08 m per repeat). The rock's per-facet grey tint is gone; the sand
   below keeps bevy's colour and shore effects rather than Unity's beach material.
+- **The hills follow the Landscape Distance.** Unity displaces its whole terrain and the setting
+  does not drive it. Here the ground's rings are displaced out to the Landscape Distance from the
+  player, never less than the 832 m the parcel-sized rings always reached, and the hills flatten
+  over a further tenth of it, so the rest of the 13 km ground costs the vertex shader nothing and
+  walking moves no vertex abruptly. Each ring coarser than a parcel snaps to its own cell size, so
+  its vertices stay on the same terrain points and the far hills do not swim.
+- **Cliffs reach 768 m at most.** Unity culls each cliff prefab whose bounds are beyond the
+  Landscape Distance from the camera. Bevy's cliffs are procedural chunks built around the
+  player's parcel out to the nearer of 768 m and the Landscape Distance: building them out to
+  7 km would mean hundreds of chunks with their invisible walls.
+- **One sea plane.** Unity culls its water chunks one by one beyond the Landscape Distance. Bevy
+  has one sea plane, shown while the nearest sea (beyond the terrain bounds, at sea level) is
+  within the Landscape Distance of the camera.
+- **Graphics presets leave the Landscape Distance alone.** Unity's Low, Medium and High set it to
+  500, 1000 and 7000 m. The Graphics Preset setting
+  (`source/react-web/bridge-scene/src/domains/settings.ts`) assumes the engine defaults are its Low
+  preset, and the default here is Unity's 1000 m, so mapping it would show every fresh install as
+  Custom.
 
 ## Deliberate choices that look like mistakes
 

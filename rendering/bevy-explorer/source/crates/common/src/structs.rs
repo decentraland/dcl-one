@@ -581,6 +581,8 @@ pub struct AppConfig {
     pub scene_imposter_multisample_amount: f32,
     pub scene_imposter_bake: SceneImposterBake,
     pub parcel_grass_setting: ParcelGrassSetting,
+    /// The Landscape Distance setting in metres ([`LandscapeDistance`]).
+    pub landscape_distance: f32,
     pub sysinfo_visible: bool,
     pub scene_log_to_console: bool,
     pub max_avatars: usize,
@@ -644,6 +646,7 @@ impl Default for AppConfig {
             scene_imposter_multisample_amount: 0.0,
             scene_imposter_bake: SceneImposterBake::Off,
             parcel_grass_setting: Default::default(),
+            landscape_distance: LandscapeDistance::default().0,
             sysinfo_visible: false,
             scene_log_to_console: false,
             max_avatars: 20,
@@ -1088,6 +1091,17 @@ pub struct SceneLoadDistance {
     pub load: f32,
     pub unload: f32, // additional
     pub load_imposter: f32,
+}
+
+/// The Landscape Distance setting in metres: how far the hills are displaced and the cliffs and
+/// the sea are drawn.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct LandscapeDistance(pub f32);
+
+impl Default for LandscapeDistance {
+    fn default() -> Self {
+        Self(1000.0)
+    }
 }
 
 #[derive(Debug)]

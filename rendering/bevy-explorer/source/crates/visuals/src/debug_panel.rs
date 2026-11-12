@@ -8,7 +8,9 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, PrimaryCamera, SceneLoadDistance, TimeOfDay, WorldHold};
+use common::structs::{
+    CurrentRealm, LandscapeDistance, PrimaryCamera, SceneLoadDistance, TimeOfDay, WorldHold,
+};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
@@ -64,6 +66,7 @@ pub(super) fn register(app: &mut App) {
         query: "/landscape",
         fields: &[
             ("Scene load distance (m)", "loadDistance"),
+            ("Landscape distance (m)", "landscapeDistance"),
             ("Loaded trees", "treeCount"),
             ("Grass parcels", "grassParcels"),
             ("Satellite floor shown", "satelliteShown"),
@@ -170,7 +173,7 @@ fn landscape_command(
     mut cmd: ConsoleCommand<LandscapeCommand>,
     preview: Option<Res<common::structs::PreviewMode>>,
     mut layers: ResMut<LandscapeLayers>,
-    load: Res<SceneLoadDistance>,
+    (load, landscape): (Res<SceneLoadDistance>, Res<LandscapeDistance>),
     (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
     textures: Res<LandscapeTextures>,
     (trees, grass): (Query<(), With<Tree>>, Query<(), With<ParcelGrass>>),
@@ -191,8 +194,8 @@ fn landscape_command(
     let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
     let ground_textures = landscape_textures::load_state(&textures);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
-        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "satelliteShown":satellite_shown,
-        "groundTextures":ground_textures}).to_string());
+        "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "landscapeDistance":landscape.0,
+        "satelliteShown":satellite_shown, "groundTextures":ground_textures}).to_string());
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;
