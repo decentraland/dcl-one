@@ -18,6 +18,7 @@ const CtaTargetSchema = z.object({
 const HeroSchema = z.object({
   kicker: z.string(),
   title: z.string(),
+  mobileTitle: z.string().optional(),
   subtitle: z.string(),
   downloads: z.string().nullish().transform((v) => v ?? null),
   downloadsLabel: z.string(),

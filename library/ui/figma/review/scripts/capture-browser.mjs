@@ -11,6 +11,22 @@ import { cleanupCapture, removeProfile, stopBrowser } from './capture-teardown.m
 
 class CaptureTimeout extends Error {}
 
+/**
+ * A command was in flight in a document that a navigation of the top frame replaced, which the session observed
+ * starting while the command was pending. Chrome answers such a command with -32000; any other answer, or the same
+ * answer with no navigation observed (a crash, a closed target), stays an ordinary error.
+ */
+class NavigationInterrupted extends Error {}
+
+// What Chrome answers for a command whose document or execution context went away.
+const CONTEXT_LOST = [
+  'Inspected target navigated or closed',
+  'Execution context was destroyed',
+  'Cannot find context with specified id'
+]
+const lostContext = (error) =>
+  error?.cdp?.code === -32000 && CONTEXT_LOST.some((text) => error.cdp.message?.startsWith(text))
+
 async function findBrowser(candidates) {
   for (const candidate of candidates.filter(Boolean)) {
     try {
@@ -29,6 +45,8 @@ async function openSession(executable, { signal } = {}) {
   let socket
   let closing
   const pending = new Map()
+  // Waiters for the top frame to stop loading; a closed session rejects them.
+  const loadWaiters = new Set()
   let startupError
   browser.on('error', (error) => {
     startupError = error
@@ -37,6 +55,8 @@ async function openSession(executable, { signal } = {}) {
     closing ??= (async () => {
       for (const reject of pending.values()) reject(new Error('Capture browser session closed'))
       pending.clear()
+      for (const waiter of loadWaiters) waiter.reject(new Error('Capture browser session closed'))
+      loadWaiters.clear()
       try {
         await stopBrowser({ socket, browser })
       } finally {
@@ -104,9 +124,22 @@ async function openSession(executable, { signal } = {}) {
     let serial = 0
     const abort = () => {
       for (const reject of pending.values()) reject(signal.reason)
+      for (const waiter of loadWaiters) waiter.reject(signal.reason)
+      loadWaiters.clear()
     }
     signal?.addEventListener('abort', abort, { once: true })
     const requestsById = new Map()
+    // The top frame's navigation state, from its Page events. `navigations` counts every navigation it requested or
+    // started that replaces its document. `loading` holds from the first of those events (or frameStartedLoading, which
+    // a same-document navigation also fires) to frameStoppedLoading, so a navigation requested but not yet loading
+    // counts as loading. `committed` holds the loader of every document the frame committed. Child frames are left out.
+    let mainFrame
+    let navigations = 0
+    let loading = false
+    const committed = new Set()
+    const settle = () => {
+      for (const waiter of loadWaiters) if (waiter.ready()) waiter.resolve()
+    }
     const session = {
       requests: [],
       requestFailures: [],
@@ -138,6 +171,29 @@ async function openSession(executable, { signal } = {}) {
         void observeTarget(message.params.sessionId).catch((error) => {
           session.requestFailures.push({ error: error.message })
         })
+      } else if (message.method === 'Page.frameNavigated') {
+        if (message.sessionId || message.params.frame.id !== mainFrame) return
+        committed.add(message.params.frame.loaderId)
+        settle()
+      } else if (
+        message.method === 'Page.frameRequestedNavigation' ||
+        message.method === 'Page.frameStartedNavigating' ||
+        message.method === 'Page.frameStartedLoading' ||
+        message.method === 'Page.frameStoppedLoading'
+      ) {
+        if (message.sessionId || message.params.frameId !== mainFrame) return
+        // A request to open the link elsewhere (a new tab or window) leaves this document in place.
+        if ((message.params.disposition ?? 'currentTab') !== 'currentTab') return
+        if (message.method === 'Page.frameStartedLoading') loading = true
+        else if (message.method === 'Page.frameStoppedLoading') {
+          loading = false
+          settle()
+        }
+        // A same-document navigation (history API, fragment) keeps the document and its execution context.
+        else if (!/sameDocument/i.test(message.params.navigationType ?? '')) {
+          navigations++
+          loading = true
+        }
       } else if (message.method === 'Runtime.exceptionThrown')
         session.runtimeErrors.push(
           message.params.exceptionDetails.exception?.description ??
@@ -166,7 +222,8 @@ async function openSession(executable, { signal } = {}) {
             reject(error)
             return
           }
-          if (message.error) reject(new Error(JSON.stringify(message.error)))
+          if (message.error)
+            reject(Object.assign(new Error(JSON.stringify(message.error)), { cdp: message.error }))
           else resolve(message.result)
         })
         socket.send(JSON.stringify({ id, method, params, sessionId }))
@@ -181,12 +238,61 @@ async function openSession(executable, { signal } = {}) {
         await send('Runtime.runIfWaitingForDebugger', {}, sessionId)
       }
     }
-    session.evaluate = async (expression) => {
-      const result = await session.send('Runtime.evaluate', {
-        expression,
-        awaitPromise: true,
-        returnByValue: true
+    Object.defineProperties(session, {
+      navigations: { get: () => navigations },
+      loading: { get: () => loading }
+    })
+    // Resolves once the top frame is not loading and, given a loader id, has committed that loader's document.
+    const whenLoaded = (timeout = 30_000, loaderId) =>
+      new Promise((resolve, reject) => {
+        if (signal?.aborted) return reject(signal.reason)
+        if (closing) return reject(new Error('Capture browser session closed'))
+        const ready = () => !loading && (!loaderId || committed.has(loaderId))
+        if (ready()) return resolve()
+        const timer = setTimeout(() => {
+          loadWaiters.delete(waiter)
+          reject(new CaptureTimeout('Timed out waiting for the page to finish loading'))
+        }, timeout)
+        const waiter = {
+          ready,
+          resolve: () => {
+            loadWaiters.delete(waiter)
+            clearTimeout(timer)
+            resolve()
+          },
+          reject: (error) => {
+            loadWaiters.delete(waiter)
+            clearTimeout(timer)
+            reject(error)
+          }
+        }
+        loadWaiters.add(waiter)
       })
+    session.whenLoaded = (timeout) => whenLoaded(timeout)
+    // Page.navigate answers before the new document commits; this resolves once that document committed and the top
+    // frame finished loading, after any redirect the document makes while it loads. A navigation that failed or
+    // stayed within the document commits no new loader of its own, so only the loading state is awaited then.
+    session.navigate = async (url, timeout = 30_000) => {
+      const result = await session.send('Page.navigate', { url })
+      await whenLoaded(timeout, result?.errorText ? undefined : result?.loaderId)
+      return result
+    }
+    session.evaluate = async (expression) => {
+      const before = navigations
+      let result
+      try {
+        result = await session.send('Runtime.evaluate', {
+          expression,
+          awaitPromise: true,
+          returnByValue: true
+        })
+      } catch (error) {
+        if (navigations !== before && lostContext(error))
+          throw new NavigationInterrupted(`A navigation replaced the page during: ${expression}`, {
+            cause: error
+          })
+        throw error
+      }
       if (result.exceptionDetails)
         throw new Error(
           result.exceptionDetails.exception?.description ?? result.exceptionDetails.text
@@ -194,6 +300,7 @@ async function openSession(executable, { signal } = {}) {
       return result.result?.value
     }
     await session.send('Page.enable')
+    mainFrame = (await session.send('Page.getFrameTree'))?.frameTree?.frame?.id
     await session.send('Runtime.enable')
     await session.send('Network.enable')
     await session.send('Target.setAutoAttach', attachment)
@@ -207,4 +314,4 @@ async function openSession(executable, { signal } = {}) {
   }
 }
 
-export { findBrowser, openSession }
+export { NavigationInterrupted, findBrowser, openSession }

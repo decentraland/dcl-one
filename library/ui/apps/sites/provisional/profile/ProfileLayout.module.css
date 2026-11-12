@@ -1,0 +1,74 @@
+/* TODO(figma-ds): replace with the Figma-generated profile layout's styles.
+ * The source's radial gradient (#7434B1 -> #481C6C -> #2B1040) has no token; the closest brand
+ * tokens stand in for it and are listed as a visual difference. */
+.root {
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 100vh;
+  /* The Sites top bar sits above the page, not over it, so only the source's gap below it remains. */
+  padding-top: var(--dcl-space-16);
+  padding-bottom: var(--dcl-space-64);
+  background: radial-gradient(
+    123.58% 82% at 9.01% 25.79%,
+    var(--dcl-brand-purple) 0%,
+    var(--dcl-brand-purple-dark) 37.11%,
+    var(--dcl-neutrals-black) 100%
+  );
+  color: var(--dcl-text-primary);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1650px;
+  margin: 0 auto;
+}
+
+.tabs {
+  width: 100%;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 1fr;
+  width: 100%;
+}
+
+.aside {
+  position: relative;
+  overflow: visible;
+  min-height: 320px;
+}
+
+.main {
+  box-sizing: border-box;
+  min-width: 0;
+  padding: var(--dcl-space-16);
+}
+
+@media (min-width: 1024px) {
+  .root {
+    padding-top: var(--dcl-space-24);
+  }
+
+  .content {
+    padding: 0 var(--dcl-space-32);
+  }
+
+  .withAside {
+    grid-template-columns: minmax(280px, 500px) 1fr;
+  }
+
+  .aside {
+    max-width: 500px;
+    min-height: 480px;
+  }
+
+  .main {
+    padding: var(--dcl-space-32);
+  }
+}

@@ -1,3 +1,5 @@
 VerifiedIcon.tsx ports the 18px solid-white product graphic from decentraland/sites (https://github.com/decentraland/sites) at revision 5aabce35423428332c81a4a78a7a9c2b486446b5, src/components/Icon/VerifiedIcon.tsx. The SVG path geometry, white fill and clipping rectangle are preserved. The local React wrapper gives repeated decorative instances distinct clip IDs. This graphic is separate from the shared gradient GeneralVerified icon.
 
 That source is licensed under the Apache License 2.0; the license is included at ../assets/LICENSE.
+
+DownloadSuccess, DownloadSuccessFooter and the installation screenshots port the DownloadSuccess/DownloadStepsLayout and LandingFooter surfaces of decentraland/sites at dd905b2a98d3450d73c8f8c562881ad45ff3c83c. CSS Modules retain their measured geometry, source artwork, browser highlights and page-specific gradient/tint values. These page-specific colors have no equivalent shared semantic tokens; approximating them would change the owner-requested visual design. Shared spacing, icons and typography assets remain from the shared foundations. Source is Apache-2.0 (../assets/LICENSE); Twemoji flags retain their asset notice.

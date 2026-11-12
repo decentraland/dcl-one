@@ -1,0 +1,49 @@
+.wrap {
+  position: relative;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.icon {
+  display: inline-flex;
+  flex: none;
+}
+
+.label {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+}
+
+.chev {
+  flex: 0 0 auto;
+  color: var(--ink-45);
+  font-size: var(--fs-lg);
+}
+
+/* Beside the row, its top level with the row's. */
+.flyout {
+  position: absolute;
+  top: 0;
+  left: 100%;
+  padding-left: 4px;
+  z-index: var(--z-popup);
+}
+
+/* No room on the right: the list opens on the row's left. */
+.flyoutLeft {
+  left: auto;
+  right: 100%;
+  padding-left: 0;
+  padding-right: 4px;
+}
+
+/* No room below: the list's bottom lines up with the row's. */
+.flyoutUp {
+  top: auto;
+  bottom: 0;
+}

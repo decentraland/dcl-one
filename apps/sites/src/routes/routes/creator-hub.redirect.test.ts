@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
@@ -26,7 +27,7 @@ describe("/creator-hub/* redirects to /create/*", () => {
     const response = await loader({
       request: new Request("https://sites.test/creator-hub/manage"),
       params: { "*": "manage" },
-      context: {},
+      context: new RouterContextProvider(),
     } as never);
     expect(response.status).toBe(308);
     expect(response.headers.get("Location")).toBe("/create/worlds");
