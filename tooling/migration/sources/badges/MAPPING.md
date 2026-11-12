@@ -96,10 +96,19 @@ wallet under two spellings are merged, never dropped:
   across the spellings (in jsonb order);
 - `updated_at`: the latest.
 
-The same rules merge into a row the node already holds, except `progress`,
-where the source's document replaces the node's: no node writer keeps one,
-so upstream's is the only state to resume from. `steps_done` never goes
-down, so a node-side grant survives re-runs.
+Wallet spellings are grouped before pagination and watermark filtering, so
+batch boundaries and incremental imports retain the complete source state.
+The watermark is the latest update across all spellings.
+
+Stored progress also participates in the merge: arrays are unioned, missing
+fields are retained, and conflicting scalar fields come from the document
+with the greater counter (then the newer timestamp; the source wins ties).
+The document's `steps` follows the maximum `steps_done`, preserving node-side
+grants and evaluator progress.
+
+After upgrading from an import that paged individual wallet spellings, run
+`run badges --step user_progress --restart` to rebuild complete documents
+and replace its old checkpoint.
 
 ## Not migrated
 

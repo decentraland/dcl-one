@@ -25,6 +25,10 @@ columns = [
   { name = "invited_user", type = "text" },
   { name = "referrer", type = "text" },
   { name = "status", type = "text" },
+  { name = "invited_user_ip", type = "text" },
+  { name = "signed_up_at", type = "timestamptz" },
+  { name = "tier_granted", type = "boolean" },
+  { name = "tier_granted_at", type = "timestamptz" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
 ]

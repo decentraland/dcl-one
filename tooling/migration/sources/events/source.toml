@@ -6,7 +6,7 @@ after = []
 notes = """
 Imports the events catalogue as this node's own ('local') rows; see MAPPING.md.
 Not migrated: event_categories (fixed list in events/categories.rs),
-profile_subscriptions (web-push retired, 410), jobs and notification_cursors
+jobs and notification_cursors
 (upstream scheduler state), the textsearch column (computed at read time).
 No signed envelopes exist upstream, so explore.events_local and
 explore.signed_actions get no rows. Moderators come from upstream
@@ -84,10 +84,25 @@ columns = [
   { name = "user", type = "text" },
   { name = "email", type = "text" },
   { name = "email_verified", type = "boolean" },
+  { name = "email_verified_at", type = "timestamptz" },
+  { name = "email_updated_at", type = "timestamptz" },
   { name = "use_local_time", type = "boolean" },
   { name = "notify_by_email", type = "boolean" },
   { name = "notify_by_browser", type = "boolean" },
   { name = "permissions", type = "jsonb" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "profile_subscription"
+targets = ["explore.event_profile_subscriptions"]
+extract = "profile_subscription.extract.sql"
+load = "profile_subscription.load.sql"
+key = ["endpoint"]
+columns = [
+  { name = "endpoint", type = "text" },
+  { name = "user", type = "text" },
+  { name = "p256dh", type = "text" },
+  { name = "auth", type = "text" },
 ]

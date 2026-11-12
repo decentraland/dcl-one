@@ -22,6 +22,7 @@ wins. Upstream `timestamp` columns hold UTC; referral timestamps are epoch milli
 | community_post_likes | community_post_likes | social.community_post_likes | liked_at |
 | referral_progress | referral_progress | social.referral_progress | updated_at |
 | referral_progress_viewed | referral_progress_viewed | social.referral_progress_viewed | updated_at |
+| referral_reward_images | referral_reward_images | social.referral_reward_images | created_at |
 | referral_emails | referral_emails | social.referral_emails | updated_at |
 
 Catch-up runs use `--since last`: member roles and ban lifts move no upstream timestamp, so
@@ -90,9 +91,6 @@ upstream. Private and unlisted communities, which the mirror never sees, are imp
 
 - `private_voice_chats`: live call state that expires within minutes. The LiveKit rooms do
   not move.
-- `referral_reward_images`: no target table.
-- `referral_progress.invited_user_ip`, `signed_up_at`, `tier_granted*`: no target columns.
-  `status` carries the progress, and the IP is personal data.
 - Community thumbnails: S3 objects, not rows in this database. `social.community_thumbnails`
   is filled when the blobs are moved, which is out of scope here.
 - Nothing in `chat.*` or `social.friend_messages`: this database holds no chat.
@@ -104,3 +102,17 @@ upstream. Private and unlisted communities, which the mirror never sees, are imp
 - `social.referral_progress*` / `referral_emails` may also be fed by referral-server's older
   database. `referral_progress` keeps the first referrer bound to a wallet, whichever source
   wrote it.
+
+## Referral state
+
+Progress includes the recorded IP (needed for signup limits), signup and tier timestamps,
+and the granted flag used by accepted-invite counts. Status and the granted flag stay
+consistent; completed progress does not regress on repeat imports. The first referrer wins,
+and existing IP and transition timestamps are retained. The older referral-server only fills
+gaps for the same referrer. Reward images retain their IDs and historical snapshots.
+No reward requests, retry state or deliveries are created; existing target reward execution
+fields are untouched. Redis login-day counters are not in this PostgreSQL database and
+require a separate cutover decision before referral logins are enabled.
+
+After upgrading an earlier import, restart `referral_progress` to populate fields whose
+source watermark has not changed. The reward-image step has its own checkpoint.

@@ -8,7 +8,7 @@ Pinned at `decentraland/worlds-content-server@10af5255bb04` (migrations
 | `world` | `worlds` | `worlds.worlds`, `world_permissions` (`access`), `world_access_communities` | One row per `lower(name)`. A lowercase spelling wins over a mixed-case one, otherwise the newest wins. The row is imported as local (`mirror_source` NULL). The `access` JSONB is split into `access_type`, `access_secret_hash` (the bcrypt hash, verified the same way by the node) and `access_nft`. A restricted setting with no secret or nft, or with an unknown type, becomes an empty `allow-list`, so it fails closed. `access.wallets` and `access.communities` (UUIDs only) replace the world's `access` grants and community rows. A `content_rating` outside `RP/E/T/A/R` becomes NULL; `categories` is capped at 20. |
 | `world_scene` | `world_scenes` | `worlds.world_scenes` | A `DEPLOYED` row is imported as a local publish with its auth chain (JSON text unchanged), entity JSONB, deployer, parcels and size. An `UNDEPLOYED` row deletes the local target row. Mirrored scenes of an imported world are deleted, as a local publish deletes them. The identities of removed scenes are retired. |
 | `world_scene_place` | `world_scenes` (`DEPLOYED`) | `explore.world_scene_place` | The `places` source has already bound most scenes exactly, through `places.deployment_id`. Those bindings are never changed here. For each imported scene still unbound, the identity is the retired upstream UUID the `places` source wrote for that world whose parcels overlap the scene, reactivated. That identity must not overlap any other local scene of the world. Otherwise the identity is `md5(world/entity)::uuid`. `world_scene` retires only the identities of the scenes it deletes. |
-| `world_permission` | `world_permissions` + `world_permission_parcels` | `worlds.world_permissions`, `world_permission_parcels` | Covers the `deployment` and `streaming` grants. Addresses are lowercased; a value that is not an address is dropped. Each row carries the grant's canonical `x,y` parcel set and replaces the target set. An empty set means a world-wide grant. Upstream bumps the grant's `updated_at` on every parcel edit. |
+| `world_permission` | `world_permissions` + `world_permission_parcels` | `worlds.world_permissions`, `world_permission_parcels` | Covers the `deployment` and `streaming` grants. Addresses are lowercased; a value that is not an address is dropped. Each row carries the grant's canonical `x,y` parcel set and replaces the target set. An empty source set means a world-wide grant. Coordinates cover the complete signed 32-bit range; any malformed or out-of-range restriction aborts the batch before changing grants. Upstream bumps the grant's `updated_at` on every parcel edit. |
 | `quota_block` | `blocked` | `worlds.quota_blocks` | Lowercased, address values only. Upstream's `blocked` is the storage-quota block of an owner over its allowance, not a visitor ban, so it never lands in `worlds.blocked_wallets` (the node's platform-wide ban). |
 
 ### Targets loaded by the former `blocked_wallet` step
@@ -173,3 +173,18 @@ the columns' range are capped (`max_parcels` at 2^31-1).
 - `forward_outbox`: upstream forwarding of new local publishes.
 - `world_access_log`: upstream has no such table.
 - `worlds.world_scene_identity`: a frozen upgrade source. It is never written.
+
+## Blocked names: required cutover preflight
+
+Export the running source deployment's `BLOCKED_WORLD_NAMES` setting to a JSON
+array file and pass `--worlds-blocked-names FILE` for worlds runs (including dry
+runs). An explicitly confirmed empty array `[]` is accepted; a missing file or
+nonempty list stops the migration. Do not infer an empty list from the database:
+this restriction is deployment configuration, not a table.
+
+The source blocks exact world names. The target's shared banned-name list removes
+`.eth`/`.dcl` when checking names, so copying this list could also block an
+unrelated sibling name. Setting `blocked_since` on existing worlds would miss
+blocked names without rows and does not establish equivalent admission checks.
+For a nonempty list, retain the current service owner until an equivalent target
+exact-name policy is implemented and verified across deployment and read routes.

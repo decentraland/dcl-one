@@ -1,3 +1,11 @@
+-- Never discard an invalid restriction: an empty parcel set grants the whole world.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM stage WHERE invalid_parcels > 0) THEN
+        RAISE EXCEPTION 'world permission has unrepresentable parcel restrictions; repair the source before migration';
+    END IF;
+END $$;
+
 -- A grant with no parcels is world-wide; the row carries the whole parcel
 -- set, so the grant's parcel rows are replaced.
 INSERT INTO worlds.world_permissions (world_name, permission, address, created_at, updated_at)

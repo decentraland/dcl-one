@@ -106,7 +106,7 @@ columns = [
 
 [[step]]
 name = "broadcast_read"
-targets = ["social.notifications"]
+targets = ["social.broadcast_notifications", "social.broadcast_reads"]
 extract = "broadcast_read.extract.sql"
 load = "broadcast_read.load.sql"
 key = ["notification_id", "source_address"]
@@ -122,19 +122,16 @@ columns = [
   { name = "read_at", type = "timestamptz" },
 ]
 
-# Address-less upstream rows, one stage row per (broadcast, address shard):
-# fanned out to every wallet the earlier steps and the node put in the
-# notification tables.
+# Address-less rows are stored once and visible to every wallet.
 [[step]]
 name = "broadcast"
-targets = ["social.notifications"]
+targets = ["social.broadcast_notifications", "social.broadcast_reads", "social.notifications"]
 extract = "broadcast.extract.sql"
 load = "broadcast.load.sql"
-key = ["id", "shard"]
+key = ["id"]
 watermark = "updated_at"
 columns = [
   { name = "id", type = "uuid" },
-  { name = "shard", type = "text" },
   { name = "type", type = "text" },
   { name = "metadata", type = "jsonb" },
   { name = "occurred_at", type = "timestamptz" },

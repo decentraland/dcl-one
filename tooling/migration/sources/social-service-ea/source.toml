@@ -11,8 +11,7 @@ row is deleted (communities step), and actively banned wallets lose their member
 (community_bans step), to keep the node's invariants.
 Not migrated: private_voice_chats (live call state, LiveKit rooms do not move),
 community_ranking_metrics and communities.ranking_score (upstream ranking job output, no
-writer on the node), referral_reward_images (no target table), referral_progress.invited_user_ip
-(personal data, no target column), community thumbnails (S3 objects, not in this database;
+writer on the node), community thumbnails (S3 objects, not in this database;
 blobs are out of scope). No chat tables live in this database.
 """
 
@@ -209,6 +208,10 @@ columns = [
   { name = "invited_user", type = "text" },
   { name = "referrer", type = "text" },
   { name = "status", type = "text" },
+  { name = "invited_user_ip", type = "text" },
+  { name = "signed_up_at", type = "timestamptz" },
+  { name = "tier_granted", type = "boolean" },
+  { name = "tier_granted_at", type = "timestamptz" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
 ]
@@ -239,4 +242,19 @@ columns = [
   { name = "email", type = "text" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "referral_reward_images"
+targets = ["social.referral_reward_images"]
+extract = "referral_reward_images.extract.sql"
+load = "referral_reward_images.load.sql"
+key = ["id"]
+watermark = "created_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "referrer", type = "text" },
+  { name = "reward_image_url", type = "text" },
+  { name = "tier", type = "integer" },
+  { name = "created_at", type = "timestamptz" },
 ]

@@ -399,7 +399,11 @@ def copy_one(source, store, key):
         if cid is None:
             staged.unlink()
             return Outcome(key, 'corrupt', reason=REASONS['corrupt'])
-        store.commit(staged, cid, replace=replace and cid == key)
+        # SHA-256 thumbnail keys resolve to a CID only after hashing. Check
+        # that destination too, so a retry repairs an existing corrupt file.
+        if cid != key and store.has(cid):
+            replace = store.intact(cid) is None
+        store.commit(staged, cid, replace=replace)
         return Outcome(key, 'copied', cid, hasher.size)
     except BaseException:
         staged.unlink(missing_ok=True)

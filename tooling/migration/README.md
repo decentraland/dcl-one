@@ -54,9 +54,17 @@ in-app purchases cannot be clawed back by a later Apple refund
   `COMMUNITIES_MIRROR_UPSTREAM`, `WORLDS_MIRROR_UPSTREAM`, ...) before its
   import, or the next mirror pass turns imported rows back into mirrored ones.
   The per-source `MAPPING.md` says which mirror applies.
-- **Freeze upstream writes for the final pass.** Re-runs do not see upstream
-  deletes (except the `whole` reconcile steps a manifest declares), so the
-  last `run --since last` happens after the old service stops writing.
+- **Freeze writers and scheduled jobs before the authoritative snapshot.**
+  Re-runs do not see upstream deletes (except the `whole` reconcile steps a
+  manifest declares). Freezing only before `run --since last` does not remove
+  rows deleted since an earlier import. Use an empty migration destination
+  for the frozen snapshot, or reconcile deletions explicitly before activation.
+  Keep target jobs and external side effects disabled until ownership transfers.
+- **External state needs a separate handover.** These SQL imports do not copy
+  referral Redis login-day state, live voice/streaming sessions or provider
+  ownership. Export/reconcile that state or drain it before activation. Builder
+  and camera media also need their documented external-file transfer; database
+  rows alone are not a complete service migration.
 - **Same secrets.** Values the upstream encrypted (world env variables) are
   copied as ciphertext; the node must run with the upstream key.
 
@@ -70,7 +78,7 @@ python3 tooling/migration/migrate.py list                 # sources, steps, vari
 python3 tooling/migration/migrate.py check places         # validate manifests and SQL, no writes
 python3 tooling/migration/migrate.py run places --dry-run # load everything, then roll back
 python3 tooling/migration/migrate.py run places           # migrate, resuming where it stopped
-python3 tooling/migration/migrate.py run all              # every source, in dependency order
+python3 tooling/migration/migrate.py run all              # excludes credits, shop and marketplace
 python3 tooling/migration/migrate.py status               # checkpoints per step
 python3 tooling/migration/migrate.py run places --since 2026-10-01T00:00:00Z
 python3 tooling/migration/migrate.py run places --since last
@@ -80,6 +88,32 @@ python3 tooling/migration/migrate.py blobs badges --to "$BADGES_ASSETS_DIR"   # 
 python3 tooling/migration/migrate.py worlds-limits whitelist.json --max-size-mb 100
 python3 tooling/migration/migrate.py worlds-unban-quota-blocks --dry-run   # one-off, see the worlds MAPPING.md
 ```
+
+`run all` excludes `credits-server`, `shop-server`, `marketplace-server` and
+`marketplace-favorites-server` entirely for security reasons, including dry
+runs and incremental imports. `--step` cannot opt them back into `all`.
+`list`, `check` and `status` continue to include them. Explicitly naming a
+source is reserved for its separately planned service handover.
+
+A configured `worlds-content-server` import also requires
+`--worlds-blocked-names blocked-names.json`: export its effective
+`BLOCKED_WORLD_NAMES` configuration as a JSON array. An explicit `[]` is
+accepted. A nonempty list stops the import until exact-name blocking has a
+compatible target policy; the target's global denylist is not equivalent.
+
+Import financial state only at the service handover, with upstream writers
+stopped, in-flight operations settled and the replacement's money-moving
+jobs disabled:
+
+```sh
+python3 tooling/migration/migrate.py run credits-server
+python3 tooling/migration/migrate.py run shop-server --step treasury_ledger --step treasury_pending_refill
+```
+
+These explicit commands also accept `--dry-run`. Selecting a financial step
+automatically includes its guard first; guards check outstanding operations,
+but do not stop upstream writers. Explicit `run shop-server` includes its
+financial steps as well as its other data, so it is a cutover command too.
 
 `blobs <source>` reads from the source database which objects its rows name,
 copies each from upstream storage (`--from-dir`, or `--from-s3 BUCKET`) into

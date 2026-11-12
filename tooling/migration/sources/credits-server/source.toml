@@ -7,7 +7,8 @@ notes = """
 Imports the USD Credits balance as a ledger (credits.ledger, all in the
 'paid' bucket) and its wallet projections, the wallets' program flags and the
 Stripe orders. See MAPPING.md. Run at cutover, with upstream writes stopped:
-cutover_guard refuses unsettled USD intents and in-flight Stripe orders.
+cutover_guard refuses PENDING/EXPIRED USD intents, in-flight Stripe orders,
+unresolved disputes and unreconciled dispute/refund facts.
 
 Not migrated, by reason:
 - MANA-denominated user_credits (goal, on_demand, legacy iap): each is a
@@ -19,8 +20,8 @@ Not migrated, by reason:
   run imports each once its available_at passes.
 - usd_purchase_intents as credits.authorizations: their salts were signed by
   upstream; the node's usage index would settle a matching CreditUsed log a
-  second time. SETTLED intents become 'spend' ledger rows; EXPIRED moved no
-  money.
+  second time. SETTLED intents become 'spend' ledger rows; EXPIRED liabilities
+  cannot be proven released from this snapshot and block the import.
 - stripe_events, stripe_payment_refunds, stripe_payment_disputes: webhook
   de-duplication and reconciliation state of upstream's endpoint; their
   outcome is folded into purchases.refunded_cents/revoked_credits and the

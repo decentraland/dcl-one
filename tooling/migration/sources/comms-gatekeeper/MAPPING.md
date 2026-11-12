@@ -1,6 +1,6 @@
 # comms-gatekeeper → catalyst
 
-Pinned at `edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786` (`src/migrations/` up to
+Pinned at `33d2e28aefad26b72902a8c5d694129df0de3b77` (`src/migrations/` up to
 `1791320003000_version-streaming-state`).
 
 | Upstream | Target | Notes |
@@ -13,13 +13,25 @@ Pinned at `edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786` (`src/migrations/` up to
 | `user_warnings` | `social.user_warnings` | Same `id`; upstream `created_at` has no target column. |
 | `player_connection_info` | `social.player_connections` | Watermark `updated_at`; a null never erases a known value, a newer node row wins. Holds IP addresses and device ids. |
 
-Scene identity: since `1771434939000` upstream keys scene admins and bans by
-the Places place UUID, the same id `explore.place` / `explore.world_scene_place`
-carry, so `place_id` is copied verbatim. Rows still keyed by a world name
-(that migration kept them when Places listed no scene for the world) are
-skipped; count them with
-`SELECT count(*) FROM scene_admin WHERE place_id !~* '^[0-9a-f]{8}-([0-9a-f]{4}-){3}[0-9a-f]{12}$'`
-(and the same on `scene_bans`).
+Scene identity: import Places and worlds first. Upstream scene admins and bans
+use Places UUIDs, but the target checks scene admins by entity ID, Genesis bans
+by entity ID, and world bans by `world_name:effective_base`. Resolve Genesis
+UUIDs through `explore.place.raw.deployment_id` to a live content deployment
+with active pointers. Resolve world UUIDs through the active
+`explore.world_scene_place` association and its `worlds.world_scenes` row.
+World ban bases use the target resolver's rules: the canonical declared base
+when it belongs to the footprint, otherwise the numerically first valid parcel.
+
+Both moderation steps read the complete source set in one transaction, so
+aliases of one target identity cannot land in separate batches and overwrite
+each other. Active/newest admin grants and earliest bans win deterministically.
+Size the cutover transaction for the complete moderation set.
+
+Missing or ambiguous bindings, including old world-name keys, abort the batch
+before writing moderation rows. Fix those bindings before cutover; never infer a
+scene by name or overlap. Genesis content deployments must already be populated
+on the destination; the Places import alone does not import content. Streaming
+credential IDs retain their separate Places UUID contract and are not rewritten.
 
 Addresses are lowercased; rows whose subject wallet is not `0x` + 40 hex are
 skipped. Actor columns (`added_by`, `banned_by`, ...) are lowercased only when

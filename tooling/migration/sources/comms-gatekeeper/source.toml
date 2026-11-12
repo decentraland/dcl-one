@@ -1,8 +1,8 @@
 name = "comms-gatekeeper"
 repository = "github.com/decentraland/comms-gatekeeper"
-revision = "edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786"
+revision = "33d2e28aefad26b72902a8c5d694129df0de3b77"
 database_env = "COMMS_GATEKEEPER_DATABASE_URL"
-after = []
+after = ["places", "worlds-content-server"]
 notes = """
 Not migrated: voice_chat_users and community_voice_chat_users (live LiveKit
 session membership; the node rebuilds it from webhooks and rejoins), and the
@@ -11,14 +11,16 @@ ingress_cleanup_retry_at: in-flight claims of the old process).
 The gatekeeper keeps no private_messages_privacy (it only forwards
 social-service's value to LiveKit metadata) and no player reports, so it
 writes neither social.user_settings nor social.player_reports.
-scene_admin and scene_bans rows whose place_id is not a places UUID (world
-names left by upstream migration 1771434939000 when Places had no scene for
-the world) are skipped: they match no place on the node. Rows whose wallet
+scene_admin and scene_bans resolve source Places UUIDs to the target runtime
+identity. Unresolved/ambiguous identities (including old world-name keys) stop
+the batch; do not cut over with missing moderation state. Rows whose wallet
 is not a 0x + 40 hex address are skipped. See MAPPING.md.
 Upstream timestamp columns (user_bans, user_warnings) are read as UTC.
-Only player_connection has a reliable watermark; re-scan the others with
---restart. Scene unbans are upstream DELETEs and are not propagated, so take
-the final pass with the old gatekeeper stopped. scene_stream_access retires
+Only player_connection has a reliable watermark. Moderation steps read the
+whole source set so aliases of one target identity are resolved together;
+re-scan other steps with --restart. Scene unbans are upstream DELETEs and are
+not propagated: use a frozen snapshot into an empty destination or explicitly
+reconcile deletions before activation. scene_stream_access retires
 (active = false) any other active target credential of a place whose
 upstream active credential it loads, to keep the one-active index.
 """
@@ -28,6 +30,7 @@ name = "scene_admin"
 targets = ["social.scene_admins"]
 extract = "scene_admin.extract.sql"
 load = "scene_admin.load.sql"
+whole = true
 key = ["place_id", "admin_address"]
 columns = [
   { name = "place_id", type = "text" },
@@ -42,6 +45,7 @@ name = "scene_ban"
 targets = ["social.scene_bans"]
 extract = "scene_ban.extract.sql"
 load = "scene_ban.load.sql"
+whole = true
 key = ["place_id", "banned_address"]
 columns = [
   { name = "place_id", type = "text" },

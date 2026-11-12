@@ -1,5 +1,9 @@
 # shop-server → shop
 
+`run all` excludes this entire source for security reasons. At cutover, run `run shop-server --step treasury_ledger
+--step treasury_pending_refill`; `treasury_guard` runs first automatically.
+Explicit `run shop-server` includes the treasury too.
+
 Source: the shop-server database at `609a1f69` (`src/migrations`). Its
 migrations are the same as at `dc1a8be96`, the revision `schemas/30_shop.sql`
 was derived from. Upstream times are epoch-ms `bigint`, except on the

@@ -746,6 +746,35 @@ def dry_run(plans, target_url, log):
         log(f'  {key}: {walk.reason}: {rows} rows ({summarize_tags(tags)}, rolled back)')
 
 
+# Financial state is imported only by explicitly naming its source. The
+# guard must accompany any selected financial step, even with --step.
+EXCLUDED_FROM_ALL = {'credits-server', 'shop-server', 'marketplace-server', 'marketplace-favorites-server'}
+CUTOVER_STEPS = {
+    'credits-server': {'cutover_guard', 'wallet', 'purchase', 'ledger'},
+    'shop-server': {'treasury_guard', 'treasury_ledger', 'treasury_pending_refill'},
+}
+CUTOVER_GUARDS = {'credits-server': 'cutover_guard', 'shop-server': 'treasury_guard'}
+
+
+def run_sources(sources, names, steps=None):
+    selected = ordered(sources, names)
+    if names == ['all']:
+        selected = [src for src in selected if src.name not in EXCLUDED_FROM_ALL]
+    unknown = set(steps or []) - {step.name for src in selected for step in src.steps}
+    if unknown:
+        raise MigrationError(f'unknown or excluded step(s): {", ".join(sorted(unknown))};'
+                             ' cutover steps require an explicit source, not `all`')
+    if steps:
+        filtered = []
+        for src in selected:
+            wanted = set(steps)
+            if wanted & CUTOVER_STEPS.get(src.name, set()):
+                wanted.add(CUTOVER_GUARDS[src.name])
+            filtered.append(dataclasses.replace(src, steps=[step for step in src.steps if step.name in wanted]))
+        selected = [src for src in filtered if src.steps]
+    return selected
+
+
 # ── commands ────────────────────────────────────────────────────────────────
 
 def ensure_checkpoint_table(target_url):
@@ -761,7 +790,8 @@ def cmd_list(args, sources):
         for step in source.steps:
             mode = (f'watermark {step.watermark}' if step.watermark
                     else 'whole set, one batch' if step.whole else 'full re-scan')
-            print(f'  {step.name}: {", ".join(step.targets)} (key {", ".join(step.key)}; {mode})')
+            cutover = ' [cutover only; excluded from run all]' if source.name in EXCLUDED_FROM_ALL else ''
+            print(f'  {step.name}: {", ".join(step.targets)} (key {", ".join(step.key)}; {mode}){cutover}')
     return 0
 
 
@@ -802,8 +832,27 @@ def cmd_check(args, sources):
     return 1 if failures else 0
 
 
+def validate_worlds_blocked_names(path):
+    if path is None:
+        raise MigrationError('worlds-content-server requires --worlds-blocked-names: export BLOCKED_WORLD_NAMES as a JSON array (including [] when empty)')
+    try:
+        names = json.loads(Path(path).read_text())
+    except (OSError, ValueError) as error:
+        raise MigrationError(f'cannot read world blocked-name export: {error}') from error
+    if not isinstance(names, list) or any(not isinstance(name, str) for name in names):
+        raise MigrationError('world blocked-name export must be a JSON array of strings')
+    if names:
+        raise MigrationError('nonempty BLOCKED_WORLD_NAMES cannot yet be migrated with exact-name semantics; resolve the target blocking policy before cutover')
+
+
 def cmd_run(args, sources):
-    selected = ordered(sources, args.sources)
+    selected = run_sources(sources, args.sources, args.step)
+    if args.sources == ['all']:
+        print('run all: excluding credits-server, shop-server and both marketplace sources; explicitly name the source at cutover',
+              flush=True)
+    if any(source.name == 'worlds-content-server' and os.environ.get(source.database_env)
+           for source in selected):
+        validate_worlds_blocked_names(args.worlds_blocked_names)
     target_url = database_url(args.target_env)
     missing = [s.database_env for s in selected if not os.environ.get(s.database_env)]
     if missing and not args.skip_unconfigured:
@@ -822,8 +871,6 @@ def cmd_run(args, sources):
             continue
         source_url = database_url(source.database_env)
         for step in source.steps:
-            if args.step and step.name not in args.step:
-                continue
             walk = plan_walk(step, checkpoints.get((source.name, step.name)), since=since,
                              since_last=args.since == 'last', overlap=args.overlap, restart=args.restart)
             plans.append((step, source_url, walk))
@@ -853,9 +900,6 @@ def cmd_run(args, sources):
             if verify_blobs(name, store, target_url, log, recorded_missing(name, target_url)):
                 raise MigrationError(f'{name}: imported rows name blobs missing from {store.contents};'
                                      ' re-run `blobs` (and never run the storage GC between `blobs` and `run`)')
-    unknown_steps = set(args.step or []) - {s.name for src in selected for s in src.steps}
-    if unknown_steps:
-        raise MigrationError(f'unknown step(s): {", ".join(sorted(unknown_steps))}')
     return 0
 
 
@@ -1359,8 +1403,9 @@ def parser():
     check.add_argument('sources', nargs='*')
     status = sub.add_parser('status', help='checkpoints in the target')
     status.add_argument('sources', nargs='*')
-    run = sub.add_parser('run', help='migrate sources (`all` for every one)')
+    run = sub.add_parser('run', help='migrate sources (`all` excludes credits, shop and marketplace)')
     run.add_argument('sources', nargs='+')
+    run.add_argument('--worlds-blocked-names', type=Path, help='JSON export of source BLOCKED_WORLD_NAMES; currently only an empty list is supported')
     run.add_argument('--dry-run', action='store_true', help='load every batch, then roll it back')
     run.add_argument('--step', action='append', help='only this step (repeatable)')
     run.add_argument('--since', help="ISO 8601 timestamp, or 'last'")

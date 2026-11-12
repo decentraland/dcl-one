@@ -8,7 +8,6 @@ FROM (
            row_number() OVER (PARTITION BY place_id, lower(banned_address)
                               ORDER BY banned_at, id) AS pick
     FROM scene_bans
-    WHERE place_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-      AND lower(banned_address) ~ '^0x[0-9a-f]{40}$'
+    WHERE lower(banned_address) ~ '^0x[0-9a-f]{40}$'
 ) b
 WHERE pick = 1

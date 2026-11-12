@@ -13,8 +13,8 @@ time is an epoch-ms `bigint`; extracts convert it exactly
 | `opt_out` | `notification_opt_outs` | `social.subscription_opt_outs` | Community `scope_id` canonicalized to the hyphenated lowercase uuid, as the node writes it; opaque ids kept. Earliest `created_at` wins. Each row this load inserts is recorded with its `created_at` in `dcl_migration.notification_opt_out_loaded`; an opt-out the node already held is not. |
 | `opt_out_reconcile` | `notification_opt_outs` (keys, whole set) | `social.subscription_opt_outs` | Deletes, see Deletions. |
 | `notification` | `notifications` with an address | `social.notifications` | Id preserved. `occurred_at` = `timestamp` (values below 1e11 are epoch seconds and are scaled); `read` = `read_at IS NOT NULL`; `in_app` = true (upstream showed every row). Read state only moves forward, so reads on the node survive a re-import. |
-| `broadcast_read` | `broadcast_read` ⨝ `notifications` | `social.notifications` | The reader's copy of the broadcast (ids and key as in `broadcast`), read. Runs before `broadcast`, so readers are in its audience. |
-| `broadcast` | `notifications` without an address | `social.notifications` | One row per recipient, `broadcast_key = 'notifications-workers:<upstream id>'`, id `md5(upstream id ':' address)::uuid`, so re-runs and `broadcast_read` land on the same row. See Broadcast audience. |
+| `broadcast_read` | `broadcast_read` ⨝ `notifications` | `social.broadcast_notifications`, `social.broadcast_reads` | Preserves the source broadcast ID and each normalized wallet's read receipt. Can seed missing parent broadcasts when run independently. |
+| `broadcast` | `notifications` without an address | `social.broadcast_notifications`, `social.broadcast_reads` | One global row per source ID, visible to new wallets as well. Converts copies from the former loader and preserves their read state. |
 
 All notification types are imported, including ones no node producer emits
 (governance, rentals, credits...): the bell lists rows regardless of type,
@@ -32,33 +32,18 @@ upstream did the same, and the client decides what it renders.
 - `notification_reader_seen`, `event_notification_intents`: no upstream
   equivalent.
 
-## Broadcast audience
+## Global broadcasts
 
-Upstream stored a broadcast once and showed it to every caller
-(`common/src/adapters/db.ts`, `n.address IS NULL`); the node stores one row
-per recipient. The recipients are every wallet in the target's notification
-tables when the batch loads: `social.subscriptions`, `social.notifications`,
-`social.subscription_opt_outs`, `social.unconfirmed_emails` and
-`social.notification_reader_seen`. After the earlier steps these hold every
-valid address upstream knew (subscriptions, addressed notifications,
-broadcast readers, opt-outs, pending emails), plus the wallets the node has
-seen itself, including every wallet that has polled the node's bell. Other
-social tables (friendships, community members, profiles) are not used: a
-wallet there never shown to open the bell would only add rows.
+A broadcast is stored once and listed for every wallet, including wallets absent from both
+databases at import time. The target's broadcast retention horizon still applies. Read
+receipts are keyed by broadcast ID and wallet; repeated imports retain reads made on the node.
+The load also converts former per-wallet copies, preserving their reads before removing
+only copies whose broadcast key and deterministic ID both match that loader's output.
+No notification deliveries are created.
 
-Residual gap: a wallet upstream never stored and the node has not seen when
-`broadcast` last ran gets no copy, though upstream would have shown it the
-broadcast on its first visit. Running `broadcast --restart` again (for
-instance after the final pass, or later) reaches the wallets seen since; new
-wallets after that miss the imported broadcasts.
-
-Volume: the step writes `broadcasts × audience` rows (B address-less upstream
-rows times the distinct wallets above). The extract emits one row per
-broadcast and address shard (the three hex digits after `0x`, 4096 shards),
-keyset-walked on `(updated_at, id, shard)`, so a batch of N stage rows writes
-about `N / 4096 × audience` rows (about 1.2 × audience at the default 5000)
-and reads the audience by address range. A re-run rewrites only copies whose
-payload changed.
+The broadcast cursor is now `(updated_at, id)`. After upgrading an earlier import, run
+`run notifications-workers --step broadcast --restart` to convert all historical copies,
+then `run notifications-workers --step broadcast_read --restart` to import every read receipt.
 
 ## Deletions
 
@@ -127,9 +112,6 @@ until upstream writes stop, following the cutover order above.
 
 ## Caveats
 
-- A broadcast reaches only the audience present when its batch loads; re-run
-  `broadcast` with `--restart` after the final pass (Broadcast audience).
 - Events notified by both systems during an overlap are stored twice
   (Cutover and duplicate events).
-- `broadcast`'s cursor is `(updated_at, id, shard)`: a checkpoint stored
-  under the former `(updated_at, id)` needs `--restart`.
+- An earlier broadcast checkpoint with a shard key requires `--restart` (Global broadcasts).

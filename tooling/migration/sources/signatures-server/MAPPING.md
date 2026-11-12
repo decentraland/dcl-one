@@ -24,7 +24,9 @@ LAND/Estate rentals listings.
   rentals-subgraph sync. They seed the node, and the node's `rentals` chain
   index (`shop.rental_event`) refolds them once it is published. Rows the sync
   created (epoch `expiration`, zero nonces) are imported as `executed`. A row
-  whose target `updated_at` is newer (a node fold) is not overwritten.
+  whose target `updated_at` is newer (a node fold) is not overwritten,
+  including its listing tenant/lessor. Periods load only when the parent
+  signature and update timestamp match the extracted parent version.
 - Skipped: a signature that the node holds under another id, and a second
   `open` listing for an asset (the node allows one open listing per asset).
   Periods of skipped listings are skipped too.

@@ -9,7 +9,6 @@ FROM (
            row_number() OVER (PARTITION BY place_id, lower(admin)
                               ORDER BY active DESC, created_at DESC, id DESC) AS pick
     FROM scene_admin
-    WHERE place_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
-      AND lower(admin) ~ '^0x[0-9a-f]{40}$'
+    WHERE lower(admin) ~ '^0x[0-9a-f]{40}$'
 ) a
 WHERE pick = 1

@@ -13,12 +13,22 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import textwrap
 import unittest
 import urllib.error
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+if __name__ == "__main__":
+    sys.modules["tooling.tests.test_migration"] = sys.modules[__name__]
+
+from tooling.tests.migration_comms_cases import CommsMigrationCases
+from tooling.tests.migration_social_cases import SocialMigrationCases
+from tooling.tests.migration_worlds_cases import WorldsMigrationCases
+from tooling.tests.migration_financial_cases import FinancialMigrationCases
+
 spec = importlib.util.spec_from_file_location('migrate', ROOT / 'tooling/migration/migrate.py')
 migrate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(migrate)
@@ -141,6 +151,89 @@ class Manifests(unittest.TestCase):
                                                                          'database_env = "TOY_URL"\nafter = ["toy"]')})
         with self.assertRaisesRegex(migrate.MigrationError, 'cycle'):
             migrate.ordered(migrate.discover(self.tmp), ['all'])
+
+
+class CutoverSelection(unittest.TestCase):
+    def setUp(self):
+        self.sources = migrate.discover(migrate.SOURCES)
+        self.env = unittest.mock.patch.dict(os.environ, {
+            'TARGET_DATABASE_URL': 'postgres://target/test',
+            'SHOP_SERVER_DATABASE_URL': 'postgres://shop/test',
+        }, clear=True)
+        self.env.start()
+        self.addCleanup(self.env.stop)
+
+    def test_when_running_all_it_should_exclude_all_shop_and_credits_steps(self):
+        args = migrate.parser().parse_args(['run', 'all', '--skip-unconfigured'])
+        with unittest.mock.patch.object(migrate, 'ensure_checkpoint_table'), \
+                unittest.mock.patch.object(migrate, 'read_checkpoints', return_value={}), \
+                unittest.mock.patch.object(migrate, 'run_step', return_value=(0, 'no writes')) as run, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(migrate.cmd_run(args, self.sources), 0)
+        self.assertEqual([(c.args[0].source, c.args[0].name) for c in run.call_args_list],
+                         [])
+
+    def test_when_dry_running_all_since_last_it_should_still_exclude_financial_steps(self):
+        args = migrate.parser().parse_args(['run', 'all', '--dry-run', '--since', 'last', '--skip-unconfigured'])
+        os.environ['CREDITS_SERVER_DATABASE_URL'] = 'postgres://credits/test'
+        with unittest.mock.patch.object(migrate, 'read_checkpoints', return_value={}), \
+                unittest.mock.patch.object(migrate, 'dry_run') as dry, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(migrate.cmd_run(args, self.sources), 0)
+        self.assertEqual([step.name for step, _, _ in dry.call_args.args[0]],
+                         [])
+
+    def test_when_all_explicitly_selects_a_financial_step_it_should_fail_before_connecting(self):
+        for step in ('ledger', 'treasury_ledger', 'treasury_guard'):
+            with self.subTest(step=step), unittest.mock.patch.object(migrate, 'database_url') as connect:
+                args = migrate.parser().parse_args(['run', 'all', '--step', step])
+                with self.assertRaisesRegex(migrate.MigrationError, 'cutover steps require an explicit source'):
+                    migrate.cmd_run(args, self.sources)
+                connect.assert_not_called()
+
+    def test_when_running_all_it_should_exclude_every_shop_schema_source(self):
+        selected = migrate.run_sources(self.sources, ['all'])
+        self.assertTrue(selected)
+        self.assertFalse(set(migrate.EXCLUDED_FROM_ALL) & {source.name for source in selected})
+        for source in selected:
+            for step in source.steps:
+                self.assertFalse(any(target.startswith(('shop.', 'credits.')) for target in step.targets))
+
+    def test_when_world_blocking_configuration_is_unavailable_it_should_refuse(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'blocked.json'
+            for value in (None, {}, ['blocked.eth']):
+                with self.subTest(value=value):
+                    path.write_text(json.dumps(value))
+                    with self.assertRaises(migrate.MigrationError):
+                        migrate.validate_worlds_blocked_names(path)
+            path.write_text('[]')
+            self.assertIsNone(migrate.validate_worlds_blocked_names(path))
+        with self.assertRaises(migrate.MigrationError):
+            migrate.validate_worlds_blocked_names(None)
+
+    def test_when_world_blocklist_export_is_missing_it_should_stop_before_connecting(self):
+        source = self.sources['worlds-content-server']
+        os.environ[source.database_env] = 'postgres://worlds/test'
+        for flags in ([], ['--dry-run']):
+            with self.subTest(flags=flags), unittest.mock.patch.object(migrate, 'database_url') as connect:
+                args = migrate.parser().parse_args(['run', 'worlds-content-server', *flags])
+                with self.assertRaisesRegex(migrate.MigrationError, 'worlds-blocked-names'):
+                    migrate.cmd_run(args, self.sources)
+                connect.assert_not_called()
+
+    def test_when_a_cutover_step_is_explicitly_selected_it_should_include_its_guard_first(self):
+        for source, step, guard in [('credits-server', 'ledger', 'cutover_guard'),
+                                    ('shop-server', 'treasury_ledger', 'treasury_guard')]:
+            with self.subTest(source=source):
+                selected = migrate.run_sources(self.sources, [source], [step])
+                self.assertEqual([s.name for s in selected[0].steps], [guard, step])
+
+    def test_when_explicitly_running_a_source_it_should_retain_all_steps_and_checks_should_still_cover_all(self):
+        for source in ('credits-server', 'shop-server'):
+            with self.subTest(source=source):
+                self.assertEqual(migrate.run_sources(self.sources, [source])[0].steps, self.sources[source].steps)
+        self.assertIn('credits-server', [s.name for s in migrate.ordered(self.sources, ['all'])])
 
 
 class WorldStorageScope(unittest.TestCase):
@@ -294,6 +387,21 @@ class BlobCopy(unittest.TestCase):
         outcome = self.copy(cid)
         self.assertEqual((outcome.status, outcome.size), ('copied', len(data)))
         self.assertEqual(self.store.path(cid).read_bytes(), data)
+
+    def test_when_a_thumbnail_destination_is_corrupt_it_should_replace_it(self):
+        data = b'correct thumbnail'
+        key = hashlib.sha256(data).hexdigest()
+        cid = blobs.hash_bytes_v1(data)
+        self.put(key, data)
+        self.store.path(cid).parent.mkdir(parents=True)
+        for damaged in (b'bad', b'x' * len(data)):
+            with self.subTest(size=len(damaged)):
+                self.store.path(cid).write_bytes(damaged)
+                outcome = self.copy(key)
+                self.assertEqual((outcome.status, outcome.cid, outcome.size), ('copied', cid, len(data)))
+                self.assertEqual(self.store.path(cid).read_bytes(), data)
+                self.assertEqual(self.store.intact(cid), len(data))
+                self.assertEqual(self.staging_files(), [])
 
     def test_when_the_stored_file_has_its_recorded_size_it_should_count_as_held(self):
         cid = blobs.hash_bytes_v1(b'abc')
@@ -702,7 +810,7 @@ SERVER_ENV = 'MIGRATION_TEST_SERVER_URL'
 @unittest.skipUnless(shutil.which('psql') and (os.environ.get(SERVER_ENV) or
                                                (shutil.which('initdb') and shutil.which('pg_ctl'))),
                      'PostgreSQL binaries are not on PATH')
-class AgainstPostgres(unittest.TestCase):
+class AgainstPostgres(CommsMigrationCases, SocialMigrationCases, WorldsMigrationCases, FinancialMigrationCases, unittest.TestCase):
     """A throwaway cluster: the toy source end to end, and every real manifest's load against the schema."""
 
     @classmethod
@@ -747,6 +855,10 @@ class AgainstPostgres(unittest.TestCase):
         return name
 
     def migrate(self, *args, sources_dir):
+        if args and args[0] == 'run' and '--worlds-blocked-names' not in args:
+            fixture = self.tmp / 'empty-world-blocklist.json'
+            fixture.write_text('[]')
+            args = (*args, '--worlds-blocked-names', str(fixture))
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             code = migrate.main(['--sources-dir', str(sources_dir), *args])
@@ -1233,22 +1345,22 @@ class AgainstPostgres(unittest.TestCase):
         self.addCleanup(patcher.stop)
         return src, tgt
 
-    def broadcast_copies(self, tgt):
-        return self.sql(tgt, "SELECT address, read, id = md5(%s || ':' || address)::uuid FROM social.notifications "
-                             "WHERE broadcast_key = 'notifications-workers:%s' ORDER BY address;\n"
-                        % (f"'{self.BROADCAST}'", self.BROADCAST)).splitlines()
-
-    def test_when_importing_a_broadcast_it_should_reach_every_wallet_the_source_or_node_knows(self):
+    def test_when_importing_a_broadcast_it_should_remain_global_and_keep_reads(self):
         _, tgt = self.notifications_dbs()
-        w = self.wallet
         code, out = self.migrate('run', 'notifications-workers', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
-        expected = [f'{w(d)}\t{"t" if d == "1" else "f"}\tt' for d in '12abcdef']
-        self.assertEqual(self.broadcast_copies(tgt), expected)
+        self.assertEqual(self.count(tgt, 'social.broadcast_notifications'), 1)
+        self.assertEqual(self.count(tgt, 'social.notifications'), 1)
+        self.assertEqual(self.sql(tgt, 'SELECT address FROM social.broadcast_reads;').strip(), self.wallet('1'))
+        # An unseen wallet gets the same global entry without any stored audience row.
+        self.assertEqual(self.sql(tgt, "SELECT count(*) FROM social.broadcast_notifications b "
+                                 "LEFT JOIN social.broadcast_reads r ON r.broadcast_id = b.id "
+                                 f"AND r.address = '{self.wallet('9')}' WHERE r.broadcast_id IS NULL;").strip(), '1')
         code, out = self.migrate('run', 'notifications-workers', '--step', 'broadcast', '--restart',
                                  sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.broadcast_copies(tgt), expected)
+        self.assertEqual(self.count(tgt, 'social.broadcast_notifications'), 1)
+        self.assertEqual(self.count(tgt, 'social.broadcast_reads'), 1)
 
     def test_when_upstream_drops_an_opt_out_or_pending_email_it_should_delete_only_the_imported_row(self):
         src, tgt = self.notifications_dbs()
@@ -1553,7 +1665,7 @@ class AgainstPostgres(unittest.TestCase):
                               "FROM social.user_achieved_tiers ORDER BY 1;\n").splitlines()
         self.assertEqual(tiers, [f'emotionista-bronze\t{self.T0 + 30}', f'emotionista-starter\t{self.T0 + 5}'])
 
-    def test_when_the_node_holds_more_steps_it_should_keep_them_and_take_the_source_document(self):
+    def test_when_the_node_holds_more_steps_it_should_merge_the_document_and_keep_its_counter(self):
         src, tgt = self.badges_dbs()
         w = self.wallet('3')
         self.assertEqual(self.migrate('run', 'badges', '--step', 'catalog', sources_dir=migrate.SOURCES)[0], 0)
@@ -1563,7 +1675,43 @@ class AgainstPostgres(unittest.TestCase):
         code, out = self.migrate('run', 'badges', sources_dir=migrate.SOURCES)
         self.assertEqual(code, 0, out)
         self.assertEqual(self.sql(tgt, 'SELECT steps_done, progress, granted_by FROM social.user_badge_progress;\n')
-                         .strip(), '2\t{"steps": 1, "collection_submitted": true}\tconsole')
+                         .strip(), '2\t{"steps": 2, "collection_submitted": true}\tconsole')
+
+    def test_when_wallet_spellings_cross_batches_or_since_it_should_keep_the_complete_progress(self):
+        src, tgt = self.badges_dbs()
+        lower, mixed = self.wallet('a'), '0x' + 'A' * 40
+        self.progress(src, mixed, 'emotionista',
+                      {'steps': 7, 'transactions_emotes_purchase': ['first'], 'extra': []}, updated=35)
+        self.progress(src, lower, 'emotionista',
+                      {'steps': 2, 'transactions_emotes_purchase': ['second'], 'other': ['value']}, updated=40)
+        query = 'SELECT steps_done, progress FROM social.user_badge_progress;\n'
+        expected = {'steps': 7, 'transactions_emotes_purchase': ['first', 'second'],
+                    'extra': [], 'other': ['value']}
+        for size in ('1', '5000'):
+            with self.subTest(batch_size=size):
+                self.sql(tgt, 'DELETE FROM social.user_badge_progress;\n')
+                code, out = self.migrate('run', 'badges', '--restart', '--batch-size', size,
+                                         sources_dir=migrate.SOURCES)
+                self.assertEqual(code, 0, out)
+                steps, document = self.sql(tgt, query).strip().split('\t')
+                self.assertEqual((steps, json.loads(document)), ('7', expected))
+        self.sql(src, f"UPDATE user_progress SET updated_at = {self.T0 + 50} "
+                      f"WHERE user_address = '{lower}';\n")
+        code, out = self.migrate('run', 'badges', '--step', 'user_progress',
+                                 '--since', '2026-01-01T00:00:00.045Z', sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        steps, document = self.sql(tgt, query).strip().split('\t')
+        self.assertEqual((steps, json.loads(document)), ('7', expected))
+        # A node-side evaluator has progressed further since the import.
+        self.sql(tgt, "UPDATE social.user_badge_progress SET steps_done = 9, "
+                      "progress = '{\"steps\":9,\"transactions_emotes_purchase\":[\"node\"]}', "
+                      "updated_at = timestamp '2026-02-01';\n")
+        code, out = self.migrate('run', 'badges', '--step', 'user_progress', '--restart',
+                                 sources_dir=migrate.SOURCES)
+        self.assertEqual(code, 0, out)
+        steps, document = self.sql(tgt, query).strip().split('\t')
+        expected.update(steps=9, transactions_emotes_purchase=['first', 'node', 'second'])
+        self.assertEqual((steps, json.loads(document)), ('9', expected))
 
     def test_when_the_schema_lacks_the_badge_columns_it_should_stop_instead_of_dropping_data(self):
         src, tgt = self.badges_dbs()

@@ -1,12 +1,15 @@
 # credits-server -> credits
 
+`run all` excludes this source. Run `run credits-server` explicitly at
+cutover; selecting individual steps also runs `cutover_guard` first.
+
 Pinned at `6b7407ef227af07885fe863123c6dbfb9056d1f7` (migrations through
 `1787000000000_usd-purchase-alerts`). Run at cutover with upstream writes
 stopped.
 
 | Step | Upstream | Target |
 | --- | --- | --- |
-| `cutover_guard` | `usd_purchase_intents`, `stripe_orders` in flight | nothing (refuses the run) |
+| `cutover_guard` | `usd_purchase_intents`, `stripe_orders`, Stripe dispute/refund facts | nothing (refuses the run) |
 | `wallet` | `users`, `flagged_wallets` | `credits.wallets` flags |
 | `purchase` | `stripe_orders` + their `user_credits` | `credits.purchases` |
 | `ledger` | USD `user_credits`, SETTLED `usd_purchase_intents` | `credits.ledger`, `credits.wallets` balances |
@@ -49,10 +52,20 @@ ledger. Credits sort before debits within a wallet, so a batch boundary never
 leaves a partial wallet negative; a wallet whose final balance is negative
 upstream fails the CHECK and stops the run.
 
-`cutover_guard` proves "held = 0": it refuses PENDING intents, EXPIRED intents
-inside upstream's one-hour recovery horizon, and Stripe orders processing,
-crediting or initiated in the last 24 hours. With it, the node's balance
-equals upstream's spendable USD for every wallet.
+`cutover_guard` refuses all PENDING and EXPIRED intents, Stripe orders
+processing, crediting or initiated in the last 24 hours, unresolved disputes,
+and dispute/refund facts not yet reconciled upstream. Intent age is not a
+release condition: upstream also requires the active squid deployment's head
+past expiry and no indexed consumption. The migration cannot establish that
+proof, so even old EXPIRED rows block cutover. This is deliberately conservative:
+accounts with historical EXPIRED rows need a separately reviewed release-proof
+mechanism before migrating; do not delete rows or relabel them to bypass it.
+
+Disputes must have a known closed outcome and all recorded payment facts must
+already be reflected in balances. This guard does not add dispute restoration
+to the node. A subsequent reversal of a closed lost dispute, new refund, or new
+dispute still needs a supported payment reconciliation owner after cutover;
+a successful import alone is not approval to retire the upstream payment service.
 
 `purchases`: keyed by the upstream order id (`order_id`). `credits` is what
 the order's purchase credit granted, so the reconciler's paid-vs-granted check

@@ -26,6 +26,7 @@ adding events created upstream later as `'upstream'` rows; the next
 | `schedule` | `schedule` | `explore.schedules_local` | `id` | none (small; update path not verified to bump `updated_at`) |
 | `event` | `events` | `explore.event` | `id` | `updated_at` (`EventModel.update` sets it on every write, attendee counts and the recurrence cron included) |
 | `attendance` | `event_attendees` | `explore.event_attendance_local` (`going`) | `event_id, signer` | none (`created_at` nullable; a cancel deletes the row) |
+| `profile_subscription` | `profile_subscriptions` | `explore.event_profile_subscriptions` | `endpoint` | none (source has no timestamps) |
 | `profile_settings` | `profile_settings` | `explore.event_profile_settings` | `user` | none (updates keep the old `updated_at`) |
 
 Notes:
@@ -45,14 +46,18 @@ Notes:
   writers, so a non-empty list is imported with `permissions_granted = true`
   (`schemas/migrations/0014`). A row saved on this node after upstream's last
   save keeps its own permissions and grant.
-  `email_verified_at` and `email_updated_at` have no target.
+  `email_verified_at` and `email_updated_at` are also preserved as UTC, including nulls.
+- Browser subscription endpoints, users and push keys are retained for the existing
+  settings/subscription APIs; the target does not send browser pushes. The source
+  has no creation timestamp, so the target stamps first import and preserves it
+  on reruns. Keep target subscription writes disabled during import: these rows
+  cannot be ordered against target edits.
 - Deletions upstream are not propagated (engine contract), except event
   soft-deletes, which are flags in `raw`.
 
 ## Not migrated
 
 - `event_categories`: the list is fixed in `events/categories.rs`.
-- `profile_subscriptions`: web-push is retired (the routes answer 410).
 - `jobs`, `notification_cursors`: upstream scheduler state.
 - `events.textsearch`, `coordinates`: computed at read time / from `x`, `y`.
 - `explore.events_local`, `explore.signed_actions`: upstream stores no signed

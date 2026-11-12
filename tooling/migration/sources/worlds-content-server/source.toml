@@ -1,6 +1,6 @@
 name = "worlds-content-server"
 repository = "github.com/decentraland/worlds-content-server"
-revision = "10af5255bb04a1a28e0c26bd190317c26a6015a9"
+revision = "adc123b2059768407cc4d893ed39d6fbcb956a68"
 database_env = "WORLDS_CONTENT_SERVER_DATABASE_URL"
 # places seeds explore.place and the exact explore.world_scene_place bindings;
 # world_scene_place binds only the imported scenes it left unbound.
@@ -108,6 +108,7 @@ columns = [
   { name = "permission", type = "text" },
   { name = "address", type = "text" },
   { name = "parcels", type = "text[]" },
+  { name = "invalid_parcels", type = "integer" },
   { name = "created_at", type = "timestamptz" },
   { name = "updated_at", type = "timestamptz" },
 ]

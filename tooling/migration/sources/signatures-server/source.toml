@@ -73,4 +73,6 @@ columns = [
   { name = "min_days", type = "integer" },
   { name = "max_days", type = "integer" },
   { name = "price_per_day", type = "numeric" },
+  { name = "parent_signature", type = "text" },
+  { name = "parent_updated_at", type = "timestamptz" },
 ]

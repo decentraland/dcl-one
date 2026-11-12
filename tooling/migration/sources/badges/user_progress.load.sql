@@ -1,17 +1,34 @@
 -- Badge and tier ids are upstream's (the catalog step imported every badge,
 -- archived ones included); a row whose badge or tier is unknown is skipped.
 --
--- Rows of one wallet under two spellings (and the node's own row) merge:
--- the most steps, the earliest completed_at, every achieved tier at its
--- earliest completed_at, the highest-ordinal last tier. The progress
--- document is the source's: the one of the spelling with the most steps
--- (then the latest updated_at, then the lowest address), each of its
--- top-level arrays replaced by the distinct union of that key's arrays
--- across the spellings. On the node it replaces the stored document (no
--- node writer keeps one yet); steps_done never goes down.
+-- The extract merges wallet spellings before pagination. Re-imports also
+-- retain stored dedupe arrays and the document with the greater counter
+-- (then the newer timestamp), keeping document.steps equal to steps_done.
+-- Earned tiers and completion only move forward.
 --
 -- progress comes with the badge catalog schema; on a schema without it a
 -- non-empty batch stops instead of dropping the documents.
+CREATE OR REPLACE FUNCTION pg_temp.merge_badge_progress(
+    old_doc jsonb, new_doc jsonb, old_steps integer, new_steps integer,
+    old_at timestamp, new_at timestamp) RETURNS jsonb
+LANGUAGE sql IMMUTABLE AS $merge$
+    WITH docs AS (
+        SELECT CASE WHEN jsonb_typeof(old_doc) = 'object' THEN old_doc ELSE '{}'::jsonb END AS a,
+               CASE WHEN jsonb_typeof(new_doc) = 'object' THEN new_doc ELSE '{}'::jsonb END AS b
+    )
+    SELECT (CASE WHEN (old_steps, old_at) > (new_steps, new_at) THEN b || a ELSE a || b END)
+           || COALESCE((
+               SELECT jsonb_object_agg(k.key, (
+                   SELECT COALESCE(jsonb_agg(DISTINCT e ORDER BY e), '[]'::jsonb)
+                   FROM jsonb_array_elements(
+                       (CASE WHEN jsonb_typeof(a -> k.key) = 'array' THEN a -> k.key ELSE '[]'::jsonb END)
+                       || (CASE WHEN jsonb_typeof(b -> k.key) = 'array' THEN b -> k.key ELSE '[]'::jsonb END)) e))
+               FROM (SELECT key FROM jsonb_each(a) WHERE jsonb_typeof(value) = 'array'
+                     UNION SELECT key FROM jsonb_each(b) WHERE jsonb_typeof(value) = 'array') k), '{}'::jsonb)
+           || jsonb_build_object('steps', GREATEST(old_steps, new_steps))
+    FROM docs
+$merge$;
+
 DO $progress$
 DECLARE
   lacking text;
@@ -92,7 +109,8 @@ BEGIN
   FROM progress_src s
   ON CONFLICT (address, badge_id) DO UPDATE
      SET steps_done = GREATEST(p.steps_done, EXCLUDED.steps_done),
-         progress = EXCLUDED.progress,
+         progress = pg_temp.merge_badge_progress(p.progress, EXCLUDED.progress,
+             p.steps_done, EXCLUDED.steps_done, p.updated_at, EXCLUDED.updated_at),
          completed_at = LEAST(p.completed_at, EXCLUDED.completed_at),
          last_completed_tier_id = COALESCE(
              (SELECT t.tier_id FROM social.badge_tiers t
