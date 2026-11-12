@@ -12,6 +12,10 @@
 - For tracked documentation, ADRs, agent instructions, comments and PR prose, apply the [public-prose rule](rendering/bevy-explorer/docs/guidelines/contributing.md#public-prose), including its pre-publication search.
 - Make focused edits; preserve other agents' work.
 
+For formal verification of LiveKit or networking decisions, or maintenance of
+their Rocq proof evidence, use
+[verify-dcl-networking](.claude/skills/verify-dcl-networking/SKILL.md).
+
 ## Agentic roles documentation
 
 - README `Agentic roles` lists every agent role: name, goal, main functions, relative link to its tracked definition or workflow.
