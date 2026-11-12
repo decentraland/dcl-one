@@ -29,7 +29,7 @@ Caller-supplied stable IDs remain the default. For these idempotent setters only
 
 ## Evidence and follow-up
 
-- [Repository-wide coverage and priorities](repository-service-inventory.md): Discovery ownership, Mobile/Exploration/CMS gaps, warehouse writers, retained services and missing source checkouts. Includes the complete 246-checkout screening catalog.
+- [Repository-wide coverage and priorities](repository-service-inventory.md): in-scope Worlds/content/storage priorities, explicit scope exclusions, retained services and missing source checkouts. Includes the complete 246-checkout screening catalog.
 
 - [Places command protocol](places-hybrid-commands.md) and [POI residual justification](places-poi-residual.md): exact implemented boundaries and source-change reasons.
 - [Notifications gateway contract](notifications-gateway-contract.md): read-only paths, mutating GET endpoints, native command candidates and queue reliability blockers.

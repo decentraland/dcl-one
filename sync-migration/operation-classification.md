@@ -37,7 +37,7 @@ Detailed source links and writer evidence are in the four service audits linked 
 
 ## Ordered next work
 
-**Source ownership gate:** confirm whether deployed Discovery or legacy Places/Events owns each route and writer before expanding command receipts. The [repository-wide review](repository-service-inventory.md) also tracks Mobile, Exploration Games, CMS and warehouse feed coverage; these are scope and operation-classification tasks, not approved broad DB adapters.
+**Scope gate:** [repository-wide screening](repository-service-inventory.md) is not the migration scope. Discovery is represented by Places/Events; CMS, warehouse feeds and Exploration Games are not additional migration services. Prioritize the [Worlds content and storage contracts](worlds-creator-sync-audit.md#worlds-recheck-and-next-contracts), with native replay first and only justified job outcomes considered for residual sync.
 
 1. Rehearse the implemented favorite/vote command and POI residual paths through actual gateway/source roles. Untagged mutations remain blocked.
 2. Validate the optional per-request-attempt gateway policy under real retries; it mirrors actual accepted setter attempts and does not provide logical client retry deduplication.
