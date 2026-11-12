@@ -251,7 +251,10 @@ def runtime_env(config):
     # Do not inherit a shell's production database, upstreams or credentials.
     env = {key: os.environ[key] for key in (
         'PATH', 'HOME', 'USER', 'TMPDIR', 'LANG', 'LC_ALL', 'LOCALE_ARCHIVE',
-        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS
+        'SSL_CERT_FILE', 'NIX_SSL_CERT_FILE', *PUBLIC_SIGN_IN_IDS,
+        # Sites' blog CMS base, taken from the shell when set (unset: the blog answers 503).
+        # TODO(cms-migration): point it at the in-tree area once cms-server is migrated.
+        'BLOG_CMS_URL',
     ) if key in os.environ}
     base = config['port']
     env.update({
@@ -545,7 +548,8 @@ def project(config, postgres_only=False):
         'nats': nats,
     }
     if config['profile'] in ('mirror', 'testnet'):
-        # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`.
+        # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`. The CreditUsed index
+        # runs in `serve`: its fold debits the credits ledger.
         processes['index'] = process('index', {'postgres': 'process_healthy',
                                                'api-build': 'process_completed_successfully'})
     return {'version': '0.5', 'processes': processes}

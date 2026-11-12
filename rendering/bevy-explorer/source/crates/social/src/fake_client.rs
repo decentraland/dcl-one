@@ -1,6 +1,7 @@
 use alloy_core::primitives::Address;
 use bevy::platform::collections::{HashMap, HashSet};
 
+use crate::voice::{VoiceEvent, VoiceQuery};
 use crate::{DirectChatMessage, DmPrivacy, DmPrivacyOf};
 
 /// `(addresses I blocked, addresses that blocked me)` — mirrors the real
@@ -61,8 +62,15 @@ impl SocialClientHandler {
             + Send
             + Sync
             + 'static,
+        _voice_callback: impl Fn(VoiceEvent) + Send + Sync + 'static,
     ) -> Option<Self> {
         Some(Self::default())
+    }
+
+    /// No social service: the query's reply channel is dropped, which its sender reads as a
+    /// transport failure.
+    pub fn voice(&self, _query: VoiceQuery) -> Result<(), anyhow::Error> {
+        Err(anyhow::anyhow!("social not available"))
     }
 
     pub fn update(&self) -> bool {

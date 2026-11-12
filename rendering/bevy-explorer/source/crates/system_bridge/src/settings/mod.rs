@@ -48,7 +48,7 @@ use shadow_settings::{LightCountSetting, ShadowCasterCountSetting, ShadowDistanc
 use video_threads::VideoThreadsSetting;
 use volume_settings::{
     AvatarVolumeSetting, MasterVolumeSetting, SceneVolumeSetting, SystemVolumeSetting,
-    VoiceVolumeSetting,
+    VoiceChatVolumeSetting, VoiceVolumeSetting,
 };
 
 pub mod aa_settings;
@@ -197,6 +197,7 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<MasterVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SceneVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<VoiceVolumeSetting>(app, &mut settings, &mut schedule, &config);
+        add_int_setting::<VoiceChatVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<SystemVolumeSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
 

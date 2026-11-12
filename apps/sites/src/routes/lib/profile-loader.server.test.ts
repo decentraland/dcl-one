@@ -28,8 +28,9 @@ vi.mock("@/data/lib/catalyst/marketplace/account", () => ({
   fetchOwnedNames: net.fetchOwnedNames,
 }));
 
-import { createStaticHandler } from "react-router";
+import { createStaticHandler, RouterContextProvider } from "react-router";
 
+import { markPublicResponse, requestSessionContext } from "@/core/lib/telemetry/session";
 import { CatalystError } from "@/data/lib/catalyst/client";
 import { profileKeys } from "@/data/lib/profile/queries";
 
@@ -61,7 +62,7 @@ function request(path: string, wallet?: string, init: RequestInit = {}) {
 /** Runs the real loader, returning its loader data, or the response it threw. */
 async function run(path: string, params: { address?: string; tab?: string }, wallet?: string) {
   try {
-    const result = (await profileLoader(request(path, wallet), params)) as unknown as { data: ProfileLoaderData };
+    const result = (await profileLoader(request(path, wallet), new RouterContextProvider(), params)) as unknown as { data: ProfileLoaderData };
     return { ok: true as const, data: result.data };
   } catch (thrown) {
     return { ok: false as const, thrown };
@@ -335,7 +336,7 @@ describe("profile loader, a visitor who leaves", () => {
     controller.abort();
 
     await expect(
-      profileLoader(request(`/profile/${A}`, undefined, { signal: controller.signal }), { address: A }),
+      profileLoader(request(`/profile/${A}`, undefined, { signal: controller.signal }), new RouterContextProvider(), { address: A }),
     ).rejects.toBeTruthy();
     expect(seen).toBeUndefined();
     expect(net.fetchProfile).not.toHaveBeenCalled();
@@ -352,7 +353,7 @@ describe("profile loader, a visitor who leaves", () => {
     );
     const controller = new AbortController();
 
-    const pending = profileLoader(request(`/profile/${A}`, undefined, { signal: controller.signal }), { address: A });
+    const pending = profileLoader(request(`/profile/${A}`, undefined, { signal: controller.signal }), new RouterContextProvider(), { address: A });
     await vi.waitFor(() => expect(seen).toBeDefined());
     controller.abort();
 
@@ -361,12 +362,42 @@ describe("profile loader, a visitor who leaves", () => {
   });
 });
 
+describe("profile loader session", () => {
+  type Wrapped = { data: ProfileLoaderData; init?: { headers?: HeadersInit } };
+  const setCookies = (result: Wrapped) => new Headers(result.init?.headers).getSetCookie();
+
+  it("uses the session the root middleware set and leaves the cookie to it", async () => {
+    const context = new RouterContextProvider();
+    context.set(requestSessionContext, { sid: "from-middleware", created: true });
+
+    const result = (await profileLoader(request(`/profile/${A}`), context, { address: A })) as unknown as Wrapped;
+
+    expect(result.data.sid).toBe("from-middleware");
+    expect(setCookies(result)).toEqual([]);
+  });
+
+  it("mints a session and sets its one cookie when no middleware ran", async () => {
+    const result = (await profileLoader(request(`/profile/${A}`), new RouterContextProvider(), { address: A })) as unknown as Wrapped;
+
+    expect(setCookies(result)).toHaveLength(1);
+    expect(setCookies(result)[0]).toContain(`sid=${encodeURIComponent(result.data.sid)}`);
+  });
+
+  it("refuses a context marked public, so no sid reaches shared page data", async () => {
+    const context = new RouterContextProvider();
+    markPublicResponse(context);
+
+    await expect(profileLoader(request(`/profile/${A}`), context, { address: A })).rejects.toThrow(/publicly cacheable/);
+    expect(net.fetchProfile).not.toHaveBeenCalled();
+  });
+});
+
 describe("profile document request, through the router's handler", () => {
   const handler = createStaticHandler([
     {
       id: "profile",
       path: "/profile/:address/:tab?",
-      loader: ({ request, params }) => profileLoader(request, params),
+      loader: ({ request, context, params }) => profileLoader(request, context, params),
       ErrorBoundary: () => null,
     },
   ]);

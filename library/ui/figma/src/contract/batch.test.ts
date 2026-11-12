@@ -1,6 +1,13 @@
 import { readdir, rm } from 'node:fs/promises'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { resolveBatch } from './batch.js'
+import { findMappingFiles } from './library.js'
+
+// Counts how often a batch walks the mapping root.
+vi.mock('./library.js', async (importOriginal) => {
+  const original = await importOriginal<typeof import('./library.js')>()
+  return { ...original, findMappingFiles: vi.fn(original.findMappingFiles) }
+})
 import { buttonSet, makeLibrary, mappingSource } from './test-fixtures.js'
 
 const created: string[] = []
@@ -49,6 +56,53 @@ describe('resolveBatch', () => {
     })
   })
 
+  describe('when entries carry booleanProperties', () => {
+    it('should accept them and keep entries that differ only in a boolean apart', async () => {
+      const { mappingRoot } = await library()
+
+      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: 'true' }
+        },
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: 'false' }
+        },
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: 'true' }
+        }
+      ])
+
+      expect('results' in batch && batch.results.map((entry) => entry.repeats)).toEqual([
+        undefined,
+        undefined,
+        0
+      ])
+      expect('summary' in batch && batch.summary).toMatchObject({ requested: 3, resolved: 3 })
+    })
+
+    it('should fail an entry whose booleanProperties hold a non-string value', async () => {
+      const { mappingRoot } = await library()
+
+      const batch = await resolveBatch({ mappingRoot, figmaSets: [] }, [
+        {
+          name: 'Button',
+          variantProperties: { Kind: 'Primary' },
+          booleanProperties: { Icon: true }
+        }
+      ])
+
+      expect('summary' in batch && batch.summary.failed).toEqual([
+        { index: 0, code: 'invalid-input' }
+      ])
+    })
+  })
+
   describe('when every entry resolves without a capture', () => {
     it('should pass', async () => {
       const { mappingRoot } = await library()
@@ -61,6 +115,35 @@ describe('resolveBatch', () => {
       expect(batch).toMatchObject({
         ok: true,
         summary: { requested: 2, resolved: 2, unmapped: [], failed: [] }
+      })
+    })
+  })
+
+  describe('when the batch has several distinct entries', () => {
+    it('should read the mappings once for the whole batch', async () => {
+      const { mappingRoot } = await library()
+      vi.mocked(findMappingFiles).mockClear()
+
+      await resolveBatch({ mappingRoot, figmaSets: [] }, [
+        { name: 'Button', variantProperties: { Kind: 'Primary' } },
+        { name: 'Button', variantProperties: { Kind: 'Secondary' } },
+        { nodeId: '3:3' }
+      ])
+
+      expect(vi.mocked(findMappingFiles)).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('when the mapping root cannot be used', () => {
+    it('should fail the batch once with mapping-root-not-configured, not each entry', async () => {
+      const batch = await resolveBatch(
+        { mappingRoot: '/nonexistent/mapping-root', figmaSets: [] },
+        [{ name: 'Button' }, { name: 'Card' }]
+      )
+
+      expect(batch).toEqual({
+        ok: false,
+        errors: [expect.objectContaining({ code: 'mapping-root-not-configured' })]
       })
     })
   })
@@ -104,7 +187,7 @@ describe('resolveBatch', () => {
   })
 
   describe('when an entry repeats an earlier one', () => {
-    it('should refuse the repeat and name the first entry', async () => {
+    it('should share the earlier answer with an identical repeat and name the first entry', async () => {
       const { mappingRoot } = await library()
 
       const batch = await resolveBatch({ mappingRoot, figmaSets: [buttonSet] }, [

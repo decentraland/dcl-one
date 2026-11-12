@@ -43,7 +43,7 @@ function ProfileTabs({
             <li key={tab.id} className={styles.item}>
               <LinkComponent
                 to={tab.href}
-                className={current ? `${styles.tab} ${styles.active}` : styles.tab}
+                className={current ? `${styles.tab} ${styles.active}` : (styles.tab ?? '')}
                 aria-current={current ? 'page' : undefined}
                 onClick={(event) => {
                   // A modifier or middle click opens a new browser tab; this page's tab does not change.
