@@ -16,7 +16,6 @@ let
   contract = lib.fileset.toSource {
     inherit root;
     fileset = lib.fileset.unions (sharedFiles ++ (map (p: lib.fileset.maybeMissing (root + p)) [
-      /rendering/bevy-explorer/upstream.lock.json
       /rendering/bevy-explorer/source
       /rendering/bevy-explorer/bevy
       /library/protocol/proto
@@ -27,7 +26,7 @@ let
       /tooling/play-artifact.py /tooling/hud_shared_inputs.py
       /.github/workflows/bevy-explorer-ci.yml
       /.cargo /rust-toolchain /rust-toolchain.toml
-      /apps/ui3/src/play/engine/generated
+      /library/explorer-core/engine/generated
     ]));
   };
 in runCommand "foundation-built-play-web" {

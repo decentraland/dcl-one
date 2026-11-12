@@ -52,6 +52,12 @@ export function browserCatalystBase(env: BaseEnv = processEnv()): string {
   return trimSlash(envValue(env, "PUBLIC_CATALYST_URL") ?? "");
 }
 
+/** An absolute URL of this site for a page's public address (canonical, share links): under
+ * PUBLIC_CATALYST_URL when set, else the request's origin. */
+export function publicPageUrl(request: Request, pathname: string, env: BaseEnv = processEnv()): string {
+  return `${browserCatalystBase(env) || new URL(request.url).origin}${pathname}`;
+}
+
 export function worldsUrl(override?: string, env: BaseEnv = processEnv()): string {
   return trimSlash(
     override ?? envValue(env, "WORLDS_URL") ?? `${catalystUrl(undefined, env)}${WORLDS_PREFIX}`,
@@ -72,6 +78,17 @@ export function communitiesUrl(env: BaseEnv = processEnv()): string {
   return trimSlash(
     envValue(env, "COMMUNITIES_URL") ?? `${catalystUrl(undefined, env)}${SOCIAL_PREFIX}`,
   );
+}
+
+/**
+ * The blog's CMS (cms-server, the Contentful cache decentraland/sites reads), as the full
+ * `<origin>/spaces/<space>/environments/<environment>` base; undefined when unset, and the blog
+ * then answers 503.
+ */
+export function blogCmsUrl(env: BaseEnv = processEnv()): string | undefined {
+  // TODO(cms-migration): point BLOG_CMS_URL at the in-tree catalyst CMS area once cms-server is migrated into dcl-one; today it is the external cms-server.
+  const value = envValue(env, "BLOG_CMS_URL");
+  return value ? trimSlash(value) : undefined;
 }
 
 export function creatorsDataUrl(override?: string, env: BaseEnv = processEnv()): string {

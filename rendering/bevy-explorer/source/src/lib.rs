@@ -25,6 +25,7 @@ use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
 use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
+use ban_block::BanBlockPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
@@ -681,6 +682,7 @@ impl DecentralandApp {
             .add_plugins(WalletPlugin)
             .add_plugins(CommsPlugin)
             .add_plugins(SocialPlugin)
+            .add_plugins(BanBlockPlugin)
             // Keep ImageProcessingPlugin ahead of NftShapePlugin. Bevy gives an image path
             // without an extension to the last image loader registered, which must stay
             // NftShapePlugin's ExtendedImageLoader (16-bit conversion, size cap); Ktx2Loader,

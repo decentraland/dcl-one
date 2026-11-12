@@ -37,11 +37,12 @@ reference: `getBlockUpdateStream` (#844). The file set:
    two ops.
 8. `react-web/bridge-scene/src/bevy-api.ts`: the method on `BevyApiInterface`, importing the
    generated type; a relay domain under `bridge-scene/src/domains/`; a message kind in
-   `react-web/src/engine/protocol.ts`; a case in `useEngineSession.ts`; the mock bridge.
+   `library/explorer-core/engine/protocol.ts`; a case in `useEngineSession.ts`; the mock bridge.
 
-Run `just ts-bindings` before touching the TypeScript: the generated types under
-`react-web/src/engine/generated/` are gitignored, and CI regenerates them before every TS
-build, so a Rust struct change that breaks the page fails `tsc` there.
+Run `just ts-bindings` before touching the TypeScript: it regenerates the types under
+`library/explorer-core/engine/generated/`, which both HUD hosts compile. Commit them with the
+Rust struct change. CI regenerates them before every TS build, so a Rust struct change that
+breaks the page fails `tsc` there, and the Sites import fails while the committed copy differs.
 
 ## The ts-rs boundary
 
@@ -127,19 +128,19 @@ the defs; a material extension's defs do not reach a separate material.
 ## A pipeline-compile test for a shader
 
 Every shader change gets a test that compiles every pipeline variant off-screen, `#[ignore]`d
-because CI has no GPU. `crates/perf_output/tests/gpu_frame_time.rs` shows the headless app
-setup of step 1; no test in the repo polls the pipeline cache yet:
+because CI has no GPU. `assets::test_support` holds the setup these tests share:
 
-1. A `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and `PipelinedRenderingPlugin`
-   disabled and no primary window.
-2. A camera rendering to an `Image`, with `DepthPrepass` and `NormalPrepass`, and a shadowing
-   `DirectionalLight`, so the prepass and shadow variants compile too.
+1. `headless_app()`: a `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and
+   `PipelinedRenderingPlugin` disabled, no primary window and the embedded assets.
+2. A camera rendering to `render_target(&mut app)`, with `DepthPrepass` and `NormalPrepass`,
+   and a shadowing `DirectionalLight`, so the prepass and shadow variants compile too.
 3. One entity per material and tag variant the change touches.
-4. Update until the `RenderApp`'s `PipelineCache` has nothing pending, then assert that no
-   pipeline is in an error state.
+4. `compile_pipelines(&mut app)` updates until the `RenderApp`'s `PipelineCache` has nothing
+   pending and panics on a pipeline in an error state. `fragment_pipelines(&app, path)` counts
+   the compiled pipelines whose fragment stage is one shader.
 
-The crate needs `assets` and `naga_oil` as dev-dependencies, the latter only to enable its
-`override_any` feature for the crate. Run with
+The crate needs `assets` with its `test-support` feature and `naga_oil` as dev-dependencies,
+the latter only to enable its `override_any` feature for the crate. Run with
 `cargo test -p <crate> <test> -- --ignored --nocapture`. The native pass compiles the same
 variants as web, but the web-only rules on the [platforms](platforms.md#web) page still need
 the web build once.

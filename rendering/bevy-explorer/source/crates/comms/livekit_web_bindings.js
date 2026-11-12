@@ -102,6 +102,15 @@ export function room_name(room) {
 }
 
 /**
+ *
+ * @param {livekit.Room} room
+ * @returns string
+ */
+export function room_metadata(room) {
+    return room.metadata ?? ''
+}
+
+/**
  * 
  * @param {livekit.Room} room
  * @returns livekit.LocalParticipant
@@ -189,6 +198,15 @@ function set_room_event_handler(room, handler) {
                 participant,
                 old_metadata: prev_metadata,
                 metadata: participant.metadata
+            })
+        }
+    );
+    room.on(
+        LivekitClient.RoomEvent.RoomMetadataChanged,
+        (metadata) => {
+            handler({
+                type: 'roomMetadataChanged',
+                metadata: metadata ?? ''
             })
         }
     );

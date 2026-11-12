@@ -6,7 +6,7 @@
   gap: var(--dcl-layout-section-gap);
   padding: var(--dcl-layout-section-padding-y) 0;
   overflow: hidden;
-  background: radial-gradient(ellipse at 110% 50%, rgb(148, 37, 205) 0%, rgb(104, 20, 155) 100%);
+  background: var(--dcl-gradient-radial-background);
   color: var(--dcl-text-primary);
 }
 
