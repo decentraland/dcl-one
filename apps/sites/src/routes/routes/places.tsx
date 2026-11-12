@@ -50,7 +50,7 @@ const FALLBACK: PageDefaults = {
   variant: "live-signals",
 };
 
-export async function loader({ request }: Route.LoaderArgs) {
+export async function loader({ request, context }: Route.LoaderArgs) {
   const requestUrl = new URL(request.url);
   const category = requestUrl.searchParams.get("category")?.trim() ?? "";
   const search = requestUrl.searchParams.get("search")?.trim() ?? "";
@@ -61,7 +61,7 @@ export async function loader({ request }: Route.LoaderArgs) {
 
   const highlights = section === "all" && !category && !search && offset === 0;
   const [{ sid, wrap }, placesRes, categories, featuredRes] = await Promise.all([
-    pageLoader(request,  FALLBACK),
+    pageLoader(request, context,  FALLBACK),
     (section === "all" ? fetchDestinations({
       limit: PLACES_LIMIT,
       offset: offset || undefined,

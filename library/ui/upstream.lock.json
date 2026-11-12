@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "c3ee9df26299e35f36b7044455a3fa993b2bcac685e188906aae2fed85ee4dac",
+          "sha256": "aad38c51f636631db4deb88d0c41fc95c1732128930f2ba4f6aedb6bb97da5ea",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -716,7 +716,7 @@
           "sha256": "d0c58eb095df77821434ee9305f71768cd9fd45142e20644bdd421b51d715492"
         },
         "library/ui/figma/figma.config.json": {
-          "sha256": "601bfe0e26501a323aca9af6667ed184faa390d25db5836eda946db39f1f7e25",
+          "sha256": "da4a9ae4f51f110d9badbf10e7b52cad8da3f5cbd1614285e7767f531ca76feb",
           "fds": {
             "path": "dcl-mcp-figma/figma.config.json",
             "sha256": "bbdff04e92ef00d38110f067b97882744179f82b842dc7e770f478c8ca9f0efe"
@@ -3213,7 +3213,7 @@
           }
         },
         "library/ui/figma/src/guard/ownership.test.ts": {
-          "sha256": "b0d4381cff25572cb1ab285bfc35e61156e1e6ae3bc05de6457f1ce450f4d7ea",
+          "sha256": "34fc6eebe05e24c42a3a13435c2af633ed6829596c3dbfe78a5cfc6866b632d1",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/ownership.test.ts",
             "sha256": "c90722967a197cf1612c3da7f0f54d3ae6d9dd72547b8496e70605a032f1591d"
@@ -3224,7 +3224,7 @@
           ]
         },
         "library/ui/figma/src/guard/ownership.ts": {
-          "sha256": "a473efa6b1aae4c527b9b8eff98d11d874eb282bac910de263dd6f01fc43d2e3",
+          "sha256": "bb9432254cffa6c468f9eae2a93145c9d5773006e986c89579fbf9d250ec6eab",
           "fds": {
             "path": "dcl-mcp-figma/src/guard/ownership.ts",
             "sha256": "55e741b867015d2967b3a60823d3847bfa05eb070e376a04270b64224d280694"
@@ -3379,7 +3379,7 @@
         },
         "library/ui/figma/src/install-components.test.ts": {
           "fds": null,
-          "sha256": "db1cb63c9449bb5b500b35dbc4a0d55370ff379cbcfe6f41a4ccbce429d7abce",
+          "sha256": "a9400b5d755c2e295db95b934200ab09e6fa8e4db80cd02008119e0871cad662",
           "deviation": [
             "local-components-plan",
             "internal-components",
@@ -4026,7 +4026,7 @@
           "deviation": "live-read-restored"
         },
         "library/ui/figma/test/accepted-limits.test.ts": {
-          "sha256": "e3cdf2f75a93530e6104253a6b35aa6e35561a416d5ef19e156c3e81dae66c4b",
+          "sha256": "38f98d15fee068c7f4be769d3ae6821aeff3a5aa14e5d46ea3c36ece74940f7f",
           "fds": null,
           "deviation": [
             "accepted-limits",
@@ -4749,40 +4749,8 @@
   },
   "publicComponents": {
     "files": {
-      "NavBar/NavBar.figma.ts": {
-        "sha256": "ead9799e44e9b60c8e8dcc697b180f212f8373d0fce24c4309ad4be7e12fb95b",
-        "origin": {
-          "kind": "generated",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1"
-        }
-      },
-      "NavBar/NavBar.module.css": {
-        "sha256": "fce5ebb617b694ecc0fbc32a195f534590350222c4267e09aa23c6eb6ff6dc60",
-        "origin": {
-          "kind": "generated",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1"
-        }
-      },
-      "NavBar/NavBar.module.css.d.ts": {
-        "sha256": "828d14307f527ce92821af3cbf08f5953a7255c5ce2ce82ec498bd9ce71822e2",
-        "origin": {
-          "kind": "generated",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1"
-        }
-      },
-      "NavBar/NavBar.tsx": {
-        "sha256": "64676cdc20bce71e34d60a9fa1439a8faf4361f304cf5f4577244a24c0678709",
-        "origin": {
-          "kind": "generated",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1"
-        }
-      },
       "generation.json": {
-        "sha256": "a63e533d6dd3da0b63f43326efcc7d21a8aff65d579f36214e12ee83e568a1a5",
+        "sha256": "b519c4368e9fbcc0ee269f26b117252be9a43d12ec0ad0cc919909226e9e2985",
         "origin": {
           "kind": "generated",
           "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
@@ -4790,58 +4758,10 @@
         }
       },
       "promotion.json": {
-        "sha256": "abf3aa92674c3dbcee83226326916a4a387056a45f2f9127ed7072fdebf3f8a3",
+        "sha256": "00070f6a1fd3332c284a60a19ad819d598d084e00fdd6024672a79f958deb215",
         "origin": {
           "kind": "source",
           "repository": "https://github.com/decentraland/dcl-one"
-        }
-      },
-      "runtime/figma-interactions.tsx": {
-        "sha256": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f",
-        "origin": {
-          "kind": "runtime",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1",
-          "path": "library/ui/figma/review/src/components/figma-interactions.tsx",
-          "sha256": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f"
-        }
-      },
-      "runtime/figma-module-runtime.module.css": {
-        "sha256": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07",
-        "origin": {
-          "kind": "runtime",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1",
-          "path": "library/ui/figma/review/src/components/figma-module-runtime.module.css",
-          "sha256": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07"
-        }
-      },
-      "runtime/figma-module-runtime.module.css.d.ts": {
-        "sha256": "adcc34f5bed1d31a3e14630e7311138878de82dc9e1daf0a72a27984deb30071",
-        "origin": {
-          "kind": "generated",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1"
-        }
-      },
-      "runtime/figma-module-runtime.tsx": {
-        "sha256": "4f3790181edb0aab454895459b50bee59a80e047bc8880a5c5006a331d5306db",
-        "origin": {
-          "kind": "runtime",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1",
-          "path": "library/ui/figma/review/src/components/figma-module-runtime.tsx",
-          "sha256": "a25a3157683a45e60932964608c85d2bd1711d1c15acf45b155134c8169e2476"
-        }
-      },
-      "runtime/figma-view-state.ts": {
-        "sha256": "95882b20b338599463ae5cb2d2ba542f254610a89225de8b18f0d98a37623cae",
-        "origin": {
-          "kind": "runtime",
-          "source": "{\"repository\":\"https://github.com/decentraland/figma-design-system\",\"codeRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"snapshotRevision\":\"9c6dfbe61b2c218ff0b820841aac722df4ebd8aa\",\"digestTableHash\":\"bcd458ff2f008acd71b32ebc15b85a20cd7a4efc6dece1336f18cebdb7bbb097\"}",
-          "transform": "public-runtime-imports-v1",
-          "path": "library/ui/figma/review/src/components/figma-view-state.ts",
-          "sha256": "95882b20b338599463ae5cb2d2ba542f254610a89225de8b18f0d98a37623cae"
         }
       }
     }

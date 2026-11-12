@@ -14,8 +14,8 @@ import type { Route } from "./+types/create.learn";
 
 export const meta = () => creatorHubMeta("Learn");
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = sidLoader(request);
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = sidLoader(request, context);
   const payload = { sid };
   return wrap(payload);
 }
