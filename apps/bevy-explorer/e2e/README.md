@@ -295,6 +295,8 @@ Kept from explorer-automation's guides:
 
 `specs/debug-panel.test.ts` checks every registered diagnostic field and the
 `/memory_reclaim` simulation modes, reset and budget validation.
+The same control scenario checks `/debug_memory` limit changes and reset in preview,
+and mutation denial with read-only readings outside preview.
 A separate scenario measures the active emote baseline, observes wave
 playing with cache-pin growth, waits for the observed playback to finish or yield
 its slot and idle cache pins to leave, then verifies replay with renewed pin growth.

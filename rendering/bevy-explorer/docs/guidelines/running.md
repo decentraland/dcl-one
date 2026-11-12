@@ -386,6 +386,12 @@ mode, `/memory_reclaim ram|gpu|both|off` simulates pressure for this reclaimer;
 does not change platform readings and applies on the next frame. Leaving preview
 mode clears simulation and restores the default allowance before that frame's cleanup.
 
+`/debug_memory` remains readable in every mode. Setting its RAM cap in MiB, or
+restoring platform capacity with `/debug_memory 0`, requires preview mode. Its
+`controlsAvailable` field and the **Memory and limits** section reflect that gate.
+Leaving preview clears the cap before cleanup; restoring capacity discards pressure
+history caused by that cap while retaining actual warning/full pressure.
+
 Each domain starts cleanup above 70% and continues until below 65%. Native GPU
 pools are evaluated independently; a healthy pool cannot offset an over-budget
 pool. Missing readings clear that domain's pressure latch. Browser/headless runs use RAM unless
@@ -420,14 +426,23 @@ cannot accelerate retries. When due, idle
 entries yield to bounded cleanup instead of starting another fetch; recently
 accessed entries still fetch.
 
+A failed movement-animation request retains its failed staging handle until the
+request changes or ends, or its avatar despawns. An unchanged request continues
+using its fallback without starting another load each frame.
+
 RAM cleanup covers both wearable/emote metadata caches, full/compact profile DTOs,
 registered-entity JSON (`entity_metadata`) and the editor catalogue (`editor_catalog`).
 The last two become eligible after five seconds without access. JSON reloads through
 the content reader on the next metadata query; `/init_asset` reloads a reclaimed
 catalogue automatically. Active readers retain their own values or snapshots.
 Failed reloads remain retryable, and late replies cannot overwrite newer cached
-data. Content maps and routing indexes remain available for asset dependencies.
-Current realm/account state and scene-owned DTOs follow their owners' lifetimes.
+data. A raw-JSON reload has a 30-second deadline including download admission;
+failure returns the known routing with unavailable metadata. Live scene signing
+and scene-information RPCs read their scene-owned definition instead of reloading
+JSON; scene-information replies preserve current imported content paths.
+Content maps and routing indexes remain for the session and can grow with visited
+scenes and collectibles. Current realm/account state and DTO assets held by scene
+components follow their owners' lifetimes.
 
 ## Tests
 

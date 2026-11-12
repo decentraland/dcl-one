@@ -71,23 +71,29 @@ impl AssetCatalog {
 }
 
 fn reclaim_asset_catalog(catalog: Res<AssetCatalog>, mut budget: ResMut<ReclaimBudget>) {
-    let Ok(mut cache) = catalog.0.try_write() else {
+    let Ok(cache) = catalog.0.try_read() else {
         return;
     };
     let entries = usize::from(cache.assets.is_some());
-    if let Some(mut turn) = budget.begin("editor_catalog", entries) {
-        if turn.inspect() {
-            let expired = cache.last_access.is_some_and(|access| {
-                Instant::now().saturating_duration_since(access) >= Duration::from_secs(5)
-            });
-            let released = expired && cache.assets.take().is_some();
-            if released {
-                turn.released();
-            }
-            turn.complete_scan(u64::from(released));
+    drop(cache);
+    let Some(mut turn) = budget.begin("editor_catalog", entries) else {
+        return;
+    };
+    let Ok(mut cache) = catalog.0.try_write() else {
+        budget.finish_turn(turn, entries);
+        return;
+    };
+    if turn.inspect() {
+        let expired = cache.last_access.is_some_and(|access| {
+            Instant::now().saturating_duration_since(access) >= Duration::from_secs(5)
+        });
+        let released = expired && cache.assets.take().is_some();
+        if released {
+            turn.released();
         }
-        budget.finish_turn(turn, usize::from(cache.assets.is_some()));
+        turn.complete_scan(u64::from(released));
     }
+    budget.finish_turn(turn, usize::from(cache.assets.is_some()));
 }
 
 pub fn add_asset_commands(app: &mut App) {

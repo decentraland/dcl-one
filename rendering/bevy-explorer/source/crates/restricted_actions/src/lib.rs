@@ -2,6 +2,9 @@ pub mod agent_commands;
 pub mod explorer_ui;
 pub mod teleport;
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod scene_metadata_tests;
+
 use std::{path::PathBuf, sync::Arc};
 
 use alloy_core::primitives::Address;
@@ -49,7 +52,8 @@ use nft::asset_source::Nft;
 use reqwest::StatusCode;
 use scene_runner::{
     initialize_scene::{
-        LiveScenes, PortableScenes, PortableSource, SceneLoading, SuperUserScene, PARCEL_SIZE,
+        LiveScenes, PortableScenes, PortableSource, SceneEntityDefinitionHandle, SceneLoading,
+        SuperUserScene, PARCEL_SIZE,
     },
     permissions::Permission,
     realm_base_url_and_name,
@@ -2313,13 +2317,17 @@ fn handle_sign_request(
     server_rooms: Res<comms::ServerSceneRooms>,
     preview_mode: Res<PreviewMode>,
     profile: Res<CurrentUserProfile>,
-    ipfs: IpfsAssetServer,
+    scene_definitions: Query<&SceneEntityDefinitionHandle>,
+    definitions: Res<Assets<EntityDefinition>>,
 ) {
     for ev in events.read() {
         // the requesting scene's hash: the engine builds the signed metadata from it, and it
         // selects a per-scene storage delegation in server mode
         if let (
-            RpcOrigin::Scene { hash: scene, .. },
+            RpcOrigin::Scene {
+                entity,
+                hash: scene,
+            },
             RpcCall::SignRequest(common::rpc::SignRequest {
                 method,
                 uri,
@@ -2384,19 +2392,30 @@ fn handle_sign_request(
             };
             let hostname = signed_fetch_realm_hostname(&realm.about_url, &realm_name);
 
+            let Some(definition) = scene_definitions
+                .get(*entity)
+                .ok()
+                .and_then(|handle| definitions.get(&handle.0))
+                .filter(|definition| definition.id == scene.as_ref())
+            else {
+                response.send(Err("no entity definition".to_owned()));
+                continue;
+            };
+            let scene_meta = match serde_json::from_value::<SceneMeta>(
+                definition.metadata.clone().unwrap_or_default(),
+            ) {
+                Ok(meta) => meta,
+                Err(error) => {
+                    response.send(Err(error.to_string()));
+                    continue;
+                }
+            };
+
             let method = method.clone();
             let tld = signed_fetch_tld(common::base_domain::get()).to_owned();
             let scene = scene.to_string();
             let wallet = wallet.clone();
-            let ipfs = ipfs.ipfs().clone();
             let task = IoTaskPool::get().spawn_compat(async move {
-                let (definition, _) = ipfs
-                    .entity_definition(&scene)
-                    .await
-                    .ok_or_else(|| anyhow!("no entity definition"))?;
-                let scene_meta =
-                    serde_json::from_str::<SceneMeta>(&definition.metadata.unwrap_or_default())?;
-
                 let meta = SignedFetchMeta {
                     origin: Some(base_url.clone()),
                     scene_id: Some(scene),
@@ -2557,13 +2576,40 @@ fn handle_entity_definition(
         )>,
     >,
     ipfs: IpfsAssetServer,
+    live_scenes: Res<LiveScenes>,
+    scene_definitions: Query<&SceneEntityDefinitionHandle>,
+    definitions: Res<Assets<EntityDefinition>>,
 ) {
     for ev in events.read() {
         if let RpcCall::EntityDefinition { urn, response } = &ev.call {
+            let owned = live_scenes
+                .scenes
+                .get(urn)
+                .and_then(|entity| scene_definitions.get(*entity).ok())
+                .and_then(|handle| definitions.get(&handle.0))
+                .filter(|definition| definition.id == *urn)
+                .map(|definition| {
+                    (
+                        definition.content.0.clone(),
+                        definition.metadata.as_ref().map(Value::to_string),
+                    )
+                });
             let ipfs = ipfs.ipfs().clone();
             let urn = urn.to_owned();
 
             let future = async move {
+                if let Some((collection, metadata)) = owned {
+                    let (collection, base_url) = ipfs
+                        .entity_routing(&urn)
+                        .await
+                        .map(|(collection, base_url)| (collection.0, base_url))
+                        .unwrap_or((collection, String::new()));
+                    return Some(EntityDefinitionResponse {
+                        collection,
+                        metadata,
+                        base_url,
+                    });
+                }
                 let def = ipfs.entity_definition(&urn).await;
                 def.map(|def| EntityDefinitionResponse {
                     collection: def.0.collection.0,

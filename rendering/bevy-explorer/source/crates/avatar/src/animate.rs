@@ -1154,7 +1154,8 @@ fn resolve_playback<'a>(
                         ipfas.asset_server().load_state(handle.id()),
                         bevy::asset::LoadState::Failed(_)
                     ) {
-                        pending.0 = None;
+                        // Reuse this terminal state while animate rebuilds the same request.
+                        // Loading it again would retry the failed asset every frame.
                         return Err(Hold::Failed);
                     }
                     return Err(Hold::Loading);

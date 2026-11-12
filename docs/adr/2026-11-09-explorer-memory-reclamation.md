@@ -63,14 +63,27 @@ full and compact profile DTOs, registered-entity JSON and the editor asset catal
 respond to RAM. Entity JSON and the catalogue have a five-second idle grace and
 reload on demand; in-flight consumers retain their own values or snapshots.
 Metadata reloads run outside the frame schedule and publish only if a newer
-registration or request has not replaced them. Failed reloads remain retryable.
-Cleanup skips contended cache locks rather than delaying the frame.
+registration or request has not replaced them. A raw-JSON reload has a 30-second
+deadline, including admission waits; failure returns the known content routing
+with unavailable metadata and leaves the payload retryable. Live scene RPCs use
+the entity definition already owned by that scene, so signed fetch and scene
+information do not require a metadata reload. Resident metadata reads share the
+context read lock and atomically record access. Cleanup skips contended locks and
+takes a write lock only for an eligible cleanup turn.
 
-Content maps and URN/hash routing indexes remain available after payload eviction
-so asset dependencies and metadata reloads retain their original routing. Weak
-lookup tables do not retain assets. Current realm/account state and scene-owned
-DTOs follow their owners' lifetimes. The unused collection-name catalogue is not
-fetched. Load admission, scene limits and quality degradation remain separate work.
+Content maps and URN/hash routing indexes remain for the session after payload
+eviction, including entries for departed scenes. They can grow with visited scenes
+and resolved collectibles; this pass releases their JSON payloads, not the routing
+records. Reclaiming a record requires proving that no owner or pending dependency
+request needs its paths. Weak lookup tables do not retain assets. Current
+realm/account state and the DTO assets held by scene components follow their
+owners' lifetimes. The unused collection-name catalogue is not fetched.
+
+Metadata reloads retain existing download priority. Unworn collectibles may wait
+behind scene downloads or a later load-refusal policy; the raw-JSON deadline bounds
+that wait without adding a bypass tier. Collectible metadata asset loads retain
+their ordinary asynchronous loading behavior. Load admission, scene limits and
+quality degradation remain separate work.
 
 Expose pressure, simulation, scan outcomes and per-cache progress in the runtime
 debug panel. Session-only mutation controls require preview mode. Platform

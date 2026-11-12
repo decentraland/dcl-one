@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use alloy_core::primitives::Address;
 use alloy_signer::{Error as WalletError, Signature, Signer};
@@ -8,7 +8,6 @@ use async_trait::async_trait;
 use bevy::prelude::*;
 use common::structs::ChainLink;
 use http::Uri;
-use platform::AsyncRwLock;
 use rand::SeedableRng;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +27,7 @@ impl Plugin for WalletPlugin {
 }
 
 #[derive(Resource, Clone, Default)]
-pub struct Wallet(Arc<AsyncRwLock<WalletInner>>);
+pub struct Wallet(Arc<RwLock<WalletInner>>);
 
 #[derive(Default)]
 struct WalletInner {
@@ -40,7 +39,7 @@ struct WalletInner {
 
 impl Wallet {
     pub fn auth_chain(&self) -> Result<SimpleAuthChain, anyhow::Error> {
-        let inner = self.0.blocking_read();
+        let inner = self.0.read().unwrap();
 
         Ok(SimpleAuthChain::new_chain(
             *inner
@@ -53,8 +52,8 @@ impl Wallet {
 
     /// Freeze the signer and auth chain for an in-flight request across account changes.
     pub fn snapshot(&self) -> Self {
-        let read = self.0.blocking_read();
-        Self(Arc::new(AsyncRwLock::new(WalletInner {
+        let read = self.0.read().unwrap();
+        Self(Arc::new(RwLock::new(WalletInner {
             inner: read.inner.clone(),
             root_address: read.root_address,
             delegates: read.delegates.clone(),
@@ -63,7 +62,7 @@ impl Wallet {
     }
 
     pub fn disconnect(&mut self) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.write().unwrap();
         write.inner = None;
         write.root_address = None;
         write.delegates.clear();
@@ -73,7 +72,7 @@ impl Wallet {
     pub fn finalize_as_guest(&mut self) {
         let inner: Arc<dyn ObjSafeWalletSigner + Send + Sync> =
             Arc::new(PrivateKeySigner::random_with(&mut rand::thread_rng()));
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.write().unwrap();
         write.root_address = Some(inner.address());
         write.delegates.clear();
         write.guest_account = false;
@@ -84,7 +83,7 @@ impl Wallet {
         let inner: Arc<dyn ObjSafeWalletSigner + Send + Sync> = Arc::new(
             PrivateKeySigner::random_with(&mut rand::rngs::StdRng::from_seed(seed)),
         );
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.write().unwrap();
         write.root_address = Some(inner.address());
         write.delegates.clear();
         write.guest_account = false;
@@ -98,7 +97,7 @@ impl Wallet {
         auth: Vec<ChainLink>,
         guest_account: bool,
     ) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.write().unwrap();
         write.root_address = Some(root_address);
         write.delegates = auth;
         write.guest_account = guest_account;
@@ -113,7 +112,7 @@ impl Wallet {
         auth: Vec<ChainLink>,
         guest_account: bool,
     ) {
-        let mut write = self.0.try_write().unwrap();
+        let mut write = self.0.write().unwrap();
         write.root_address = Some(root_address);
         write.delegates = auth;
         write.guest_account = guest_account;
@@ -126,7 +125,7 @@ impl Wallet {
         // not held across the signing: a remote signer awaits the page, and logging in or out
         // meanwhile needs the write lock
         let (signer, root_address, delegates) = {
-            let read = self.0.read().await;
+            let read = self.0.read().unwrap();
             let signer = read.inner.clone().ok_or_else(|| {
                 WalletError::Other(Box::new(std::io::Error::new(
                     std::io::ErrorKind::NotConnected,
@@ -139,18 +138,18 @@ impl Wallet {
     }
 
     pub fn address(&self) -> Option<Address> {
-        self.0.try_read().unwrap().root_address
+        self.0.read().unwrap().root_address
     }
 
     pub fn is_guest(&self) -> bool {
-        self.0.try_read().unwrap().delegates.is_empty()
+        self.0.read().unwrap().delegates.is_empty()
     }
 
     /// An account that was created for a guest. It signs in and keeps a profile like any
     /// other account (so `is_guest` is false), but the user holds no wallet to approve
     /// transactions with.
     pub fn is_guest_account(&self) -> bool {
-        self.0.try_read().unwrap().guest_account
+        self.0.read().unwrap().guest_account
     }
 }
 
@@ -434,5 +433,73 @@ mod snapshot_tests {
         assert_eq!(chain.0[0].payload, format!("{original:#x}"));
         assert_eq!(snapshot.address(), Some(original));
         assert_eq!(live.address(), None);
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod lock_tests {
+    use super::*;
+    use std::{sync::mpsc, time::Duration};
+
+    #[test]
+    fn account_readers_wait_for_an_account_update() {
+        let wallet = Wallet::default();
+        let mut update = wallet.0.write().unwrap();
+        update.root_address = Some(Address::repeat_byte(7));
+        update.guest_account = true;
+        let (started, starting) = mpsc::channel();
+        let (finished, finishing) = mpsc::channel();
+
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                started.send(()).unwrap();
+                finished
+                    .send((
+                        wallet.address(),
+                        wallet.is_guest(),
+                        wallet.is_guest_account(),
+                    ))
+                    .unwrap();
+            });
+            starting.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                finishing.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+            drop(update);
+            assert_eq!(
+                finishing.recv_timeout(Duration::from_secs(5)).unwrap(),
+                (Some(Address::repeat_byte(7)), true, true)
+            );
+        });
+    }
+
+    #[test]
+    fn disconnect_waits_for_an_account_reader() {
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([7; 32]);
+        let mut disconnecting = wallet.clone();
+        let reader = wallet.0.read().unwrap();
+        let (started, starting) = mpsc::channel();
+        let (finished, finishing) = mpsc::channel();
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                started.send(()).unwrap();
+                disconnecting.disconnect();
+                finished.send(()).unwrap();
+            });
+            starting.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!(
+                finishing.recv_timeout(Duration::from_millis(50)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            );
+            drop(reader);
+            finishing.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+
+        assert_eq!(wallet.address(), None);
+        assert!(wallet.is_guest());
+        assert!(!wallet.is_guest_account());
     }
 }

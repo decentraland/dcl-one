@@ -13,17 +13,27 @@ type MemoryState = {
 
 scenario('memory reclamation validates session controls and restores measured pressure', async ({ explorer }) => {
   const before = await explorer.json<MemoryState>('/memory_reclaim')
+  const memoryBefore = await explorer.json<{ controlsAvailable: boolean; limit: number }>('/debug_memory')
+  assert.equal(memoryBefore.controlsAvailable, before.controlsAvailable)
   assert.ok(before.caches.length > 0)
   if (!before.controlsAvailable) {
     for (const mutation of ['both', '--budget-ms 1.5']) {
       await assert.rejects(() => explorer.run('/memory_reclaim ' + mutation), /require preview mode/)
     }
+    for (const limit of [1, 0]) {
+      await assert.rejects(() => explorer.run('/debug_memory ' + limit), /require preview mode/)
+    }
     const after = await explorer.json<MemoryState>('/memory_reclaim')
     assert.equal(after.simulation, before.simulation)
     assert.equal(after.budgetMs, before.budgetMs)
+    assert.equal((await explorer.json<{ limit: number }>('/debug_memory')).limit, memoryBefore.limit)
     return
   }
   try {
+    await explorer.run('/debug_memory 1')
+    assert.equal((await explorer.json<{ limit: number }>('/debug_memory')).limit, 1)
+    await explorer.run('/debug_memory 0')
+    assert.equal((await explorer.json<{ limit: number }>('/debug_memory')).limit, 0)
     for (const invalid of ['0', '-1', '16.1', 'NaN', 'inf']) {
       await assert.rejects(() => explorer.run(`/memory_reclaim both --budget-ms=${invalid}`), /between 0.1 and 16/)
       const unchanged = await explorer.json<MemoryState>('/memory_reclaim')
@@ -48,6 +58,7 @@ scenario('memory reclamation validates session controls and restores measured pr
       !((state.gpu == null || state.gpu === 'Abundance') && state.gpuActive),
     { timeoutMs: 5_000, what: 'simulation off to restore real pressure' })
   } finally {
+    await explorer.run('/debug_memory ' + memoryBefore.limit)
     await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
     await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
       state.simulation === before.simulation && state.budgetMs === before.budgetMs,

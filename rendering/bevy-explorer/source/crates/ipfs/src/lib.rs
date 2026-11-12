@@ -1539,6 +1539,15 @@ impl IpfsIo {
         metadata_cache::entity_definition(self, hash).await
     }
 
+    /// Current content routing without fetching or retaining a metadata payload.
+    pub async fn entity_routing(&self, hash: &str) -> Option<(ContentMap, String)> {
+        let context = self.context.read().await;
+        Some((
+            context.entities.get(hash)?.collection.clone(),
+            context.contents_base_url(hash).unwrap_or_default(),
+        ))
+    }
+
     pub fn base_urls(&self) -> HashMap<String, String> {
         self.context
             .blocking_read()

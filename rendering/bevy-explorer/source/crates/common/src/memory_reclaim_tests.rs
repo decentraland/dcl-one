@@ -227,6 +227,80 @@ fn leaving_preview_discards_overrides_before_the_same_frames_cleanup() {
     }
 }
 
+#[test]
+fn restoring_platform_capacity_discards_the_preview_pressure_latch() {
+    let mut app = app();
+    app.insert_resource(PreviewMode {
+        is_preview: true,
+        ..default()
+    });
+    ready(&mut app);
+    ram(&mut app, Some(680));
+    app.world_mut().resource_mut::<MemoryStatus>().limit_mib = NonZeroU64::new(500);
+    app.update();
+    assert!(app.world().resource::<MemoryReclaimState>().ram_active);
+
+    app.world_mut().resource_mut::<MemoryStatus>().limit_mib = None;
+    app.update();
+    let state = app.world().resource::<MemoryReclaimState>();
+    assert_eq!(state.ram, Some(MemoryPressure::Normal));
+    assert!(!state.ram_active);
+    assert!(!app.world().resource::<ReclaimBudget>().ram);
+}
+
+#[test]
+fn leaving_preview_restores_platform_capacity_before_the_same_frames_cleanup() {
+    use bevy::ecs::schedule::common_conditions::run_once;
+
+    for (used, pressure, active) in [
+        (400, MemoryPressure::Abundance, false),
+        (680, MemoryPressure::Normal, false),
+        (800, MemoryPressure::Full, true),
+    ] {
+        let mut app = app();
+        app.init_resource::<Visits>()
+            .add_memory_reclaimer(spec("a", 10, ReclaimDomains::Ram), clean_a)
+            .insert_resource(PreviewMode {
+                is_preview: true,
+                ..default()
+            });
+        ready(&mut app);
+        ram(&mut app, Some(used));
+        app.update();
+        app.world_mut().resource_mut::<MemoryStatus>().limit_mib = NonZeroU64::new(500);
+        app.update();
+        assert_eq!(
+            app.world().resource::<MemoryReclaimState>().ram,
+            Some(MemoryPressure::Full)
+        );
+        assert!(app.world().resource::<MemoryReclaimState>().ram_active);
+        app.world_mut().resource_mut::<Visits>().0.clear();
+
+        app.add_systems(
+            PostUpdate,
+            (|mut preview: ResMut<PreviewMode>| preview.is_preview = false).run_if(run_once),
+        );
+        app.update();
+
+        let memory = app.world().resource::<MemoryStatus>();
+        assert!(memory.limit_mib.is_none());
+        assert_eq!(memory.reading().unwrap().cap_mib, 1_000);
+        let state = app.world().resource::<MemoryReclaimState>();
+        assert_eq!(state.ram, Some(pressure));
+        assert_eq!(state.ram_active, active);
+        assert_eq!(app.world().resource::<ReclaimBudget>().ram, active);
+        assert_eq!(app.world().resource::<Visits>().0.is_empty(), !active);
+
+        app.world_mut().resource_mut::<PreviewMode>().is_preview = true;
+        app.update();
+        assert!(app.world().resource::<MemoryStatus>().limit_mib.is_none());
+        assert_eq!(
+            app.world().resource::<MemoryReclaimState>().ram_active,
+            active
+        );
+    }
+}
+
 fn clean_a(mut budget: ResMut<ReclaimBudget>, mut visits: ResMut<Visits>) {
     if let Some(mut turn) = budget.begin("a", 10) {
         while turn.inspect() {

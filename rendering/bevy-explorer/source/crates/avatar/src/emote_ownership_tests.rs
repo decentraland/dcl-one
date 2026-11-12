@@ -1018,15 +1018,121 @@ fn terminal_gltf_failure_stops_playback_and_releases_its_staging_handle() {
             .get::<ActiveEmote>(avatar)
             .is_some_and(|active| active.urn == scene_emote("wave") && active.finished)
     });
+    fixture.app.update();
     assert!(
         pending.upgrade().is_none(),
         "failed staging handle is still owned"
     );
-    fixture.app.update();
     assert_eq!(
         fixture.app.world().get::<ActiveEmote>(avatar).unwrap().urn,
         *URN_IDLE
     );
+}
+
+#[test]
+fn recurring_failed_scene_movement_uses_one_load_and_stable_fallback() {
+    let mut fixture = PlaybackFixture::with_pressure();
+    let scene = fixture.app.world_mut().spawn_empty().id();
+    let mut failed = fixture.gate("stride");
+    fixture.request_movement(Some(scene), "stride");
+    fixture.wait_for_load(&mut failed);
+    let pending = fixture.pending("stride");
+    failed.result.send(false).unwrap();
+    let avatar = fixture.avatar;
+    fixture.update_until("failed movement never selected locomotion", |world| {
+        world.get::<ActiveEmote>(avatar).is_some_and(|active| {
+            active.urn == *URN_IDLE
+                && active.source == ActiveEmoteSource::VelocitySelected
+                && active.duration_ms == Some(2000)
+        })
+    });
+    let idle = fixture
+        .app
+        .world()
+        .get::<AnimationTransitions>(avatar)
+        .unwrap()
+        .get_main_animation()
+        .unwrap();
+    let mut fallback_stayed_selected = true;
+    for _ in 0..16 {
+        fixture.request_movement(Some(scene), "stride");
+        fixture.app.update();
+        let world = fixture.app.world();
+        let active = world.get::<ActiveEmote>(avatar).unwrap();
+        fallback_stayed_selected &= active.urn == *URN_IDLE
+            && active.source == ActiveEmoteSource::VelocitySelected
+            && active.duration_ms == Some(2000);
+        assert_eq!(
+            world
+                .get::<AnimationTransitions>(avatar)
+                .unwrap()
+                .get_main_animation(),
+            Some(idle)
+        );
+        assert!(world
+            .get::<AnimationPlayer>(avatar)
+            .unwrap()
+            .is_playing_animation(idle));
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(
+        fixture.loads.lock().unwrap()["stride"],
+        1,
+        "an unchanged movement request must not reload its failed asset"
+    );
+    assert!(
+        fallback_stayed_selected,
+        "a terminal movement failure must keep selecting the locomotion fallback"
+    );
+
+    let mut replacement = fixture.gate("replacement");
+    fixture.request_movement(Some(scene), "replacement");
+    fixture.wait_for_load(&mut replacement);
+    assert!(
+        pending.upgrade().is_none(),
+        "replaced failure is still owned"
+    );
+    replacement.result.send(true).unwrap();
+    fixture.wait_for_playback("replacement", EmoteMask::FullBody);
+
+    let mut retried = fixture.gate("stride");
+    fixture.request_movement(Some(scene), "stride");
+    fixture.wait_for_load(&mut retried);
+    retried.result.send(true).unwrap();
+    fixture.wait_for_playback("stride", EmoteMask::FullBody);
+    assert_eq!(fixture.loads.lock().unwrap()["stride"], 2);
+}
+
+#[test]
+fn terminal_scene_movement_failure_releases_when_request_ends_or_avatar_despawns() {
+    for despawn in [false, true] {
+        let mut fixture = PlaybackFixture::with_pressure();
+        let mut failed = fixture.gate("stride");
+        fixture.request_movement(None, "stride");
+        fixture.wait_for_load(&mut failed);
+        let pending = fixture.pending("stride");
+        failed.result.send(false).unwrap();
+        let avatar = fixture.avatar;
+        fixture.update_until("failed movement never selected locomotion", |world| {
+            world.get::<ActiveEmote>(avatar).is_some_and(|active| {
+                active.urn == *URN_IDLE && active.source == ActiveEmoteSource::VelocitySelected
+            })
+        });
+        if despawn {
+            fixture.app.world_mut().despawn(avatar);
+        } else {
+            fixture
+                .app
+                .world_mut()
+                .entity_mut(avatar)
+                .remove::<SceneDrivenAnim>();
+            fixture.app.update();
+        }
+        assert!(
+            pending.upgrade().is_none(),
+            "an abandoned movement failure is still owned"
+        );
+    }
 }
 
 #[test]

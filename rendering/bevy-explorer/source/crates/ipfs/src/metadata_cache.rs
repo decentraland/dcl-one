@@ -1,16 +1,42 @@
 use std::ops::Bound::{Excluded, Included, Unbounded};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use common::memory_reclaim::{ReclaimBudget, ReclaimTurn};
 
 use super::*;
 
 const IDLE_GRACE: Duration = Duration::from_secs(5);
+const RELOAD_TIMEOUT: Duration = Duration::from_secs(30);
+
+struct MetadataAccess {
+    epoch: Instant,
+    nanos: AtomicU64,
+}
+
+impl MetadataAccess {
+    fn new(epoch: Instant) -> Self {
+        Self {
+            epoch,
+            nanos: AtomicU64::new(0),
+        }
+    }
+
+    fn touch(&self) {
+        let elapsed = self.epoch.elapsed().as_nanos().min(u64::MAX as u128) as u64;
+        self.nanos.fetch_max(elapsed, Ordering::Relaxed);
+    }
+
+    fn idle_for(&self, now: Instant) -> Duration {
+        now.saturating_duration_since(self.epoch)
+            .saturating_sub(Duration::from_nanos(self.nanos.load(Ordering::Relaxed)))
+    }
+}
 
 pub(super) struct RegisteredEntity {
     pub collection: ContentMap,
     pub metadata: Option<String>,
     metadata_evicted: bool,
-    metadata_accessed: Instant,
+    metadata_accessed: MetadataAccess,
     generation: u64,
 }
 
@@ -33,7 +59,7 @@ impl IpfsContext {
                 collection: entity.collection,
                 metadata: entity.metadata,
                 metadata_evicted: false,
-                metadata_accessed: Instant::now(),
+                metadata_accessed: MetadataAccess::new(Instant::now()),
                 generation: self.metadata_retention.generation,
             },
         );
@@ -63,9 +89,7 @@ impl IpfsContext {
                 break;
             };
             retention.cursor = Some(hash.clone());
-            if entry.metadata.is_some()
-                && now.saturating_duration_since(entry.metadata_accessed) >= IDLE_GRACE
-            {
+            if entry.metadata.is_some() && entry.metadata_accessed.idle_for(now) >= IDLE_GRACE {
                 entry.metadata = None;
                 entry.metadata_evicted = true;
                 retention.resident -= 1;
@@ -74,37 +98,66 @@ impl IpfsContext {
             }
         }
     }
+
+    fn definition(&self, hash: &str) -> Option<(IpfsEntity, String)> {
+        let entry = self.entities.get(hash)?;
+        Some((
+            IpfsEntity {
+                collection: entry.collection.clone(),
+                metadata: entry.metadata.clone(),
+            },
+            self.contents_base_url(hash).unwrap_or_default(),
+        ))
+    }
 }
 
 pub(super) fn reclaim_metadata(ipfs: Res<IpfsResource>, mut budget: ResMut<ReclaimBudget>) {
-    // Async content reads must never make the cleanup schedule wait for this lock.
-    let Ok(mut context) = ipfs.context.try_write() else {
+    let Ok(context) = ipfs.context.try_read() else {
         return;
     };
-    if let Some(mut turn) = budget.begin("entity_metadata", context.metadata_retention.resident) {
-        context.reclaim_metadata(Instant::now(), &mut turn);
-        budget.finish_turn(turn, context.metadata_retention.resident);
-    }
+    let entries = context.metadata_retention.resident;
+    drop(context);
+    let Some(mut turn) = budget.begin("entity_metadata", entries) else {
+        return;
+    };
+    // Async content reads must never make the cleanup schedule wait for this lock.
+    let Ok(mut context) = ipfs.context.try_write() else {
+        budget.finish_turn(turn, entries);
+        return;
+    };
+    context.reclaim_metadata(Instant::now(), &mut turn);
+    budget.finish_turn(turn, context.metadata_retention.resident);
 }
 
 pub(super) async fn entity_definition(
     ipfs: &Arc<IpfsIo>,
     hash: &str,
 ) -> Option<(IpfsEntity, String)> {
+    entity_definition_with_timeout(ipfs, hash, RELOAD_TIMEOUT).await
+}
+
+async fn entity_definition_with_timeout(
+    ipfs: &Arc<IpfsIo>,
+    hash: &str,
+    timeout: Duration,
+) -> Option<(IpfsEntity, String)> {
+    match async_std::future::timeout(timeout, reload_definition(ipfs, hash)).await {
+        Ok(definition) => definition,
+        Err(_) => {
+            warn!("entity metadata reload timed out for {hash}");
+            ipfs.context.read().await.definition(hash)
+        }
+    }
+}
+
+async fn reload_definition(ipfs: &Arc<IpfsIo>, hash: &str) -> Option<(IpfsEntity, String)> {
     loop {
         let (generation, source) = {
-            let mut context = ipfs.context.write().await;
-            let entry = context.entities.get_mut(hash)?;
-            entry.metadata_accessed = Instant::now();
+            let context = ipfs.context.read().await;
+            let entry = context.entities.get(hash)?;
+            entry.metadata_accessed.touch();
             if !entry.metadata_evicted {
-                let definition = IpfsEntity {
-                    collection: entry.collection.clone(),
-                    metadata: entry.metadata.clone(),
-                };
-                return Some((
-                    definition,
-                    context.contents_base_url(hash).unwrap_or_default(),
-                ));
+                return context.definition(hash);
             }
             (entry.generation, context.contents_base_url(hash))
         };
@@ -140,24 +193,17 @@ pub(super) async fn entity_definition(
                 Ok(metadata) => metadata,
                 Err(error) => {
                     warn!("failed to reload entity metadata for {hash}: {error}");
-                    return None;
+                    return context.definition(hash);
                 }
             };
             let resident = metadata.is_some();
             entry.metadata = metadata;
             entry.metadata_evicted = false;
-            entry.metadata_accessed = Instant::now();
+            entry.metadata_accessed.touch();
             context.metadata_retention.resident += usize::from(resident);
         }
         // Read the current routing and metadata together, including concurrent reloads.
-        let entry = context.entities.get(hash)?;
-        return Some((
-            IpfsEntity {
-                collection: entry.collection.clone(),
-                metadata: entry.metadata.clone(),
-            },
-            context.contents_base_url(hash).unwrap_or_default(),
-        ));
+        return context.definition(hash);
     }
 }
 

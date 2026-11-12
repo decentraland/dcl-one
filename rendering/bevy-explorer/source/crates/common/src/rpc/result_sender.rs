@@ -1,10 +1,9 @@
 use crate::rpc::*;
 use pin_project::{pin_project, pinned_drop};
-use platform::AsyncRwLock;
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use std::{
     future::Future,
-    sync::Arc,
+    sync::{Arc, Mutex},
     task::{Context, Poll},
 };
 use tokio_util::sync::{CancellationToken, DropGuard};
@@ -39,13 +38,13 @@ impl<T> LocalChannel<T> {
 #[derive(Clone)]
 pub enum RpcResultSender<T> {
     Local {
-        channel: Arc<AsyncRwLock<LocalChannel<T>>>,
+        channel: Arc<Mutex<LocalChannel<T>>>,
         cancel: CancellationToken,
     },
     Remote {
         id: u64,
         #[allow(clippy::type_complexity)]
-        router: Arc<AsyncRwLock<Option<tokio::sync::mpsc::UnboundedSender<(u64, IpcMessage)>>>>,
+        router: Arc<Mutex<Option<tokio::sync::mpsc::UnboundedSender<(u64, IpcMessage)>>>>,
         receiver_dropped: CancellationToken,
         sender_alive: tokio::sync::mpsc::Sender<()>,
     },
@@ -102,7 +101,7 @@ impl<T> std::fmt::Debug for RpcResultSender<T> {
 impl<T: 'static> Default for RpcResultSender<T> {
     fn default() -> Self {
         Self::Local {
-            channel: Arc::new(AsyncRwLock::new(LocalChannel::Used)),
+            channel: Arc::new(Mutex::new(LocalChannel::Used)),
             cancel: CancellationToken::new(),
         }
     }
@@ -115,7 +114,7 @@ impl<T: Serialize + 'static> RpcResultSender<T> {
 
         (
             Self::Local {
-                channel: Arc::new(AsyncRwLock::new(LocalChannel::Channel(sx))),
+                channel: Arc::new(Mutex::new(LocalChannel::Channel(sx))),
                 cancel: cancel.clone(),
             },
             RpcResultReceiver {
@@ -138,14 +137,14 @@ impl<T: Serialize + 'static> RpcResultSender<T> {
     pub fn send(&self, result: T) {
         match self {
             RpcResultSender::Local { channel, .. } => {
-                let mut guard = channel.blocking_write();
-                if let Some(response) = guard.take() {
+                let response = channel.lock().unwrap().take();
+                if let Some(response) = response {
                     let _ = response.send(result);
                 }
             }
             RpcResultSender::Remote { id, router, .. } => {
-                let mut guard = router.blocking_write();
-                if let Some(response) = guard.take() {
+                let response = router.lock().unwrap().take();
+                if let Some(response) = response {
                     let data = rmp_encode(&result).unwrap();
                     let _ = response.send((*id, IpcMessage::Data(data)));
                 }
@@ -181,7 +180,7 @@ impl<T: 'static + Serialize + DeserializeOwned + Send> Serialize for RpcResultSe
             panic!();
         };
 
-        let id = channel.try_write().unwrap().serialize_with(|sender| {
+        let id = channel.lock().unwrap().serialize_with(|sender| {
             let endpoint = IpcResultCallback {
                 sender: Some(sender),
                 _cancel_on_drop: cancel.clone().drop_guard(),
@@ -217,7 +216,7 @@ impl<'de, T> Deserialize<'de> for RpcResultSender<T> {
 
         Ok(Self::Remote {
             id,
-            router: Arc::new(AsyncRwLock::new(Some(router))),
+            router: Arc::new(Mutex::new(Some(router))),
             receiver_dropped: cancel,
             sender_alive: sx,
         })

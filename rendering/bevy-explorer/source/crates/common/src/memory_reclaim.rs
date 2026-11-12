@@ -46,6 +46,7 @@ pub struct MemoryReclaimState {
     pub ram_active: bool,
     pub gpu_active: bool,
     ram_latched: bool,
+    ram_limit_active: bool,
     gpu_latched: bool,
 }
 
@@ -360,10 +361,16 @@ fn snapshot_pressure(
     settings: Res<MemoryReclaimSettings>,
     mut state: ResMut<MemoryReclaimState>,
 ) {
+    let ram_limit_active = ram.as_ref().is_some_and(|ram| ram.limit_mib.is_some());
     state.ram = ram
         .and_then(|ram| ram.reading())
         .map(|reading| reading.pressure());
     state.gpu = gpu.as_deref().and_then(gpu_pressure);
+    // A restored platform cap must not inherit pressure from the preview limit.
+    if state.ram_limit_active && !ram_limit_active {
+        state.ram_latched = false;
+    }
+    state.ram_limit_active = ram_limit_active;
     state.ram_latched = latch(state.ram_latched, state.ram);
     state.gpu_latched = latch(state.gpu_latched, state.gpu);
     state.ram_active = state.ram_latched;
@@ -387,10 +394,22 @@ fn begin_frame(
     mut state: ResMut<MemoryReclaimState>,
     mut budget: ResMut<ReclaimBudget>,
     preview: Option<Res<PreviewMode>>,
+    mut ram: Option<ResMut<MemoryStatus>>,
 ) {
     // Preview can end in PostUpdate, after the pressure snapshot.
     if preview.is_some_and(|preview| !preview.is_preview) {
         *settings = MemoryReclaimSettings::default();
+        if state.ram_limit_active || ram.as_ref().is_some_and(|ram| ram.limit_mib.is_some()) {
+            if let Some(ram) = ram.as_mut() {
+                ram.limit_mib = None;
+            }
+            state.ram = ram
+                .as_deref()
+                .and_then(MemoryStatus::reading)
+                .map(|reading| reading.pressure());
+            state.ram_latched = latch(false, state.ram);
+            state.ram_limit_active = false;
+        }
         state.ram_active = state.ram_latched;
         state.gpu_active = state.gpu_latched;
     }

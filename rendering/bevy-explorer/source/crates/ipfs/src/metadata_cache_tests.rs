@@ -41,7 +41,8 @@ fn store(dir: &Dir, hash: &str, metadata: serde_json::Value) {
 fn expire(ipfs: &IpfsIo) {
     let mut context = ipfs.context.blocking_write();
     for entry in context.entities.values_mut() {
-        entry.metadata_accessed = Instant::now() - IDLE_GRACE - Duration::from_secs(1);
+        entry.metadata_accessed =
+            MetadataAccess::new(Instant::now() - IDLE_GRACE - Duration::from_secs(1));
     }
     context.reclaim_metadata(Instant::now(), &mut ReclaimTurn::bounded(10, 64));
 }
@@ -57,7 +58,8 @@ fn metadata_reclamation_is_ram_only_and_preserves_routing_and_absence() {
         .entities
         .get_mut("stale")
         .unwrap()
-        .metadata_accessed = Instant::now() - IDLE_GRACE - Duration::from_secs(1);
+        .metadata_accessed =
+        MetadataAccess::new(Instant::now() - IDLE_GRACE - Duration::from_secs(1));
     let mut app = App::new();
     app.add_plugins((MinimalPlugins, MemoryReclaimPlugin))
         .insert_resource(IpfsResource {
@@ -146,6 +148,14 @@ fn failed_metadata_reload_remains_retryable() {
         "invalid-json",
     );
     expire(&ipfs);
+    let (definition, base) = bevy::tasks::block_on(ipfs.entity_definition("scene"))
+        .expect("a failed payload reload must preserve the known entity's routing");
+    assert!(definition.metadata.is_none());
+    assert_eq!(
+        definition.collection.hash("model.glb").as_deref(),
+        Some("model-content")
+    );
+    assert_eq!(base, "https://metadata.invalid/contents/");
     assert!(bevy::tasks::block_on(ipfs.scene_metadata("scene")).is_none());
     assert!(ipfs.context.blocking_read().entities["scene"].metadata_evicted);
     store(&dir, "scene", serde_json::json!({ "name": "retry" }));
@@ -157,6 +167,25 @@ fn failed_metadata_reload_remains_retryable() {
 }
 
 #[test]
+fn a_resident_metadata_read_does_not_exclude_other_content_readers() {
+    use std::{
+        future::Future,
+        task::{Context, Poll, Waker},
+    };
+    let (ipfs, _) = fixture();
+    register(&ipfs, "scene", Some("{}"));
+    let read = ipfs.context.blocking_read();
+    let mut lookup = Box::pin(ipfs.entity_definition("scene"));
+    assert!(matches!(
+        lookup
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop())),
+        Poll::Ready(Some(_))
+    ));
+    drop(read);
+}
+
+#[test]
 fn bounded_metadata_scans_reach_idle_entries_while_recent_entries_keep_being_read() {
     let (ipfs, _) = fixture();
     for index in 0..128 {
@@ -164,9 +193,9 @@ fn bounded_metadata_scans_reach_idle_entries_while_recent_entries_keep_being_rea
     }
     let mut context = ipfs.context.blocking_write();
     context.entities.get_mut("127").unwrap().metadata_accessed =
-        Instant::now() - IDLE_GRACE - Duration::from_secs(1);
+        MetadataAccess::new(Instant::now() - IDLE_GRACE - Duration::from_secs(1));
     for _ in 0..128 {
-        context.entities.get_mut("000").unwrap().metadata_accessed = Instant::now();
+        context.entities["000"].metadata_accessed.touch();
         context.reclaim_metadata(Instant::now(), &mut ReclaimTurn::bounded(10, 1));
     }
     assert!(context.entities["127"].metadata_evicted);
@@ -206,10 +235,14 @@ struct ReRegisteringReader {
     inner: MemoryAssetReader,
     replacement: Arc<std::sync::Mutex<Option<Weak<IpfsIo>>>>,
     register: bool,
+    pending: bool,
 }
 
 impl AssetReader for ReRegisteringReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
+        if self.pending {
+            std::future::pending::<()>().await;
+        }
         let previous = AssetReader::read(&self.inner, path).await?;
         let replacement = self
             .replacement
@@ -274,6 +307,7 @@ fn a_late_metadata_reload_cannot_return_an_older_registration_or_source() {
                 inner: MemoryAssetReader { root: dir },
                 replacement: replacement.clone(),
                 register: register_entity,
+                pending: false,
             }),
             Some(PathBuf::from("metadata-fixture-cache")),
             Default::default(),
@@ -301,4 +335,39 @@ fn a_late_metadata_reload_cannot_return_an_older_registration_or_source() {
         assert_eq!(base, "https://replacement.invalid/");
         assert_eq!(ipfs.context.blocking_read().metadata_retention.resident, 1);
     }
+}
+
+#[test]
+fn metadata_reload_deadline_returns_routing_and_keeps_the_payload_retryable() {
+    let ipfs = Arc::new(IpfsIo::new(
+        false,
+        Box::new(ReRegisteringReader {
+            inner: MemoryAssetReader {
+                root: Dir::default(),
+            },
+            replacement: Arc::new(std::sync::Mutex::new(None)),
+            register: false,
+            pending: true,
+        }),
+        Some(PathBuf::from("metadata-fixture-cache")),
+        Default::default(),
+        1,
+        #[cfg(feature = "ipfs_debug")]
+        tokio::sync::mpsc::unbounded_channel().0,
+    ));
+    register(&ipfs, "scene", Some("{}"));
+    expire(&ipfs);
+    let (definition, base) = bevy::tasks::block_on(entity_definition_with_timeout(
+        &ipfs,
+        "scene",
+        Duration::from_millis(1),
+    ))
+    .unwrap();
+    assert!(definition.metadata.is_none());
+    assert_eq!(
+        definition.collection.hash("model.glb").as_deref(),
+        Some("model-content")
+    );
+    assert_eq!(base, "https://metadata.invalid/contents/");
+    assert!(ipfs.context.blocking_read().entities["scene"].metadata_evicted);
 }
