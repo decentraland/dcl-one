@@ -925,10 +925,12 @@ fn broadcast_nearby_reactions(
     }
 }
 
-/// Every reaction, the local user's included, except from blocked users.
+/// Every reaction, the local user's included, except from blocked users and, in Nearby, from
+/// other players the scene room bans.
 fn pipe_chat_reactions_to_scene(
     mut reactions: EventReader<ChatReactionEvent>,
     #[cfg(feature = "livekit")] ban_block: ban_block::BanBlock,
+    #[cfg(feature = "livekit")] wallet: Res<Wallet>,
     mut requests: EventReader<SystemApi>,
     mut senders: Local<Vec<RpcStreamSender<ChatReactionData>>>,
 ) {
@@ -943,7 +945,11 @@ fn pipe_chat_reactions_to_scene(
 
     for ev in reactions.read() {
         #[cfg(feature = "livekit")]
-        if ban_block.is_blocked_either_way(ev.from) {
+        if ban_block.is_blocked_either_way(ev.from)
+            || (ev.channel == "Nearby"
+                && Some(ev.from) != wallet.address()
+                && ban_block.is_addr_banned_in_scene(ev.from))
+        {
             continue;
         }
         debug!("reaction {ev:?}");

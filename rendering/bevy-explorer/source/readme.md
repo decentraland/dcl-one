@@ -180,7 +180,7 @@ Replies are JSON where the command says so; a failed command rejects (web) or an
   `micEnabled`, `localSpeaker`, `localRole`, `error`, `errorIsNotice`), `/ban_block_state
   [address]` (whether the local user is banned from the platform or refused by the current
   scene, whom they block or are blocked by, the scene room's banned and admin lists, and that
-  address's standing; Nearby chat from an address the scene room bans is dropped;
+  address's standing; Nearby chat and reactions from an address the scene room bans are dropped;
   `/ban_block_refresh` re-checks the platform ban), `/entity_screen_position
   <entity> [--bounds]`, `/photo_mode [on|off]` (the camera reel's in-world camera: its state, or
   open or close it) and `/take_photo` (a photo, captured and uploaded; the reply is the state, a
