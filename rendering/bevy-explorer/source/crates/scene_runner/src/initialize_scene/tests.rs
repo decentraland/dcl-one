@@ -101,8 +101,35 @@ fn full_memory_still_admits_the_players_own_scene() {
 
     world.run_system_once(process_scene_lifecycle).unwrap();
 
+    // the current-scene deferral alone would hold the neighbour too; the count shows the
+    // refusal admitted the current scene and refused the neighbour
     assert_eq!(spawned_hashes(&world), vec!["current".to_owned()]);
     assert_eq!(world.resource::<RefusedScenes>().0, 1);
+}
+
+#[test]
+fn full_memory_keeps_a_neighbour_already_spawned() {
+    let mut world = lifecycle_world();
+    spawn_current_scene(&mut world, SceneLoading::Failed);
+    let neighbour = world
+        .spawn((SceneHash("neighbour".to_owned()), SceneLoading::SceneEntity))
+        .id();
+    world
+        .resource_mut::<LiveScenes>()
+        .scenes
+        .insert("neighbour".to_owned(), neighbour);
+    world.insert_resource(LoadRefusal { refusing: true });
+
+    world.run_system_once(process_scene_lifecycle).unwrap();
+
+    // nothing new to spawn, nothing refused, and the neighbour still loads
+    assert!(spawned_hashes(&world).is_empty());
+    assert_eq!(world.resource::<RefusedScenes>().0, 0);
+    assert!(world.get_entity(neighbour).is_ok());
+    assert_eq!(
+        world.resource::<LiveScenes>().scenes.get("neighbour"),
+        Some(&neighbour)
+    );
 }
 
 #[test]

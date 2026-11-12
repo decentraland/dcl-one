@@ -4,7 +4,6 @@ use bevy::{
 };
 
 use common::{
-    memory::LoadRefusal,
     partition::{point_partition, scene_partition, LoadPriority, PartitionData, Tier},
     structs::{PrimaryCamera, PrimaryUser},
 };
@@ -182,16 +181,6 @@ pub fn publish_download_priorities(
         downloads.0.iter().map(move |hash| (hash.as_str(), key))
     });
     ipfs.update_download_priorities(scene_keys.chain(wearable_keys));
-}
-
-/// While engine memory is full, the request slots hold every download ranked in the `Other`
-/// tier or later: requests no live scene or avatar owns (imposter tiles, NFT images, URL fonts)
-/// and those of departed scenes. They keep their place and resume when the refusal ends. The
-/// player's scenes, avatars and the other live scenes keep downloading, so a scene already
-/// spawned finishes loading.
-pub fn hold_low_priority_downloads(refusal: Option<Res<LoadRefusal>>, ipfs: Res<IpfsResource>) {
-    let refusing = refusal.is_some_and(|refusal| refusal.refusing);
-    ipfs.hold_downloads_from(refusing.then_some(Tier::Other));
 }
 
 #[cfg(test)]

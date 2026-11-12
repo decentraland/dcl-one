@@ -22,7 +22,7 @@ fn scene(name: &str) -> Option<String> {
 }
 
 /// Register each hash once, as its scene root or avatar would.
-fn register(gate: &PriorityGate, entries: &[(&str, LoadPriority)]) {
+fn register(gate: &Arc<PriorityGate>, entries: &[(&str, LoadPriority)]) {
     for (name, key) in entries {
         gate.register(name, *key);
     }
@@ -139,26 +139,50 @@ async fn an_unregistered_hash_ranks_after_the_registered_ones() {
 }
 
 #[tokio::test]
-async fn a_held_tier_waits_while_live_scenes_are_granted() {
+async fn a_held_tier_waits_while_the_others_are_granted() {
     let gate = PriorityGate::new(1);
-    register(&gate, &[("live", key(5, true, 6400.0))]);
-    gate.hold_from(Some(Tier::Other));
+    register(&gate, &[("left", key(1, false, 100.0))]);
+    let blocker = gate.try_acquire().unwrap();
     let log = Log::default();
-
-    // the slot is free, but the imposter request ranks in the held tier
-    let imposter = reader(&gate, "imposter", gate.ticket(None), &log);
+    let left = reader(&gate, "left", gate.ticket(scene("left")), &log);
     settle(&gate, 1).await;
-    // a live scene's request is granted past it
-    reader(&gate, "live", gate.ticket(scene("live")), &log)
+    gate.unregister("left");
+    gate.hold_from(Some(Tier::Departed));
+
+    // the slot comes free, but the departed scene's request is held
+    drop(blocker);
+    settle(&gate, 1).await;
+    // a request no scene owns is granted past it
+    reader(&gate, "no-hash", gate.ticket(None), &log)
         .await
         .unwrap();
-    assert_eq!(*log.lock().unwrap(), vec!["live"]);
+    assert_eq!(*log.lock().unwrap(), vec!["no-hash"]);
     assert_eq!(gate.waiting(), 1);
 
     // lifting the hold grants what waited
     gate.hold_from(None);
-    imposter.await.unwrap();
-    assert_eq!(*log.lock().unwrap(), vec!["live", "imposter"]);
+    left.await.unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["no-hash", "left"]);
+}
+
+#[tokio::test]
+async fn a_held_request_is_granted_once_its_scene_is_registered_again() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("back", key(1, false, 100.0))]);
+    let blocker = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let back = reader(&gate, "back", gate.ticket(scene("back")), &log);
+    settle(&gate, 1).await;
+    gate.unregister("back");
+    gate.hold_from(Some(Tier::Departed));
+    drop(blocker);
+    settle(&gate, 1).await;
+
+    // the scene comes back: its request takes the free slot without waiting for another
+    // request, release or hold change
+    gate.register("back", key(1, false, 100.0));
+    back.await.unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["back"]);
 }
 
 #[tokio::test]

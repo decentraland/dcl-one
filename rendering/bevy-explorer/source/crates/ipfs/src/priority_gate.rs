@@ -371,10 +371,12 @@ impl PriorityGate {
     }
 
     /// An entity that owns `hash` (a scene root, an avatar wearing it) has appeared: the hash
-    /// ranks by `key`, or by the best key of its holders when it is held already.
-    pub fn register(&self, hash: &str, key: LoadPriority) {
+    /// ranks by `key`, or by the best key of its holders when it is held already. A departed
+    /// hash registered again leaves the last tier, so while a hold is on its waiting requests
+    /// may now take a free slot: they are offered one at once.
+    pub fn register(self: &Arc<Self>, hash: &str, key: LoadPriority) {
         let mut state = self.state();
-        state.departed.remove(hash);
+        let released = state.departed.remove(hash) && state.held_from.is_some();
         match state.keys.get_mut(hash) {
             Some(entry) => {
                 entry.holders += 1;
@@ -390,6 +392,10 @@ impl PriorityGate {
                     },
                 );
             }
+        }
+        drop(state);
+        if released {
+            self.grant();
         }
     }
 
@@ -413,6 +419,8 @@ impl PriorityGate {
 
     /// A frame's keys, written in place: the first write of a hash replaces its key, later
     /// writes in the same publish take the best, and a hash nobody registered is ignored.
+    /// Only a departed hash ranks in the held tier, and it has no key, so a publish never
+    /// releases a held request.
     pub fn publish<'a>(&self, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
         let mut state = self.state();
         state.generation += 1;
