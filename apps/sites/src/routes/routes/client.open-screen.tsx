@@ -7,8 +7,8 @@ import type { StoryId } from "@/core/lib/telemetry/story-id";
 
 const STORY: StoryId = "client/open-screen";
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = await pageLoader(request,  { variant: "base" });
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = await pageLoader(request, context,  { variant: "base" });
   const places = await loadPlaces({ limit: 24 })
     .then((result) => result.data)
     .catch(() => null);

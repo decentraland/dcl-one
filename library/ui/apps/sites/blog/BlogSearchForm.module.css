@@ -1,0 +1,73 @@
+.form {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-12);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--dcl-space-8);
+  min-width: 0;
+  border-radius: var(--dcl-radius-full);
+  color: var(--dcl-neutrals-gray);
+}
+
+.bar .field {
+  width: 362px;
+  padding: 7px var(--dcl-space-12);
+  border: 1px solid var(--dcl-neutrals-gray);
+  background: var(--dcl-transparencies-white-10);
+}
+
+.outline .field {
+  padding: 11px var(--dcl-space-16);
+  border: 1px solid var(--dcl-border-default);
+}
+
+.field:focus-within {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.icon {
+  flex: none;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--dcl-text-primary);
+  font: inherit;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 26px;
+  letter-spacing: -0.2px;
+}
+
+.input::placeholder {
+  color: var(--dcl-neutrals-gray);
+  opacity: 1;
+}
+
+.input:focus {
+  outline: none;
+}
+
+@media (max-width: 1023px) {
+  .bar .field {
+    width: 200px;
+  }
+}
