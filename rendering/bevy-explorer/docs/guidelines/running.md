@@ -134,6 +134,18 @@ with its HUD host, `apps/ui3/src/play`, which runs the same shared HUD as `react
 `rendering/bevy-explorer/README.md` for what each host keeps. Full DevTools logging needs DevTools open before the page loads.
 The engine console lives in the app iframe.
 
+To try a pull request's web build by hand, take its CI artifact (`bevy-explorer-web-<sha>`,
+built from the PR merged with main) and serve the folder on loopback with the headers the dev
+server sends (`coiHeadersExceptAuth` in `react-web/vite.config.ts`): none on the shell page,
+`Document-Isolation-Policy` on `app.html`, the isolation headers on everything else. The app
+frame is isolated, so drive it with the [web driver](#test-commands) rather than a page script;
+its window must stay visible, or Chrome throttles it. `?guest=1` signs in the engine's plain
+guest: the HUD's guest sign-in goes through thirdweb, which refuses origins it does not list. The HUD focuses the chat field on
+arrival, so release it (`/press_key Escape`) and check `keyboardClaimed` in `/world_state` before
+holding a movement key; a scene's own dialog can hold movement too. `/performance_state` gives the
+slowest frame and the frames over 50 ms of each 1,000 frames, and `/instantiation_state` what the
+spawner and glTF processing take.
+
 ## Headless
 
 ```
