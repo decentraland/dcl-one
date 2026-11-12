@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
-import type { PageToScene, SceneToPage } from '../engine/protocol'
+import type { PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
 
 const http = vi.hoisted(() => ({
   serviceBase: vi.fn(async () => 'https://camera-reel.test'),

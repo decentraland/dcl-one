@@ -1,5 +1,5 @@
 import { posix } from 'node:path'
-import { componentRegistryEntries } from '../component-generation.mjs'
+import { componentRegistryEntries, type AcceptedLimit } from '../component-generation.mjs'
 import postcss from 'postcss'
 import postcssModules from 'postcss-modules'
 import type { FigmaConfig } from './config.js'
@@ -170,8 +170,6 @@ export default {
 `
 }
 
-type AcceptedLimit = { id: string; text: string }
-
 // The registry the install writes back: public names keep their accepted limits, in the { name, limits } form.
 function registryBytes(
   components: readonly string[],
@@ -194,15 +192,11 @@ async function planComponents(context: ComponentPlanContext): Promise<ComponentI
   const { source, config, registry, runtime } = context
   if (config.imageFills !== 'placeholder')
     throw new Error('Public component installation requires the placeholder raster policy')
-  let entries: { components: string[]; internal: string[]; limits: Record<string, AcceptedLimit[]> }
+  let entries: ReturnType<typeof componentRegistryEntries>
   try {
     entries = componentRegistryEntries(registry)
   } catch (error) {
-    throw new Error(
-      'Component registry must contain public and internal name lists only: ' +
-        (error as Error).message,
-      { cause: error }
-    )
+    throw new Error('Invalid component registry: ' + (error as Error).message, { cause: error })
   }
   const requested = [...entries.components, ...entries.internal]
   if (

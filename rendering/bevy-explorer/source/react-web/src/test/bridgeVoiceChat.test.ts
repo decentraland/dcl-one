@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import type { ActiveCommunityVoiceChat } from '../engine/protocol'
+import type { ActiveCommunityVoiceChat } from '@explorer-core/engine/protocol'
 
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({ engine: { addSystem: vi.fn(), removeSystem: vi.fn() } }))
 const player = vi.hoisted(() => ({ current: null as { userId: string; position?: undefined } | null }))
@@ -16,7 +16,7 @@ vi.mock('../../bridge-scene/src/bevy-api', () => ({
 }))
 
 const { fetchActiveChats, patchActive, registerVoiceChat } = await import('../../bridge-scene/src/domains/voiceChat')
-const { streamHere } = await import('../features/voiceChat/streamHere')
+const { streamHere } = await import('../../../../../../library/ui/apps/hud/features/voiceChat/streamHere')
 
 const chats = (...ids: string[]): { ok: true; body: string } => ({
   ok: true,

@@ -69,6 +69,39 @@ describe('Explorer', () => {
     assert.equal(state.sent, 2)
   })
 
+  test('ban and block commands: the state, the lookup, and the block and unblock lines', async () => {
+    const other = '0x' + '2'.repeat(40)
+    const fake = new FakeConsole({
+      ban_block_state: (line) =>
+        JSON.stringify({
+          address: '0x' + '1'.repeat(40),
+          blocks: { state: 'live', reason: null, blocked: [other], blockedBy: [] },
+          platformBan: { state: 'checked', isBanned: false, source: null, reason: null, matchedOn: null, customMessage: null, expiresAt: null, checkedAgoSecs: 3, error: null },
+          sceneAdmission: { state: 'allowed', scope: null, message: null, sceneId: 'scene-1' },
+          sceneRoom: { state: 'connected', sceneId: 'scene-1', bannedAddresses: [], sceneAdmins: [] },
+          lookup: line.endsWith(other) ? { address: other, isBlockedEitherWay: true, direction: 'local_user_blocked_them', bannedInScene: false, adminPermissions: 'not_admin' } : null,
+          unavailable: line.endsWith(other) ? {} : { lookup: 'no address given' }
+        }),
+      block_user: 'block requested',
+      unblock_user: 'unblock requested'
+    })
+    const explorer = new Explorer(fake)
+    const state = await explorer.banBlockState()
+    assert.equal(state.blocks.state, 'live')
+    assert.deepEqual(state.blocks.blocked, [other])
+    assert.equal(state.platformBan.isBanned, false)
+    assert.equal(state.lookup, null)
+    assert.equal(state.unavailable.lookup, 'no address given')
+    const lookup = await explorer.banBlockState(other)
+    assert.equal(lookup.lookup?.direction, 'local_user_blocked_them')
+    assert.equal(lookup.sceneRoom.state, 'connected')
+    await explorer.blockUser(other)
+    await explorer.unblockUser(other)
+    assert.deepEqual(fake.sent('ban_block_state'), ['/ban_block_state', `/ban_block_state ${other}`])
+    assert.deepEqual(fake.sent('block_user'), [`/block_user ${other}`])
+    assert.deepEqual(fake.sent('unblock_user'), [`/unblock_user ${other}`])
+  })
+
   test('a JSON reply that is text is an error naming the command', async () => {
     const fake = new FakeConsole({ world_state: 'oops' })
     await assert.rejects(new Explorer(fake).worldState(), /`\/world_state` did not reply JSON: oops/)
