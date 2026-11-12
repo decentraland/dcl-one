@@ -109,10 +109,10 @@ describe('NativeConsole', () => {
 
   test('a command that never answers times out with its line redacted', async () => {
     const console_ = new NativeConsole({ port, token, pollMs: 5, commandTimeoutMs: 40 })
-    await assert.rejects(console_.run('/login_identity eyJhIjoxfQ== --guest'), (error: unknown) => {
+    await assert.rejects(console_.run('/login_identity eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest'), (error: unknown) => {
       assert.ok(error instanceof TimeoutError)
       assert.match(error.message, /waiting for `\/login_identity <redacted> --guest` to answer/)
-      assert.doesNotMatch(error.message, /eyJhIjoxfQ/)
+      assert.doesNotMatch(error.message, /eyJlcGhl/)
       return true
     })
   })

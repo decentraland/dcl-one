@@ -58,16 +58,27 @@ describe('acceptsBinding', () => {
 
 describe('redact', () => {
   test("keeps a sign-in line's credential out of what the command line prints", () => {
-    assert.equal(secretOf('/hud_login eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('login_identity eyJhIjoxfQ== --name tester'), 'eyJhIjoxfQ==');
+    assert.equal(secretOf('/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
+    assert.equal(secretOf('login_identity eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --name tester'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
     assert.equal(secretOf('/teleport 1 2'), undefined);
-    assert.equal(secretOf('/hud_login --guest eyJhIjoxfQ== --look 1'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/hud_login --name tester --look 1 eyJhIjoxfQ== --guest'), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/login_identity --look 3 eyJhIjoxfQ=='), 'eyJhIjoxfQ==');
-    assert.equal(secretOf('/hud_login "eyJhIjoxfQ==" --guest'), 'eyJhIjoxfQ==');
-    assert.equal(redact('/hud_login "eyJhIjoxfQ=="', 'said eyJhIjoxfQ== and "eyJhIjoxfQ=="'), 'said <redacted> and "<redacted>"');
-    assert.equal(redact('/hud_login eyJhIjoxfQ== --guest', '/hud_login eyJhIjoxfQ== --guest did not finish: eyJhIjoxfQ=='), '/hud_login <redacted> --guest did not finish: <redacted>');
+    assert.equal(secretOf('/hud_login --guest eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --look 1'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
+    assert.equal(secretOf('/hud_login --name tester --look 1 eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
+    assert.equal(secretOf('/login_identity --look 3 eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
+    assert.equal(secretOf('/hud_login "eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=" --guest'), 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=');
+    assert.equal(redact('/hud_login "eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0="', 'said eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= and "eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0="'), 'said <redacted> and "<redacted>"');
+    assert.equal(redact('/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest', '/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest did not finish: eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='), '/hud_login <redacted> --guest did not finish: <redacted>');
     assert.equal(redact('/teleport 1 2', 'failed to set location'), 'failed to set location');
+  });
+
+  test('takes nothing that is not shaped as an identity, so no line is split between its characters', () => {
+    for (const line of ['/hud_login ""', "/hud_login ''", '/hud_login "', '/hud_login --look 1', '/hud_login eyJhIjoxfQ==']) {
+      assert.equal(secretOf(line), undefined, line);
+      assert.equal(redact(line, 'the line 1 failed'), 'the line 1 failed', line);
+    }
+    // an identity in a flag's value slot is the secret, not the word the flags leave over
+    const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=';
+    assert.equal(secretOf(`/hud_login --name ${id} --look 1`), id);
+    assert.equal(redact(`/hud_login --name ${id} --look 1`, `look 1 for ${id}`), 'look 1 for <redacted>');
   });
 });
 

@@ -11,16 +11,20 @@ export interface Console {
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
 }
 
+/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON,
+ *  which starts `{"` (`eyJ`), as a whole run of base64 characters; one this short or shorter
+ *  could be part of other text, and an identity's is hundreds of characters long. */
+const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])eyJ[A-Za-z0-9+/_-]{13,}={0,2}/
+
 /** The credential a line carries: the payload of `/login_identity` or `/hud_login`, an
- *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days):
- *  the first word that is neither a flag nor the value of one that takes a value, as a
- *  hand-typed line may put `--guest` or `--name x` first (the commands refuse such a line, but
- *  after it was logged). The web driver's `driver.mjs` has the same rule, which a test keeps in
- *  step. */
+ *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
+ *  found by its shape wherever a hand-typed line puts it: after flags, as a flag's value, or
+ *  quoted (the commands refuse such a line, but after it was logged). Nothing else is one, so an
+ *  empty or short word never turns every line into `<redacted>`. The web driver's `driver.mjs`
+ *  has the same rule, which a test keeps in step. */
 export function secretOf(line: string): string | undefined {
-  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1]
-  // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
-  return token?.replace(/^["']|["']$/g, '')
+  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return undefined
+  return ENCODED_IDENTITY.exec(line)?.[0]
 }
 
 /** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout

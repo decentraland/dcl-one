@@ -538,6 +538,8 @@ export class Explorer {
     await until(() => this.worldState(), (state) => state.signedIn, { timeoutMs: 30_000, intervalMs: 250, what: 'the guest to be signed in' })
   }
 
+  /** The engine's sign-out (`/logout`). On the web the HUD never hears of it and stays signed in,
+   *  refusing a new `/hud_login`; `/hud_logout` signs both out. */
   async logout(): Promise<void> {
     await this.run('/logout')
   }

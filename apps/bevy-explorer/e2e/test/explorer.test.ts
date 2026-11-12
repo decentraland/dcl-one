@@ -179,15 +179,16 @@ describe('Explorer', () => {
     const explorer = new Explorer(fake)
     const records: CommandRecord[] = []
     explorer.onCommand((record) => records.push(record))
-    await explorer.loginIdentity('eyJhIjoxfQ==', { name: 'tester', look: 3, guest: true })
-    assert.deepEqual(fake.lines, ['/login_identity eyJhIjoxfQ== --guest --name tester --look 3'])
+    await explorer.loginIdentity('eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=', { name: 'tester', look: 3, guest: true })
+    assert.deepEqual(fake.lines, ['/login_identity eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --guest --name tester --look 3'])
     assert.equal(records[0]!.line, '/login_identity <redacted> --guest --name tester --look 3')
     assert.equal(records[0]!.reply, 'logged in with identity')
   })
 
-  test('redactLine leaves other lines alone', () => {
+  test('redactLine leaves other lines alone, and words that are no identity', () => {
     assert.equal(redactLine('/hud_click Backpack'), '/hud_click Backpack')
-    assert.equal(redactLine('/login_identity abc'), '/login_identity <redacted>')
+    assert.equal(redactLine('/login_identity abc'), '/login_identity abc')
+    assert.equal(redactLine('/login_identity eyJwcml2YXRlS2V5IjoiMHhzZWNyZXQifQ=='), '/login_identity <redacted>')
   })
 
   test('a failed login keeps its payload out of the error, the record and the stack', async () => {
@@ -213,7 +214,7 @@ describe('Explorer', () => {
   })
 
   test("a transport's own error that quotes the line is scrubbed before it is rethrown", async () => {
-    const payload = 'c2VjcmV0LWtleQ=='
+    const payload = 'eyJwcml2YXRlS2V5IjoiMHhzZWNyZXQifQ=='
     const fake = new FakeConsole({
       login_identity: (line) => {
         throw new Error(`${line} did not finish within 5 ms`)
@@ -225,7 +226,7 @@ describe('Explorer', () => {
     await assert.rejects(explorer.run(`/login_identity ${payload}`), (error: unknown) => {
       assert.ok(error instanceof Error)
       assert.equal(error.message, '/login_identity <redacted> did not finish within 5 ms')
-      assert.doesNotMatch(error.stack ?? '', /c2VjcmV0/)
+      assert.doesNotMatch(error.stack ?? '', /eyJwcml2/)
       return true
     })
     assert.equal(records[0]!.error, '/login_identity <redacted> did not finish within 5 ms')
@@ -434,24 +435,24 @@ describe('hudLogin', () => {
     const explorer = new Explorer(fake)
     const records: CommandRecord[] = []
     explorer.onCommand((record) => records.push(record))
-    const reply = await explorer.hudLogin('eyJhIjoxfQ==', { name: 'tester', look: 3, guest: true, realm: 'https://realm.example', position: '10,-20' })
+    const reply = await explorer.hudLogin('eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=', { name: 'tester', look: 3, guest: true, realm: 'https://realm.example', position: '10,-20' })
     assert.deepEqual(reply, { address: '0xabc', guest: true, phase: 'entering' })
-    assert.deepEqual(fake.lines, ['/hud_login eyJhIjoxfQ== --name tester --look 3 --guest --realm https://realm.example --position 10,-20'])
+    assert.deepEqual(fake.lines, ['/hud_login eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= --name tester --look 3 --guest --realm https://realm.example --position 10,-20'])
     assert.equal(records[0]!.line, '/hud_login <redacted> --name tester --look 3 --guest --realm https://realm.example --position 10,-20')
   })
 
   test("the credentials of the lines run are replaced in text that quotes them, for the page's console", async () => {
     const fake = new FakeConsole({ hud_login: '{"address":"0xabc","guest":false,"phase":"lobby"}', login_identity: 'logged in with identity' })
     const explorer = new Explorer(fake)
-    assert.equal(explorer.redactSecrets('nothing yet eyJhIjoxfQ=='), 'nothing yet eyJhIjoxfQ==')
-    await explorer.hudLogin('eyJhIjoxfQ==')
-    await explorer.loginIdentity('eyJiIjoyfQ==')
-    assert.equal(explorer.redactSecrets('[login] failed: eyJhIjoxfQ== and eyJiIjoyfQ== again eyJhIjoxfQ=='), '[login] failed: <redacted> and <redacted> again <redacted>')
+    assert.equal(explorer.redactSecrets('nothing yet eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='), 'nothing yet eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=')
+    await explorer.hudLogin('eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=')
+    await explorer.loginIdentity('eyJlcGhlbWVyYWxJZGVudGl0eSI6Mn0=')
+    assert.equal(explorer.redactSecrets('[login] failed: eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0= and eyJlcGhlbWVyYWxJZGVudGl0eSI6Mn0= again eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='), '[login] failed: <redacted> and <redacted> again <redacted>')
   })
 
   test('a flag value with whitespace is refused before the line is sent', async () => {
     const fake = new FakeConsole({ hud_login: '{}' })
-    await assert.rejects(new Explorer(fake).hudLogin('eyJhIjoxfQ==', { name: 'two words', look: 1 }), /a \/hud_login --name takes no whitespace: "two words"/)
+    await assert.rejects(new Explorer(fake).hudLogin('eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0=', { name: 'two words', look: 1 }), /a \/hud_login --name takes no whitespace: "two words"/)
     assert.deepEqual(fake.lines, [])
   })
 
@@ -471,7 +472,7 @@ describe('hudLogin', () => {
   })
 
   test('fails with the sign-in error the HUD reports, the payload redacted', async () => {
-    const payload = 'eyJhIjoxfQ=='
+    const payload = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='
     const fake = new FakeConsole({
       hud_login: (line) => {
         throw new ConsoleError(line, `profile fetch failed for ${payload}: 503`)

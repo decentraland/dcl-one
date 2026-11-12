@@ -83,14 +83,20 @@ function noChromeMessage(env) {
   return `Google Chrome is not installed (looked in ${looked}); install it, or point CHROME_PATH at it`;
 }
 
-/** The credential a console line carries: the first argument of `/login_identity` or
- *  `/hud_login` that is neither a flag nor the value of one that takes a value, an AuthIdentity
- *  (an ephemeral private key and a signed delegation valid for days), or undefined. The e2e
- *  suite's `driver/console.ts` has the same rule, which its tests keep in step. */
+/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON,
+ *  which starts `{"` (`eyJ`), as a whole run of base64 characters; one this short or shorter
+ *  could be part of other text, and an identity's is hundreds of characters long. */
+const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])eyJ[A-Za-z0-9+/_-]{13,}={0,2}/;
+
+/** The credential a console line carries: the payload of `/login_identity` or `/hud_login`, an
+ *  AuthIdentity (an ephemeral private key and a signed delegation valid for days), found by its
+ *  shape wherever a hand-typed line puts it (after flags, as a flag's value, quoted), or
+ *  undefined. Nothing else is one, so an empty or short word never becomes a secret that matches
+ *  everywhere. The e2e suite's `driver/console.ts` has the same rule, which its tests keep in
+ *  step. */
 export function secretOf(line) {
-  const token = /^\s*\/?(?:login_identity|hud_login)\s+(?:--(?:name|look|realm|position)\s+\S+\s+|--\S+\s+)*([^-\s]\S*)/.exec(line)?.[1];
-  // without the quotes a hand-typed line may put around it, so a bare quote of it is found too
-  return token?.replace(/^["']|["']$/g, '');
+  if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return undefined;
+  return ENCODED_IDENTITY.exec(line)?.[0];
 }
 
 /** `text` with the line's credential replaced wherever it appears, for what the command line

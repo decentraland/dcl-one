@@ -4,18 +4,20 @@
 //
 // On the web the engine cannot reach this DOM, so the page answers the commands itself:
 // installHudAutomation registers /hud_list, /hud_read, /hud_wait, /hud_click, /hud_fill,
-// /hud_login, /press_key and /click_at with engine.js, which runs them here instead of sending
-// them to the engine. Clicks and keys are real input when a test runner drives the browser and
-// has added window.__dclTrustedInput (local-harness/web-driver, over the DevTools Protocol): the
-// page finds the control, asks the runner to click or type, and waits for its answer. Without one
-// they are DOM events, which a page can tell from a user's (isTrusted is false). Natively the
-// engine asks over window.cef (cefNativeBridge.ts, answerHudRequest, answerHudWait) and then
-// clicks and types with real input through CEF. Waiting happens here on both: the page polls, the
-// engine just relays. /hud_login signs the HUD in through its own flow: the session provides the
-// sign-in while it is mounted (features/session/useEngineSession.ts calls provideHudLogin), so
-// the HUD leaves its start page as it does for a user, which the engine's /login_identity alone
-// never makes it do. It is registered only while a test runner drives the browser (the hook is
-// present at install), so a page script in a browser nobody drives has no such command.
+// /hud_login, /hud_logout, /press_key and /click_at with engine.js, which runs them here instead
+// of sending them to the engine. Clicks and keys are real input when a test runner drives the
+// browser and has added window.__dclTrustedInput (local-harness/web-driver, over the DevTools
+// Protocol): the page finds the control, asks the runner to click or type, and waits for its
+// answer. Without one they are DOM events, which a page can tell from a user's (isTrusted is
+// false). Natively the engine asks over window.cef (cefNativeBridge.ts, answerHudRequest,
+// answerHudWait) and then clicks and types with real input through CEF. Waiting happens here on
+// both: the page polls, the engine just relays. /hud_login signs the HUD in through its own flow,
+// and /hud_logout signs it out: the session provides both while it is mounted
+// (features/session/useEngineSession.ts calls provideHudLogin and provideHudLogout), so the HUD
+// leaves its start page, and returns to it, as it does for a user, which the engine's
+// /login_identity and /logout alone never make it do. They are registered only while a test
+// runner drives the browser (the hook is present at install), so a page script in a browser
+// nobody drives has no such command.
 
 import type { NewAccountPick } from '../engine/driver'
 import type { AuthIdentity } from '../features/auth/sso'
@@ -702,6 +704,13 @@ export function provideHudLogin(login: HudLogin | null): void {
   hudLogin = login
 }
 
+let hudLogout: (() => void) | null = null
+
+/** The session's sign-out, for `/hud_logout`; null once the session unmounts. */
+export function provideHudLogout(logout: (() => void) | null): void {
+  hudLogout = logout
+}
+
 const HEX_ADDRESS = /^0x[0-9a-fA-F]{40}$/
 
 // The identity as `/login_identity` takes it: base64 of the AuthIdentity's JSON. An error never
@@ -795,6 +804,16 @@ export function loginThroughHud(request: HudLoginRequest): Promise<HudLoginReply
   return hudLogin(request)
 }
 
+/** Sign out as the HUD's own sign-out does, the engine included, back to the start page; a
+ *  pending `/hud_login` fails with that. Only for a test runner driving the browser, as
+ *  `/hud_login` is. */
+export function logoutThroughHud(): string {
+  if (!trustedInputAvailable()) throw new Error('/hud_logout takes a test runner driving the browser (window.__dclTrustedInput)')
+  if (hudLogout == null) throw new Error('no HUD session to sign out of here: the HUD is not mounted')
+  hudLogout()
+  return 'signed out'
+}
+
 // --- the commands ---
 
 /** The text after a `/hud_*` command: a JSON selector object, or just an accessible name, bare or
@@ -864,8 +883,9 @@ export interface PageCommand {
 const SELECTOR_ARG: PageCommandArg = { name: 'json', kind: 'json', optional: false, help: 'the accessible name, or a JSON selector' }
 
 // The same commands and help as the engine registers natively (src/automation.rs,
-// src/react_hud_cef/automation.rs), but /hud_login, which only the web has: natively the engine
-// signs in. It is kept apart (LOGIN_COMMANDS), registered only under a test runner.
+// src/react_hud_cef/automation.rs), but /hud_login and /hud_logout, which only the web has:
+// natively the engine signs in and out. They are kept apart (LOGIN_COMMANDS), registered only
+// under a test runner.
 export const PAGE_COMMANDS: Record<string, PageCommand> = {
   '/hud_list': {
     args: [{ name: 'role', kind: 'string', optional: true, help: 'only controls with this role' }],
@@ -936,6 +956,14 @@ export const LOGIN_COMMANDS: Record<string, PageCommand> = {
     args: [{ name: 'identity', kind: 'string', optional: false, help: 'base64(JSON) of an AuthIdentity, as /login_identity takes it' }],
     help: "Sign in through the HUD's own flow with an identity (base64 JSON of an AuthIdentity, as /login_identity takes it), as a stored sign-in's Jump In. The sign-in accepts the terms the welcome page asks for; --name <name> and --look <n> pick a first login's profile (needed for an account with no profile yet; an existing one keeps its own), --guest marks a guest account, --default-on-error continues with a default profile when the account's can't be fetched, and --realm <realm> and --position <x,y> go there from the lobby as a link would. Replies JSON {\"address\", \"guest\", \"phase\"} once the sign-in has landed and the page is done (phase lobby, entering on the way to the destination, picking or world), and fails with the sign-in's error. Web only, under a test runner driving the browser: natively the engine signs in",
     run: async (rest) => JSON.stringify(await loginThroughHud(parseLoginArgs(rest)))
+  },
+  '/hud_logout': {
+    args: [],
+    help: "Sign out through the HUD's own flow, the engine included, back to the HUD's start page, as its Sign Out does; a /hud_login still waiting for its answer fails with \"signed out\". /hud_login then takes a sign-in again, once the engine has answered any it still held. The engine's /logout never reaches the HUD, which stays signed in. Web only, under a test runner driving the browser",
+    run: (rest) => {
+      if (rest.trim() !== '') throw new Error('/hud_logout takes no arguments')
+      return logoutThroughHud()
+    }
   }
 }
 
