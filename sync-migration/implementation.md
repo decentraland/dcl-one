@@ -43,3 +43,13 @@ The bounded implementation now adds [Places catalogue](places-catalogue.md), [Ev
 - Reconciliation holds repeatable-read snapshots across size preflight and decode. No source application or client change is needed; each source DB requires capture installation and reviewed grants.
 
 Tests: [shared domains](../services/migration-sync/tests/domains.rs), [Events](../services/migration-sync/tests/events_schedules.rs), [social settings](../services/migration-sync/tests/social_settings.rs), and the existing capture/apply suites linked above. Production schedulers, provider enforcement, future generated IDs and full service parity remain unverified or out of scope.
+
+## Coverage audit and staging package
+
+The [Places audit](places-coverage-audit.md) and [Events/Social audit](events-social-coverage-audit.md) pin reviewed sources and distinguish captured facts from missing workflows. The [installation package](staging-installation.md) and [rehearsal procedure](staging-rehearsal.md) provide the next executable steps; neither represents a live deployment.
+
+The audit corrected a source compatibility defect: Places identifiers are character columns, not PostgreSQL UUID columns. Source scope joins and optional favorite SQL now compare text, tolerate unrelated world names and reject noncanonical scoped IDs instead of omitting them. The capture regression uses source-shaped character columns and a separate invalid-casing fixture.
+
+Validation after the fix: **34 unit/CLI tests and all five PostgreSQL suites passed**. The soak script now routes all three sources and rejects arithmetic-overflow inputs; **three subprocess tests passed**, covering routing, invalid inputs and failure propagation. Clippy, formatting, ownership/protocol and local document-link checks passed. The Events recurrence unawaited-write finding remains a separate pending source fix, not a silently resolved item.
+
+The disposable source-role test passed for all three adapters: non-owner writer CRUD, reader SELECT with denied mutation/function calls, and rejected missing grants, disabled triggers, non-inherited role membership, schema ownership and column-only UPDATE privileges. This validates the package on local PostgreSQL, not actual deployed roles.

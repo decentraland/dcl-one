@@ -8,7 +8,7 @@ Current priority: expand source-only coverage with unchanged clients, then run a
 | --- | --- | --- | --- |
 | H1 | Freeze mapping scope and deployed writer inventory. Unknown scripts, queues or schemas can invalidate completeness. | Places interaction contract and immutable scope implemented. | Pin source/target releases; verify every scoped writer, role, trigger, alias and dependency; agree numerical operating budgets. |
 | H2 | Isolate target writes, jobs, mirrors and effects. API flags and separate DB leases do not establish global ownership. | Dedicated follower and startup guards implemented. | Fence older binaries and direct writers; test realistic pending work stays inert; validate any public read adapter. |
-| H3 | Align capture and baseline. Timestamp batches can miss late commits/deletes. | Local outbox and snapshot-aligned v2 interaction bootstrap implemented. | Verify deployed grants, source capacity, failover and history recovery; rehearse writes throughout export. |
+| H3 | Align capture and baseline. Timestamp batches can miss late commits/deletes. | Local outbox and snapshot-aligned Places v3, Events schedules and Social settings bootstraps implemented. | Verify deployed grants, source capacity, failover and history recovery; rehearse writes throughout export. |
 | H4 | Optional durable native command execution. Timeouts cannot prove a transaction failed. | Favorite source/target receipts and gateway protocol implemented locally. | Only for native replay: publish/review coordinated PRs, add stable client IDs, verify signed routes and deployed ingress. Not a blocker for source-only sync. |
 | H5 | Selective, atomic transformation and ordered progress. Copying native mutations again causes divergence. | Favorites and likes/dislikes implemented with tombstones and counts. | Each new mapping proves identities, updates, deletes, mixed transactions, derived state and effect behavior. Unknown mappings block. |
 | H6 | Representative fault rehearsal. Unit success does not establish coexistence behavior. | Local PostgreSQL/HTTP pilot suites pass. | Test production-like volume, actual source job writes, outages and recovery; reconcile canonical state and any intended effects. |
@@ -21,7 +21,7 @@ The next mappings are candidates, not blanket permission to synchronize an entir
 
 1. Pin revisions and approve the explicit nonfinancial scope. Inventory source writers, target dependencies, queues, providers and blobs. Confirm the source role/grant plan before installing triggers.
 2. Prepare a dedicated target with normal APIs/jobs/mirrors off. Install the normal schema. Places bootstrap imports scoped catalogue and interaction facts together; any existing catalogue must have reviewed Places provenance. Leave scoped interaction, schedule and social-settings baselines empty for their consistent bootstraps.
-3. Install reviewed source capture and grants in a controlled change. Bootstrap both interaction fact sets at the same boundary. Existing v1 streams need a reviewed new v2 baseline rather than relabelling old progress.
+3. Install reviewed source capture and grants in a controlled change. Bootstrap both interaction fact sets at the same boundary. Existing Places v1/v2 streams need a reviewed new v3 baseline rather than relabelling old progress.
 4. Start capture and apply separately, with the minimum roles. For unchanged-client source-only mode, no client ID, source HTTP feature flag or native replay URL/token is required.
 5. Compare canonical facts and derived counts, then test inserts, updates, deletes, mixed transactions, worker restarts, duplicate delivery, poison input, stale contact and history gaps. Test an actual job-owned dataset before claiming scheduled-job coverage.
 6. Measure source lock contention, end-to-end lag, queue/storage growth and recovery speed. Exercise alerts and stable-boundary reconciliation through the intended outage window and a sustained soak.
@@ -53,3 +53,7 @@ Before independent target writes, the old owner can resume if the cutover is abo
 ## Open operational decisions
 
 Deployed role names, actual PostgreSQL/CDC capabilities, cloud cron/queue configuration, intended cohort/duration, numerical interruption/freshness/outage/retention budgets, operator assignments, production provider guarantees and reverse recovery after cutover are still unverified or unset. Keep these explicit; do not replace them with assumptions drawn from static code review.
+
+## Rehearsal package
+
+Use the [source installation package](staging-installation.md) and [staging acceptance procedure](staging-rehearsal.md). The [Places](places-coverage-audit.md) and [Events/Social](events-social-coverage-audit.md) audits distinguish existing capture from missing service workflows. No live staging results are claimed by these instructions.

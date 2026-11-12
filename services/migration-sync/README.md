@@ -237,3 +237,5 @@ Retained transaction reads are limited to 1,000 changes and 1 MiB of JSON payloa
 before client decoding. Oversized input stops capture without advancing its offset;
 it is not truncated or skipped. Snapshot field bounds and immutable key scopes are
 validated separately.
+
+For multi-source staging, see the [installation package](../../sync-migration/staging-installation.md) and [rehearsal acceptance procedure](../../sync-migration/staging-rehearsal.md). `scripts/soak.sh STREAM SAMPLES INTERVAL_SECONDS SOURCE` supports `places` (default), `events` and `social-settings`; use separate source credentials per invocation. Validate command routing locally with `python3 scripts/test_soak.py`.

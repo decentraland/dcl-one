@@ -15,6 +15,10 @@ Updated 2026-11-12. This directory records the selected migration strategy, its 
 | [Places catalogue](places-catalogue.md) | Catalogue mapping, POI job outcome and cleanup restrictions |
 | [Events schedules](events-schedules.md) | Schedule mapping and source-database-only change rationale |
 | [Social settings](social-settings.md) | Settings mapping, absent-row defaults and privacy-effect limits |
+| [Staging installation](staging-installation.md) | Source roles, grants, preflight and retirement procedure |
+| [Staging rehearsal](staging-rehearsal.md) | Multi-source execution, fault scenarios and acceptance evidence |
+| [Places coverage audit](places-coverage-audit.md) | Remaining writers, mappings and scheduled-job gaps |
+| [Events/Social coverage audit](events-social-coverage-audit.md) | Missing workflow dependencies and effects |
 | [Rollout and backlog](rollout.md) | Remaining work, acceptance criteria, prolonged operation and cutover |
 
 The [service runbook](../services/migration-sync/README.md) owns executable commands and operational instructions. The [architecture ADR](../docs/adr/2026-11-12-removable-migration-sync-service.md) owns the standalone service boundary. Keep both aligned with these documents.

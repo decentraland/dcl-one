@@ -104,11 +104,12 @@ pub async fn install(source: &PgPool, scope: &[Uuid]) -> Result<SourceInfo> {
             "installed capture scope is immutable; use a new reviewed baseline to change it"
         );
     } else {
-        let present: i64 =
-            sqlx::query_scalar("SELECT count(*) FROM public.places WHERE id=ANY($1) AND NOT world")
-                .bind(&wanted)
-                .fetch_one(&mut *tx)
-                .await?;
+        let present: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM public.places WHERE lower(id::text)=ANY($1::text[]) AND NOT world",
+        )
+        .bind(wanted.iter().map(Uuid::to_string).collect::<Vec<_>>())
+        .fetch_one(&mut *tx)
+        .await?;
         ensure!(
             present == wanted.len() as i64,
             "capture scope must contain existing Genesis places"
@@ -161,7 +162,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
     let rows = sqlx::query(
         "SELECT f.\"user\"::text AS actor,f.entity_id::text AS entity_id,
                 f.user_activity::double precision AS activity,f.created_at AS created_at
-         FROM public.user_favorites f JOIN migration_capture.scope s ON s.entity_id=f.entity_id
+         FROM public.user_favorites f JOIN migration_capture.scope s ON s.entity_id::text=lower(f.entity_id::text)
          ORDER BY f.entity_id,f.\"user\" LIMIT 100001",
     )
     .fetch_all(&mut *snapshot)
@@ -184,7 +185,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
     let like_rows = sqlx::query(
         "SELECT f.\"user\"::text AS actor,f.entity_id::text AS entity_id,
                 f.\"like\",f.user_activity::double precision AS activity,f.created_at,f.updated_at
-         FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id=f.entity_id
+         FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id::text=lower(f.entity_id::text)
          ORDER BY f.entity_id,f.\"user\" LIMIT 100001",
     )
     .fetch_all(&mut *snapshot)
@@ -205,7 +206,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         change.validate()?;
         baseline.push(change);
     }
-    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id=p.id ORDER BY p.id")
+    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id::text=lower(p.id::text) ORDER BY p.id")
         .fetch_all(&mut *snapshot).await?;
     for document in &catalogue {
         let id = document["id"]
@@ -417,19 +418,19 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
     );
     // Equality here is a point-in-time diagnostic; concurrent source changes
     // invalidate the result below rather than being called a consistent proof.
-    let source_rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_array(f.\"user\"::text,f.entity_id::text,f.user_activity,to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) FROM public.user_favorites f JOIN migration_capture.scope s ON s.entity_id=f.entity_id ORDER BY f.\"user\",f.entity_id")
+    let source_rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_array(f.\"user\"::text,f.entity_id::text,f.user_activity,to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) FROM public.user_favorites f JOIN migration_capture.scope s ON s.entity_id::text=lower(f.entity_id::text) ORDER BY f.\"user\",f.entity_id")
         .fetch_all(source).await?;
     let target_rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_array(\"user\",entity_id,user_activity,to_char(created_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) FROM explore.user_favorites WHERE entity_id=ANY($1) ORDER BY \"user\",entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let source_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(f.\"user\"::text,f.entity_id::text,f.\"like\",f.user_activity,to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'local') FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id=f.entity_id ORDER BY f.\"user\",f.entity_id")
+    let source_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(f.\"user\"::text,f.entity_id::text,f.\"like\",f.user_activity,to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'local') FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id::text=lower(f.entity_id::text) ORDER BY f.\"user\",f.entity_id")
         .fetch_all(source).await?;
     let target_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(\"user\",entity_id,\"like\",user_activity,to_char(created_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(updated_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),source) FROM explore.user_likes WHERE entity_id=ANY($1) ORDER BY \"user\",entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let source_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id::text,(SELECT count(*) FROM public.user_favorites f WHERE f.entity_id=s.entity_id),(SELECT count(*) FROM public.user_likes l WHERE l.entity_id=s.entity_id AND l.\"like\"),(SELECT count(*) FROM public.user_likes l WHERE l.entity_id=s.entity_id AND NOT l.\"like\")) FROM migration_capture.scope s ORDER BY s.entity_id")
+    let source_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id::text,(SELECT count(*) FROM public.user_favorites f WHERE lower(f.entity_id::text)=s.entity_id::text),(SELECT count(*) FROM public.user_likes l WHERE lower(l.entity_id::text)=s.entity_id::text AND l.\"like\"),(SELECT count(*) FROM public.user_likes l WHERE lower(l.entity_id::text)=s.entity_id::text AND NOT l.\"like\")) FROM migration_capture.scope s ORDER BY s.entity_id")
         .fetch_all(source).await?;
     let target_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id,c.favorites,c.likes,c.dislikes) FROM unnest($1::text[]) AS s(entity_id) LEFT JOIN explore.place_interaction_counts c USING(entity_id) ORDER BY s.entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id=p.id ORDER BY p.id")
+    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id::text=lower(p.id::text) ORDER BY p.id")
         .fetch_all(source).await?;
     let mut catalogue_matches = true;
     let mut target_connection = target.acquire().await?;

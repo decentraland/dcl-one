@@ -161,22 +161,22 @@ BEGIN
         RETURN existing.response;
     END IF;
     IF NOT EXISTS(SELECT 1 FROM migration_capture.scope s WHERE s.entity_id=execute_favorite.entity_id)
-       OR NOT EXISTS(SELECT 1 FROM public.places p WHERE p.id=execute_favorite.entity_id AND NOT p.world AND NOT p.disabled) THEN
+       OR NOT EXISTS(SELECT 1 FROM public.places p WHERE p.id::text=execute_favorite.entity_id::text AND NOT p.world AND NOT p.disabled) THEN
         RAISE EXCEPTION 'favorite entity is outside the active capture scope';
     END IF;
     p := migration_capture.ensure_transaction();
     IF favorite THEN
         INSERT INTO public.user_favorites("user",entity_id,user_activity,created_at)
-        VALUES(actor,entity_id,user_activity::integer,clock_timestamp())
+        VALUES(actor,entity_id::text,user_activity::integer,clock_timestamp())
         ON CONFLICT DO NOTHING;
     ELSE
-        DELETE FROM public.user_favorites f WHERE f."user"=actor AND f.entity_id=execute_favorite.entity_id;
+        DELETE FROM public.user_favorites f WHERE f."user"=actor AND f.entity_id::text=execute_favorite.entity_id::text;
     END IF;
-    SELECT count(*) INTO total FROM public.user_favorites f WHERE f.entity_id=execute_favorite.entity_id;
-    UPDATE public.places SET favorites=total WHERE id=execute_favorite.entity_id;
+    SELECT count(*) INTO total FROM public.user_favorites f WHERE f.entity_id::text=execute_favorite.entity_id::text;
+    UPDATE public.places SET favorites=total WHERE id::text=execute_favorite.entity_id::text;
     SELECT jsonb_build_object('user_activity',f.user_activity,'created_at',
         to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')) INTO expected
-    FROM public.user_favorites f WHERE f."user"=actor AND f.entity_id=execute_favorite.entity_id;
+    FROM public.user_favorites f WHERE f."user"=actor AND f.entity_id::text=execute_favorite.entity_id::text;
     answer := jsonb_build_object('favorites',total,'user_favorite',favorite);
     PERFORM migration_capture.record_command(jsonb_build_object(
         'operation_id',operation_id,'request_hash',request_hash,'user',actor,
@@ -199,11 +199,11 @@ LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 DECLARE p bigint; old_scoped boolean := false; new_scoped boolean := false; before_doc jsonb; after_doc jsonb;
 BEGIN
     IF TG_OP <> 'INSERT' THEN
-        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id=OLD.id) INTO old_scoped;
+        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id::text=lower(OLD.id::text)) INTO old_scoped;
         before_doc := migration_capture.catalogue_document(OLD);
     END IF;
     IF TG_OP <> 'DELETE' THEN
-        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id=NEW.id) INTO new_scoped;
+        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id::text=lower(NEW.id::text)) INTO new_scoped;
         after_doc := migration_capture.catalogue_document(NEW);
     END IF;
     IF NOT old_scoped AND NOT new_scoped THEN RETURN NULL; END IF;

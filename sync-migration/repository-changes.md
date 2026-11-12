@@ -29,11 +29,11 @@ Local branch: `feat/one-way-sync-service`. Foundation `f6062a8e6`, integrated fa
 
 ## Places source database: why installation is required
 
-The [source SQL](../services/migration-sync/source/places.sql) captures committed changes from both `public.user_favorites` and `public.user_likes`, including internal or administrative writes. Triggers append to local outbox tables inside the same transaction; they never contact dcl-one. Without a verified logical CDC feed or this installation, the worker has no reliable stream of deletes and late commits.
+The [source SQL](../services/migration-sync/source/places.sql) captures committed changes from `public.places`, `public.user_favorites` and `public.user_likes`, including internal or administrative writes. Triggers append to local outbox tables inside the same transaction; they never contact dcl-one. Without a verified logical CDC feed or this installation, the worker has no reliable stream of deletes and late commits.
 
 This is a production database change even though no HTTP-handler deployment is needed. The [installation contract](../services/migration-sync/source/README.md) requires explicit source DDL permissions and grants to the actual application/writer roles. The functions run as the caller. Coordinate grants and installation before resuming writes; missing privileges can make triggered writes fail. Source lock contention, storage growth, failure recovery and trigger-bypass restrictions need staging evidence.
 
-Adapter v2 includes likes/dislikes. Do not relabel or silently upgrade a v1 favorites-only stream; establish a reviewed new baseline that includes the additional history. Source polling needs only read permissions after installation.
+Adapter v3 includes catalogue metadata and likes/dislikes. Do not relabel or silently upgrade a v1/v2 stream; establish a reviewed new baseline that includes the additional history. Source polling needs only read permissions after installation.
 
 ## Places application PR: why it exists, and when it is needed
 
@@ -93,3 +93,9 @@ Do not add synchronization code to every application write by default. For a pur
 The [shared coordinator](../services/migration-sync/src/domain_capture.rs) adds separate
 source identities, scopes and positions. These are dcl-one changes; source installations
 still require explicit database grants and operational review even without application PRs.
+
+## Staging audit follow-up
+
+The [installation package](staging-installation.md) supplies explicit source writer/reader grants and preflight checks. It requires a controlled source write fence while installing triggers and grants; this is an operational database change, not an application sync hook.
+
+The [Events/Social audit](events-social-coverage-audit.md) identifies a separate Events recurrence bug: its job does not await a database update. A focused Events PR should await completion and test error propagation before relying on job completion as rehearsal evidence. That fix is pending; it is not required to capture successfully committed schedule rows. The [Places audit](places-coverage-audit.md) records the source ID-type compatibility fix in dcl-one and the remaining world/catalogue dependencies.

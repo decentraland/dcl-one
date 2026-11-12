@@ -64,3 +64,10 @@ See [repository rationale](repository-changes.md) for which of these choices req
 ## Multiple-source expansion
 
 See [coordination decisions](multiple-sources.md), [Events schedules](events-schedules.md) and [social settings](social-settings.md). Each source retains its own baseline, immutable scope and cursor because independent databases have no shared commit order. All new mappings are source-only. Reconciliation holds repeatable-read snapshots across size preflight and row decoding to prevent concurrent changes bypassing allocation limits. Oversized transactions block without advancing capture; they are never split or skipped.
+
+## Staging preparation
+
+- Rehearse on disposable source clones with normal target services off before any public read cohort. Separate source streams cannot establish a cross-service snapshot or provider handover; see [acceptance procedure](staging-rehearsal.md).
+- Install source triggers and grants under a source write fence. Invoker triggers can fail ordinary writes if any application/job role is missing permissions. Use separate unprivileged capture readers and validate effective permissions; see [installation package](staging-installation.md).
+- Match Places character identifiers as text rather than casting every source identifier to UUID. Non-UUID world identifiers are valid outside the chosen Genesis scope; faithful source fixtures must exercise them. See [Places audit](places-coverage-audit.md).
+- Keep Events job completion separate from committed-data evidence: the reviewed recurrence job has an unawaited update, tracked as a source fix in the [Events/Social audit](events-social-coverage-audit.md).
