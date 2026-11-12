@@ -1,24 +1,22 @@
 # One-way migration service
 
 A separately deployable, removable **production → dcl-one** coordinator. Production
-remains the write authority and owns jobs and external effects. Existing clients
-continue calling production. The coordinator captures committed favorite and
-like/dislike changes and applies them to dcl-one in source order. An optional
-receipt-bearing favorite command can exercise native target execution instead;
-its captured favorite rows are then verified rather than applied twice.
-
-See the [decision record and repository PR rationale](../../sync-migration/README.md)
-for why this architecture and its optional service changes are needed.
+remains the write authority and owns jobs and external effects. The gateway returns
+production's result. Its production transaction records the command durably; the
+coordinator executes the equivalent native target command in source order. Changes
+without an accepted command are retained as evidence and block progress. There is
+currently no approved residual database-sync mapping: compatible requests must
+be executed through both services before considering a selective fallback.
 
 ## Supported pilot
 
-Scoped Genesis Places catalogue metadata, favorites, likes and dislikes; selected
-Events schedules and social settings facts. See [domain contracts](../../sync-migration/multiple-sources.md). Shop and credits are
-excluded for security reasons, including marketplace imports. Worlds, social workflows beyond settings, voice,
-notifications, event workflows beyond schedules and arbitrary SQL replication are not implemented.
+Only favorites for explicitly selected Genesis Places UUIDs. Shop and credits are
+excluded for security reasons, including marketplace imports. Worlds, social/voice,
+notifications, other aggregates and arbitrary SQL replication are not implemented.
 The asset-bundle rewriter is unrelated and unchanged.
 
-The [executable scope contract](pilot-contract.json) lists mappings and activation gates.
+The [executable scope contract](pilot-contract.json) lists the command scope and activation gates.
+The migration decision document under [`sync-migration`](../../sync-migration/README.md) owns strategy and exceptions.
 
 The target's dedicated `catalyst migration-follower` listener starts no normal
 services, consumers, mirrors or scheduled jobs. Its authenticated read endpoint is
@@ -32,30 +30,6 @@ waits for dcl-one, but contending source writers do serialize. Measure that cost
 before rollout. Outbox ordinals use the envelope's hexadecimal cursor format;
 they are not actual PostgreSQL WAL positions.
 
-## Unchanged-client synchronization
-
-The default rollout path is source-only synchronization. Existing clients call
-production normally, with no operation header. No Places application change or
-hybrid gateway mode is needed: leave `MIGRATION_CAPTURE_ENABLED` disabled and use
-the gateway's ordinary upstream routing, if present. The source database capture
-installation is still an explicit change requiring reviewed privileges and load.
-
-The worker captures favorite and like/dislike inserts, updates and deletes,
-including internal SQL, in one ordered transaction stream. Target counts are derived
-from those facts. Production alone runs scheduled jobs; capture of an actual
-scheduled-job dataset beyond these tables remains unproven.
-
-Native favorite replay is optional. Its handler, header and follower replay
-credentials are needed only when explicitly exercising native duplicate commands.
-For source-only operation, omit `MIGRATION_SYNC_FOLLOWER_URL` and
-`MIGRATION_FOLLOWER_TOKEN` from the apply worker. The private follower listener may
-still be used separately for verification reads.
-
-Catalogue-inclusive Places coverage requires `places_outbox_v3` and a new consistent catalogue/interaction baseline.
-A v1/v2 source/stream is not upgraded or expanded in place. Retain its
-history, stop the rehearsal and establish a reviewed clean v3 baseline. The target
-schema migration permits both adapter identities without relabeling old rows.
-
 ## Build and prerequisites
 
 ```sh
@@ -66,15 +40,12 @@ nix build .#image-migration-sync
 
 Use the normal schema migration procedure to install
 [worker state](../../schemas/70_migration_sync.sql) and
-[capture progress](../../schemas/71_migration_capture.sql) and
-[like version history](../../schemas/72_migration_like_versions.sql). Apply the normal
-additive schema migration for existing databases too. Bootstrap imports reviewed Genesis catalogue metadata and a consistent scoped favorite/like
-snapshot and rejects existing target interactions in that scope; omit that scoped
-interaction batch from the initial import or use a clean rehearsal destination.
-Catalogue capture covers only explicitly scoped Genesis IDs; arbitrary new IDs,
-worlds and normalized moderation/category histories remain outside this projection.
-Existing target catalogue rows must have Places migration provenance, and native
-ownership/overlays block application. Removal intents stay inert until reviewed cutover.
+[capture progress](../../schemas/71_migration_capture.sql). Migrate the canonical
+Genesis catalogue before bootstrap. Bootstrap imports a consistent scoped favorite
+snapshot and rejects existing target favorites in that scope; omit that scoped
+favorite batch from the initial import or use a clean rehearsal destination.
+Catalogue changes are not continuously mapped by this pilot: freeze reviewed
+catalogue identities or stop the pilot when dependencies change.
 
 Stop all normal destination API/job/mirror processes. New `serve` and `index`
 commands share a startup advisory guard with registration/bootstrap; old binaries,
@@ -107,7 +78,7 @@ with that value and its own `MIGRATION_FOLLOWER_DATABASE_URL` plus a secret
 catalyst migration-follower --host 127.0.0.1 --port 5213 --stream places --generation GENERATION
 ```
 
-For optional native favorite replay, set worker `MIGRATION_SYNC_FOLLOWER_URL` to the complete URL ending in
+Set worker `MIGRATION_SYNC_FOLLOWER_URL` to the complete URL ending in
 `/internal/migration/favorites/replay`, and the same bearer token. HTTPS is required
 except for loopback rehearsal. Redirects are disabled. The replay body contains
 only stream, generation and cursor; the target reads the immutable command from
@@ -122,12 +93,12 @@ dcl-migration-sync reconcile --stream places
 dcl-migration-sync metrics --stream places
 ```
 
-For optional native favorite replay only, enable the Places application's `MIGRATION_CAPTURE_ENABLED=true` only after source
+Enable the Places application's `MIGRATION_CAPTURE_ENABLED=true` only after source
 installation. Its authenticated favorite handler requires a stable client-generated
 `x-dcl-operation-id` for captured commands. Client retries reuse that ID and payload.
 Configure the alb-router hybrid allowlist to match the installed UUID scope. Writes
-without that protocol still produce source-only changes through capture; they do
-not prove native command compatibility. Direct independent target writes stay denied.
+without that protocol are captured but block the ordered head with
+`unreceipted_mutation`; they are never copied into target business tables. Direct independent target writes stay denied.
 
 ## Ordering and failure handling
 
@@ -136,12 +107,12 @@ not prove native command compatibility. Direct independent target writes stay de
 - Capture persists each complete transaction before advancing its durable offset.
   Snapshot-covered commands never replay. A source generation change or history gap
   stops capture rather than silently starting over.
-- One stream lock coordinates native target execution, transformed SQL and progress.
+- One stream lock coordinates native target execution and progress.
   Native state and receipt commit together. The coordinator validates that receipt
   and advances without applying those captured favorite rows again.
 - A timeout may hide success. Retry the same pointer and resolve the durable target
   receipt. Later deletes cannot be overtaken by a delayed earlier command.
-- Mapping or native invariant failures block the head. No later transaction skips it.
+- Unreceipted mutations or native invariant failures block the head. No later transaction skips it.
   Transport failures leave the head pending. Never fall back to independent target
   execution if production is unavailable.
 
@@ -157,7 +128,9 @@ dcl-migration-sync resume --stream places --rehearsal
 ```
 
 Retry changes only its blocked status; it does not alter payloads, receipts,
-checkpoints or domain data. Revalidation can block it again. There is no skip,
+checkpoints or domain data. Revalidation can block it again. Retrying an unreceipted
+mutation cannot approve it or manufacture a command receipt. Resolving that gap
+requires a reviewed recovery decision or new consistent baseline. There is no skip,
 automatic repair, destructive reset or automatic history pruning.
 
 ## Operating and retiring
@@ -171,7 +144,9 @@ thresholds are examples, not measured production budgets.
 Readiness requires current source contact, matching generation, fully caught-up
 capture/application, no blocked head and an unpaused stream. Idle capture polls
 refresh contact. Readiness is sampled, not linearizable cross-database consistency.
-Reconciliation compares scoped catalogue and favorite/like facts plus derived interaction counts, and rejects a moving source or target boundary. Domain reconciliation compares scoped schedule/settings facts. It never repairs data; provider effects and public API equivalence need separate verification.
+Reconciliation compares scoped favorite rows and target favorite counts derived
+from source facts, and rejects a moving source or target boundary. It never repairs data; catalogue/effects/API equivalence still
+need separate verification.
 
 For a repeatable stable-window soak, run `scripts/soak.sh places 1440 60` with
 the worker binary and read-only source credentials in the environment. It records
@@ -199,43 +174,9 @@ DB tests create uniquely named disposable databases; the test role needs CREATED
 Without the explicit URL, DB tests are skipped locally. Local tests do not establish
 production restart/failover behavior, deployed role grants, source load budgets,
 public read compatibility, real scheduled-job coverage or a multi-day soak.
-Those remain activation gates. Expand table mappings only after an actual job-owned
-and coupled permission/notification workflow passes equivalent fault tests.
+Those remain activation gates. Add a residual mapping only after documenting the
+specific writer, why equivalent requests cannot reproduce its result, its exact
+fields and side effects, and its validation. A job or internal call is a candidate
+for investigation, not automatic permission to copy its tables.
 
 See the [deployment ADR](../../docs/adr/2026-11-12-removable-migration-sync-service.md).
-
-## Additional source-only domains
-
-Use separate processes and source credentials for each database. Their positions
-are independent, even though they share one target database. Keys below are examples;
-choose a reviewed UUID/wallet allowlist. No client or source application PR is required.
-
-```sh
-dcl-migration-sync install-domain-source --source events --key 11111111-1111-4111-8111-111111111111
-dcl-migration-sync bootstrap-domain --source events --stream event-schedules
-dcl-migration-sync capture-domain --source events --stream event-schedules
-# In a separately supervised process with the target credentials:
-dcl-migration-sync resume --stream event-schedules --rehearsal
-dcl-migration-sync run --stream event-schedules --rehearsal
-dcl-migration-sync reconcile-domain --source events --stream event-schedules
-```
-
-For social settings use `--source social-settings`, a distinct stream name, its source
-DB credentials and canonical wallet keys. Bootstrap requires an empty scoped target.
-Ordinary `pause`, `status`, `metrics`, `check` and `retry-blocked` accept any registered
-stream. A source cannot be owned by two streams. New source IDs and adapter constraints
-are installed by the normal additive schema procedure; existing rows are not relabelled.
-
-Read [Events schedules](../../sync-migration/events-schedules.md) and
-[social settings](../../sync-migration/social-settings.md) before installation.
-Settings facts do not reproduce Gatekeeper privacy effects. No public schedule or
-settings endpoints are enabled by the follower. Schedule allowlists do not include
-arbitrary future random IDs. Source functions need reviewed grants for actual writer
-roles before traffic resumes. No source write contacts the target.
-
-Retained transaction reads are limited to 1,000 changes and 1 MiB of JSON payload
-before client decoding. Oversized input stops capture without advancing its offset;
-it is not truncated or skipped. Snapshot field bounds and immutable key scopes are
-validated separately.
-
-For multi-source staging, see the [installation package](../../sync-migration/staging-installation.md) and [rehearsal acceptance procedure](../../sync-migration/staging-rehearsal.md). `scripts/soak.sh STREAM SAMPLES INTERVAL_SECONDS SOURCE` supports `places` (default), `events` and `social-settings`; use separate source credentials per invocation. Validate command routing locally with `python3 scripts/test_soak.py`.

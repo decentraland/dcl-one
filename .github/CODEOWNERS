@@ -143,11 +143,3 @@
 /sync-migration/ @decentraland/apis
 /schemas/70_migration_sync.sql @decentraland/apis
 /schemas/71_migration_capture.sql @decentraland/apis
-/schemas/72_migration_like_versions.sql @decentraland/apis
-/schemas/73_migration_catalogue_versions.sql @decentraland/apis
-/schemas/74_migration_domain_scope.sql @decentraland/apis
-/schemas/75_migration_domain_versions.sql @decentraland/apis
-/schemas/migrations/0040_migration_capture_adapter_v3.sql @decentraland/apis
-/schemas/migrations/0041_migration_sync_sources.sql @decentraland/apis
-/schemas/migrations/0042_migration_sync_domain_adapters.sql @decentraland/apis
-/schemas/migrations/0039_migration_capture_adapter_v2.sql @decentraland/apis

@@ -42,7 +42,7 @@ pub async fn source_info(source: &PgPool) -> Result<SourceInfo> {
     .fetch_one(source)
     .await?;
     ensure!(
-        row.try_get::<i32, _>("version")? == 3,
+        row.try_get::<i32, _>("version")? == 1,
         "unsupported capture adapter version"
     );
     let scope = sqlx::query_scalar::<_, Uuid>(
@@ -51,7 +51,7 @@ pub async fn source_info(source: &PgPool) -> Result<SourceInfo> {
     .fetch_all(source)
     .await?;
     Ok(SourceInfo {
-        adapter: "places_outbox_v3",
+        adapter: "places_outbox_v1",
         generation: row.try_get("generation")?,
         position: row.try_get("position")?,
         scope,
@@ -87,14 +87,6 @@ pub async fn install(source: &PgPool, scope: &[Uuid]) -> Result<SourceInfo> {
             .fetch_one(&mut *tx)
             .await?;
     if installed {
-        let version: i32 =
-            sqlx::query_scalar("SELECT version FROM migration_capture.control WHERE singleton")
-                .fetch_one(&mut *tx)
-                .await?;
-        ensure!(
-            version == 3,
-            "installed capture version lacks catalogue coverage; stop and create a reviewed new baseline"
-        );
         let actual: Vec<Uuid> =
             sqlx::query_scalar("SELECT entity_id FROM migration_capture.scope ORDER BY entity_id")
                 .fetch_all(&mut *tx)
@@ -104,12 +96,11 @@ pub async fn install(source: &PgPool, scope: &[Uuid]) -> Result<SourceInfo> {
             "installed capture scope is immutable; use a new reviewed baseline to change it"
         );
     } else {
-        let present: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM public.places WHERE lower(id::text)=ANY($1::text[]) AND NOT world",
-        )
-        .bind(wanted.iter().map(Uuid::to_string).collect::<Vec<_>>())
-        .fetch_one(&mut *tx)
-        .await?;
+        let present: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM public.places WHERE lower(id::text)=ANY($1::text[]) AND NOT world")
+                .bind(wanted.iter().map(Uuid::to_string).collect::<Vec<_>>())
+                .fetch_one(&mut *tx)
+                .await?;
         ensure!(
             present == wanted.len() as i64,
             "capture scope must contain existing Genesis places"
@@ -146,7 +137,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
     .fetch_one(&mut *snapshot)
     .await?;
     ensure!(
-        row.try_get::<i32, _>("version")? == 3,
+        row.try_get::<i32, _>("version")? == 1,
         "unsupported capture adapter version"
     );
     let generation: Uuid = row.try_get("generation")?;
@@ -182,38 +173,6 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         change.validate()?;
         baseline.push(change);
     }
-    let like_rows = sqlx::query(
-        "SELECT f.\"user\"::text AS actor,f.entity_id::text AS entity_id,
-                f.\"like\",f.user_activity::double precision AS activity,f.created_at,f.updated_at
-         FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id::text=lower(f.entity_id::text)
-         ORDER BY f.entity_id,f.\"user\" LIMIT 100001",
-    )
-    .fetch_all(&mut *snapshot)
-    .await?;
-    ensure!(
-        baseline.len() + like_rows.len() <= MAX_BASELINE_ROWS,
-        "pilot baseline exceeds bounded export size; choose a smaller scope"
-    );
-    for row in like_rows {
-        let change = FavoriteChange::LikeUpsert {
-            user: row.try_get("actor")?,
-            entity_id: row.try_get("entity_id")?,
-            r#like: row.try_get("like")?,
-            user_activity: row.try_get("activity")?,
-            created_at: row.try_get::<DateTime<Utc>, _>("created_at")?,
-            updated_at: row.try_get::<DateTime<Utc>, _>("updated_at")?,
-        };
-        change.validate()?;
-        baseline.push(change);
-    }
-    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id::text=lower(p.id::text) ORDER BY p.id")
-        .fetch_all(&mut *snapshot).await?;
-    for document in &catalogue {
-        let id = document["id"]
-            .as_str()
-            .context("catalogue identity missing")?;
-        crate::catalogue::validate(id, document)?;
-    }
     snapshot.commit().await?;
     let boundary = position_cursor(position)?;
     let mut tx = target.begin().await?;
@@ -229,58 +188,42 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         "normal destination instance is active; stop it before bootstrap"
     );
     ensure!(!generation.is_nil(), "source generation cannot be nil");
-    let occupied: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM migration_sync.streams WHERE source='places' OR name=$1)",
-    )
-    .bind(stream)
-    .fetch_one(&mut *tx)
-    .await?;
+    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.streams)")
+        .fetch_one(&mut *tx)
+        .await?;
     ensure!(
         !occupied,
         "bootstrap requires an unregistered destination; never overwrite an active generation"
     );
     let existing: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM explore.user_favorites WHERE entity_id=ANY($1)) OR EXISTS(SELECT 1 FROM explore.user_likes WHERE entity_id=ANY($1))",
+        "SELECT EXISTS(SELECT 1 FROM explore.user_favorites WHERE entity_id=ANY($1))",
     )
     .bind(scope.iter().map(ToString::to_string).collect::<Vec<_>>())
     .fetch_one(&mut *tx)
     .await?;
     ensure!(
         !existing,
-        "bootstrap scope already contains target interaction facts; use a clean scoped baseline"
+        "bootstrap scope already contains target favorites; use a clean scoped baseline"
     );
     for entity in &scope {
-        let id = entity.to_string();
-        let document = catalogue.iter().find(|document| document["id"] == id);
-        crate::catalogue::apply(&mut tx, &id, document).await?;
+        let local: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM explore.place WHERE id=$1 AND NOT world AND origin='local')")
+            .bind(entity.to_string()).fetch_one(&mut *tx).await?;
+        ensure!(local, "bootstrap catalogue identity is missing or mirrored");
     }
     sqlx::query("INSERT INTO migration_sync.streams(name,source,generation,baseline_lsn,applied_lsn) VALUES($1,'places',$2,$3::text::pg_lsn,$3::text::pg_lsn)")
         .bind(stream).bind(generation).bind(&boundary).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO migration_sync.capture_scope(stream,generation,entity_id) SELECT $1,$2,unnest($3::uuid[])")
         .bind(stream).bind(generation).bind(&scope).execute(&mut *tx).await?;
     for change in baseline {
-        match change {
-            FavoriteChange::Upsert {
-                user,
-                entity_id,
-                user_activity,
-                created_at,
-            } => {
-                sqlx::query("INSERT INTO explore.user_favorites(\"user\",entity_id,user_activity,created_at) VALUES($1,$2,$3,$4)")
-                    .bind(user).bind(entity_id).bind(user_activity).bind(created_at.naive_utc()).execute(&mut *tx).await?;
-            }
-            FavoriteChange::LikeUpsert {
-                user,
-                entity_id,
-                r#like,
-                user_activity,
-                created_at,
-                updated_at,
-            } => {
-                sqlx::query("INSERT INTO explore.user_likes(\"user\",entity_id,\"like\",user_activity,created_at,updated_at,source) VALUES($1,$2,$3,$4,$5,$6,'local')")
-                    .bind(user).bind(entity_id).bind(r#like).bind(user_activity).bind(created_at.naive_utc()).bind(updated_at.naive_utc()).execute(&mut *tx).await?;
-            }
-            _ => anyhow::bail!("snapshot has unsupported change"),
+        if let FavoriteChange::Upsert {
+            user,
+            entity_id,
+            user_activity,
+            created_at,
+        } = change
+        {
+            sqlx::query("INSERT INTO explore.user_favorites(\"user\",entity_id,user_activity,created_at) VALUES($1,$2,$3,$4)")
+                .bind(user).bind(entity_id).bind(user_activity).bind(created_at.naive_utc()).execute(&mut *tx).await?;
         }
     }
     for entity in &scope {
@@ -291,11 +234,11 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
             ON CONFLICT(entity_id) DO UPDATE SET favorites=EXCLUDED.favorites,likes=EXCLUDED.likes,dislikes=EXCLUDED.dislikes,updated_at=timezone('UTC',now())")
             .bind(entity.to_string()).execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,adapter,captured_position,observed_position,last_contact_at) VALUES($1,$2,'places_outbox_v3',$3,$3,clock_timestamp())")
+    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,captured_position,observed_position,last_contact_at) VALUES($1,$2,$3,$3,clock_timestamp())")
         .bind(stream).bind(generation).bind(position).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(SourceInfo {
-        adapter: "places_outbox_v3",
+        adapter: "places_outbox_v1",
         generation,
         position,
         scope,
@@ -330,11 +273,10 @@ pub async fn pump_once(source: &PgPool, target: &PgPool, stream: &str) -> Result
     if let Some(next) = next {
         let position: i64 = next.try_get("position")?;
         ensure!(position == captured + 1, "source capture history has a gap");
-        let size=sqlx::query("SELECT count(*) AS rows, COALESCE(sum(octet_length(payload::text)),0)::bigint AS bytes FROM migration_capture.changes WHERE position=$1")
+        let size = sqlx::query("SELECT count(*) AS rows, COALESCE(sum(octet_length(payload::text)),0)::bigint AS bytes FROM migration_capture.changes WHERE position=$1")
             .bind(position).fetch_one(source).await?;
         ensure!(
-            size.try_get::<i64, _>("rows")? <= 1000
-                && size.try_get::<i64, _>("bytes")? <= 1024 * 1024,
+            size.try_get::<i64, _>("rows")? <= 1000 && size.try_get::<i64, _>("bytes")? <= 1048576,
             "source transaction exceeds bounded capture size"
         );
         let changes: Vec<Value> = sqlx::query_scalar(
@@ -391,18 +333,6 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
         status["generation"] == json!(info.generation),
         "source and target generations differ"
     );
-    let adapter: String = sqlx::query_scalar(
-        "SELECT adapter FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2",
-    )
-    .bind(stream)
-    .bind(info.generation)
-    .fetch_optional(target)
-    .await?
-    .context("stream has no matching capture bootstrap")?;
-    ensure!(
-        adapter == info.adapter,
-        "source and target capture adapters differ"
-    );
     let approved_scope: Vec<Uuid> = sqlx::query_scalar("SELECT entity_id FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 ORDER BY entity_id")
         .bind(stream).bind(info.generation).fetch_all(target).await?;
     ensure!(
@@ -422,45 +352,13 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
         .fetch_all(source).await?;
     let target_rows:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_array(\"user\",entity_id,user_activity,to_char(created_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"')) FROM explore.user_favorites WHERE entity_id=ANY($1) ORDER BY \"user\",entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let source_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(f.\"user\"::text,f.entity_id::text,f.\"like\",f.user_activity,to_char(f.created_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(f.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),'local') FROM public.user_likes f JOIN migration_capture.scope s ON s.entity_id::text=lower(f.entity_id::text) ORDER BY f.\"user\",f.entity_id")
+    let source_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id::text,count(f.entity_id)) FROM migration_capture.scope s LEFT JOIN public.user_favorites f ON lower(f.entity_id::text)=s.entity_id::text GROUP BY s.entity_id ORDER BY s.entity_id")
         .fetch_all(source).await?;
-    let target_likes: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(\"user\",entity_id,\"like\",user_activity,to_char(created_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),to_char(updated_at,'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"'),source) FROM explore.user_likes WHERE entity_id=ANY($1) ORDER BY \"user\",entity_id")
+    let target_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id,c.favorites) FROM unnest($1::text[]) AS s(entity_id) LEFT JOIN explore.place_interaction_counts c USING(entity_id) ORDER BY s.entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let source_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id::text,(SELECT count(*) FROM public.user_favorites f WHERE lower(f.entity_id::text)=s.entity_id::text),(SELECT count(*) FROM public.user_likes l WHERE lower(l.entity_id::text)=s.entity_id::text AND l.\"like\"),(SELECT count(*) FROM public.user_likes l WHERE lower(l.entity_id::text)=s.entity_id::text AND NOT l.\"like\")) FROM migration_capture.scope s ORDER BY s.entity_id")
-        .fetch_all(source).await?;
-    let target_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id,c.favorites,c.likes,c.dislikes) FROM unnest($1::text[]) AS s(entity_id) LEFT JOIN explore.place_interaction_counts c USING(entity_id) ORDER BY s.entity_id")
-        .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
-    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id::text=lower(p.id::text) ORDER BY p.id")
-        .fetch_all(source).await?;
-    let mut catalogue_matches = true;
-    let mut target_connection = target.acquire().await?;
-    for document in &catalogue {
-        catalogue_matches &= crate::catalogue::equivalent(
-            &mut target_connection,
-            document["id"]
-                .as_str()
-                .context("catalogue identity missing")?,
-            document,
-        )
-        .await?;
-    }
-    let target_catalogue_count: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM explore.place WHERE id=ANY($1)")
-            .bind(
-                info.scope
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>(),
-            )
-            .fetch_one(&mut *target_connection)
-            .await?;
-    catalogue_matches &= target_catalogue_count == catalogue.len() as i64;
-    drop(target_connection);
     let after = source_info(source).await?;
     ensure!(
-        after.position == info.position
-            && after.generation == info.generation
-            && after.scope == info.scope,
+        after.position == info.position && after.generation == info.generation,
         "source changed during reconciliation; retry at a stable boundary"
     );
     let target_after = store::status(target, stream).await?;
@@ -469,20 +367,7 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
             && target_after["generation"] == status["generation"],
         "target changed during reconciliation"
     );
-    let scope_after: Vec<Uuid> = sqlx::query_scalar("SELECT entity_id FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 ORDER BY entity_id")
-        .bind(stream).bind(info.generation).fetch_all(target).await?;
-    let adapter_after: Option<String> = sqlx::query_scalar(
-        "SELECT adapter FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2",
-    )
-    .bind(stream)
-    .bind(info.generation)
-    .fetch_optional(target)
-    .await?;
-    ensure!(
-        scope_after == approved_scope && adapter_after.as_deref() == Some(adapter.as_str()),
-        "target capture contract changed during reconciliation"
-    );
     Ok(
-        json!({"stream":stream,"generation":info.generation,"position":info.position,"matches":catalogue_matches && source_rows==target_rows && source_likes==target_likes && source_counts==target_counts,"catalogue_match":catalogue_matches,"rows_match":source_rows==target_rows,"likes_match":source_likes==target_likes,"source_likes":source_likes.len(),"target_likes":target_likes.len(),"counts_match":source_counts==target_counts,"source_rows":source_rows.len(),"target_rows":target_rows.len()}),
+        json!({"stream":stream,"generation":info.generation,"position":info.position,"matches":source_rows==target_rows && source_counts==target_counts,"rows_match":source_rows==target_rows,"counts_match":source_counts==target_counts,"source_rows":source_rows.len(),"target_rows":target_rows.len()}),
     )
 }

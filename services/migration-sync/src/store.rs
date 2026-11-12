@@ -6,10 +6,10 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
-use sqlx::{Acquire, PgPool, Postgres, Row, Transaction};
+use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
-use crate::model::{Decision, Envelope, FavoriteChange, parse_lsn, validate_stream};
+use crate::model::{Decision, Envelope, parse_lsn, validate_stream};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Outcome {
@@ -22,18 +22,7 @@ pub enum Outcome {
 /// Record an already validated snapshot boundary. Existing generations cannot
 /// be replaced here: rebootstrap requires a separately reviewed state transition.
 pub async fn register(pool: &PgPool, name: &str, generation: Uuid, baseline: &str) -> Result<()> {
-    register_source(pool, name, "places", generation, baseline).await
-}
-
-pub async fn register_source(
-    pool: &PgPool,
-    name: &str,
-    source: &str,
-    generation: Uuid,
-    baseline: &str,
-) -> Result<()> {
     validate_stream(name)?;
-    crate::model::validate_source(source)?;
     ensure!(!generation.is_nil(), "generation must not be nil");
     parse_lsn(baseline)?;
     let mut tx = pool.begin().await?;
@@ -49,25 +38,23 @@ pub async fn register_source(
 
     sqlx::query(
         "INSERT INTO migration_sync.streams(name, source, generation, baseline_lsn, applied_lsn)
-         VALUES ($1, $4, $2, $3::text::pg_lsn, $3::text::pg_lsn) ON CONFLICT DO NOTHING",
+         VALUES ($1, 'places', $2, $3::text::pg_lsn, $3::text::pg_lsn) ON CONFLICT DO NOTHING",
     )
     .bind(name)
     .bind(generation)
     .bind(baseline)
-    .bind(source)
     .execute(&mut *tx)
     .await?;
     let row = sqlx::query(
-        "SELECT source, generation, baseline_lsn::text AS baseline
+        "SELECT generation, baseline_lsn::text AS baseline
          FROM migration_sync.streams WHERE name = $1 FOR UPDATE",
     )
     .bind(name)
     .fetch_optional(&mut *tx)
     .await?
-    .context("source already belongs to a different stream")?;
+    .context("the Places source already belongs to a different stream")?;
     ensure!(
-        row.try_get::<String, _>("source")? == source
-            && row.try_get::<Uuid, _>("generation")? == generation
+        row.try_get::<Uuid, _>("generation")? == generation
             && parse_lsn(&row.try_get::<String, _>("baseline")?)? == parse_lsn(baseline)?,
         "stream baseline or generation differs; registration cannot reset it"
     );
@@ -82,7 +69,7 @@ pub async fn enqueue(pool: &PgPool, envelope: &Envelope) -> Result<bool> {
     let payload = serde_json::to_value(envelope)?;
     let mut tx = pool.begin().await?;
     let stream = sqlx::query(
-        "SELECT source, generation, applied_lsn::text AS applied
+        "SELECT generation, applied_lsn::text AS applied
          FROM migration_sync.streams WHERE name = $1 FOR UPDATE",
     )
     .bind(&envelope.stream)
@@ -90,8 +77,7 @@ pub async fn enqueue(pool: &PgPool, envelope: &Envelope) -> Result<bool> {
     .await?
     .context("stream is not registered")?;
     ensure!(
-        stream.try_get::<Uuid, _>("generation")? == envelope.generation
-            && stream.try_get::<String, _>("source")? == envelope.source,
+        stream.try_get::<Uuid, _>("generation")? == envelope.generation,
         "stream generation mismatch"
     );
     let scoped: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_sources WHERE stream=$1 AND generation=$2)")
@@ -106,14 +92,9 @@ pub async fn enqueue(pool: &PgPool, envelope: &Envelope) -> Result<bool> {
             entities.insert(&command.entity_id);
         }
         for entity in entities {
-            let allowed: bool = if envelope.source == "places" {
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 AND entity_id=$3)")
-                    .bind(&envelope.stream).bind(envelope.generation).bind(Uuid::parse_str(entity)?)
-                    .fetch_one(&mut *tx).await?
-            } else {
-                sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.domain_scope WHERE stream=$1 AND generation=$2 AND key=$3)")
-                    .bind(&envelope.stream).bind(envelope.generation).bind(entity).fetch_one(&mut *tx).await?
-            };
+            let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.capture_scope WHERE stream=$1 AND generation=$2 AND entity_id=$3)")
+                .bind(&envelope.stream).bind(envelope.generation).bind(Uuid::parse_str(entity)?)
+                .fetch_one(&mut *tx).await?;
             ensure!(allowed, "transaction escapes installed capture scope");
         }
     }
@@ -218,7 +199,7 @@ pub async fn status(pool: &PgPool, name: &str) -> Result<Value> {
 pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
     let mut tx = pool.begin().await?;
     let stream = sqlx::query(
-        "SELECT source, generation, applied_lsn::text AS applied, paused
+        "SELECT generation, applied_lsn::text AS applied, paused
          FROM migration_sync.streams WHERE name=$1 FOR UPDATE",
     )
     .bind(name)
@@ -252,7 +233,6 @@ pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
     let envelope = match envelope {
         Ok(value)
             if value.validate().is_ok()
-                && value.source == stream.try_get::<String, _>("source")?
                 && value.stream == name
                 && value.generation == generation
                 && value.previous_lsn == applied
@@ -307,18 +287,6 @@ pub async fn process_next(pool: &PgPool, name: &str) -> Result<Outcome> {
             // Native mutation and receipt already committed together. Do not
             // reapply captured favorite writes or increment counters again.
         }
-        Decision::Apply => {
-            // Savepoint preserves the head lock while rolling back all domain
-            // writes before a durable blocked outcome is recorded.
-            let mut application = tx.begin().await?;
-            match apply(&mut application, &envelope).await {
-                Ok(()) => application.commit().await?,
-                Err(_) => {
-                    application.rollback().await?;
-                    return block(tx, name, generation, &position, "apply_failed").await;
-                }
-            }
-        }
     }
     sqlx::query(
         "UPDATE migration_sync.inbox SET status='applied', applied_at=now()
@@ -352,147 +320,6 @@ async fn block(
         .execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Outcome::Blocked)
-}
-
-async fn apply(tx: &mut Transaction<'_, Postgres>, envelope: &Envelope) -> Result<()> {
-    let mut entities = BTreeSet::new();
-    for change in &envelope.changes {
-        let external_deleted = if let Some(event) = change.event_change() {
-            crate::events_schedules::apply(&mut *tx, &event).await?;
-            Some(matches!(
-                event,
-                crate::events_schedules::ScheduleChange::Delete { .. }
-            ))
-        } else if let Some(settings) = change.social_change() {
-            crate::social_settings::apply(&mut *tx, &settings).await?;
-            Some(settings.deleted())
-        } else {
-            None
-        };
-        if let Some(deleted) = external_deleted {
-            sqlx::query("INSERT INTO migration_sync.domain_versions(stream,generation,key,commit_lsn,deleted) VALUES($1,$2,$3,$4::text::pg_lsn,$5) ON CONFLICT(stream,generation,key) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted")
-                .bind(&envelope.stream).bind(envelope.generation).bind(change.key().1).bind(&envelope.commit_lsn).bind(deleted).execute(&mut **tx).await?;
-            continue;
-        }
-        if let FavoriteChange::CatalogueUpsert { entity_id, .. }
-        | FavoriteChange::CatalogueDelete { entity_id } = change
-        {
-            let document = match change {
-                FavoriteChange::CatalogueUpsert { document, .. } => Some(document),
-                _ => None,
-            };
-            crate::catalogue::apply(tx, entity_id, document).await?;
-            sqlx::query("INSERT INTO migration_sync.catalogue_versions(stream,generation,entity_id,commit_lsn,deleted) VALUES($1,$2,$3,$4::text::pg_lsn,$5) ON CONFLICT(stream,generation,entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted")
-                .bind(&envelope.stream).bind(envelope.generation).bind(entity_id).bind(&envelope.commit_lsn).bind(document.is_none()).execute(&mut **tx).await?;
-            continue;
-        }
-        let (user, entity_id, deleted) = match change {
-            FavoriteChange::ScheduleUpsert { .. }
-            | FavoriteChange::ScheduleDelete { .. }
-            | FavoriteChange::SocialSettingsUpsert { .. }
-            | FavoriteChange::SocialSettingsDelete { .. } => {
-                anyhow::bail!("unhandled domain change")
-            }
-            FavoriteChange::CatalogueUpsert { .. } | FavoriteChange::CatalogueDelete { .. } => {
-                unreachable!("catalogue handled above")
-            }
-            FavoriteChange::Upsert {
-                user,
-                entity_id,
-                user_activity,
-                created_at,
-            } => {
-                let valid: Option<bool> = sqlx::query_scalar(
-                    "SELECT true FROM explore.place WHERE id=$1 AND NOT world AND origin='local' FOR SHARE",
-                ).bind(entity_id).fetch_optional(&mut **tx).await?;
-                ensure!(
-                    valid == Some(true),
-                    "catalogue identity is unavailable or not owned by this baseline"
-                );
-                sqlx::query(
-                    "INSERT INTO explore.user_favorites(\"user\",entity_id,user_activity,created_at) VALUES($1,$2,$3,$4)
-                     ON CONFLICT(\"user\",entity_id) DO UPDATE SET user_activity=EXCLUDED.user_activity,created_at=EXCLUDED.created_at",
-                ).bind(user).bind(entity_id).bind(user_activity).bind(created_at.naive_utc()).execute(&mut **tx).await?;
-                (user, entity_id, false)
-            }
-            FavoriteChange::Delete { user, entity_id } => {
-                // A deleted catalogue row is a valid cause of a favorite deletion.
-                sqlx::query(
-                    "DELETE FROM explore.user_favorites WHERE \"user\"=$1 AND entity_id=$2",
-                )
-                .bind(user)
-                .bind(entity_id)
-                .execute(&mut **tx)
-                .await?;
-                (user, entity_id, true)
-            }
-            FavoriteChange::LikeUpsert {
-                user,
-                entity_id,
-                r#like,
-                user_activity,
-                created_at,
-                updated_at,
-            } => {
-                let valid: Option<bool> = sqlx::query_scalar(
-                    "SELECT true FROM explore.place WHERE id=$1 AND NOT world AND origin='local' FOR SHARE",
-                ).bind(entity_id).fetch_optional(&mut **tx).await?;
-                ensure!(
-                    valid == Some(true),
-                    "catalogue identity is unavailable or not owned by this baseline"
-                );
-                sqlx::query(
-                    "INSERT INTO explore.user_likes(\"user\",entity_id,\"like\",user_activity,created_at,updated_at,source)
-                     VALUES($1,$2,$3,$4,$5,$6,'local') ON CONFLICT(\"user\",entity_id)
-                     DO UPDATE SET \"like\"=EXCLUDED.\"like\",user_activity=EXCLUDED.user_activity,
-                     created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at,source='local'",
-                ).bind(user).bind(entity_id).bind(r#like).bind(user_activity).bind(created_at.naive_utc())
-                 .bind(updated_at.naive_utc()).execute(&mut **tx).await?;
-                (user, entity_id, false)
-            }
-            FavoriteChange::LikeDelete { user, entity_id } => {
-                sqlx::query("DELETE FROM explore.user_likes WHERE \"user\"=$1 AND entity_id=$2")
-                    .bind(user)
-                    .bind(entity_id)
-                    .execute(&mut **tx)
-                    .await?;
-                (user, entity_id, true)
-            }
-        };
-        entities.insert(entity_id);
-        let version_sql = if matches!(
-            change,
-            FavoriteChange::LikeUpsert { .. } | FavoriteChange::LikeDelete { .. }
-        ) {
-            "INSERT INTO migration_sync.like_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted)
-             VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6)
-             ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted"
-        } else {
-            "INSERT INTO migration_sync.favorite_versions(stream,generation,\"user\",entity_id,commit_lsn,deleted)
-             VALUES($1,$2,$3,$4,$5::text::pg_lsn,$6)
-             ON CONFLICT(stream,generation,\"user\",entity_id) DO UPDATE SET commit_lsn=EXCLUDED.commit_lsn,deleted=EXCLUDED.deleted"
-        };
-        sqlx::query(version_sql)
-            .bind(&envelope.stream)
-            .bind(envelope.generation)
-            .bind(user)
-            .bind(entity_id)
-            .bind(&envelope.commit_lsn)
-            .bind(deleted)
-            .execute(&mut **tx)
-            .await?;
-    }
-    for entity in entities {
-        sqlx::query(
-            "INSERT INTO explore.place_interaction_counts(entity_id,favorites,likes,dislikes,updated_at)
-             SELECT $1,(SELECT count(*) FROM explore.user_favorites WHERE entity_id=$1),
-               (SELECT count(*) FROM explore.user_likes WHERE entity_id=$1 AND \"like\"),
-               (SELECT count(*) FROM explore.user_likes WHERE entity_id=$1 AND NOT \"like\"),timezone('UTC',now())
-             ON CONFLICT(entity_id) DO UPDATE SET favorites=EXCLUDED.favorites,likes=EXCLUDED.likes,
-               dislikes=EXCLUDED.dislikes,updated_at=EXCLUDED.updated_at",
-        ).bind(entity).execute(&mut **tx).await?;
-    }
-    Ok(())
 }
 
 /// The pointer is read without holding a transaction across network I/O. The

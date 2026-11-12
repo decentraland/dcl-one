@@ -1,13 +1,13 @@
 -- Explicit opt-in installation on the source Places database. The application
 -- owner installs this once and grants only the intended application/capture roles.
 -- No function contacts the destination. The per-transaction lock establishes
--- commit order before any interaction row mutation can acquire its row locks.
+-- commit order before any favorite row mutation can acquire its row locks.
 CREATE SCHEMA migration_capture;
 REVOKE ALL ON SCHEMA migration_capture FROM PUBLIC;
 
 CREATE TABLE migration_capture.control (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    version integer NOT NULL DEFAULT 3 CHECK (version = 3),
+    version integer NOT NULL DEFAULT 1 CHECK (version = 1),
     generation uuid NOT NULL DEFAULT gen_random_uuid() CHECK (generation <> '00000000-0000-0000-0000-000000000000'),
     position bigint NOT NULL DEFAULT 0 CHECK (position >= 0)
 );
@@ -70,7 +70,7 @@ END $$;
 CREATE FUNCTION migration_capture.favorite_truncate() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
 BEGIN
-    RAISE EXCEPTION 'TRUNCATE is unsupported while interaction capture is installed; use captured DELETE';
+    RAISE EXCEPTION 'TRUNCATE is unsupported while favorites capture is installed; use captured DELETE';
 END $$;
 CREATE FUNCTION migration_capture.favorite_row() RETURNS trigger
 LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
@@ -101,38 +101,6 @@ FOR EACH STATEMENT EXECUTE FUNCTION migration_capture.favorite_statement();
 CREATE TRIGGER migration_capture_row AFTER INSERT OR UPDATE OR DELETE ON public.user_favorites
 FOR EACH ROW EXECUTE FUNCTION migration_capture.favorite_row();
 CREATE TRIGGER migration_capture_no_truncate BEFORE TRUNCATE ON public.user_favorites
-FOR EACH STATEMENT EXECUTE FUNCTION migration_capture.favorite_truncate();
-
-CREATE FUNCTION migration_capture.like_row() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
-DECLARE p bigint; old_scoped boolean := false; new_scoped boolean := false;
-BEGIN
-    IF TG_OP <> 'INSERT' THEN
-        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id::text=lower(OLD.entity_id::text)) INTO old_scoped;
-    END IF;
-    IF TG_OP <> 'DELETE' THEN
-        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id::text=lower(NEW.entity_id::text)) INTO new_scoped;
-    END IF;
-    IF NOT old_scoped AND NOT new_scoped THEN RETURN NULL; END IF;
-    p := migration_capture.ensure_transaction();
-    IF old_scoped AND (TG_OP='DELETE' OR NOT new_scoped OR (OLD."user",OLD.entity_id) IS DISTINCT FROM (NEW."user",NEW.entity_id)) THEN
-        INSERT INTO migration_capture.changes(position,payload) VALUES(p,
-            jsonb_build_object('op','like_delete','user',OLD."user"::text,'entity_id',OLD.entity_id::text));
-    END IF;
-    IF new_scoped THEN
-        INSERT INTO migration_capture.changes(position,payload) VALUES(p,
-            jsonb_build_object('op','like_upsert','user',NEW."user"::text,'entity_id',NEW.entity_id::text,
-                'like',NEW."like",'user_activity',NEW.user_activity,'created_at',
-                to_char(NEW.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
-                'updated_at',to_char(NEW.updated_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"')));
-    END IF;
-    RETURN NULL;
-END $$;
-CREATE TRIGGER migration_capture_statement BEFORE INSERT OR UPDATE OR DELETE ON public.user_likes
-FOR EACH STATEMENT EXECUTE FUNCTION migration_capture.favorite_statement();
-CREATE TRIGGER migration_capture_row AFTER INSERT OR UPDATE OR DELETE ON public.user_likes
-FOR EACH ROW EXECUTE FUNCTION migration_capture.like_row();
-CREATE TRIGGER migration_capture_no_truncate BEFORE TRUNCATE ON public.user_likes
 FOR EACH STATEMENT EXECUTE FUNCTION migration_capture.favorite_truncate();
 
 -- Called only after the source HTTP handler has authenticated the actor and
@@ -185,43 +153,3 @@ BEGIN
     VALUES(operation_id,request_hash,actor,entity_id,favorite,p,answer);
     RETURN answer;
 END $$;
-
--- The source row already carries effective category/moderation/ranking values.
--- Do not copy interaction counters or generated full-text indexes. The fixed UTC
--- setting makes timestamptz JSON stable across different capture connections.
-CREATE FUNCTION migration_capture.catalogue_document(value public.places) RETURNS jsonb
-LANGUAGE sql STABLE SET timezone = 'UTC' AS $$
-    SELECT (to_jsonb(value) - ARRAY['textsearch','likes','dislikes','favorites'])
-        || jsonb_build_object('source','places','local',true);
-$$;
-CREATE FUNCTION migration_capture.catalogue_row() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, public AS $$
-DECLARE p bigint; old_scoped boolean := false; new_scoped boolean := false; before_doc jsonb; after_doc jsonb;
-BEGIN
-    IF TG_OP <> 'INSERT' THEN
-        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id::text=lower(OLD.id::text)) INTO old_scoped;
-        before_doc := migration_capture.catalogue_document(OLD);
-    END IF;
-    IF TG_OP <> 'DELETE' THEN
-        SELECT EXISTS(SELECT 1 FROM migration_capture.scope WHERE entity_id::text=lower(NEW.id::text)) INTO new_scoped;
-        after_doc := migration_capture.catalogue_document(NEW);
-    END IF;
-    IF NOT old_scoped AND NOT new_scoped THEN RETURN NULL; END IF;
-    IF TG_OP='UPDATE' AND old_scoped AND new_scoped AND before_doc=after_doc THEN RETURN NULL; END IF;
-    p := migration_capture.ensure_transaction();
-    IF old_scoped AND (TG_OP='DELETE' OR NOT new_scoped OR OLD.id IS DISTINCT FROM NEW.id) THEN
-        INSERT INTO migration_capture.changes(position,payload) VALUES(p,
-            jsonb_build_object('op','catalogue_delete','entity_id',OLD.id::text));
-    END IF;
-    IF new_scoped THEN
-        INSERT INTO migration_capture.changes(position,payload) VALUES(p,
-            jsonb_build_object('op','catalogue_upsert','entity_id',NEW.id::text,'document',after_doc));
-    END IF;
-    RETURN NULL;
-END $$;
-CREATE TRIGGER migration_capture_statement BEFORE INSERT OR UPDATE OR DELETE ON public.places
-FOR EACH STATEMENT EXECUTE FUNCTION migration_capture.favorite_statement();
-CREATE TRIGGER migration_capture_row AFTER INSERT OR UPDATE OR DELETE ON public.places
-FOR EACH ROW EXECUTE FUNCTION migration_capture.catalogue_row();
-CREATE TRIGGER migration_capture_no_truncate BEFORE TRUNCATE ON public.places
-FOR EACH STATEMENT EXECUTE FUNCTION migration_capture.favorite_truncate();

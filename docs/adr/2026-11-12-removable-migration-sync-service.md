@@ -1,78 +1,24 @@
-# ADR: Removable production-to-dcl-one synchronization service
+# ADR: Removable hybrid migration coordinator
 
 - Status: Accepted
 - Date: 2026-11-12
 
-See [migration decisions and reasons](../../sync-migration/README.md) for the
-strategy, alternatives and repository change requirements.
-
 ## Decision
 
-`services/migration-sync` is a separately deployed migration worker in the
-monorepo, built as `dcl-migration-sync`. It belongs to the existing Rust workspace
-for dependency locking and verification, but the Catalyst binary does not link
-or start it. Its independent deployment and retirement lifecycle justify the
-separate service crate. It is not a Catalyst domain module or a library crate.
+[The migration decision summary](../../sync-migration/README.md) defines the strategy: migrate before activation, duplicate compatible accepted operations, and implement production → dcl-one DB synchronization only for demonstrated residual outcomes. Classify operations and writers, not entire tables.
 
-Production remains authoritative during one-way coexistence. The worker owns
-its inbox, stream positions and mapping provenance in `migration_sync` inside
-the destination database. These tables join the single `schemas/` bootstrap;
-there is no private application schema installer. Target facts and their apply
-receipts commit together. Removing the worker does not remove business facts.
+`services/migration-sync` remains a separately deployed and removable worker in the Rust workspace. Catalyst does not link or start it. Its independent deployment/retirement justifies a separate crate; metadata uses the existing shared schema bootstrap.
 
-The executable supports isolated rehearsals of explicitly scoped Genesis Places
-favorites and likes/dislikes. Source-local transactional outbox capture records changes and command
-receipts without contacting dcl-one. A repeatable-read snapshot and capture boundary
-bootstrap the destination before activation. Source-only changes apply through the
-mapping; duplicate commands run through a dedicated authenticated follower listener,
-with native mutations and receipts in one transaction. The ordered coordinator
-verifies those receipts without applying the same domain changes again.
+The retained bounded pilot imports a one-time favorite baseline and coordinates native favorite commands. Source acceptance, mutation and original response commit together; target native mutation and receipt commit together. The coordinator verifies receipts before advancing ordered progress. Unreceipted source mutations are retained as evidence and block progress. There is no post-baseline SQL business-row application path and no approved residual mapping yet.
 
-Capture and apply run as separately supervised commands with different database
-roles. Source installation is an explicit operator command; runtime capture needs
-read access only. The minimal `catalyst migration-follower` process starts no normal
-API, jobs, mirrors or providers. Its private verification read is not a public API
-replacement. Normal `serve`/`index` startup and registration share an advisory guard;
-old binaries and independent writers still require deployment-level fencing.
+The broader source-only likes/catalogue/schedule/settings adapters and their local-only metadata were removed because operation incompatibility had not been established. Their research informs future classification, not deployment. Never silently downgrade an existing test database or relabel capture generations.
 
-The source outbox is a bounded fallback, not a claim that production logical CDC,
-throughput or failover has been verified. The [pilot contract](../../services/migration-sync/pilot-contract.json)
-and [runbook](../../services/migration-sync/README.md) define the supported mapping,
-recovery controls and remaining activation gates.
+Capture and replay run independently with separate credentials. Source-local outbox/receipts record evidence without contacting the target; they do not imply copying every business-row change. The minimal `catalyst migration-follower` process starts no ordinary jobs, mirrors or providers. Its private routes do not replace public APIs. Normal server startup remains fenced while migration streams exist; deployment-level fencing is still required for old binaries, lost sessions and manual writers.
 
 ## Ownership and retirement
 
-The sync worker may write only its own metadata and the declared destination
-mapping. The initial mapping updates `explore.user_favorites` and `explore.user_likes`, and derives
-`explore.place_interaction_counts`; catalogue data remains owned by Explore.
-No production-to-target flow may silently become target-to-production writes.
-Normal API/jobs must stay off; only the dedicated follower may serve the pilot.
+Production owns user responses, business jobs, external effects and live sessions during coexistence. The target may reproduce only approved accepted operations. Any future residual mapping must share ordering and prove that native results are not applied twice.
 
-At eventual ownership transfer, fence production writers, drain commands and
-effects, synchronize through final source boundaries and validate before
-enabling independent target writes. Stop dispatch/capture and the worker only
-when their pending state is accounted for. Retain metadata for the agreed
-recovery period; retiring replication slots and deleting metadata are explicit
-operator actions, not shutdown behavior. After independent target writes,
-rollback requires preserving those writes through a separately tested process.
+Before ownership transfer, fence source writers, account for in-flight commands/effects, reach final boundaries and reconcile. Independent target writes invalidate simple rollback to production; preservation of those writes needs a tested procedure. Archive receipts/history for the agreed recovery horizon before explicit retirement. Stopping the worker never deletes business facts or evidence.
 
-## Unchanged-client interaction coverage
-
-The default pilot uses source-only capture of favorite and like/dislike changes.
-Clients and production HTTP handlers remain unchanged; the source database receives
-the explicit local capture installation. Native favorite replay stays optional.
-Adapter v2 captures both interaction tables in one ordered stream and bootstraps
-them at one snapshot boundary. V1 history is retained under its original identity;
-it is not silently expanded. Vote facts and independent version history commit
-with derived counters and the applied cursor.
-
-## Scoped source-only expansion
-
-Places adapter v3 captures scoped Genesis catalogue metadata and interactions
-at one source boundary. Separate Events schedule and social-settings adapters
-share the worker infrastructure while retaining independent source owners, scopes
-and cursors. There is no atomic cross-source snapshot. All these mappings copy
-facts only; normal target jobs, provider calls and privacy enforcement remain
-disabled. Source DB capture installation is required; source application and
-client changes are not. See the [mapping decisions](../../sync-migration/multiple-sources.md)
-and [repository rationale](../../sync-migration/repository-changes.md).
+See the [pilot runbook](../../services/migration-sync/README.md) for current commands and [operation backlog](../../sync-migration/operation-classification.md) for unresolved gates.

@@ -1560,42 +1560,22 @@ each publication or archive transition appends a row to
 `social.badge_catalog_audit`; `badge_admin_audit` keeps per-wallet grants and
 revokes, whose `address` a catalog write does not have.
 
-## Removable one-way migration worker
+## Removable hybrid migration coordinator
 
-`services/migration-sync` owns the `migration_sync` stream, inbox, favorite and like
-version, command receipt and capture-progress tables. Its workload is a bounded, ordered source transaction (up to
-1,000 changes) applied to an isolated destination. One stream row lock serializes
-workers; facts, versions, receipt and position commit together. A predecessor gap
-waits; a failed domain transaction rolls back before its head is marked blocked.
-A unique owner per source prevents overlapping streams mutating the same
-scope. No throughput or production-load budget is claimed without measurement.
+`services/migration-sync` owns source acceptance evidence, inboxes, stream progress
+and native execution receipts. A stream row lock serializes replay. Source acceptance
+and target native mutations each commit with their own durable receipt. Progress
+advances only after verified execution; unreceipted mutations block without changing
+business rows. The one-time favorite baseline is pre-activation migration, not a
+continuous row-copy mapping.
 
-The pilot changes Explore favorite and like/dislike facts and recomputes interaction counts from
-facts. It reads canonical non-mirrored Genesis catalogue IDs and preserves
-delete history without an FK to a place that can disappear. Existing Explore
-writers/mirrors must remain off for this scope. Dual commands execute through the isolated follower native favorite helper and
-commit their target receipt atomically; the coordinator verifies it without
-reapplying domain rows. Capture reads a source-local transactional outbox and
-bootstrap aligns a repeatable-read baseline with its ordered boundary. The
-worker uses the single root schema bootstrap/object migration pass and has no
-automatic schema installer or history cleanup.
+Duplicate compatible operations first. Any future residual DB mapping must identify
+its non-replayable writer/result and preserve mixed-transaction ordering without
+reapplying native results. No residual mapping is currently approved. The broad
+likes/catalogue/schedules/settings metadata and adapters were local-only and removed.
+Never reset or downgrade an existing rehearsal database to fit these changes.
 
-The interaction capture adapter (`places_outbox_v2`) serializes both source tables
-under the same transaction lock. It imports a shared snapshot boundary and preserves
-like `created_at`/`updated_at`, activity and true/false vote values. Like versions
-use a separate table so deleting a like cannot overwrite a favorite tombstone.
-Target vote counts derive from mapped local facts. Older favorites-only adapter
-rows retain their identity; adding likes requires a reviewed new baseline, not a
-relabelled cursor. This source-only path needs no client operation ID or source
-HTTP handler deployment.
-
-The current Places adapter (`places_outbox_v3`) adds scoped Genesis catalogue
-metadata to the same snapshot and transaction stream; v1/v2 history cannot be
-relabelled as v3. Catalogue versions preserve deletes independently. Events
-schedules and social settings use separate immutable text-key scopes, source
-owners, capture adapters and cursors. Domain facts and tombstones commit with
-their stream cursor. Cross-source transactions are not provided. Capture limits
-transactions to 1,000 changes and 1 MiB before decoding outbox rows. Events array
-preflight and fetch share a repeatable-read snapshot. Source remains the only
-job/provider authority; copied removal intents remain inert. See
-[sync decisions](sync-migration/multiple-sources.md) for mapping boundaries.
+Source capture uses an explicit local transactional outbox with read-only polling;
+source DDL/grants and writer fencing are operator work. Target jobs/providers stay
+off. Production load, history retention, public API compatibility and effect handover
+remain unverified. See [the decision summary](sync-migration/README.md).

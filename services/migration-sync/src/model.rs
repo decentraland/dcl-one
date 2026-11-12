@@ -1,4 +1,4 @@
-//! The bounded, typed input contract for the Places interactions pilot.
+//! The bounded, typed input contract for the Places favorites pilot.
 //!
 //! An envelope represents one committed source transaction. Changes retain
 //! their source order, including multiple changes to the same favorite.
@@ -36,28 +36,6 @@ pub enum Mode {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FavoriteChange {
-    ScheduleUpsert {
-        schedule: crate::events_schedules::ScheduleRecord,
-    },
-    ScheduleDelete {
-        id: String,
-    },
-    SocialSettingsUpsert {
-        address: String,
-        private_messages_privacy: crate::social_settings::PrivateMessagesPrivacy,
-        blocked_users_messages_visibility: crate::social_settings::BlockedMessagesVisibility,
-        show_situation_reactions: crate::social_settings::SituationReactions,
-    },
-    SocialSettingsDelete {
-        address: String,
-    },
-    CatalogueUpsert {
-        entity_id: String,
-        document: serde_json::Value,
-    },
-    CatalogueDelete {
-        entity_id: String,
-    },
     Upsert {
         user: String,
         entity_id: String,
@@ -68,23 +46,10 @@ pub enum FavoriteChange {
         user: String,
         entity_id: String,
     },
-    LikeUpsert {
-        user: String,
-        entity_id: String,
-        r#like: bool,
-        user_activity: f64,
-        created_at: DateTime<Utc>,
-        updated_at: DateTime<Utc>,
-    },
-    LikeDelete {
-        user: String,
-        entity_id: String,
-    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Decision {
-    Apply,
     ExecuteCommand,
     Blocked(&'static str),
 }
@@ -155,11 +120,7 @@ impl Envelope {
             self.version == SCHEMA_VERSION,
             "unsupported envelope version"
         );
-        validate_source(&self.source)?;
-        ensure!(
-            self.mode == Mode::SourceOnly || self.source == "places",
-            "native replay is only supported for Places"
-        );
+        ensure!(self.source == "places", "unsupported source");
         validate_stream(&self.stream)?;
         ensure!(!self.generation.is_nil(), "generation must not be nil");
         let previous = parse_lsn(&self.previous_lsn)?;
@@ -167,10 +128,6 @@ impl Envelope {
         ensure!(previous < committed, "commit LSN must follow previous LSN");
         ensure!(self.changes.len() <= MAX_CHANGES, "too many changes");
         for change in &self.changes {
-            ensure!(
-                change.source() == self.source,
-                "change does not belong to envelope source"
-            );
             change.validate()?;
         }
         if let Some(command) = &self.command {
@@ -179,13 +136,6 @@ impl Envelope {
                 "source-only transactions cannot carry commands"
             );
             command.validate()?;
-            ensure!(
-                self.changes.iter().all(|change| matches!(
-                    change,
-                    FavoriteChange::Upsert { .. } | FavoriteChange::Delete { .. }
-                )),
-                "dual favorite transaction includes unsupported interaction changes"
-            );
             ensure!(
                 self.changes
                     .iter()
@@ -221,7 +171,7 @@ impl Envelope {
     /// dispatch; advancement separately requires its atomic native receipt.
     pub fn classify(&self) -> Decision {
         match self.mode {
-            Mode::SourceOnly => Decision::Apply,
+            Mode::SourceOnly => Decision::Blocked("unreceipted_mutation"),
             Mode::Dual if self.command.is_some() => Decision::ExecuteCommand,
             Mode::Dual => Decision::Blocked("dual_receipts_required"),
         }
@@ -229,88 +179,16 @@ impl Envelope {
 }
 
 impl FavoriteChange {
-    pub fn source(&self) -> &'static str {
-        match self {
-            Self::ScheduleUpsert { .. } | Self::ScheduleDelete { .. } => "events",
-            Self::SocialSettingsUpsert { .. } | Self::SocialSettingsDelete { .. } => {
-                "social-settings"
-            }
-            _ => "places",
-        }
-    }
-    pub fn event_change(&self) -> Option<crate::events_schedules::ScheduleChange> {
-        use crate::events_schedules::ScheduleChange;
-        match self {
-            Self::ScheduleUpsert { schedule } => Some(ScheduleChange::Upsert {
-                schedule: schedule.clone(),
-            }),
-            Self::ScheduleDelete { id } => Some(ScheduleChange::Delete { id: id.clone() }),
-            _ => None,
-        }
-    }
-    pub fn social_change(&self) -> Option<crate::social_settings::Change> {
-        use crate::social_settings::Change;
-        match self {
-            Self::SocialSettingsUpsert {
-                address,
-                private_messages_privacy,
-                blocked_users_messages_visibility,
-                show_situation_reactions,
-            } => Some(Change::SocialSettingsUpsert {
-                address: address.clone(),
-                private_messages_privacy: *private_messages_privacy,
-                blocked_users_messages_visibility: *blocked_users_messages_visibility,
-                show_situation_reactions: *show_situation_reactions,
-            }),
-            Self::SocialSettingsDelete { address } => Some(Change::SocialSettingsDelete {
-                address: address.clone(),
-            }),
-            _ => None,
-        }
-    }
     pub fn key(&self) -> (&str, &str) {
         match self {
-            Self::ScheduleUpsert { schedule } => ("", &schedule.id),
-            Self::ScheduleDelete { id } => ("", id),
-            Self::SocialSettingsUpsert { address, .. } | Self::SocialSettingsDelete { address } => {
-                (address, address)
-            }
-            Self::CatalogueUpsert { entity_id, .. } | Self::CatalogueDelete { entity_id } => {
-                ("", entity_id)
-            }
             Self::Upsert {
                 user, entity_id, ..
             }
-            | Self::Delete { user, entity_id }
-            | Self::LikeUpsert {
-                user, entity_id, ..
-            }
-            | Self::LikeDelete { user, entity_id } => (user, entity_id),
+            | Self::Delete { user, entity_id } => (user, entity_id),
         }
     }
 
     pub fn validate(&self) -> Result<()> {
-        if let Some(change) = self.event_change() {
-            return change.validate();
-        }
-        if let Some(change) = self.social_change() {
-            return change.validate();
-        }
-        if let Self::CatalogueUpsert {
-            entity_id,
-            document,
-        } = self
-        {
-            return crate::catalogue::validate(entity_id, document);
-        }
-        if let Self::CatalogueDelete { entity_id } = self {
-            ensure!(
-                Uuid::parse_str(entity_id)
-                    .is_ok_and(|id| !id.is_nil() && id.to_string() == *entity_id),
-                "catalogue ID must be canonical UUID"
-            );
-            return Ok(());
-        }
         let (user, entity_id) = self.key();
         ensure!(
             user.len() == 42
@@ -326,7 +204,7 @@ impl FavoriteChange {
             entity.hyphenated().to_string() == entity_id,
             "entity ID must be a canonical UUID"
         );
-        if let Self::Upsert { user_activity, .. } | Self::LikeUpsert { user_activity, .. } = self {
+        if let Self::Upsert { user_activity, .. } = self {
             ensure!(user_activity.is_finite(), "user activity must be finite");
         }
         Ok(())
@@ -366,14 +244,6 @@ pub fn parse_lsn(value: &str) -> Result<u64> {
     Ok((u64::from(component(high)?) << 32) | u64::from(component(low)?))
 }
 
-pub fn validate_source(source: &str) -> Result<()> {
-    ensure!(
-        matches!(source, "places" | "events" | "social-settings"),
-        "unsupported source"
-    );
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -403,57 +273,12 @@ mod tests {
     }
 
     #[test]
-    fn source_only_transaction_is_applicable() {
+    fn unreceipted_transaction_requires_an_explicit_residual_mapping() {
         let envelope = envelope();
         envelope.validate().expect("valid source transaction");
-        assert_eq!(envelope.classify(), Decision::Apply);
-    }
-
-    #[test]
-    fn like_changes_require_typed_vote_and_both_timestamps() {
-        let mut value = fixture();
-        value["changes"][0]["op"] = json!("like_upsert");
-        value["changes"][0]["like"] = json!(false);
-        value["changes"][0]["updated_at"] = json!("2026-11-12T11:00:00Z");
-        let parsed: Envelope = serde_json::from_value(value.clone()).unwrap();
-        parsed.validate().unwrap();
-        assert!(matches!(
-            parsed.changes[0],
-            FavoriteChange::LikeUpsert { r#like: false, .. }
-        ));
-        value["changes"][0]["like"] = json!("false");
-        assert!(serde_json::from_value::<Envelope>(value.clone()).is_err());
-        value["changes"][0]["like"] = json!(true);
-        value["changes"][0]
-            .as_object_mut()
-            .unwrap()
-            .remove("updated_at");
-        assert!(serde_json::from_value::<Envelope>(value).is_err());
-    }
-
-    #[test]
-    fn dual_favorite_cannot_suppress_same_key_like_changes() {
-        let mut value = fixture();
-        value["mode"] = json!("dual");
-        value["command"] = json!({
-            "operation_id":"10000000-0000-4000-8000-000000000003",
-            "request_hash":"a".repeat(64),
-            "user":value["changes"][0]["user"],"entity_id":value["changes"][0]["entity_id"],
-            "favorite":true,"user_activity":1.5,
-            "expected":{"user_activity":1.5,"created_at":"2026-11-12T10:00:00Z"}
-        });
-        let like_change = json!({"op":"like_delete","user":value["command"]["user"],"entity_id":value["command"]["entity_id"]});
-        // Place the like before the matching favorite final change: checking only
-        // the last event would silently suppress the vote deletion.
-        value["changes"]
-            .as_array_mut()
-            .unwrap()
-            .insert(0, like_change);
-        assert!(
-            serde_json::from_value::<Envelope>(value)
-                .unwrap()
-                .validate()
-                .is_err()
+        assert_eq!(
+            envelope.classify(),
+            Decision::Blocked("unreceipted_mutation")
         );
     }
 

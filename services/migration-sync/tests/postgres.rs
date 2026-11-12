@@ -8,7 +8,7 @@ use dcl_migration_sync::{
     store::{self, Outcome},
 };
 use serde_json::{Value, json};
-use sqlx::{Connection, Executor, PgConnection, PgPool, Row, postgres::PgConnectOptions};
+use sqlx::{Connection, Executor, PgConnection, PgPool, postgres::PgConnectOptions};
 use uuid::Uuid;
 
 const USER: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
@@ -152,62 +152,17 @@ async fn assertions(pool: &PgPool) -> Result<()> {
     assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Idle);
     store::pause(pool, "pilot", false).await?;
 
-    // Concurrent workers serialize on stream ownership, never on arrival order.
+    // Unreceipted changes remain evidence, never an automatic database fallback.
     let (a, b) = tokio::join!(
         store::process_next(pool, "pilot"),
         store::process_next(pool, "pilot")
     );
-    assert_eq!(a?, Outcome::Applied);
-    assert_eq!(b?, Outcome::Applied);
-    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/30");
-    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM explore.user_favorites")
-        .fetch_one(pool)
-        .await?;
-    assert_eq!(count, 0);
-    let counts = sqlx::query("SELECT favorites, likes, dislikes FROM explore.place_interaction_counts WHERE entity_id=$1")
-        .bind(PLACE).fetch_one(pool).await?;
-    assert_eq!(counts.try_get::<i32, _>("favorites")?, 0);
-    assert_eq!(counts.try_get::<i32, _>("likes")?, 1);
-    assert_eq!(counts.try_get::<i32, _>("dislikes")?, 1);
-    let deleted: bool = sqlx::query_scalar("SELECT deleted FROM migration_sync.favorite_versions")
-        .fetch_one(pool)
-        .await?;
-    assert!(deleted);
-    assert!(!store::enqueue(pool, &first).await?);
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Idle);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_favorites")
-            .fetch_one(pool)
-            .await?,
-        0
-    );
-    // Registering the original baseline after progress is idempotent, not a reset.
-    store::register(pool, "pilot", generation, "0/10").await?;
-    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/30");
-
-    // A later invalid row rolls back earlier writes and their version records.
-    let failure = envelope(
-        generation,
-        "0/30",
-        "0/40",
-        "source_only",
-        json!([upsert(PLACE), upsert(MISSING)]),
-    );
-    let behind = envelope(
-        generation,
-        "0/40",
-        "0/50",
-        "source_only",
-        json!([upsert(PLACE)]),
-    );
-    store::enqueue(pool, &failure).await?;
-    store::enqueue(pool, &behind).await?;
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Blocked);
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Blocked);
-    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/30");
+    assert_eq!(a?, Outcome::Blocked);
+    assert_eq!(b?, Outcome::Blocked);
+    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/10");
     assert_eq!(
         store::status(pool, "pilot").await?["head_error"],
-        "apply_failed"
+        "unreceipted_mutation"
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_favorites")
@@ -215,15 +170,24 @@ async fn assertions(pool: &PgPool) -> Result<()> {
             .await?,
         0
     );
-    assert!(
-        sqlx::query_scalar::<_, bool>("SELECT deleted FROM migration_sync.favorite_versions")
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM migration_sync.favorite_versions")
             .fetch_one(pool)
-            .await?
+            .await?,
+        0
     );
-    // Pausing/resuming never acknowledges or skips the poisoned transaction.
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.place_interaction_counts")
+            .fetch_one(pool)
+            .await?,
+        0
+    );
     store::pause(pool, "pilot", true).await?;
+    dcl_migration_sync::ops::retry_blocked(pool, "pilot", "0/20").await?;
     store::pause(pool, "pilot", false).await?;
     assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Blocked);
+    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/10");
+
     Ok(())
 }
 
@@ -310,17 +274,22 @@ async fn native_assertions(pool: &PgPool) -> Result<()> {
         .fetch_one(pool)
         .await?;
     assert_eq!(count, 1);
-    // A later source-only delete advances before an old native retry. Returning
-    // its receipt must never resurrect the deleted favorite.
-    store::enqueue(
+    // A later accepted delete executes natively. An older retry cannot undo it.
+    let mut removal = dual.clone();
+    removal.previous_lsn = "0/2".into();
+    removal.commit_lsn = "0/3".into();
+    removal.changes = serde_json::from_value(json!([delete(PLACE)]))?;
+    let removal_command = removal.command.as_mut().unwrap();
+    removal_command.operation_id = Uuid::new_v4();
+    removal_command.favorite = false;
+    removal_command.expected = None;
+    store::enqueue(pool, &removal).await?;
+    replay(
         pool,
-        &envelope(
-            generation,
-            "0/2",
-            "0/3",
-            "source_only",
-            json!([delete(PLACE)]),
-        ),
+        &ReplayRequest {
+            commit_lsn: "0/3".into(),
+            ..pointer.clone()
+        },
     )
     .await?;
     assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
@@ -399,12 +368,25 @@ async fn native_failure_assertions(pool: &PgPool) -> Result<()> {
             .await?,
         0
     );
-    // Fill the missing predecessor with a source row that exposes divergence.
+    // Fill the predecessor using an accepted native command; its different
+    // resulting activity makes the following command fail equivalence checks.
+    let mut predecessor = dual.clone();
+    predecessor.previous_lsn = "0/0".into();
+    predecessor.commit_lsn = "0/1".into();
     let mut different = upsert(PLACE);
     different["user_activity"] = json!(9.0);
-    store::enqueue(
+    predecessor.changes = serde_json::from_value(json!([different]))?;
+    let command = predecessor.command.as_mut().unwrap();
+    command.operation_id = Uuid::new_v4();
+    command.user_activity = 9.0;
+    command.expected.as_mut().unwrap().user_activity = 9.0;
+    store::enqueue(pool, &predecessor).await?;
+    replay(
         pool,
-        &envelope(generation, "0/0", "0/1", "source_only", json!([different])),
+        &ReplayRequest {
+            commit_lsn: "0/1".into(),
+            ..pointer.clone()
+        },
     )
     .await?;
     assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
@@ -413,7 +395,7 @@ async fn native_failure_assertions(pool: &PgPool) -> Result<()> {
         sqlx::query_scalar::<_, i64>("SELECT count(*) FROM migration_sync.command_receipts")
             .fetch_one(pool)
             .await?,
-        0
+        1
     );
     assert_eq!(
         sqlx::query_scalar::<_, f64>("SELECT user_activity FROM explore.user_favorites")
@@ -567,191 +549,6 @@ async fn dispatch_assertions(pool: &PgPool) -> Result<()> {
     Ok(())
 }
 
-async fn like_assertions(pool: &PgPool) -> Result<()> {
-    fixture(pool).await?;
-    let generation = Uuid::new_v4();
-    store::register(pool, "pilot", generation, "0/0").await?;
-    store::pause(pool, "pilot", false).await?;
-    let like = |entity: &str, vote: bool| {
-        json!({"op":"like_upsert","user":USER,"entity_id":entity,"like":vote,
-        "user_activity":7.0,"created_at":"2026-11-12T00:00:00Z","updated_at":"2026-11-12T01:00:00Z"})
-    };
-    let first = envelope(
-        generation,
-        "0/0",
-        "0/1",
-        "source_only",
-        json!([upsert(PLACE), like(PLACE, true)]),
-    );
-    let second = envelope(
-        generation,
-        "0/1",
-        "0/2",
-        "source_only",
-        json!([like(PLACE, false)]),
-    );
-    store::enqueue(pool, &second).await?;
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Idle);
-    store::enqueue(pool, &first).await?;
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
-    let counts = sqlx::query(
-        "SELECT favorites,likes,dislikes FROM explore.place_interaction_counts WHERE entity_id=$1",
-    )
-    .bind(PLACE)
-    .fetch_one(pool)
-    .await?;
-    assert_eq!(
-        (
-            counts.try_get::<i32, _>("favorites")?,
-            counts.try_get::<i32, _>("likes")?,
-            counts.try_get::<i32, _>("dislikes")?
-        ),
-        (1, 2, 1)
-    );
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
-    let row=sqlx::query("SELECT \"like\",user_activity,source,created_at::text AS created,updated_at::text AS updated FROM explore.user_likes WHERE \"user\"=$1 AND entity_id=$2")
-        .bind(USER).bind(PLACE).fetch_one(pool).await?;
-    assert!(!row.try_get::<bool, _>("like")?);
-    assert_eq!(row.try_get::<f64, _>("user_activity")?, 7.0);
-    assert_eq!(row.try_get::<String, _>("source")?, "local");
-    assert_eq!(row.try_get::<String, _>("created")?, "2026-11-12 00:00:00");
-    assert_eq!(row.try_get::<String, _>("updated")?, "2026-11-12 01:00:00");
-    let third = envelope(
-        generation,
-        "0/2",
-        "0/3",
-        "source_only",
-        json!([{"op":"like_delete","user":USER,"entity_id":PLACE}]),
-    );
-    store::enqueue(pool, &third).await?;
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Applied);
-    assert!(!store::enqueue(pool, &first).await?);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM explore.user_favorites WHERE \"user\"=$1"
-        )
-        .bind(USER)
-        .fetch_one(pool)
-        .await?,
-        1
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_likes WHERE \"user\"=$1")
-            .bind(USER)
-            .fetch_one(pool)
-            .await?,
-        0
-    );
-    assert!(
-        sqlx::query_scalar::<_, bool>(
-            "SELECT deleted FROM migration_sync.like_versions WHERE \"user\"=$1"
-        )
-        .bind(USER)
-        .fetch_one(pool)
-        .await?
-    );
-    assert!(
-        !sqlx::query_scalar::<_, bool>(
-            "SELECT deleted FROM migration_sync.favorite_versions WHERE \"user\"=$1"
-        )
-        .bind(USER)
-        .fetch_one(pool)
-        .await?
-    );
-    let counts = sqlx::query(
-        "SELECT favorites,likes,dislikes FROM explore.place_interaction_counts WHERE entity_id=$1",
-    )
-    .bind(PLACE)
-    .fetch_one(pool)
-    .await?;
-    assert_eq!(
-        (
-            counts.try_get::<i32, _>("favorites")?,
-            counts.try_get::<i32, _>("likes")?,
-            counts.try_get::<i32, _>("dislikes")?
-        ),
-        (1, 1, 1)
-    );
-    // A missing second catalogue rolls back both the earlier vote and favorite deletion.
-    let failed = envelope(
-        generation,
-        "0/3",
-        "0/4",
-        "source_only",
-        json!([delete(PLACE), like(PLACE, true), like(MISSING, false)]),
-    );
-    store::enqueue(pool, &failed).await?;
-    assert_eq!(store::process_next(pool, "pilot").await?, Outcome::Blocked);
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.user_likes WHERE \"user\"=$1")
-            .bind(USER)
-            .fetch_one(pool)
-            .await?,
-        0
-    );
-    assert_eq!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT count(*) FROM explore.user_favorites WHERE \"user\"=$1"
-        )
-        .bind(USER)
-        .fetch_one(pool)
-        .await?,
-        1
-    );
-    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/3");
-    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,captured_position,observed_position,last_contact_at) VALUES('pilot',$1,4,4,now())")
-        .bind(generation).execute(pool).await?;
-    sqlx::query("INSERT INTO migration_sync.capture_scope(stream,generation,entity_id) VALUES('pilot',$1,$2)")
-        .bind(generation).bind(Uuid::parse_str(PLACE)?).execute(pool).await?;
-    let escaped = envelope(
-        generation,
-        "0/4",
-        "0/5",
-        "source_only",
-        json!([like(MISSING, true)]),
-    );
-    assert!(store::enqueue(pool, &escaped).await.is_err());
-    Ok(())
-}
-
-async fn adapter_upgrade_assertions(pool: &PgPool) -> Result<()> {
-    let generation = Uuid::new_v4();
-    store::register(pool, "pilot", generation, "0/0").await?;
-    sqlx::raw_sql("ALTER TABLE migration_sync.capture_sources DROP CONSTRAINT capture_sources_adapter_check; ALTER TABLE migration_sync.capture_sources ADD CONSTRAINT capture_sources_adapter_check CHECK (adapter='places_outbox_v1')")
-        .execute(pool).await?;
-    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,captured_position,observed_position,last_contact_at) VALUES('pilot',$1,0,0,now())")
-        .bind(generation).execute(pool).await?;
-    let migration = include_str!(concat!(
-        env!("DCL_ONE_ROOT"),
-        "/schemas/migrations/0039_migration_capture_adapter_v2.sql"
-    ));
-    for _ in 0..2 {
-        sqlx::raw_sql(migration).execute(pool).await?;
-        assert_eq!(
-            sqlx::query_scalar::<_, String>(
-                "SELECT adapter FROM migration_sync.capture_sources WHERE stream='pilot'"
-            )
-            .fetch_one(pool)
-            .await?,
-            "places_outbox_v1"
-        );
-    }
-    // Exercise the widened constraint without relabelling persisted old history.
-    let mut transaction = pool.begin().await?;
-    sqlx::query("UPDATE migration_sync.capture_sources SET adapter='places_outbox_v2'")
-        .execute(&mut *transaction)
-        .await?;
-    transaction.rollback().await?;
-    assert!(
-        sqlx::query("UPDATE migration_sync.capture_sources SET adapter='unreviewed_adapter'")
-            .execute(pool)
-            .await
-            .is_err()
-    );
-    assert_eq!(store::status(pool, "pilot").await?["applied_lsn"], "0/0");
-    Ok(())
-}
-
 async fn schema(pool: &PgPool) -> Result<()> {
     let root = Path::new(env!("DCL_ONE_ROOT")).join("schemas");
     let mut files = std::fs::read_dir(root)?.collect::<std::io::Result<Vec<_>>>()?;
@@ -785,7 +582,7 @@ async fn ordered_postgres_apply_preserves_boundaries_and_atomicity() -> Result<(
     };
     let options = PgConnectOptions::from_str(&url)?;
     let mut admin = PgConnection::connect_with(&options).await?;
-    for scenario in 0..7 {
+    for scenario in 0..5 {
         let database = format!("migration_sync_test_{}", Uuid::new_v4().simple());
         admin
             .execute(sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
@@ -800,9 +597,7 @@ async fn ordered_postgres_apply_preserves_boundaries_and_atomicity() -> Result<(
                 1 => dual_assertions(&pool).await,
                 2 => native_assertions(&pool).await,
                 3 => native_failure_assertions(&pool).await,
-                4 => dispatch_assertions(&pool).await,
-                5 => like_assertions(&pool).await,
-                _ => adapter_upgrade_assertions(&pool).await,
+                _ => dispatch_assertions(&pool).await,
             }
         }
         .await;

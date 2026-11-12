@@ -5,9 +5,7 @@
 
 ## Decision
 
-Maintain migration strategy, alternatives, reasons, repository/PR rationale,
-coverage and rollout gates in the root [sync-migration](../../sync-migration/README.md)
-directory, as requested for this project. These are explicitly requested tracked
+Maintain one concise decision summary at [sync-migration/README.md](../../sync-migration/README.md), linking only to supporting operation classification, repository rationale and pinned service audits. Remove superseded deployment plans rather than leaving conflicting entrypoints. These are explicitly requested tracked
 project documents, not private task scratch files.
 
 Keep the [standalone service ADR](2026-11-12-removable-migration-sync-service.md)

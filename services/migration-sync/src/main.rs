@@ -3,12 +3,7 @@ use std::{path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use dcl_migration_sync::{
-    capture, dispatch,
-    domain_capture::{self, Domain},
-    model::Envelope,
-    ops, store,
-};
+use dcl_migration_sync::{capture, dispatch, model::Envelope, ops, store};
 use sqlx::postgres::PgPoolOptions;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
@@ -29,38 +24,6 @@ struct Args {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Explicitly install source-only capture for schedule IDs or settings wallets.
-    InstallDomainSource {
-        #[arg(long, value_enum)]
-        source: Domain,
-        #[arg(long, required=true, num_args=1..)]
-        key: Vec<String>,
-    },
-    /// Snapshot a reviewed non-Places domain; the new stream starts paused.
-    BootstrapDomain {
-        #[arg(long, value_enum)]
-        source: Domain,
-        #[arg(long)]
-        stream: String,
-    },
-    /// Capture one domain using this process's source database credentials.
-    CaptureDomain {
-        #[arg(long, value_enum)]
-        source: Domain,
-        #[arg(long)]
-        stream: String,
-        #[arg(long)]
-        once: bool,
-        #[arg(long, default_value_t=1000, value_parser=clap::value_parser!(u64).range(100..=60000))]
-        poll_ms: u64,
-    },
-    /// Compare one scoped non-Places domain at a stable boundary.
-    ReconcileDomain {
-        #[arg(long, value_enum)]
-        source: Domain,
-        #[arg(long)]
-        stream: String,
-    },
     /// Fail unless capture is fresh, application caught up, and the stream unpaused.
     Check {
         #[arg(long)]
@@ -115,7 +78,7 @@ enum Command {
     },
     /// Durably enqueue one trusted, normalized source transaction (not raw WAL).
     Enqueue { file: PathBuf },
-    /// Apply ordered transactions to an isolated destination with competing writers off.
+    /// Execute accepted native commands in source order; block unreceipted mutations.
     Run {
         #[arg(long)]
         stream: String,
@@ -253,67 +216,6 @@ async fn execute(args: Args) -> Result<()> {
         .await
         .context("connect to migration sync destination")?;
     match args.command {
-        Command::InstallDomainSource {
-            source: domain,
-            key,
-        } => {
-            let source = source_pool().await?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &domain_capture::install(&source, domain, &key).await?
-                )?
-            );
-            source.close().await;
-        }
-        Command::BootstrapDomain {
-            source: domain,
-            stream,
-        } => {
-            let source = source_pool().await?;
-            println!(
-                "{}",
-                serde_json::to_string_pretty(
-                    &domain_capture::bootstrap(&source, &pool, domain, &stream).await?
-                )?
-            );
-            source.close().await;
-        }
-        Command::CaptureDomain {
-            source: domain,
-            stream,
-            once,
-            poll_ms,
-        } => {
-            let source = source_pool().await?;
-            let run = async {
-                loop {
-                    let captured =
-                        domain_capture::pump_once(&source, &pool, domain, &stream).await?;
-                    if once {
-                        return Ok::<(), anyhow::Error>(());
-                    }
-                    if !captured {
-                        tokio::time::sleep(Duration::from_millis(poll_ms)).await;
-                    }
-                }
-            };
-            tokio::select! { result=run => result?, result=shutdown_signal() => {result?;} }
-            source.close().await;
-        }
-        Command::ReconcileDomain {
-            source: domain,
-            stream,
-        } => {
-            let source = source_pool().await?;
-            let report = domain_capture::reconcile(&source, &pool, domain, &stream).await?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            source.close().await;
-            if report["matches"] != true {
-                bail!("domain reconciliation found a mismatch");
-            }
-        }
-
         Command::Check {
             stream,
             max_age_seconds,
