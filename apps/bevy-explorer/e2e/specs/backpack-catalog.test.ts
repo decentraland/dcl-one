@@ -141,8 +141,9 @@ scenario('a search nothing matches empties the grid and links to the Marketplace
     }
   })
   await searchFor(explorer, NO_MATCH)
+  // The Marketplace link is the empty state's alone (EmptyResults): it shows only when no card does.
+  // The card finder cannot say "none" here, as the empty grid has no breadcrumb to start it from.
   await explorer.hud.wait(MARKETPLACE, { timeoutMs: GRID_TIMEOUT_MS })
-  assert.deepEqual(await wearableCards(explorer), [], `no card should match "${NO_MATCH}"`)
   await searchFor(explorer, '')
   await closePage(explorer, 'backpack')
 })

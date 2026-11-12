@@ -182,6 +182,10 @@ scenario(
     const { state } = await startingPoint(explorer, restore)
     await openWithKey(explorer, 'map')
     const title = await firstListedPlace(explorer)
+    // The category's side list covers the search field: closed with its own Close, after the top bar's.
+    const closes = (await explorer.hud.list('button')).filter((entry) => entry.name === 'Close').length
+    await explorer.hud.click({ name: 'Close', role: 'button', index: closes - 1 })
+    await explorer.hud.wait(PAGES.map.marker, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
     // The search lists places once it holds two characters; the place's longest word finds it.
     const query = title.split(/\s+/).sort((a, b) => b.length - a.length)[0]!
     await explorer.hud.fill(PAGES.map.marker, query)
