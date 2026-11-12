@@ -328,6 +328,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
     mips is the intended format; its encoder was not available when they were added. Until then
     they sit uncompressed on the GPU (RGBA8 with mips, about 28 MB for the five), where Unity's
     import compresses them.
+  - Until a texture has loaded, and for good if it fails (an LFS pointer embedded in place of the
+    image, say), its one-texel stand-in is drawn: the ground in its former flat green, the rock in
+    its former grey. Unity has no such state; its textures ship in the build.
   - Until the scattered grass replaces them, every grass shell takes the ground's colour under it
     rather than the grass colours, so the ground looks the same with grass on or off. Unity has
     no shells.

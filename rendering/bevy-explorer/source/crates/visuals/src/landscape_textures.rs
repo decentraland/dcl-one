@@ -4,13 +4,13 @@
 //! none, and without one the distance shimmers) and a repeating, trilinear sampler.
 
 use bevy::{
-    asset::RenderAssetUsages,
+    asset::{LoadState, RenderAssetUsages},
     image::{
         ImageAddressMode, ImageFilterMode, ImageLoaderSettings, ImageSampler,
         ImageSamplerDescriptor,
     },
     prelude::*,
-    render::render_resource::{ShaderDefVal, TextureFormat},
+    render::render_resource::{Extent3d, ShaderDefVal, TextureDimension, TextureFormat},
 };
 
 /// The splat covers this many metres of ground and repeats beyond them.
@@ -41,10 +41,45 @@ impl Plugin for LandscapeTexturesPlugin {
     fn build(&self, app: &mut App) {
         // in Update, before the frame's asset events, so the first upload already has the mips
         app.init_resource::<LandscapeTextures>()
-            .add_systems(Update, build_mips);
+            .add_systems(Update, resolve_textures);
     }
 }
 
+/// The flat ground colour, which the ground showed before it was textured.
+const FLAT_GROUND: [u8; 4] = [77, 115, 51, 255];
+/// The plain rock grey the cliffs showed before they were textured.
+const PLAIN_ROCK: [u8; 4] = [110, 105, 102, 255];
+
+/// Each texture's file under `embedded://landscape/`, what it holds, and the one texel drawn in
+/// its place until it loads, or for good if it fails (for example an LFS pointer embedded in place
+/// of the image): together they give the ground and cliffs their former flat colours.
+const SOURCES: [(&str, TexelKind, [u8; 4]); 5] = [
+    // all ground, no sand
+    ("ground/splat.png", TexelKind::Data, [255, 0, 0, 0]),
+    (
+        "ground/ground_basecolor.jpg",
+        TexelKind::Colour,
+        FLAT_GROUND,
+    ),
+    ("ground/sand_basecolor.jpg", TexelKind::Colour, FLAT_GROUND),
+    ("cliff/cliff_basecolor.jpg", TexelKind::Colour, PLAIN_ROCK),
+    // straight up
+    (
+        "cliff/cliff_normal.png",
+        TexelKind::Normal,
+        [128, 128, 255, 255],
+    ),
+];
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum TextureState {
+    Loading,
+    Ready,
+    Failed,
+}
+
+/// The handles materials bind. Each holds a one-texel stand-in from the start, so the ground and
+/// cliffs always draw, and is replaced in place by its file, with mips, once that has loaded.
 #[derive(Resource, Clone)]
 pub(crate) struct LandscapeTextures {
     /// Ground weight in red, sand weight in green.
@@ -53,38 +88,58 @@ pub(crate) struct LandscapeTextures {
     pub(crate) sand: Handle<Image>,
     pub(crate) cliff: Handle<Image>,
     pub(crate) cliff_normal: Handle<Image>,
+    /// The loading files, dropped once resolved.
+    sources: [Option<Handle<Image>>; 5],
+    states: [TextureState; 5],
 }
 
 impl FromWorld for LandscapeTextures {
     fn from_world(world: &mut World) -> Self {
-        let server = world.resource::<AssetServer>();
-        let load = |path: &str, kind: TexelKind| {
-            server.load_with_settings(
-                format!("embedded://landscape/{path}"),
-                move |settings: &mut ImageLoaderSettings| {
-                    settings.is_srgb = kind == TexelKind::Colour;
-                    settings.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
-                        address_mode_u: ImageAddressMode::Repeat,
-                        address_mode_v: ImageAddressMode::Repeat,
-                        mag_filter: ImageFilterMode::Linear,
-                        min_filter: ImageFilterMode::Linear,
-                        mipmap_filter: ImageFilterMode::Linear,
-                        ..default()
-                    });
-                },
-            )
-        };
-        Self {
-            splat: load("ground/splat.png", TexelKind::Data),
-            ground: load("ground/ground_basecolor.jpg", TexelKind::Colour),
-            sand: load("ground/sand_basecolor.jpg", TexelKind::Colour),
-            cliff: load("cliff/cliff_basecolor.jpg", TexelKind::Colour),
-            cliff_normal: load("cliff/cliff_normal.png", TexelKind::Normal),
-        }
+        Self::load(world, SOURCES.map(|(path, _, _)| path))
     }
 }
 
 impl LandscapeTextures {
+    /// Starts loading `paths` (in `SOURCES` order) and gives each its stand-in.
+    pub(crate) fn load(world: &mut World, paths: [&str; 5]) -> Self {
+        let server = world.resource::<AssetServer>().clone();
+        let sources = std::array::from_fn(|i| {
+            let kind = SOURCES[i].1;
+            Some(server.load_with_settings(
+                format!("embedded://landscape/{}", paths[i]),
+                move |settings: &mut ImageLoaderSettings| {
+                    settings.is_srgb = kind == TexelKind::Colour;
+                    settings.sampler = tiling_sampler();
+                },
+            ))
+        });
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let [splat, ground, sand, cliff, cliff_normal] = SOURCES.map(|(_, kind, texel)| {
+            let mut image = Image::new_fill(
+                Extent3d::default(),
+                TextureDimension::D2,
+                &texel,
+                match kind {
+                    TexelKind::Colour => TextureFormat::Rgba8UnormSrgb,
+                    TexelKind::Data | TexelKind::Normal => TextureFormat::Rgba8Unorm,
+                },
+                RenderAssetUsages::default(),
+            );
+            image.sampler = tiling_sampler();
+            images.add(image)
+        });
+        Self {
+            splat,
+            ground,
+            sand,
+            cliff,
+            cliff_normal,
+            sources,
+            states: [TextureState::Loading; 5],
+        }
+    }
+
+    /// The bound handles, in `SOURCES` order.
     pub(crate) fn all(&self) -> [(&Handle<Image>, TexelKind); 5] {
         [
             (&self.splat, TexelKind::Data),
@@ -96,30 +151,64 @@ impl LandscapeTextures {
     }
 }
 
+fn tiling_sampler() -> ImageSampler {
+    ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        mipmap_filter: ImageFilterMode::Linear,
+        ..default()
+    })
+}
+
 /// "loaded", "loading", or "failed" when any texture failed, for the debug panel.
-pub(crate) fn load_state(textures: &LandscapeTextures, server: &AssetServer) -> &'static str {
-    let states = textures.all().map(|(handle, _)| server.load_state(handle));
-    if states.iter().any(|state| state.is_failed()) {
+pub(crate) fn load_state(textures: &LandscapeTextures) -> &'static str {
+    if textures.states.contains(&TextureState::Failed) {
         "failed"
-    } else if states.iter().all(|state| state.is_loaded()) {
-        "loaded"
-    } else {
+    } else if textures.states.contains(&TextureState::Loading) {
         "loading"
+    } else {
+        "loaded"
     }
 }
 
-/// Gives each texture its mips once it has loaded. A mipped texture drops its main-world copy at
-/// its upload, so it is not seen again.
-fn build_mips(textures: Res<LandscapeTextures>, mut images: ResMut<Assets<Image>>) {
-    for (handle, kind) in textures.all() {
-        let unmipped = images
-            .get(handle)
-            .is_some_and(|image| image.texture_descriptor.mip_level_count == 1);
-        if unmipped {
-            if let Some(image) = images.get_mut(handle) {
-                add_mips(image, kind);
+/// Moves each file, once loaded and given its mips, into its bound handle; a file that fails
+/// leaves its stand-in. Each file is handled once, so a failure or an unsupported image is
+/// reported once.
+fn resolve_textures(
+    mut textures: ResMut<LandscapeTextures>,
+    server: Res<AssetServer>,
+    mut images: ResMut<Assets<Image>>,
+) {
+    if !textures.states.contains(&TextureState::Loading) {
+        return;
+    }
+    let textures = &mut *textures;
+    let targets = textures.all().map(|(handle, kind)| (handle.id(), kind));
+    for (i, (target, kind)) in targets.into_iter().enumerate() {
+        let Some(source) = textures.sources[i].as_ref() else {
+            continue;
+        };
+        let path = source.path().map(ToString::to_string).unwrap_or_default();
+        textures.states[i] = match server.load_state(source) {
+            LoadState::Loaded => {
+                let Some(mut image) = images.remove(source) else {
+                    continue;
+                };
+                add_mips(&mut image, kind);
+                // drawn only, never read back: no main-world copy once uploaded
+                image.asset_usage = RenderAssetUsages::RENDER_WORLD;
+                images.insert(target, image);
+                TextureState::Ready
             }
-        }
+            LoadState::Failed(error) => {
+                error!("landscape texture {path} failed to load, drawing a flat colour: {error}");
+                TextureState::Failed
+            }
+            _ => continue,
+        };
+        textures.sources[i] = None;
     }
 }
 
@@ -165,8 +254,6 @@ pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) {
     }
     image.data = Some(bytes);
     image.texture_descriptor.mip_level_count = levels;
-    // drawn only, never read back: no main-world copy once uploaded
-    image.asset_usage = RenderAssetUsages::RENDER_WORLD;
 }
 
 fn decode(texel: &[u8], kind: TexelKind) -> Vec4 {

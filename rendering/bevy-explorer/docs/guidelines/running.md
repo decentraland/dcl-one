@@ -251,7 +251,8 @@ State, in every build:
   `ground`, `trees`, `grass` and `satellite` (each layer's toggle), `treeCount`, `grassParcels`,
   `loadDistance`, `satelliteShown` (the satellite floor is drawn: a realm is loaded, the world is
   not held, the realm is not a World, and its toggle is on), and `groundTextures` (`loading`,
-  `loaded` or `failed`: the ground, sand and cliff textures). With a layer and a value it shows or hides that layer, in preview
+  `loaded` or `failed`: the ground, sand and cliff textures; until one loads, or if it fails, its
+  part of the ground or cliffs is drawn in a flat colour). With a layer and a value it shows or hides that layer, in preview
   mode only. The satellite floor is the city's satellite map laid at y -0.205 under Genesis City,
   under the ground and scene floors, so it shows only where neither is drawn. The debug panel's
   "Landscape" section binds it.

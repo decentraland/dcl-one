@@ -172,7 +172,7 @@ fn landscape_command(
     mut layers: ResMut<LandscapeLayers>,
     load: Res<SceneLoadDistance>,
     (realm, held): (Res<CurrentRealm>, Option<Res<WorldHold>>),
-    (textures, server): (Res<LandscapeTextures>, Res<AssetServer>),
+    textures: Res<LandscapeTextures>,
     (trees, grass): (Query<(), With<Tree>>, Query<(), With<ParcelGrass>>),
 ) {
     let Some(Ok(args)) = cmd.take() else { return };
@@ -189,7 +189,7 @@ fn landscape_command(
         }
     }
     let satellite_shown = satellite_floor::shown(layers.satellite, &realm, held.is_some());
-    let ground_textures = landscape_textures::load_state(&textures, &server);
+    let ground_textures = landscape_textures::load_state(&textures);
     cmd.reply_ok(json!({"ground":layers.ground, "trees":layers.trees, "grass":layers.grass, "satellite":layers.satellite,
         "treeCount":trees.iter().len(), "grassParcels":grass.iter().len(), "loadDistance":load.load, "satelliteShown":satellite_shown,
         "groundTextures":ground_textures}).to_string());

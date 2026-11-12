@@ -1,5 +1,5 @@
 use bevy::{
-    asset::LoadState,
+    asset::io::embedded::EmbeddedAssetRegistry,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler},
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
@@ -20,33 +20,26 @@ fn app() -> App {
     app
 }
 
-/// Every texture loads from the embedded assets, gains a full mip chain, and keeps the colour
-/// space and tiling sampler its use needs.
-#[test]
-fn ground_assets_load_embedded() {
-    let mut app = app();
-    let textures = app.world().resource::<LandscapeTextures>().clone();
-    let server = app.world().resource::<AssetServer>().clone();
-    let all = textures.all();
+/// Updates until no texture is still loading.
+fn settle(app: &mut App) -> LandscapeTextures {
     for _ in 0..200 {
         app.update();
-        let images = app.world().resource::<Assets<Image>>();
-        if all.iter().all(|(handle, _)| {
-            images
-                .get(*handle)
-                .is_some_and(|image| image.texture_descriptor.mip_level_count > 1)
-        }) {
+        if load_state(app.world().resource::<LandscapeTextures>()) != "loading" {
             break;
         }
     }
+    app.world().resource::<LandscapeTextures>().clone()
+}
+
+/// Every texture loads from the embedded assets into the handle materials bind, gains a full
+/// mip chain, and keeps the colour space and tiling sampler its use needs.
+#[test]
+fn ground_assets_load_embedded() {
+    let mut app = app();
+    let textures = settle(&mut app);
+    assert_eq!(load_state(&textures), "loaded");
     let images = app.world().resource::<Assets<Image>>();
-    for (handle, kind) in all {
-        let path = handle.path().unwrap();
-        assert!(
-            matches!(server.load_state(handle), LoadState::Loaded),
-            "{path}: {:?}",
-            server.load_state(handle)
-        );
+    for ((handle, kind), (path, _, _)) in textures.all().into_iter().zip(SOURCES) {
         let image = images.get(handle).unwrap();
         assert_eq!(image.size(), UVec2::splat(1024), "{path}");
         assert_eq!(image.texture_descriptor.mip_level_count, 11, "{path}");
@@ -84,7 +77,76 @@ fn ground_assets_load_embedded() {
             "{path}: {sampler:?}"
         );
     }
-    assert_eq!(load_state(&textures, &server), "loaded");
+}
+
+/// Before any file has loaded, every bound handle already holds its one-texel stand-in, so the
+/// ground and cliffs draw from the first frame.
+#[test]
+fn stand_ins_are_bound_from_the_start() {
+    let app = app();
+    let textures = app.world().resource::<LandscapeTextures>();
+    assert_eq!(load_state(textures), "loading");
+    let images = app.world().resource::<Assets<Image>>();
+    for ((handle, _), (_, _, texel)) in textures.all().into_iter().zip(SOURCES) {
+        let image = images.get(handle).unwrap();
+        assert_eq!(image.size(), UVec2::ONE);
+        assert_eq!(image.data.as_deref(), Some(texel.as_slice()));
+    }
+}
+
+/// A file that does not decode (here an LFS pointer embedded in place of the image, as in a
+/// checkout without `git lfs pull`) leaves its flat stand-in bound, in the handle the materials
+/// use, and the debug reading says so; the other textures still load.
+#[test]
+fn a_texture_that_fails_keeps_its_flat_stand_in() {
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin::default(),
+        ImagePlugin::default(),
+        assets::EmbedAssetsPlugin,
+    ));
+    app.world_mut()
+        .resource_mut::<EmbeddedAssetRegistry>()
+        .insert_asset(
+            "pointer.jpg".into(),
+            std::path::Path::new("landscape/test/pointer.jpg"),
+            b"version https://git-lfs.github.com/spec/v1\noid sha256:0\nsize 1\n".as_slice(),
+        );
+    let mut paths = SOURCES.map(|(path, _, _)| path);
+    paths[1] = "test/pointer.jpg";
+    let textures = LandscapeTextures::load(app.world_mut(), paths);
+    app.insert_resource(textures)
+        .add_plugins(LandscapeTexturesPlugin);
+    app.finish();
+    app.cleanup();
+
+    let textures = settle(&mut app);
+    assert_eq!(load_state(&textures), "failed");
+    let ground = crate::terrain::TerrainExtension::new(&textures).ground_colour;
+    assert_eq!(ground, textures.ground);
+    let images = app.world().resource::<Assets<Image>>();
+    let stand_in = images.get(&ground).unwrap();
+    assert_eq!(stand_in.size(), UVec2::ONE);
+    assert_eq!(stand_in.data.as_deref(), Some(FLAT_GROUND.as_slice()));
+    assert_eq!(
+        images.get(&textures.splat).unwrap().size(),
+        UVec2::splat(1024)
+    );
+    // resolved once: later frames leave it alone
+    let changed = app
+        .world()
+        .resource::<Assets<Image>>()
+        .get(&ground)
+        .cloned();
+    app.update();
+    assert_eq!(
+        app.world()
+            .resource::<Assets<Image>>()
+            .get(&ground)
+            .map(|image| image.data.clone()),
+        changed.map(|image| image.data)
+    );
 }
 
 fn image(size: u32, texels: &[[u8; 4]], format: TextureFormat) -> Image {
