@@ -124,9 +124,12 @@ progress, position or a computed size. Pass them as a narrowly scoped custom
 property and let the module consume it; fixed appearance stays in the module.
 
 ```tsx
-import type { CSSProperties } from 'react'
+import type { CSSProperties } from "react";
 
-;<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
+<div
+  className={styles.track}
+  style={{ "--progress": `${pct}%` } as CSSProperties}
+/>;
 ```
 
 Shared components expose runtime geometry through typed props mapped to custom
@@ -371,8 +374,8 @@ Each consumer keeps its own independent build and imports the shared code as
 source:
 
 ```tsx
-import { theme } from '@dcl/one-ui/foundations'
-import '@dcl/one-ui/foundations.css'
+import { theme } from "@dcl/one-ui/foundations";
+import "@dcl/one-ui/foundations.css";
 ```
 
 `@dcl/one-ui` exposes the shared source and foundation styles. Before using these imports, each application configures the package name and CSS subpaths in both its TypeScript paths and bundler aliases, allows access to shared sources and deduplicates React and React DOM. Assets must work in every supported target, including native CEF.

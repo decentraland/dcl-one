@@ -12,6 +12,7 @@ import { confirmBlock, confirmUnfriend, reportUser } from '../friends/friendDial
 import { openFriendRequest } from '../friends/FriendRequestPopup'
 import { splitName } from '@explorer-core/lib/identity'
 import { startCallWith } from '../voiceChat/callGate'
+import { offersInvite, useInviteToCommunityItems } from '../communities/InviteToCommunity'
 
 export function ProfileCard({
   userId,
@@ -20,7 +21,9 @@ export function ProfileCard({
   above,
   context,
   communityActions,
+  invite = true,
   onMessage,
+  onCall,
   onClose
 }: {
   userId: string
@@ -29,14 +32,21 @@ export function ProfileCard({
   above?: boolean
   context?: MenuContext
   communityActions?: CardAction[]
+  /** Offer Invite to Community (the voice panel's menu does not). */
+  invite?: boolean
   /** Replaces opening the DM (a card opened over another popup closes that one first). */
   onMessage?: (address: string) => void
+  /** Replaces starting the call, as `onMessage` does the DM. */
+  onCall?: (address: string) => void
   onClose: () => void
 }): React.JSX.Element {
   const session = useSession()
   const known = useProfile(userId)
   const user: ChatUser = { address: userId, name: known?.name ?? userId, picture: known?.picture, claimed: known?.hasClaimedName, nameColor: known?.nameColor }
   const act = session.friends.act
+  // the user menus and the member menus offer it; the friend request and blocked lists' menus do not
+  const isMe = session.profile.data?.address?.toLowerCase() === userId.toLowerCase()
+  const inviteItems = useInviteToCommunityItems(userId, invite && offersInvite(isMe, context))
   return (
     <ProfileCardPresentation
       user={user}
@@ -45,6 +55,7 @@ export function ProfileCard({
       above={above}
       context={context}
       communityActions={communityActions}
+      inviteItems={inviteItems}
       me={session.profile.data}
       relationship={relationshipOf(session.friends, userId)}
       blockedBy={session.friends.blockedBy.includes(userId.toLowerCase())}
@@ -56,7 +67,7 @@ export function ProfileCard({
       onReport={(u) => void reportUser(session.profile.data?.address, u.address)}
       onMention={session.chat.mention}
       onMessage={(u) => (onMessage != null ? onMessage(u.address) : session.chat.openConversation(u.address))}
-      onCall={(u) => startCallWith(session, u.address)}
+      onCall={(u) => (onCall != null ? onCall(u.address) : startCallWith(session, u.address))}
       onViewProfile={() => openPassport(userId)}
       onClose={onClose}
     />
@@ -69,8 +80,12 @@ export interface ProfileCardOptions {
   context?: MenuContext
   /** 'community': the owner's or moderator's actions on the member. */
   communityActions?: CardAction[]
+  /** Offer Invite to Community; on unless false. */
+  invite?: boolean
   /** Replaces opening the DM with the user. */
   onMessage?: (address: string) => void
+  /** Replaces starting a call with the user. */
+  onCall?: (address: string) => void
   /** Runs when the card closes by any path. */
   onClose?: () => void
 }
@@ -78,7 +93,7 @@ export interface ProfileCardOptions {
 /** Open the world profile card as a popup, anchored at the given screen coords. */
 export function openProfileCard(userId: string, x: number, y: number, opts: ProfileCardOptions = {}): () => void {
   return openPopup(
-    (close) => <ProfileCard userId={userId} x={x} y={y} above={opts.above} context={opts.context} communityActions={opts.communityActions} onMessage={opts.onMessage} onClose={close} />,
+    (close) => <ProfileCard userId={userId} x={x} y={y} above={opts.above} context={opts.context} communityActions={opts.communityActions} invite={opts.invite} onMessage={opts.onMessage} onCall={opts.onCall} onClose={close} />,
     { dim: false, onClose: opts.onClose }
   ) // anchored popover, no scrim dim
 }

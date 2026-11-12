@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 import { loader as collection } from "./builder.collection_.$id";
 import { loader as collections } from "./builder.collections_.$id";
@@ -12,7 +13,7 @@ describe.each([["collection", collection], ["collections", collections]] as cons
     const response = await loader({
       request: new Request(`https://sites.test/builder/${segment}/${id}?address=${owner}&tab=items&variant=detail&unrelated=discard`),
       params: { id },
-      context: {} as never,
+      context: new RouterContextProvider(),
     } as never);
     expect(response.status).toBe(308);
     expect(response.headers.get("Location")).toBe(`/create/wearables/collections/${id}?address=${owner}&tab=items&variant=detail`);

@@ -1,5 +1,5 @@
 import { renderToString } from "react-dom/server";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider, RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Place } from "@/data/lib/catalyst/schema";
 import { fetchDestinations } from "@/data/lib/catalyst/places/destinations";
@@ -48,19 +48,19 @@ describe("when the actual Places page renders unified discovery", () => {
   });
 
   it("should reuse the activity-ordered first page for live places", async () => {
-    await loader({ request: new Request("https://example.test/places"), params: {}, context: {} } as never);
+    await loader({ request: new Request("https://example.test/places"), params: {}, context: new RouterContextProvider() } as never);
     expect(fetchDestinations).toHaveBeenCalledTimes(2);
     expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ limit: 60 }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
   });
 
   it("should only load the main feed on subsequent public pages", async () => {
-    await loader({ request: new Request("https://example.test/places?offset=60"), params: {}, context: {} } as never);
+    await loader({ request: new Request("https://example.test/places?offset=60"), params: {}, context: new RouterContextProvider() } as never);
     expect(fetchDestinations).toHaveBeenCalledTimes(1);
     expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ offset: 60, limit: 60 }), expect.anything());
   });
 
   it("should defer personal reads until the browser has the signed identity", async () => {
-    await loader({ request: new Request("https://example.test/places?tab=favourites"), params: {}, context: {} } as never);
+    await loader({ request: new Request("https://example.test/places?tab=favourites"), params: {}, context: new RouterContextProvider() } as never);
     expect(fetchDestinations).not.toHaveBeenCalled();
   });
 

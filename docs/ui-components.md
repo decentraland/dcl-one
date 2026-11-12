@@ -4,11 +4,11 @@ This is dcl-one’s adoption tracker. Check the local runtime contract before im
 
 ## Available contracts
 
-The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts), with the NavBar bridge's accepted limitations in the [promotion registry](../library/ui/components/promotion.json). This table records adoption work rather than duplicating the generated component manifest.
+The authoritative public surface is [library/ui/index.ts](../library/ui/index.ts). Public components are hand-written, and this table records their open limitations and adoption.
 
-| Component | Runtime contract                                         | Limitations                                                                                                                                  | Verified app adoption |
-| --------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
-| NavBar    | [NavBar.tsx](../library/ui/components/NavBar/NavBar.tsx) | Signed-in placeholders, empty signed-in mobile variants, pending semantic/data contracts and logo sizing. See the registry for exact limits. | Not recorded          |
+| Component | Runtime contract                                         | Limitations                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Verified app adoption |
+| --------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------- |
+| NavBar    | [NavBar.tsx](../library/ui/components/NavBar/NavBar.tsx) | Hand-written. No light theme (theme selection is undecided). The app supplies the notifications panel, account data and balances; NavBar renders only what it is given. Below 768px balances show only in the menu drawer. The drawer renders inside the bar, so a consumer stacking context (a sticky header with a `z-index`) also contains it, and the page behind relies on `aria-modal` instead of `inert`. Not verified with a screen reader or on a touch device. | Not recorded          |
 
 ## Review-only components
 
@@ -28,4 +28,4 @@ Import shared public contracts from `@dcl/one-ui`. Do not import components from
 
 ## Recording adoption
 
-The author of each new public component or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and its tests, and against the port verification record for the NavBar bridge.
+The author of each new public component or consumer migration updates this tracker in the same PR. For an available contract, record the exact local implementation and export, plus its accepted limits. For each application adoption, record the consumer path, route, verification date/result and full PR URL. “Not recorded” means no verified adoption evidence is recorded here; it is not proof that no consumers exist. Reviewers check these claims against local code and its tests, and against the applicable port verification record.

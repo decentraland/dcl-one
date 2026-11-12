@@ -3,6 +3,7 @@
 
 import { useState, type ReactNode } from 'react'
 import { Toggle } from './Toggle'
+import { Submenu } from './Submenu'
 import styles from './ContextMenu.module.css'
 
 export type ContextMenuItem =
@@ -13,10 +14,13 @@ export type ContextMenuItem =
   | { kind: 'toggle'; label: ReactNode; icon?: ReactNode; checked?: boolean; onChange?: (checked: boolean) => void }
   /** One of a set of exclusive choices (a radio): the checked one carries the mark. */
   | { kind: 'option'; label: ReactNode; icon?: ReactNode; checked: boolean; onClick?: () => void }
-  | { kind?: 'item' | 'submenu'; label: ReactNode; icon?: ReactNode; danger?: boolean; onClick?: () => void }
+  /** A 'submenu' with `items` opens them beside it (Submenu); without, it only shows its chevron. */
+  | { kind?: 'item' | 'submenu'; label: ReactNode; icon?: ReactNode; danger?: boolean; onClick?: () => void; items?: ContextMenuItem[] }
 
 interface ContextMenuProps {
   items: ContextMenuItem[]
+  /** Scroll past a long list's maximum height (a submenu's list of names). */
+  scroll?: boolean
 }
 
 function shortAddress(a: string): string {
@@ -24,9 +28,9 @@ function shortAddress(a: string): string {
   return `${a.slice(0, 6)}…${a.slice(-4)}`
 }
 
-export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
+export function ContextMenu({ items, scroll = false }: ContextMenuProps): React.JSX.Element {
   return (
-    <div className={styles.ctx} role="menu">
+    <div className={`${styles.ctx} ${scroll ? styles.scroll : ''}`.trim()} role="menu">
       {items.map((it, i) => {
         if (it.kind === 'separator') return <div className={styles.sep} key={i} />
 
@@ -78,6 +82,14 @@ export function ContextMenu({ items }: ContextMenuProps): React.JSX.Element {
               <span className={styles.label}>{it.label}</span>
               <span className={styles.check} aria-hidden="true">{it.checked ? '✓' : ''}</span>
             </button>
+          )
+        }
+
+        if (it.kind === 'submenu' && it.items != null) {
+          return (
+            <Submenu key={i} label={it.label} icon={it.icon} className={styles.item}>
+              <ContextMenu items={it.items} scroll />
+            </Submenu>
           )
         }
 
