@@ -85,6 +85,10 @@ describe('redact', () => {
   test('takes every identity on the line, in whatever JSON spacing, and a raw JSON payload', () => {
     const spaced = 'eyAiZXBoZW1lcmFsSWRlbnRpdHkiOjF9';
     const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9';
+    const afterNewline = 'CnsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9';
+    assert.deepEqual(secretsOf(`/hud_login ${afterNewline}`), [afterNewline]);
+    // a realm's long name is no identity
+    assert.deepEqual(secretsOf(`/hud_login ${id} --realm example-world-name.dcl.eth`), [id]);
     const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}';
     assert.deepEqual(secretsOf(`/hud_login ${spaced}`), [spaced]);
     assert.deepEqual(secretsOf(`/hud_login ${id} ${pretty}`), [id, pretty]);

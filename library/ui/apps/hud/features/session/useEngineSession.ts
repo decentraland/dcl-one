@@ -2309,7 +2309,10 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       // localStorage entry would strand the user on a button that throws. The driver folds both
       // signals together (engine saved login + SSO) into getPreviousLogin().
       const login = getLogin().catch(() => null)
+      const signOut = signOuts.current
       void login.then((read) => {
+        // a sign-out since cleared what the read would bring back
+        if (signOuts.current !== signOut) return
         // a /hud_login that came first holds the stored sign-in: the read is what goes back if
         // the engine refuses that sign-in, never a replacement for it
         const owned = hudStored.current
@@ -3305,9 +3308,18 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           else {
             urlDestination.current = null
             setFatalError({ message: realmCheckMessage(dest.realm, result), source: 'realm' })
-            // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back
+            // a /hud_login's sign-in never ran: answered with that, its stored sign-in put back,
+            // and it never runs later from the picker the dismissed dialog leads to (a person's
+            // own link sign-in does), so the HUD goes back to its start page
+            const runners = hudStored.current != null && !hudStored.current.landed
             restoreHudSignIn()
             settleHudLogin(new Error(realmCheckMessage(dest.realm, result)))
+            if (runners) {
+              pendingLogin.current = null
+              pendingLoginType.current = null
+              setSubmitted(false)
+              submittedRef.current = false
+            }
           }
         })
         .finally(() => {
@@ -3639,6 +3651,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
     clearLogins() // drop the same-domain SSO identity for this origin
     setStored(null)
+    // the refs at once too: a /hud_login in the same task sees the sign-out
+    storedRef.current = null
     pendingLoginType.current = null
     lastLoginType.current = null
     welcomeRef.current = null
@@ -3649,6 +3663,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     closeAllPanels()
     setPlayerReady(false)
     setSubmitted(false) // back to the login screen
+    submittedRef.current = false
     setDestinationPicked(false) // re-show the picker on the next jump-in
     setLobby(false)
     setLobbyOpen(false)

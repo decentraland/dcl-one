@@ -11,26 +11,29 @@ export interface Console {
   evidence?(): Promise<{ console: string[]; screenshot: Buffer | undefined }>
 }
 
-/** An identity as `/login_identity` and `/hud_login` take it: base64 of an AuthIdentity's JSON.
- *  Its `{` encodes as `e` and one of `w`-`z`, a digit, `+` or `/` (`-` or `_` in base64url),
- *  whatever follows it (`eyJ` for `{"`, `eyAi` for `{ "`, `ewog` for pretty-printed JSON), as a
- *  whole run of base64 characters; one shorter than this could be part of other text, and an
- *  identity's is hundreds of characters long. */
-const ENCODED_IDENTITY = /(?<![A-Za-z0-9+/_-])e[w-z0-9+/_-][A-Za-z0-9+/_-]{14,}={0,2}/g
+/** A whole run of base64 characters (either alphabet), long enough that it is no ordinary word;
+ *  an identity's is hundreds of characters long. */
+const BASE64_RUN = /(?<![A-Za-z0-9+/_-])[A-Za-z0-9+/_-]{16,}={0,2}/g
+/** How an AuthIdentity's JSON starts once its base64 is decoded, as the commands parse it: any
+ *  whitespace, then an object and the quote of its first key. Only the start is read, so a cut or
+ *  mistyped identity is still found. */
+const JSON_OBJECT_START = /^\s*\{\s*"/
 /** A payload sent as raw JSON, which the commands refuse after it was logged: the line's first
  *  `{` to its last `}`. */
 const RAW_JSON = /\{.*\}/s
 const MIN_SECRET = 16
 
+const encodesJsonObject = (run: string): boolean => JSON_OBJECT_START.test(Buffer.from(run.slice(0, 64), 'base64').toString('latin1'))
+
 /** The credentials a line carries: the payload of `/login_identity` or `/hud_login`, an
  *  AuthIdentity (an ephemeral private key and a signed delegation that stays valid for days),
- *  found by its shape wherever a hand-typed line puts it: after flags, as a flag's value, quoted,
- *  twice, or as raw JSON (the commands refuse such a line, but after it was logged). Nothing else
- *  is one, so an empty or short word never turns every line into `<redacted>`. The web driver's
- *  `driver.mjs` has the same rule, which a test keeps in step. */
+ *  found by what it decodes to wherever a hand-typed line puts it: after flags, as a flag's value,
+ *  quoted, twice, or as raw JSON (the commands refuse such a line, but after it was logged).
+ *  Nothing else is one, so an empty or short word, or a realm's name, never turns lines into
+ *  `<redacted>`. The web driver's `driver.mjs` has the same rule, which a test keeps in step. */
 export function secretsOf(line: string): string[] {
   if (!/^\s*\/?(?:login_identity|hud_login)(?:\s|$)/.test(line)) return []
-  const secrets: string[] = [...(line.match(ENCODED_IDENTITY) ?? [])]
+  const secrets = (line.match(BASE64_RUN) ?? []).filter(encodesJsonObject)
   const raw = RAW_JSON.exec(line)?.[0]
   if (raw !== undefined && raw.length >= MIN_SECRET) secrets.push(raw)
   return secrets

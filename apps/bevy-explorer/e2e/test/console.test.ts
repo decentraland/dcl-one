@@ -57,11 +57,12 @@ describe('ConsoleError', () => {
     assert.equal(error.message, '`/login_identity <redacted> --name tester` failed: the identity <redacted> is not base64 JSON')
   })
 
-  test('the credentials are what is shaped as an encoded identity, wherever it is, as the web driver has it', async () => {
+  test('the credentials are what decodes as an identity, wherever it is, as the web driver has it', async () => {
     const id = 'eyJlcGhlbWVyYWxJZGVudGl0eSI6MX0='
-    // `{ "` and pretty-printed JSON, which the commands decode as well
+    // `{ "`, pretty-printed JSON and JSON after whitespace, which the commands decode as well
     const spaced = 'eyAiZXBoZW1lcmFsSWRlbnRpdHkiOjF9'
     const pretty = 'ewogICJlcGhlbWVyYWxJZGVudGl0eSI6IDF9'
+    const afterWhitespace = ['IHsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CnsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'CXsiZXBoZW1lcmFsSWRlbnRpdHkiOjF9', 'DQp7ImVwaGVtZXJhbElkZW50aXR5IjoxfQ==']
     const raw = '{"ephemeralIdentity":{"privateKey":"0x56"}}'
     const cases: [string, string[]][] = [
       [`/hud_login ${id} --guest`, [id]],
@@ -73,6 +74,10 @@ describe('ConsoleError', () => {
       [`/hud_login '${id}'`, [id]],
       [`/hud_login ${spaced}`, [spaced]],
       [`/login_identity ${pretty} --guest`, [pretty]],
+      ...afterWhitespace.map((encoded): [string, string[]] => [`/hud_login ${encoded}`, [encoded]]),
+      // a realm's long name is no identity, though base64 characters spell it
+      [`/hud_login ${id} --realm example-world-name.dcl.eth`, [id]],
+      [`/hud_login ${id} --realm ezra-test-world-2025.dcl.eth --default-on-error`, [id]],
       // in a flag's value slot: the identity, never the word the flags leave over
       [`/hud_login --name ${id} --look 1`, [id]],
       // pasted twice: both

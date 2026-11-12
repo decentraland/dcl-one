@@ -393,6 +393,9 @@ describe('/hud_login through the session', () => {
       expect(driver.identityLogins).toEqual([])
       await waitFor(() => expect(h.session().fatalError).toMatchObject({ source: 'realm' }))
       await waitFor(() => expect(h.session().login.account).toBeNull())
+      // back to the start page, not the picker the dismissed dialog would lead to, where a pick
+      // would still run the refused sign-in
+      expect(h.session().phase).toBe('login')
     } finally {
       fetchSpy.mockRestore()
       leave()
@@ -473,6 +476,15 @@ describe('/hud_login through the session', () => {
     driver.release()
     await expect(first).rejects.toThrow('profile fetch failed: 503')
     await waitFor(() => expect(h.session().login.account).toBe(previous))
+  })
+
+  it('a stored sign-in read late at startup does not bring back an account a sign-out cleared', async () => {
+    let readArrives!: (login: StoredLogin | null) => void
+    read.late = new Promise((resolve) => (readArrives = resolve))
+    const h = await ready(new IdentityDriver())
+    await act(async () => expect(await logout()).toBe('signed out'))
+    await act(async () => readArrives(storedOf('0x' + 'Cd'.repeat(20))))
+    expect(h.session().login.account).toBeNull()
   })
 
   it("a stored sign-in read late at startup does not replace the runner's once it landed", async () => {
@@ -560,6 +572,36 @@ describe('/hud_logout', () => {
     await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
   })
 
+  it('a /hud_login in the same task as the /hud_logout after a sign-in is taken', async () => {
+    const driver = new IdentityDriver()
+    await ready(driver)
+    await expect(login(ENCODED)).resolves.toMatchObject({ phase: 'lobby' })
+    let again!: Promise<Reply>
+    await act(async () => {
+      expect(await logout()).toBe('signed out')
+      again = login(ENCODED)
+    })
+    await expect(again).resolves.toMatchObject({ phase: 'lobby' })
+    expect(driver.identityLogins).toHaveLength(2)
+  })
+
+  it('a /hud_login in the same task as /hud_logout, once refused, puts back nothing the sign-out cleared', async () => {
+    const previous = '0x' + 'Cd'.repeat(20)
+    localStorage.setItem(`single-sign-on-${previous.toLowerCase()}`, JSON.stringify(identityOf(previous)))
+    const driver = new IdentityDriver()
+    driver.failWith = 'profile fetch failed: 503'
+    const h = await ready(driver)
+    await waitFor(() => expect(h.session().login.account).toBe(previous))
+    let refused!: Promise<void>
+    await act(async () => {
+      expect(await logout()).toBe('signed out')
+      refused = expect(login(ENCODED)).rejects.toThrow('profile fetch failed: 503')
+    })
+    await refused
+    await waitFor(() => expect(h.session().login.busy).toBe(false))
+    expect(h.session().login.account).toBeNull()
+  })
+
   it('a /hud_logout before the deferred sign-in has run drops it, and the start page stays as it is', async () => {
     const driver = new IdentityDriver()
     driver.welcome = { terms: true, newProfile: false }
@@ -594,9 +636,8 @@ describe('/hud_logout', () => {
       const second = login(ENCODED)
       await waitFor(() => expect(answers).toHaveLength(2))
       await act(async () => answers[0](new Response('', { status: 404 })))
-      // no "World not found" from the dropped check, and nothing launched or signed in for it
+      // no "World not found" from the dropped check
       expect(h.session().fatalError).toBeNull()
-      expect(driver.identityLogins).toEqual([])
       await act(async () => answers[1](new Response('{}', { status: 200 })))
       await expect(second).resolves.toMatchObject({ address: ADDRESS.toLowerCase() })
       expect(driver.identityLogins).toHaveLength(1)
