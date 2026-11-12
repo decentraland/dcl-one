@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import {
   GeneralAddToCalendar,
   GeneralBell,
+  GeneralCopy,
   GeneralLive,
   GeneralPlayers,
   GeneralTime
@@ -83,33 +85,45 @@ function TimePill({ time }: { time: EventCardTime }) {
   )
 }
 
-/** Remind me and Add to calendar, shown on hover or focus from desktop and always on phones. */
-function CardActions({
-  title,
-  remind,
-  calendarHref
-}: {
+type CardActionProps = {
+  href: string
   title: string
   remind?: RemindControl
   calendarHref?: string
-}) {
-  if (!remind && !calendarHref) return null
+}
+
+/** Remind me, calendar and copy actions share the card's reserved footer area. */
+function CardActions({ title, remind, calendarHref, href }: CardActionProps) {
+  const [copyStatus, setCopyStatus] = useState('')
+  const copy = async () => {
+    try {
+      if (!navigator.clipboard) throw new Error('Clipboard unavailable')
+      await navigator.clipboard.writeText(new URL(href, window.location.href).href)
+      setCopyStatus('Link copied.')
+    } catch {
+      setCopyStatus("Couldn't copy the link. Try again.")
+    }
+  }
   return (
     <div className={styles.actions}>
       {remind ? (
         <button
           type="button"
-          className={styles.action}
+          className={`${styles.action} ${styles.remindAction}`}
           aria-pressed={remind.active}
           aria-label={`Remind me: ${title}`}
           disabled={remind.pending}
-          onClick={remind.onToggle}
+          onClick={(event) => {
+            event.stopPropagation()
+            remind.onToggle()
+          }}
         >
           <GeneralBell
-            size={16}
+            size={20}
             aria-hidden="true"
             className={remind.active ? styles.reminded : undefined}
           />
+          <span className={styles.remindLabel}>Remind me</span>
         </button>
       ) : null}
       {calendarHref ? (
@@ -119,12 +133,36 @@ function CardActions({
           target="_blank"
           rel="noopener noreferrer"
           aria-label={`Add to calendar: ${title}`}
+          onClick={(event) => event.stopPropagation()}
         >
-          <GeneralAddToCalendar size={16} aria-hidden="true" />
+          <GeneralAddToCalendar size={20} aria-hidden="true" />
         </a>
       ) : null}
+      <button
+        type="button"
+        className={styles.action}
+        aria-label={`Copy link: ${title}`}
+        onClick={(event) => {
+          event.stopPropagation()
+          void copy()
+        }}
+      >
+        <GeneralCopy size={20} aria-hidden="true" />
+      </button>
+      <span role="status" className={styles.visuallyHidden}>
+        {copyStatus}
+      </span>
     </div>
   )
 }
 
-export { Badges, CardActions, CreatorRow, TimePill }
+function CardFooter({ time, ...actions }: CardActionProps & { time: EventCardTime }) {
+  return (
+    <div className={styles.cardFooter}>
+      <TimePill time={time} />
+      <CardActions {...actions} />
+    </div>
+  )
+}
+
+export { Badges, CardActions, CardFooter, CreatorRow, TimePill }

@@ -38,15 +38,12 @@
 
 .liveCard {
   flex-direction: column;
-  height: 100%;
-  transition:
-    transform 0.3s,
-    box-shadow 0.3s;
+  height: calc(min(62.5cqw, 297px) + 123px);
+  transition: box-shadow 0.3s;
 }
 
 @media (hover: hover) and (min-width: 768px) {
   .liveCard:hover {
-    transform: translateY(-4px);
     box-shadow: 0 2px 12px 12px var(--dcl-transparencies-white-20);
   }
 }
@@ -56,10 +53,9 @@
    rail never stretches the cards past it. */
 .liveMedia {
   position: relative;
-  flex: none;
+  flex: 1;
+  min-height: 0;
   overflow: hidden;
-  aspect-ratio: 8 / 5;
-  max-height: 297px;
   background: var(--dcl-neutrals-onix);
 }
 
@@ -70,15 +66,15 @@
 }
 
 @media (max-width: 767px) {
-  .liveMedia {
-    aspect-ratio: 358 / 162;
+  .liveCard {
+    height: calc(45.25cqw + 149px);
   }
 }
 
 /* Source's body: at least 123px (149px on phones), the title, then the by-line at the bottom. */
 .liveBody {
   display: flex;
-  flex: 1;
+  flex: none;
   flex-direction: column;
   box-sizing: border-box;
   min-height: 123px;
@@ -130,8 +126,7 @@
   outline-offset: 2px;
 }
 
-/* From desktop, Jump In appears under the by-line on hover or focus and the card grows, as source;
-   phones always show it. */
+/* The fixed outer card lets its media yield space to Jump In without moving the rail. */
 @media (hover: hover) and (min-width: 768px) {
   .liveCard .jumpIn {
     display: none;
@@ -284,24 +279,30 @@ a.creator:focus-visible {
 
 /* Source's compact card: 140px tall, the cover 42% of its width. */
 .smallCard {
-  min-height: 140px;
+  container-type: inline-size;
+  height: 140px;
   background: var(--dcl-transparencies-black-40);
 }
 
 .smallMedia {
+  position: relative;
   flex: none;
   width: 42%;
   background: var(--dcl-neutrals-onix);
+}
+
+.smallMedia .image {
+  position: absolute;
+  inset: 0;
 }
 
 .smallBody {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: var(--dcl-space-8);
+  gap: var(--dcl-space-4);
   min-width: 0;
-  /* Clear of the action in the top corner. */
-  padding: var(--dcl-space-12) 44px var(--dcl-space-12) var(--dcl-space-12);
+  padding: var(--dcl-space-12);
 }
 
 .smallTitle {
@@ -317,28 +318,30 @@ a.creator:focus-visible {
 
 .actions {
   position: absolute;
-  top: var(--dcl-space-8);
-  right: var(--dcl-space-8);
+  inset: 0;
   z-index: 1;
   display: flex;
+  align-items: center;
   gap: var(--dcl-space-4);
 }
 
 .action {
   display: grid;
   place-items: center;
-  width: var(--dcl-space-32);
-  height: var(--dcl-space-32);
+  flex: none;
+  width: 44px;
+  height: 44px;
   padding: 0;
   border: 0;
   border-radius: var(--dcl-radius-sm);
-  background: var(--dcl-transparencies-black-60);
-  color: var(--dcl-text-primary);
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-charcoal);
+  text-decoration: none;
   cursor: pointer;
 }
 
 .action:hover:not(:disabled) {
-  background: var(--dcl-neutrals-onix);
+  background: var(--dcl-neutrals-pearl);
 }
 
 .action:disabled {
@@ -357,13 +360,62 @@ a.creator:focus-visible {
 
 @media (hover: hover) and (min-width: 768px) {
   .card .actions {
+    visibility: hidden;
     opacity: 0;
     transition: opacity 0.2s;
   }
 
   .card:hover .actions,
   .card:focus-within .actions {
+    visibility: visible;
     opacity: 1;
+  }
+}
+
+.cardFooter {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  margin-top: auto;
+}
+
+.cardFooter .time {
+  opacity: 1;
+}
+.remindAction {
+  display: inline-flex;
+  justify-content: center;
+  gap: var(--dcl-space-4);
+  width: auto;
+  min-width: 44px;
+  padding-inline: var(--dcl-space-8);
+}
+.remindLabel {
+  composes: text627574746f6e2f736d from '../../../../foundations/typography/text-styles.module.css';
+  white-space: nowrap;
+}
+.smallCard .remindLabel {
+  display: none;
+}
+@container (min-width: 400px) {
+  .smallCard .remindLabel {
+    display: inline;
+  }
+}
+@media (hover: hover) and (min-width: 768px) {
+  .cardFooter .time {
+    opacity: 1;
+  }
+  .card:hover .cardFooter .time,
+  .card:focus-within .cardFooter .time {
+    opacity: 0;
+  }
+  .smallCard:hover,
+  .smallCard:focus-within,
+  .dayCard:hover,
+  .dayCard:focus-within {
+    box-shadow: 0 2px 12px 12px var(--dcl-transparencies-white-20);
   }
 }
 
@@ -406,5 +458,21 @@ a.creator:focus-visible {
   .liveCard,
   .card .actions {
     transition: none;
+  }
+}
+
+/* Touch users can read the start time and reach every action without a hover gesture. */
+@media (hover: none), (max-width: 767px) {
+  .smallCard {
+    height: 176px;
+  }
+  .cardFooter {
+    flex-direction: column;
+    align-items: flex-start;
+    min-height: 76px;
+    gap: var(--dcl-space-8);
+  }
+  .actions {
+    position: static;
   }
 }

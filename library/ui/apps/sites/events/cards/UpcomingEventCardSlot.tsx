@@ -1,4 +1,4 @@
-import { CardActions, CreatorRow, TimePill } from './parts'
+import { CardFooter, CreatorRow } from './parts'
 import type { UpcomingEventCardProps } from './types'
 import styles from './cards.module.css'
 
@@ -30,10 +30,14 @@ function UpcomingEventCardSlot({
           </a>
         </h3>
         {creator ? <CreatorRow creator={creator} /> : null}
-        <TimePill time={time} />
+        <CardFooter
+          title={title}
+          href={href}
+          time={time}
+          remind={remind}
+          calendarHref={calendarHref}
+        />
       </div>
-      {/* One action, as source's compact card: Remind me, else Add to calendar. */}
-      <CardActions title={title} remind={remind} calendarHref={remind ? undefined : calendarHref} />
     </article>
   )
 }

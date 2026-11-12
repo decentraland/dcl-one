@@ -50,7 +50,8 @@
 /* Cards keep their own height (cover plus body), as source; stretching them to the tallest leaves
    empty space under the by-line. */
 .track {
-  align-items: flex-start;
+  align-items: stretch;
+  justify-content: safe center;
   gap: var(--dcl-space-16);
   margin: calc(-1 * var(--dcl-space-24)) calc(-1 * var(--dcl-space-16))
     calc(-1 * var(--dcl-space-16));
@@ -60,6 +61,7 @@
 
 /* Four cards share a desktop row, each at least 300px and at most 850px (source). */
 .slide {
+  container-type: inline-size;
   flex: 1 1 0;
   min-width: max(300px, calc((100% - 48px) / 4));
   max-width: 850px;

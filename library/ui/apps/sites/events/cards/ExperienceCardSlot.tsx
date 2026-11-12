@@ -1,4 +1,4 @@
-import { Badges, CardActions, CreatorRow, TimePill } from './parts'
+import { Badges, CardFooter, CreatorRow } from './parts'
 import type { ExperienceCardProps } from './types'
 import styles from './cards.module.css'
 
@@ -36,9 +36,16 @@ function ExperienceCardSlot({
           </a>
         </h3>
         {creator ? <CreatorRow creator={creator} prefix="By" /> : null}
-        {live ? null : <TimePill time={time} />}
+        {live ? null : (
+          <CardFooter
+            title={title}
+            href={href}
+            time={time}
+            remind={remind}
+            calendarHref={calendarHref}
+          />
+        )}
       </div>
-      {live ? null : <CardActions title={title} remind={remind} calendarHref={calendarHref} />}
     </article>
   )
 }
