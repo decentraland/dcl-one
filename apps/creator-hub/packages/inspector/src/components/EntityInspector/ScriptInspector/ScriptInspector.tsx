@@ -513,6 +513,9 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
               rightContent={
                 <>
                   <Button
+                    variant="contained"
+                    color="secondary"
+                    size="small"
                     className="CodeButton"
                     onClick={e => handleEditScript(e, index)}
                   >
@@ -520,7 +523,12 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
                     Code
                   </Button>
                   <MoreOptionsMenu>
-                    <Button onClick={() => handleRemoveScript(index)}>
+                    <Button
+                      variant="contained"
+                      color="secondary"
+                      size="small"
+                      onClick={() => handleRemoveScript(index)}
+                    >
                       <RemoveIcon />
                       Delete Script Module
                     </Button>
@@ -576,6 +584,9 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             <div className="asks">
               {reactionEvents.map(event => (
                 <Button
+                  variant="contained"
+                  color="secondary"
+                  size="small"
                   key={event}
                   className="ReactionButton"
                   onClick={() => promptReaction(l => `${capitalize(eventClause(event, l))}, `)}
@@ -587,6 +598,9 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             <div className="chips">
               {ACTION_CHIPS.map(verb => (
                 <Button
+                  variant="contained"
+                  color="secondary"
+                  size="small"
                   key={verb}
                   className="ReactionChip"
                   onClick={() =>
@@ -609,7 +623,12 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
           rightContent={
             scripts.length > 0 ? (
               <MoreOptionsMenu>
-                <Button onClick={() => handleScriptModuleMode(undefined)}>
+                <Button
+                  variant="contained"
+                  color="secondary"
+                  size="small"
+                  onClick={() => handleScriptModuleMode(undefined)}
+                >
                   <RemoveIcon />
                   Delete Script Module
                 </Button>
@@ -640,11 +659,21 @@ export default withSdk<Props>(({ sdk, entity: entityId, initialOpen = true }) =>
             className="ScriptActionsMenu"
             icon={<>⌄</>}
           >
-            <Button onClick={() => handleScriptModuleMode('import')}>
+            <Button
+              variant="contained"
+              color="secondary"
+              size="small"
+              onClick={() => handleScriptModuleMode('import')}
+            >
               <FileUploadIcon />
               Import Script File
             </Button>
-            <Button onClick={() => setShowCreateModal(true)}>
+            <Button
+              variant="contained"
+              color="secondary"
+              size="small"
+              onClick={() => setShowCreateModal(true)}
+            >
               <EditIcon />
               Create a new Script File
             </Button>

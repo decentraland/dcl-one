@@ -196,6 +196,9 @@ export const TriggerConditionContainer = ({
             <div className="RightMenu">
               <MoreOptionsMenu className="TriggerConditionMenu">
                 <Button
+                  variant="contained"
+                  color="secondary"
+                  size="small"
                   className="RemoveButton"
                   onClick={e => handleRemoveCondition(e, idx)}
                 >
