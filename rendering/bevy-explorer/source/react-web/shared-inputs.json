@@ -139,6 +139,10 @@
           "kind": "directory"
         },
         {
+          "name": "donate",
+          "kind": "directory"
+        },
+        {
           "name": "editorHost",
           "kind": "directory"
         },
@@ -276,6 +280,19 @@
         },
         {
           "name": "roles.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/explorer-core/features/donate",
+      "entries": [
+        {
+          "name": "place.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "tip.ts",
           "kind": "regular"
         }
       ]
@@ -634,6 +651,14 @@
           "kind": "regular"
         },
         {
+          "name": "donatePlace.test.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "donateTip.test.ts",
+          "kind": "regular"
+        },
+        {
           "name": "engineDriver.test.ts",
           "kind": "regular"
         },
@@ -839,6 +864,10 @@
         },
         {
           "name": "chat",
+          "kind": "directory"
+        },
+        {
+          "name": "donate",
           "kind": "directory"
         },
         {
@@ -1263,6 +1292,15 @@
         },
         {
           "name": "symbols.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/donate",
+      "entries": [
+        {
+          "name": "tip.png",
           "kind": "regular"
         }
       ]
@@ -2245,6 +2283,10 @@
           "kind": "directory"
         },
         {
+          "name": "donate",
+          "kind": "directory"
+        },
+        {
           "name": "editorHost",
           "kind": "directory"
         },
@@ -2530,6 +2572,27 @@
         },
         {
           "name": "useDebugPanel.ts",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate",
+      "entries": [
+        {
+          "name": "DonatePanel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "DonatePanel.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "types.ts",
+          "kind": "regular"
+        },
+        {
+          "name": "useDonate.ts",
           "kind": "regular"
         }
       ]
@@ -3275,6 +3338,14 @@
         },
         {
           "name": "design.ported.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "donate.test.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "donatePanel.test.ts",
           "kind": "regular"
         },
         {
@@ -4030,7 +4101,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/host.ts",
-      "sha256": "c5a8ef6b809175e4bd3d5ab53d6b40266f6b574c91fcbb4b9f3fda090699b16f"
+      "sha256": "1f01c380663fb1d0dd65452aaa42ec2e4e3a7295e4c542e7910bbe3479879d37"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/src/lib/baseDomain.ts",
@@ -4465,6 +4536,14 @@
       "sha256": "f5248e789ad1338f8b5e9fcad8418efd9064be47c1617a5d4d9a9735902a9569"
     },
     {
+      "path": "library/explorer-core/features/donate/place.ts",
+      "sha256": "272bca7a014151925f09ae5ca7032813260dbfaed0f0919293d6cf15af2a65a2"
+    },
+    {
+      "path": "library/explorer-core/features/donate/tip.ts",
+      "sha256": "8d83e3410f013de8165e9d97a1d48b6745cb442a07a1da22026d2430004be463"
+    },
+    {
       "path": "library/explorer-core/features/editorHost/config.ts",
       "sha256": "2f05b98689c654b4936bbd1c6c55b6e174bed35f8a04161b1b93ed42a9e81624"
     },
@@ -4570,7 +4649,7 @@
     },
     {
       "path": "library/explorer-core/hostContract.ts",
-      "sha256": "eeb9dd1dcbdec4b03b9ae8b58f78fed2ea5365e898e3d4805d7c81d541e570f0"
+      "sha256": "246acfe7a9feff364242afee43cb8546e7c87112485a5865d46fb2d86fee64c0"
     },
     {
       "path": "library/explorer-core/lib/analytics.ts",
@@ -4725,6 +4804,14 @@
       "sha256": "1fde69a9041ff8bb7c2557b73cd60879a3f6e248da2886bf74dc74e343163f25"
     },
     {
+      "path": "library/explorer-core/test/donatePlace.test.ts",
+      "sha256": "0a5c5afa134fccc816b56aebdc86200c031973a3ce699627aca2af8dd76a0715"
+    },
+    {
+      "path": "library/explorer-core/test/donateTip.test.ts",
+      "sha256": "920446a0dcf3b0ef15f1422b584a37ddc43df345eb2595210b9ab87934107e1e"
+    },
+    {
       "path": "library/explorer-core/test/engineDriver.test.ts",
       "sha256": "aa5d527668fecc68a73201ba8babc3bc9c98eecf682798eb948cb7e4f819a4ef"
     },
@@ -4778,7 +4865,7 @@
     },
     {
       "path": "library/ui/apps/hud/App.tsx",
-      "sha256": "b1ed494cc3933a47bfc6070b3e6f6184233fd5197bf945ec80caf207b953fada"
+      "sha256": "ce42ab391c5abe005a2122a6a781d1f587fb4bf1b3fb9bc588cb6eb2e37f4eb1"
     },
     {
       "path": "library/ui/apps/hud/assets/backpack/add-gradient.webp",
@@ -5135,6 +5222,10 @@
     {
       "path": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
       "sha256": "6c1d7ae4d8fdf33951ffe4cae923f029863c7f70095995e1aa51658dfaed4241"
+    },
+    {
+      "path": "library/ui/apps/hud/assets/donate/tip.png",
+      "sha256": "4892de91637563e8335c7b44a3e070e705178c842b70ea3f091c68d188d4eab6"
     },
     {
       "path": "library/ui/apps/hud/assets/loading-tips/add-friends.webp",
@@ -6165,6 +6256,22 @@
       "sha256": "94859614803b162d43e0957b63f143819b31653af59281dd90e2f5b5f564eca2"
     },
     {
+      "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "sha256": "9c88f84b3813dda7763ac751c06573fb8502524ea1416c8c42d72bfc33a5ebe9"
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "sha256": "6c2ba0c28051a41ec1af448a197ee2be8b6237b5873e5aca2445756c0b5e437e"
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate/types.ts",
+      "sha256": "bbb0b7ab1b3f0cc8a8bbd72ca40d033cfb5107a61d8d128e156075a7f233d79d"
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "sha256": "aae70008f009476ec95abdd28d33f18cd3cd4dbe26b2a4795b5336a93175d91b"
+    },
+    {
       "path": "library/ui/apps/hud/features/editorHost/CreatePage.module.css",
       "sha256": "32a5fc3375bd73b3ae4f5a880f5fcfe6231085f1b6df8bb2ae61e93d7da393ae"
     },
@@ -6382,7 +6489,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/map/MapPage.tsx",
-      "sha256": "7cb6a49b0d271e2b7e0b69d13163ffe8f03ee919a1310efa98018e4f2f1ba661"
+      "sha256": "d8a707e1ddbe3dc3c1304abe735614c943a93713d6f22d82fc528efc7179cfd2"
     },
     {
       "path": "library/ui/apps/hud/features/map/mapArt.ts",
@@ -6406,11 +6513,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.module.css",
-      "sha256": "6b6c750747a18923e5f37868cfd3243c065fdb46b6d802b02623b15a335f4f3f"
+      "sha256": "24636b673472a8adffb013b49defda0481ca33551dbd4bc0b3e18d0253ec6e4a"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "0ec92c357bf4da0a36f1a1d448a9c5d0cceca057583fd98298e91839e33016da"
+      "sha256": "ae42dfa24c7edfb7c29815c0c9956620b8a6d6d897107d090ff7e7b128d22e82"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -6430,7 +6537,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationToast.tsx",
-      "sha256": "1079067e585ca5c08871f809152329932399beeb271c76f124b436f935d6b163"
+      "sha256": "a6257749a95572dd38c995b44889f674b5beb32bbb89772a4ea9ecfd602a3f77"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationsPanel.module.css",
@@ -6438,11 +6545,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/NotificationsPanel.tsx",
-      "sha256": "68e9589d497f967cb6e540384b3e2bca7eba3bca3774b9d72c21a58811af2988"
+      "sha256": "50863da87090fe732b72139b65276b5fb94bc8e260fc70a499884c3b0c54c60b"
     },
     {
       "path": "library/ui/apps/hud/features/notifications/summary.ts",
-      "sha256": "3cb0cbf63c0d85d189df794640059e26aa6bd9bfb658de1e8e339284b6f4842d"
+      "sha256": "7f3f53810d36d0bfc7ed223bebd7dbcd63003ee6b150c03cfb34e484fd35845b"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.module.css",
@@ -6594,7 +6701,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/session/useEngineSession.ts",
-      "sha256": "2a769c3b524c0f95cb77f8b38e77aecd4f3feced54f2f5fbc6e8575c94dc6f1f"
+      "sha256": "c1717e51e54e5dbb022227b7ba746867dff570cb3b7bc6249c7c4add2e1d33a5"
     },
     {
       "path": "library/ui/apps/hud/features/settings/KeyBindingsTab.module.css",
@@ -6745,6 +6852,14 @@
       "sha256": "d561bcc5edf48cf83a00a8440b35f8313b46935a4183c6974a8909577eed9314"
     },
     {
+      "path": "library/ui/apps/hud/test/donate.test.tsx",
+      "sha256": "44680443a805669f5b626106cf7ccdbb4b428737f42a0442b5d71b2ec1ecbf6e"
+    },
+    {
+      "path": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "sha256": "6ff187f0c763b8c51980477fe79611261e17f40836089bf5dd45159778e8c0ea"
+    },
+    {
       "path": "library/ui/apps/hud/test/error.test.tsx",
       "sha256": "b0fa53ae546c421b7c4319e8ab5b9db966ec8cd1c1483b4dd351e0416a9d97be"
     },
@@ -6758,11 +6873,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/harness.tsx",
-      "sha256": "709a43e096c70c3aba171e36776aa48193a73322507adec5711d43ec0bd90ae1"
+      "sha256": "682a575142219615d7fb5ad58b88b3119c21ba21df0ac746cc781c3e5660c05f"
     },
     {
       "path": "library/ui/apps/hud/test/host.ts",
-      "sha256": "428aaf38bc6c1c29623e2e1f27cd47bb71f9b0fdaef61aeced60da8e63d11727"
+      "sha256": "7168fe4c9c98d4562a83d0a1bb2a57bd52db8fd123afff53b73c4a044a045191"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/analytics.session.test.tsx",
@@ -8384,6 +8499,36 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/explorer-core/test/donatePlace.test.ts",
+      "to": "library/explorer-core/features/donate/place.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donatePlace.test.ts",
+      "to": "library/explorer-core/features/donate/place.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donatePlace.test.ts",
+      "to": "library/explorer-core/features/donate/place.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donateTip.test.ts",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donateTip.test.ts",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/explorer-core/test/donateTip.test.ts",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/explorer-core/test/engineDriver.test.ts",
       "to": "library/explorer-core/engine/EngineDriver.ts",
       "kind": "native:runtime"
@@ -8936,6 +9081,21 @@
     {
       "from": "library/ui/apps/hud/App.tsx",
       "to": "library/ui/apps/hud/features/debug/FpsMeter.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/App.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
       "kind": "test:runtime"
     },
     {
@@ -15629,6 +15789,66 @@
       "kind": "test:runtime"
     },
     {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "to": "library/ui/apps/hud/features/session/SessionContext.tsx",
+      "kind": "test:runtime"
+    },
+    {
       "from": "library/ui/apps/hud/features/editorHost/CreatePage.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
@@ -17610,6 +17830,36 @@
     },
     {
       "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/map/MapPage.tsx",
       "to": "library/ui/apps/hud/features/map/MapPage.module.css",
       "kind": "native:runtime"
     },
@@ -18315,6 +18565,21 @@
     },
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
       "kind": "native:runtime"
     },
@@ -18326,6 +18591,21 @@
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
       "kind": "test:runtime"
     },
     {
@@ -18671,6 +18951,21 @@
     {
       "from": "library/ui/apps/hud/features/notifications/summary.ts",
       "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "test:runtime"
     },
     {
@@ -20546,6 +20841,21 @@
     {
       "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
       "to": "library/explorer-core/features/communities/notifications.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/donate/place.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/donate/place.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/session/useEngineSession.ts",
+      "to": "library/explorer-core/features/donate/place.ts",
       "kind": "test:runtime"
     },
     {
@@ -22856,6 +23166,51 @@
     {
       "from": "library/ui/apps/hud/test/design.ported.test.tsx",
       "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donate.test.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donate.test.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donate.test.tsx",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donate.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donate.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donate.test.tsx",
+      "to": "library/ui/apps/hud/features/notifications/summary.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/test/donatePanel.test.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
       "kind": "test:runtime"
     },
     {
@@ -28040,6 +28395,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/donate/place.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/features/donate/tip.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/features/editorHost/config.ts",
       "kind": "type"
     },
@@ -28361,6 +28726,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/explorer-core/test/console.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/donatePlace.test.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/explorer-core/test/donateTip.test.ts",
       "kind": "type"
     },
     {
@@ -28821,6 +29196,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/donate/useDonate.ts",
       "kind": "type"
     },
     {
@@ -29291,6 +29681,16 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/test/design.ported.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/donate.test.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/test/donatePanel.test.ts",
       "kind": "type"
     },
     {
@@ -31241,6 +31641,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
       "kind": "test:asset"
     },
     {

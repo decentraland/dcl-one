@@ -329,3 +329,22 @@ owns the mode as a surface. Expectations:
   (the overlay's buttons, bindings, notice and effect); the e2e camera scenarios
   (`apps/bevy-explorer/e2e/specs/camera.test.ts`) drive the real engine.
 
+
+## Donate
+
+Tipping a place's creator in MANA, where the host can sign a tip (`@hud-host`'s `donations`: the Sites `/play`
+web shell; null here, so this HUD shows no Donate). The shared HUD names a place and nothing else
+(`features/donate/useDonate.ts`); the shell resolves the creator, draws the panel and signs (`apps/ui3/src/play/shell/donate`,
+[ADR](../../../../docs/adr/2026-11-12-play-shell-signs-tips.md)). Expectations:
+
+- **Where it shows:** the minimap's header for the scene the player stands in (the session's
+  `minimap.donatePlace`: a Genesis City parcel or a World, none in a preview or a local realm), and the
+  map's place panel. Only when the host says the session may tip and the place has a creator; hidden while
+  the first answer is pending. Whether the session may tip is asked once per sign-in. The minimap's place
+  changes with the scene, not with each parcel crossed (none on a parcel with no scene), and its last answer
+  stays while the next scene is asked about; on the map a newly picked place hides it until answered.
+- **After a tip** the host's `onSent` plays the `money` base emote; a `tip_received` notification opens the
+  tipper's passport (`notifications/summary.ts` `tipTarget`).
+- Tests: `library/ui/apps/hud/test/donate.test.tsx` (gating, open, emote, notification),
+  `library/explorer-core/test/donatePlace.test.ts`; the shell's side in `apps/ui3/src/play/test/donateShell.test.ts`
+  and `donateGuard.test.ts`. No visual baseline: the panel is drawn by the `/play` shell, not by `?mock=1`.
