@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { anchoredMenuPosition } from '../design'
 import { ReelGrid, buildReelRows, type ReelGridLayout } from '../features/gallery/ReelGrid'
 import { reelFileName, shareToXUrl } from '../features/gallery/reelActions'
+import { serviceUrl } from '@hud-host'
 import type { GalleryPhoto } from '@explorer-core/engine/protocol'
 
 const LAYOUT: ReelGridLayout = {
@@ -86,6 +87,6 @@ describe('reel actions', () => {
     const url = new URL(shareToXUrl('r1'))
     expect(url.origin + url.pathname).toBe('https://x.com/intent/post')
     expect(url.searchParams.get('text')).toBe('Happening right now in @decentraland.\n\nCome hang out 👋\n\n')
-    expect(url.searchParams.get('url')).toMatch(/\/reels\/r1$/)
+    expect(url.searchParams.get('url')).toBe(`${serviceUrl('reels')}/r1`)
   })
 })
