@@ -19,6 +19,7 @@ use bevy::{
         schedule::ScheduleLabel,
         system::{StaticSystemParam, SystemParam, SystemParamItem},
     },
+    pbr::ScreenSpaceAmbientOcclusion,
     platform::collections::HashSet,
     prelude::*,
 };
@@ -86,16 +87,21 @@ pub mod video_threads;
 pub mod volume_settings;
 pub mod window_settings;
 
-/// Inserts both prepasses while the avatar outline (edge detection) is on and removes them while
-/// it is off, keeping the primary camera's depth prepass, which the jump marker reads. Nothing
-/// else needs them: DoF, stars and the fork's focus target use the main-pass depth, and the hover
-/// glow follows whatever prepasses the view has.
+/// Inserts both prepasses while the avatar outline (edge detection) is on or the camera has SSAO
+/// (native only), and removes them otherwise, keeping the primary camera's depth prepass, which
+/// the jump marker reads. Nothing else needs them: DoF, stars and the fork's focus target use the
+/// main-pass depth, and the hover glow follows whatever prepasses the view has.
+///
+/// SSAO is read from the camera when the command applies, so the outline and SSAO settings reach
+/// the same result in either order.
 pub fn sync_prepasses(cmds: &mut EntityCommands, graphics: &GraphicsSettings) {
     if graphics.avatar_outline {
         cmds.try_insert((DepthPrepass, NormalPrepass));
     } else {
         cmds.queue(|mut camera: EntityWorldMut| {
-            if camera.contains::<PrimaryCamera>() {
+            if camera.contains::<ScreenSpaceAmbientOcclusion>() {
+                camera.insert((DepthPrepass, NormalPrepass));
+            } else if camera.contains::<PrimaryCamera>() {
                 camera.remove::<NormalPrepass>();
             } else {
                 camera.remove::<(DepthPrepass, NormalPrepass)>();
@@ -599,5 +605,68 @@ mod tests {
             assert!(world.entity(camera).contains::<DepthPrepass>());
             assert!(world.entity(camera).contains::<NormalPrepass>());
         }
+    }
+
+    #[test]
+    fn ssao_keeps_both_prepasses_with_the_outline_off() {
+        let mut world = World::new();
+        let primary = world.spawn((PrimaryCamera::default(), DepthPrepass)).id();
+        let texture = world.spawn_empty().id();
+        let off = GraphicsSettings {
+            avatar_outline: false,
+            ..Default::default()
+        };
+
+        // the outline setting applies after SSAO reached the cameras
+        for camera in [primary, texture] {
+            world
+                .entity_mut(camera)
+                .insert(ScreenSpaceAmbientOcclusion::default());
+        }
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &off);
+        sync_prepasses(&mut commands.entity(texture), &off);
+        world.flush();
+        for camera in [primary, texture] {
+            assert!(world.entity(camera).contains::<DepthPrepass>());
+            assert!(world.entity(camera).contains::<NormalPrepass>());
+        }
+
+        // the outline setting applies first and strips them, then SSAO arrives
+        for camera in [primary, texture] {
+            world
+                .entity_mut(camera)
+                .remove::<ScreenSpaceAmbientOcclusion>();
+        }
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &off);
+        sync_prepasses(&mut commands.entity(texture), &off);
+        world.flush();
+        assert!(!world.entity(primary).contains::<NormalPrepass>());
+        assert!(!world.entity(texture).contains::<DepthPrepass>());
+        let mut commands = world.commands();
+        for camera in [primary, texture] {
+            let mut cmds = commands.entity(camera);
+            cmds.try_insert(ScreenSpaceAmbientOcclusion::default());
+            sync_prepasses(&mut cmds, &off);
+        }
+        world.flush();
+        for camera in [primary, texture] {
+            assert!(world.entity(camera).contains::<DepthPrepass>());
+            assert!(world.entity(camera).contains::<NormalPrepass>());
+        }
+
+        // SSAO off again: back to the outline-off layout
+        let mut commands = world.commands();
+        for camera in [primary, texture] {
+            let mut cmds = commands.entity(camera);
+            cmds.remove::<ScreenSpaceAmbientOcclusion>();
+            sync_prepasses(&mut cmds, &off);
+        }
+        world.flush();
+        assert!(world.entity(primary).contains::<DepthPrepass>());
+        assert!(!world.entity(primary).contains::<NormalPrepass>());
+        assert!(!world.entity(texture).contains::<DepthPrepass>());
+        assert!(!world.entity(texture).contains::<NormalPrepass>());
     }
 }
