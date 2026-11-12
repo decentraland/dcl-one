@@ -26,7 +26,8 @@ beforeAll(async () => {
       "/usr/bin/chromium",
     ]),
   );
-});
+  // Chrome can take longer than the default 10 s hook timeout to start on a busy CI runner.
+}, 60_000);
 afterAll(async () => {
   await session?.close();
 });
