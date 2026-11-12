@@ -5,6 +5,112 @@ const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
 const button = (name: string) => ({ role: 'button', name } as const)
 
+type MemoryState = {
+  controlsAvailable: boolean; simulation: string; ram: string | null; gpu: string | null
+  ramActive: boolean; gpuActive: boolean; budgetMs: number
+  caches: { name: string; entries: number; released: number; completedScans: number; scanStatus: string; lastScanReleased: number | null }[]
+}
+
+scenario('memory reclamation validates session controls and restores measured pressure', async ({ explorer }) => {
+  const before = await explorer.json<MemoryState>('/memory_reclaim')
+  const memoryBefore = await explorer.json<{ controlsAvailable: boolean; limit: number }>('/debug_memory')
+  assert.equal(memoryBefore.controlsAvailable, before.controlsAvailable)
+  assert.ok(before.caches.length > 0)
+  if (!before.controlsAvailable) {
+    for (const mutation of ['both', '--budget-ms 1.5']) {
+      await assert.rejects(() => explorer.run('/memory_reclaim ' + mutation), /require preview mode/)
+    }
+    for (const limit of [1, 0]) {
+      await assert.rejects(() => explorer.run('/debug_memory ' + limit), /require preview mode/)
+    }
+    const after = await explorer.json<MemoryState>('/memory_reclaim')
+    assert.equal(after.simulation, before.simulation)
+    assert.equal(after.budgetMs, before.budgetMs)
+    assert.equal((await explorer.json<{ limit: number }>('/debug_memory')).limit, memoryBefore.limit)
+    return
+  }
+  try {
+    await explorer.run('/debug_memory 1')
+    assert.equal((await explorer.json<{ limit: number }>('/debug_memory')).limit, 1)
+    await explorer.run('/debug_memory 0')
+    assert.equal((await explorer.json<{ limit: number }>('/debug_memory')).limit, 0)
+    for (const invalid of ['0', '-1', '16.1', 'NaN', 'inf']) {
+      await assert.rejects(() => explorer.run(`/memory_reclaim both --budget-ms=${invalid}`), /between 0.1 and 16/)
+      const unchanged = await explorer.json<MemoryState>('/memory_reclaim')
+      assert.equal(unchanged.simulation, before.simulation)
+      assert.equal(unchanged.budgetMs, before.budgetMs)
+    }
+    for (const budgetMs of [0.1, 1.5, 16]) {
+      await explorer.run('/memory_reclaim --budget-ms ' + budgetMs)
+      assert.equal((await explorer.json<MemoryState>('/memory_reclaim')).budgetMs, budgetMs)
+    }
+    for (const simulation of ['ram', 'gpu', 'both']) {
+      await explorer.run('/memory_reclaim ' + simulation)
+      await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+        state.simulation === simulation && (simulation === 'gpu' || state.ramActive) &&
+        (simulation === 'ram' || state.gpuActive),
+      { timeoutMs: 5_000, what: 'memory reclamation simulation ' + simulation })
+    }
+    await explorer.run('/memory_reclaim off')
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      state.simulation === 'off' &&
+      !((state.ram == null || state.ram === 'Abundance') && state.ramActive) &&
+      !((state.gpu == null || state.gpu === 'Abundance') && state.gpuActive),
+    { timeoutMs: 5_000, what: 'simulation off to restore real pressure' })
+  } finally {
+    await explorer.run('/debug_memory ' + memoryBefore.limit)
+    await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      state.simulation === before.simulation && state.budgetMs === before.budgetMs,
+    { timeoutMs: 5_000, what: 'the original reclamation settings to be restored' })
+  }
+}, { session: { signIn: 'guest' } })
+
+scenario('memory pressure releases an idle emote pin and preserves replay', async ({ explorer, t }) => {
+  const wave = 'urn:decentraland:off-chain:base-emotes:wave'
+  const before = await explorer.json<MemoryState>('/memory_reclaim')
+  if (!before.controlsAvailable) {
+    t.skip('Actual release requires a preview session; run with DCL_E2E_NATIVE_ARGS="--preview"')
+    return
+  }
+  const emote = (state: MemoryState) => state.caches.find(cache => cache.name === 'emote')!
+  const isWave = (urn: string | undefined) => urn !== undefined && /(?:^|:)wave$/i.test(urn)
+  const waitForEmoteSlot = () => until(async () => (await explorer.myAvatar()).emote, current =>
+    !(current?.source === 'sceneMovementAnim' && current.idle === false),
+  { timeoutMs: 20_000, intervalMs: 100, what: 'scene movement to yield the triggered emote slot' })
+  try {
+    await explorer.run('/memory_reclaim both')
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      emote(state).completedScans > emote(before).completedScans && emote(state).lastScanReleased === 0,
+    { timeoutMs: 30_000, what: 'an emote cache scan with no releases before loading wave' })
+    const waitForWave = () => until(() => explorer.myAvatar(), avatar =>
+      !!avatar.rendered?.processed && !avatar.rendered.failed &&
+      avatar.emote?.source === 'triggeredEmote' && !avatar.emote.finished && isWave(avatar.emote.urn),
+    { timeoutMs: 30_000, intervalMs: 100, what: 'wave to play on the intact avatar' })
+    await explorer.run('/memory_reclaim off')
+    await waitForEmoteSlot()
+    await explorer.run('/emote ' + wave)
+    await waitForWave()
+    const loaded = await explorer.json<MemoryState>('/memory_reclaim')
+    await explorer.run('/memory_reclaim both')
+    await until(() => explorer.myAvatar(), avatar =>
+      !isWave(avatar.emote?.urn) || avatar.emote?.finished === true,
+    { timeoutMs: 30_000, what: 'the observed wave to finish or yield the emote slot' })
+    await until(() => explorer.json<MemoryState>('/memory_reclaim'), state =>
+      emote(state).released > emote(loaded).released &&
+      emote(state).completedScans > emote(loaded).completedScans,
+    { timeoutMs: 30_000, what: 'an idle emote pin to release and another cache scan to complete after wave' })
+    // Scene movement can change cache size independently of wave. Managed asset-loader
+    // tests verify the specific pin's release and graph-owned replay without another load.
+    await explorer.run('/memory_reclaim off')
+    await waitForEmoteSlot()
+    await explorer.run('/emote ' + wave)
+    await waitForWave()
+  } finally {
+    await explorer.run(`/memory_reclaim ${before.simulation} --budget-ms ${before.budgetMs}`)
+  }
+}, { session: { signIn: 'guest' } })
+
 scenario('every registered debug reading resolves or explains what it is waiting for', async ({ explorer }) => {
   const sections = await explorer.json<{ title: string; query: string; fields: [string, string][] }[]>('/debug_panel')
   assert.ok(sections.length > 0)

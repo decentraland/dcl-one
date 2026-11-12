@@ -306,6 +306,34 @@ Kept from explorer-automation's guides:
 
 ## Keeping the suite true
 
+`specs/debug-panel.test.ts` checks every registered diagnostic field and the
+`/memory_reclaim` simulation modes, reset and budget validation.
+The same control scenario checks `/debug_memory` limit changes and reset in preview,
+and mutation denial with read-only readings outside preview.
+A separate scenario observes wave playing on the intact avatar, snapshots the
+reclamation counters, then enables pressure. After playback finishes or yields its
+slot, it waits for `released` and `completedScans` to advance and
+verifies replay. Scene movement can change cache size independently, so the scenario
+does not compare global entry counts.
+The graph continues owning the stopped emote after its cache pin is released;
+managed asset-loader tests verify replay does not fetch or parse it again.
+Both full URNs and short emote names are accepted. Per-asset ownership and release
+are checked by the native library tests.
+Simulation is preview-only; the
+scenarios restore the session settings after exercising it. The control scenario
+checks mutation denial when `controlsAvailable` is false; the release scenario
+explicitly skips that non-preview session. Run mutations against a native preview client using
+`DCL_E2E_NATIVE_ARGS="--preview"` (plus the usual native transport/binary options).
+The normal browser CI session exercises mutation denial, not this preview-only
+scenario. The registered command's preview gate, numeric validation and atomic
+settings changes run as root-crate unit tests in the Explorer CI Test Suite
+(`cargo test --all --profile ci-test --locked -- --test-threads=1`). Cache release
+and scene-emote recovery also run there as native library regressions, including
+real Bevy asset tracking and the collectible manager. Those regressions cover
+graph reuse, local movement-scene ownership beyond cached graph nodes, and scene
+despawn. Metadata tests cover both collectible types, full/compact profiles, raw
+entity JSON and the editor catalogue, including pressure eviction and reload.
+
 The suite and the console surface read the code they test (the repository's `AGENTS.md`). A
 change on the left updates what is on the right in the same change, then runs the check.
 

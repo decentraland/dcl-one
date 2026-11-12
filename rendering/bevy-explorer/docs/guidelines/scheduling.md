@@ -122,15 +122,23 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`Startup`**: `SetupSets::Init` before `SetupSets::Main`. `Init` creates the resources and
   entities other setup depends on (cameras, UI roots, the system scene); `Main` is everything
   that needs them.
-- **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
+- **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters, and
+  `MemoryReclaimPlugin`'s RAM and GPU pressure snapshot.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
-- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
+- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat,
+  and `MemoryReclaimPlugin`'s cache cleanup chain before bevy's frame counter advances.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in
 `visuals`, `GltfLinkSet` for gltf instance linking, `ConsoleSet` (`ConsoleUI`, `Commands`,
 `PostCommands`) in `console`.
+
+`MemoryReclaimPlugin` finalizes registered cache reclaimers in `(priority, name)` order.
+Its `Last` chain resets preview overrides after realm changes in `PostUpdate`, gives the
+reclaimers a shared cooperative allowance, and records the cleanup timing. Cache owners use
+`add_memory_reclaimer` to join that chain. Deferred asset destruction is outside the measured
+allowance.
 
 ## Render world
 

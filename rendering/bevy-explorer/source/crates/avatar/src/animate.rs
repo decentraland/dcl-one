@@ -42,8 +42,98 @@ use scene_runner::{
 
 use crate::{process_avatar, upload_cpu_mesh, AvatarDefinition};
 
+#[cfg(test)]
+#[path = "emote_ownership_tests.rs"]
+mod ownership_tests;
+
 #[derive(Component)]
+#[require(PendingEmoteLoads)]
 pub struct AvatarAnimPlayer(pub Entity);
+
+/// Graph nodes own their aggregate emotes until the node or graph is replaced.
+#[derive(Component, Default)]
+pub(crate) struct EmoteGraphAssets {
+    graph: Option<AssetId<AnimationGraph>>,
+    nodes: HashMap<AnimationNodeIndex, Handle<Collectible<Emote>>>,
+}
+
+impl EmoteGraphAssets {
+    fn set_graph(&mut self, graph: Option<AssetId<AnimationGraph>>) {
+        if self.graph != graph {
+            self.nodes.clear();
+            self.graph = graph;
+        }
+    }
+
+    fn bind(
+        &mut self,
+        graph: AssetId<AnimationGraph>,
+        node: AnimationNodeIndex,
+        emote: Handle<Collectible<Emote>>,
+    ) {
+        self.set_graph(Some(graph));
+        self.nodes.insert(node, emote);
+    }
+}
+
+/// Movement animations remain available for the controlling scene's lifetime,
+/// including clips that have been replaced in an avatar's graph.
+#[derive(Component, Default)]
+struct SceneMovementEmoteAssets(HashSet<Handle<Collectible<Emote>>>);
+
+#[derive(Default)]
+struct PendingEmoteGltf(Option<(EmoteUrn, Handle<Gltf>)>);
+
+impl PendingEmoteGltf {
+    fn synchronize(&mut self, urn: Option<&EmoteUrn>) {
+        if self.0.as_ref().map(|(held, _)| held) != urn {
+            self.0 = None;
+        }
+    }
+
+    fn load(&mut self, urn: &EmoteUrn, load: impl FnOnce() -> Handle<Gltf>) -> Handle<Gltf> {
+        self.synchronize(Some(urn));
+        self.0
+            .get_or_insert_with(|| (urn.clone(), load()))
+            .1
+            .clone()
+    }
+}
+
+/// Playback values are rebuilt by animate; pending requests must survive that
+/// replacement while remaining scoped to their avatar and playback slot.
+#[derive(Component, Default)]
+struct PendingEmoteLoads {
+    full: PendingEmoteGltf,
+    masked: PendingEmoteGltf,
+}
+
+#[allow(clippy::type_complexity)]
+fn synchronize_emote_ownership(
+    mut avatars: Query<(
+        &mut PendingEmoteLoads,
+        Option<&ActiveEmote>,
+        Option<&MaskedEmote>,
+        Option<&AnimationGraphHandle>,
+        Option<&mut EmoteGraphAssets>,
+    )>,
+) {
+    for (mut pending, full, masked, graph, owner) in &mut avatars {
+        pending
+            .full
+            .synchronize(full.filter(|emote| !emote.finished).map(|emote| &emote.urn));
+        // Suspension pauses rendering without ending the masked request's pending load.
+        pending.masked.synchronize(
+            masked
+                .and_then(|masked| masked.request.as_ref())
+                .filter(|emote| !emote.finished)
+                .map(|emote| &emote.urn),
+        );
+        if let Some(mut owner) = owner {
+            owner.set_graph(graph.map(|graph| graph.0.id()));
+        }
+    }
+}
 
 // engine-emote urns used every frame by the velocity selector; parsed once
 // (EmoteUrn::new re-validates and re-allocates several times per call)
@@ -157,7 +247,12 @@ impl Plugin for AvatarAnimationPlugin {
             Update,
             (
                 (handle_trigger_emotes, broadcast_emote).before(animate),
-                (animate, play_current_emote, play_masked_emote)
+                (
+                    animate,
+                    synchronize_emote_ownership,
+                    play_current_emote,
+                    play_masked_emote,
+                )
                     .chain()
                     .after(process_avatar),
                 play_scene_driven_sounds.after(process_avatar),
@@ -393,6 +488,8 @@ pub struct ActiveEmote {
     /// Source path from `MovementAnimation.src`; used to populate feedback and detect
     /// cross-fade boundaries between scene-driven animations.
     scene_anim_src: Option<String>,
+    /// Local controlling scene; remote movement requests have no scene entity here.
+    scene: Option<Entity>,
     /// Alternate state to play if the primary URN fails to resolve. Populated by
     /// `animate` for scene-driven selections with the velocity-based choice;
     /// `play_current_emote` swaps to it on resolution failure.
@@ -410,6 +507,7 @@ impl Default for ActiveEmote {
             pending_seek: None,
             source: ActiveEmoteSource::VelocitySelected,
             scene_anim_src: None,
+            scene: None,
             fallback: None,
         }
     }
@@ -844,6 +942,7 @@ fn animate(
                 pending_seek: if scene_anim_changed { req.seek } else { None },
                 source: ActiveEmoteSource::SceneMovementAnim,
                 scene_anim_src: Some(req.src.clone()),
+                scene: req.scene,
                 fallback: Some(Box::new(velocity_emote)),
             }
         } else {
@@ -977,29 +1076,35 @@ struct PlayParams<'w, 's> {
     meshes: ResMut<'w, Assets<Mesh>>,
     preloaded_gltfs: Query<'w, 's, &'static PreloadedGltf>,
     ipfas: IpfsAssetServer<'w, 's>,
-    cached_gltf_handles: Local<'s, HashSet<Handle<Gltf>>>,
+    pending: Query<'w, 's, &'static mut PendingEmoteLoads>,
+    owners: Query<'w, 's, &'static mut EmoteGraphAssets>,
+    scene_owners: Query<'w, 's, &'static mut SceneMovementEmoteAssets>,
     time: Res<'w, Time>,
+}
+
+struct ResolvedPlayback<'a> {
+    emote: &'a Emote,
+    emote_handle: Handle<Collectible<Emote>>,
+    clip: Handle<AnimationClip>,
+    duration: f32,
 }
 
 /// Resolve what a slot plays to its emote, loaded avatar clip and duration for `bodyshape`,
 /// folding the collectible's loop flag into `playback`. A scene emote's gltf is fetched through
-/// its scene's content (and registered as a builtin collectible on first sight), a wearable emote
+/// its scene's content (and registered as a dynamic collectible on first sight), a wearable emote
 /// through the collectible manager. `Err(Loading)` until everything is in, `Err(Failed)` if it
 /// never will be.
+#[allow(clippy::too_many_arguments)]
 fn resolve_playback<'a>(
     playback: &mut EmotePlayback,
     bodyshape: &str,
     emote_loader: &'a mut CollectibleManager<Emote>,
     gltfs: &mut Assets<Gltf>,
-    params: &mut PlayParams,
-) -> Result<(&'a Emote, Handle<AnimationClip>, f32), Hold> {
-    let PlayParams {
-        ipfas,
-        preloaded_gltfs,
-        cached_gltf_handles,
-        anim_clips,
-        ..
-    } = params;
+    ipfas: &IpfsAssetServer,
+    pending: &mut PendingEmoteGltf,
+    preloaded_gltfs: &Query<&PreloadedGltf>,
+    anim_clips: &Assets<AnimationClip>,
+) -> Result<ResolvedPlayback<'a>, Hold> {
     let urn = &playback.urn;
     if let Some(scene_emote) = urn.scene_emote() {
         debug!("got {scene_emote:?}");
@@ -1027,29 +1132,30 @@ fn resolve_playback<'a>(
         };
 
         if emote_loader.get_representation(urn, bodyshape).is_err() {
-            // play the scene's preloaded copy (`AssetLoad`) if it has one. Otherwise load the
-            // gltf through the scene's modifier context so b64 hashes (local preview /
-            // portable) resolve to the scene's origin rather than the realm content URL.
-            // A by-hash load started before the preload showed up is dropped.
-            let preloaded = preloaded_gltfs
+            // Prefer AssetLoad's preloaded copy; dropping staging ownership also
+            // releases a by-hash request started before the preload arrived.
+            let handle = if let Some(preloaded) = preloaded_gltfs
                 .iter()
-                .find(|p| p.scene_hash == scene_hash && p.content_hash == hash);
-            let handle = match preloaded {
-                Some(preloaded) => {
-                    let by_hash =
-                        IpfsAssetServer::scene_content_hash_path::<Gltf>(&scene_hash, &hash);
-                    cached_gltf_handles.retain(|h| h.path() != Some(&by_hash));
-                    preloaded.handle.clone()
-                }
-                None => ipfas.load_scene_content_hash::<Gltf>(&scene_hash, &hash),
+                .find(|p| p.scene_hash == scene_hash && p.content_hash == hash)
+            {
+                pending.0 = None;
+                preloaded.handle.clone()
+            } else {
+                pending.load(urn, || {
+                    ipfas.load_scene_content_hash::<Gltf>(&scene_hash, &hash)
+                })
             };
             let gltf = match gltfs.get_mut(handle.id()) {
-                Some(gltf) => {
-                    cached_gltf_handles.remove(&handle);
-                    gltf
-                }
+                Some(gltf) => gltf,
                 None => {
-                    cached_gltf_handles.insert(handle);
+                    if matches!(
+                        ipfas.asset_server().load_state(handle.id()),
+                        bevy::asset::LoadState::Failed(_)
+                    ) {
+                        // Reuse this terminal state while animate rebuilds the same request.
+                        // Loading it again would retry the failed asset every frame.
+                        return Err(Hold::Failed);
+                    }
                     return Err(Hold::Loading);
                 }
             };
@@ -1057,7 +1163,7 @@ fn resolve_playback<'a>(
             // fix up the gltf if possible/required
             if !gltf.named_animations.any_avatar_emote() {
                 let Some(anim) = gltf.animations.first() else {
-                    warn!("scene emote has no animations");
+                    warn_once!("scene emote has no animations");
                     return Err(Hold::Failed);
                 };
 
@@ -1065,7 +1171,7 @@ fn resolve_playback<'a>(
             }
 
             // add repr
-            emote_loader.add_builtin(
+            emote_loader.add_dynamic(
                 urn.clone(),
                 Collectible {
                     representations: HashMap::from_iter([(
@@ -1090,7 +1196,11 @@ fn resolve_playback<'a>(
         }
     }
 
-    let emote = match emote_loader.get_representation(urn, bodyshape) {
+    // The locomotion fallback shares the full slot while its scene clip is loading.
+    if pending.0.as_ref().is_some_and(|(held, _)| held == urn) {
+        pending.0 = None;
+    }
+    let (emote, handle) = match emote_loader.get_representation_with_handle(urn, bodyshape) {
         Ok(emote) => emote,
         Err(CollectibleError::Loading) => {
             debug!("{} -> loading", urn);
@@ -1117,7 +1227,12 @@ fn resolve_playback<'a>(
         .get(&clip)
         .map(|clip| clip.duration())
         .ok_or(Hold::Loading)?;
-    Ok((emote, clip, duration))
+    Ok(ResolvedPlayback {
+        emote,
+        emote_handle: handle,
+        clip,
+        duration,
+    })
 }
 
 enum PropState {
@@ -1387,7 +1502,7 @@ enum Slot<'a> {
 }
 
 /// Clip nodes an avatar's graph holds per slot kind before a new clip replaces one: the graph
-/// can't drop nodes, and each keeps its clip loaded.
+/// can't drop nodes, and each keeps its emote loaded.
 const MAX_CLIP_NODES: usize = 16;
 
 /// `urn`'s clip node in the avatar graph, stamped as played at `now`. A new urn gets `clip` under
@@ -1506,9 +1621,50 @@ fn play_slot(
     speed: f32,
     seek: &mut Option<f32>,
     default_mark: Option<f32>,
+    scene: Option<Entity>,
 ) -> Result<Played, Hold> {
-    let (emote, clip, clip_duration) =
-        resolve_playback(playback, bodyshape, emote_loader, gltfs, params)?;
+    let ResolvedPlayback {
+        emote,
+        emote_handle,
+        clip,
+        duration: clip_duration,
+    } = {
+        let mut pending = params.pending.get_mut(avatar).map_err(|_| Hold::NoPlayer)?;
+        let pending_slot = match slot {
+            Slot::FullBody { .. } => &mut pending.full,
+            Slot::UpperBody { .. } => &mut pending.masked,
+        };
+        resolve_playback(
+            playback,
+            bodyshape,
+            emote_loader,
+            gltfs,
+            &params.ipfas,
+            pending_slot,
+            &params.preloaded_gltfs,
+            &params.anim_clips,
+        )?
+    };
+
+    if let Some(scene) = scene {
+        if let Ok(mut owner) = params.scene_owners.get_mut(scene) {
+            if !owner.0.contains(&emote_handle) {
+                owner.0.insert(emote_handle.clone());
+            }
+        } else if let Ok(mut scene) = commands.get_entity(scene) {
+            let handle = emote_handle.clone();
+            // Accumulate at command application so concurrent first resolutions cannot
+            // replace one another. A scene may despawn before this command applies.
+            scene.queue_silenced(move |mut entity: EntityWorldMut| {
+                entity
+                    .entry::<SceneMovementEmoteAssets>()
+                    .or_default()
+                    .get_mut()
+                    .0
+                    .insert(handle);
+            });
+        }
+    }
 
     // extract props and prop anim
     let (prop_fresh, prop_player_and_clip) = match ensure_prop(
@@ -1588,6 +1744,16 @@ fn play_slot(
             )
         }
     };
+
+    let graph = graph.ok_or(Hold::NoPlayer)?;
+    if clip_ix == AnimationNodeIndex::new(u32::MAX as usize) {
+        return Err(Hold::NoPlayer);
+    }
+    params
+        .owners
+        .get_mut(player_ent)
+        .map_err(|_| Hold::NoPlayer)?
+        .bind(graph.0.id(), clip_ix, emote_handle);
 
     let sound = slot_sound(
         emote,
@@ -1805,6 +1971,7 @@ fn play_current_emote(
                 active_emote.speed,
                 &mut active_emote.pending_seek,
                 active_emote.initial_audio_mark,
+                active_emote.scene,
             ) {
                 Err(Hold::Failed) => {
                     if let Some(fb) = active_emote.fallback.take() {
@@ -1868,6 +2035,7 @@ fn play_current_emote(
                     fb.speed,
                     &mut fb.pending_seek,
                     fb.initial_audio_mark,
+                    None,
                 )
                 .ok()
             }),
@@ -2017,6 +2185,7 @@ fn play_masked_emote(
                 },
                 1.0,
                 &mut None,
+                None,
                 None,
             ) {
                 Ok(_) => 1.0,

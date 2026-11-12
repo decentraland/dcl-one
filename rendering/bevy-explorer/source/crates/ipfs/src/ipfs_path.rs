@@ -1031,7 +1031,7 @@ mod tests {
     #[test]
     fn a_content_map_miss_is_only_hashed_as_a_url() {
         let mut context = crate::IpfsContext::default();
-        context.entities.insert(
+        context.register_entity(
             "scenehash".to_owned(),
             crate::IpfsEntity {
                 collection: crate::ContentMap::new_single(

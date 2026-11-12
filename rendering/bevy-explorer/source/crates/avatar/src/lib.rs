@@ -19,8 +19,8 @@ use bevy::{
 use bevy_console::ConsoleCommand;
 use collectibles::{
     base_wearables,
-    wearables::{UsedWearables, Wearable, WearableCategory, WearableModel, WearableUrn},
-    CollectibleError, CollectibleManager, Emote, EmoteUrn,
+    wearables::{Wearable, WearableCategory, WearableModel, WearableUrn},
+    Collectible, CollectibleError, CollectibleManager, Emote, EmoteUrn,
 };
 use colliders::AvatarColliderPlugin;
 use console::DoAddConsoleCommand;
@@ -54,6 +54,8 @@ mod two_bone_ik;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wearable_ownership_tests;
 
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
@@ -525,6 +527,8 @@ fn select_avatar(
 #[derive(Component)]
 pub struct AvatarDefinition {
     render: AvatarRenderDefinition,
+    /// Keep the source aggregates loaded for this definition's lifetime, outside visual equality.
+    _collectibles: Vec<Handle<Collectible<Wearable>>>,
     /// played once the avatar is processed. a change of emote alone is applied to the avatar
     /// as it stands, without a rebuild
     emote: Option<EmoteCommand>,
@@ -665,30 +669,31 @@ fn update_render_avatar(
                 .try_insert(PartitionedDownloads(hashes));
         }
 
-        let body = match wearable_loader.get_representation(&body_urn, body_urn.as_str()) {
-            Ok(body) => body.clone(),
-            Err(CollectibleError::Loading) => {
-                debug!("waiting for hash from body {body_urn}");
-                commands.entity(entity).try_insert(RetryRenderAvatar);
-                continue;
-            }
-            Err(other) => {
-                warn!("failed to resolve body {body_urn}: {other:?}");
-                if let Some(scene_ent) = maybe_scene_ent {
-                    report_avatar_load(
-                        &mut scenes,
-                        &timestamp,
-                        scene_ent,
-                        LoadingState::FinishedWithError,
-                        body_urn.as_str(),
-                    );
+        let (body, body_handle) =
+            match wearable_loader.get_representation_with_handle(&body_urn, body_urn.as_str()) {
+                Ok((body, handle)) => (body.clone(), handle),
+                Err(CollectibleError::Loading) => {
+                    debug!("waiting for hash from body {body_urn}");
+                    commands.entity(entity).try_insert(RetryRenderAvatar);
+                    continue;
                 }
-                // don't retry
-                let data = wearable_loader.get_data(&body_urn);
-                debug!("data: {data:?}");
-                continue;
-            }
-        };
+                Err(other) => {
+                    warn!("failed to resolve body {body_urn}: {other:?}");
+                    if let Some(scene_ent) = maybe_scene_ent {
+                        report_avatar_load(
+                            &mut scenes,
+                            &timestamp,
+                            scene_ent,
+                            LoadingState::FinishedWithError,
+                            body_urn.as_str(),
+                        );
+                    }
+                    // don't retry
+                    let data = wearable_loader.get_data(&body_urn);
+                    debug!("data: {data:?}");
+                    continue;
+                }
+            };
 
         // get wearables
         let mut all_loaded = true;
@@ -699,8 +704,8 @@ fn update_render_avatar(
             .iter()
             .flat_map(|w| WearableUrn::new(w).ok())
             .flat_map(|wearable| {
-                match wearable_loader.get_representation(&wearable, body_urn.as_str()) {
-                    Ok(data) => Some((data.category, (data.clone(), wearable))),
+                match wearable_loader.get_representation_with_handle(&wearable, body_urn.as_str()) {
+                    Ok((data, handle)) => Some((data.category, (data.clone(), wearable, handle))),
                     Err(CollectibleError::Loading) => {
                         debug!("waiting for wearable {wearable:?}");
                         all_loaded = false;
@@ -725,8 +730,10 @@ fn update_render_avatar(
         // add defaults
         let defaults: Vec<_> = base_wearables::default_wearables(&body_urn)
             .flat_map(|default| {
-                match wearable_loader.get_representation(default.base(), body_urn.as_str()) {
-                    Ok(data) => Some((data.clone(), default.base().to_owned())),
+                match wearable_loader
+                    .get_representation_with_handle(default.base(), body_urn.as_str())
+                {
+                    Ok((data, handle)) => Some((data.clone(), default.base().to_owned(), handle)),
                     _ => {
                         debug!("waiting for {default:?}");
                         all_loaded = false;
@@ -741,10 +748,10 @@ fn update_render_avatar(
             continue;
         }
 
-        for (default, default_urn) in defaults {
+        for (default, default_urn, handle) in defaults {
             if !wearables.contains_key(&default.category) {
                 debug!("adding default {default:?}");
-                wearables.insert(default.category, (default, default_urn));
+                wearables.insert(default.category, (default, default_urn, handle));
             }
         }
 
@@ -758,7 +765,7 @@ fn update_render_avatar(
                 continue;
             }
 
-            if let Some((wearable, _)) = wearables.get(category) {
+            if let Some((wearable, ..)) = wearables.get(category) {
                 hides_first_pass.extend(wearable.hides.iter());
                 debug!(
                     "add {:?} = {:?} -> {:?}",
@@ -778,7 +785,7 @@ fn update_render_avatar(
                 continue;
             }
 
-            if let Some((wearable, _)) = wearables.get(category) {
+            if let Some((wearable, ..)) = wearables.get(category) {
                 hides.extend(wearable.hides.iter());
                 debug!("add {:?} = {:?} -> {:?}", category, wearable.hides, hides);
             }
@@ -800,18 +807,20 @@ fn update_render_avatar(
             initial_count
         );
 
+        let mut collectible_handles = vec![body_handle];
         let mut wearables: Vec<(WearableUrn, Wearable)> = wearables
             .into_values()
-            .map(|(wearable, urn)| (urn, wearable))
+            .map(|(wearable, urn, handle)| {
+                collectible_handles.push(handle);
+                (urn, wearable)
+            })
             .collect();
         // a fixed order, so an unchanged definition compares equal
         wearables.sort_by_key(|(_, wearable)| wearable.category);
 
-        let mut urns: HashSet<_> = wearables.iter().map(|(urn, _)| urn.clone()).collect();
-        urns.insert(body_urn.clone());
-
         debug!("avatar definition loaded: {wearables:?}");
         let definition = AvatarDefinition {
+            _collectibles: collectible_handles,
             render: AvatarRenderDefinition {
                 body,
                 body_shape: body_urn.as_str().to_owned(),
@@ -976,7 +985,6 @@ fn update_render_avatar(
                 Transform::from_rotation(Quat::from_rotation_y(PI)),
                 Visibility::default(),
                 definition,
-                UsedWearables(urns),
             ));
         });
 
@@ -1328,6 +1336,7 @@ fn process_avatar(
                 transitions,
                 clips,
                 AnimationGraphHandle(graph),
+                animate::EmoteGraphAssets::default(),
             ));
         }
 

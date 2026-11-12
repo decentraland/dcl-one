@@ -325,6 +325,9 @@ pub fn avatar_tilt_quat(pitch_deg: f32, roll_deg: f32) -> bevy::math::Quat {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct SceneDrivenAnimationRequest {
+    /// Local controlling scene, which owns resolved movement animations until it despawns.
+    /// Remote requests have no corresponding scene entity in this world.
+    pub scene: Option<Entity>,
     // scene-relative path (e.g. "assets/walk.glb") — used for feedback to the controlling
     // scene. Empty for remote requests received over the network.
     pub src: String,

@@ -355,6 +355,7 @@ fn save_composite_cmd(
     mut input: ConsoleCommand<SaveCompositeCommand>,
     resolver: SceneResolver,
     ipfs: Res<ipfs::IpfsResource>,
+    metadata: crate::asset_commands::SceneMetadata,
     mut console_responses: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(cmd)) = input.take() {
@@ -365,10 +366,17 @@ fn save_composite_cmd(
                 return;
             }
         };
-        let hash = match resolver.resolve() {
-            Ok((_, ctx)) => ctx.hash.to_string(),
+        let (scene, hash) = match resolver.resolve() {
+            Ok((scene, ctx)) => (scene, ctx.hash.to_string()),
             Err(e) => {
                 input.reply_failed(e);
+                return;
+            }
+        };
+        let metadata = match metadata.snapshot(scene, &hash) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                input.reply_failed(error);
                 return;
             }
         };
@@ -380,8 +388,13 @@ fn save_composite_cmd(
         let (tx, rx) = tokio::sync::oneshot::channel();
         IoTaskPool::get()
             .spawn(async move {
-                let target = crate::asset_commands::scene_target_json(&io, &hash).await;
-                let _ = tx.send(platform::save_scene_composite(hash, bytes, target).await);
+                let result = async {
+                    let target =
+                        crate::asset_commands::scene_target_json(&io, &hash, metadata).await?;
+                    platform::save_scene_composite(hash, bytes, target).await
+                }
+                .await;
+                let _ = tx.send(result);
             })
             .detach();
         console_responses.push_oneshot(rx, |r| r, input.take_responder());

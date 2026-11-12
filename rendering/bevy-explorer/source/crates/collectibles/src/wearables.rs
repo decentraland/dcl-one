@@ -2,39 +2,32 @@ use std::str::FromStr;
 
 use crate::{
     urn::{CollectibleInstance, CollectibleUrn},
-    Collectible, CollectibleData, CollectibleType, Collectibles, CollectiblesTypePlugin,
+    Collectible, CollectibleData, CollectibleType, CollectiblesTypePlugin,
 };
 use anyhow::anyhow;
 use bevy::{
     asset::{io::AssetSourceId, AssetEvents, AssetLoader, AssetPath, RenderAssetTransferPriority},
-    diagnostic::FrameCount,
     gltf::{Gltf, GltfLoaderSettings},
     image::ImageLoaderSettings,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::render_asset::RenderAssetUsages,
-    tasks::{IoTaskPool, Task},
 };
 use serde::Deserialize;
 
-use common::util::{TaskCompat, TaskExt};
-use ipfs::{ipfs_path::ContentPathExt, EntityDefinitionLoader, IpfsAssetServer};
+use ipfs::{ipfs_path::ContentPathExt, EntityDefinitionLoader};
 
 pub struct WearablePlugin;
 
 impl Plugin for WearablePlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(CollectiblesTypePlugin::<Wearable>::default())
-            .init_resource::<WearableCollections>();
+        app.add_plugins(CollectiblesTypePlugin::<Wearable>::default());
         app.register_asset_loader(WearableLoader);
         app.register_asset_loader(WearableMetaLoader);
-        app.add_systems(Update, (load_collections, retain_wearables));
+        app.add_systems(Update, crate::expire_idle_wearables);
         app.add_systems(PostUpdate, clean_images.before(AssetEvents));
     }
 }
-
-#[derive(Resource, Default)]
-pub struct WearableCollections(pub HashMap<String, String>);
 
 pub type WearableUrn = CollectibleUrn<Wearable>;
 pub type WearableInstance = CollectibleInstance<Wearable>;
@@ -69,66 +62,6 @@ pub struct WearableRepresentation {
     pub override_replaces: Vec<WearableCategory>,
     pub override_hides: Vec<WearableCategory>,
     pub contents: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct Collection {
-    pub id: String,
-    pub name: String,
-}
-
-#[derive(Deserialize)]
-struct Collections {
-    collections: Vec<Collection>,
-}
-
-fn load_collections(
-    mut once: Local<bool>,
-    mut collections: ResMut<WearableCollections>,
-    mut task: Local<Option<Task<Result<Collections, anyhow::Error>>>>,
-    ipfs: IpfsAssetServer,
-) {
-    if *once {
-        return;
-    }
-
-    match *task {
-        None => {
-            let client = ipfs.ipfs().client();
-            let t: Task<Result<Collections, anyhow::Error>> =
-                IoTaskPool::get().spawn_compat(async move {
-                    let response = client
-                        .get(common::base_domain::url(
-                            common::base_domain::Service::Catalyst,
-                            "/lambdas/collections",
-                        ))
-                        .timeout(std::time::Duration::from_secs(10))
-                        .send()
-                        .await
-                        .map_err(|e| anyhow!(e))?;
-                    response.json::<Collections>().await.map_err(|e| anyhow!(e))
-                });
-            *task = Some(t)
-        }
-        Some(ref mut active_task) => match active_task.complete() {
-            None => (),
-            Some(Err(e)) => {
-                warn!("failed to acquire collections: {e}");
-                *task = None;
-                *once = true;
-            }
-            Some(Ok(collections_result)) => {
-                collections.0 = HashMap::from_iter(
-                    collections_result
-                        .collections
-                        .into_iter()
-                        .map(|c| (c.id, c.name)),
-                );
-                *task = None;
-                *once = true;
-            }
-        },
-    }
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Debug)]
@@ -505,25 +438,6 @@ impl AssetLoader for WearableLoader {
     }
 }
 
-#[derive(Component)]
-pub struct UsedWearables(pub HashSet<CollectibleUrn<Wearable>>);
-
-fn retain_wearables(
-    used: Query<&UsedWearables>,
-    mut collectibles: ResMut<Collectibles<Wearable>>,
-    frame: Res<FrameCount>,
-) {
-    let urns = used.iter().fold(
-        HashSet::<&CollectibleUrn<Wearable>>::default(),
-        |mut urns, used| {
-            urns.extend(used.0.iter());
-            urns
-        },
-    );
-
-    collectibles.retain(frame.0, |urn| urns.contains(urn));
-}
-
 struct WearableMetaLoader;
 
 impl AssetLoader for WearableMetaLoader {
@@ -627,6 +541,22 @@ fn screenshot_reference(path: &AssetPath<'_>) -> bool {
     // leaves metadata in Assets<Image>, but the renderer takes their pixel buffers.
     matches!(path.source(), AssetSourceId::Name(source) if source.as_ref() == "embedded")
         && path.path().starts_with("images/screenshots")
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn wearable_metadata_expires_and_reloads() {
+        crate::metadata_lifecycle_tests::metadata_expires_and_reloads::<Wearable>(
+            WearableMetaLoader,
+            serde_json::json!({
+                "id": "fixture", "name": "Fixture metadata", "thumbnail": "thumbnail.png",
+                "data": { "tags": [], "category": "hat", "representations": [], "hides": [], "replaces": [] }
+            }),
+        );
+    }
 }
 
 #[cfg(test)]

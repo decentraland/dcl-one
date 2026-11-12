@@ -1,8 +1,34 @@
 pub mod base_wearables;
+mod cache;
+#[cfg(test)]
+mod dynamic_lifecycle_tests;
 pub mod emotes;
 pub mod ext;
+#[cfg(test)]
+mod metadata_lifecycle_tests;
 pub mod urn;
 pub mod wearables;
+
+#[cfg(feature = "test-support")]
+pub mod test_support {
+    use super::*;
+
+    /// Installs the real wearable cache schedules with already resolved remote pointers.
+    /// Tests supply their own asset reader and loader, without catalogue HTTP requests.
+    pub fn wearable_cache(
+        app: &mut App,
+        pointers: impl IntoIterator<Item = (wearables::WearableUrn, String)>,
+    ) {
+        app.add_plugins(CollectiblesTypePlugin::<wearables::Wearable>::default())
+            .add_systems(Update, expire_idle_wearables);
+        let mut cache = app
+            .world_mut()
+            .resource_mut::<Collectibles<wearables::Wearable>>();
+        for (urn, hash) in pointers {
+            cache.record_remote(urn, PointerResult::Hash(hash));
+        }
+    }
+}
 
 use std::{marker::PhantomData, path::PathBuf};
 
@@ -13,6 +39,9 @@ use bevy::{
     prelude::*,
 };
 
+use common::memory_reclaim::{
+    AddMemoryReclaimer, MemoryReclaimState, ReclaimBudget, ReclaimDomains, ReclaimSpec, ReclaimTurn,
+};
 use common::util::TaskExt;
 pub use emotes::*;
 use ipfs::{
@@ -44,7 +73,15 @@ impl<T: CollectibleType> Plugin for CollectiblesTypePlugin<T> {
         app.init_resource::<Collectibles<T>>()
             .init_asset::<Collectible<T>>()
             .init_asset::<CollectibleData<T>>()
-            .add_systems(Update, request_collectibles::<T>);
+            .add_systems(Update, (request_collectibles::<T>, prune_dynamic::<T>))
+            .add_memory_reclaimer(
+                ReclaimSpec::new(T::extension(), 10, ReclaimDomains::RamAndGpu),
+                reclaim_representations::<T>,
+            )
+            .add_memory_reclaimer(
+                ReclaimSpec::new(T::data_extension(), 20, ReclaimDomains::Ram),
+                reclaim_metadata::<T>,
+            );
     }
 }
 
@@ -58,6 +95,12 @@ pub trait CollectibleType: std::fmt::Debug + TypePath + Send + Sync + 'static {
     fn source_collections() -> &'static [&'static str];
     fn extension() -> &'static str;
     fn data_extension() -> &'static str;
+    fn is_dynamic(_urn: &CollectibleUrn<Self>) -> bool
+    where
+        Self: Sized,
+    {
+        false
+    }
 }
 
 pub enum PointerResult<T: CollectibleType> {
@@ -103,8 +146,11 @@ pub struct Collectibles<T: CollectibleType> {
     pointer_request: HashSet<CollectibleUrn<T>>,
     /// requested urn -> the `source_collections` urn it resolved to
     aliases: HashMap<CollectibleUrn<T>, CollectibleUrn<T>>,
-    cache: HashMap<CollectibleUrn<T>, (u32, Handle<Collectible<T>>)>,
-    data_cache: HashMap<CollectibleUrn<T>, (u32, Handle<CollectibleData<T>>)>,
+    cache: cache::IdleCache<Collectible<T>>,
+    data_cache: cache::IdleCache<CollectibleData<T>>,
+    // Non-owning indexes; AssetEvent::Removed prunes them without a whole-map scan.
+    dynamic: HashMap<CollectibleUrn<T>, AssetId<Collectible<T>>>,
+    dynamic_urns: HashMap<AssetId<Collectible<T>>, CollectibleUrn<T>>,
 }
 
 impl<T: CollectibleType> Collectibles<T> {
@@ -117,17 +163,12 @@ impl<T: CollectibleType> Collectibles<T> {
         }
     }
 
-    pub fn retain(&mut self, frame: u32, f: impl Fn(&CollectibleUrn<T>) -> bool) {
-        let count = self.cache.len();
-        self.cache
-            .retain(|urn, (expiry, _)| *expiry >= frame || f(urn));
-        if self.cache.len() != count {
-            debug!(
-                "{}/{} {} remain",
-                self.cache.len(),
-                count,
-                std::any::type_name::<T>()
-            );
+    fn record_remote(&mut self, urn: CollectibleUrn<T>, result: PointerResult<T>) {
+        // A delayed response must not replace a local builtin or synthesized scene emote.
+        if !T::is_dynamic(&urn)
+            && !matches!(self.pointers.get(&urn), Some(PointerResult::Builtin(_)))
+        {
+            self.pointers.insert(urn, result);
         }
     }
 }
@@ -140,6 +181,8 @@ impl<T: CollectibleType> Default for Collectibles<T> {
             aliases: Default::default(),
             cache: Default::default(),
             data_cache: Default::default(),
+            dynamic: Default::default(),
+            dynamic_urns: Default::default(),
         }
     }
 }
@@ -156,6 +199,8 @@ pub struct CollectibleManager<'w, 's, T: CollectibleType> {
 #[derive(Debug)]
 pub enum CollectibleError {
     Loading,
+    /// The remote pointer is absent, or a dynamic collectible has no local value.
+    /// Dynamic values require synthesis through `CollectibleManager::add_dynamic`.
     Missing,
     Failed,
     NoRepresentation,
@@ -168,6 +213,9 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
         &mut self,
         urn: impl AsRef<CollectibleUrn<T>>,
     ) -> Result<String, CollectibleError> {
+        if T::is_dynamic(urn.as_ref()) {
+            return Err(CollectibleError::NoRepresentation);
+        }
         match self.collectibles.pointers.get(urn.as_ref()) {
             Some(PointerResult::Missing) => Err(CollectibleError::Missing),
             Some(PointerResult::Hash(hash)) => Ok(hash.to_owned()),
@@ -181,107 +229,129 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
         }
     }
 
-    pub fn get_representation(
+    fn representation_handle(
         &mut self,
-        urn: impl AsRef<CollectibleUrn<T>>,
-        body_shape: &str,
-    ) -> Result<&T, CollectibleError> {
-        match self.collectibles.pointers.get(urn.as_ref()) {
+        urn: &CollectibleUrn<T>,
+    ) -> Result<Handle<Collectible<T>>, CollectibleError> {
+        if T::is_dynamic(urn) {
+            let id = *self
+                .collectibles
+                .dynamic
+                .get(urn)
+                .ok_or(CollectibleError::Missing)?;
+            if !self.assets.contains(id) {
+                return Err(CollectibleError::Missing);
+            }
+            return Ok(self
+                .collectibles
+                .cache
+                .get_or_insert_with(urn.as_str(), self.frame.0, || {
+                    self.assets
+                        .get_strong_handle(id)
+                        .expect("dynamic asset checked above")
+                })
+                .clone());
+        }
+        match self.collectibles.pointers.get(urn) {
             Some(PointerResult::Missing) => Err(CollectibleError::Missing),
+            Some(PointerResult::Builtin(handle)) => Ok(handle.clone()),
             Some(PointerResult::Hash(hash)) => {
                 let hash = hash.clone();
-                let (expiry, handle) = self
+                Ok(self
                     .collectibles
                     .cache
-                    .entry(urn.as_ref().clone())
-                    .or_insert_with(|| {
-                        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+                    .get_or_insert_with(&hash, self.frame.0, || {
+                        let path = IpfsPath::new(IpfsType::new_content_file(
                             hash.clone(),
                             format!("collectible.{}", T::extension()),
                         ));
-
-                        (
-                            0,
-                            self.ipfas
-                                .asset_server()
-                                .load::<Collectible<T>>(PathBuf::from(&ipfs_path)),
-                        )
-                    });
-
-                *expiry = self.frame.0 + RETAIN_TICKS;
-
-                if let Some(reps) = self.assets.get(handle.id()) {
-                    match reps.representations.get(body_shape.to_lowercase().as_str()) {
-                        Some(collectible) => Ok(collectible),
-                        None => Err(CollectibleError::NoRepresentation),
-                    }
-                } else if let bevy::asset::LoadState::Failed(_) =
-                    self.ipfas.asset_server().load_state(handle.id())
-                {
-                    Err(CollectibleError::Failed)
-                } else {
-                    Err(CollectibleError::Loading)
-                }
-            }
-            Some(PointerResult::Builtin(handle)) => {
-                let reps = self.assets.get(handle).unwrap();
-                match reps.representations.get(body_shape) {
-                    Some(collectible) => Ok(collectible),
-                    None => Err(CollectibleError::NoRepresentation),
-                }
+                        self.ipfas.asset_server().load(PathBuf::from(&path))
+                    })
+                    .clone())
             }
             None => {
-                self.collectibles
-                    .pointer_request
-                    .insert(urn.as_ref().clone());
+                self.collectibles.pointer_request.insert(urn.clone());
                 Err(CollectibleError::Loading)
             }
         }
     }
 
+    pub fn get_representation(
+        &mut self,
+        urn: impl AsRef<CollectibleUrn<T>>,
+        body_shape: &str,
+    ) -> Result<&T, CollectibleError> {
+        self.get_representation_with_handle(urn, body_shape)
+            .map(|(representation, _)| representation)
+    }
+
+    /// Consumers such as animation graph nodes retain this handle for their entire lifetime.
+    pub fn get_representation_with_handle(
+        &mut self,
+        urn: impl AsRef<CollectibleUrn<T>>,
+        body_shape: &str,
+    ) -> Result<(&T, Handle<Collectible<T>>), CollectibleError> {
+        let handle = self.representation_handle(urn.as_ref())?;
+        let Some(asset) = self.assets.get(handle.id()) else {
+            return Err(
+                if matches!(
+                    self.ipfas.asset_server().load_state(handle.id()),
+                    bevy::asset::LoadState::Failed(_)
+                ) {
+                    CollectibleError::Failed
+                } else {
+                    CollectibleError::Loading
+                },
+            );
+        };
+        let representation = asset
+            .representations
+            .get(&body_shape.to_lowercase())
+            .ok_or(CollectibleError::NoRepresentation)?;
+        Ok((representation, handle))
+    }
+
+    /// Dynamic collectibles must already be synthesized through [`Self::add_dynamic`].
+    /// `Missing` for an unbuilt or reclaimed dynamic value does not start a remote load.
     pub fn get_data(
         &mut self,
         urn: impl AsRef<CollectibleUrn<T>>,
     ) -> Result<&CollectibleData<T>, CollectibleError> {
-        match self.collectibles.pointers.get(urn.as_ref()) {
-            Some(PointerResult::Missing) => Err(CollectibleError::Missing),
-            Some(PointerResult::Hash(hash)) => {
-                let hash = hash.clone();
-                let (expiry, handle) = self
-                    .collectibles
-                    .data_cache
-                    .entry(urn.as_ref().clone())
-                    .or_insert_with(|| {
-                        let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
-                            hash,
-                            format!("collectible.{}", T::data_extension()),
-                        ));
-
-                        (
-                            0,
-                            self.ipfas
-                                .asset_server()
-                                .load::<CollectibleData<T>>(PathBuf::from(&ipfs_path)),
-                        )
-                    });
-
-                *expiry = self.frame.0 + RETAIN_TICKS;
-
-                if let Some(reps) = self.datas.get(handle.id()) {
-                    Ok(reps)
-                } else if let bevy::asset::LoadState::Failed(_) =
-                    self.ipfas.asset_server().load_state(handle.id())
-                {
-                    Err(CollectibleError::Failed)
-                } else {
-                    Err(CollectibleError::Loading)
-                }
+        let urn = urn.as_ref();
+        match (T::is_dynamic(urn), self.collectibles.pointers.get(urn)) {
+            (true, _) | (_, Some(PointerResult::Builtin(_))) => {
+                let handle = self.representation_handle(urn)?;
+                self.assets
+                    .get(handle.id())
+                    .map(|asset| &asset.data)
+                    .ok_or(CollectibleError::Loading)
             }
-            Some(PointerResult::Builtin(handle)) => Ok(&self.assets.get(handle).unwrap().data),
-            None => {
-                self.collectibles
-                    .pointer_request
-                    .insert(urn.as_ref().clone());
+            (_, Some(PointerResult::Missing)) => Err(CollectibleError::Missing),
+            (_, Some(PointerResult::Hash(hash))) => {
+                let hash = hash.clone();
+                let handle =
+                    self.collectibles
+                        .data_cache
+                        .get_or_insert_with(&hash, self.frame.0, || {
+                            let path = IpfsPath::new(IpfsType::new_content_file(
+                                hash.clone(),
+                                format!("collectible.{}", T::data_extension()),
+                            ));
+                            self.ipfas.asset_server().load(PathBuf::from(&path))
+                        });
+                self.datas.get(handle.id()).ok_or_else(|| {
+                    if matches!(
+                        self.ipfas.asset_server().load_state(handle.id()),
+                        bevy::asset::LoadState::Failed(_)
+                    ) {
+                        CollectibleError::Failed
+                    } else {
+                        CollectibleError::Loading
+                    }
+                })
+            }
+            (_, None) => {
+                self.collectibles.pointer_request.insert(urn.clone());
                 Err(CollectibleError::Loading)
             }
         }
@@ -307,6 +377,106 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
                 .insert(urn, PointerResult::Builtin(handle));
         }
     }
+
+    /// Synthesized scene content has ordinary idle pins, unlike permanent engine builtins.
+    pub fn add_dynamic(&mut self, urn: CollectibleUrn<T>, value: Collectible<T>) {
+        assert!(T::is_dynamic(&urn));
+        let existing = self
+            .collectibles
+            .dynamic
+            .get(&urn)
+            .and_then(|id| self.assets.get_strong_handle(*id));
+        let handle = if let Some(handle) = existing {
+            let asset = self.assets.get_mut(&handle).unwrap();
+            asset.representations.extend(value.representations);
+            asset
+                .data
+                .available_representations
+                .extend(value.data.available_representations);
+            handle
+        } else {
+            self.assets.add(value)
+        };
+        self.collectibles.dynamic.insert(urn.clone(), handle.id());
+        self.collectibles
+            .dynamic_urns
+            .insert(handle.id(), urn.clone());
+        self.collectibles.pointer_request.remove(&urn);
+        self.collectibles
+            .cache
+            .get_or_insert_with(urn.as_str(), self.frame.0, || handle);
+    }
+}
+
+fn prune_dynamic<T: CollectibleType>(
+    mut removed: EventReader<AssetEvent<Collectible<T>>>,
+    mut cache: ResMut<Collectibles<T>>,
+) {
+    for event in removed.read() {
+        if let AssetEvent::Removed { id } = event {
+            if let Some(urn) = cache.dynamic_urns.remove(id) {
+                if cache.dynamic.get(&urn) == Some(id) {
+                    cache.dynamic.remove(&urn);
+                }
+            }
+        }
+    }
+}
+
+fn load_pending<A: Asset>(server: &AssetServer, id: AssetId<A>) -> bool {
+    match server.load_state(id) {
+        bevy::asset::LoadState::Loading => true,
+        bevy::asset::LoadState::Loaded => matches!(
+            server.recursive_dependency_load_state(id),
+            bevy::asset::RecursiveDependencyLoadState::Loading
+        ),
+        _ => false,
+    }
+}
+
+fn reclaim_representations<T: CollectibleType>(
+    mut cache: ResMut<Collectibles<T>>,
+    frame: Res<FrameCount>,
+    server: Res<AssetServer>,
+    mut budget: ResMut<ReclaimBudget>,
+) {
+    if let Some(mut turn) = budget.begin(T::extension(), cache.cache.len()) {
+        cache
+            .cache
+            .reclaim(frame.0, &mut turn, |id| load_pending(&server, id));
+        budget.finish_turn(turn, cache.cache.len());
+    }
+}
+
+fn reclaim_metadata<T: CollectibleType>(
+    mut cache: ResMut<Collectibles<T>>,
+    frame: Res<FrameCount>,
+    server: Res<AssetServer>,
+    mut budget: ResMut<ReclaimBudget>,
+) {
+    if let Some(mut turn) = budget.begin(T::data_extension(), cache.data_cache.len()) {
+        cache
+            .data_cache
+            .reclaim(frame.0, &mut turn, |id| load_pending(&server, id));
+        budget.finish_turn(turn, cache.data_cache.len());
+    }
+}
+
+fn expire_idle_wearables(
+    mut cache: ResMut<Collectibles<wearables::Wearable>>,
+    frame: Res<FrameCount>,
+    server: Res<AssetServer>,
+    pressure: Option<Res<MemoryReclaimState>>,
+) {
+    // Under pressure, all expiry shares the reclaimer's budget and rotation.
+    if pressure.is_some_and(|pressure| pressure.ram_active || pressure.gpu_active) {
+        return;
+    }
+    cache
+        .cache
+        .reclaim(frame.0, &mut ReclaimTurn::bounded(10, 64), |id| {
+            load_pending(&server, id)
+        });
 }
 
 pub fn request_collectibles<T: CollectibleType>(
@@ -351,18 +521,14 @@ pub fn request_collectibles<T: CollectibleType>(
 
                         debug!("{} -> {}", pointer, entity.id);
                         requested_entities.remove(&pointer);
-                        collectibles
-                            .pointers
-                            .insert(pointer, PointerResult::Hash(entity.id.clone()));
+                        collectibles.record_remote(pointer, PointerResult::Hash(entity.id.clone()));
                     }
                 }
 
                 // any urns left in the hashset were requested but not returned
                 for urn in &requested_entities {
                     debug!("missing {urn}");
-                    collectibles
-                        .pointers
-                        .insert(urn.clone(), PointerResult::Missing);
+                    collectibles.record_remote(urn.clone(), PointerResult::Missing);
                 }
 
                 // an unknown-source urn is never returned, so it always lands here: resolve it to
@@ -376,9 +542,7 @@ pub fn request_collectibles<T: CollectibleType>(
                     });
                     if let Some((source, hash)) = found {
                         debug!("{urn} -> {source}");
-                        collectibles
-                            .pointers
-                            .insert(urn.clone(), PointerResult::Hash(hash));
+                        collectibles.record_remote(urn.clone(), PointerResult::Hash(hash));
                         collectibles.aliases.insert(urn, source);
                     }
                 }
@@ -396,7 +560,7 @@ pub fn request_collectibles<T: CollectibleType>(
 
         let mut requested = requested
             .into_iter()
-            .filter(|r| !collectibles.pointers.contains_key(r))
+            .filter(|r| !T::is_dynamic(r) && !collectibles.pointers.contains_key(r))
             .collect::<HashSet<_>>();
 
         // fetch an unknown-source name under every source collection, in the same round trip
@@ -446,6 +610,20 @@ fn source_urns<T: CollectibleType>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn late_remote_results_cannot_replace_builtin_emotes() {
+        let mut collectibles = Collectibles::<Emote>::default();
+        let builtin = EmoteUrn::new("wave").unwrap();
+        collectibles
+            .pointers
+            .insert(builtin.clone(), PointerResult::Builtin(Handle::default()));
+        collectibles.record_remote(builtin.clone(), PointerResult::Missing);
+        assert!(matches!(
+            collectibles.pointers.get(&builtin),
+            Some(PointerResult::Builtin(_))
+        ));
+    }
 
     fn sources<T: CollectibleType>(urn: &str) -> Vec<String> {
         source_urns(&CollectibleUrn::<T>::new(urn).unwrap())

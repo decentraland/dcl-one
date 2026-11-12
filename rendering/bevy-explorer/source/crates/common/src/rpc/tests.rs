@@ -130,6 +130,124 @@ fn result_channel_is_released_on_both_sides_after_a_reply() {
 }
 
 #[test]
+fn cloned_result_sender_delivers_after_an_intact_channel_is_poisoned() {
+    let (sender, mut receiver) = RpcResultSender::<u32>::channel();
+    let clone = sender.clone();
+    poison_result_channel(&sender);
+
+    clone.send(7);
+    sender.send(9);
+    assert_eq!(receiver.try_recv().unwrap(), 7);
+}
+
+fn poison_result_channel(sender: &RpcResultSender<u32>) {
+    let RpcResultSender::Local { channel, .. } = sender else {
+        unreachable!();
+    };
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _held = channel.lock().unwrap();
+        panic!("poison an intact result channel");
+    }))
+    .is_err());
+    assert!(channel.is_poisoned());
+}
+
+#[test]
+fn cloned_result_sender_serializes_after_an_intact_channel_is_poisoned() {
+    let mut bridge = Bridge::new();
+    let _guard = bridge.rt.enter();
+    let (sender, mut receiver) = RpcResultSender::<u32>::channel();
+    let clone = sender.clone();
+    poison_result_channel(&sender);
+
+    let bytes = rmp_encode(&clone).unwrap();
+    assert_eq!(rmp_encode(&sender).unwrap(), bytes);
+    assert_eq!(bridge.scene_endpoints(), 1);
+    let remote: RpcResultSender<u32> = rmp_serde::from_slice(&bytes).unwrap();
+    remote.send(7);
+    drop(remote);
+    bridge.settle();
+    bridge.route_to_scene();
+    bridge.settle();
+
+    assert_eq!(receiver.try_recv().unwrap(), 7);
+    assert_eq!(bridge.scene_endpoints(), 0);
+    assert_eq!(bridge.engine_tokens(), 0);
+    assert_eq!(bridge.close_watchers(), 0);
+}
+
+#[test]
+fn cloned_result_sender_stays_consumed_after_a_serialized_local_send_panics() {
+    let mut bridge = Bridge::new();
+    let _guard = bridge.rt.enter();
+    let (sender, mut receiver) = RpcResultSender::<u32>::channel();
+    let clone = sender.clone();
+    let bytes = rmp_encode(&sender).unwrap();
+    let remote: RpcResultSender<u32> = rmp_serde::from_slice(&bytes).unwrap();
+
+    assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| sender.send(11))).is_err());
+    clone.send(22);
+    assert_eq!(
+        receiver.try_recv(),
+        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+    );
+    remote.send(33);
+    drop(remote);
+    bridge.settle();
+    bridge.route_to_scene();
+    bridge.settle();
+
+    assert_eq!(receiver.try_recv().unwrap(), 33);
+    assert_eq!(bridge.scene_endpoints(), 0);
+    assert_eq!(bridge.engine_tokens(), 0);
+    assert_eq!(bridge.close_watchers(), 0);
+}
+
+#[test]
+#[cfg(not(target_arch = "wasm32"))]
+fn result_serialization_waits_for_the_channel_and_replies_inside_a_runtime() {
+    use std::{sync::mpsc, time::Duration};
+
+    let (sender, mut receiver) = RpcResultSender::<u32>::channel();
+    let RpcResultSender::Local { channel, .. } = &sender else {
+        unreachable!();
+    };
+    let held = channel.lock().unwrap();
+    let (started, starting) = mpsc::channel();
+    let (finished, finishing) = mpsc::channel();
+
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut bridge = Bridge::new();
+            bridge.rt.block_on(async {
+                started.send(()).unwrap();
+                let bytes = rmp_encode(&sender).unwrap();
+                assert_eq!(rmp_encode(&sender).unwrap(), bytes);
+                assert_eq!(bridge.scene_endpoints(), 1);
+                let remote: RpcResultSender<u32> = rmp_serde::from_slice(&bytes).unwrap();
+                remote.send(7);
+            });
+            bridge.settle();
+            bridge.route_to_scene();
+            bridge.settle();
+            assert_eq!(bridge.scene_endpoints(), 0);
+            assert_eq!(bridge.engine_tokens(), 0);
+            assert_eq!(bridge.close_watchers(), 0);
+            finished.send(()).unwrap();
+        });
+        starting.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(
+            finishing.recv_timeout(Duration::from_millis(50)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        );
+        drop(held);
+        finishing.recv_timeout(Duration::from_secs(5)).unwrap();
+    });
+
+    assert_eq!(receiver.try_recv().unwrap(), 7);
+}
+
+#[test]
 fn stream_channel_is_released_on_both_sides_when_the_engine_closes_it() {
     let mut bridge = Bridge::new();
     let _guard = bridge.rt.enter();

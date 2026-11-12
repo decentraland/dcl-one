@@ -193,6 +193,7 @@ fn update_scene_driven_animation(
             ctx.hash, content_hash
         );
         Some(SceneDrivenAnimationRequest {
+            scene: Some(scene_ent),
             src: anim.src.clone(),
             urn,
             scene_hash: ctx.hash.to_string(),

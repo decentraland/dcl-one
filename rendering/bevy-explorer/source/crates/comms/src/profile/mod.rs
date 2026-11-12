@@ -1,6 +1,12 @@
 pub mod name_color;
 
-use std::{io::Read, path::PathBuf, sync::Arc};
+use std::{
+    collections::BTreeMap,
+    io::Read,
+    ops::Bound::{Excluded, Unbounded},
+    path::PathBuf,
+    sync::Arc,
+};
 
 use alloy_core::primitives::Address;
 use anyhow::anyhow;
@@ -28,6 +34,10 @@ use super::{
     TransportType,
 };
 use common::{
+    memory_reclaim::{
+        AddMemoryReclaimer, MemoryReclaimState, ReclaimBudget, ReclaimDomains, ReclaimSpec,
+        ReclaimTurn,
+    },
     profile::{
         AvatarColor, AvatarEmote, AvatarSnapshots, CompactProfile, LambdaProfiles,
         SerializedProfile,
@@ -102,7 +112,11 @@ impl Plugin for UserProfilePlugin {
             });
         app.insert_resource(CurrentUserProfile::default());
         app.init_resource::<ProfileCache>()
-            .add_event::<ProfileDeployedEvent>();
+            .add_event::<ProfileDeployedEvent>()
+            .add_memory_reclaimer(
+                ReclaimSpec::new("profiles", 30, ReclaimDomains::Ram),
+                reclaim_profiles,
+            );
     }
 }
 
@@ -118,6 +132,7 @@ const PROFILE_REQUEST_BATCH: usize = 100;
 /// it). Live foreign players touch their entry every frame, so this only reaps departed
 /// peers and addresses scenes/ui asked about once.
 const PROFILE_EVICT_AFTER: std::time::Duration = std::time::Duration::from_secs(300);
+const PROFILE_PRESSURE_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Where held profile data came from. Declared in ascending order of authority so the
 /// derived `Ord` ranks them: an equal-version answer only displaces held data when it
@@ -221,10 +236,20 @@ impl ProfileEntry {
 
     /// nobody has accessed it within `PROFILE_EVICT_AFTER`, and no fetch is in flight
     fn evictable(&self, now: web_time::Instant) -> bool {
+        self.evictable_after(now, PROFILE_EVICT_AFTER)
+    }
+
+    fn evictable_after(&self, now: web_time::Instant, grace: std::time::Duration) -> bool {
         self.fetching.is_none()
             && self
                 .last_access
-                .is_none_or(|at| now.saturating_duration_since(at) >= PROFILE_EVICT_AFTER)
+                .is_none_or(|at| now.saturating_duration_since(at) >= grace)
+    }
+
+    fn evictable_under_pressure(&self, now: web_time::Instant) -> bool {
+        self.evictable(now)
+            || (self.evictable_after(now, PROFILE_PRESSURE_GRACE)
+                && (self.satisfied() || self.due(now)))
     }
 
     /// accept a newer version from anywhere, and an equal version only from a more
@@ -317,13 +342,31 @@ enum CompactFetchError {
 
 #[derive(Resource, Default)]
 pub struct ProfileCache {
-    entries: HashMap<Address, ProfileEntry>,
+    // Ordered keys let a bounded pressure pass resume without copying/scanning every address.
+    entries: BTreeMap<Address, ProfileEntry>,
+    reclaim_cursor: Option<Address>,
+    scan_released: u64,
     requests: ProfileRequestCounts,
     batches: Vec<ProfileBatch>,
     compact_batches: Vec<CompactBatch>,
     /// the compact source answered a compact POST as an unknown route: compact readers are
     /// served from full profiles for the rest of the session
     compact_unsupported: bool,
+}
+
+pub(crate) fn protect_joining_peer(
+    mut world: bevy::ecs::world::DeferredWorld,
+    context: bevy::ecs::component::HookContext,
+) {
+    let Some(peer) = world.get::<ForeignPlayer>(context.entity) else {
+        return;
+    };
+    let address = peer.address;
+    if let Some(mut cache) = world.get_resource_mut::<ProfileCache>() {
+        if let Some(entry) = cache.entries.get_mut(&address) {
+            entry.last_access = Some(web_time::Instant::now());
+        }
+    }
 }
 
 #[derive(Default)]
@@ -362,6 +405,28 @@ fn profile_requests(
 }
 
 impl ProfileCache {
+    fn reclaim(&mut self, now: web_time::Instant, local: Option<Address>, turn: &mut ReclaimTurn) {
+        while turn.inspect() {
+            let next = match self.reclaim_cursor {
+                Some(address) => self.entries.range((Excluded(address), Unbounded)).next(),
+                None => self.entries.iter().next(),
+            }
+            .map(|(address, entry)| (*address, entry.evictable_under_pressure(now)));
+            let Some((address, eligible)) = next else {
+                self.reclaim_cursor = None;
+                turn.complete_scan(std::mem::take(&mut self.scan_released));
+                break;
+            };
+            self.reclaim_cursor = Some(address);
+            // Admission protects new peers immediately; subsequent profile reads refresh them.
+            if Some(address) != local && eligible {
+                self.entries.remove(&address);
+                turn.released();
+                self.scan_released += 1;
+            }
+        }
+    }
+
     /// the entry for `address`, created if missing, marked as accessed now by a reader that
     /// needs `tier` of it
     fn touch(&mut self, address: Address, tier: ProfileTier) -> &mut ProfileEntry {
@@ -457,6 +522,17 @@ impl ProfileCache {
         (held.version == profile.version
             && profile.content.avatar.snapshots.as_ref() != Some(snapshots))
         .then(|| snapshots.clone())
+    }
+}
+
+fn reclaim_profiles(
+    mut cache: ResMut<ProfileCache>,
+    wallet: Res<Wallet>,
+    mut budget: ResMut<ReclaimBudget>,
+) {
+    if let Some(mut turn) = budget.begin("profiles", cache.entries.len()) {
+        cache.reclaim(web_time::Instant::now(), wallet.address(), &mut turn);
+        budget.finish_turn(turn, cache.entries.len());
     }
 }
 
@@ -929,7 +1005,11 @@ impl CurrentUserProfile {
 /// lives here — the fetchers themselves are dumb HTTP. Entries nobody has asked about
 /// recently are dropped here too, so departed peers and one-off lookups (unknown addresses
 /// especially, which never satisfy) stop being re-fetched for the rest of the session.
-fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
+fn drive_profile_fetches(
+    mut manager: ProfileManager,
+    wallet: Res<Wallet>,
+    pressure: Option<Res<MemoryReclaimState>>,
+) {
     let ProfileManager { cache, ipfs } = &mut manager;
 
     // apply landed compact batches; a catalyst without the route turns every fetch full
@@ -999,12 +1079,25 @@ fn drive_profile_fetches(mut manager: ProfileManager, wallet: Res<Wallet>) {
     // replaced by a lagging catalyst answer), and collect due entries into batches
     let local = wallet.address();
     let compact_unsupported = cache.compact_unsupported;
+    let ram_pressure = pressure
+        .as_ref()
+        .is_some_and(|pressure| pressure.ram_active);
     let mut full = Vec::new();
     let mut compact = Vec::new();
     cache.entries.retain(|address, entry| {
-        if entry.evictable(now) && Some(*address) != local {
-            debug!("evicting stale profile entry for {address:#x}");
-            return false;
+        if Some(*address) != local {
+            if ram_pressure {
+                // Keep idle due entries available to the bounded Last cleanup instead of
+                // making them ineligible with another fetch. Readers can still refresh them.
+                // This includes the normal 300-second expiry: under pressure, dropping a
+                // large stale batch here would bypass the shared frame allowance.
+                if entry.evictable_under_pressure(now) {
+                    return true;
+                }
+            } else if entry.evictable(now) {
+                debug!("evicting stale profile entry for {address:#x}");
+                return false;
+            }
         }
         if entry.wants_fetch(now) {
             let tier = entry.fetch_tier(compact_unsupported);
@@ -2078,6 +2171,256 @@ mod deploy_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn peer_admitted_after_profile_refresh_survives_pressure_cleanup() {
+        use crate::global_crdt::{
+            ChatEvent, DiscardPlayerUpdates, PlayerMessage, PlayerPositionEvent,
+            PlayerSceneAnimEvent, PlayerUpdate,
+        };
+        use common::{
+            memory_reclaim::{MemoryReclaimPlugin, MemoryReclaimSettings, ReclaimSimulation},
+            structs::EmoteLifecycleEvent,
+        };
+        let peer = Address::repeat_byte(0xab);
+        let mut cache = ProfileCache::default();
+        cache.touch(peer, ProfileTier::Full).last_access =
+            Some(web_time::Instant::now() - std::time::Duration::from_secs(6));
+        let mut app = App::new();
+        app.init_resource::<Time>()
+            .init_resource::<Wallet>()
+            .init_resource::<DiscardPlayerUpdates>()
+            .insert_resource(cache)
+            .add_event::<RpcCallEvent>()
+            .add_event::<ProfileEvent>()
+            .add_event::<PlayerPositionEvent>()
+            .add_event::<PlayerSceneAnimEvent>()
+            .add_event::<EmoteLifecycleEvent>()
+            .add_event::<ChatEvent>()
+            .add_event::<crate::chat_reaction::ChatReactionEvent>()
+            .add_plugins(MemoryReclaimPlugin)
+            .add_systems(Update, process_transport_updates)
+            .add_memory_reclaimer(
+                ReclaimSpec::new("profiles", 30, ReclaimDomains::Ram),
+                reclaim_profiles,
+            );
+        app.world_mut()
+            .resource_mut::<MemoryReclaimSettings>()
+            .simulation = ReclaimSimulation::Ram;
+        app.world_mut()
+            .resource_mut::<MemoryReclaimSettings>()
+            .frame_budget = std::time::Duration::from_secs(10);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        let (sender, _receiver) = tokio::sync::mpsc::channel(1);
+        let transport = app
+            .world_mut()
+            .spawn(Transport {
+                transport_type: TransportType::WebsocketRoom,
+                sender,
+                control: None,
+                context,
+            })
+            .id();
+        // The refresh cannot see a peer that has not been admitted yet. Real transport
+        // processing admits it later in Update; Last must preserve its old cached data.
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::Joined,
+                    address: peer,
+                }
+                .into(),
+            )
+            .unwrap();
+        app.finish();
+        app.cleanup();
+        app.update();
+        assert_eq!(
+            app.world_mut()
+                .query::<&ForeignPlayer>()
+                .iter(app.world())
+                .count(),
+            1
+        );
+        assert!(app
+            .world()
+            .resource::<ProfileCache>()
+            .entries
+            .contains_key(&peer));
+        assert_eq!(
+            app.world().resource::<ReclaimBudget>().caches()[0].released,
+            0
+        );
+    }
+
+    #[test]
+    fn pressure_cleanup_gets_idle_due_profiles_before_the_fetch_driver_retries_them() {
+        use bevy::asset::io::memory::{Dir, MemoryAssetReader};
+        use common::memory_reclaim::{
+            MemoryReclaimPlugin, MemoryReclaimSettings, ReclaimSimulation,
+        };
+        for simulation in [ReclaimSimulation::Ram, ReclaimSimulation::Off] {
+            let now = web_time::Instant::now();
+            let idle = Address::repeat_byte(0xd1);
+            let active = Address::repeat_byte(0xd2);
+            let cooling = Address::repeat_byte(0xd3);
+            let expired = Address::repeat_byte(0xd4);
+            let mut cache = ProfileCache::default();
+            for address in [idle, active, cooling] {
+                let entry = cache.touch(address, ProfileTier::Compact);
+                entry.apply_compact(None, now - PROFILE_FETCH_RETRY);
+                entry.last_access = Some(now - std::time::Duration::from_secs(6));
+            }
+            cache.touch(active, ProfileTier::Compact);
+            cache.entries.get_mut(&cooling).unwrap().next_fetch = Some(now + PROFILE_FETCH_RETRY);
+            let expired_entry = cache.touch(expired, ProfileTier::Compact);
+            expired_entry.apply_compact(None, now);
+            expired_entry.last_access = Some(now - PROFILE_EVICT_AFTER);
+
+            let mut app = App::new();
+            app.add_plugins((MinimalPlugins, AssetPlugin::default(), MemoryReclaimPlugin))
+                .init_resource::<Wallet>()
+                .insert_resource(cache)
+                .insert_resource(ipfs::IpfsResource {
+                    inner: Arc::new(IpfsIo::new(
+                        false,
+                        Box::new(MemoryAssetReader {
+                            root: Dir::default(),
+                        }),
+                        None,
+                        Default::default(),
+                        1,
+                        tokio::sync::mpsc::unbounded_channel().0,
+                    )),
+                })
+                .insert_resource(MemoryReclaimSettings {
+                    simulation,
+                    frame_budget: std::time::Duration::from_secs(1),
+                })
+                .add_systems(Update, drive_profile_fetches)
+                .add_memory_reclaimer(
+                    ReclaimSpec::new("profiles", 30, ReclaimDomains::Ram),
+                    reclaim_profiles,
+                );
+            app.finish();
+            app.cleanup();
+            app.update();
+
+            let cache = app.world().resource::<ProfileCache>();
+            assert_eq!(
+                cache.entries.contains_key(&idle),
+                simulation == ReclaimSimulation::Off,
+                "the Update fetch driver must leave pressure-eligible idle entries for Last"
+            );
+            assert_eq!(cache.entries[&active].fetching, Some(ProfileTier::Compact));
+            assert!(cache.entries[&cooling].fetching.is_none());
+            assert!(
+                !cache.entries.contains_key(&expired),
+                "pressure must preserve the normal maximum idle age even during retry cooldown"
+            );
+            let expected = if simulation == ReclaimSimulation::Ram {
+                vec![active]
+            } else {
+                vec![idle, active]
+            };
+            assert_eq!(cache.compact_batches[0].addresses, expected);
+        }
+    }
+
+    #[test]
+    fn pressure_cleanup_preserves_a_missing_profiles_retry_deadline() {
+        use common::memory_reclaim::ReclaimTurn;
+        let address = Address::repeat_byte(0xc1);
+        let now = web_time::Instant::now();
+        let mut cache = ProfileCache::default();
+        let entry = cache.touch(address, ProfileTier::Compact);
+        entry.apply_compact(None, now);
+        entry.last_access = Some(now);
+
+        let resolved = Address::repeat_byte(0xc2);
+        let entry = cache.touch(resolved, ProfileTier::Full);
+        entry.next_fetch = Some(now + PROFILE_FETCH_RETRY);
+        entry.apply(profile(1, "resolved"), ProfileSource::Catalyst);
+        entry.last_access = Some(now);
+
+        let idle = now + PROFILE_PRESSURE_GRACE + std::time::Duration::from_secs(1);
+        cache.reclaim(idle, None, &mut ReclaimTurn::bounded(10, 64));
+        assert!(
+            cache.entries.contains_key(&address),
+            "pressure must preserve the failed fetch's retry deadline"
+        );
+        assert!(!cache.entries.contains_key(&resolved));
+        let read = cache.touch(address, ProfileTier::Compact);
+        assert!(read.missing(ProfileTier::Compact, idle));
+        assert!(!read.wants_fetch(idle));
+
+        let due = now + PROFILE_FETCH_RETRY;
+        assert!(cache.entries[&address].wants_fetch(due));
+        cache.reclaim(due, None, &mut ReclaimTurn::bounded(10, 64));
+        assert!(!cache.entries.contains_key(&address));
+        assert!(cache.touch(address, ProfileTier::Compact).wants_fetch(due));
+    }
+
+    #[test]
+    fn pressure_reclaims_only_inactive_profiles_with_bounded_progress() {
+        use common::memory_reclaim::ReclaimTurn;
+        let now = web_time::Instant::now();
+        let mut cache = ProfileCache::default();
+        let local = Address::from([1; 20]);
+        let live = Address::from([2; 20]);
+        let fetching = Address::from([3; 20]);
+        let recent = Address::from([4; 20]);
+        let stale = Address::from([5; 20]);
+        for address in [local, live, fetching, recent, stale] {
+            cache.touch(address, ProfileTier::Full).last_access =
+                Some(now - std::time::Duration::from_secs(6));
+        }
+        cache.touch(live, ProfileTier::Full);
+        cache.entries.get_mut(&fetching).unwrap().fetching = Some(ProfileTier::Full);
+        cache.entries.get_mut(&recent).unwrap().last_access =
+            Some(now - std::time::Duration::from_secs(4));
+        // One candidate per pass ensures protected entries cannot starve a later idle entry.
+        for _ in 0..5 {
+            cache.reclaim(now, Some(local), &mut ReclaimTurn::bounded(10, 1));
+        }
+        assert!(!cache.entries.contains_key(&stale));
+        for address in [local, live, fetching, recent] {
+            assert!(cache.entries.contains_key(&address));
+        }
+    }
+
+    #[test]
+    fn pressure_evicts_both_profile_dto_tiers_and_a_revisit_requests_them_again() {
+        use common::memory_reclaim::ReclaimTurn;
+        let now = web_time::Instant::now();
+        let full = Address::repeat_byte(0xd1);
+        let compact_address = Address::repeat_byte(0xd2);
+        let mut cache = ProfileCache::default();
+        let entry = cache.touch(full, ProfileTier::Full);
+        entry.apply(profile(1, "full DTO"), ProfileSource::Catalyst);
+        entry.last_access = Some(now - PROFILE_PRESSURE_GRACE - std::time::Duration::from_secs(1));
+        let entry = cache.touch(compact_address, ProfileTier::Compact);
+        entry.apply_compact(Some(compact("compact DTO")), now);
+        entry.last_access = Some(now - PROFILE_PRESSURE_GRACE - std::time::Duration::from_secs(1));
+
+        cache.reclaim(now, None, &mut ReclaimTurn::bounded(10, 64));
+        assert!(!cache.entries.contains_key(&full));
+        assert!(!cache.entries.contains_key(&compact_address));
+        for (address, tier) in [
+            (full, ProfileTier::Full),
+            (compact_address, ProfileTier::Compact),
+        ] {
+            let entry = cache.touch(address, tier);
+            assert!(entry.profile().is_none());
+            assert!(entry.compact.is_none());
+            assert!(entry.wants_fetch(web_time::Instant::now()));
+            assert_eq!(entry.fetch_tier(false), tier);
+        }
+    }
 
     #[test]
     fn evicts_only_stale_idle_entries() {

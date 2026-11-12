@@ -115,6 +115,7 @@ pub fn assemble(
         .add_plugins((
             crate::memory::MemoryStatusPlugin,
             crate::gpu_memory::GpuMemoryPlugin,
+            common::memory_reclaim::MemoryReclaimPlugin,
         ))
         .add_plugins(TransformPlugin)
         .add_plugins(DiagnosticsPlugin)
@@ -178,6 +179,7 @@ pub fn assemble(
     // the shared launch options' resources and plugins (--log-fps logs the tick rate, against
     // --tick-hz)
     crate::launch::apply(app, launch, &config, &map_realm_name(realm));
+    crate::memory_reclaim_debug::register(app);
 
     // ---- resources & events the scene runtime needs (no render/UI plugins) ----
     app.insert_resource(config)

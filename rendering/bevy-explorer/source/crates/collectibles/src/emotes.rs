@@ -464,6 +464,10 @@ impl CollectibleType for Emote {
     type Meta = EmoteMeta;
     type ExtraData = EmoteExtraData;
 
+    fn is_dynamic(urn: &EmoteUrn) -> bool {
+        urn.scene_emote().is_some()
+    }
+
     fn source_collections() -> &'static [&'static str] {
         &[
             "urn:decentraland:off-chain:base-emotes",
@@ -616,5 +620,21 @@ impl AssetLoader for EmoteMetaLoader {
                 loops: meta.emote_extended_data.loops,
             },
         })
+    }
+}
+
+#[cfg(test)]
+mod metadata_tests {
+    use super::*;
+
+    #[test]
+    fn emote_metadata_expires_and_reloads() {
+        crate::metadata_lifecycle_tests::metadata_expires_and_reloads::<Emote>(
+            EmoteMetaLoader,
+            serde_json::json!({
+                "name": "Fixture metadata", "description": "", "thumbnail": "thumbnail.png",
+                "emoteDataADR74": { "representations": [], "loop": false }
+            }),
+        );
     }
 }

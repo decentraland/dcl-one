@@ -2,6 +2,7 @@ mod batch_sizes;
 pub mod content_hash;
 mod debug_panel;
 mod download;
+mod metadata_cache;
 use download::{InFlightDownloads, RequestMetrics};
 mod priority_gate;
 pub use priority_gate::{PriorityGate, Ticket};
@@ -14,6 +15,7 @@ pub mod web_cache;
 
 use std::{
     borrow::Cow,
+    collections::BTreeMap,
     io::ErrorKind,
     marker::PhantomData,
     path::{Path, PathBuf},
@@ -62,6 +64,7 @@ use bevy::asset::io::wasm::HttpWasmAssetReader;
 
 use bevy_console::{ConsoleCommand, PrintConsoleLine};
 use common::{
+    memory_reclaim::{AddMemoryReclaimer, ReclaimDomains, ReclaimSpec},
     rpc::{RpcResultReceiver, RpcResultSender},
     sets::RealmLifecycle,
     structs::{
@@ -605,6 +608,10 @@ impl Plugin for IpfsIoPlugin {
             app.register_diagnostic(Diagnostic::new(path));
         }
         app.insert_resource(IpfsResource { inner: ipfs_io });
+        app.add_memory_reclaimer(
+            ReclaimSpec::new("entity_metadata", 25, ReclaimDomains::Ram),
+            metadata_cache::reclaim_metadata,
+        );
         app.insert_resource(RealmInitialLocation::Base);
 
         #[cfg(feature = "hot_reload")]
@@ -933,7 +940,8 @@ pub struct IpfsEntity {
 pub struct IpfsContext {
     about_url: String,
     base_url: String,
-    entities: HashMap<String, IpfsEntity>,
+    entities: BTreeMap<String, metadata_cache::RegisteredEntity>,
+    metadata_retention: metadata_cache::MetadataRetention,
     about: Option<ServerAbout>,
     modifiers: HashMap<String, IpfsModifier>,
     failed_remotes: HashMap<String, Instant>,
@@ -1372,7 +1380,7 @@ impl IpfsIo {
             write.modifiers.insert(hash.clone(), modifier);
         }
 
-        write.entities.insert(hash, entity);
+        write.register_entity(hash, entity);
     }
 
     /// Merge additional path→hash entries into an existing collection (creating it if absent),
@@ -1383,7 +1391,7 @@ impl IpfsIo {
         match write.entities.get_mut(hash) {
             Some(entity) => entity.collection.0.extend(extra.0),
             None => {
-                write.entities.insert(
+                write.register_entity(
                     hash.to_owned(),
                     IpfsEntity {
                         collection: extra,
@@ -1527,10 +1535,15 @@ impl IpfsIo {
         ipfs_path.hash(&*self.context.read().await)
     }
 
-    pub async fn entity_definition(&self, hash: &str) -> Option<(IpfsEntity, String)> {
+    pub async fn entity_definition(self: &Arc<Self>, hash: &str) -> Option<(IpfsEntity, String)> {
+        metadata_cache::entity_definition(self, hash).await
+    }
+
+    /// Current content routing without fetching or retaining a metadata payload.
+    pub async fn entity_routing(&self, hash: &str) -> Option<(ContentMap, String)> {
         let context = self.context.read().await;
         Some((
-            context.entities.get(hash)?.clone(),
+            context.entities.get(hash)?.collection.clone(),
             context.contents_base_url(hash).unwrap_or_default(),
         ))
     }
@@ -1656,14 +1669,8 @@ impl IpfsIo {
     }
 
     /// The stored entity metadata (the scene's scene.json) for a scene, if any.
-    pub async fn scene_metadata(&self, scene_hash: &str) -> Option<String> {
-        self.context
-            .read()
-            .await
-            .entities
-            .get(scene_hash)?
-            .metadata
-            .clone()
+    pub async fn scene_metadata(self: &Arc<Self>, scene_hash: &str) -> Option<String> {
+        self.entity_definition(scene_hash).await?.0.metadata
     }
 
     /// The sorted file paths in a scene's content map (the collection keys), or empty if the scene
@@ -1685,51 +1692,51 @@ impl IpfsIo {
     /// just the referenced files, so this picks up files added to the project *outside* the editor
     /// without a scene reload. Imported assets (written to disk by `/init_asset`) are naturally
     /// included. Acts only on local (`dcl start`, b64-addressed) scenes — deployed scenes have an
-    /// immutable content map. Returns true if the collection was refreshed.
-    pub async fn refresh_scene_collection(self: &Arc<Self>, scene_hash: &str) -> bool {
+    /// immutable content map. Live callers supply their retained entity metadata; only callers
+    /// without an owner reload it. Returns true if the collection was refreshed.
+    pub async fn refresh_scene_collection(
+        self: &Arc<Self>,
+        scene_hash: &str,
+        metadata: Option<&serde_json::Value>,
+    ) -> Result<bool, String> {
         // local scenes only; deployed content maps don't change
         if self.local_project_root(scene_hash).await.is_none() {
-            return false;
+            return Ok(false);
         }
-        // the scene's base parcel pointer, from its stored scene.json
-        let pointer = {
-            let read = self.context.read().await;
-            read.entities
-                .get(scene_hash)
-                .and_then(|e| e.metadata.as_deref())
-                .and_then(|m| serde_json::from_str::<serde_json::Value>(m).ok())
-                .and_then(|j| {
-                    j.get("scene")
-                        .and_then(|s| s.get("base"))
-                        .and_then(|b| b.as_str())
-                        .map(str::to_owned)
-                })
+        let metadata = match metadata {
+            Some(metadata) => std::borrow::Cow::Borrowed(metadata),
+            None => std::borrow::Cow::Owned(
+                serde_json::from_str::<serde_json::Value>(
+                    &self
+                        .scene_metadata(scene_hash)
+                        .await
+                        .ok_or_else(|| "scene metadata is unavailable".to_owned())?,
+                )
+                .map_err(|error| format!("invalid scene metadata: {error}"))?,
+            ),
         };
-        let Some(pointer) = pointer else {
-            return false;
-        };
-        let Ok(defs) = self
-            .active_entities(ActiveEntitiesRequest::Pointers(vec![pointer]), None)
+        let pointer = metadata
+            .pointer("/scene/base")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "scene metadata has no base parcel".to_owned())?;
+        let defs = self
+            .active_entities(
+                ActiveEntitiesRequest::Pointers(vec![pointer.to_owned()]),
+                None,
+            )
             .await
-        else {
-            return false;
-        };
-        // exactly one scene at the base parcel; match by id when present, else take the first
-        let Some(def) = defs
-            .iter()
-            .find(|d| d.id == scene_hash)
-            .or_else(|| defs.first())
-        else {
-            return false;
+            .map_err(|error| format!("could not refresh scene content: {error}"))?;
+        let Some(def) = defs.iter().find(|d| d.id == scene_hash) else {
+            return Err("content server returned no matching active scene".to_owned());
         };
         let collection = def.content.clone();
         let mut write = self.context.write().await;
         match write.entities.get_mut(scene_hash) {
             Some(entity) => {
                 entity.collection = collection;
-                true
+                Ok(true)
             }
-            None => false,
+            None => Err("scene collection no longer exists".to_owned()),
         }
     }
 
@@ -1874,6 +1881,11 @@ pub enum ActiveEntitiesRequest {
 #[derive(Deserialize, Debug)]
 pub struct ActiveEntitiesResponse(Vec<EntityDefinitionJson>);
 
+struct IpfsRead<'a> {
+    reader: Box<dyn Reader + 'a>,
+    cache_may_have_served: bool,
+}
+
 impl IpfsIo {
     /// Read an asset: a plain path from the default reader, an ipfs path from the cache or the
     /// remote (`download`).
@@ -1881,6 +1893,16 @@ impl IpfsIo {
         self: &'a Arc<Self>,
         path: &'a Path,
     ) -> Result<Box<dyn Reader + 'a>, AssetReaderError> {
+        self.read_with_cache(path, true)
+            .await
+            .map(|read| read.reader)
+    }
+
+    async fn read_with_cache<'a>(
+        self: &'a Arc<Self>,
+        path: &'a Path,
+        use_cache: bool,
+    ) -> Result<IpfsRead<'a>, AssetReaderError> {
         platform::compat(async move {
             let wrap_err = |e: anyhow::Error| {
                 if e.to_string().contains("file not found") {
@@ -1912,7 +1934,10 @@ impl IpfsIo {
                 None => {
                     let data = ipfs_io_read_state.send_failure(self.default_io.read(path).await)?;
                     ipfs_io_read_state.send_non_ipfs(0);
-                    return Ok(data);
+                    return Ok(IpfsRead {
+                        reader: data,
+                        cache_may_have_served: false,
+                    });
                 }
             };
 
@@ -1924,10 +1949,17 @@ impl IpfsIo {
                 let mut daft_buffer = Vec::default();
                 ipfs_io_read_state.send_failure(file.read_to_end(&mut daft_buffer).await)?;
                 ipfs_io_read_state.send_cached(daft_buffer.len());
-                return Ok(Box::new(VecReader::new(daft_buffer)));
+                return Ok(IpfsRead {
+                    reader: Box::new(VecReader::new(daft_buffer)),
+                    cache_may_have_served: false,
+                });
             }
 
-            let cache_key = ipfs_path.cache_key(&*self.context.read().await);
+            let cache_key = if use_cache {
+                ipfs_path.cache_key(&*self.context.read().await)
+            } else {
+                None
+            };
 
             if let Some(key) = &cache_key {
                 debug!("hash: {}", key.name());
@@ -1935,7 +1967,10 @@ impl IpfsIo {
                     ipfs_io_read_state.send_failure(self.read_disk_cache(key).await)?
                 {
                     ipfs_io_read_state.send_cached(cached.len());
-                    return Ok(Box::new(VecReader::new(cached)));
+                    return Ok(IpfsRead {
+                        reader: Box::new(VecReader::new(cached)),
+                        cache_may_have_served: true,
+                    });
                 }
             }
 
@@ -1964,7 +1999,10 @@ impl IpfsIo {
                     let data = ipfs_io_read_state
                         .send_failure(self.default_io.read(Path::new(static_path)).await)?;
                     ipfs_io_read_state.send_cached(0);
-                    return Ok(data);
+                    return Ok(IpfsRead {
+                        reader: data,
+                        cache_may_have_served: false,
+                    });
                 }
             }
             let remote = ipfs_io_read_state.send_failure(remote)?;
@@ -2005,7 +2043,10 @@ impl IpfsIo {
                     })
                 }))?;
                 ipfs_io_read_state.send_cached(data.len());
-                return Ok(Box::new(VecReader::new(data)));
+                return Ok(IpfsRead {
+                    reader: Box::new(VecReader::new(data)),
+                    cache_may_have_served: false,
+                });
             }
 
             let fail_time = context.failed_remotes.get(&remote).cloned();
@@ -2027,7 +2068,10 @@ impl IpfsIo {
             if sw_caches {
                 if let Some(cached) = web_cache::read(&remote).await {
                     ipfs_io_read_state.send_cached(cached.len());
-                    return Ok(Box::new(VecReader::new(cached)));
+                    return Ok(IpfsRead {
+                        reader: Box::new(VecReader::new(cached)),
+                        cache_may_have_served: true,
+                    });
                 }
             }
 
@@ -2050,13 +2094,23 @@ impl IpfsIo {
             // the scene the file belongs to decides its place in the request slot queue
             let scene = ipfs_path.scene_hash().map(str::to_owned);
 
+            // A native download is fresh even when another reader shares it. On web,
+            // the browser HTTP cache can answer after a service-worker cache miss.
+            #[cfg(not(target_arch = "wasm32"))]
+            let cache_may_have_served = false;
+            #[cfg(target_arch = "wasm32")]
+            let cache_may_have_served = use_cache;
+
             // nothing to share an uncacheable download under
             let Some(key) = cache_key else {
                 let data = self
                     .clone()
-                    .download(token, path.to_owned(), remote, None, scene)
+                    .download(token, path.to_owned(), remote, None, scene, !use_cache)
                     .await?;
-                return Ok(Box::new(AsyncCursor::new(data)));
+                return Ok(IpfsRead {
+                    reader: Box::new(AsyncCursor::new(data)),
+                    cache_may_have_served,
+                });
             };
             // one download per url: a second read of a url already in flight (the same file
             // under another asset path, say) takes the first's bytes instead of queueing a
@@ -2082,10 +2136,16 @@ impl IpfsIo {
             if joined {
                 let data = ipfs_io_read_state.send_failure(data)?;
                 ipfs_io_read_state.send_cached(data.len());
-                return Ok(Box::new(AsyncCursor::new(data)));
+                return Ok(IpfsRead {
+                    reader: Box::new(AsyncCursor::new(data)),
+                    cache_may_have_served,
+                });
             }
             // the download reported for the reader that started it
-            Ok(Box::new(AsyncCursor::new(data?)))
+            Ok(IpfsRead {
+                reader: Box::new(AsyncCursor::new(data?)),
+                cache_may_have_served,
+            })
         })
         .await
     }
@@ -2385,7 +2445,8 @@ mod tests {
                 "first".into(),
                 format!("http://{address}/first"),
                 None,
-                None
+                None,
+                false
             )
             .await
             .is_err());

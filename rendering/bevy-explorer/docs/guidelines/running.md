@@ -384,6 +384,80 @@ of the contract.
   macOS; port 5000 is taken by AirPlay so override `HttpService__Port`; ENet needs
   `BindHost: "::"`.
 
+## Asset release under memory pressure
+
+`/memory_reclaim` reports the RAM/GPU pressure snapshot, active cleanup domains,
+per-cache pin counts and cumulative pressure-pass releases, and the last cleanup
+duration. Each cache reports its current turn's scan status (`not_run`,
+`in_progress`, `no_eligible`, or `released`), completed scan count, and the number
+of pins released across its last complete scan, including earlier bounded turns.
+`no_eligible` describes that completed scan, not a promise about newly idle assets.
+The **Asset release** debug panel section shows the same state. In preview
+mode, `/memory_reclaim ram|gpu|both|off` simulates pressure for this reclaimer;
+`/memory_reclaim --budget-ms 1` sets its session allowance (0.1–16 ms). Simulation
+does not change platform readings and applies on the next frame. Leaving preview
+mode clears simulation and restores the default allowance before that frame's cleanup.
+
+`/debug_memory` remains readable in every mode. Setting its RAM cap in MiB, or
+restoring platform capacity with `/debug_memory 0`, requires preview mode. Its
+`controlsAvailable` field and the **Memory and limits** section reflect that gate.
+Leaving preview clears the cap before cleanup. RAM pressure history is retained when
+the effective cap stays the same or falls. Raising the effective cap or changing
+reading availability discards that history; current warning/full pressure still
+enables cleanup.
+
+Each domain starts cleanup above 70% and continues until below 65%. Native GPU
+pools are evaluated independently; a healthy pool cannot offset an over-budget
+pool. Missing readings clear that domain's pressure latch. Browser/headless runs use RAM unless
+pressure is explicitly simulated. The default allowance is 1 ms, with at most 10
+releases and 64 candidate inspections per cache turn. A slow destructor can exceed
+the cooperative allowance; later Bevy/renderer destruction is outside this timing.
+Released pins are not a measurement of freed bytes.
+
+Cache plugins register ordinary Bevy systems in `build` using
+`common::memory_reclaim::AddMemoryReclaimer`. The coordinator sorts their
+`ReclaimSpec` priorities/names once in `finish` and chains them in `Last`, before
+Bevy increments the frame counter so lookups and cleanup use the same frame.
+Call `ReclaimBudget::begin`, check `ReclaimTurn::inspect` before each candidate,
+record each released pin, then call `finish_turn`. At the end of a complete
+candidate scan, call `ReclaimTurn::complete_scan` with the scan's total releases
+across all its bounded turns. Keep a bounded scan cursor in
+the owning cache; never collect every entity owner or sort the whole cache during
+a turn. Consumers retain strong asset handles on their entities. Cleanup drops
+cache handles and does not force-remove assets from `Assets`.
+
+Collectible pins share content-hash identity across aliases. Permanent engine
+builtins remain pinned; synthesized scene emotes use idle pins and ownership on
+every cached animation graph node, including stopped nodes. Reusing a node replaces
+its aggregate handle. Each local movement scene also owns its resolved movement
+emotes until the scene despawns, even when their graph nodes are reused. Remote
+movement emotes rely on their avatar's graph ownership. Avatar definitions retain
+body and rendered wearable aggregates until despawn, including during outfit
+replacement. Profiles have a five-second pressure
+grace and retain local, live-peer, and in-flight data. Unresolved entries keep their
+fetch-retry deadline within the normal 300-second idle lifetime so pressure cleanup
+cannot accelerate retries. When due, idle
+entries yield to bounded cleanup instead of starting another fetch; recently
+accessed entries still fetch.
+
+A failed movement-animation request retains its failed staging handle until the
+request changes or ends, or its avatar despawns. An unchanged request continues
+using its fallback without starting another load each frame.
+
+RAM cleanup covers both wearable/emote metadata caches, full/compact profile DTOs,
+registered-entity JSON (`entity_metadata`) and the editor catalogue (`editor_catalog`).
+The last two become eligible after five seconds without access. JSON reloads through
+the content reader on the next metadata query; `/init_asset` reloads a reclaimed
+catalogue automatically. Active readers retain their own values or snapshots.
+Failed reloads remain retryable, and late replies cannot overwrite newer cached
+data. A raw-JSON reload has a 30-second deadline including download admission;
+failure returns the known routing with unavailable metadata. Live scene signing
+and scene-information RPCs read their scene-owned definition instead of reloading
+JSON; scene-information replies preserve current imported content paths.
+Content maps and routing indexes remain for the session and can grow with visited
+scenes and collectibles. Current realm/account state and DTO assets held by scene
+components follow their owners' lifetimes.
+
 ## Tests
 
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with

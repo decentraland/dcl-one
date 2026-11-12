@@ -504,6 +504,7 @@ impl GlobalCrdtState {
 }
 
 #[derive(Component, Debug)]
+#[component(on_add = crate::profile::protect_joining_peer)]
 pub struct ForeignPlayer {
     pub address: Address,
     /// the crdt context (player-presence view) this player entity belongs to; the same
@@ -1306,6 +1307,7 @@ fn resolve_remote_anim(
     let transition_seconds = anim.transition_seconds.unwrap_or(0.2);
 
     Some(SceneDrivenAnimationRequest {
+        scene: None,
         src: String::new(),
         urn,
         scene_hash,

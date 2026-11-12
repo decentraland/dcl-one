@@ -130,13 +130,21 @@ fn scene_target_cmd(
     mut input: ConsoleCommand<SceneTargetCommand>,
     ipfs: Res<IpfsResource>,
     resolver: SceneResolver,
+    metadata: crate::asset_commands::SceneMetadata,
     mut console_responses: ResMut<PendingConsoleResponses>,
 ) {
     if let Some(Ok(_)) = input.take() {
-        let scene_hash = match resolver.resolve() {
-            Ok((_, ctx)) => ctx.hash.clone(),
+        let (scene, scene_hash) = match resolver.resolve() {
+            Ok((scene, ctx)) => (scene, ctx.hash.clone()),
             Err(e) => {
                 input.reply_failed(e);
+                return;
+            }
+        };
+        let metadata = match metadata.snapshot(scene, &scene_hash) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                input.reply_failed(error);
                 return;
             }
         };
@@ -144,11 +152,9 @@ fn scene_target_cmd(
         let (tx, rx) = tokio::sync::oneshot::channel();
         IoTaskPool::get()
             .spawn(async move {
-                let _ = tx.send(Ok(crate::asset_commands::scene_target_json(
-                    &io,
-                    &scene_hash,
-                )
-                .await));
+                let _ = tx.send(
+                    crate::asset_commands::scene_target_json(&io, &scene_hash, metadata).await,
+                );
             })
             .detach();
         console_responses.push_oneshot(rx, |r| r, input.take_responder());
