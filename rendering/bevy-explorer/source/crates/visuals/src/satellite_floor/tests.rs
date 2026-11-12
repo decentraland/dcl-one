@@ -1,6 +1,7 @@
 use bevy::{asset::LoadState, render::mesh::VertexAttributeValues};
 
 use super::*;
+use crate::test_wait::update_until;
 
 fn layers() -> LandscapeLayers {
     LandscapeLayers {
@@ -79,15 +80,18 @@ fn satellite_assets_load_embedded() {
     let handles: Vec<Handle<Image>> = ["0,0", "7,7"]
         .map(|tile| server.load(format!("embedded://landscape/satellite/{tile}.jpg")))
         .into();
-    for _ in 0..200 {
-        app.update();
-        if handles
+    update_until(&mut app, |_| {
+        handles
             .iter()
-            .all(|handle| matches!(server.load_state(handle), LoadState::Loaded))
-        {
-            break;
-        }
-    }
+            .filter(|handle| {
+                !matches!(
+                    server.load_state(*handle),
+                    LoadState::Loaded | LoadState::Failed(_)
+                )
+            })
+            .map(Handle::path)
+            .collect()
+    });
     for handle in &handles {
         assert!(
             matches!(server.load_state(handle), LoadState::Loaded),
