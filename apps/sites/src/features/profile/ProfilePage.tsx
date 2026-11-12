@@ -16,6 +16,7 @@ import { emptyProfile, normalizeAddress, type ProfileVM } from "@/data/lib/catal
 import { canReadProfile } from "@/data/lib/profile/queries";
 
 import { ProfileRouteError } from "./errors";
+import { ProfileOverviewScreen } from "./ProfileOverviewScreen";
 import {
   useMyCommunities,
   useProfileAssets,
@@ -66,6 +67,18 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
 
   const activeTab: ProfileTab = tab ?? "overview";
   const tabs = profileTabs(own).map((entry) => ({ id: entry.id, label: entry.label }));
+  const onTab = (next: string) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY });
+
+  if (activeTab === "overview") {
+    return (
+      <ProfileOverviewScreen
+        profile={profile}
+        own={own}
+        tabs={tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) }))}
+        onTab={onTab}
+      />
+    );
+  }
 
   return (
     <div className="landings-profile">
@@ -73,7 +86,7 @@ export function ProfilePage({ address: rawAddress, tabSegment, ownOnServer, sid 
         value={{
           tabs: tabs.map((entry) => ({ ...entry, href: profileHref(address, entry.id) })),
           active: activeTab,
-          onTab: (next) => track("profile_tab_changed", { tab: next as ProfileTab }, { sid, story: STORY }),
+          onTab,
         }}
       >
         <ActiveTab tab={activeTab} address={address} profile={profile} own={own} tabs={tabs} sid={sid} />
@@ -96,7 +109,6 @@ function ActiveTab({ tab, ...props }: TabProps & { tab: ProfileTab }) {
     case "assets":
       return <AssetsTab {...props} />;
     case "referral-rewards":
-    case "overview":
     default:
       return <StProfileOverviewTab profile={props.profile as never} activeTab="overview" isOwnProfile={props.own} />;
   }

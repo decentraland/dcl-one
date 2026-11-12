@@ -289,3 +289,78 @@
   justify-content: center;
   padding: 0 0 24px;
 }
+
+/* The sidebar's Invites & Requests: opens the section, with the count of what waits on the user. */
+.invitesBtn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  background: none;
+  border-top: none;
+  border-left: none;
+  border-right: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  color: var(--ink-6);
+}
+.invitesBtn:hover,
+.invitesBtn[aria-pressed='true'] {
+  color: var(--text);
+}
+/* the column's heading style, its colour the button's */
+.invitesLabel {
+  font-size: var(--type-13);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* An invited card's Accept and Reject. */
+.cardBtns {
+  display: flex;
+  gap: 6px;
+}
+
+/* The section: Invites, Requests Received, Requests Sent. */
+.invitesSection {
+  padding-bottom: 24px;
+}
+.invitesHead {
+  margin: 4px 0 12px;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text);
+}
+
+/* One community's requests received: its header (opens the card), then its members. */
+.requestsGroup {
+  margin-bottom: 20px;
+}
+.requestsGroupHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 6px 0;
+  margin-bottom: 8px;
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.requestsGroupName {
+  font-weight: 700;
+}
+.requestsGroupCount {
+  color: var(--ink-45);
+  font-size: var(--fs-sm);
+}
+.requestsGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(440px, 1fr));
+  gap: 8px;
+}

@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { track } from "@/core/lib/telemetry/track";
@@ -21,7 +22,7 @@ beforeEach(() => {
   }));
 });
 
-const args = (url: string, params: Record<string, string> = {}) => ({ request: new Request(`https://sites.test${url}`), params, context: {} }) as never;
+const args = (url: string, params: Record<string, string> = {}) => ({ request: new Request(`https://sites.test${url}`), params, context: new RouterContextProvider() }) as never;
 
 async function thrown(fn: () => unknown): Promise<Response> {
   try {

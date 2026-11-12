@@ -1,4 +1,4 @@
-import { redirect, type HeadersArgs } from "react-router";
+import { redirect, type HeadersArgs, type RouterContextProvider } from "react-router";
 
 import type { BlogOutcome } from "@/data/lib/blog/pages";
 import type { BlogListPayload } from "@/data/lib/blog/types";
@@ -10,8 +10,12 @@ const FALLBACK: PageDefaults = { variant: "index_grid" };
  * A blog loader's response: the payload with its status (the view renders a 404 or 503 page from it),
  * or a redirect. A 503 is never cached; nothing about the upstream is in it.
  */
-export async function blogResponse<T>(request: Request, load: Promise<BlogOutcome<T>>) {
-  const { sid, wrap } = await pageLoader(request, FALLBACK);
+export async function blogResponse<T>(
+  request: Request,
+  context: Readonly<RouterContextProvider>,
+  load: Promise<BlogOutcome<T>>,
+) {
+  const { sid, wrap } = await pageLoader(request, context, FALLBACK);
   const outcome = await load;
   if ("location" in outcome) throw redirect(outcome.location, outcome.status);
   const response = wrap({ sid, ...outcome.payload }, { status: outcome.status });

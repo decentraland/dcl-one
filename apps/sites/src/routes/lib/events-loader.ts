@@ -1,4 +1,5 @@
 import { dehydrate, QueryClient } from "@tanstack/react-query";
+import type { RouterContextProvider } from "react-router";
 
 import { siteUrl } from "@/data/lib/catalyst/bases";
 import {
@@ -10,7 +11,10 @@ import {
   readPlaceTarget,
   upcomingQuery,
 } from "@/data/lib/catalyst/places/events-page";
-import { pageLoader, type PageDefaults } from "@/core/lib/telemetry/page-loader";
+import {
+  pageLoader,
+  type PageDefaults,
+} from "@/core/lib/telemetry/page-loader";
 import { detectPlatform } from "@/features/download/options";
 import { TAB_PARAM } from "@/features/events/view";
 
@@ -22,17 +26,32 @@ const FALLBACK: PageDefaults = { variant: "live_feed" };
  * The first document: the calendar is required (its outage answers 503); Live Now, Upcoming and an
  * event or place the URL opens are optional, and the browser fetches whatever failed here.
  */
-export async function loadEventsPage(request: Request) {
+export async function loadEventsPage(
+  request: Request,
+  context: Readonly<RouterContextProvider>,
+) {
   const url = new URL(request.url);
-  const { sid, wrap } = await pageLoader(request, FALLBACK);
+  const { sid, wrap } = await pageLoader(request, context, FALLBACK);
   const platform = detectPlatform(request.headers.get("user-agent"));
   const configured = siteUrl("/");
-  const origin = /^https?:\/\//.test(configured) ? new URL(configured).origin : url.origin;
+  const origin = /^https?:\/\//.test(configured)
+    ? new URL(configured).origin
+    : url.origin;
   const now = Date.now();
   if (url.searchParams.get(TAB_PARAM) === "my") {
-    return wrap({ tab: "my" as const, sid, platform, origin, now, unavailable: false, dehydratedState: null });
+    return wrap({
+      tab: "my" as const,
+      sid,
+      platform,
+      origin,
+      now,
+      unavailable: false,
+      dehydratedState: null,
+    });
   }
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   const eventId = readEventId(url.searchParams);
   const place = eventId ? null : readPlaceTarget(url.searchParams);
   // A visitor who leaves stops the page's upstream reads: cancelling aborts each query's own signal.
@@ -48,10 +67,15 @@ export async function loadEventsPage(request: Request) {
   if (request.signal.aborted) {
     // Nobody is waiting for this page: that is not an outage, so it never answers 503.
     client.clear();
-    throw request.signal.reason ?? new DOMException("The request was aborted.", "AbortError");
+    throw (
+      request.signal.reason ??
+      new DOMException("The request was aborted.", "AbortError")
+    );
   }
   const unavailable = calendar.status === "rejected";
-  const dehydratedState = dehydrate(client, { shouldDehydrateQuery: (query) => query.state.status === "success" });
+  const dehydratedState = dehydrate(client, {
+    shouldDehydrateQuery: (query) => query.state.status === "success",
+  });
   client.clear();
   return wrap(
     { tab: null, sid, platform, origin, now, unavailable, dehydratedState },

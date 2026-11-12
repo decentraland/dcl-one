@@ -336,7 +336,7 @@ class PlayImportTests(unittest.TestCase):
         key = contract.inputs(self.root)
         for neighbour in ('library/ui/index.ts', 'library/ui/index.tsx', 'library/ui/index.ts.orig',
                           'library/ui/components/NavBar/NavBar.tsx',
-                          'library/ui/components/runtime/figma-module-runtime.module.css',
+                          'library/ui/components/NavBar/NavBar.module.css',
                           'library/ui/figma/src/cli.ts'):
             self.write(neighbour, 'export {};\n')
         git('add', '.')

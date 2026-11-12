@@ -1,0 +1,162 @@
+/* TODO(figma-ds): replace with the Figma-generated profile header's styles. */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--dcl-space-12);
+  box-sizing: border-box;
+  width: 100%;
+  padding: var(--dcl-space-16);
+  border-bottom: 1px solid var(--dcl-border-subtle);
+}
+
+.identity {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  min-width: 0;
+}
+
+.identity .avatar {
+  --avatar-size: 48px;
+}
+
+.nameBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.nameRow {
+  display: flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+}
+
+.name,
+.discriminator {
+  margin: 0;
+  font-family: 'Inter', sans-serif;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.334;
+}
+
+.name {
+  overflow: hidden;
+  max-width: 20ch;
+  color: var(--name-color);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.discriminator {
+  color: var(--dcl-text-secondary);
+}
+
+.verified {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: var(--dcl-radius-full);
+  background: var(--name-color);
+  color: var(--dcl-neutrals-pale-black);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.addressRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dcl-text-secondary);
+}
+
+.address {
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  line-height: 1.75;
+}
+
+.copyWrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--dcl-radius-full);
+  background: transparent;
+  color: var(--dcl-text-secondary);
+  cursor: pointer;
+}
+
+.copy:hover {
+  background: var(--dcl-bg-hover);
+}
+
+.copy:focus-visible {
+  outline: 2px solid var(--dcl-text-primary);
+  outline-offset: 2px;
+}
+
+.copied {
+  position: absolute;
+  bottom: calc(100% + var(--dcl-space-8));
+  left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  padding: var(--dcl-space-4) var(--dcl-space-8);
+  border-radius: var(--dcl-radius-sm);
+  background: var(--dcl-bg-surface-raised);
+  color: var(--dcl-text-primary);
+  font-size: var(--dcl-font-size-body-sm);
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--dcl-space-12);
+  width: 100%;
+}
+
+@media (min-width: 1024px) {
+  .root {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--dcl-space-16);
+    padding: var(--dcl-space-16) var(--dcl-space-24);
+  }
+
+  .identity .avatar {
+    --avatar-size: 76px;
+  }
+
+  .name,
+  .discriminator {
+    font-size: 24px;
+  }
+
+  .actions {
+    flex-shrink: 0;
+    flex-wrap: nowrap;
+    width: auto;
+  }
+}

@@ -254,7 +254,7 @@ function ParticipantMenu({ p, me, moderator }: { p: VoiceChatParticipant; me: bo
     }
     const viewProfile = (): void => {
       const r = ref.current?.getBoundingClientRect()
-      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true })
+      openProfileCard(p.address, r?.right ?? 0, r?.top ?? 0, { above: true, invite: false })
     }
     const list: ContextMenuItem[] = [{ label: 'View profile', onClick: then(viewProfile) }]
     if (moderator && !isModerator(p.role)) {
@@ -302,7 +302,7 @@ function CommunityStream({ state, collapsed, setCollapsed, people, setPeople }: 
   }, [state.participants, query])
 
   const openProfile = (p: VoiceChatParticipant) => (e: React.MouseEvent): void => {
-    openProfileCard(p.address, e.clientX, e.clientY)
+    openProfileCard(p.address, e.clientX, e.clientY, { invite: false })
   }
   const shown = (p: VoiceChatParticipant): string => (p.address.toLowerCase() === me ? 'You' : splitName(p.name || p.address).base)
 
