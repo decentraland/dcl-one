@@ -158,9 +158,7 @@ impl Plugin for SettingBridgePlugin {
             apply_to_camera::<ShadowSetting>.in_set(SceneSets::RestrictedActions),
         );
 
-        if !is_preview {
-            add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
-        }
+        add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<ParcelGrassSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<FogSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<BloomSetting>(app, &mut settings, &mut schedule, &config);
