@@ -22,6 +22,7 @@ use common::{
     util::TryPushChildrenEx,
 };
 use platform::default_camera_components;
+use scene_runner::scene_partition::PlayerDownloads;
 use ui_core::ui_actions::{DragData, Dragged, On};
 
 use crate::{AvatarSelection, AvatarShape};
@@ -79,6 +80,9 @@ impl PhotoBooth<'_, '_> {
                 Propagate(render_layers.clone()),
                 AvatarDynamicState::default(),
                 BoothAvatar,
+                // a preview the player opened (the backpack, a passport) downloads with the
+                // player's scenes, so it still loads while engine memory is full
+                PlayerDownloads,
             ))
             .id();
 

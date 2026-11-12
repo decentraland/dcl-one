@@ -30,8 +30,8 @@ pub struct Partition(pub PartitionData);
 pub struct PartitionedDownloads(pub Vec<String>);
 
 /// Marks an entity whose [`PartitionedDownloads`] are the player's own though it is not the
-/// player entity (the player's emotes): they rank with the player's scenes, so they are not
-/// held while engine memory is full.
+/// player entity (an avatar preview the player opened, the player's emotes): they rank with the
+/// player's scenes, so they are not held while engine memory is full.
 #[derive(Component, Clone, Copy, Debug, Default)]
 pub struct PlayerDownloads;
 

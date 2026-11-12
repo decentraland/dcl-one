@@ -23,9 +23,11 @@ download, however close the engine was to running out. On the web that ends in a
   kept; how many were held back is published as `RefusedScenes`. An imposter bake's scene is
   refused too, so a bake waits for the refusal to end.
 - **Downloads.** While refusing, the request slots grant only the `Active` tier: the scenes the
-  player stands in, portables and global scenes, the player's own body, wearables and emotes, and
-  files every scene runtime needs (the SDK6 adaption layer, queued under a fixed owner registered
-  at that tier). Every other request is held: other avatars, the other scenes (spawned ones
+  player stands in, portables and global scenes, the player's own body, wearables and emotes
+  (equipped or last played), the avatar previews the player opens (the backpack, a passport,
+  with the emotes they play), and files every scene runtime needs (the SDK6 adaption layer,
+  queued under a fixed owner registered at that tier). A preview the player opens is never held,
+  so trying on an outfit cannot leave the backpack waiting on memory the refusal does not free. Every other request is held: other avatars, the other scenes (spawned ones
   included), emotes of other avatars, departed scenes and requests made by URL. A held request
   keeps its place and is granted once the refusal ends, or at once when it rises into the
   `Active` tier: its hash is registered for the player, the player's scene shares its download,

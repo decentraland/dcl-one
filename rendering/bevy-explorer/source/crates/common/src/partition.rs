@@ -40,7 +40,8 @@ impl PartitionData {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
     /// the scenes the player stands in, portables and global scenes, the player's own body,
-    /// wearables and emotes, and files every scene runtime needs (the SDK6 adaption layer)
+    /// wearables and emotes, the avatar previews the player opens (the backpack, a passport), and
+    /// files every scene runtime needs (the SDK6 adaption layer)
     Active,
     /// other avatars' bodies and wearables: all before any other scene, nearest avatar first
     Avatar,
