@@ -53,7 +53,6 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - Reach other files through `env!("DCL_ONE_ROOT")`, never `../` chains.
 - Domain crates follow `docs/module-layers.toml`; no upward dependency.
 - Keep the fresh-schema bootstrap single.
-- Put helpers other crates' tests use behind a `test-support` feature.
 - ops, presence, serve and main stay in the root crate.
 
 ## Ownership
