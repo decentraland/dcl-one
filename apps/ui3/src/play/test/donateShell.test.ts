@@ -70,6 +70,32 @@ const signThen =
     return after()
   }
 
+/** Web Locks as one browser holds them: one holder per name until it lets go, then the next tab queued for it. */
+function fakeLocks() {
+  const held = new Set<string>()
+  const queued = new Map<string, Array<(release: () => void) => void>>()
+  const grant = (name: string): (() => void) => {
+    held.add(name)
+    let gone = false
+    return () => {
+      if (gone) return
+      gone = true
+      held.delete(name)
+      const next = queued.get(name)?.shift()
+      if (next) next(grant(name))
+    }
+  }
+  return {
+    held,
+    claim: (account: string, wait = false): Promise<(() => void) | null> => {
+      const name = `donate:${account}`
+      if (!held.has(name)) return Promise.resolve(grant(name))
+      if (!wait) return Promise.resolve(null)
+      return new Promise((resolve) => queued.set(name, [...(queued.get(name) ?? []), resolve]))
+    }
+  }
+}
+
 /** A Storage in memory, shared between two shells to stand for a reload or another tab. */
 function memoryStorage(): Storage {
   const map = new Map<string, string>()
@@ -85,8 +111,9 @@ function memoryStorage(): Storage {
   }
 }
 
-function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 'managed'; web3?: boolean; other?: boolean; storage?: Storage } = {}) {
+function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 'managed'; web3?: boolean; other?: boolean; storage?: Storage; locks?: ReturnType<typeof fakeLocks> } = {}) {
   const storage = opts.storage ?? memoryStorage()
+  const locks = opts.locks ?? fakeLocks()
   const w = fakeProvider()
   const views: DonateView[] = []
   let handlers: DonateHandlers = { onClose: () => {} }
@@ -103,6 +130,8 @@ function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 
     chainId: () => 137,
     sendGasless: signThen(async () => HASH),
     blockNumber: async () => 100n,
+    // The meta-transaction nonce: the tips here sign nonce 1, so 1 means unused.
+    nonce: async () => 1n,
     transfers: async () => [],
     newId: (() => {
       let n = 0
@@ -115,6 +144,8 @@ function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 
     accountUrl: () => 'https://example.org/account',
     supportUrl: () => 'https://example.org/help',
     storage: () => storage,
+    claim: locks.claim,
+    locksAvailable: () => true,
     ...over
   }
   const donate = createShellDonate({
@@ -132,7 +163,7 @@ function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 
     otherDialogOpen: () => opts.other === true,
     services
   })
-  return { donate, views, last: () => views[views.length - 1], handlers: () => handlers, hidden: () => hidden, posted, w, services, storage }
+  return { donate, views, last: () => views[views.length - 1], handlers: () => handlers, hidden: () => hidden, posted, w, services, storage, locks }
 }
 
 const open = (d: ReturnType<typeof setup>['donate']) => d.request('donate.open', { v: 1, place: { parcel: { x: 0, y: 0 } } })
@@ -313,6 +344,77 @@ describe('sending a tip', () => {
     expect(JSON.parse(storage.getItem(key)!).id).toBe('other-tab-tip')
   })
 
+  it('never offers TRY AGAIN after a refusal once the chain shows the tip used: it finds the Transfer', async () => {
+    const MINED = '0x' + 'ef'.repeat(32)
+    const s = setup({
+      sendGasless: signThen(() => Promise.reject(new MetaTransactionError('Invalid transaction', 'invalid_transaction', 400, true))),
+      nonce: async () => 2n,
+      transfers: async () => [{ hash: MINED, value: parseUnits('166', 18) }]
+    })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.views.some((v) => v.step === 'failed')).toBe(false)
+    expect(s.last().step).toBe('sent')
+    expect(s.services.forward).toHaveBeenCalledWith(MINED, LOGIN)
+  })
+
+  it('keeps watching, with no TRY AGAIN, a refused tip whose nonce moved but whose Transfer isn’t seen yet', async () => {
+    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('Invalid transaction', 'invalid_transaction', 400, true))), nonce: async () => 2n })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.views.some((v) => v.step === 'failed')).toBe(false)
+    expect(s.last()).toMatchObject({ step: 'processing', final: true })
+  })
+
+  it('treats a revert as final only while the nonce is unused', async () => {
+    const reverted = { wait: async (_c: number, h: string) => Promise.reject(new TxRevertedError(h)) }
+    const used = setup({ ...reverted, nonce: async () => 2n, transfers: async () => [{ hash: HASH, value: parseUnits('166', 18) }] })
+    await open(used.donate)
+    used.handlers().onSend?.('166')
+    await flush()
+    expect(used.last().step).toBe('sent')
+    const unused = setup(reverted)
+    await open(unused.donate)
+    unused.handlers().onSend?.('166')
+    await flush()
+    expect(unused.last().step).toBe('failed')
+  })
+
+  it('stops polling for the receipt once the tip settled', async () => {
+    let stop: (() => boolean) | undefined
+    const s = setup({
+      sendGasless: signThen(async () => HASH),
+      wait: async (_c, h, timeout, st) => {
+        if (timeout > 200_000) {
+          stop = st
+          return new Promise<string>(() => {})
+        }
+        return Promise.reject(new TxPendingError(h, 'The tip'))
+      },
+      transfers: async () => [{ hash: HASH, value: parseUnits('166', 18) }],
+      now: () => 0
+    })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('sent')
+    expect(stop?.()).toBe(true)
+  })
+
+  it('ignores a stored record it can’t trust, and never leaves the dialog claimed', async () => {
+    const storage = memoryStorage()
+    storage.setItem(`dcl:donate:pending:v2:${TIPPER}`, JSON.stringify({ id: 'x', amount: '166', wei: 'x', fromBlock: '1', nonce: '1', until: Number.MAX_SAFE_INTEGER, creator: { address: CREATOR } }))
+    const s = setup({}, { storage })
+    await open(s.donate)
+    expect(s.last().step).toBe('form')
+    expect(storage.length).toBe(0)
+    const hung = setup({ place: () => Promise.reject(new Error('boom')) })
+    await expect(open(hung.donate)).rejects.toThrow()
+    expect(hung.donate.dialogOpen()).toBe(false)
+  })
+
   it('fails at once when a processing tip reverts', async () => {
     const s = setup({ wait: async (_c, h, timeout) => Promise.reject(timeout > 200_000 ? new TxRevertedError(h) : new TxPendingError(h, 'The tip')) })
     await open(s.donate)
@@ -415,6 +517,39 @@ describe('sending a tip', () => {
     await flush()
     expect(s.last().step).toBe('failed')
     expect(s.storage.length).toBe(0)
+  })
+
+  it('lets one tab at a time send or watch the account’s tip: another tab says so, then goes on once it is done', async () => {
+    const storage = memoryStorage()
+    const locks = fakeLocks()
+    let settleFirst: () => void = () => {}
+    const mined = new Promise<string>((r) => (settleFirst = () => r(HASH)))
+    // The first tab's tip is still being mined when the second tab opens Donate.
+    const first = setup({ wait: async (_c, _h, timeout) => (timeout > 200_000 ? new Promise<string>(() => {}) : mined) }, { storage, locks })
+    await open(first.donate)
+    first.handlers().onSend?.('166')
+    await flush()
+    expect(first.last().step).toBe('sending')
+    expect(locks.held.size).toBe(1)
+    const second = setup({}, { storage, locks })
+    await open(second.donate)
+    expect(second.last().step).toBe('elsewhere')
+    // The second tab can't start a send of its own meanwhile, and goes on to its form once the first tab's tip settles.
+    settleFirst()
+    await flush()
+    await flush()
+    expect(first.last().step).toBe('sent')
+    expect(locks.held.size).toBe(0)
+    expect(second.last().step).toBe('form')
+  })
+
+  it('lets the lock go when nothing was signed', async () => {
+    const s = setup({ sendGasless: async () => Promise.reject(Object.assign(new Error('User rejected the request.'), { code: 4001 })) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('failed')
+    expect(s.locks.held.size).toBe(0)
   })
 })
 

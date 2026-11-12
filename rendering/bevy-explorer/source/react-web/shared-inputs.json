@@ -2572,6 +2572,18 @@
       "path": "library/ui/apps/hud/features/donate",
       "entries": [
         {
+          "name": "DonatePanel.module.css",
+          "kind": "regular"
+        },
+        {
+          "name": "DonatePanel.tsx",
+          "kind": "regular"
+        },
+        {
+          "name": "types.ts",
+          "kind": "regular"
+        },
+        {
           "name": "useDonate.ts",
           "kind": "regular"
         }
@@ -6222,6 +6234,18 @@
     {
       "path": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "sha256": "94859614803b162d43e0957b63f143819b31653af59281dd90e2f5b5f564eca2"
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "sha256": "9c88f84b3813dda7763ac751c06573fb8502524ea1416c8c42d72bfc33a5ebe9"
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "sha256": "77d12da9787e883b505853d7351959cf1fa684f0c7ab1a5abfdc2d8da3861fcc"
+    },
+    {
+      "path": "library/ui/apps/hud/features/donate/types.ts",
+      "sha256": "bbb0b7ab1b3f0cc8a8bbd72ca40d033cfb5107a61d8d128e156075a7f233d79d"
     },
     {
       "path": "library/ui/apps/hud/features/donate/useDonate.ts",
@@ -15723,6 +15747,51 @@
     {
       "from": "library/ui/apps/hud/features/debug/useDebugPanel.ts",
       "to": "library/ui/apps/hud/features/debug/DebugPanel.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/design/index.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.module.css",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
       "kind": "test:runtime"
     },
     {
@@ -29052,6 +29121,16 @@
     },
     {
       "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
+      "to": "library/ui/apps/hud/features/donate/types.ts",
+      "kind": "type"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/tsconfig.json",
       "to": "library/ui/apps/hud/features/donate/useDonate.ts",
       "kind": "type"
     },
@@ -33353,6 +33432,11 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/voice/stream-small.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/features/donate/DonatePanel.tsx",
       "kind": "test:asset"
     }
   ]

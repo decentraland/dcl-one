@@ -1,12 +1,11 @@
-// The Donate panel, drawn by the web shell over the app (shell/donate/overlay): the
-// player picks a suggested amount or types one, in MANA or USD, and SEND TIP hands it to the shell, which signs.
+// The Donate panel, drawn over the app by the host that can sign a tip (the Sites /play web shell): the player
+// picks a suggested amount or types one, in MANA or USD, and SEND TIP hands it to the host, which signs.
 // Its steps: loading, the form, the tip being prepared (the wallet's window), processing (an outcome not yet
 // known), sent (rays, OK) and failed (TRY AGAIN, Contact Support).
 
 import { useState } from 'react'
-import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '@hud/design'
-import { MIN_TIP, TIP_AMOUNT } from '../../../lib/donateProtocol'
-import type { DonateCreator, DonateHandlers, DonateView } from '../../../shell/donate/donation'
+import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '../../design'
+import { MIN_TIP, TIP_AMOUNT, type DonateCreator, type DonateHandlers, type DonateView } from './types'
 import styles from './DonatePanel.module.css'
 
 const OTHER = -1
@@ -213,6 +212,21 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
             <Button onClick={handlers.onClose}>OK</Button>
           </div>
         </div>
+      )
+    case 'elsewhere':
+      return (
+        <Modal ariaLabel={label} width={480}>
+          <div className={styles.status} role="status">
+            <span className={styles.title}>A tip is in progress in another tab</span>
+            <Spinner />
+            <span className={styles.note}>This panel continues once it finishes. You can close it meanwhile.</span>
+          </div>
+          <ModalActions>
+            <Button variant="secondary" onClick={handlers.onClose}>
+              CLOSE
+            </Button>
+          </ModalActions>
+        </Modal>
       )
     case 'failed':
       return (

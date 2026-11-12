@@ -36,6 +36,10 @@ Donate runs in the `/play` web shell, the same way the Shop's purchases do.
 - **Confirmed by its own Transfer.** An unclear tip is watched by its hash, when there is one, and by the MANA
   token's `Transfer(tipper, creator, amount)` since the block it was signed at, which also gives the hash the
   creator's notification needs.
+- **Failed only while unused.** A relay refusal, or a revert of the known transaction, fails the tip (with TRY
+  AGAIN) only while the token's meta-transaction nonce is still the one the tip signed. Once it has moved past it,
+  the signature was used, so the tip's Transfer is looked for and the tip is never retried: a retry would sign the
+  next nonce and could pay twice.
 - **Web3 sign-ins only.** Donate is offered, and `donate.open` is accepted, only for a web3 wallet sign-in, as
   AGENTS.md requires for MANA. The shell checks this on every open, not only in what the HUD reads.
 - **One dialog over the app.** The Shop's dialog and the Donate panel each refuse to open while the other's is up.
@@ -53,8 +57,11 @@ the player owns.
 - The recipient is the places service's `creator_address`, which dcl-one derives from the scene's deployer
   (`services/catalyst/explore/src/places/derive.rs`).
 - A player whose tip the relay refuses cannot tip from the wallet instead.
-- A tip whose outcome is unknown is the account's pending tip, kept in the browser's storage (with an id, so one
-  tab never removes another's newer tip) until it settles or its watch ends: opening Donate again, after a reload
-  or in another tab, shows it, not a new form.
+- One tab at a time sends or watches an account's tip: a Web Lock per account (as the Shop takes one per purchase)
+  is held from SEND until the tip settles. Another tab opening Donate meanwhile says a tip is in progress there and
+  goes on once the lock is let go; it can't start a tip of its own. The browser lets a closed tab's lock go.
+- A tip whose outcome is unknown is the account's pending tip, kept in the browser's storage (with an id) until it
+  settles or its watch ends: after a reload, the page takes the lock again and shows it, not a new form.
+- A tip that is mined only after its 30-minute watch ends is never forwarded, so its creator gets no notification.
 - A second tip of the same amount to the same creator, signed in the watch window from another tab, could be taken
   for the first one's Transfer.

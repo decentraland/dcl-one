@@ -7,15 +7,12 @@
 import type { DonatePlace } from '@explorer-core/hostContract'
 import { ShellError } from '@explorer-core/lib/shellReply'
 
+/** The amount rules, the panel's (library/ui/apps/hud/features/donate). */
+export { MIN_TIP, TIP_AMOUNT } from '@hud/features/donate/types'
+
 export const DONATE_PROTOCOL = 1
 
-/** The least a tip may be, in MANA: the catalyst tells a creator of no smaller tip. */
-export const MIN_TIP = 1
 
-/** A tip amount as typed: whole MANA, optionally with up to 18 decimals (MANA's precision; `10` or `10.5`, not `10.`
- *  or `.5`). The panel and the
- *  shell read amounts by this one rule. */
-export const TIP_AMOUNT = /^\d+(\.\d{1,18})?$/
 
 /** The methods the shell answers (`shellRequest`). */
 export const DONATE_METHODS = {

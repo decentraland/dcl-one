@@ -83,7 +83,8 @@ export function executeMetaTransactionData(kind: MetaTxKind, from: string, signa
   return encodeFunctionData({ abi: EXECUTE_ABI, functionName: "executeMetaTransaction", args: [from as `0x${string}`, functionData, r, s, v] });
 }
 
-async function readNonce(contract: ContractData, from: string): Promise<bigint> {
+/** The contract's meta-transaction nonce for `from`: the one its next meta-transaction signs. */
+export async function readNonce(contract: ContractData, from: string): Promise<bigint> {
   const data = encodeFunctionData({ abi: NONCE_ABI, functionName: "getNonce", args: [from as `0x${string}`] });
   const raw = await rpc<string>(contract.chainId, "eth_call", [{ to: contract.address, data }, "latest"]);
   return BigInt(raw);

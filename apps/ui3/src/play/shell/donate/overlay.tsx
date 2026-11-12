@@ -8,7 +8,7 @@ import '@hud/styles/tokens.css'
 import { useEffect, useRef } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { installHudScale } from '@explorer-core/lib/hudScale'
-import { DonatePanel } from '../../features/donate/ui/DonatePanel'
+import { DonatePanel } from '@hud/features/donate/DonatePanel'
 import type { DonateHandlers, DonateView, ShellDonateUi } from './donation'
 import styles from './overlay.module.css'
 

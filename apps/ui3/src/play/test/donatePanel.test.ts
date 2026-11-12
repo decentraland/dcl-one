@@ -1,7 +1,7 @@
 // The Donate panel's amount rule (features/donate/ui): the one the shell sends by, so SEND TIP is never enabled for
 // an amount the shell would refuse.
 import { describe, expect, it } from 'vitest'
-import { formatAmount, formatBalance, parseAmount } from '../features/donate/ui/DonatePanel'
+import { formatAmount, formatBalance, parseAmount } from '@hud/features/donate/DonatePanel'
 import { manaToWei } from '../../explorer/components/manaTip'
 
 describe('the tip amount', () => {
