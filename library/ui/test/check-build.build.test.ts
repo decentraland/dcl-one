@@ -219,10 +219,11 @@ describe('when checking a built gallery', () => {
         )
       })
 
-      // The entry can finish loading before the redirect commits, so either the request or the final document names it.
+      // The check reads the page only once the top frame stops loading, so it sees the document the redirect lands on,
+      // which the second origin has served by then.
       const escaped = `${origin}/landed.html`.replaceAll('.', '\\.')
       await expect(checkBuild({ dist: copy, prefix: '/nested/prefix/' })).rejects.toThrow(
-        new RegExp(`(request|document) left the expected origin or prefix: ${escaped}$`)
+        new RegExp(`the document left the expected origin or prefix: ${escaped}$`)
       )
       expect(requests).toContain('/landed.html')
     }, 120_000)
@@ -299,6 +300,105 @@ describe('when checking a built gallery', () => {
     }, 120_000)
   })
 
+  describe('and a navigation replaces the page while a poll is pending', () => {
+    // Rewrites the first poll for the component heading: `poll` is what that evaluation runs instead.
+    const interrupting = (poll: string) => {
+      const seen = { rewritten: false, rejected: '', polls: 0 }
+      const open: typeof openSession = async (...args) => {
+        const session = await openSession(...args)
+        const send = session.send
+        session.send = async (method, params) => {
+          const heading =
+            method === 'Runtime.evaluate' &&
+            String(params?.expression).includes("document.querySelector('main h1')")
+          if (heading) seen.polls++
+          if (heading && !seen.rewritten) {
+            seen.rewritten = true
+            try {
+              return await send(method, { ...params, expression: poll })
+            } catch (error) {
+              seen.rejected = String(error)
+              throw error
+            }
+          }
+          return send(method, params)
+        }
+        return session
+      }
+      return { open, seen }
+    }
+
+    it('should read the poll again in the document that replaced it', async () => {
+      // The evaluation never settles by itself, so it is in flight when the reload commits.
+      const { open, seen } = interrupting('(location.reload(), new Promise(() => {}))')
+
+      await expect(checkBuild({ dist, open })).resolves.toMatchObject({ entry: '/index.html' })
+      expect(seen.rewritten).toBe(true)
+      // Chrome names the lost document or the lost context, depending on how it replaced the page.
+      expect(seen.rejected).toMatch(
+        /Inspected target navigated or closed|Execution context was destroyed|Cannot find context/
+      )
+    }, 120_000)
+
+    it('should not keep a value read while a navigation started, and read the new document instead', async () => {
+      // The poll answers true, but the reload it starts is reported before that answer arrives.
+      const { open, seen } = interrupting('(location.reload(), true)')
+
+      await expect(checkBuild({ dist, open })).resolves.toMatchObject({ entry: '/index.html' })
+      expect(seen.rewritten).toBe(true)
+      expect(seen.rejected).toBe('')
+      expect(seen.polls).toBeGreaterThan(1)
+    }, 120_000)
+
+    it('should fail on a lost context that no navigation explains', async () => {
+      const open: typeof openSession = async (...args) => {
+        const session = await openSession(...args)
+        const send = session.send
+        session.send = async (method, params) => {
+          if (
+            method === 'Runtime.evaluate' &&
+            String(params?.expression).includes("document.querySelector('main h1')")
+          )
+            throw Object.assign(
+              new Error('{"code":-32000,"message":"Inspected target navigated or closed"}'),
+              { cdp: { code: -32000, message: 'Inspected target navigated or closed' } }
+            )
+          return send(method, params)
+        }
+        return session
+      }
+
+      await expect(checkBuild({ dist, open })).rejects.toThrow(
+        'Inspected target navigated or closed'
+      )
+    }, 120_000)
+
+    it('should time out on a page that never finishes loading instead of reading it', async () => {
+      let reads = 0
+      const loading = async () => ({
+        requests: [],
+        requestFailures: [],
+        runtimeErrors: [],
+        consoleErrors: [],
+        navigations: 0,
+        loading: true,
+        send: async () => ({}),
+        navigate: async () => ({}),
+        whenLoaded: async () => {},
+        evaluate: async () => {
+          reads++
+          return 'http://127.0.0.1/'
+        },
+        close: async () => {}
+      })
+
+      await expect(checkBuild({ dist, browser: 'unused', open: loading })).rejects.toThrow(
+        /^Timed out waiting for the page at /
+      )
+      expect(reads).toBe(0)
+    }, 60_000)
+  })
+
   describe('and a teardown step fails', () => {
     let origin: string
     let serverCloses: number
@@ -310,10 +410,14 @@ describe('when checking a built gallery', () => {
         requestFailures: [],
         runtimeErrors: [],
         consoleErrors: [],
-        send: async (method: string, params?: Record<string, unknown>) => {
-          if (method === 'Page.navigate') origin ||= new URL(String(params?.url)).origin
+        navigations: 0,
+        loading: false,
+        navigate: async (url: string) => {
+          origin ||= new URL(url).origin
           return {}
         },
+        whenLoaded: async () => {},
+        send: async () => ({}),
         evaluate: async (expression: string) => evaluate(expression),
         close: async () => {
           if (!closes) throw new Error('browser would not close')
@@ -323,7 +427,7 @@ describe('when checking a built gallery', () => {
     const passing = (expression: string) => {
       const page = `${origin}/?component=Button`
       if (
-        expression === 'location.href' ||
+        expression.includes('return location.href }') ||
         expression.includes("readyState === 'complete' && location.href")
       )
         return page

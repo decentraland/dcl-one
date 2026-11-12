@@ -1,3 +1,4 @@
+import { RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { action, normalizeReport } from "./internal.client-error";
@@ -11,7 +12,7 @@ function post(body: string): Request {
 }
 
 function call(request: Request) {
-  return action({ request } as unknown as Parameters<typeof action>[0]);
+  return action({ request, context: new RouterContextProvider() } as unknown as Parameters<typeof action>[0]);
 }
 
 describe("normalizeReport", () => {

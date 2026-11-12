@@ -41,8 +41,10 @@ describe('private community join requests', () => {
     expect(p.onJoin).not.toHaveBeenCalled()
   })
 
-  it('a pending request shows Requested, and clicking it cancels the request', async () => {
+  it('a pending request shows Request Sent (Cancel Request on hover), and clicking it cancels the request', async () => {
     const p = renderModal(community({ pendingRequestId: 'r9' }))
+    expect(screen.getByRole('button', { name: 'Cancel join request' })).toHaveTextContent('Request Sent')
+    expect(screen.queryByRole('button', { name: 'Request to Join' })).toBeNull()
     await userEvent.click(screen.getByRole('button', { name: 'Cancel join request' }))
     expect(p.onCancelRequest).toHaveBeenCalledWith('c1', 'r9')
   })

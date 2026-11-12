@@ -8,17 +8,15 @@
   },
   "registry": {
     "path": "promotion.json",
-    "sha256": "abf3aa92674c3dbcee83226326916a4a387056a45f2f9127ed7072fdebf3f8a3",
-    "components": [
-      "NavBar"
-    ],
+    "sha256": "00070f6a1fd3332c284a60a19ad819d598d084e00fdd6024672a79f958deb215",
+    "components": [],
     "internal": []
   },
   "inputs": {
     "config": {
       "path": "library/ui/figma/figma.config.json",
-      "sha256": "601bfe0e26501a323aca9af6667ed184faa390d25db5836eda946db39f1f7e25",
-      "indexBlobSha": "30cd3dd8f4befeee7aa8a2bb8cae1ec8eaf807c2"
+      "sha256": "da4a9ae4f51f110d9badbf10e7b52cad8da3f5cbd1614285e7767f531ca76feb",
+      "indexBlobSha": "de0bfcb132d1138d70db2b539dfbd896b1da5b1b"
     },
     "dependencies": [
       {
@@ -45,8 +43,8 @@
   "modules": [
     {
       "path": "library/ui/figma/component-generation.mjs",
-      "sha256": "38d308ab445b98b80cfda2175f3a7dcd26ea723413dfa43b62fefb882d85c1ad",
-      "indexBlobSha": "181b5b16dc44461cfc4ca545ca1a41c7fd434c98"
+      "sha256": "d0c58eb095df77821434ee9305f71768cd9fd45142e20644bdd421b51d715492",
+      "indexBlobSha": "2e5acca2768c4bb20f7b2063c0139f0da7558448"
     },
     {
       "path": "library/ui/figma/ledger/retirements.json",
@@ -200,8 +198,8 @@
     },
     {
       "path": "library/ui/figma/src/install.ts",
-      "sha256": "8946fd13bc558edb1e93dc089150928cb498ff807dd72fb9bb494142f0b77e47",
-      "indexBlobSha": "53209f334eeb5d5348ac55725832e11877ea4c0a"
+      "sha256": "31109be35556d9e4f659cdd7f90be132a3e86780549466c76d8c67fbaf2cf9c7",
+      "indexBlobSha": "a3c716dcea6ae95bc28e82cccac51b62412ce5c1"
     },
     {
       "path": "library/ui/figma/src/ir/components.ts",
@@ -316,44 +314,8 @@
   ],
   "output": [
     {
-      "path": "NavBar/NavBar.figma.ts",
-      "sha256": "ead9799e44e9b60c8e8dcc697b180f212f8373d0fce24c4309ad4be7e12fb95b"
-    },
-    {
-      "path": "NavBar/NavBar.module.css",
-      "sha256": "fce5ebb617b694ecc0fbc32a195f534590350222c4267e09aa23c6eb6ff6dc60"
-    },
-    {
-      "path": "NavBar/NavBar.module.css.d.ts",
-      "sha256": "828d14307f527ce92821af3cbf08f5953a7255c5ce2ce82ec498bd9ce71822e2"
-    },
-    {
-      "path": "NavBar/NavBar.tsx",
-      "sha256": "64676cdc20bce71e34d60a9fa1439a8faf4361f304cf5f4577244a24c0678709"
-    },
-    {
       "path": "promotion.json",
-      "sha256": "abf3aa92674c3dbcee83226326916a4a387056a45f2f9127ed7072fdebf3f8a3"
-    },
-    {
-      "path": "runtime/figma-interactions.tsx",
-      "sha256": "c219b13ce084c2d90b8cfaf76a602a92ea69563b139471f9278016eca46ce88f"
-    },
-    {
-      "path": "runtime/figma-module-runtime.module.css",
-      "sha256": "22820cf60e25d5ba462e1f2a786f590825b9c31dde6d9734fec9e56bb3813c07"
-    },
-    {
-      "path": "runtime/figma-module-runtime.module.css.d.ts",
-      "sha256": "adcc34f5bed1d31a3e14630e7311138878de82dc9e1daf0a72a27984deb30071"
-    },
-    {
-      "path": "runtime/figma-module-runtime.tsx",
-      "sha256": "4f3790181edb0aab454895459b50bee59a80e047bc8880a5c5006a331d5306db"
-    },
-    {
-      "path": "runtime/figma-view-state.ts",
-      "sha256": "95882b20b338599463ae5cb2d2ba542f254610a89225de8b18f0d98a37623cae"
+      "sha256": "00070f6a1fd3332c284a60a19ad819d598d084e00fdd6024672a79f958deb215"
     }
   ]
 }

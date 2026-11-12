@@ -65,6 +65,21 @@ const safe = (value) =>
 const ordered = (entries) => [...entries].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 
 /**
+ * Hand-written components: the top-level directories of library/ui/components that hold none of the installer's
+ * outputs (`owned`, paths relative to library/ui/components, as the lock's public component table names them). Git
+ * owns their files; the installer keeps them byte for byte and the lock never pins them.
+ * @param {Iterable<string>} files paths relative to library/ui/components
+ * @param {Iterable<string>} owned
+ * @returns {string[]}
+ */
+export function handWrittenComponentDirectories(files, owned) {
+  const top = (paths) =>
+    new Set([...paths].filter((file) => file.includes('/')).map((file) => file.split('/')[0]))
+  const installed = top(owned)
+  return [...top(files)].filter((directory) => !installed.has(directory)).sort()
+}
+
+/**
  * Whether a tracked path can be a component generation input: a fixed module, a non-test file at the top of
  * library/ui/figma with a code extension, or any non-test file under library/ui/figma/src. The read-set is narrower
  * (componentModulePaths); this wider class is what the install and offline inventories compare with the source
