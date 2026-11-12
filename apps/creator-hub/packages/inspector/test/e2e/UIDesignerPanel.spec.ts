@@ -129,6 +129,35 @@ test.describe('UI Designer left panel', () => {
     ]);
   });
 
+  test('show the Position unit value in full, inside its cell', async () => {
+    await UIDesigner.selectNode('Container1');
+    const unit = page.locator('.ui-designer-right-rail [aria-label="X unit"]');
+    await expect(
+      unit
+        .locator('.Option')
+        .evaluate(el => el.getBoundingClientRect().width > 0 && el.scrollWidth <= el.clientWidth),
+    ).resolves.toBe(true);
+    await expect(unit.evaluate(el => !!el.closest('.InputContainer'))).resolves.toBe(true);
+  });
+
+  test('show every unit option label in full when the list opens', async () => {
+    await page.locator('.ui-designer-right-rail [aria-label="X unit"]').click();
+    const labels = page.locator('[role="listbox"] .Option');
+    await labels.first().waitFor({ state: 'visible' });
+    await expect(
+      labels.evaluateAll(els =>
+        els.map(el => [
+          el.textContent,
+          el.getBoundingClientRect().width > 0 && el.scrollWidth <= el.clientWidth,
+        ]),
+      ),
+    ).resolves.toEqual([
+      ['px', true],
+      ['%', true],
+    ]);
+    await page.keyboard.press('Escape');
+  });
+
   test('return to the empty state when the last GUI is deleted', async () => {
     await UIDesigner.removeRoot(ROOT);
 

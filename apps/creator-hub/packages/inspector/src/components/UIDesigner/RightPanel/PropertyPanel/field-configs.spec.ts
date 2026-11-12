@@ -36,7 +36,7 @@ const CONTAINER_ONLY = [
 
 const ITEM_PROPS = [
   'Display',
-  'Size',
+  'Resize',
   'Min Size',
   'Max Size',
   'Align Self',
@@ -155,7 +155,7 @@ describe('buildGroups', () => {
     it('should lead Layout with the composite controls, in the design’s order', () => {
       expect(labelsIn('UiEntity', 'Layout').slice(0, 7)).toEqual([
         'Flow',
-        'Size',
+        'Resize',
         'Min Size',
         'Max Size',
         'Alignment',
@@ -173,11 +173,11 @@ describe('buildGroups', () => {
       }
     });
 
-    it('should make Size the per-axis resize control', () => {
-      const size = fieldsIn('UiEntity', 'Layout').find(f => f.label === 'Size');
+    it('should make Resize the per-axis resize control', () => {
+      const size = fieldsIn('UiEntity', 'Layout').find(f => f.label === 'Resize');
       expect(size?.kind).toBe('resize');
       const otherKinds = buildLayoutGroup(true)
-        .fields.filter(f => f.label !== 'Size')
+        .fields.filter(f => f.label !== 'Resize')
         .map(f => f.kind);
       expect(otherKinds).not.toContain('resize');
     });

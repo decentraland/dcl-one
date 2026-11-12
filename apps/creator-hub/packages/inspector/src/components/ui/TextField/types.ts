@@ -12,6 +12,7 @@ export type Props = Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> & 
   className?: string;
   disabled?: boolean;
   leftContent?: React.ReactNode;
+  rightContent?: React.ReactNode;
   debounceTime?: number;
   autoSelect?: boolean;
 };

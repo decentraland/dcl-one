@@ -1,4 +1,5 @@
 import React from 'react';
+import cx from 'classnames';
 import type { Entity } from '@dcl/ecs';
 
 import { useAppDispatch, useAppSelector } from '../../../../../redux/hooks';
@@ -6,7 +7,12 @@ import { getAspectLockedNodes, setAspectLocked } from '../../../../../redux/ui-d
 import { Dropdown, TextField } from '../../../../ui';
 import { BindableSubField } from '../BindableSubField';
 import type { FieldConfig } from '../field-configs';
-import { axisForPath, convertLength, measureParentBox } from '../../../shared/measure';
+import {
+  axisForPath,
+  convertLength,
+  measureNodeBox,
+  measureParentBox,
+} from '../../../shared/measure';
 import {
   MODE_LABELS,
   type ResizeAxis,
@@ -34,6 +40,11 @@ interface ResizeFieldProps {
 const UNIT_OF: Partial<Record<ResizeMode, number>> = {
   fixed: YGU_POINT,
   percent: YGU_PERCENT,
+};
+
+const UNIT_LABEL: Partial<Record<ResizeMode, string>> = {
+  fixed: 'px',
+  percent: '%',
 };
 
 export const ResizeField: React.FC<ResizeFieldProps> = ({
@@ -72,6 +83,9 @@ export const ResizeField: React.FC<ResizeFieldProps> = ({
         const mode = resizeMode(value, axis, mainAxis);
         const modes = resizeModesFor(value, { overriding, current: mode });
         const numeric = (value?.[axis] as number | undefined) ?? 0;
+        const sized = !!UNIT_OF[mode];
+        const rendered = sized ? undefined : measureNodeBox(entity)?.[axis];
+        const shown = rendered === undefined ? numeric : Math.round(rendered);
         return (
           <BindableSubField
             key={axis}
@@ -79,40 +93,50 @@ export const ResizeField: React.FC<ResizeFieldProps> = ({
             entity={entity}
             bound={bindings?.[`${field.componentId}.${axis}`]}
           >
-            <div className="ui-designer-resize-axis">
-              <TextField
-                type="number"
-                leftLabel={sub.leftLabel}
-                value={String(numeric)}
-                disabled={!UNIT_OF[mode]}
-                onChange={e => patchValue(axis, mode, Number(e.target.value) || 0)}
-              />
-              <Dropdown
-                options={modes.map(m => ({ value: m, label: MODE_LABELS[m] }))}
-                value={mode}
-                aria-label={`${sub.leftLabel === 'W' ? 'Width' : 'Height'} resize mode`}
-                onChange={e => {
-                  const next = (e.target as HTMLSelectElement).value as ResizeMode;
-                  if (next === mode) return;
-                  const parent = measureParentBox(entity);
-                  const dim = parent ? parent[axisForPath(axis)] : 0;
-                  onPatch(
-                    resizePatch({
-                      next,
-                      current: mode,
-                      axis,
-                      mainAxis,
-                      value: convertLength(
-                        numeric,
-                        UNIT_OF[mode] ?? YGU_POINT,
-                        UNIT_OF[next] ?? YGU_POINT,
-                        dim,
-                      ),
-                    }),
-                  );
-                }}
-              />
-            </div>
+            <TextField
+              type="number"
+              leftLabel={sub.leftLabel}
+              value={String(shown)}
+              readOnly={!sized}
+              rightContent={
+                <span
+                  className={cx('ui-designer-unit-control', {
+                    'is-mode-word': !UNIT_LABEL[mode],
+                  })}
+                >
+                  <Dropdown
+                    options={modes.map(m => ({
+                      value: m,
+                      label: MODE_LABELS[m],
+                      selectedLabel: UNIT_LABEL[m],
+                    }))}
+                    value={mode}
+                    aria-label={`${sub.leftLabel === 'W' ? 'Width' : 'Height'} resize mode`}
+                    onChange={e => {
+                      const next = (e.target as HTMLSelectElement).value as ResizeMode;
+                      if (next === mode) return;
+                      const parent = measureParentBox(entity);
+                      const dim = parent ? parent[axisForPath(axis)] : 0;
+                      onPatch(
+                        resizePatch({
+                          next,
+                          current: mode,
+                          axis,
+                          mainAxis,
+                          value: convertLength(
+                            numeric,
+                            UNIT_OF[mode] ?? YGU_POINT,
+                            UNIT_OF[next] ?? YGU_POINT,
+                            dim,
+                          ),
+                        }),
+                      );
+                    }}
+                  />
+                </span>
+              }
+              onChange={e => patchValue(axis, mode, Number(e.target.value) || 0)}
+            />
           </BindableSubField>
         );
       })}

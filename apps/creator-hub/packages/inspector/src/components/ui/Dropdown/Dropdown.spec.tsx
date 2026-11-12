@@ -282,3 +282,23 @@ describe('when the list has a search field', () => {
     });
   });
 });
+
+describe('when the selected option has a selectedLabel', () => {
+  const modes = [
+    { value: 'fixed', label: 'Fixed', selectedLabel: 'px' },
+    { value: 'hug', label: 'Hug' },
+  ];
+
+  it('should show the selectedLabel in the trigger', () => {
+    const { trigger } = renderDropdown({ options: modes, value: 'fixed' });
+    expect(trigger.textContent).toBe('px');
+  });
+
+  it('should keep the label in the open list', () => {
+    const { trigger } = renderDropdown({ options: modes, value: 'fixed' });
+    fireEvent.click(trigger);
+    const list = screen.getByRole('listbox', { hidden: true });
+    expect(within(list).getByText('Fixed')).toBeTruthy();
+    expect(within(list).queryByText('px')).toBeNull();
+  });
+});
