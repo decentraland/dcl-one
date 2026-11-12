@@ -499,11 +499,11 @@ const ToolbarPillLabel = styled('span')({
 
 const SendButton = styled(IconButton)(({ theme }) => ({
   flexShrink: 0,
-  width: theme.spacing(3.5),
-  height: theme.spacing(3.5),
+  width: theme.spacing(3.25),
+  height: theme.spacing(3.25),
   borderRadius: '50%',
   backgroundColor: theme.palette.primary.main,
-  color: theme.palette.primary.contrastText,
+  color: 'var(--palette-neutral-softWhite)',
   '&:hover': { backgroundColor: 'var(--primary-hover)' },
   '&.Mui-disabled': { backgroundColor: theme.palette.action.disabledBackground },
 }));

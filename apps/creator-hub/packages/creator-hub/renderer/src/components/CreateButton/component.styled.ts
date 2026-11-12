@@ -31,7 +31,7 @@ const StyledLabelButton = styled(Button)(({ theme }) => ({
     textTransform: 'uppercase',
     borderRadius: 0,
     backgroundColor: theme.palette.primary.main,
-    color: 'var(--text-on-primary)',
+    color: 'var(--palette-neutral-softWhite)',
     boxShadow: 'none',
     [`@media ${ICON_ONLY_QUERY}`]: {
       width: 40,
