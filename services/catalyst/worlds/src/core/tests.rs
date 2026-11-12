@@ -6293,22 +6293,26 @@ async fn active_entities_look_up_pointers_as_sent_and_fold_a_null_owner() {
     assert_eq!(body[0]["metadata"]["owner"], Value::Null);
 }
 
-/// `index-handler.ts` reads `searchParams.get('limit')`, the first of a
-/// repeated key, so a repeated `limit` is not a 400.
+/// `index-handler.ts` reads `searchParams.get('limit')` and
+/// `searchParams.get('offset')`, the first of a repeated key, so a repeated
+/// key is not a 400 and pages as its first values alone. With at least three
+/// indexed worlds, the last values (2, 0) or a last limit (2, 1) would list
+/// two worlds, and a last offset (1, 0) another page than (1, 1).
 #[tokio::test]
 async fn index_reads_the_first_of_a_repeated_query_key() {
     let Some(f) = fixture().await else { return };
+    for _ in 0..3 {
+        let (owner, world) = (Wallet::random(), world_name());
+        f.names.set(&owner.address, world.label());
+        let d = deployment(&owner, &world, "Indexed", "0,0", &["0,0"]).await;
+        post_entity(&f.app, &d, 200).await;
+    }
     let app = served_app(&f).await;
-    let body = expect(
-        &app,
-        Case::new(
-            "get",
-            format!("{NEST}/index?limit=1&limit=2&offset=0&offset=x"),
-        ),
-        200,
-    )
-    .await;
-    assert!(body["data"].as_array().unwrap().len() <= 1, "{body}");
+    let page = |query: &str| Case::new("get", format!("{NEST}/index?{query}"));
+    let repeated = expect(&app, page("limit=1&limit=2&offset=1&offset=0"), 200).await;
+    let first = expect(&app, page("limit=1&offset=1"), 200).await;
+    assert_eq!(repeated["data"].as_array().unwrap().len(), 1, "{repeated}");
+    assert_eq!(repeated["data"], first["data"]);
 }
 
 /// `checkNameDenyList` refuses a `BLOCKED_WORLD_NAMES` entry (trimmed,

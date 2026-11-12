@@ -137,9 +137,9 @@ Files read:
 | 10 | POST | `/gc` | `/worlds-content-server/gc` and `/worlds-content-server/admin/gc` → `worlds/src/core/admin.rs:90`; no root route | DIVERGENT |
 
 Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 9, MISSING 1. Every remaining difference on the
-DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's rarer formats and the
-gateway's read rate limits (WR-37). The cross-cutting rules (404/405,
-error envelope, CORS, mounts) are in "Common notes" and the backlog.
+DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's rarer formats, the
+recovery after a failed deny-list read (WR-35) and the gateway's read rate limits (WR-37). The
+cross-cutting rules (404/405, error envelope, CORS, mounts) are in "Common notes" and the backlog.
 
 ---
 
@@ -220,7 +220,7 @@ Upstream: `activeEntitiesHandler` (`src/controllers/handlers/active-entities.ts:
 | Body read | `request.json()`, no content-type check, no body cap (`@dcl/http-server` is built without `maxBodySize`). Invalid or empty JSON throws a `SyntaxError` → 500 `{"error":"Internal Server Error"}`. | Raw bytes, no content-type check, 256 KiB cap (`core/mod.rs:645-648`) under the gateway's 1 MiB (`gateway.py:366`). Invalid JSON → 400 `Invalid request. Request body is not valid` (`active.rs:25-26`) (WR-13, WR-16). |
 | Shape | Not an object, or `pointers` not an array → 400 `{"error":"Bad request","message":"Invalid request. Request body is not valid"}` (`active-entities-handler.spec.ts:17-28`). | Same message and envelope (`active.rs:27-31`). MATCH. |
 | Pointers | Non-empty strings kept; more than 50 → 400 `Maximum 50 pointers allowed per request`; lowercased and deduplicated (`active-entities.ts:17-29`). | Same filter, same cap and message, deduplicated by lowercase key (`active.rs`). A pointer with surrounding whitespace finds nothing; one that is not a `WorldName` (inner whitespace, `/` or a control character) is dropped, which also finds nothing upstream (WR-14). |
-| Deny list | `checkNameDenyList`: first the whole lowercased name against `BLOCKED_WORLD_NAMES` (entries trimmed and lowercased, applied while the remote list is offline), then the name lowercased with its first `.eth` and first `.dcl` removed against the remote list, case-insensitively (`src/adapters/name-deny-list-checker.ts:8-13,45-59`; `active-entities.ts:33-42`, again in `worlds-manager.ts:827-832`). | `BannedNames::allows` checks `BLOCKED_WORLD_NAMES` the same way, then the same normalization over the `banned-names` list (`worlds/src/core/names.rs:31-39,51-54`; source: the explorer-api mirror instead of `DCL_LISTS_URL`), applied in `active.rs:44-53` (WR-35). MATCH. |
+| Deny list | `checkNameDenyList`: first the whole lowercased name against `BLOCKED_WORLD_NAMES` (entries trimmed and lowercased, applied while the remote list is offline), then the name lowercased with its first `.eth` and first `.dcl` removed against the remote list, case-insensitively (`src/adapters/name-deny-list-checker.ts:8-13,45-59`; `active-entities.ts:33-42`, again in `worlds-manager.ts:827-832`). | `BannedNames::allows` checks `BLOCKED_WORLD_NAMES` the same way, then the same normalization over the `banned-names` list (`worlds/src/core/names.rs:31-39,51-54`; source: the explorer-api mirror instead of `DCL_LISTS_URL`), applied in `active.rs:44-53` (WR-35). MATCH while the list reads; a failed read is not cached (WR-35). |
 | Query | `DISTINCT ON (world_name)` the newest `DEPLOYED` scene, `ORDER BY world_name, created_at DESC`. | The same `DISTINCT ON` over `worlds.world_scenes` (which keeps only live scenes; retired ones move to `worlds.retired_world_scenes`). MATCH. |
 | Body | `[{...entity, id, metadata: {...metadata, owner}}]`: the stored entity's keys in their jsonb order, `id` and `metadata` at their places, `owner` last in `metadata` (`worlds-manager.ts:854-861`). | The same: `entities_for_worlds` reads `entity::text` and writes the members in that order, `id`, `metadata` and `owner` (`null` when the row has none) replaced in place or appended (`worlds/src/core/store.rs:1206-1332`) (WR-15). MATCH. |
 | Order | `world_name` order. | `world_name` order. MATCH. |
@@ -446,7 +446,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       (`thumbnail`, `worlds/src/index.rs:142`) link the worlds `/contents` under it; the comms
       adapter keeps `PUBLIC_URL`. The root paths that are the catalyst's are WR-23. Pinned by
       `worlds/src/about.rs:560` `about_points_scenes_and_files_at_this_node_and_keeps_mirrored_ens_names`,
-      `worlds/src/core/tests.rs:6196` `index_lists_deny_listed_worlds_and_answers_upstream_fields`
+      `worlds/src/core/tests.rs:6222` `index_lists_deny_listed_worlds_and_answers_upstream_fields`
       and `tests/worlds_mirror.rs`.
     - Severity: none (closed).
 
@@ -462,7 +462,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
     - dcl-one: a pointer that differs from its trim is skipped before `WorldName::parse`
       (`worlds/src/core/active.rs:46-50`), so `" foo.dcl.eth"` finds nothing; a name with inner
       whitespace, `/` or a control character is dropped, which also finds nothing upstream. Pinned by
-      `worlds/src/core/tests.rs:6247` `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`.
+      `worlds/src/core/tests.rs:6273` `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`.
     - Severity: none (closed).
 
 15. **WR-15 · `/entities/active` · key order and a world without an owner.** Status: MATCH, no work.
@@ -472,7 +472,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
     - dcl-one: `entities_for_worlds` reads `entity::text`, drops the whitespace outside strings and
       writes the members in that order with the same three keys spliced
       (`worlds/src/core/store.rs:1206-1332`); `metadata.owner` is the row's owner, `null` when it
-      has none. Pinned by `worlds/src/core/tests.rs:6379` `active_entities_answer_upstream_member_order`,
+      has none. Pinned by `worlds/src/core/tests.rs:6543` `active_entities_answer_upstream_member_order`,
       `store.rs` `active_entity_spreads_in_the_stored_member_order`,
       `active_entity_appends_what_the_entity_lacks` and
       `active_entities_look_up_pointers_as_sent_and_fold_a_null_owner`.
@@ -498,7 +498,7 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
     - dcl-one: `list_index_scenes` applies `w.name <> ALL($3)` with `BannedNames::banned_names`, the
       same list in the same order, before paging (`worlds/src/queries.rs:225-266`,
       `worlds/src/index.rs:136`, `worlds/src/core/names.rs:67-75`). Pinned by
-      `worlds/src/core/tests.rs:6196` `index_lists_deny_listed_worlds_and_answers_upstream_fields`.
+      `worlds/src/core/tests.rs:6222` `index_lists_deny_listed_worlds_and_answers_upstream_fields`.
     - Severity: none (closed).
 
 18. **WR-18 · `/index` · missing scene fields.** Status: MATCH, no work.
@@ -659,28 +659,57 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       (`content/src/lib.rs:728-735,841`).
     - Severity: none (closed).
 
-35. **WR-35 · every name deny-list consumer · `BLOCKED_WORLD_NAMES`.** Status: MATCH, no work.
+35. **WR-35 · every name deny-list consumer · `BLOCKED_WORLD_NAMES`.** Status: MATCH on every answer
+    while the list reads; a failed list read differs (open, waiting for a decision).
     - Upstream: `BLOCKED_WORLD_NAMES` (`.env.default:97`, empty) is split on commas, trimmed and
       lowercased (`name-deny-list-checker.ts:8-13`); `checkNameDenyList` refuses a whole lowercased
       name in it before reading the remote list and keeps refusing it while that list is offline
-      (`:45-59`; `test/unit/name-deny-list-checker.spec.ts:19-62`). `POST /entities/active` drops
-      such a pointer (`active-entities.ts:33-42`, `worlds-manager.ts:827-832`).
+      (`:45-59`; `test/unit/name-deny-list-checker.spec.ts:19-62`), and `getBannedNames` returns the
+      entries whole ahead of the stripped list entries (`:61-65`). Its consumers:
+      `POST /entities/active` drops such a pointer (`active-entities.ts:33-42`,
+      `worlds-manager.ts:827-832`); `getRawWorldRecords` (`worlds-manager.ts:322-327`; `/index` through
+      `worlds-indexer.ts:20`, `GET /permissions`) and the `GET /worlds` listing (`:1371`) leave out a
+      world named like a `getBannedNames` entry; `/about`, `/manifest`, `/limits` and
+      `getMetadataForWorld` (`:384-388`) refuse a name `checkNameDenyList` refuses; deploy validation
+      answers its 400 (`logic/validations/scene.ts:86-101`); and `isWorldValid` asks `checkNameDenyList` before the
+      world row (`logic/worlds/component.ts:71-74`), so `assertWorldAccess` on the two world comms
+      routes (`logic/comms/component.ts:54`), `/get-comms-adapter` (`comms-adapter-handler.ts:37`) and
+      `DELETE /world/:n/permissions/...` (`permissions-handlers.ts:429`) answer 404 for a configured
+      whole name and for a DAO-listed `<label>.dcl.eth`.
     - dcl-one: `WorldsConfig::blocked_world_names` reads `BLOCKED_WORLD_NAMES`
       (`config/src/worlds.rs:449-454`); `NameDenyList::new` parses it once
-      (`worlds/src/core/names.rs:31-39,92-97`) and every snapshot, a failed list read included,
-      carries it (`:102-120`), so `/entities/active`, `/index`, `/worlds`, `/about`, the manifest,
-      limits and deploy validation apply it. Pinned by `names.rs`
+      (`worlds/src/core/names.rs:31-39,92-97`) and every snapshot carries it (`:102-120`), so
+      `/entities/active`, `/index`, `/worlds`, `/about`, the manifest, limits and deploy validation
+      (WD-28) apply it. `store::world_is_valid` asks `check_name_deny_list` before the row
+      (`worlds/src/core/store.rs:459-467`; the permission routes, WP-11 and WP-20), and
+      `Policy::world_admission` refuses a name the list refuses (`worlds/src/policy.rs:1439-1468`;
+      the three comms mints, the scene-host admission and the room recheck, WC-28; `serve` gives
+      that policy `BLOCKED_WORLD_NAMES`). Pinned by `names.rs`
       `configured_blocks_refuse_exact_names_and_lead_the_banned_names`,
-      `configured_blocks_hold_while_the_list_cannot_be_read`, `configured_blocks_add_to_the_list` and
-      `worlds/src/core/tests.rs:6291` `active_entities_skip_a_blocked_world_name`.
-    - Severity: none (closed).
+      `configured_blocks_hold_while_the_list_cannot_be_read`, `configured_blocks_add_to_the_list`,
+      `worlds/src/core/tests.rs` `active_entities_skip_a_blocked_world_name` and
+      `configured_world_names_are_invalid_on_the_permission_routes`, `worlds/src/policy.rs`
+      `world_admission_refuses_a_deny_listed_name` and `tests/gatekeeper_policy.rs`
+      `the_mints_answer_404_for_a_deny_listed_world_name`.
+    - Difference on a failed list read: upstream's `fetchMethod` catches the fetch error and returns
+      `[]`, which the LRU cache keeps for its hour (`name-deny-list-checker.ts:21-43`), so after the
+      list service recovers DAO-listed names stay allowed until that hour ends. dcl-one answers the
+      configured blocks alone for the failed call and caches nothing (`names.rs:109-120`), so the next
+      call reads `explore_api.lists` again and a recovered list applies at once; an expired snapshot is
+      never served. Both answer the configured blocks alone while the read fails. The edge is not
+      listed in `docs/worlds-compatibility.md`.
+    - Proposed fix: decide whether this stricter recovery is intended; if so, list it under "Deny list
+      in world listings"; if not, cache the blocks-only snapshot for the hour in `NameDenyList::read`.
+    - Severity: P3 (only the hour after a failed list read).
 
 36. **WR-36 · `/index` · a repeated query key.** Status: MATCH, no work.
-    - Upstream: `searchParams.get` reads the first value, so `?limit=1&limit=2` answers 200
-      (`index-handler.ts:17-18`).
+    - Upstream: `searchParams.get` reads the first value of `limit` and of `offset`, so
+      `?limit=1&limit=2` answers 200 and pages one world (`index-handler.ts:17-18`).
     - dcl-one: the query is read as pairs and `query_param` takes the first
       (`worlds/src/index.rs:88-96`, `worlds/src/core/http.rs:10-14`). Pinned by
-      `worlds/src/core/tests.rs:6273` `index_reads_the_first_of_a_repeated_query_key`.
+      `worlds/src/core/tests.rs:6302` `index_reads_the_first_of_a_repeated_query_key`: with three
+      worlds seeded, `?limit=1&limit=2&offset=1&offset=0` answers one world, the page of
+      `?limit=1&offset=1`.
     - Severity: none (closed).
 
 37. **WR-37 · reads behind the gateway · rate limits.** Status: open, waiting for a decision.

@@ -440,9 +440,9 @@ pub async fn get_world(pool: &PgPool, world: &WorldName) -> Result<Option<WorldR
     Ok(row.as_ref().map(world_from_row))
 }
 
-/// Whether upstream's `getRawWorldRecords` leaves `world` out:
-/// `name != ALL(<deny-list entries without the first .eth and .dcl>)`, so
-/// only a world named exactly like a stripped entry (a bare name) is left out.
+/// Whether upstream's `getRawWorldRecords` leaves `world` out, `name != ALL(getBannedNames())`:
+/// a world named exactly like a `BLOCKED_WORLD_NAMES` entry (a whole name) or
+/// like a list entry without its first .eth and .dcl (a bare name) is left out.
 pub async fn raw_records_exclude(
     pool: &PgPool,
     names: &super::names::NameDenyList,

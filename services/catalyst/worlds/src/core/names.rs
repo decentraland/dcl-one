@@ -96,9 +96,9 @@ impl NameDenyList {
         }
     }
 
-    /// The current snapshot; a database fault keeps the last snapshot when
-    /// there is one and otherwise reads as the configured blocks alone (the
-    /// old checker kept its last good list across fetch failures).
+    /// The current snapshot. A failed list read answers the configured blocks
+    /// alone and is not cached, so the next call reads again (upstream caches
+    /// `[]` for its hour); an expired snapshot is never served (WR-35).
     pub async fn snapshot(&self, pool: &PgPool) -> Arc<BannedNames> {
         if let Some(cached) = self.cache.get_fresh(&()) {
             return cached;
@@ -252,6 +252,11 @@ mod tests {
             checker.cache.get_fresh(&()).is_none(),
             "a failed read is not memoized"
         );
+        // The next read that succeeds applies the list at once (upstream would
+        // serve its cached `[]` until the hour ends).
+        let snapshot = checker.read(Ok::<_, String>(vec!["Banned".to_string()]));
+        assert!(!snapshot.allows("banned.dcl.eth"));
+        assert!(checker.cache.get_fresh(&()).is_some());
     }
 
     /// "adds configured blocks without replacing the remote denylist".

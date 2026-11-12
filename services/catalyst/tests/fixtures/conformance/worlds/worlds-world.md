@@ -673,7 +673,7 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       `w.name <> ALL($5)` to the page and the count (`worlds/src/core/store.rs:2076`) with
       `BannedNames::banned_names()` (`names.rs:67-76`), the same order, stripping and no lowercasing. Pinned by
       `names.rs` `configured_blocks_refuse_exact_names_and_lead_the_banned_names` and
-      `configured_blocks_hold_while_the_list_cannot_be_read`, `core/tests.rs:6336`
+      `configured_blocks_hold_while_the_list_cannot_be_read`, `core/tests.rs:6366`
       `configured_world_names_are_hidden_from_the_world_reads` and `core/tests.rs`
       `worlds_listing_reads_the_query_like_url_search_params_and_hides_banned_bare_names`.
     - Both trees list `<banned>.dcl.eth` from the remote list while `/about` and the manifest answer 404 for it;
