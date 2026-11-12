@@ -142,11 +142,29 @@ fn both_metadata_readers_reload_evicted_json_without_replacing_content_maps() {
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
 async fn failed_metadata_reload_remains_retryable() {
-    rejected_payload_remains_retryable("invalid-json".to_owned()).await;
+    rejected_payload_remains_retryable("invalid-json".to_owned(), true).await;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-async fn rejected_payload_remains_retryable(payload: String) {
+#[tokio::test]
+async fn fresh_network_metadata_rejection_does_not_fetch_twice() {
+    for payload in [
+        "invalid-json".to_owned(),
+        serde_json::json!({
+            "id": "another-scene", "pointers": [], "content": [], "metadata": {}
+        })
+        .to_string(),
+        serde_json::json!({
+            "id": "scene", "pointers": [], "content": [], "metadata": null
+        })
+        .to_string(),
+    ] {
+        rejected_payload_remains_retryable(payload, false).await;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn rejected_payload_remains_retryable(payload: String, cached_payload: bool) {
     use tokio::{
         io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
         net::TcpListener,
@@ -155,7 +173,10 @@ async fn rejected_payload_remains_retryable(payload: String) {
 
     timeout(Duration::from_secs(10), async {
         IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
-        let (ipfs, dir) = fixture();
+        let (mut ipfs, dir) = fixture();
+        if !cached_payload {
+            Arc::get_mut(&mut ipfs).unwrap().default_fs_path = None;
+        }
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let public_url = format!("http://{}", listener.local_addr().unwrap());
         let base_url = format!("{public_url}/contents/");
@@ -197,10 +218,12 @@ async fn rejected_payload_remains_retryable(payload: String) {
             secret: None,
             spawn_parcel: None,
         }));
-        dir.insert_asset_text(
-            &PathBuf::from("metadata-fixture-cache").join("scene"),
-            &payload,
-        );
+        if cached_payload {
+            dir.insert_asset_text(
+                &PathBuf::from("metadata-fixture-cache").join("scene"),
+                &payload,
+            );
+        }
         let rejected = payload.clone();
         let server = tokio::spawn(async move {
             let recovered = serde_json::json!({
@@ -227,7 +250,7 @@ async fn rejected_payload_remains_retryable(payload: String) {
                         }
                     }
                 }
-                assert!(bypass_cache, "rejected metadata must bypass HTTP caches");
+                assert_eq!(bypass_cache, cached_payload);
                 request
                     .into_inner()
                     .write_all(
@@ -247,6 +270,7 @@ async fn rejected_payload_remains_retryable(payload: String) {
         assert_eq!(definition.collection.0.len(), 1);
         assert_eq!(definition.collection.0["model.glb"], "model-content");
         assert_eq!(base, base_url);
+        assert_eq!(ipfs.request_metrics.attempts.load(Ordering::Relaxed), 1);
         {
             let context = ipfs.context.read().await;
             assert!(context.entities["scene"].metadata_evicted);
@@ -259,14 +283,16 @@ async fn rejected_payload_remains_retryable(payload: String) {
             serde_json::json!({"name": "recovered"})
         );
         server.await.unwrap();
-        // Recovery must not depend on rewriting or deleting rejected cached bytes.
-        assert_eq!(
-            ipfs.read_disk_cache(&ipfs_path::CacheKey::Content("scene".to_owned()))
-                .await
-                .unwrap()
-                .unwrap(),
-            payload.as_bytes()
-        );
+        let cached = ipfs
+            .read_disk_cache(&ipfs_path::CacheKey::Content("scene".to_owned()))
+            .await
+            .unwrap();
+        if cached_payload {
+            // Recovery must not depend on rewriting or deleting rejected cached bytes.
+            assert_eq!(cached.unwrap(), payload.as_bytes());
+        } else {
+            assert!(cached.is_none());
+        }
         assert_eq!(ipfs.request_metrics.attempts.load(Ordering::Relaxed), 2);
         let context = ipfs.context.read().await;
         assert!(!context.entities["scene"].metadata_evicted);
@@ -287,7 +313,7 @@ async fn metadata_reload_rejects_another_entity_and_accepts_a_matching_retry() {
         "metadata": {"name": "wrong scene"}
     });
     for payload in [other.clone(), serde_json::json!([other])] {
-        rejected_payload_remains_retryable(payload.to_string()).await;
+        rejected_payload_remains_retryable(payload.to_string(), true).await;
     }
 }
 
@@ -299,7 +325,7 @@ async fn metadata_reload_keeps_empty_null_and_missing_payloads_retryable() {
         serde_json::json!({"id": "scene", "pointers": [], "content": [], "metadata": null}),
         serde_json::json!({"id": "scene", "pointers": [], "content": []}),
     ] {
-        rejected_payload_remains_retryable(payload.to_string()).await;
+        rejected_payload_remains_retryable(payload.to_string(), true).await;
     }
 }
 

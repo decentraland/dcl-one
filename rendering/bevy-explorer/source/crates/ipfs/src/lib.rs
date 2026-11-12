@@ -1881,6 +1881,11 @@ pub enum ActiveEntitiesRequest {
 #[derive(Deserialize, Debug)]
 pub struct ActiveEntitiesResponse(Vec<EntityDefinitionJson>);
 
+struct IpfsRead<'a> {
+    reader: Box<dyn Reader + 'a>,
+    cache_may_have_served: bool,
+}
+
 impl IpfsIo {
     /// Read an asset: a plain path from the default reader, an ipfs path from the cache or the
     /// remote (`download`).
@@ -1888,14 +1893,16 @@ impl IpfsIo {
         self: &'a Arc<Self>,
         path: &'a Path,
     ) -> Result<Box<dyn Reader + 'a>, AssetReaderError> {
-        self.read_with_cache(path, true).await
+        self.read_with_cache(path, true)
+            .await
+            .map(|read| read.reader)
     }
 
     async fn read_with_cache<'a>(
         self: &'a Arc<Self>,
         path: &'a Path,
         use_cache: bool,
-    ) -> Result<Box<dyn Reader + 'a>, AssetReaderError> {
+    ) -> Result<IpfsRead<'a>, AssetReaderError> {
         platform::compat(async move {
             let wrap_err = |e: anyhow::Error| {
                 if e.to_string().contains("file not found") {
@@ -1927,7 +1934,10 @@ impl IpfsIo {
                 None => {
                     let data = ipfs_io_read_state.send_failure(self.default_io.read(path).await)?;
                     ipfs_io_read_state.send_non_ipfs(0);
-                    return Ok(data);
+                    return Ok(IpfsRead {
+                        reader: data,
+                        cache_may_have_served: false,
+                    });
                 }
             };
 
@@ -1939,7 +1949,10 @@ impl IpfsIo {
                 let mut daft_buffer = Vec::default();
                 ipfs_io_read_state.send_failure(file.read_to_end(&mut daft_buffer).await)?;
                 ipfs_io_read_state.send_cached(daft_buffer.len());
-                return Ok(Box::new(VecReader::new(daft_buffer)));
+                return Ok(IpfsRead {
+                    reader: Box::new(VecReader::new(daft_buffer)),
+                    cache_may_have_served: false,
+                });
             }
 
             let cache_key = if use_cache {
@@ -1954,7 +1967,10 @@ impl IpfsIo {
                     ipfs_io_read_state.send_failure(self.read_disk_cache(key).await)?
                 {
                     ipfs_io_read_state.send_cached(cached.len());
-                    return Ok(Box::new(VecReader::new(cached)));
+                    return Ok(IpfsRead {
+                        reader: Box::new(VecReader::new(cached)),
+                        cache_may_have_served: true,
+                    });
                 }
             }
 
@@ -1983,7 +1999,10 @@ impl IpfsIo {
                     let data = ipfs_io_read_state
                         .send_failure(self.default_io.read(Path::new(static_path)).await)?;
                     ipfs_io_read_state.send_cached(0);
-                    return Ok(data);
+                    return Ok(IpfsRead {
+                        reader: data,
+                        cache_may_have_served: false,
+                    });
                 }
             }
             let remote = ipfs_io_read_state.send_failure(remote)?;
@@ -2024,7 +2043,10 @@ impl IpfsIo {
                     })
                 }))?;
                 ipfs_io_read_state.send_cached(data.len());
-                return Ok(Box::new(VecReader::new(data)));
+                return Ok(IpfsRead {
+                    reader: Box::new(VecReader::new(data)),
+                    cache_may_have_served: false,
+                });
             }
 
             let fail_time = context.failed_remotes.get(&remote).cloned();
@@ -2046,7 +2068,10 @@ impl IpfsIo {
             if sw_caches {
                 if let Some(cached) = web_cache::read(&remote).await {
                     ipfs_io_read_state.send_cached(cached.len());
-                    return Ok(Box::new(VecReader::new(cached)));
+                    return Ok(IpfsRead {
+                        reader: Box::new(VecReader::new(cached)),
+                        cache_may_have_served: true,
+                    });
                 }
             }
 
@@ -2069,13 +2094,23 @@ impl IpfsIo {
             // the scene the file belongs to decides its place in the request slot queue
             let scene = ipfs_path.scene_hash().map(str::to_owned);
 
+            // A native download is fresh even when another reader shares it. On web,
+            // the browser HTTP cache can answer after a service-worker cache miss.
+            #[cfg(not(target_arch = "wasm32"))]
+            let cache_may_have_served = false;
+            #[cfg(target_arch = "wasm32")]
+            let cache_may_have_served = use_cache;
+
             // nothing to share an uncacheable download under
             let Some(key) = cache_key else {
                 let data = self
                     .clone()
                     .download(token, path.to_owned(), remote, None, scene, !use_cache)
                     .await?;
-                return Ok(Box::new(AsyncCursor::new(data)));
+                return Ok(IpfsRead {
+                    reader: Box::new(AsyncCursor::new(data)),
+                    cache_may_have_served,
+                });
             };
             // one download per url: a second read of a url already in flight (the same file
             // under another asset path, say) takes the first's bytes instead of queueing a
@@ -2101,10 +2136,16 @@ impl IpfsIo {
             if joined {
                 let data = ipfs_io_read_state.send_failure(data)?;
                 ipfs_io_read_state.send_cached(data.len());
-                return Ok(Box::new(AsyncCursor::new(data)));
+                return Ok(IpfsRead {
+                    reader: Box::new(AsyncCursor::new(data)),
+                    cache_may_have_served,
+                });
             }
             // the download reported for the reader that started it
-            Ok(Box::new(AsyncCursor::new(data?)))
+            Ok(IpfsRead {
+                reader: Box::new(AsyncCursor::new(data?)),
+                cache_may_have_served,
+            })
         })
         .await
     }

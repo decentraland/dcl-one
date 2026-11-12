@@ -171,17 +171,21 @@ async fn reload_definition(ipfs: &Arc<IpfsIo>, hash: &str) -> Option<(IpfsEntity
         }
         let path = PathBuf::from(&path);
         let loaded = async {
-            let mut reader = ipfs.read(&path).await?;
+            let IpfsRead {
+                mut reader,
+                cache_may_have_served,
+            } = ipfs.read_with_cache(&path, true).await?;
             match reload_metadata(reader.as_mut(), hash).await {
                 Ok(metadata) => Ok(metadata),
-                Err(error) => {
-                    // A rejected disk or service-worker entry must not prevent recovery.
+                Err(error) if cache_may_have_served => {
+                    // A rejected cached payload must not prevent recovery.
                     // Keep the entity path so the normal download queue retains its owner.
                     warn!("reloading rejected entity metadata for {hash} without cache: {error}");
                     drop(reader);
-                    let mut reader = ipfs.read_with_cache(&path, false).await?;
-                    reload_metadata(reader.as_mut(), hash).await
+                    let mut fresh = ipfs.read_with_cache(&path, false).await?;
+                    reload_metadata(fresh.reader.as_mut(), hash).await
                 }
+                Err(error) => Err(error),
             }
         }
         .await;
