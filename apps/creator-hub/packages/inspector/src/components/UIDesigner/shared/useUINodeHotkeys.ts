@@ -5,6 +5,7 @@ import type { Entity } from '@dcl/ecs';
 import { useAppSelector } from '../../../redux/hooks';
 import { getSelectedNode } from '../../../redux/ui-designer';
 import { isAssetExplorerActive } from '../../../redux/ui';
+import { isMenuOpen } from '../../../hooks/useHotkey';
 import { useUINodeActions } from './useUINodeActions';
 
 /** UI-Designer keyboard shortcuts (copy/paste/duplicate/delete), scoped to the panel. */
@@ -30,7 +31,7 @@ export function useUINodeHotkeys(containerRef: RefObject<HTMLElement>): void {
     const onKeyDown = (e: KeyboardEvent) => {
       const container = containerRef.current;
       if (!container || container.offsetParent === null) return;
-      if (isEditable(e.target)) return;
+      if (isEditable(e.target) || isMenuOpen()) return;
 
       const { selectedNode, remove, duplicate, assetExplorerActive } = state.current;
       if (assetExplorerActive) return;

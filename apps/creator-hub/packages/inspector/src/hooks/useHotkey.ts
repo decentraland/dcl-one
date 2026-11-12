@@ -41,7 +41,8 @@ export const EXTEND_DOWN = `${SHIFT}+down`;
 export const FOCUS_SELECTED = 'f';
 export const TOGGLE_FREE_CAMERA = '`';
 
-const isMenuOpen = () => document.querySelector('[role="menu"]') !== null;
+/** True while a `role="menu"` is open; app shortcuts leave their keys to it. */
+export const isMenuOpen = () => document.querySelector('[role="menu"]') !== null;
 
 interface UseHotkeyOptions {
   /** Skip registration entirely while false (default true). */
