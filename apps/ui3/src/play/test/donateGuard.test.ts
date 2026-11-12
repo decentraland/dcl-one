@@ -96,18 +96,11 @@ describe('the tip wallet', () => {
     expect(w.reached('eth_signTypedData_v4')).toBe(false)
   })
 
-  it('sends the confirmed transfer directly, with no value, on the tip chain only', async () => {
+  it('never lets the wallet send a transaction itself: the tip is the relayed one only', async () => {
     const tx = { from: FROM, to: TOKEN.address, data: transfer(CREATOR, WEI) }
-    const ok = fakeWallet()
-    await expect(guardedDonationProvider(ok.provider, intent()).request({ method: 'eth_sendTransaction', params: [tx] })).resolves.toMatch(/^0x/)
-    for (const bad of [{ ...tx, value: '0x1' }, { ...tx, to: OTHER }, { ...tx, data: transfer(OTHER, WEI) }, { ...tx, nonce: '0x1' }]) {
-      const w = fakeWallet()
-      await expect(guardedDonationProvider(w.provider, intent()).request({ method: 'eth_sendTransaction', params: [bad] })).rejects.toThrow()
-      expect(w.reached('eth_sendTransaction')).toBe(false)
-    }
-    const elsewhere = fakeWallet(FROM, 1)
-    await expect(guardedDonationProvider(elsewhere.provider, intent()).request({ method: 'eth_sendTransaction', params: [tx] })).rejects.toThrow(/another network/)
-    expect(elsewhere.reached('eth_sendTransaction')).toBe(false)
+    const w = fakeWallet()
+    await expect(guardedDonationProvider(w.provider, intent()).request({ method: 'eth_sendTransaction', params: [tx] })).rejects.toThrow()
+    expect(w.reached('eth_sendTransaction')).toBe(false)
   })
 
   it('refuses once the sign-in or the wallet account changed', async () => {
@@ -119,12 +112,11 @@ describe('the tip wallet', () => {
     expect(stale.reached('eth_signTypedData_v4')).toBe(false)
   })
 
-  it('refuses anything else, and switches only to the tip chain', async () => {
+  it('refuses anything else', async () => {
     const w = fakeWallet()
     const p = guardedDonationProvider(w.provider, intent())
     await expect(p.request({ method: 'personal_sign', params: ['0x00', FROM] })).rejects.toThrow()
-    await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x1' }] })).rejects.toThrow()
-    await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] })).resolves.toBeNull()
-    expect(w.calls.filter((c) => c.method === 'personal_sign')).toHaveLength(0)
+    await expect(p.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x89' }] })).rejects.toThrow()
+    expect(w.calls.filter((c) => c.method !== 'eth_accounts')).toHaveLength(0)
   })
 })

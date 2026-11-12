@@ -102,7 +102,12 @@ function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 
     tipTarget: async () => ({ chainId: 137, manaToken: TOKEN.address }),
     chainId: () => 137,
     sendGasless: signThen(async () => HASH),
-    sendDirect: async () => HASH,
+    blockNumber: async () => 100n,
+    transfers: async () => [],
+    newId: (() => {
+      let n = 0
+      return () => `tip-${++n}`
+    })(),
     wait: async (_c, h) => h,
     forward: vi.fn(async () => {}),
     sleep: async () => {},
@@ -240,38 +245,72 @@ describe('sending a tip', () => {
     expect(s.last().step).toBe('form')
   })
 
-  it('sends from the wallet only when the relay clearly refused before broadcasting', async () => {
-    const sendDirect = vi.fn(async () => HASH)
-    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('refused', 'INVALID', 400, true))), sendDirect })
+  it('fails, with TRY AGAIN, when the relay refuses, and sends nothing from the wallet', async () => {
+    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('Invalid transaction', 'invalid_transaction', 400, true))) })
     await open(s.donate)
     s.handlers().onSend?.('166')
     await flush()
-    expect(sendDirect).toHaveBeenCalledOnce()
-    expect(s.last().step).toBe('sent')
+    expect(s.last().step).toBe('failed')
+    expect(s.w.calls).not.toContain('eth_sendTransaction')
+    expect(s.storage.length).toBe(0)
   })
 
-  it('never sends again after an unclear relay answer: it watches the balance and confirms by its effect', async () => {
-    const sendDirect = vi.fn(async () => HASH)
-    // Read when the panel opens and again before signing; then the tip's effect.
-    const balance = vi.fn().mockResolvedValueOnce(parseUnits('1000', 18)).mockResolvedValueOnce(parseUnits('1000', 18)).mockResolvedValue(parseUnits('834', 18))
-    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('The relay answered 502', '502', 502, false))), sendDirect, balance })
+  it('never sends again after an unclear relay answer: it confirms by the tip’s own Transfer, and forwards that hash', async () => {
+    const MINED = '0x' + 'cd'.repeat(32)
+    const transfers = vi.fn(async () => [{ hash: MINED, value: parseUnits('166', 18) }])
+    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('The relay answered 502', '502', 502, false))), transfers })
     await open(s.donate)
     s.handlers().onSend?.('166')
     await flush()
-    expect(sendDirect).not.toHaveBeenCalled()
+    expect(transfers).toHaveBeenCalledWith(expect.anything(), TIPPER, CREATOR, 100n)
     expect(s.views.map((v) => v.step)).toContain('processing')
     expect(s.last().step).toBe('sent')
+    expect(s.services.forward).toHaveBeenCalledWith(MINED, LOGIN)
+    expect(s.w.calls).not.toContain('eth_sendTransaction')
   })
 
-  it('keeps an unclear send that shows no effect as still processing, with no retry', async () => {
-    const sendDirect = vi.fn(async () => HASH)
-    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('lost', 'network', 502, false))), sendDirect })
+  it('doesn’t take another transfer (another amount) as the tip', async () => {
+    const transfers = vi.fn(async () => [{ hash: HASH, value: parseUnits('20', 18) }])
+    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('lost', 'network', 502, false))), transfers })
     await open(s.donate)
     s.handlers().onSend?.('166')
     await flush()
-    expect(sendDirect).not.toHaveBeenCalled()
+    expect(s.last()).toMatchObject({ step: 'processing', final: true })
+  })
+
+  it('keeps an unclear send with no Transfer seen as still processing, with no retry', async () => {
+    const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('lost', 'network', 502, false))) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
     expect(s.views.some((v) => v.step === 'failed')).toBe(false)
     expect(s.last()).toMatchObject({ step: 'processing', final: true })
+  })
+
+  it('removes only the record of the tip it settled, never a newer one another tab stored', async () => {
+    const storage = memoryStorage()
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    const s = setup(
+      {
+        sendGasless: signThen(() => Promise.reject(new MetaTransactionError('lost', 'network', 502, false))),
+        sleep: () => gate,
+        transfers: async () => [{ hash: HASH, value: parseUnits('166', 18) }]
+      },
+      { storage }
+    )
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    const key = storage.key(0)!
+    expect(JSON.parse(storage.getItem(key)!).id).toBe('tip-1')
+    // Another tab signs a newer tip meanwhile, under the same account's key.
+    storage.setItem(key, JSON.stringify({ ...JSON.parse(storage.getItem(key)!), id: 'other-tab-tip', until: Number.MAX_SAFE_INTEGER }))
+    // This tab's tip then settles: the other tab's record stays.
+    release()
+    await flush()
+    expect(s.last().step).toBe('sent')
+    expect(JSON.parse(storage.getItem(key)!).id).toBe('other-tab-tip')
   })
 
   it('fails at once when a processing tip reverts', async () => {

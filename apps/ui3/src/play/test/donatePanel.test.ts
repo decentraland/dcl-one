@@ -1,7 +1,7 @@
 // The Donate panel's amount rule (features/donate/ui): the one the shell sends by, so SEND TIP is never enabled for
 // an amount the shell would refuse.
 import { describe, expect, it } from 'vitest'
-import { formatAmount, parseAmount } from '../features/donate/ui/DonatePanel'
+import { formatAmount, formatBalance, parseAmount } from '../features/donate/ui/DonatePanel'
 import { manaToWei } from '../../explorer/components/manaTip'
 
 describe('the tip amount', () => {
@@ -14,6 +14,16 @@ describe('the tip amount', () => {
 
   it('accepts exactly what the shell can send', () => {
     for (const text of ['166', '10.5', '0.01', '10.', '.5']) expect(parseAmount(text) != null).toBe(manaToWei(text) != null)
+  })
+
+  it('reads at most 18 decimals, MANA\u2019s precision', () => {
+    expect(parseAmount('1.' + '1'.repeat(18))).not.toBeNull()
+    expect(parseAmount('1.' + '1'.repeat(19))).toBeNull()
+  })
+
+  it('shows the balance rounded down, so it never reads more than can be tipped', () => {
+    expect(formatBalance(9.996)).toBe('9.99')
+    expect(formatBalance(10)).toBe('10')
   })
 
   it('shows at most two decimals', () => {

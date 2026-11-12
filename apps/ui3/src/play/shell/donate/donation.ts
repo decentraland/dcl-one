@@ -2,9 +2,10 @@
 // itself (the places service), reads the creator's profile, the player's MANA balance, the MANA price and the
 // suggested amounts, and shows the player the panel over the app (./overlay). On SEND it transfers exactly the
 // confirmed MANA to that creator with the wallet the host injected, bound to that tip (./guard): a gasless
-// meta-transaction through the relay first, and a transaction from the wallet only when the relay clearly refused
-// before broadcasting. An outcome it can't tell (the relay's answer lost, or the transaction not yet mined) is
-// shown as processing and watched, never retried: a second try could pay twice. Once the tip is mined, the shell
+// meta-transaction through the relay, and nothing else (a transaction from the wallet beside it could pay twice).
+// The relay's refusal fails the tip; trying again signs the same nonce, so at most one can land. An outcome it can't
+// tell (the relay's answer lost, or the transaction not yet mined) is shown as processing and watched for the tip's
+// own Transfer, never retried. Once the tip is mined, the shell
 // forwards its hash to the catalyst, signed by the login, which then tells the creator (`tip_received`), and posts
 // `bevy-shell:donate` so the app plays the tip emote.
 //
@@ -22,7 +23,7 @@ import { parseRemoteFlags } from '@shop/discovery/lib/rolloutFlags'
 import { MANA_TOKEN, type ContractData } from '@shop/market/lib/contracts'
 import { MetaTransactionError, sendMetaTransaction } from '../../../shop/market/lib/metaTx'
 import { rpc } from '../../../shop/market/lib/rpc'
-import { declined, isTxReverted, sendCall, waitForReceipt } from '../../../shop/market/lib/tx'
+import { isTxReverted, waitForReceipt } from '../../../shop/market/lib/tx'
 import type { ChainId } from '@shop/model/chain'
 import { loginExpired, rootAddress, type StoredLogin } from '@explorer-core/features/auth/sso'
 import { siteUrl } from '../../lib/baseDomain'
@@ -118,9 +119,14 @@ export interface ShellDonateServices {
   guard(provider: Eip1193Provider, intent: DonationIntent): Eip1193Provider
   /** Relays the token meta-transaction; `fetchImpl` carries the relay POST (its timeout, and whether it was made). */
   sendGasless(provider: Eip1193Provider, token: ContractData, data: `0x${string}`, fetchImpl: typeof fetch): Promise<string>
+  /** A fresh id for a pending tip's record. */
+  newId(): string
   /** Where an unsettled tip is kept across reloads and tabs; null when this browser keeps nothing. */
   storage(): Storage | null
-  sendDirect(provider: Eip1193Provider, token: ContractData, to: string, wei: bigint): Promise<string>
+  /** The chain's latest block, read before signing: where a tip's Transfer is looked for from. */
+  blockNumber(chainId: ChainId): Promise<bigint>
+  /** The token's Transfer events from `from` to `to` since `fromBlock`: their transaction and value. */
+  transfers(token: ContractData, from: string, to: string, fromBlock: bigint): Promise<Array<{ hash: string; value: bigint }>>
   /** Resolves when mined; TxRevertedError on a revert, TxPendingError after `timeoutMs`. */
   wait(chainId: ChainId, hash: string, timeoutMs: number): Promise<string>
   forward(hash: string, login: StoredLogin): Promise<void>
@@ -233,6 +239,7 @@ const LIVE: ShellDonateServices = {
   chainId: () => settlementChainId(),
   guard: guardedDonationProvider,
   sendGasless: (provider, token, data, fetchImpl) => sendMetaTransaction({ provider, contract: token, kind: 'collection', functionData: data, fetchImpl }),
+  newId: () => crypto.randomUUID(),
   storage: () => {
     try {
       return window.localStorage
@@ -240,7 +247,14 @@ const LIVE: ShellDonateServices = {
       return null
     }
   },
-  sendDirect: (provider, token, to, wei) => sendCall(provider, { chainId: token.chainId, to: token.address, abi: TRANSFER_ABI, functionName: 'transfer', args: [to, wei] }),
+  blockNumber: async (chainId) => BigInt(await rpc<string>(chainId, 'eth_blockNumber', [])),
+  async transfers(token, from, to, fromBlock) {
+    const topic = (a: string): string => `0x${a.slice(2).toLowerCase().padStart(64, '0')}`
+    const logs = await rpc<Array<{ transactionHash?: string; data?: string }>>(token.chainId, 'eth_getLogs', [
+      { address: token.address, fromBlock: `0x${fromBlock.toString(16)}`, toBlock: 'latest', topics: [TRANSFER_TOPIC, topic(from), topic(to)] }
+    ])
+    return (logs ?? []).flatMap((l) => (l.transactionHash && l.data ? [{ hash: l.transactionHash, value: BigInt(l.data) }] : []))
+  },
   wait: (chainId, hash, timeoutMs) => waitForReceipt(chainId, hash, 'The tip', { timeoutMs }),
   async forward(hash, login) {
     const signer = loginSigner(login)
@@ -305,22 +319,30 @@ class ForwardRefused extends Error {
   }
 }
 
-/** A relay answer that clearly refused the tip before broadcasting it: only then may the wallet send it instead. */
-function refusedBeforeBroadcast(e: unknown): boolean {
-  return e instanceof MetaTransactionError && e.refused === true && typeof e.status === 'number' && e.status >= 400 && e.status < 500
+/**
+ * The relay answered and refused the tip (`ok: false`). It may have broadcast and lost it first, but a refused tip
+ * isn't mined, and trying again signs the same meta-transaction nonce, so at most one of the two can land.
+ */
+function refusedByRelay(e: unknown): boolean {
+  return e instanceof MetaTransactionError && e.refused === true
 }
+
+/** keccak256("Transfer(address,address,uint256)"). */
+const TRANSFER_TOPIC = '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
 
 /** How an unsettled tip ended: mined, reverted, or still unknown when the watch ran out. */
 type Outcome = 'sent' | 'failed' | 'unknown'
 
 /** A signed tip as kept across reloads and tabs, per account, until it settles or its watch ends. */
 export interface PendingRecord {
+  /** Which signature this is: a tab removes the stored record only while it still holds this one. */
+  id: string
   amount: string
   creator: DonateCreator
   /** The tip, in wei. */
   wei: string
-  /** The balance just before signing, in wei: the baseline the tip's effect is measured from. */
-  before: string
+  /** The chain's block just before signing, as a decimal string: the tip's Transfer is looked for from it. */
+  fromBlock: string
   /** Its transaction hash, once the relay or the wallet gave one. */
   hash?: string
   /** When the watch ends, in ms. */
@@ -335,7 +357,7 @@ interface Pending {
 }
 
 const RELAY_TIMEOUT_MS = 60_000
-const storeKey = (account: string): string => `dcl:donate:pending:v1:${account}`
+const storeKey = (account: string): string => `dcl:donate:pending:v2:${account}`
 
 export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   const svc: ShellDonateServices = { ...LIVE, ...deps.services }
@@ -373,7 +395,7 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
       const raw = svc.storage()?.getItem(storeKey(who))
       if (!raw) return null
       const r = JSON.parse(raw) as PendingRecord
-      if (typeof r?.until !== 'number' || r.until <= svc.now() || typeof r.wei !== 'string' || typeof r.before !== 'string' || !r.creator?.address) {
+      if (typeof r?.id !== 'string' || typeof r.until !== 'number' || r.until <= svc.now() || typeof r.wei !== 'string' || typeof r.fromBlock !== 'string' || !r.creator?.address) {
         save(who, null)
         return null
       }
@@ -394,10 +416,9 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   function settle(who: string, p: Pending, outcome: Outcome): void {
     if (p.settled) return
     p.settled = true
-    if (pending.get(who) === p) {
-      pending.delete(who)
-      save(who, null)
-    }
+    if (pending.get(who) === p) pending.delete(who)
+    // Only this tip's record: another tab may since have stored a newer one.
+    if (load(who)?.id === p.record.id) save(who, null)
     if (p.onSettle) p.onSettle(outcome)
     else if (outcome === 'sent') tipped()
   }
@@ -417,14 +438,15 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   }
 
   /**
-   * A tip whose outcome is unknown: never sent again. It is watched by its hash (when there is one) and by its
-   * effect on the balance (the relay may have re-sent it under another hash) until the record's end; the first
-   * answer settles it. A revert fails it at once; no answer leaves it unknown.
+   * A tip whose outcome is unknown: never sent again. It is watched by its hash (when there is one) and by its own
+   * Transfer (from the tipper to the creator, of exactly its amount, since the block it was signed at: the relay may
+   * have re-sent it under another hash) until the record's end; the first answer settles it. A revert fails it at
+   * once; no answer leaves it unknown.
    */
   function watch(who: string, p: Pending, token: ContractData, login: StoredLogin | null): void {
     const { record } = p
     const wei = BigInt(record.wei)
-    const before = BigInt(record.before)
+    const fromBlock = BigInt(record.fromBlock)
     const chainId = token.chainId as ChainId
     const byHash: Promise<void> = record.hash
       ? svc.wait(chainId, record.hash, Math.max(0, record.until - svc.now())).then(
@@ -437,15 +459,19 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
           }
         )
       : Promise.resolve()
-    const byBalance = (async (): Promise<void> => {
+    const byTransfer = (async (): Promise<void> => {
       while (!p.settled && svc.now() < record.until) {
         await svc.sleep(WATCH_EVERY_MS)
         if (p.settled) return
-        const now = await svc.balance(who, token).catch(() => null)
-        if (now != null && before - now >= wei) return settle(who, p, 'sent')
+        const found = (await svc.transfers(token, who, record.creator.address, fromBlock).catch(() => [])).find((t) => t.value === wei)
+        if (found) {
+          settle(who, p, 'sent')
+          if (login) void forward(found.hash, login)
+          return
+        }
       }
     })()
-    void Promise.all([byHash, byBalance]).then(() => settle(who, p, 'unknown'))
+    void Promise.all([byHash, byTransfer]).then(() => settle(who, p, 'unknown'))
   }
 
   async function capabilities(): Promise<DonateCapabilities> {
@@ -571,45 +597,42 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         // Closing now cancels: nothing was signed. After the signature the tip is pending and goes on without the panel.
         let cancelled = false
         show({ step: 'sending', amount, creator: form.creator }, { onClose: () => ((cancelled = true), close(s)) })
-        // The balance now, not when the panel opened: the baseline the tip's effect is measured from.
-        const before = await svc.balance(who!, token!).catch(() => null)
+        // The balance now, not when the panel opened; and the block the tip's Transfer is looked for from.
+        const [before, fromBlock] = await Promise.all([svc.balance(who!, token!).catch(() => null), svc.blockNumber(chainId).catch(() => null)])
         if (cancelled) return
-        if (before == null) return toForm(amount, 'Couldn’t read your MANA balance. Try again.')
+        if (before == null || fromBlock == null) return toForm(amount, 'Couldn’t read your MANA balance. Try again.')
         form = { ...form, balance: weiToMana(before) }
         if (wei > before) return toForm(amount, 'Insufficient MANA')
-        await sendTip(amount, wei, before, login, () => cancelled)
+        await sendTip(amount, wei, fromBlock, login, () => cancelled)
       } finally {
         sending = false
       }
     }
 
-    async function sendTip(amount: string, wei: bigint, before: bigint, login: StoredLogin, cancelled: () => boolean): Promise<void> {
+    async function sendTip(amount: string, wei: bigint, fromBlock: bigint, login: StoredLogin, cancelled: () => boolean): Promise<void> {
       const intent: DonationIntent = {
         from: who!,
         chainId,
         token: { address: lower(token!.address), name: token!.name, version: token!.version },
         to: form.creator.address,
         wei,
-        current: () => !cancelled() && account() === who
+        // A close cancels only until the tip is signed; after that it goes on without the panel.
+        current: () => (pendingTip() != null || !cancelled()) && account() === who
       }
-      // What left the wallet decides what a failure means: before a signature or a transaction did, nothing can have
-      // reached the chain; after, a failure that isn't an explicit refusal may have. Tracked on the real wallet, under
-      // the guard: a request the guard refused never reached it. The tip is pending from the moment it is signed.
+      // What left the wallet decides what a failure means: before the signature did, nothing can have reached the
+      // chain. Tracked on the real wallet, under the guard: a request the guard refused never reached it. The tip is
+      // pending from the moment it is signed.
       let p: Pending | null = null
-      let submitted = false
       let posted = false
+      const pendingTip = (): Pending | null => p
       const tracked: Eip1193Provider = {
         ...provider!,
         async request(args) {
-          if (args.method === 'eth_sendTransaction') {
-            if (cancelled()) throw new Error('Donate was closed.')
-            submitted = true
-          }
           const answer = await provider!.request(args)
           if (args.method === 'eth_signTypedData_v4') {
             // Closed while the wallet asked: the signature is never used.
             if (cancelled()) throw new Error('Donate was closed.')
-            p = begin(who!, { amount, creator: form.creator, wei: wei.toString(), before: before.toString(), until: svc.now() + WATCH_FOR_MS })
+            p = begin(who!, { id: svc.newId(), amount, creator: form.creator, wei: wei.toString(), fromBlock: fromBlock.toString(), until: svc.now() + WATCH_FOR_MS })
             const settledHere = p
             settledHere.onSettle = (outcome) => {
               if (outcome === 'sent') return sent(form.creator)
@@ -628,7 +651,6 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         posted = true
         return fetch(input, { ...init, signal: AbortSignal.timeout(RELAY_TIMEOUT_MS) })
       }
-      const pendingTip = (): Pending | null => p
       const processing = (): void => {
         const tip = pendingTip()
         if (!tip) return failed(amount)
@@ -642,15 +664,9 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
       } catch (e) {
         const tip = pendingTip()
         if (!tip) return cancelled() ? undefined : failed(amount)
-        // Signed but never handed to the relay (the signature unusable, say): nothing was sent.
-        if (!posted) return settle(who!, tip, 'failed')
-        if (!refusedBeforeBroadcast(e)) return processing()
-        // The relay clearly refused before broadcasting: the wallet may send it itself.
-        try {
-          hash = await svc.sendDirect(wallet, token!, intent.to, wei)
-        } catch (direct) {
-          return submitted && !declined(direct) ? processing() : settle(who!, tip, 'failed')
-        }
+        // Signed but never handed to the relay (the signature unusable, say), or refused by it: not sent.
+        if (!posted || refusedByRelay(e)) return settle(who!, tip, 'failed')
+        return processing()
       }
       const tip = pendingTip()!
       tip.record.hash = hash

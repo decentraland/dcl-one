@@ -17,6 +17,11 @@ export function formatAmount(n: number): string {
   return String(Math.round(n * 100) / 100)
 }
 
+/** A balance with at most two decimals, rounded down: what can actually be tipped (9.996 reads 9.99, not 10). */
+export function formatBalance(n: number): string {
+  return Number.isFinite(n) ? String(Math.floor(n * 100) / 100) : '0'
+}
+
 /** A typed amount, by the rule the shell sends by; null when it isn't one (`10.`, `.5`, empty). */
 export function parseAmount(text: string): number | null {
   const clean = text.replace(/-/g, '').trim()
@@ -90,7 +95,7 @@ function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>;
       <div className={styles.body}>
         <Creator creator={view.creator} />
         <div className={styles.balance} data-invalid={tooMuch || undefined}>
-          <span className={styles.balanceValue}>{formatAmount(view.balance)}</span>
+          <span className={styles.balanceValue}>{formatBalance(view.balance)}</span>
           <span className={styles.balanceLabel}>{tooMuch ? 'Insufficient MANA' : 'Available'}</span>
           <Button variant="outline" size="sm" onClick={handlers.onBuyMana}>
             BUY MANA
@@ -179,7 +184,7 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
           <div className={styles.status} role="status">
             <span className={styles.title}>Preparing {view.amount} MANA Tip for</span>
             <Creator creator={view.creator} />
-            <Spinner />
+            {!(view.step === 'processing' && view.final) && <Spinner />}
             <span className={styles.note}>
               {view.step === 'sending'
                 ? 'A browser window should open for you to confirm this transfer.'
