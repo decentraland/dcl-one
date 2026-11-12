@@ -43,7 +43,8 @@ function subscribe(listener: () => void): () => void {
 
 const getSnapshot = () => snapshot;
 
-function service(): string {
+/** The flags service this page asks: the host's, else Decentraland's. */
+export function flagsService(): string {
   const declared = typeof window !== "undefined" ? (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ : undefined;
   return (declared || FLAGS_SERVICE).replace(/\/$/, "");
 }
@@ -73,7 +74,7 @@ const fetchFlags: FlagsTransport = async (url, { signal }) => {
 };
 
 export async function readRemoteFlags(signal?: AbortSignal): Promise<RemoteFlagsAnswer> {
-  return readFlagsFile(service(), fetchFlags, signal);
+  return readFlagsFile(flagsService(), fetchFlags, signal);
 }
 
 export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<string, boolean>> {

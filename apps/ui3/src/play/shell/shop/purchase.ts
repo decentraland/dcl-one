@@ -205,6 +205,8 @@ export interface ShellShopDeps {
   openExternal(url: string): void
   /** Leaves for the sign-in, as the HUD's own sign-in does. */
   signIn(): void
+  /** Whether another dialog (Donate's) is up over the app: a purchase waits its turn. */
+  otherDialogOpen?(): boolean
   services?: Partial<ShellShopServices>
 }
 
@@ -435,6 +437,8 @@ type Operation = OperationRecord & {
 export interface ShellShop {
   /** Answers a `shop.*` request from the app frame. */
   request(method: string, params: unknown): Promise<unknown>
+  /** Whether the Shop's dialog is up over the app. */
+  dialogOpen(): boolean
 }
 
 export function createShellShop(deps: ShellShopDeps): ShellShop {
@@ -537,7 +541,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
     session: nameSession,
     client: (key) => confirmedClient(key),
     slot,
-    busy: () => starting || running,
+    busy: () => starting || running || deps.otherDialogOpen?.() === true,
     post: deps.post,
     openExternal: deps.openExternal,
     services: {
@@ -1245,7 +1249,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
 
   const buy = async (params: unknown): Promise<ShopOperation> => {
     const req = parseBuyRequest(params)
-    if (starting || running || slot.open()) throw shopBusy()
+    if (starting || running || slot.open() || deps.otherDialogOpen?.()) throw shopBusy()
     starting = true
     try {
       const who = signedIn()
@@ -1332,6 +1336,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
         default:
           throw new Error(`unknown request ${method}`)
       }
-    }
+    },
+    dialogOpen: () => slot.holder() != null
   }
 }

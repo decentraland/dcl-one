@@ -115,6 +115,13 @@ export function friendshipTarget(n: AppNotification, friends?: FriendsState): ((
   return () => openPassport(address)
 }
 
+/** A tip's notification opens the tipper's passport. */
+export function tipTarget(n: AppNotification): (() => void) | undefined {
+  if (n.type !== 'tip_received') return undefined
+  const address = str(n.metadata, 'senderAddress')
+  return address == null ? undefined : () => openPassport(address)
+}
+
 /** A community stream notification joins the stream if it is still live (an old one would hang up the
  *  user's call for nothing) and the user is not in it (a rejoin comes back as a listener), then opens
  *  that community's chat. */

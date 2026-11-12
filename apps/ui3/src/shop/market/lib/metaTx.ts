@@ -26,6 +26,9 @@ export class MetaTransactionError extends Error {
   constructor(
     message: string,
     readonly code: string,
+    /** The relay's HTTP status, and whether it answered with an explicit refusal (`ok: false`). */
+    readonly status?: number,
+    readonly refused?: boolean,
   ) {
     super(message);
   }
@@ -108,7 +111,7 @@ export async function sendMetaTransaction(opts: {
   });
   const body = (await res.json().catch(() => null)) as { ok?: boolean; txHash?: string; message?: string; code?: string } | null;
   if (!body || body.ok === false || !body.txHash) {
-    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, body?.code ?? String(res.status));
+    throw new MetaTransactionError(body?.message ?? `The relay answered ${res.status}`, body?.code ?? String(res.status), res.status, body?.ok === false);
   }
   return body.txHash;
 }
