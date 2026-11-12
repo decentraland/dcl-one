@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
   redirect,
@@ -9,7 +10,6 @@ import {
 } from "react-router";
 
 import ShopChrome from "@ui/shop/discovery/frames/ShopChrome";
-import { EnsureQueryClient } from "@ui/shop/checkout/services";
 import type { ShopHost } from "@ui/shop/native-contract";
 import { NativeShopContext } from "@ui/shop/native-context";
 import { shopRouteObjects } from "@ui/shop/routes";
@@ -71,6 +71,12 @@ function nativeWalletHost(
 }
 
 function NativeLayout({ host }: { host: ShopHost }) {
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
+      }),
+  );
   const { identity } = useAuth();
   const walletHost = useMemo(
     () => nativeWalletHost(host, identity as AuthIdentity | null),
@@ -83,7 +89,7 @@ function NativeLayout({ host }: { host: ShopHost }) {
   );
   return (
     <NativeShopContext.Provider value={true}>
-      <EnsureQueryClient>
+      <QueryClientProvider client={queryClient}>
         <ChromeNavBridge>
           <ShopProviders host={walletHost} services={services}>
             <ShopChrome>
@@ -93,7 +99,7 @@ function NativeLayout({ host }: { host: ShopHost }) {
             </ShopChrome>
           </ShopProviders>
         </ChromeNavBridge>
-      </EnsureQueryClient>
+      </QueryClientProvider>
     </NativeShopContext.Provider>
   );
 }

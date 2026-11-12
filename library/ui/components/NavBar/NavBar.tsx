@@ -9,6 +9,7 @@ import {
   type ComponentType,
   type FocusEvent as ReactFocusEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type ReactNode,
   type RefObject
 } from 'react'
@@ -219,7 +220,16 @@ function usePopup(
     const next = event.relatedTarget as Node | null
     if (next && !event.currentTarget.contains(next)) setOpen(false)
   }
-  return { open, setOpen, onKeyDown, onBlur }
+  const toggle = () => {
+    triggerRef.current?.focus({ preventScroll: true })
+    setOpen((value) => !value)
+  }
+  const onPopupClick = (event: ReactMouseEvent<HTMLElement>) => {
+    if (event.target === event.currentTarget) {
+      event.currentTarget.focus({ preventScroll: true })
+    }
+  }
+  return { open, setOpen, toggle, onKeyDown, onBlur, onPopupClick }
 }
 
 function SectionDropdown({
@@ -232,7 +242,7 @@ function SectionDropdown({
   const rootRef = useRef<HTMLLIElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const listId = useId()
-  const { open, setOpen, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
+  const { open, setOpen, toggle, onKeyDown, onBlur, onPopupClick } = usePopup(rootRef, triggerRef)
   const active = section.active || section.items.some((item) => item.active)
   return (
     <li ref={rootRef} className={styles.section} onKeyDown={onKeyDown} onBlur={onBlur}>
@@ -243,12 +253,18 @@ function SectionDropdown({
         data-active={active || undefined}
         aria-expanded={open}
         aria-controls={listId}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
       >
         {section.label}
         <GeneralDownArrow className={styles.chevron} size={20} aria-hidden="true" />
       </button>
-      <ul id={listId} className={styles.dropdown} hidden={!open}>
+      <ul
+        id={listId}
+        className={styles.dropdown}
+        hidden={!open}
+        tabIndex={-1}
+        onClick={onPopupClick}
+      >
         {section.items.map((item, index) => (
           <li key={index}>
             {renderLink({
@@ -392,7 +408,7 @@ function AccountMenu({
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
   const menuId = useId()
-  const { open, setOpen, onKeyDown, onBlur } = usePopup(rootRef, triggerRef)
+  const { open, setOpen, toggle, onKeyDown, onBlur, onPopupClick } = usePopup(rootRef, triggerRef)
   const displayName = account.name || shortAddress(account.address)
   return (
     <div ref={rootRef} className={styles.account} onKeyDown={onKeyDown} onBlur={onBlur}>
@@ -403,11 +419,17 @@ function AccountMenu({
         aria-label={labels.account(displayName)}
         aria-expanded={open}
         aria-controls={menuId}
-        onClick={() => setOpen((value) => !value)}
+        onClick={toggle}
       >
         <Avatar account={account} />
       </button>
-      <div id={menuId} className={styles.accountMenu} hidden={!open}>
+      <div
+        id={menuId}
+        className={styles.accountMenu}
+        hidden={!open}
+        tabIndex={-1}
+        onClick={onPopupClick}
+      >
         <p className={styles.accountName}>{displayName}</p>
         {account.name ? (
           <p className={styles.accountAddress} title={account.address}>

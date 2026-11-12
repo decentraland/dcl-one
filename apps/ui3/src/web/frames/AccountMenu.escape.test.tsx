@@ -132,6 +132,24 @@ describe("when AccountMenu shares keyboard dismissal with an outer dialog", () =
       expect(screen.queryByRole("menu")).not.toBeInTheDocument();
     },
   );
+  it("should keep Escape ownership after clicking the menu padding without canceling pointer defaults", async () => {
+    render(<AccountMenu>Account</AccountMenu>);
+    const trigger = screen.getByRole("button", { name: "My account" });
+    await user.click(trigger);
+    const menu = screen.getByRole("menu");
+    const pointer = new MouseEvent("mousedown", {
+      bubbles: true,
+      cancelable: true,
+    });
+    menu.dispatchEvent(pointer);
+    expect(pointer.defaultPrevented).toBe(false);
+    await user.click(menu);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+    expect(outerEscape).not.toHaveBeenCalled();
+  });
+
   it.each(["Ada", "0x1234…abcd"])(
     "should retain keyboard ownership after clicking static account text %s",
     async (label) => {

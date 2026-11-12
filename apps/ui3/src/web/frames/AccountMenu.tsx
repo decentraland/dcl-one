@@ -95,6 +95,12 @@ export default function AccountMenu({
         <div
           className={`acm__menu acm__menu--${align} acm__menu--${placement}`}
           role="menu"
+          tabIndex={-1}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              event.currentTarget.focus({ preventScroll: true });
+            }
+          }}
           aria-label={triggerLabel}
         >
           <div

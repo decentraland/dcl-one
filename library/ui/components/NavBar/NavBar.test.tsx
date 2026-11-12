@@ -3,7 +3,16 @@ import userEvent, { type UserEvent } from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { hydrateRoot, type Root } from 'react-dom/client'
 import { renderToString } from 'react-dom/server'
-import { afterEach, beforeEach, describe, expect, it, vi, type Mock, type MockInstance } from 'vitest'
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+  type Mock,
+  type MockInstance
+} from 'vitest'
 import { NavBar, type NavBarLinkProps, type NavBarProps, type NavBarSection } from './NavBar'
 
 const sections: NavBarSection[] = [
@@ -70,7 +79,7 @@ describe('NavBar', () => {
 
   describe('when signed out with a sign-in href', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} signIn={{ href: "/sign-in" }} />)
+      render(<NavBar sections={sections} signIn={{ href: '/sign-in' }} />)
     })
 
     it('should render Sign in as a link', () => {
@@ -80,7 +89,9 @@ describe('NavBar', () => {
 
   describe('when signed in with no notification count or balances', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} notifications={{ onSelect: () => {} }} />)
+      render(
+        <NavBar sections={sections} account={account} notifications={{ onSelect: () => {} }} />
+      )
     })
 
     it('should name the notifications button without a count', () => {
@@ -151,7 +162,13 @@ describe('NavBar', () => {
 
   describe('when the notification count is 3', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} notifications={{ count: 3, onSelect: () => {} }} />)
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          notifications={{ count: 3, onSelect: () => {} }}
+        />
+      )
     })
 
     it('should show the count in the badge', () => {
@@ -165,7 +182,13 @@ describe('NavBar', () => {
 
   describe('when the notification count is larger than the badge can show', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} notifications={{ count: 250, onSelect: () => {} }} />)
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          notifications={{ count: 250, onSelect: () => {} }}
+        />
+      )
     })
 
     it('should cap the badge at 99+', () => {
@@ -181,7 +204,13 @@ describe('NavBar', () => {
     let onNotificationsClick: Mock<() => void>
     beforeEach(async () => {
       onNotificationsClick = vi.fn<() => void>()
-      render(<NavBar sections={sections} account={account} notifications={{ onSelect: onNotificationsClick }} />)
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          notifications={{ onSelect: onNotificationsClick }}
+        />
+      )
       await user.click(notifications())
     })
 
@@ -194,7 +223,11 @@ describe('NavBar', () => {
     let balances: HTMLElement[]
     beforeEach(() => {
       render(
-        <NavBar sections={sections} account={account} balances={{ credits: 30, mana: 1234.567, polygonMana: 0 }} />
+        <NavBar
+          sections={sections}
+          account={account}
+          balances={{ credits: 30, mana: 1234.567, polygonMana: 0 }}
+        />
       )
       // Balance items share the listitem role with the section links; data-balance tells them apart.
       balances = screen.getAllByRole('listitem').filter((item) => item.hasAttribute('data-balance'))
@@ -211,7 +244,9 @@ describe('NavBar', () => {
 
   describe('when only some balances are defined', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} balances={{ credits: 5, mana: Number.NaN }} />)
+      render(
+        <NavBar sections={sections} account={account} balances={{ credits: 5, mana: Number.NaN }} />
+      )
     })
 
     it('should not render the missing or invalid balances', () => {
@@ -221,7 +256,9 @@ describe('NavBar', () => {
 
   describe('when balances are passed while signed out', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} balances={{ credits: 5 }} signIn={{ onSelect: () => {} }} />)
+      render(
+        <NavBar sections={sections} balances={{ credits: 5 }} signIn={{ onSelect: () => {} }} />
+      )
     })
 
     it('should not render them', () => {
@@ -280,7 +317,10 @@ describe('NavBar', () => {
     })
 
     it('should mark the active item as the current page', () => {
-      expect(screen.getByRole('link', { name: "What's on" })).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('link', { name: "What's on" })).toHaveAttribute(
+        'aria-current',
+        'page'
+      )
     })
 
     describe('and Escape is pressed inside it', () => {
@@ -543,7 +583,11 @@ describe('NavBar', () => {
     let menuButton: HTMLElement
     beforeEach(async () => {
       render(
-        <NavBar sections={sections} account={account} accountActions={[{ label: 'Sign out', onSelect: () => {} }]} />
+        <NavBar
+          sections={sections}
+          account={account}
+          accountActions={[{ label: 'Sign out', onSelect: () => {} }]}
+        />
       )
       menuButton = screen.getByRole('button', { name: 'Open menu' })
       await user.click(menuButton)
@@ -576,7 +620,8 @@ describe('NavBar', () => {
         'matchMedia',
         vi.fn(() => ({
           matches: false,
-          addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => listeners.push(listener),
+          addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) =>
+            listeners.push(listener),
           removeEventListener: () => {}
         }))
       )
@@ -605,13 +650,16 @@ describe('NavBar', () => {
         'matchMedia',
         vi.fn(() => ({
           matches: false,
-          addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) => listeners.push(listener),
+          addEventListener: (_: string, listener: (event: MediaQueryListEvent) => void) =>
+            listeners.push(listener),
           removeEventListener: () => {}
         }))
       )
       render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
-      act(() => listeners.forEach((listener) => listener({ matches: false } as MediaQueryListEvent)))
+      act(() =>
+        listeners.forEach((listener) => listener({ matches: false } as MediaQueryListEvent))
+      )
     })
     afterEach(() => {
       vi.unstubAllGlobals()
@@ -628,7 +676,10 @@ describe('NavBar', () => {
     })
 
     it('should link the logo to it', () => {
-      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveAttribute('href', '/home')
+      expect(screen.getByRole('link', { name: 'Decentraland home' })).toHaveAttribute(
+        'href',
+        '/home'
+      )
     })
   })
 
@@ -650,7 +701,9 @@ describe('NavBar', () => {
 
   describe('when a locale is given', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} balances={{ mana: 1234.5 }} locale="de-DE" />)
+      render(
+        <NavBar sections={sections} account={account} balances={{ mana: 1234.5 }} locale="de-DE" />
+      )
     })
 
     it('should format balances for it', () => {
@@ -679,7 +732,13 @@ describe('NavBar', () => {
 
   describe('when the account label is overridden', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} labels={{ account: (name) => `Cuenta de ${name}` }} />)
+      render(
+        <NavBar
+          sections={sections}
+          account={account}
+          labels={{ account: (name) => `Cuenta de ${name}` }}
+        />
+      )
     })
 
     it('should name the trigger with it', () => {
@@ -707,7 +766,7 @@ describe('NavBar', () => {
 
   describe('when a Sign in link is followed in the mobile menu', () => {
     beforeEach(async () => {
-      render(<NavBar sections={sections} signIn={{ href: "/sign-in" }} />)
+      render(<NavBar sections={sections} signIn={{ href: '/sign-in' }} />)
       await user.click(screen.getByRole('button', { name: 'Open menu' }))
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('link', { name: 'Sign in' }))
     })
@@ -753,7 +812,9 @@ describe('NavBar', () => {
       })
 
       it('should move focus back to the last control of the dialog', () => {
-        expect(within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign in' })).toHaveFocus()
+        expect(
+          within(screen.getByRole('dialog')).getByRole('button', { name: 'Sign in' })
+        ).toHaveFocus()
       })
     })
   })
@@ -774,7 +835,9 @@ describe('NavBar', () => {
 
   describe('when the locale is one Intl rejects', () => {
     beforeEach(() => {
-      render(<NavBar sections={sections} account={account} balances={{ mana: 1234.5 }} locale="en_US" />)
+      render(
+        <NavBar sections={sections} account={account} balances={{ mana: 1234.5 }} locale="en_US" />
+      )
     })
 
     it('should format balances in en-US instead of failing', () => {
@@ -836,7 +899,9 @@ describe('NavBar', () => {
     let LinkComponent: Mock<(props: NavBarLinkProps) => ReactElement>
     beforeEach(() => {
       LinkComponent = vi.fn((props: NavBarLinkProps) => <a {...props} data-router="true" />)
-      render(<NavBar sections={sections} signIn={{ onSelect: () => {} }} linkComponent={LinkComponent} />)
+      render(
+        <NavBar sections={sections} signIn={{ onSelect: () => {} }} linkComponent={LinkComponent} />
+      )
     })
 
     it('should render internal links with it', () => {
@@ -844,11 +909,15 @@ describe('NavBar', () => {
     })
 
     it('should render external links as plain anchors', () => {
-      expect(screen.getByRole('link', { name: 'Docs', hidden: true })).not.toHaveAttribute('data-router')
+      expect(screen.getByRole('link', { name: 'Docs', hidden: true })).not.toHaveAttribute(
+        'data-router'
+      )
     })
 
     it('should not pass external hrefs to it', () => {
-      expect(LinkComponent.mock.calls.map(([props]) => props.href)).not.toContain('https://docs.example.com/')
+      expect(LinkComponent.mock.calls.map(([props]) => props.href)).not.toContain(
+        'https://docs.example.com/'
+      )
     })
   })
 
@@ -880,7 +949,9 @@ describe('NavBar', () => {
     })
 
     it('should use the overridden labels', () => {
-      expect(screen.getByRole('navigation', { name: 'Principal' })).toHaveTextContent('Iniciar sesión')
+      expect(screen.getByRole('navigation', { name: 'Principal' })).toHaveTextContent(
+        'Iniciar sesión'
+      )
     })
   })
 
@@ -920,4 +991,51 @@ describe('NavBar', () => {
       expect(consoleError).not.toHaveBeenCalled()
     })
   })
+})
+
+describe('when native popup chrome must retain keyboard dismissal ownership', () => {
+  for (const kind of ['section', 'account'] as const) {
+    it(`should close the ${kind} popup after clicking its noninteractive padding`, async () => {
+      const user = userEvent.setup()
+      render(<NavBar sections={sections} account={account} />)
+      const trigger = screen.getByRole('button', {
+        name: kind === 'section' ? 'Discover' : /^Account/
+      })
+      await user.click(trigger)
+      const popup = document.getElementById(trigger.getAttribute('aria-controls')!)!
+      expect(fireEvent.mouseDown(popup)).toBe(true)
+      await user.click(popup)
+      expect(popup).toHaveFocus()
+      await user.keyboard('{Escape}')
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).toHaveFocus()
+    })
+    it(`should focus the ${kind} trigger when pointer activation does not focus buttons`, async () => {
+      const user = userEvent.setup()
+      render(<NavBar sections={sections} account={account} />)
+      const trigger = screen.getByRole('button', {
+        name: kind === 'section' ? 'Discover' : /^Account/
+      })
+      fireEvent.click(trigger)
+      expect(trigger).toHaveFocus()
+      await user.keyboard('{Escape}')
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).toHaveFocus()
+    })
+  }
+  it.each(['name', 'address'])(
+    'should close the account popup after selecting static account text %s',
+    async (text) => {
+      const user = userEvent.setup()
+      render(<NavBar sections={sections} account={account} />)
+      const trigger = screen.getByRole('button', { name: /^Account/ })
+      await user.click(trigger)
+      await user.click(
+        text === 'name' ? screen.getByText('Ada') : screen.getByTitle(account.address)
+      )
+      await user.keyboard('{Escape}')
+      expect(trigger).toHaveAttribute('aria-expanded', 'false')
+      expect(trigger).toHaveFocus()
+    }
+  )
 })
