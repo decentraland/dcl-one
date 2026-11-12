@@ -478,6 +478,44 @@ describe('/hud_login through the session', () => {
     await waitFor(() => expect(h.session().login.account).toBe(previous))
   })
 
+  it("on a page with a link's realm that is not reachable, the refused sign-in's pick does not answer a person's welcome page", async () => {
+    const leave = onPage('/?realm=http://127.0.0.1:9999')
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('Failed to fetch'))
+    try {
+      const driver = new LaunchingDriver()
+      driver.welcome = { terms: true, newProfile: true }
+      const h = await ready(driver)
+      await expect(login(`${ENCODED} --name tester --look 1`)).rejects.toThrow("isn't reachable right now")
+      await waitFor(() => expect(h.session().phase).toBe('login'))
+      // a person goes in with the page's own sign-in: their welcome page is theirs to answer
+      act(() => h.session().login.jumpIn())
+      await waitFor(() => expect(driver.calls).toContain('jumpIn'))
+      await waitFor(() => expect(h.session().phase).toBe('welcome'))
+      expect(driver.sentOf('acceptWelcome')).toEqual([])
+    } finally {
+      fetchSpy.mockRestore()
+      leave()
+    }
+  })
+
+  it("the engine's previous login, answered after a sign-out, does not bring that account back to the start page", async () => {
+    let answer!: (login: { userId: string | null }) => void
+    class SlowPreviousDriver extends IdentityDriver {
+      async getPreviousLogin(): Promise<{ userId: string | null }> {
+        this.calls.push('getPreviousLogin')
+        return new Promise((resolve) => (answer = resolve))
+      }
+    }
+    const driver = new SlowPreviousDriver()
+    const h = renderSession({ userId: null }, driver)
+    await waitFor(() => expect(h.session().login.engineReady).toBe(true))
+    await act(async () => expect(await logout()).toBe('signed out'))
+    await act(async () => answer({ userId: '0x' + 'cd'.repeat(20) }))
+    expect(h.session().login.status).toBe('sign-in-or-guest')
+    expect(h.session().login.account).toBeNull()
+    expect(driver.calls).not.toContain('jumpIn')
+  })
+
   it('a stored sign-in read late at startup does not bring back an account a sign-out cleared', async () => {
     let readArrives!: (login: StoredLogin | null) => void
     read.late = new Promise((resolve) => (readArrives = resolve))

@@ -2323,13 +2323,15 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       const screen = (stored: boolean): void => {
         if (boot.current.autoLogin == null) setStatus(stored ? 'reuse-login-or-new' : 'sign-in-or-guest')
       }
+      // nor does the engine's answer bring a signed-out account back to the start page
       driver
         .getPreviousLogin()
         .then((r) => {
+          if (signOuts.current !== signOut) return
           setPrevUserId(r.userId)
           screen(Boolean(r.userId))
         })
-        .catch(() => login.then((l) => screen(l != null)))
+        .catch(() => login.then((l) => signOuts.current === signOut && screen(l != null)))
     }
 
     return () => {
@@ -3315,6 +3317,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
             restoreHudSignIn()
             settleHudLogin(new Error(realmCheckMessage(dest.realm, result)))
             if (runners) {
+              guestPick.current = null
               pendingLogin.current = null
               pendingLoginType.current = null
               setSubmitted(false)
