@@ -32,6 +32,7 @@ import {
   DONATE_PROTOCOL,
   DONATE_UNAVAILABLE,
   MIN_TIP,
+  TIP_AMOUNT,
   donateBusy,
   parseDonateRequest,
   parseDonateTarget,
@@ -61,6 +62,7 @@ const WATCH_FOR_MS = 30 * 60_000
 const WATCH_EVERY_MS = 10_000
 const FORWARD_RETRY_MS = [5_000, 10_000, 20_000, 40_000, 60_000]
 const TARGET_TTL_MS = 5 * 60_000
+const FORWARD_TIMEOUT_MS = 10_000
 
 /** The creator as the panel shows them: always the address, and the profile when it could be read. */
 export interface DonateCreator {
@@ -73,9 +75,9 @@ export interface DonateCreator {
 
 export type DonateView =
   | { step: 'loading' }
-  | { step: 'form'; scene: string; creator: DonateCreator; balance: number; presets: number[]; usdRate: number | null }
+  | { step: 'form'; scene: string; creator: DonateCreator; balance: number; presets: number[]; usdRate: number | null; error?: string }
   | { step: 'sending'; amount: string; creator: DonateCreator }
-  | { step: 'processing'; amount: string; creator: DonateCreator }
+  | { step: 'processing'; amount: string; creator: DonateCreator; final?: boolean }
   | { step: 'sent'; creator: DonateCreator }
   | { step: 'failed' }
 
@@ -169,13 +171,17 @@ export function weiToMana(wei: bigint): number {
 }
 
 const FLAGS_TTL_MS = 60_000
+const FLAGS_TIMEOUT_MS = 3_000
 let flagsCache: { at: number; read: Promise<ReturnType<typeof parseRemoteFlags>> } | null = null
 
 /** The Explorer's flags file (the same service the Shop reads its own from), kept a minute; a failed read is not kept. */
 function readExplorerFlags(): Promise<ReturnType<typeof parseRemoteFlags>> {
   if (flagsCache && Date.now() - flagsCache.at < FLAGS_TTL_MS) return flagsCache.read
-  const read = fetch(`${flagsService()}/explorer.json`).then(async (res) => {
-    if (!res.ok) throw new Error(`feature flags: HTTP ${res.status}`)
+  const read = fetch(`${flagsService()}/explorer.json`, { signal: AbortSignal.timeout(FLAGS_TIMEOUT_MS) }).then(async (res) => {
+    if (!res.ok) {
+      await res.body?.cancel().catch(() => {})
+      throw new Error(`feature flags: HTTP ${res.status}`)
+    }
     return parseRemoteFlags(await res.json())
   })
   flagsCache = { at: Date.now(), read }
@@ -212,7 +218,7 @@ const LIVE: ShellDonateServices = {
   },
   async usdRate() {
     if (rateCache && Date.now() - rateCache.at < RATE_CACHE_MS) return rateCache.rate
-    const res = await fetch(`${catalystBase()}/price/api/v3/simple/price?ids=decentraland&vs_currencies=usd`)
+    const res = await fetch(`${catalystBase()}/price/api/v3/simple/price?ids=decentraland&vs_currencies=usd`, { signal: AbortSignal.timeout(FLAGS_TIMEOUT_MS) })
     const body = (await res.json().catch(() => null)) as { decentraland?: { usd?: unknown } } | null
     const rate = body?.decentraland?.usd
     if (!res.ok || typeof rate !== 'number' || !(rate > 0)) return null
@@ -234,8 +240,12 @@ const LIVE: ShellDonateServices = {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...headers },
-      body: JSON.stringify({ type: 'tip-received', transactionHash: hash })
+      body: JSON.stringify({ type: 'tip-received', transactionHash: hash }),
+      signal: AbortSignal.timeout(FORWARD_TIMEOUT_MS)
     })
+    await res.body?.cancel().catch(() => {})
+    // A 4xx is the catalyst refusing the claim (a 429 is its rate limit, asked again later).
+    if (res.status >= 400 && res.status < 500 && res.status !== 429) throw new ForwardRefused(res.status)
     if (!res.ok) throw new Error(`The tip forward answered ${res.status}`)
   },
   sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
@@ -277,24 +287,48 @@ export function resolvePlace(place: DonatePlace, rows: DestinationRow[]): Resolv
   return { creator, title: placeTitle(place, row.title), positions: row.positions }
 }
 
+/** The catalyst refused a tip's forward (a 4xx other than its rate limit): asking again changes nothing. */
+class ForwardRefused extends Error {
+  constructor(readonly status: number) {
+    super(`The tip forward was refused (${status})`)
+  }
+}
+
 /** A relay answer that clearly refused the tip before broadcasting it: only then may the wallet send it instead. */
 function refusedBeforeBroadcast(e: unknown): boolean {
   return e instanceof MetaTransactionError && e.refused === true && typeof e.status === 'number' && e.status >= 400 && e.status < 500
 }
 
+/** How an unsettled tip ended: mined, reverted, or still unknown when the watch ran out. */
+type Outcome = 'sent' | 'failed' | 'unknown'
+
+/** A tip sent but not yet settled, kept per account across panels so a second tip waits for it. */
+interface Pending {
+  amount: string
+  creator: DonateCreator
+  /** Told once, when the tip settles. The panel showing it (if any) sets it. */
+  onSettle: ((outcome: Outcome) => void) | null
+}
+
 export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
   const svc: ShellDonateServices = { ...LIVE, ...deps.services }
-  /** The open panel, or null. Each opening is its own session: a late answer for an older one draws nothing. */
+  /**
+   * The open panel, or null. Each opening is its own session: a late answer for an older one draws nothing. It is
+   * claimed before the first read, so the Shop (and a second Donate) see the dialog as taken from the start.
+   */
   let session: { id: number } | null = null
   let sessions = 0
-  /** Places looked up for donate.target, kept a while so walking around reads each once. */
+  /** Places looked up for donate.target, kept a while so walking around reads each once. Failed reads aren't kept. */
   const targets = new Map<string, { at: number; tippable: boolean }>()
+  /** Unsettled tips, by account. */
+  const pending = new Map<string, Pending>()
 
   const account = (): string | null => {
     const login = deps.login()
     return login && !loginExpired(login) ? lower(rootAddress(login.identity)) : null
   }
   const web3 = (who: string): boolean => deps.wallet?.marketplace?.(who) === true && deps.wallet.kind(who) === 'web3'
+  const tipped = (): void => deps.post({ type: DONATE_EVENT, v: DONATE_PROTOCOL, state: 'sent' })
 
   async function capabilities(): Promise<DonateCapabilities> {
     const who = account()
@@ -313,56 +347,72 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
 
   async function open(request: DonateRequest): Promise<void> {
     if (session || deps.otherDialogOpen()) throw donateBusy()
-    const who = account()
-    if (!who || !web3(who) || !(await svc.enabled().catch(() => false))) throw new ShellError(DONATE_UNAVAILABLE, 'Donate is not available for this sign-in.')
-    const provider = deps.wallet?.provider(who) ?? null
-    if (!provider) throw new ShellError(DONATE_UNAVAILABLE, 'No wallet here can sign for this sign-in.')
-    const chainId = svc.chainId()
-    const token = MANA_TOKEN[chainId]
-    if (!token) throw new ShellError(DONATE_UNAVAILABLE, 'MANA is not known on this network.')
-
     const s = { id: ++sessions }
     session = s
-    const opening = { pointer: request.input === 'pointer' }
     const live = (): boolean => session === s
+    const release = (): void => {
+      if (session === s) session = null
+    }
+    const who = account()
+    let provider: Eip1193Provider | null = null
+    let token: ContractData | undefined
+    const chainId = svc.chainId()
+    try {
+      if (!who || !web3(who) || !(await svc.enabled().catch(() => false))) throw new ShellError(DONATE_UNAVAILABLE, 'Donate is not available for this sign-in.')
+      provider = deps.wallet?.provider(who) ?? null
+      if (!provider) throw new ShellError(DONATE_UNAVAILABLE, 'No wallet here can sign for this sign-in.')
+      token = MANA_TOKEN[chainId]
+      if (!token) throw new ShellError(DONATE_UNAVAILABLE, 'MANA is not known on this network.')
+    } catch (e) {
+      release()
+      throw e
+    }
+
+    const opening = { pointer: request.input === 'pointer' }
     const show = (view: DonateView, handlers: Partial<DonateHandlers> = {}): void => {
       if (live()) deps.ui.show(view, { onClose: () => close(s), ...handlers }, opening)
     }
+
+    // A tip of this account still unsettled: show it, whatever place was asked, until it settles.
+    const unsettled = pending.get(who)
+    if (unsettled) {
+      follow(unsettled)
+      return
+    }
+
     show({ step: 'loading' })
 
     // Everything the panel shows, read here. A failure closes the panel.
     let form: Extract<DonateView, { step: 'form' }>
-    let balance: bigint
     try {
       const target = await svc.tipTarget()
-      // The payments config and this build must agree on the chain and the token, or nothing is sent.
+      // When the payments config can be read, it must name this build's chain and token, or nothing is sent.
       if (target && (target.chainId !== chainId || lower(target.manaToken) !== lower(token.address))) throw new Error('The deployment pays tips on another network.')
       const place = await svc.place(request.place)
       if (!place) throw new Error('This place has no creator to tip.')
       const [creator, wei, usdRate, presets] = await Promise.all([svc.creator(place.creator), svc.balance(who, token), svc.usdRate().catch(() => null), svc.presets().catch(() => DEFAULT_PRESETS)])
-      balance = wei
       form = { step: 'form', scene: place.title, creator, balance: weiToMana(wei), presets, usdRate }
     } catch (e) {
       close(s)
+      release()
       throw e
     }
 
-    const toForm = (): void =>
-      show(form, {
+    const toForm = (error?: string): void =>
+      show(error ? { ...form, error } : form, {
         onSend: (amount) => void send(amount),
         onBuyMana: () => deps.openExternal(svc.accountUrl())
       })
     const failed = (): void =>
       show({ step: 'failed' }, {
-        onRetry: toForm,
+        onRetry: () => toForm(),
         onSupport: () => deps.openExternal(svc.supportUrl())
       })
-    const tipped = (): void => deps.post({ type: DONATE_EVENT, v: DONATE_PROTOCOL, state: 'sent' })
     /** The tip is mined: the panel says so and the emote plays once it is closed; with the panel gone, at once. */
-    const sent = (): void => {
+    const sent = (creator: DonateCreator): void => {
       if (!live()) return tipped()
       show(
-        { step: 'sent', creator: form.creator },
+        { step: 'sent', creator },
         {
           onClose: () => {
             close(s)
@@ -370,6 +420,17 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
           }
         }
       )
+    }
+
+    /** Shows an unsettled tip and what it settles to, in this panel while it is up. */
+    function follow(p: Pending): void {
+      show({ step: 'processing', amount: p.amount, creator: p.creator })
+      p.onSettle = (outcome) => {
+        if (outcome === 'sent') return sent(p.creator)
+        if (!live()) return
+        if (outcome === 'failed') show({ step: 'failed' }, { onRetry: () => close(s), onSupport: () => deps.openExternal(svc.supportUrl()) })
+        else show({ step: 'processing', amount: p.amount, creator: p.creator, final: true })
+      }
     }
 
     async function forward(hash: string, login: StoredLogin): Promise<void> {
@@ -380,25 +441,33 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
           return
         } catch (e) {
           console.warn('[donate] tip forward failed', e)
+          // The catalyst refused the claim itself: asking again changes nothing.
+          if (e instanceof ForwardRefused) return
         }
       }
     }
 
-    /** Whether the tip's balance effect is seen within the watch window: confirms a tip whatever hash carried it. */
-    async function watchBalance(amountWei: bigint): Promise<boolean> {
-      const until = svc.now() + WATCH_FOR_MS
-      while (svc.now() < until) {
-        await svc.sleep(WATCH_EVERY_MS)
-        const now = await svc.balance(who!, token!).catch(() => null)
-        if (now != null && balance - now >= amountWei) return true
-      }
-      return false
-    }
-
+    let sending = false
     async function send(amount: string): Promise<void> {
+      if (!live() || sending) return
       const wei = manaToWei(amount)
       const login = deps.login()
-      if (!live() || !login || wei == null || wei < BigInt(MIN_TIP) * 10n ** 18n || wei > balance) return
+      if (!login || account() !== who) return toForm('Your sign-in changed. Close Donate and open it again.')
+      if (wei == null || !TIP_AMOUNT.test(amount) || wei < BigInt(MIN_TIP) * 10n ** 18n) return toForm(`Tips must be ≥ ${MIN_TIP} MANA`)
+      sending = true
+      try {
+        show({ step: 'sending', amount, creator: form.creator })
+        // The balance now, not when the panel opened: the baseline the tip's effect is measured from.
+        const before = await svc.balance(who!, token!).catch(() => null)
+        if (before == null) return toForm('Couldn’t read your MANA balance. Try again.')
+        if (wei > before) return toForm('Insufficient MANA')
+        await sendTip(amount, wei, before, login)
+      } finally {
+        sending = false
+      }
+    }
+
+    async function sendTip(amount: string, wei: bigint, before: bigint, login: StoredLogin): Promise<void> {
       const intent: DonationIntent = {
         from: who!,
         chainId,
@@ -423,62 +492,70 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
       }
       const wallet = svc.guard(tracked, intent)
       const data = encodeFunctionData({ abi: TRANSFER_ABI, functionName: 'transfer', args: [intent.to as `0x${string}`, wei] })
-      show({ step: 'sending', amount, creator: form.creator })
 
       let hash: string
       try {
         hash = await svc.sendGasless(wallet, token!, data)
       } catch (e) {
         if (!signed) return failed()
-        if (!refusedBeforeBroadcast(e)) return processing(amount, wei)
+        if (!refusedBeforeBroadcast(e)) return processing(amount, wei, before)
         // The relay clearly refused before broadcasting: the wallet may send it itself.
         try {
           hash = await svc.sendDirect(wallet, token!, intent.to, wei)
         } catch (direct) {
-          return submitted && !declined(direct) ? processing(amount, wei) : failed()
+          return submitted && !declined(direct) ? processing(amount, wei, before) : failed()
         }
       }
       try {
         await svc.wait(chainId, hash, RECEIPT_WAIT_MS)
       } catch (e) {
         if (isTxReverted(e)) return failed()
-        return processing(amount, wei, isTxPending(e) ? hash : undefined, login)
+        return processing(amount, wei, before, isTxPending(e) ? hash : undefined, login)
       }
-      sent()
+      sent(form.creator)
       void forward(hash, login)
     }
 
     /**
      * A tip whose outcome is unknown: never sent again. It is watched by its hash (when there is one) and by its
-     * effect on the balance (the relay may have re-sent it under another hash); the first to confirm it wins. When
-     * neither does within the window, nothing was paid, and the panel says the tip failed.
+     * effect on the balance (the relay may have re-sent it under another hash); the first answer settles it. A
+     * revert fails it at once. When neither confirms it within the window, the panel says it is still being
+     * processed, with no retry: a second tip could pay twice. Until then it is the account's pending tip.
      */
-    function processing(amount: string, wei: bigint, hash?: string, login?: StoredLogin): void {
-      show({ step: 'processing', amount, creator: form.creator })
+    function processing(amount: string, wei: bigint, before: bigint, hash?: string, login?: StoredLogin): void {
+      const p: Pending = { amount, creator: form.creator, onSettle: null }
+      pending.set(who!, p)
+      follow(p)
       let settled = false
-      const confirm = (): void => {
+      const settle = (outcome: Outcome): void => {
         if (settled) return
         settled = true
-        sent()
+        if (pending.get(who!) === p) pending.delete(who!)
+        if (p.onSettle) p.onSettle(outcome)
+        else if (outcome === 'sent') tipped()
       }
-      const byHash =
+      const until = svc.now() + WATCH_FOR_MS
+      const byHash: Promise<void> =
         hash && login
           ? svc.wait(chainId, hash, WATCH_FOR_MS).then(
               () => {
-                confirm()
+                settle('sent')
                 void forward(hash, login)
-                return true
               },
-              () => false
+              (e: unknown) => {
+                if (isTxReverted(e)) settle('failed')
+              }
             )
-          : Promise.resolve(false)
-      const byBalance = watchBalance(wei).then((seen) => {
-        if (seen) confirm()
-        return seen
-      })
-      void Promise.all([byHash, byBalance]).then(([a, b]) => {
-        if (!a && !b && !settled && live()) failed()
-      })
+          : Promise.resolve()
+      const byBalance = (async (): Promise<void> => {
+        while (!settled && svc.now() < until) {
+          await svc.sleep(WATCH_EVERY_MS)
+          if (settled) return
+          const now = await svc.balance(who!, token!).catch(() => null)
+          if (now != null && before - now >= wei) return settle('sent')
+        }
+      })()
+      void Promise.all([byHash, byBalance]).then(() => settle('unknown'))
     }
 
     toForm()
@@ -492,16 +569,23 @@ export function createShellDonate(deps: ShellDonateDeps): ShellDonate {
         case DONATE_METHODS.target: {
           const place = parseDonateTarget(params)
           const key = JSON.stringify(place)
+          const now = svc.now()
           const known = targets.get(key)
-          if (known && svc.now() - known.at < TARGET_TTL_MS) return { v: DONATE_PROTOCOL, tippable: known.tippable }
-          const found = await svc.place(place).catch(() => null)
+          if (known && now - known.at < TARGET_TTL_MS) return { v: DONATE_PROTOCOL, tippable: known.tippable }
+          let found: ResolvedPlace | null
+          try {
+            found = await svc.place(place)
+          } catch {
+            // A failed read is not an answer: Donate stays hidden now and the next look asks again.
+            return { v: DONATE_PROTOCOL, tippable: false }
+          }
+          for (const [k, v] of targets) if (now - v.at >= TARGET_TTL_MS) targets.delete(k)
           const tippable = found != null
-          const at = svc.now()
-          targets.set(key, { at, tippable })
+          targets.set(key, { at: now, tippable })
           // A place covers several parcels: walking across it reads it once.
-          for (const p of found?.positions ?? []) {
-            const [x, y] = p.split(',').map(Number)
-            if (Number.isInteger(x) && Number.isInteger(y)) targets.set(JSON.stringify({ parcel: { x, y } }), { at, tippable })
+          for (const pos of found?.positions ?? []) {
+            const [x, y] = pos.split(',').map(Number)
+            if (Number.isInteger(x) && Number.isInteger(y)) targets.set(JSON.stringify({ parcel: { x, y } }), { at: now, tippable })
           }
           return { v: DONATE_PROTOCOL, tippable }
         }

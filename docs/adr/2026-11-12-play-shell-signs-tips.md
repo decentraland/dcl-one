@@ -48,5 +48,11 @@ the player owns.
   shell's check, not the relay's.
 - The recipient is the places service's `creator_address`, which dcl-one derives from the scene's deployer
   (`services/catalyst/explore/src/places/derive.rs`).
+- After the wallet fallback, the meta-transaction the player signed first stays valid until their next one on the
+  MANA token (its nonce is unused). Only the relay that refused it holds that signature, so a second payment would
+  need it to submit a signature it just refused. The risk is accepted rather than spending the nonce, which would
+  take a second wallet prompt.
+- A tip whose outcome is unknown is the account's pending tip: opening Donate again shows it, not a new form,
+  until it settles or its watch ends.
 - A tip confirmed only by its effect on the balance (when the relay's answer was lost) has no transaction hash to
   forward, so its creator is not notified.

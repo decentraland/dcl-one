@@ -16,9 +16,11 @@ export function useDonate(place: DonatePlace | null): { visible: boolean; open: 
     if (!donations || !key) return
     let alive = true
     const target = JSON.parse(key) as DonatePlace
-    void Promise.all([donations.available(), donations.tippable(target)]).then(([available, tippable]) => {
-      if (alive) setVisibleFor(available && tippable ? key : null)
-    })
+    // The place is looked up only for a session that may tip at all.
+    void (async () => {
+      const shown = (await donations.available()) && (await donations.tippable(target))
+      if (alive) setVisibleFor(shown ? key : null)
+    })()
     return () => {
       alive = false
     }

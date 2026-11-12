@@ -24,8 +24,15 @@
   min-width: 0;
 }
 .creatorName {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-weight: var(--fw-semibold);
   color: var(--name-color, var(--text));
+}
+.tag {
+  font-weight: normal;
+  color: var(--text-dim);
 }
 .address {
   font-size: var(--fs-sm);

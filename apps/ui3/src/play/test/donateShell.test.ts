@@ -178,13 +178,30 @@ describe('sending a tip', () => {
     expect(s.w.calls).toContain('eth_signTypedData_v4')
   })
 
-  it('ignores an amount below 1 MANA or above the balance', async () => {
-    const s = setup()
+  it('refuses, and says why, an amount below 1 MANA, one it can’t read, or above the balance read before signing', async () => {
+    const s = setup({ balance: vi.fn().mockResolvedValueOnce(parseUnits('1000', 18)).mockResolvedValue(parseUnits('100', 18)) })
     await open(s.donate)
-    s.handlers().onSend?.('0.5')
-    s.handlers().onSend?.('1001')
+    for (const [amount, error] of [['0.5', /1 MANA/], ['10.', /1 MANA/], ['166', /Insufficient MANA/]] as const) {
+      s.handlers().onSend?.(amount)
+      await flush()
+      expect(s.last()).toMatchObject({ step: 'form', error: expect.stringMatching(error) })
+    }
+    expect(s.w.calls).not.toContain('eth_signTypedData_v4')
+  })
+
+  it('sends one tip per SEND, however often it is pressed', async () => {
+    let release: () => void = () => {}
+    const gate = new Promise<void>((r) => (release = r))
+    const sendGasless = vi.fn(signThen(async () => (await gate, HASH)))
+    const s = setup({ sendGasless })
+    await open(s.donate)
+    const send = s.handlers().onSend!
+    send('166')
+    send('166')
     await flush()
-    expect(s.last().step).toBe('form')
+    release()
+    await flush()
+    expect(sendGasless).toHaveBeenCalledOnce()
   })
 
   it('fails, with TRY AGAIN, when the wallet declines', async () => {
@@ -209,7 +226,8 @@ describe('sending a tip', () => {
 
   it('never sends again after an unclear relay answer: it watches the balance and confirms by its effect', async () => {
     const sendDirect = vi.fn(async () => HASH)
-    const balance = vi.fn().mockResolvedValueOnce(parseUnits('1000', 18)).mockResolvedValue(parseUnits('834', 18))
+    // Read when the panel opens and again before signing; then the tip's effect.
+    const balance = vi.fn().mockResolvedValueOnce(parseUnits('1000', 18)).mockResolvedValueOnce(parseUnits('1000', 18)).mockResolvedValue(parseUnits('834', 18))
     const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('The relay answered 502', '502', 502, false))), sendDirect, balance })
     await open(s.donate)
     s.handlers().onSend?.('166')
@@ -219,14 +237,46 @@ describe('sending a tip', () => {
     expect(s.last().step).toBe('sent')
   })
 
-  it('says the tip failed once an unclear send shows no effect within the watch', async () => {
+  it('keeps an unclear send that shows no effect as still processing, with no retry', async () => {
     const sendDirect = vi.fn(async () => HASH)
     const s = setup({ sendGasless: signThen(() => Promise.reject(new MetaTransactionError('lost', 'network', 502, false))), sendDirect })
     await open(s.donate)
     s.handlers().onSend?.('166')
     await flush()
     expect(sendDirect).not.toHaveBeenCalled()
+    expect(s.views.some((v) => v.step === 'failed')).toBe(false)
+    expect(s.last()).toMatchObject({ step: 'processing', final: true })
+  })
+
+  it('fails at once when a processing tip reverts', async () => {
+    const s = setup({ wait: async (_c, h, timeout) => Promise.reject(timeout > 200_000 ? new TxRevertedError(h) : new TxPendingError(h, 'The tip')) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
     expect(s.views.map((v) => v.step)).toEqual(['loading', 'form', 'sending', 'processing', 'failed'])
+  })
+
+  it('shows an unsettled tip again instead of a new form, until it settles', async () => {
+    const s = setup({ wait: async (_c, h, timeout) => (timeout > 200_000 ? new Promise(() => {}) : Promise.reject(new TxPendingError(h, 'The tip'))), sleep: () => new Promise(() => {}) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('processing')
+    s.handlers().onClose()
+    expect(s.donate.dialogOpen()).toBe(false)
+    await open(s.donate)
+    expect(s.last()).toMatchObject({ step: 'processing', amount: '166' })
+    expect(s.views.filter((v) => v.step === 'form')).toHaveLength(1)
+  })
+
+  it('claims the dialog before its first read, so a second open waits', async () => {
+    let release: () => void = () => {}
+    const s = setup({ enabled: () => new Promise<boolean>((r) => (release = () => r(true))) })
+    const first = open(s.donate)
+    expect(s.donate.dialogOpen()).toBe(true)
+    await expect(open(s.donate)).rejects.toSatisfy((e) => isShellError(e, DONATE_BUSY))
+    release()
+    await first
   })
 
   it('fails without watching when the guard refused before the wallet signed', async () => {
@@ -246,7 +296,7 @@ describe('sending a tip', () => {
   })
 
   it('shows a tip not yet mined as processing, and a reverted one as failed', async () => {
-    const pending = setup({ wait: async (_c, h, timeout) => (timeout > 200_000 ? new Promise(() => {}) : Promise.reject(new TxPendingError(h, 'The tip'))) })
+    const pending = setup({ wait: async (_c, h, timeout) => (timeout > 200_000 ? new Promise(() => {}) : Promise.reject(new TxPendingError(h, 'The tip'))), sleep: () => new Promise(() => {}) })
     await open(pending.donate)
     pending.handlers().onSend?.('166')
     await flush()

@@ -4,8 +4,8 @@
 // known), sent (rays, OK) and failed (TRY AGAIN, Contact Support).
 
 import { useState } from 'react'
-import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner } from '@hud/design'
-import { MIN_TIP } from '../../../lib/donateProtocol'
+import { Avatar, Button, Modal, ModalActions, ModalTitle, Spinner, VerifiedBadge } from '@hud/design'
+import { MIN_TIP, TIP_AMOUNT } from '../../../lib/donateProtocol'
 import type { DonateCreator, DonateHandlers, DonateView } from '../../../shell/donate/donation'
 import styles from './DonatePanel.module.css'
 
@@ -17,14 +17,13 @@ export function formatAmount(n: number): string {
   return String(Math.round(n * 100) / 100)
 }
 
-/** A typed amount, without a sign; null when it isn't a number. */
-function parseAmount(text: string): number | null {
+/** A typed amount, by the rule the shell sends by; null when it isn't one (`10.`, `.5`, empty). */
+export function parseAmount(text: string): number | null {
   const clean = text.replace(/-/g, '').trim()
-  if (!/^\d*(\.\d*)?$/.test(clean) || clean === '' || clean === '.') return null
-  return Number(clean)
+  return TIP_AMOUNT.test(clean) ? Number(clean) : null
 }
 
-const shortAddress = (a: string): string => `${a.slice(0, 5)}...${a.slice(-5)}`
+const shortAddress = (a: string): string => `${a.slice(0, 8)}...${a.slice(-6)}`
 
 function Creator({ creator }: { creator: DonateCreator }): React.JSX.Element {
   return (
@@ -34,6 +33,8 @@ function Creator({ creator }: { creator: DonateCreator }): React.JSX.Element {
         {creator.name && (
           <span className={styles.creatorName} style={creator.nameColor ? ({ '--name-color': creator.nameColor } as React.CSSProperties) : undefined}>
             {creator.name}
+            {/* A claimed NAME is verified; any other name is the account's to set, so its #tag says whose it is. */}
+            {creator.claimed ? <VerifiedBadge size={14} /> : <span className={styles.tag}>#{creator.address.slice(-4)}</span>}
           </span>
         )}
         <span className={styles.address}>{shortAddress(creator.address)}</span>
@@ -131,6 +132,11 @@ function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>;
           )}
         </div>
         {tooLittle && <span className={styles.tip}>Tips must be ≥ 1 MANA</span>}
+        {view.error && !tooLittle && (
+          <span className={styles.tip} role="alert">
+            {view.error}
+          </span>
+        )}
       </div>
       <ModalActions>
         <Button variant="secondary" onClick={handlers.onClose}>
@@ -171,7 +177,11 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
             <Creator creator={view.creator} />
             <Spinner />
             <span className={styles.note}>
-              {view.step === 'sending' ? 'A browser window should open for you to confirm this transfer.' : 'Your tip is being processed. You can close this window.'}
+              {view.step === 'sending'
+                ? 'A browser window should open for you to confirm this transfer.'
+                : view.final
+                  ? 'Your tip is still being processed. Check your wallet’s activity before tipping again.'
+                  : 'Your tip is being processed. You can close this window.'}
             </span>
           </div>
           {view.step === 'processing' && (

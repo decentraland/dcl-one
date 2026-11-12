@@ -24,7 +24,7 @@ const passport = vi.hoisted(() => vi.fn())
 vi.mock('../features/profile/Passport', async (importOriginal) => ({ ...(await importOriginal<object>()), openPassport: passport }))
 
 import { TIP_EMOTE, useDonate, useTipEmote } from '../features/donate/useDonate'
-import { tipTarget } from '../features/notifications/summary'
+import { summarize, tipTarget } from '../features/notifications/summary'
 
 const PLACE = { parcel: { x: 1, y: 2 } }
 const settle = () => act(async () => {})
@@ -53,10 +53,13 @@ describe('Donate', () => {
     await settle()
     expect(noCreator.result.current.visible).toBe(false)
     host.donations!.available.mockResolvedValue(false)
+    host.donations!.tippable.mockClear()
     host.donations!.tippable.mockResolvedValue(true)
     const notWeb3 = renderHook(() => useDonate(PLACE))
     await settle()
     expect(notWeb3.result.current.visible).toBe(false)
+    // The place is looked up only for a session that may tip.
+    expect(host.donations!.tippable).not.toHaveBeenCalled()
     const nowhere = renderHook(() => useDonate(null))
     await settle()
     expect(nowhere.result.current.visible).toBe(false)
@@ -83,5 +86,9 @@ describe('Donate', () => {
     open?.()
     expect(passport).toHaveBeenCalledWith('0xabc')
     expect(tipTarget({ id: '2', type: 'badge_granted', address: '0x', timestamp: '0', read: false, metadata: {} } as never)).toBeUndefined()
+    expect(summarize({ id: '3', type: 'tip_received', address: '0x', timestamp: '0', read: false, metadata: { senderAddress: '0xabc', senderUsername: 'Aurora', amount: '166.456' } } as never)).toMatchObject({
+      title: 'New Tip received!',
+      body: 'Aurora sent you a 166.46 MANA tip for one of your scenes!'
+    })
   })
 })

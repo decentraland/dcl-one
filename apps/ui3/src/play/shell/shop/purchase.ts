@@ -1337,6 +1337,7 @@ export function createShellShop(deps: ShellShopDeps): ShellShop {
           throw new Error(`unknown request ${method}`)
       }
     },
-    dialogOpen: () => slot.holder() != null
+    // A purchase still starting (before its dialog shows) counts: Donate must not open over it.
+    dialogOpen: () => starting || running || slot.holder() != null
   }
 }

@@ -4,12 +4,17 @@
 // Nothing that decides the payment (the recipient, the amount, the token, the chain) crosses from the HUD:
 // parseDonateRequest admits a place reference and a display hint only.
 
+import type { DonatePlace } from '@explorer-core/hostContract'
 import { ShellError } from '@explorer-core/lib/shellReply'
 
 export const DONATE_PROTOCOL = 1
 
 /** The least a tip may be, in MANA: the catalyst tells a creator of no smaller tip. */
 export const MIN_TIP = 1
+
+/** A tip amount as typed: whole MANA, optionally with decimals (`10` or `10.5`, not `10.` or `.5`). The panel and the
+ *  shell read amounts by this one rule. */
+export const TIP_AMOUNT = /^\d+(\.\d+)?$/
 
 /** The methods the shell answers (`shellRequest`). */
 export const DONATE_METHODS = {
@@ -38,7 +43,7 @@ export interface DonateCapabilities {
 }
 
 /** A place to tip: a parcel of Genesis City (any of the place's parcels), or a World by its name. */
-export type DonatePlace = { parcel: { x: number; y: number } } | { world: string }
+export type { DonatePlace }
 
 export interface DonateRequest {
   v: typeof DONATE_PROTOCOL
