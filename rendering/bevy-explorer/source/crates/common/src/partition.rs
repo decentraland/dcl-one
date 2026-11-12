@@ -39,13 +39,16 @@ impl PartitionData {
 /// band the partition decides.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Tier {
-    /// the scenes the player stands in, portables and global scenes
+    /// the scenes the player stands in, portables and global scenes, the player's own body,
+    /// wearables and emotes, the avatar previews the player opens (the backpack, a passport), and
+    /// files every scene runtime needs (the SDK6 adaption layer)
     Active,
-    /// avatars' bodies and wearables: all before any other scene, nearest avatar first
+    /// other avatars' bodies and wearables: all before any other scene, nearest avatar first
     Avatar,
     /// the other scenes in range, nearest first
     Scene,
-    /// no scene's and no avatar's: NFT images, URL-form fonts, imposter archives
+    /// no scene's and no avatar's: NFT images, URL-form fonts, imposter archives, other
+    /// avatars' emotes
     Other,
     /// a scene that has left while its downloads wait
     Departed,

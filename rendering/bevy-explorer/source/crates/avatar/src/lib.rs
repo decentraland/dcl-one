@@ -1,7 +1,7 @@
 use std::{collections::VecDeque, f32::consts::PI, path::PathBuf, time::Duration};
 
 use attach::AttachPlugin;
-use avatar_texture::AvatarTexturePlugin;
+use avatar_texture::{AvatarTexturePlugin, BoothAvatar};
 use bevy::{
     animation::{AnimationTarget, AnimationTargetId},
     asset::{AsyncReadExt, RenderAssetUsages},
@@ -20,7 +20,7 @@ use bevy_console::ConsoleCommand;
 use collectibles::{
     base_wearables,
     wearables::{UsedWearables, Wearable, WearableCategory, WearableModel, WearableUrn},
-    CollectibleError, CollectibleManager, Emote, EmoteUrn,
+    CollectibleError, CollectibleManager, Collectibles, Emote, EmoteUrn,
 };
 use colliders::AvatarColliderPlugin;
 use console::DoAddConsoleCommand;
@@ -81,7 +81,7 @@ use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     EntityDefinition, IpfsAssetServer,
 };
-use scene_runner::scene_partition::PartitionedDownloads;
+use scene_runner::scene_partition::{PartitionedDownloads, PlayerDownloads};
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
@@ -157,6 +157,7 @@ impl Plugin for AvatarPlugin {
                 update_base_avatar_shape,
                 select_avatar,
                 update_render_avatar,
+                register_player_emote_downloads,
                 spawn_scenes,
                 process_avatar.after(update_render_avatar),
                 set_avatar_visibility,
@@ -567,6 +568,92 @@ fn retag_avatars_on_style_change(
             }
         }
         *prev = Some(cur);
+    }
+}
+
+/// The holder of the player's emote hashes in the request-slot queue.
+#[derive(Component)]
+struct PlayerEmoteDownloads;
+
+/// The avatars whose emotes are the player's own: the player and the previews (booths) the
+/// player opens, such as the backpack's.
+type PlayerAvatars = Or<(With<PrimaryUser>, With<BoothAvatar>)>;
+
+/// File the emotes of the player's avatars (equipped, or last played) under a
+/// [`PlayerDownloads`] holder once their pointers have resolved, so they download with the
+/// player's scenes and are not held while engine memory is full. Other avatars' emotes stay
+/// unregistered and rank after every scene. Requests nothing: an emote's pointer resolves when it
+/// is first played. The urns are parsed again only when an avatar, its outfit or its emote
+/// changes; an idle frame only looks the parsed urns up and allocates nothing.
+#[allow(clippy::type_complexity)]
+fn register_player_emote_downloads(
+    avatars: Query<(Entity, Ref<AvatarSelection>, Option<Ref<EmoteCommand>>), PlayerAvatars>,
+    emotes: Option<Res<Collectibles<Emote>>>,
+    holder: Query<(Entity, &PartitionedDownloads), With<PlayerEmoteDownloads>>,
+    mut sources: Local<Vec<Entity>>,
+    mut urns: Local<Vec<EmoteUrn>>,
+    mut commands: Commands,
+) {
+    let Some(emotes) = emotes else { return };
+
+    let changed = avatars.iter().count() != sources.len()
+        || avatars
+            .iter()
+            .zip(sources.iter())
+            .any(|((entity, selection, command), source)| {
+                entity != *source
+                    || selection.is_changed()
+                    || command.is_some_and(|command| command.is_changed())
+            });
+    if changed {
+        sources.clear();
+        urns.clear();
+        for (entity, selection, command) in &avatars {
+            sources.push(entity);
+            let played = command.as_ref().map(|command| &command.urn);
+            urns.extend(
+                selection
+                    .shape
+                    .0
+                    .emotes
+                    .iter()
+                    .chain(played)
+                    .filter_map(|urn| EmoteUrn::new(urn).ok()),
+            );
+        }
+    }
+
+    let resolved = || urns.iter().filter_map(|urn| emotes.resolved_hash(urn));
+    let current = holder.single().ok();
+    let filed: &[String] = match current {
+        Some((_, downloads)) => &downloads.0,
+        None => &[],
+    };
+    // the idle frame: every resolved hash is filed, and nothing else is
+    if resolved().all(|hash| filed.iter().any(|filed| filed == hash))
+        && filed
+            .iter()
+            .all(|filed| resolved().any(|hash| hash == filed))
+    {
+        return;
+    }
+
+    let mut hashes: Vec<String> = resolved().map(str::to_owned).collect();
+    hashes.sort();
+    hashes.dedup();
+    match current {
+        Some((entity, _)) => {
+            commands
+                .entity(entity)
+                .try_insert(PartitionedDownloads(hashes));
+        }
+        None => {
+            commands.spawn((
+                PlayerEmoteDownloads,
+                PlayerDownloads,
+                PartitionedDownloads(hashes),
+            ));
+        }
     }
 }
 

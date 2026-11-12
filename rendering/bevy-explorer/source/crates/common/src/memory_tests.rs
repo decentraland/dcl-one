@@ -105,3 +105,27 @@ fn unavailable_measurements_do_not_report_a_pressure_tier() {
     );
     assert!(record(&mut world, None).reading().is_none());
 }
+
+#[test]
+fn load_refusal_starts_at_full_and_ends_below_warning() {
+    use crate::memory::LoadRefusal;
+
+    // a 100 MiB cap: warning above 70 MiB, full above 75 MiB
+    let mut world = World::new();
+    let mut reading =
+        |used_mib: u64| record(&mut world, sample(used_mib * MIB, 100 * MIB)).reading();
+    let mut refusal = LoadRefusal::default();
+    for (used_mib, refusing) in [
+        (60, false),
+        (72, false), // warning alone does not start a refusal
+        (76, true),  // full does
+        (72, true),  // and warning holds it
+        (70, false), // back to normal ends it
+        (76, true),
+    ] {
+        refusal = refusal.next(reading(used_mib));
+        assert_eq!(refusal.refusing, refusing, "at {used_mib} MiB");
+    }
+    // no reading admits everything
+    assert!(!refusal.next(None).refusing);
+}

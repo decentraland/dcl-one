@@ -391,6 +391,17 @@ impl IpfsAssetServer<'_, '_> {
         self.server.load(PathBuf::from(&ipfs_path))
     }
 
+    /// Like [`Self::load_url_uncached`], for a file every scene of a kind needs to start (the
+    /// SDK6 adaption layer): it queues under [`SCENE_RUNTIME_OWNER`], which ranks with the
+    /// player's scenes, so it is not held while engine memory is full. The path does not
+    /// depend on the scene, so every scene shares one load.
+    pub fn load_scene_runtime_url<T: IpfsAsset>(&self, url: &str) -> Handle<T> {
+        let ext = T::ext();
+        let ipfs_path = IpfsPath::new_from_url_uncached(url, ext)
+            .with_keyvalue(IpfsKey::SlotOwner, SCENE_RUNTIME_OWNER.to_owned());
+        self.server.load(PathBuf::from(&ipfs_path))
+    }
+
     pub fn load_hash<T: IpfsAsset>(&self, hash: &str) -> Handle<T> {
         let ext = T::ext();
         let path = format!("$ipfs/$entity/{hash}.{ext}");
@@ -1037,6 +1048,11 @@ pub struct IpfsIo {
     debug_overlay_sender: tokio::sync::mpsc::UnboundedSender<IpfsDebug>,
 }
 
+/// The request-slot owner of files every scene of a kind needs to start, whichever scene asks
+/// first (the SDK6 adaption layer): registered for the whole session at the player's scenes'
+/// rank. See [`IpfsAssetServer::load_scene_runtime_url`].
+pub const SCENE_RUNTIME_OWNER: &str = "scene-runtime";
+
 impl IpfsIo {
     pub fn new(
         is_preview: bool,
@@ -1049,6 +1065,9 @@ impl IpfsIo {
         >,
     ) -> Self {
         let (sender, receiver) = tokio::sync::watch::channel(None);
+        let request_slots = PriorityGate::new(num_slots);
+        // files every scene runtime needs rank with the player's scenes for the whole session
+        request_slots.register(SCENE_RUNTIME_OWNER, LoadPriority::TOP);
 
         Self {
             is_preview,
@@ -1061,7 +1080,7 @@ impl IpfsIo {
                 num_slots,
                 ..Default::default()
             }),
-            request_slots: PriorityGate::new(num_slots),
+            request_slots,
             request_metrics: RequestMetrics::default(),
             preview_delay_ms: AtomicU32::new(0),
             reqno: default(),
@@ -1164,6 +1183,16 @@ impl IpfsIo {
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
         self.request_slots.scene_priority(scene)
+    }
+
+    /// Hold downloads ranked in `tier` or later (`None` lifts the hold): they keep their place
+    /// but get no request slot until the hold is lifted.
+    pub fn hold_downloads_from(&self, tier: Option<common::partition::Tier>) {
+        self.request_slots.hold_from(tier);
+    }
+
+    pub fn downloads_held_from(&self) -> Option<common::partition::Tier> {
+        self.request_slots.held_from()
     }
 
     /// Whether a grant before the next frame may read the download priorities: a download
@@ -2047,8 +2076,9 @@ impl IpfsIo {
                 }
             }
 
-            // the scene the file belongs to decides its place in the request slot queue
-            let scene = ipfs_path.scene_hash().map(str::to_owned);
+            // the scene the file belongs to, or the owner its path names, decides its place in
+            // the request slot queue
+            let scene = ipfs_path.slot_owner().map(str::to_owned);
 
             // nothing to share an uncacheable download under
             let Some(key) = cache_key else {

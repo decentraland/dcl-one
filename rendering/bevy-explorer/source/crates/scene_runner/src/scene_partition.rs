@@ -20,12 +20,20 @@ pub struct Partition(pub PartitionData);
 /// wearables. Scenes need none; their downloads carry the scene's own hash. Inserting it
 /// registers the hashes with the ipfs request slots and replacing or removing it (an outfit
 /// change, a despawn) releases them, so the slots know exactly which hashes have an owner.
+/// On the player (`PrimaryUser`) or an entity marked [`PlayerDownloads`] the hashes rank with
+/// the player's scenes instead.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 #[component(
     on_insert = register_partitioned_downloads,
     on_replace = release_partitioned_downloads
 )]
 pub struct PartitionedDownloads(pub Vec<String>);
+
+/// Marks an entity whose [`PartitionedDownloads`] are the player's own though it is not the
+/// player entity (an avatar preview the player opened, the player's emotes): they rank with the
+/// player's scenes, so they are not held while engine memory is full.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct PlayerDownloads;
 
 /// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
 /// bottom of the scene tier until it has one; the publisher raises the player's scene to the
@@ -65,11 +73,17 @@ fn register_partitioned_downloads(world: DeferredWorld, context: HookContext) {
     ) else {
         return;
     };
-    let key = world
-        .get::<Partition>(context.entity)
-        .map_or(LoadPriority::AVATAR_PENDING, |partition| {
-            partition.0.load_priority(Tier::Avatar)
-        });
+    let player_owned = world.get::<PrimaryUser>(context.entity).is_some()
+        || world.get::<PlayerDownloads>(context.entity).is_some();
+    let key = if player_owned {
+        LoadPriority::TOP
+    } else {
+        world
+            .get::<Partition>(context.entity)
+            .map_or(LoadPriority::AVATAR_PENDING, |partition| {
+                partition.0.load_priority(Tier::Avatar)
+            })
+    };
     for hash in &downloads.0 {
         ipfs.register_download_priority(hash, key);
     }
@@ -144,17 +158,25 @@ pub fn update_scene_partitions(
 
 /// This frame's download priority of every registered hash, written into the ipfs request
 /// slots in place: the player's scenes first, even before they have a context and while the
-/// player is still out of world arriving in one; then the
+/// player is still out of world arriving in one, together with the player's own body,
+/// wearables and emotes; then the other
 /// avatars' bodies and wearables, nearest avatar first, a shared wearable at the best of its
 /// avatars; then the other scenes by partition, a scene with no partition yet last among them.
 /// Which hashes are registered is the hooks' business (`register_scene_hash`,
 /// `register_partitioned_downloads`). Runs only on a frame in which a download waits for or
 /// holds a slot: a grant that chooses between downloads happens at an enqueue while others wait
 /// or at a release, so it reads this frame's keys unless the gate was idle when the frame began,
-/// and the steady state costs nothing.
+/// and an idle gate costs nothing. While engine memory is full, held requests keep it running
+/// every frame: a publish is what lifts a neighbour's requests once the player walks into it.
+#[allow(clippy::type_complexity)]
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
-    partitioned: Query<(&Partition, &PartitionedDownloads)>,
+    partitioned: Query<(
+        Option<&Partition>,
+        &PartitionedDownloads,
+        Has<PrimaryUser>,
+        Has<PlayerDownloads>,
+    )>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
@@ -176,10 +198,18 @@ pub fn publish_download_priorities(
         };
         (hash.0.as_str(), key)
     });
-    let wearable_keys = partitioned.iter().flat_map(|(partition, downloads)| {
-        let key = partition.0.load_priority(Tier::Avatar);
-        downloads.0.iter().map(move |hash| (hash.as_str(), key))
-    });
+    let wearable_keys =
+        partitioned
+            .iter()
+            .flat_map(|(partition, downloads, is_player, player_downloads)| {
+                let key = if is_player || player_downloads {
+                    Some(LoadPriority::TOP)
+                } else {
+                    partition.map(|partition| partition.0.load_priority(Tier::Avatar))
+                };
+                key.into_iter()
+                    .flat_map(move |key| downloads.0.iter().map(move |hash| (hash.as_str(), key)))
+            });
     ipfs.update_download_priorities(scene_keys.chain(wearable_keys));
 }
 

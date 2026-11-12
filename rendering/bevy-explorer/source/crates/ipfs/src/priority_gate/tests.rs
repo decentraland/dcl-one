@@ -22,7 +22,7 @@ fn scene(name: &str) -> Option<String> {
 }
 
 /// Register each hash once, as its scene root or avatar would.
-fn register(gate: &PriorityGate, entries: &[(&str, LoadPriority)]) {
+fn register(gate: &Arc<PriorityGate>, entries: &[(&str, LoadPriority)]) {
     for (name, key) in entries {
         gate.register(name, *key);
     }
@@ -53,6 +53,18 @@ async fn settle(gate: &Arc<PriorityGate>, count: usize) {
         tokio::task::yield_now().await;
     }
     panic!("{} tickets never queued", count);
+}
+
+/// Yield until `task` finishes; a request that is never granted fails the test instead of
+/// hanging it.
+async fn granted<T>(task: tokio::task::JoinHandle<T>) -> T {
+    for _ in 0..1000 {
+        if task.is_finished() {
+            return task.await.unwrap();
+        }
+        tokio::task::yield_now().await;
+    }
+    panic!("a request was never granted");
 }
 
 type Log = Arc<Mutex<Vec<&'static str>>>;
@@ -136,6 +148,174 @@ async fn an_unregistered_hash_ranks_after_the_registered_ones() {
     }
 
     assert_eq!(*log.lock().unwrap(), vec!["known", "unknown"]);
+}
+
+#[tokio::test]
+async fn a_held_tier_waits_while_the_others_are_granted() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("left", key(1, false, 100.0))]);
+    let blocker = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let left = reader(&gate, "left", gate.ticket(scene("left")), &log);
+    settle(&gate, 1).await;
+    gate.unregister("left");
+    gate.hold_from(Some(Tier::Departed));
+
+    // the slot comes free, but the departed scene's request is held
+    drop(blocker);
+    settle(&gate, 1).await;
+    // a request no scene owns is granted past it
+    reader(&gate, "no-hash", gate.ticket(None), &log)
+        .await
+        .unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["no-hash"]);
+    assert_eq!(gate.waiting(), 1);
+
+    // lifting the hold grants what waited
+    gate.hold_from(None);
+    granted(left).await;
+    assert_eq!(*log.lock().unwrap(), vec!["no-hash", "left"]);
+}
+
+#[tokio::test]
+async fn only_the_players_tier_is_granted_while_held_from_avatars() {
+    let gate = PriorityGate::new(1);
+    let avatar = LoadPriority {
+        tier: Tier::Avatar,
+        ..key(0, false, 0.0)
+    };
+    register(
+        &gate,
+        &[
+            ("player", LoadPriority::TOP),
+            ("avatar", avatar),
+            ("neighbour", key(1, false, 100.0)),
+        ],
+    );
+    gate.hold_from(Some(Tier::Avatar));
+    let log = Log::default();
+    let held =
+        ["avatar", "neighbour"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
+    let no_hash = reader(&gate, "no-hash", gate.ticket(None), &log);
+    settle(&gate, 3).await;
+
+    // the free slot goes to the player's request only
+    granted(reader(&gate, "player", gate.ticket(scene("player")), &log)).await;
+    assert_eq!(*log.lock().unwrap(), vec!["player"]);
+    assert_eq!(gate.waiting(), 3);
+
+    gate.hold_from(None);
+    for task in held {
+        granted(task).await;
+    }
+    granted(no_hash).await;
+    assert_eq!(
+        *log.lock().unwrap(),
+        vec!["player", "avatar", "neighbour", "no-hash"]
+    );
+}
+
+#[tokio::test]
+async fn a_lifted_hold_without_a_free_slot_grants_at_the_next_release() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("neighbour", key(1, false, 100.0))]);
+    gate.hold_from(Some(Tier::Avatar));
+    let blocker = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let neighbour = reader(&gate, "neighbour", gate.ticket(scene("neighbour")), &log);
+    settle(&gate, 1).await;
+
+    gate.hold_from(None);
+    assert_eq!(gate.waiting(), 1);
+    drop(blocker);
+    granted(neighbour).await;
+    assert_eq!(*log.lock().unwrap(), vec!["neighbour"]);
+}
+
+#[tokio::test]
+async fn a_held_download_joined_by_the_players_scene_is_granted() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("player", LoadPriority::TOP)]);
+    gate.hold_from(Some(Tier::Avatar));
+    // a request no scene owns queues first and is held ...
+    let (first, mut attempts) = DownloadReaders::first(&gate, None, None, None);
+    let task = tokio::spawn(async move { attempts.acquire().await.is_ok() });
+    settle(&gate, 1).await;
+    // ... until the player's scene shares the download
+    let _player = first.readers.try_register(scene("player")).unwrap();
+    assert!(granted(task).await);
+}
+
+#[tokio::test]
+async fn a_held_download_whose_hash_is_registered_for_the_player_is_granted() {
+    let gate = PriorityGate::new(1);
+    gate.hold_from(Some(Tier::Avatar));
+    // the player's wearable is requested before its hash is registered, so it ranks unowned
+    let (_first, mut attempts) = DownloadReaders::first(&gate, scene("wearable"), None, None);
+    let task = tokio::spawn(async move { attempts.acquire().await.is_ok() });
+    settle(&gate, 1).await;
+    gate.register("wearable", LoadPriority::TOP);
+    assert!(granted(task).await);
+}
+
+#[tokio::test]
+async fn a_publish_that_raises_a_held_scene_to_the_players_grants_it() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("neighbour", key(1, false, 100.0))]);
+    gate.hold_from(Some(Tier::Avatar));
+    let log = Log::default();
+    let neighbour = reader(&gate, "neighbour", gate.ticket(scene("neighbour")), &log);
+    settle(&gate, 1).await;
+
+    // the player walks into the neighbour, which now ranks with the player's scenes
+    gate.publish([("neighbour", LoadPriority::TOP)]);
+    granted(neighbour).await;
+    assert_eq!(*log.lock().unwrap(), vec!["neighbour"]);
+}
+
+#[tokio::test]
+async fn a_ticket_shared_by_a_departed_and_a_live_scene_is_granted_through_the_live_one() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("left", key(1, false, 100.0)),
+            ("player", LoadPriority::TOP),
+        ],
+    );
+    let blocker = gate.try_acquire().unwrap();
+    let ticket = gate.ticket(scene("left"));
+    let log = Log::default();
+    let shared = reader(&gate, "shared", ticket.clone(), &log);
+    settle(&gate, 1).await;
+    gate.unregister("left");
+    gate.hold_from(Some(Tier::Avatar));
+    gate.join(&ticket, scene("player"));
+    drop(ticket);
+
+    drop(blocker);
+    granted(shared).await;
+    assert_eq!(*log.lock().unwrap(), vec!["shared"]);
+}
+
+#[tokio::test]
+async fn a_held_request_is_granted_once_its_scene_is_registered_again() {
+    let gate = PriorityGate::new(1);
+    register(&gate, &[("back", key(1, false, 100.0))]);
+    let blocker = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let back = reader(&gate, "back", gate.ticket(scene("back")), &log);
+    settle(&gate, 1).await;
+    gate.unregister("back");
+    gate.hold_from(Some(Tier::Departed));
+    drop(blocker);
+    settle(&gate, 1).await;
+
+    // the scene comes back: its request takes the free slot without waiting for another
+    // request, release or hold change
+    gate.register("back", key(1, false, 100.0));
+    granted(back).await;
+    assert_eq!(*log.lock().unwrap(), vec!["back"]);
 }
 
 #[tokio::test]

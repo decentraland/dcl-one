@@ -166,7 +166,9 @@ Pulse and LiveKit rooms show one connection button. It changes from **Disconnect
 to **Connect** when paused, and is disabled when there is no controllable connection.
 
 World and Scene Loading show where the player is and which load stage is active.
-Performance and Memory and limits expose the engine's measurements and budgets.
+Performance and Memory and limits expose the engine's measurements and budgets. Memory and
+limits also shows whether new loads are refused because engine memory is full; lower the
+session memory limit there to trigger it.
 The room, voice, rendering, media and avatar sections appear with the plugins that
 supply them. When several readings need the same scene, peer or sample, the panel
 shows the cause once. Expand the reading count to see which fields it affects.
