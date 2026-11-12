@@ -24,7 +24,7 @@ describe.each(["hangout", "schedule"] as const)("when signed in to the %s wizard
       { path: "/edit", element: kind === "hangout"
         ? <SubmitHangout trackCtx={trackCtx} categories={[]} signedIn track={track} upload={upload} />
         : <ScheduleWizard trackCtx={trackCtx} schedules={[]} source="empty" signedIn track={track} /> },
-      { path: "/events", element: <h1>What's On</h1> },
+      { path: "/events", element: <h1>Events</h1> },
     ], { initialEntries: ["/edit"] });
     render(<RouterProvider router={router} />);
   });

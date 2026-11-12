@@ -1,9 +1,9 @@
 # @dcl/one-ui
 
-Shared UI foundations and components for dcl-one, and the Node-only Figma tooling that produces them.
+Shared UI foundations and components for dcl-one, and the Node-only Figma tooling that generates the foundations and the Review previews.
 The standards they follow are in [`docs/ui-standards.md`](../../docs/ui-standards.md).
 
-The [component adoption tracker](../../docs/ui-components.md) links the authoritative local contracts, pending work and verified application adoption. Update it in each verified port or consumer migration PR.
+The [component adoption tracker](../../docs/ui-components.md) links the authoritative local contracts, pending work and verified application adoption. Update it in each PR that adds a public component or migrates a consumer.
 
 | Path                   | What it is                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -23,6 +23,8 @@ The HUD schema 2 contract also records names and regular-file/directory kinds in
 
 NavBar and its prop types are exported from `@dcl/one-ui`. It is hand-written from `templates/component/` in `components/NavBar/`, so no generated public component remains: generated components back the Review previews only. Its open limits are recorded in the [component adoption tracker](../../docs/ui-components.md). Component deep imports remain unavailable.
 
+The NavBar header is 64px below the 1024px desktop breakpoint and 80px at and above it. Header slot controls must fit within a 48px block size; applications own their labels, intrinsic widths and popup positioning outside normal flow. The header preserves control hit areas and focus outlines without clipping, scaling or reducing them. Larger content requires a separate layout contract rather than relying on header growth.
+
 The design values are generated from the verified capture pinned by `upstream.lock.json`, preserving its Dark semantic mode and four responsive layout modes. These outputs do not certify parity with later live design changes. The five families use four source pages: Colors (`1:5238`), Icons (`1:5239`), Typography (`1:5237`) and Layout & Spacing (`15521:20146`, shared by layouts and spacings). No live source is written into the library.
 
 `semantic` exposes resolved Dark-mode values for inspection. Use `theme.color` for semantic CSS references. A text style's `fontSize` references the responsive CSS variable; `fontSizePx` is the captured tablet-and-larger value for responsive headings, not the current viewport measurement. Use the generated CSS classes for rendering and computed styles for viewport-specific pixel measurements.
@@ -32,6 +34,14 @@ Consumers configure `@dcl/one-ui` and its CSS subpaths in their TypeScript and b
 Inter variable normal faces (weights 100–900) come from `@fontsource-variable/inter` 5.3.0 under the SIL Open Font License in `foundations/typography/fonts/OFL.txt`. `foundations/typography/font-source.json` pins their materialized payloads; Git LFS stores the WOFF2 assets. Font ownership is independent of the Figma capture. Do not remove the font faces or replace them with a network font dependency.
 
 Monochrome icons inherit `currentColor`, and active-state pairs expose `active`. Icons preserve their captured intrinsic dimensions unless `size` is supplied. Give informative icons an accessible name with SVG attributes such as `role="img"` and `aria-label`; mark decorative icons `aria-hidden="true"`. Skipped source records are listed in `skippedIcons` rather than silently substituted.
+
+## Button
+
+Import `Button` and `ButtonProps` from `@dcl/one-ui`. Without `href` it renders a native button (`type="button"` by default); with `href` it renders an anchor and forwards cancellable native events. Links targeting a new or named browsing context retain the supplied `rel` tokens and add `noopener noreferrer`, including case-insensitive special targets.
+
+Use `children` or `label` for content, `leadingIcon` and `trailingIcon` (also `startIcon` and `endIcon`) for decorative icons, and `className` for consumer geometry. `variant="iconOnly"` or `iconOnly` requires `aria-label` or `aria-labelledby` in the public type. Supply content or an accessible name explicitly; the public control never supplies specimen text. Native button and anchor refs are typed. Native `disabled` prevents focus and activation; `aria-disabled` keeps the control focusable with disabled visuals while suppressing click and auxiliary activation. `loading` retains the content and accessible name with a decorative busy indicator, marks the control busy, retains keyboard focus and prevents repeated activation. Both button and link controls accept these states.
+
+Captured variants remain `primary`, `secondary`, `outline`, `dark`, `text` and `outlineOnLight`. Public aliases `tertiary` and `quaternary` select `outline` and `dark`. The white `inverse` appearance and the neutral `iconOnly` appearance are explicit library additions. Desktop heights are `xl` 56px, `lg` 48px, `md` 40px and `sm` 32px; mobile heights are 56px, 52px, 48px and 44px respectively. The defaults are `xl` and `viewport="desktop"`. Icon-only controls have a 48px minimum target.
 
 ## Work on it
 
@@ -75,7 +85,9 @@ The key of the Figma file never enters the repository, a generated file, a log o
 - `make figma-key-guard` (or `node library/ui/figma/key-guard.mjs`) fails when the key (`key` check, needs `FIGMA_FILE_KEY`) or any Figma file URL (`url` check) is in the working tree, in a blob of `origin/main..HEAD`, or in a directory passed with `--path`. It prints paths and check IDs only. Run it before every commit and push; CI runs it on every pull request and before every artifact upload. `figma/key-guard-allow.json` pins pre-existing public URLs by path and Figma file id, so any other URL added to those files still fails; the `key` check cannot be allowlisted.
 - The privileged key scan (`ui-library-key-scan.yml`) reads the URL allowlist from the default branch, never from the scanned commits, so a pull request that adds a public Figma URL together with its `key-guard-allow.json` entry fails that scan until the entry lands on main.
 
-## From Figma to the library
+## From Figma to the Review
+
+This pipeline feeds the Review previews; public components come from the component template instead.
 
 1. **Capture**: in figma-design-system, which owns the capture, its visual evidence and the fidelity review ([`figma/MAINTENANCE.md`](figma/MAINTENANCE.md)). This tree reads it through `pnpm figma fetch-source`.
 2. **Generate** (`pnpm figma sync`): Review previews in `figma/review/src/generated/`. Never edit them by hand.
@@ -84,9 +96,9 @@ The key of the Figma file never enters the repository, a generated file, a log o
 
 A synced component with the name of a hand-written one (NavBar) replaces it only when `promotion.include` names it explicitly (promotion, in figma-design-system, then deletes the hand-written directory and its exports; as a preview dependency or through the all-eligible default, the same name fails promotion). Once `promotion.include` names it, `check-mappings` reports the hand-written mapping as `superseded-by-sync` (eligible) or `superseded-pending` (with the reasons promotion still skips it) instead of validating it; until then the hand-written mapping is validated as usual, even when a ready page generates an eligible component with its name. Name a hand-written component in `promotion.include` only after every consumer works with the synced API.
 
-Two registries decide different things and stay separate. `promotion.include` in `figma/figma.config.json` decides only which synced component supersedes a hand-written mapping of the same name, as described above. `components/promotion.json` decides what `pnpm figma install components` installs and whether each installed component is public (mapped and exported) or internal.
+Two registries decide different things and stay separate. `promotion.include` in `figma/figma.config.json` names the synced components promotion writes; it never names a hand-written public component. `components/promotion.json` decides what `pnpm figma install components` installs and whether each installed component is public (mapped and exported) or internal.
 
-Promoted previews reproduce the reviewed design; they do not implement production keyboard, focus or navigation semantics. A consumer composing them owns that behavior and its tests.
+Generated views reproduce the reviewed design for the Review; they do not implement production keyboard, focus or navigation semantics, which public components implement and test.
 
 Generated styles use three cascade layers, declared in this order at the top of every generated stylesheet: `dcl.reset` (the runtime's base styles), `dcl.foundations` (tokens and text styles) and `dcl.components` (component styles). The cascade decides between them whatever order a bundle loads the files in, and a consumer's unlayered CSS overrides all three.
 

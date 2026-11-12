@@ -188,7 +188,7 @@ function SubmitHangoutInner({
   return (
     <div className="submit-hangout" data-step={step} data-state={value}>
       <header className="submit-hangout__header">
-        <Link to="/events">Back to What&apos;s On</Link>
+        <Link to="/events">Back to Events</Link>
         <h1>{mode === "edit" ? "Edit Hangout" : "Submit a Hangout"}</h1>
       </header>
 

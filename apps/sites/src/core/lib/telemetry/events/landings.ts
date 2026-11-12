@@ -208,11 +208,11 @@ export type LandingsEvents = {
     resolved: boolean;
   };
   lp_legal_section_clicked: {
-    doc: "brand" | "content" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
     section: string;
   };
   lp_legal_viewed: {
-    doc: "brand" | "content" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
+    doc: "brand" | "content" | "credits" | "ethics" | "privacy" | "referral" | "rewards" | "security" | "terms";
   };
   lp_rsvp_cancelled: {
     count: number;
