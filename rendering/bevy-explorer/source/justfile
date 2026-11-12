@@ -13,7 +13,7 @@ nixos_vulkan := if path_exists("/run/opengl-driver/share") == "true" { 'XDG_DATA
 # build the wasm engine into deploy/web/engine/pkg, then serve the react-web page (which hosts
 # the engine + live bridge-scene preview) and open a browser at the vite dev server.
 wasm: ts-bindings
-    RUSTUP_TOOLCHAIN={{wasm_toolchain}} wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social"
+    RUSTUP_TOOLCHAIN={{wasm_toolchain}} wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social,profiler"
     rm -f ./deploy/web/engine/pkg/.gitignore
     WASM_SIZE=$(wc -c < ./deploy/web/engine/pkg/webgpu_build_bg.wasm) && echo "{\"wasmSize\":${WASM_SIZE}}" > ./deploy/web/engine/pkg/manifest.json
     RUSTUP_TOOLCHAIN={{wasm_toolchain}} wasm-pack build crates/dcl_scene_wasm --target web --out-dir ../../deploy/web/engine/pkg-scene --no-default-features

@@ -89,7 +89,7 @@ adapter supports them. The GPU frame time of the whole frame is the explorer's o
 ### Profiler (`/profile_top [count] [--sort <metric>]`, `/profile_enable on|off|reset`)
 
 The in-app scope profiler. A `profiler` build (the cargo feature, in `default`, so every native
-build; the web build is without it) carries Bevy's tracing spans (Bevy's `trace` feature): one
+build, and the web build as `build-web.py` and `just wasm` build it) carries Bevy's tracing spans (Bevy's `trace` feature): one
 per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule run
 and per render-graph node, plus the explorer's own in-process spans (`av-thread`), which every
 build has. Scene JavaScript runs in its own process on native (`dcl_deno_ipc`), so its
@@ -99,12 +99,13 @@ section, `/profile_enable on` in the console, or the benchmark autopilot for its
 Enabled, it costs two clock reads per span and an update of the thread's own map per exit (the
 fold merges the threads' maps once a frame, so no exit waits on another thread), tens of
 microseconds a frame on native. A span that lives across frames is one call, recorded when it
-ends. `/profile_top` reports `profilerBuild`; without the feature the empty table says so, and
-the rows are the explorer's own spans and Bevy's unconditional ones (`present_frames`,
-`entity_sync`). The web build leaves the feature off because the engine's tracing layer there
-(`tracing_wasm`) marks every span on the page's performance timeline, which nothing clears. With
-the feature, Bevy's `trace` also prefixes a native session-log line logged inside a system with
-its spans (`schedule{name=Update}:system{name=...}:`) and installs a span-trace panic hook.
+ends. `/profile_top` reports `profilerBuild`; a build without the feature
+(`--no-default-features` without `profiler`) says so in its empty table, and its rows are the
+explorer's own spans and Bevy's unconditional ones (`present_frames`, `entity_sync`). On the web
+the engine's log reaches the browser console through the explorer's own layer, not Bevy's
+`tracing-wasm` layer, which would mark and measure every span on the page's performance
+timeline ([the bevy fork](bevy-fork.md#logging)). With the feature, a native session-log line
+logged inside a system carries its spans (`schedule{name=Update}:system{name=...}:`).
 
 A row is one scope since the last reset: its kind (`ecs_system`, `schedule`, `render_graph_node`,
 `bevy_internal`, `explorer_span`), call count, self time, inclusive time, longest call and the

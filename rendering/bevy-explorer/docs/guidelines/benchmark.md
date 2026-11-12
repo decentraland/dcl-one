@@ -123,9 +123,7 @@ run*, and, where a run's log holds the engine's `perf_summary` lines ([Files](#f
 profiler's scopes and their self time per run ([profiling](profiling.md)), the 15 highest by the
 larger of the two builds' values, so a scope that fell out of one build's top rows stays listed.
 A build's value is the scope's self time summed over its summaries, divided by their number: a
-run whose top 30 leave the scope out counts as 0. The browser legs run the web build, which has
-no system, schedule or render-node spans: their top scopes are the explorer's own spans and
-Bevy's unconditional ones (`present_frames`, `js update`), not ECS systems.
+run whose top 30 leave the scope out counts as 0.
 
 - A value is the **median** of the build's runs, followed by the **(min–max)** range when the runs
   differ. A wide range means a noisy metric, where small differences mean little.

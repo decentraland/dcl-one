@@ -600,15 +600,21 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         level: Level::INFO,
         filter,
         custom_layer: |_| {
-            use bevy::log::tracing_subscriber::{Layer, Registry};
-            // the benchmark log when the page streams it, and the scope profiler's layer always
+            use bevy::log::tracing_subscriber::{fmt, Layer, Registry};
+            // the browser console (the fork's `bevy_log` installs no layer of its own on the
+            // web), the benchmark log when the page streams it, and the scope profiler's layer
+            let console = fmt::layer()
+                .with_writer(ConsoleMakeWriter)
+                .with_ansi(false)
+                .without_time();
             let benchmark_log = perf_output::stream::log_sink().map(PerfLogLayer::new);
-            Some(
-                Box::new(<Option<PerfLogLayer> as Layer<Registry>>::and_then(
+            Some(Box::new(
+                <Option<PerfLogLayer> as Layer<Registry>>::and_then(
                     benchmark_log,
                     crate::perf::profiled_scopes::profiled_scopes_layer(),
-                )) as BoxedLayer,
-            )
+                )
+                .and_then(console),
+            ) as BoxedLayer)
         },
     });
 
@@ -826,6 +832,39 @@ impl Drop for PerfStreamEnd {
 /// Pings the JS watchdog each frame so it can detect a stalled engine loop.
 fn engine_heartbeat_system(_js: JsThread) {
     engine_heartbeat();
+}
+
+/// The browser console as the log layer's writer: `console.error` for an error, `console.warn`
+/// for a warning, `console.log` for the rest, one call per write.
+struct ConsoleMakeWriter;
+
+struct ConsoleWriter(fn(&JsValue));
+
+impl std::io::Write for ConsoleWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        (self.0)(&JsValue::from_str(String::from_utf8_lossy(buf).trim_end()));
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> bevy::log::tracing_subscriber::fmt::MakeWriter<'a> for ConsoleMakeWriter {
+    type Writer = ConsoleWriter;
+
+    fn make_writer(&'a self) -> ConsoleWriter {
+        ConsoleWriter(web_sys::console::log_1)
+    }
+
+    fn make_writer_for(&'a self, meta: &bevy::log::tracing::Metadata<'_>) -> ConsoleWriter {
+        ConsoleWriter(match *meta.level() {
+            Level::ERROR => web_sys::console::error_1,
+            Level::WARN => web_sys::console::warn_1,
+            _ => web_sys::console::log_1,
+        })
+    }
 }
 
 /// The browser page's focus and the engine viewport's activity.

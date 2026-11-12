@@ -350,11 +350,17 @@ impl Plugin for LogPlugin {
             finished_subscriber = subscriber;
         }
 
-        #[cfg(target_arch = "wasm32")]
+        #[cfg(all(target_arch = "wasm32", feature = "tracing-wasm"))]
         {
             finished_subscriber = subscriber.with(tracing_wasm::WASMLayer::new(
                 tracing_wasm::WASMLayerConfig::default(),
             ));
+        }
+        // without the `tracing-wasm` feature the custom layer is the web's only output: that
+        // layer marks and measures every span on the page's performance timeline
+        #[cfg(all(target_arch = "wasm32", not(feature = "tracing-wasm")))]
+        {
+            finished_subscriber = subscriber;
         }
 
         #[cfg(target_os = "android")]
