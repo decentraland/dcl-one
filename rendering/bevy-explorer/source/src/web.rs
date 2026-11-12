@@ -641,13 +641,10 @@ pub fn engine_run(options: JsValue) -> Result<(), JsValue> {
         .add_systems(Update, update_url_params)
         .add_systems(Update, update_text_focus)
         .insert_resource(BrowserPageFocus::current())
-        .insert_resource(LatestHudMainThreadCostWindow(None))
         .add_systems(
             First,
-            (
-                update_browser_page_focus_system,
-                update_latest_hud_main_thread_cost_window_system,
-            ),
+            update_browser_page_focus_system
+                .before(crate::perf::frame_inputs::collect_frame_inputs_system),
         )
         .add_systems(Last, engine_heartbeat_system);
     if perf_output::stream::started() {
@@ -867,22 +864,13 @@ fn update_browser_page_focus_system(mut focus: ResMut<BrowserPageFocus>) {
     focus.set_if_neq(BrowserPageFocus::current());
 }
 
-/// The HUD cost windows the page stored since the engine last took them, summed; written only
-/// when one is taken, so `is_changed` marks that frame.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub(crate) struct LatestHudMainThreadCostWindow(pub(crate) Option<HudMainThreadCostDataPoint>);
-
-/// Takes the stored window, if any, into [`LatestHudMainThreadCostWindow`].
-fn update_latest_hud_main_thread_cost_window_system(
-    mut latest: ResMut<LatestHudMainThreadCostWindow>,
-) {
-    let taken = HUD_MAIN_THREAD_COST_WINDOW
+/// Takes the HUD cost windows the page stored since the last take, summed; `None` when none
+/// arrived.
+pub(crate) fn take_hud_main_thread_cost_window() -> Option<HudMainThreadCostDataPoint> {
+    HUD_MAIN_THREAD_COST_WINDOW
         .lock()
         .unwrap_or_else(|poison| poison.into_inner())
-        .take();
-    if let Some(window) = taken {
-        latest.0 = Some(window);
-    }
+        .take()
 }
 
 fn update_text_focus(priorities: Res<InputPriorities>, mut prev: Local<bool>, _js: JsThread) {

@@ -13,8 +13,8 @@ use common::{
     gpu_time::GPU_FRAME_TIME,
     memory::{GpuMemoryBudget, MemoryStatus},
     perf::{
-        FrameTimeBreakdown, FrameTimeSampleSummary, InProgressSample, PerformanceSnapshot,
-        SamplingStatus, PERF_ALLOCATED_BYTES_PER_FRAME, PERF_ALLOCATION_COUNT_PER_FRAME,
+        FrameTimeBreakdown, FrameTimeSampleSummary, PerformanceSnapshot, SamplingStatus,
+        PERF_ALLOCATED_BYTES_PER_FRAME, PERF_ALLOCATION_COUNT_PER_FRAME,
         PERF_FRAME_LIMITER_SLEEP_MS, PERF_MAIN_WORLD_SCHEDULES_MS, PERF_RENDER_WORLD_CPU_MS,
         PERF_SCENE_RUNTIME_LOOP_MS, PERF_SWAPCHAIN_PRESENT_WAIT_MS,
     },
@@ -23,13 +23,13 @@ use common::{
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use scene_material::SceneMaterial;
 use scene_runner::{
-    renderer_context::RendererSceneContext, visible_content_bytes::scene_visible_content_bytes,
-    ContainerEntity, ContainingScene,
+    visible_content_bytes::scene_visible_content_bytes, ContainerEntity, ContainingScene,
 };
 use serde_json::{json, Value};
 
 use crate::perf::{
-    in_progress_sample::{latest_entity_count, sum_scene_js_heaps, InProgressSampleMeasurements},
+    frame_inputs::FrameInputs,
+    populating_sample::PerformancePopulatingSample,
     profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable},
 };
 
@@ -191,22 +191,18 @@ fn performance_state(
     session: Res<SessionGraphics>,
     config: Res<AppConfig>,
     memory: Res<MemoryStatus>,
-    status: Res<SamplingStatus>,
-    in_progress: Res<InProgressSample>,
+    sample: Res<PerformancePopulatingSample>,
+    inputs: Res<FrameInputs>,
     snapshot: Option<Res<PerformanceSnapshot>>,
     breakdown: Res<FrameTimeBreakdown>,
     #[cfg(any(windows, target_os = "linux"))] system_info: Option<
         Res<bevy::diagnostic::SystemInfo>,
     >,
-    #[cfg(target_arch = "wasm32")] hud_cost: Res<crate::web::LatestHudMainThreadCostWindow>,
 ) {
     if input.take().is_none_or(|parsed| parsed.is_err()) {
         return;
     }
-    #[cfg(target_arch = "wasm32")]
-    let hud_main_thread_cost = hud_cost.0;
-    #[cfg(not(target_arch = "wasm32"))]
-    let hud_main_thread_cost: Option<common::perf::HudMainThreadCostDataPoint> = None;
+    let hud_main_thread_cost = inputs.last_hud_main_thread_cost_window;
     let hundredths = |ms: f32| (f64::from(ms) * 100.0).round() / 100.0;
     let hud_main_thread_cost_cells = hud_main_thread_cost.map(|window| {
         let commits = window.react_commits;
@@ -289,10 +285,10 @@ fn performance_state(
             "limit30": session.fps_target == Some(30),
             "gpuFrameMs": gpu_ms.map(tenths),
             "sampling": {
-                "status": match *status { SamplingStatus::Sampling => "sampling", SamplingStatus::Paused(_) => "paused" },
-                "pausedReason": status.paused_reason(),
+                "status": match sample.status() { SamplingStatus::Sampling => "sampling", SamplingStatus::Paused(_) => "paused" },
+                "pausedReason": sample.status().paused_reason(),
             },
-            "inProgressSample": { "sampledSeconds": tenths(in_progress.sampled_seconds) },
+            "inProgressSample": { "sampledSeconds": tenths(sample.sampled_seconds()) },
             "snapshot": snapshot.map(|snapshot| json!({
                 "durationSeconds": tenths(snapshot.snapshot_duration_seconds),
                 "takenAtRealSeconds": tenths(snapshot.taken_at_real_seconds),
@@ -303,7 +299,7 @@ fn performance_state(
             "frameTimeBreakdown": breakdown_smoothed,
             "bottleneck": breakdown.bottleneck,
             "hudMainThreadCost": hud_main_thread_cost_cells,
-            "entityCount": latest_entity_count(&diagnostics),
+            "entityCount": inputs.entity_count,
             "system": system,
             "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes / BYTES_PER_MIB),
             "unavailable": {
@@ -529,8 +525,8 @@ fn debug_memory(
     mut cmd: ConsoleCommand<MemoryCommand>,
     mut memory: ResMut<MemoryStatus>,
     gpu: Option<Res<GpuMemoryBudget>>,
-    frame_times: Res<InProgressSampleMeasurements>,
-    scenes: Query<&RendererSceneContext>,
+    sample: Res<PerformancePopulatingSample>,
+    inputs: Res<FrameInputs>,
     containing_scene: ContainingScene,
     player: Query<Entity, With<PrimaryUser>>,
     mesh_handles: Query<(&Mesh3d, &ContainerEntity, &Visibility)>,
@@ -592,7 +588,7 @@ fn debug_memory(
         })).collect::<Vec<_>>()),
         _ => None,
     };
-    let js_heap = sum_scene_js_heaps(scenes.iter());
+    let js_heap = inputs.js_heap;
     let current_scene_content = player
         .single()
         .ok()
@@ -617,8 +613,8 @@ fn debug_memory(
     cmd.reply_ok(json!({
         "used": reading.map(|r| r.used_bytes >> 20), "capacity": reading.map(|r| r.capacity_mib),
         "usedPeakMiBInSample": reading
-            .and((frame_times.used_peak_bytes_in_sample > 0).then_some(()))
-            .map(|_| frame_times.used_peak_bytes_in_sample >> 20),
+            .and(sample.used_peak_bytes())
+            .map(|bytes| bytes >> 20),
         "cap": reading.map(|r| r.cap_mib), "limit": memory.limit_mib.map_or(0, |n| n.get()),
         "pressure": reading.map(|r| format!("{:?}", r.pressure())), "gpu": pools,
         "thresholds": reading.map(|r| { let t = r.thresholds(); json!({

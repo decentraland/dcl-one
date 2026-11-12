@@ -31,7 +31,9 @@ use bevy::{
     platform::time::Instant,
     prelude::*,
 };
-use common::perf::{ProfiledScopeKind, ProfiledScopeSummary, SamplingStatus};
+use common::perf::{ProfiledScopeKind, ProfiledScopeSummary};
+
+use super::populating_sample::PerformancePopulatingSample;
 
 /// Frames the smoothed per-frame self time averages over.
 const SMOOTHING_FRAMES: f32 = 60.0;
@@ -366,19 +368,17 @@ fn fold_into(
     }
 }
 
-/// Folds the frame's recording into the table, and into the sample when the status is
-/// `Sampling` and unchanged this frame.
+/// Folds the frame's recording into the table, and into the sample when the frame was sampled.
 pub fn fold_profiled_scopes_system(
     mut table: ResMut<ProfiledScopesTable>,
-    status: Res<SamplingStatus>,
+    sample: Res<PerformancePopulatingSample>,
 ) {
     if !profiler_recording_enabled() {
         return;
     }
     let frame = take_current_frame_accumulations();
     if !frame.is_empty() {
-        let sampled = status.is_sampling() && !status.is_changed();
-        table.fold_frame_accumulations(frame, sampled);
+        table.fold_frame_accumulations(frame, sample.frame_sampled());
     }
 }
 

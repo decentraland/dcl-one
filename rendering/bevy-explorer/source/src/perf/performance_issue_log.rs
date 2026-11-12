@@ -3,7 +3,9 @@
 //! target `perf`, carrying the frame-time breakdown.
 
 use bevy::prelude::*;
-use common::perf::{FrameTimeBreakdown, PerformanceSnapshot, SamplingStatus};
+use common::perf::{FrameTimeBreakdown, PerformanceSnapshot};
+
+use super::{frame_inputs::FrameInputs, populating_sample::PerformancePopulatingSample};
 
 pub const PERFORMANCE_ISSUE_LOG_TARGET: &str = "perf";
 pub const LONG_FRAME_THRESHOLD_MS: f32 = 1000.0;
@@ -11,8 +13,8 @@ pub const LOW_MEAN_FPS_THRESHOLD: f32 = 15.0;
 
 /// Logs at most one issue per sample.
 pub fn log_performance_issue_system(
-    status: Res<SamplingStatus>,
-    time: Res<Time<Real>>,
+    sample: Res<PerformancePopulatingSample>,
+    inputs: Res<FrameInputs>,
     breakdown: Res<FrameTimeBreakdown>,
     mut snapshots: EventReader<PerformanceSnapshot>,
     mut logged_this_sample: Local<bool>,
@@ -33,12 +35,8 @@ pub fn log_performance_issue_system(
         }
     }
     // the frame that completes a sample belongs to it, so it is checked before the reset
-    let frame_ms = time.delta_secs_f64() as f32 * 1000.0;
-    if status.is_sampling()
-        && !status.is_changed()
-        && !*logged_this_sample
-        && frame_ms >= LONG_FRAME_THRESHOLD_MS
-    {
+    let frame_ms = inputs.frame_delta_seconds as f32 * 1000.0;
+    if sample.frame_sampled() && !*logged_this_sample && frame_ms >= LONG_FRAME_THRESHOLD_MS {
         *logged_this_sample = true;
         warn!(
             target: PERFORMANCE_ISSUE_LOG_TARGET,

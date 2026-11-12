@@ -1,12 +1,14 @@
 //! Performance monitoring: what the explorer measures about itself. The types are in
 //! `common::perf`; this module fills them and publishes the `perf/*` diagnostics.
 //!
-//! - [`in_progress_sample`]: the sampling status and the 15 s samples that become
-//!   `PerformanceSnapshot`s;
+//! - [`frame_inputs`]: the frame's raw arrivals, gathered once in `First`: the entry point of
+//!   every measurement below;
+//! - [`populating_sample`]: the sampling status and the sample being populated, which becomes a
+//!   `PerformanceSnapshot` every 15 s of sampled time;
 //! - [`frame_time_breakdown`]: where the previous frame's wall time went;
 //! - [`profiled_scopes`]: the in-app scope profiler over Bevy's tracing spans;
 //! - [`performance_issue_log`]: the warn-level signal for a long frame or a slow sample;
-//! - [`benchmark_summary`]: the autopilot run's `perf_summary` log lines;
+//! - [`benchmark_summary`]: the autopilot run's `perf_summary` log lines, from the same inputs;
 //! - [`allocation_counter`]: allocations per frame.
 //!
 //! Bevy's spans and the allocation counter exist only under the `profiler` cargo feature (every
@@ -15,9 +17,10 @@
 #[cfg(feature = "profiler")]
 pub mod allocation_counter;
 pub mod benchmark_summary;
+pub mod frame_inputs;
 pub mod frame_time_breakdown;
-pub mod in_progress_sample;
 pub mod performance_issue_log;
+pub mod populating_sample;
 pub mod profiled_scopes;
 
 use bevy::{
@@ -26,19 +29,17 @@ use bevy::{
     time::TimeSystem,
 };
 use common::perf::{
-    FrameTimeBreakdown, InProgressSample, PerformanceSnapshot, SamplingPausedReason,
-    SamplingStatus, PERF_ALLOCATED_BYTES_PER_FRAME, PERF_ALLOCATION_COUNT_PER_FRAME,
-    PERF_FRAME_LIMITER_SLEEP_MS, PERF_MAIN_WORLD_SCHEDULES_MS, PERF_RENDER_WORLD_CPU_MS,
-    PERF_SCENE_RUNTIME_LOOP_MS, PERF_SWAPCHAIN_PRESENT_WAIT_MS,
+    FrameTimeBreakdown, PerformanceSnapshot, PERF_ALLOCATED_BYTES_PER_FRAME,
+    PERF_ALLOCATION_COUNT_PER_FRAME, PERF_FRAME_LIMITER_SLEEP_MS, PERF_MAIN_WORLD_SCHEDULES_MS,
+    PERF_RENDER_WORLD_CPU_MS, PERF_SCENE_RUNTIME_LOOP_MS, PERF_SWAPCHAIN_PRESENT_WAIT_MS,
 };
 
 pub struct PerformanceMonitoringPlugin;
 
 impl Plugin for PerformanceMonitoringPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(SamplingStatus::Paused(SamplingPausedReason::NotInWorld))
-            .insert_resource(InProgressSample::new())
-            .insert_resource(in_progress_sample::InProgressSampleMeasurements::new())
+        app.insert_resource(frame_inputs::FrameInputs::new())
+            .insert_resource(populating_sample::PerformancePopulatingSample::new())
             .insert_resource(profiled_scopes::ProfiledScopesTable::new())
             .insert_resource(frame_time_breakdown::MainWorldFrameTimer::new())
             .insert_resource(FrameTimeBreakdown {
@@ -65,7 +66,7 @@ impl Plugin for PerformanceMonitoringPlugin {
                 First,
                 (
                     frame_time_breakdown::mark_main_world_frame_start_system.before(TimeSystem),
-                    in_progress_sample::update_sampling_status_system.after(TimeSystem),
+                    frame_inputs::collect_frame_inputs_system.after(TimeSystem),
                 ),
             )
             .add_systems(
@@ -75,7 +76,7 @@ impl Plugin for PerformanceMonitoringPlugin {
             .add_systems(
                 Update,
                 (
-                    in_progress_sample::sample_frame_times_system,
+                    populating_sample::advance_populating_sample_system,
                     performance_issue_log::log_performance_issue_system,
                 )
                     .chain(),

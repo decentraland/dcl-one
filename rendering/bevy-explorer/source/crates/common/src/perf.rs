@@ -17,7 +17,7 @@ pub enum SamplingPausedReason {
 }
 
 /// Whether frames are being sampled right now.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SamplingStatus {
     Sampling,
@@ -39,23 +39,6 @@ impl SamplingStatus {
 
 /// Sampled seconds that complete one in-progress sample and produce one [`PerformanceSnapshot`].
 pub const SAMPLE_DURATION_SECONDS: f64 = 15.0;
-
-/// The sample being accumulated right now.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct InProgressSample {
-    /// Seconds accumulated while [`SamplingStatus`] was `Sampling`; paused time never counts.
-    pub sampled_seconds: f64,
-}
-
-impl InProgressSample {
-    // the empty sample is the start of sampling, not a default value of the type
-    #[allow(clippy::new_without_default)]
-    pub fn new() -> Self {
-        Self {
-            sampled_seconds: 0.0,
-        }
-    }
-}
 
 /// Summary statistics of one completed sample's frame times: count, extremes, mean, percentiles
 /// and the frames over the hiccup threshold. Every time is in milliseconds.

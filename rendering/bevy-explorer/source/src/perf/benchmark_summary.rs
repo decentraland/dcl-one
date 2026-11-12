@@ -16,22 +16,17 @@
 //! Line 2: `top_scopes=<name>:<self ms>,...`, up to 30, highest self time first; a name has its
 //! commas, colons and equals signs replaced by spaces.
 
-use bevy::{diagnostic::DiagnosticsStore, platform::time::Instant, prelude::*};
+use bevy::prelude::*;
 use common::{
     autopilot::AutopilotPhase,
-    memory::MemoryStatus,
     perf::{
         hiccup_threshold_ms, FrameTimeSampleSummary, ProfiledScopeSummary,
         SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
     },
-    structs::{AppConfig, SessionGraphics},
 };
-use scene_runner::renderer_context::RendererSceneContext;
 
 use super::{
-    in_progress_sample::{
-        effective_target_fps, latest_entity_count, new_gpu_frame_time_ms, sum_scene_js_heaps,
-    },
+    frame_inputs::FrameInputs,
     profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable},
 };
 
@@ -42,23 +37,17 @@ pub struct BenchmarkMeasuredPhaseAccumulator {
     measured_phase_started: bool,
     cpu_frame_times_ms: Vec<f32>,
     gpu_frame_times_ms: Vec<f32>,
-    last_gpu_frame_time_measured_at: Option<Instant>,
     /// `None` until a memory reading is taken during the phase.
     used_peak_bytes: Option<u64>,
     sampled_seconds: f64,
     perf_summary_logged: bool,
 }
 
-/// Does nothing without an [`AutopilotPhase`] resource.
-#[allow(clippy::too_many_arguments)]
+/// Does nothing without an [`AutopilotPhase`] resource. Consumes the frame's [`FrameInputs`],
+/// the sample's inputs, under the phase instead of the sampling status.
 pub fn accumulate_benchmark_measured_phase_system(
     phase: Option<Res<AutopilotPhase>>,
-    time: Res<Time<Real>>,
-    diagnostics: Res<DiagnosticsStore>,
-    memory: Res<MemoryStatus>,
-    scenes: Query<&RendererSceneContext>,
-    config: Res<AppConfig>,
-    session: Option<Res<SessionGraphics>>,
+    inputs: Res<FrameInputs>,
     mut profiled_scopes: ResMut<ProfiledScopesTable>,
     mut run: Local<BenchmarkMeasuredPhaseAccumulator>,
 ) {
@@ -77,15 +66,12 @@ pub fn accumulate_benchmark_measured_phase_system(
                 return;
             }
             run.cpu_frame_times_ms
-                .push(time.delta_secs_f64() as f32 * 1000.0);
-            run.sampled_seconds += time.delta_secs_f64();
-            let run = &mut *run;
-            if let Some(gpu_ms) =
-                new_gpu_frame_time_ms(&diagnostics, &mut run.last_gpu_frame_time_measured_at)
-            {
+                .push(inputs.frame_delta_seconds as f32 * 1000.0);
+            run.sampled_seconds += inputs.frame_delta_seconds;
+            if let Some(gpu_ms) = inputs.new_gpu_frame_time_ms {
                 run.gpu_frame_times_ms.push(gpu_ms);
             }
-            if let Some(reading) = memory.reading() {
+            if let Some(reading) = inputs.memory_reading {
                 run.used_peak_bytes = Some(
                     run.used_peak_bytes
                         .map_or(reading.used_bytes, |peak| peak.max(reading.used_bytes)),
@@ -106,7 +92,7 @@ pub fn accumulate_benchmark_measured_phase_system(
             if exit_code != 0 {
                 return;
             }
-            let threshold = hiccup_threshold_ms(effective_target_fps(&config, session.as_deref()));
+            let threshold = hiccup_threshold_ms(inputs.target_fps);
             let cpu =
                 FrameTimeSampleSummary::from_frame_times(&mut run.cpu_frame_times_ms, threshold);
             let gpu =
@@ -115,8 +101,8 @@ pub fn accumulate_benchmark_measured_phase_system(
                 cpu.as_ref(),
                 gpu.as_ref(),
                 run.used_peak_bytes,
-                sum_scene_js_heaps(scenes.iter()).map(|heap| heap.used_bytes_sum),
-                latest_entity_count(&diagnostics).map(u64::from),
+                inputs.js_heap.map(|heap| heap.used_bytes_sum),
+                inputs.entity_count.map(u64::from),
                 run.sampled_seconds,
                 &top_scopes,
             );
@@ -141,7 +127,9 @@ pub fn perf_summary_log_lines(
     let ms = |value: Option<f32>| value.map_or("n/a".to_owned(), |ms| format!("{ms:.2}"));
     let count = |value: Option<u32>| value.map_or("n/a".to_owned(), |count| count.to_string());
     let mib = |bytes: Option<u64>| {
-        bytes.map_or("n/a".to_owned(), |bytes| (bytes / BYTES_PER_MIB).to_string())
+        bytes.map_or("n/a".to_owned(), |bytes| {
+            (bytes / BYTES_PER_MIB).to_string()
+        })
     };
     let values_line = format!(
         "cpu_p99_ms={} cpu_frames_over_hiccup_threshold_count={} cpu_hiccup_threshold_ms={} gpu_p99_ms={} gpu_frames_over_hiccup_threshold_count={} used_peak_mib={} js_heap_used_mib={} entity_count={} sample_count={} snapshot_duration_seconds={:.1}",
