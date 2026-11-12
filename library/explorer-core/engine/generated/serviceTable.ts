@@ -143,6 +143,13 @@ export const SERVICES: ServiceDef[] = [
     "path": ""
   },
   {
+    "name": "featureFlags",
+    "value": "http",
+    "scheme": "https",
+    "sub": "feature-flags",
+    "path": ""
+  },
+  {
     "name": "autotranslate",
     "value": "http",
     "scheme": "https",

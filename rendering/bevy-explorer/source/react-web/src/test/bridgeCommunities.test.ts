@@ -1,6 +1,6 @@
 // The bridge's communities: the form's place picker (the user's own places, the community's linked
 // ones and the ids the places service did not return), the card's places with the user's own marked,
-// the card's place delete, the member menu's actions, and the browse grid's pages.
+// the card's place delete, the member menu's actions, the browse grid's pages and the announcements.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { CommunityDetailMessage, CommunityPlaceOptionsMessage, PageToScene, SceneToPage } from '@explorer-core/engine/protocol'
@@ -22,6 +22,7 @@ vi.mock('../../bridge-scene/src/http', () => ({
 }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({ BevyApi: { getCompactProfiles, social: {} } }))
 vi.mock('../../bridge-scene/src/system-helpers', () => ({ relay: vi.fn() }))
+vi.mock('../../bridge-scene/src/officialWallets', () => ({ officialWallets: async () => new Set(['0xofficial']) }))
 vi.mock('../../bridge-scene/src/domains/profile', () => ({
   fetchIdentities: async () => (address: string) => ({ name: address, hasClaimedName: false })
 }))
@@ -647,5 +648,75 @@ describe('bridge community invites and requests', () => {
     expect(last(h.sent, 'invitableCommunities')).toMatchObject({ communities: [], failed: true })
     await h.req({ kind: 'inviteToCommunity', id: 'c8', address: '0xfriend' })
     expect(last(h.sent, 'communityInviteSent')?.ok).toBe(false)
+  })
+})
+
+describe('bridge community announcements', () => {
+  const v1 = 'https://socialApi.example/v1/communities'
+  const v2 = 'https://socialApi.example/v2/communities'
+  const page = (n: number): string => `GET ${v2}/c1/posts?offset=${(n - 1) * 10}&limit=10`
+  const row = { id: 'p1', authorAddress: '0xOFFICIAL', content: 'Hello', createdAt: '2026-11-01T10:00:00Z', likesCount: 3, isLikedByUser: true }
+
+  it('reads a page of 10 with the authors, the official mark and the likes', async () => {
+    serve({ [page(2)]: { posts: [row, { id: 'p2', authorAddress: '0xother', likesCount: 0 }], total: 12 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityPosts', id: 'c1', page: 2 })
+    expect(h.sent).toEqual([
+      {
+        kind: 'communityPosts',
+        id: 'c1',
+        page: 2,
+        total: 12,
+        posts: [
+          { id: 'p1', author: '0xOFFICIAL', authorAddress: '0xOFFICIAL', authorPicture: undefined, hasClaimedName: false, official: true, text: 'Hello', timestamp: Date.parse('2026-11-01T10:00:00Z'), likes: 3, likedByMe: true },
+          { id: 'p2', author: '0xother', authorAddress: '0xother', authorPicture: undefined, hasClaimedName: false, official: false, text: '', timestamp: 0, likes: 0, likedByMe: false }
+        ]
+      }
+    ])
+  })
+
+  it('reports a failed read', async () => {
+    serve({ [page(1)]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'getCommunityPosts', id: 'c1', page: 1 })
+    expect(h.sent).toEqual([{ kind: 'communityActionFailed', id: 'c1', action: 'fetchPosts', message: 'posts read failed' }])
+  })
+
+  it('posts the content, then reads the first page again', async () => {
+    serve({ [`POST ${v1}/c1/posts`]: {}, [page(1)]: { posts: [row], total: 1 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'createCommunityPost', id: 'c1', content: 'Hello' })
+    expect(signed).toHaveBeenCalledWith(`${v1}/c1/posts`, 'POST', { content: 'Hello' })
+    expect(h.sent.map((m) => m.kind)).toEqual(['communityPostCreated', 'communityPosts'])
+    expect(h.sent[0]).toEqual({ kind: 'communityPostCreated', id: 'c1', ok: true })
+  })
+
+  it('a refused post reads nothing', async () => {
+    serve({ [`POST ${v1}/c1/posts`]: new Error('HTTP 401') })
+    const h = fakeCtx()
+    await h.req({ kind: 'createCommunityPost', id: 'c1', content: 'Hello' })
+    expect(h.sent).toEqual([{ kind: 'communityPostCreated', id: 'c1', ok: false }])
+  })
+
+  it('deletes, then reads the first page again; a failed delete is reported', async () => {
+    serve({ [`DELETE ${v1}/c1/posts/p1`]: {}, [page(1)]: { posts: [], total: 0 } })
+    const h = fakeCtx()
+    await h.req({ kind: 'deleteCommunityPost', id: 'c1', postId: 'p1' })
+    expect(h.sent).toEqual([{ kind: 'communityPosts', id: 'c1', page: 1, posts: [], total: 0 }])
+    serve({ [`DELETE ${v1}/c1/posts/p1`]: new Error('HTTP 403') })
+    const f = fakeCtx()
+    await f.req({ kind: 'deleteCommunityPost', id: 'c1', postId: 'p1' })
+    expect(f.sent).toEqual([{ kind: 'communityActionFailed', id: 'c1', action: 'deletePost', message: 'HTTP 403' }])
+  })
+
+  it('likes with a POST and unlikes with a DELETE, and says how it went', async () => {
+    serve({ [`POST ${v1}/c1/posts/p1/like`]: {}, [`DELETE ${v1}/c1/posts/p1/like`]: new Error('HTTP 500') })
+    const h = fakeCtx()
+    await h.req({ kind: 'likeCommunityPost', id: 'c1', postId: 'p1', like: true })
+    await h.req({ kind: 'likeCommunityPost', id: 'c1', postId: 'p1', like: false })
+    expect(h.sent).toEqual([
+      { kind: 'communityPostLiked', id: 'c1', postId: 'p1', liked: true, ok: true },
+      { kind: 'communityPostLiked', id: 'c1', postId: 'p1', liked: false, ok: false }
+    ])
   })
 })

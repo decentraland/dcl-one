@@ -235,6 +235,10 @@ export type PageToScene =
   | CancelJoinRequestRequest
   | ManageCommunityRequestRequest
   | UnbanCommunityMemberRequest
+  | GetCommunityPostsRequest
+  | CreateCommunityPostRequest
+  | DeleteCommunityPostRequest
+  | LikeCommunityPostRequest
   | GetCommunityInvitesRequest
   | GetCommunityInvitesCountRequest
   | GetCommunityMemberSectionRequest
@@ -1433,6 +1437,10 @@ export type CommunityAction =
   | CommunityMemberAction
   | 'unban'
   | CommunityRequestAction
+  | 'fetchPosts'
+  | 'createPost'
+  | 'deletePost'
+  | 'likePost'
 
 /** Lift a member's ban, from the card's Banned section (page → scene → signed DELETE
  *  /v1/communities/{id}/members/{address}/bans). */
@@ -1595,9 +1603,77 @@ export interface CommunityPost {
   author: string
   authorAddress: string
   authorPicture?: string
+  /** The author claimed their name: a verified mark instead of the address's #tag. */
+  hasClaimedName: boolean
+  /** The author is one of the official wallets (the feature flags' list): the official mark. */
+  official: boolean
   text: string
   timestamp: number
   likes: number
+  /** The signed-in user likes it. */
+  likedByMe: boolean
+}
+
+/** Read a page of a community's announcements (page → scene → signed GET
+ *  /v2/communities/{id}/posts, POSTS_PAGE a page). */
+export interface GetCommunityPostsRequest {
+  kind: 'getCommunityPosts'
+  id: string
+  /** 1-based. */
+  page: number
+}
+
+/** A page of a community's announcements, newest first (scene → page). A failed read arrives as
+ *  `communityActionFailed` with action `fetchPosts`. */
+export interface CommunityPostsMessage {
+  kind: 'communityPosts'
+  id: string
+  page: number
+  posts: CommunityPost[]
+  /** Every announcement the community has. */
+  total: number
+}
+
+/** Post an announcement as an owner or moderator (page → scene → signed POST
+ *  /v1/communities/{id}/posts). The first page is read again after it. */
+export interface CreateCommunityPostRequest {
+  kind: 'createCommunityPost'
+  id: string
+  content: string
+}
+
+/** How an announcement's post went (scene → page): the composer clears on `ok`, and a failure is toasted. */
+export interface CommunityPostCreatedMessage {
+  kind: 'communityPostCreated'
+  id: string
+  ok: boolean
+}
+
+/** Delete an announcement: the owner any, an author their own (page → scene → signed DELETE
+ *  /v1/communities/{id}/posts/{postId}). The first page is read again after it; a failure arrives
+ *  as `communityActionFailed` with action `deletePost`. */
+export interface DeleteCommunityPostRequest {
+  kind: 'deleteCommunityPost'
+  id: string
+  postId: string
+}
+
+/** Like or unlike an announcement (page → scene → signed POST or DELETE
+ *  /v1/communities/{id}/posts/{postId}/like). */
+export interface LikeCommunityPostRequest {
+  kind: 'likeCommunityPost'
+  id: string
+  postId: string
+  like: boolean
+}
+
+/** How a like or unlike went (scene → page); a failure is toasted and changes nothing. */
+export interface CommunityPostLikedMessage {
+  kind: 'communityPostLiked'
+  id: string
+  postId: string
+  liked: boolean
+  ok: boolean
 }
 
 /** An upcoming event (right-hand sidebar). */
@@ -1624,7 +1700,6 @@ export interface CommunityDetailMessage {
   kind: 'communityDetail'
   id: string
   members: CommunityMember[]
-  posts: CommunityPost[]
   places: CommunityPlace[]
   events: CommunityEvent[]
   photos: CommunityPhoto[]
@@ -2240,6 +2315,9 @@ export type SceneToPage =
   | VoiceActivityMessage
   | NearbyMutesMessage
   | CommunityActionFailedMessage
+  | CommunityPostsMessage
+  | CommunityPostCreatedMessage
+  | CommunityPostLikedMessage
   | CommunitySaveResultMessage
   | CommunityPlaceOptionsMessage
   | CommunityDeletedMessage

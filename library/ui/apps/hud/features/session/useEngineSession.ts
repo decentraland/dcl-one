@@ -79,6 +79,7 @@ import type {
   CommunityInvitesMessage,
   CommunityMemberSection,
   CommunityMemberSectionMessage,
+  CommunityPost,
   InvitableCommunitiesMessage,
   CommunityChannel,
   CommunityMember,
@@ -139,12 +140,18 @@ const COMMUNITY_ERROR: Record<CommunityAction, string> = {
   // answers to invites and requests
   acceptInvite: 'There was an error accepting community invitation. Please try again.',
   rejectInvite: 'There was an error rejecting community invitation. Please try again.',
-  manageRequest: 'There was an error managing the user request. Please try again.'
+  manageRequest: 'There was an error managing the user request. Please try again.',
+  // the Announcements tab's (AnnouncementsSectionController *_ERROR_MESSAGE)
+  fetchPosts: 'There was an error fetching the community announcements. Please try again.',
+  createPost: 'There was an error creating the community announcement. Please try again.',
+  deletePost: 'There was an error deleting the community announcement. Please try again.',
+  likePost: 'There was an error sending the like status to the community announcement. Please try again.'
 }
 
 // Answers to invites and requests, and an unban, are toasted rather than shown on a card: the
 // Invites & Requests section has none.
-const TOASTED_COMMUNITY_ACTIONS: ReadonlySet<CommunityAction> = new Set(['acceptInvite', 'rejectInvite', 'manageRequest', 'unban'])
+// The Announcements tab's failures are toasts too.
+const TOASTED_COMMUNITY_ACTIONS: ReadonlySet<CommunityAction> = new Set(['acceptInvite', 'rejectInvite', 'manageRequest', 'unban', 'fetchPosts', 'createPost', 'deletePost', 'likePost'])
 
 // The texts for the Invites & Requests section's reads and the Invite to Community submenu.
 export const INVITES_LOAD_ERROR: Record<CommunityInvitesMessage['failed'][number], string> = {
@@ -301,6 +308,29 @@ export const BROWSE_ERROR = 'There was an error loading Communities. Please try 
 
 const NO_BROWSE: CommunityBrowse = { search: '', items: [], total: 0, loading: false, loadingMore: false }
 
+/** The open card's Announcements tab: the pages read so far, newest first. */
+export interface CommunityPosts {
+  /** The community they belong to. */
+  id: string
+  posts: CommunityPost[]
+  /** Every announcement the community has (the service's total). */
+  total: number
+  /** The first page is being read. */
+  loading: boolean
+  /** A further page is being read. */
+  loadingMore: boolean
+  /** An announcement is being posted. */
+  posting: boolean
+  /** How many announcements were posted from this card, so the composer clears after each. */
+  posted: number
+  /** The announcements whose like or unlike is on its way. */
+  liking: readonly string[]
+  /** The announcements whose delete is on its way. */
+  deleting: readonly string[]
+  /** The first page could not be read: the tab shows no empty state. */
+  failed?: boolean
+}
+
 export interface CommunitiesState {
   /** My Communities: every community the user is a member of. */
   list: Community[]
@@ -380,6 +410,18 @@ export interface CommunitiesState {
   invite: (id: string, address: string) => void
   /** Lift a member's ban (the card's Banned section); the section is read again after it. */
   unban: (id: string, address: string) => void
+  /** The open card's announcements, null until its first page is asked for. */
+  posts: CommunityPosts | null
+  /** Read a community's first page of announcements (the card opening). */
+  loadPosts: (id: string) => void
+  /** Read the next page, when the list's end comes into view. */
+  loadMorePosts: () => void
+  /** Post an announcement (owners and moderators). */
+  createPost: (id: string, content: string) => void
+  /** Delete an announcement (the owner any, an author their own). */
+  deletePost: (id: string, postId: string) => void
+  /** Like or unlike an announcement; one request at a time for each. */
+  likePost: (id: string, postId: string, like: boolean) => void
 }
 
 export interface MapState {
@@ -1397,6 +1439,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     communityBrowseRef.current = next(communityBrowseRef.current)
     setCommunityBrowse(communityBrowseRef.current)
   }, [])
+  // The open card's announcements, and the page read last (0: none yet).
+  const [communityPosts, setCommunityPosts] = useState<CommunityPosts | null>(null)
+  const communityPostsRef = useRef<CommunityPosts | null>(null)
+  const communityPostsPage = useRef(0)
+  const updateCommunityPosts = useCallback((next: (prev: CommunityPosts | null) => CommunityPosts | null) => {
+    communityPostsRef.current = next(communityPostsRef.current)
+    setCommunityPosts(communityPostsRef.current)
+  }, [])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
   // read by the bridge handler, which outlives each render
   const communitiesOpenRef = useRef(false)
@@ -2040,7 +2090,37 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           })
           break
         }
+        case 'communityPosts': {
+          const current = communityPostsRef.current
+          if (current == null || current.id !== msg.id) break
+          communityPostsPage.current = msg.page
+          seedProfiles(msg.posts.map((p) => ({ address: p.authorAddress, name: p.hasClaimedName || p.author.includes('#') ? p.author : `${p.author}#${p.authorAddress.slice(-4)}`, picture: p.authorPicture, claimed: p.hasClaimedName })))
+          updateCommunityPosts((prev) => {
+            if (prev == null || prev.id !== msg.id) return prev
+            // a page that arrives after a post moved the list keeps each announcement once
+            const posts = msg.page === 1 ? msg.posts : [...prev.posts, ...msg.posts.filter((p) => !prev.posts.some((q) => q.id === p.id))]
+            // a first page answers every delete: the list starts over
+            return { ...prev, posts, total: msg.total, loading: false, loadingMore: false, failed: false, deleting: msg.page === 1 ? [] : prev.deleting }
+          })
+          break
+        }
+        case 'communityPostCreated':
+          updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, posting: false, posted: prev.posted + (msg.ok ? 1 : 0) }))
+          if (!msg.ok) showToast(COMMUNITY_ERROR.createPost, { tone: 'error' })
+          break
+        case 'communityPostLiked':
+          updateCommunityPosts((prev) => {
+            if (prev == null || prev.id !== msg.id) return prev
+            const liking = prev.liking.filter((p) => p !== msg.postId)
+            if (!msg.ok) return { ...prev, liking }
+            const posts = prev.posts.map((p) => (p.id === msg.postId ? { ...p, likedByMe: msg.liked, likes: Math.max(0, p.likes + (msg.liked ? 1 : -1)) } : p))
+            return { ...prev, liking, posts }
+          })
+          if (!msg.ok) showToast(COMMUNITY_ERROR.likePost, { tone: 'error' })
+          break
         case 'communityActionFailed':
+          if (msg.action === 'fetchPosts') updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, loading: false, loadingMore: false, failed: prev.posts.length === 0 }))
+          if (msg.action === 'deletePost') updateCommunityPosts((prev) => (prev == null || prev.id !== msg.id ? prev : { ...prev, deleting: [] }))
           if (TOASTED_COMMUNITY_ACTIONS.has(msg.action)) showToast(COMMUNITY_ERROR[msg.action], { tone: 'error' })
           else {
             setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
@@ -3641,6 +3721,36 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     setInvitable(null)
     driverRef.current?.send({ kind: 'getInvitableCommunities', address })
   }, [])
+  const loadCommunityPosts = useCallback((id: string) => {
+    communityPostsPage.current = 0
+    updateCommunityPosts(() => ({ id, posts: [], total: 0, loading: true, loadingMore: false, posting: false, posted: 0, liking: [], deleting: [] }))
+    driverRef.current?.send({ kind: 'getCommunityPosts', id, page: 1 })
+  }, [updateCommunityPosts])
+  const loadMoreCommunityPosts = useCallback(() => {
+    const current = communityPostsRef.current
+    if (current == null || current.loading || current.loadingMore) return
+    if (communityPostsPage.current === 0 || current.posts.length >= current.total) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, loadingMore: true }))
+    driverRef.current?.send({ kind: 'getCommunityPosts', id: current.id, page: communityPostsPage.current + 1 })
+  }, [updateCommunityPosts])
+  const createCommunityPost = useCallback((id: string, content: string) => {
+    const current = communityPostsRef.current
+    if (current == null || current.id !== id || current.posting) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, posting: true }))
+    driverRef.current?.send({ kind: 'createCommunityPost', id, content })
+  }, [updateCommunityPosts])
+  const deleteCommunityPost = useCallback((id: string, postId: string) => {
+    const current = communityPostsRef.current
+    if (current == null || current.id !== id || current.deleting.includes(postId)) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, deleting: [...prev.deleting, postId] }))
+    driverRef.current?.send({ kind: 'deleteCommunityPost', id, postId })
+  }, [updateCommunityPosts])
+  const likeCommunityPost = useCallback((id: string, postId: string, like: boolean) => {
+    const current = communityPostsRef.current
+    if (current == null || current.id !== id || current.liking.includes(postId)) return
+    updateCommunityPosts((prev) => (prev == null ? prev : { ...prev, liking: [...prev.liking, postId] }))
+    driverRef.current?.send({ kind: 'likeCommunityPost', id, postId, like })
+  }, [updateCommunityPosts])
   const unbanCommunityMember = useCallback((id: string, address: string) => {
     driverRef.current?.send({ kind: 'unbanCommunityMember', id, address })
   }, [])
@@ -4672,7 +4782,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       saveOutfit, deleteOutfit, equipOutfit,
       outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
-    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember },
+    communities: { list: communities, browse: communityBrowse, loadBrowse: loadCommunityBrowse, loadMoreBrowse: loadMoreCommunityBrowse, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, update: updateCommunity, remove: deleteCommunity, deleted: deletedCommunity, save: communitySave, clearSave: clearCommunitySave, placeOptions: communityPlaceOptions, loadPlaceOptions: loadCommunityPlaceOptions, clearPlaceOptions: clearCommunityPlaceOptions, removePlace: removeCommunityPlace, memberAction: communityMemberAction, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail, cards: communityCards, fetch: fetchCommunity, invites: communityInvites, loadInvites: loadCommunityInvites, pendingCount, loadInvitesCount: loadCommunityInvitesCount, manageRequest: manageCommunityRequest, memberSections, cardOpen: setOpenCard, loadMemberSection, invitable, loadInvitable, invite: inviteToCommunity, unban: unbanCommunityMember, posts: communityPosts, loadPosts: loadCommunityPosts, loadMorePosts: loadMoreCommunityPosts, createPost: createCommunityPost, deletePost: deleteCommunityPost, likePost: likeCommunityPost },
     map: mapSlice,
     minimap: minimapSlice,
     places: { open: placesOpen, toggle: togglePlaces },

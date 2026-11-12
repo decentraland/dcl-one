@@ -9,6 +9,7 @@ import type { ChatLine, ChatState, Conversation } from '../session/useEngineSess
 import type { DmUserState, MessageReaction, NearbyMember } from '@explorer-core/engine/protocol'
 import { Avatar, ControlButton, DclLogo, MaskIcon, Tooltip, Translate, VerifiedBadge, VoiceBars } from '../../design'
 import { EmojiPicker } from './EmojiPicker'
+import { EmojiSuggestList, tokenAtCaret } from './EmojiSuggestList'
 import { AutoTranslateButton } from './AutoTranslateButton'
 import { ConversationMenu } from './ConversationMenu'
 import { ConversationRail } from './ConversationRail'
@@ -115,16 +116,7 @@ type Suggestions =
   | { kind: 'emoji'; items: Emoji[]; start: number; end: number; sel: number }
   | { kind: 'mention'; items: NearbyMember[]; start: number; end: number; sel: number }
 
-/** The ":emoji" or "@name" word ending at the caret, if any. */
-export function tokenAtCaret(value: string, caret: number): { kind: 'emoji' | 'mention'; query: string; start: number } | null {
-  const before = value.slice(0, caret)
-  const m = before.match(/(?:^|\s)([@:])(\S*)$/)
-  if (!m) return null
-  const query = m[2]
-  const start = caret - query.length - 1
-  if (m[1] === ':') return /^[\w+-]{2,}$/.test(query) && !/https?$/i.test(before.slice(0, start)) ? { kind: 'emoji', query, start } : null
-  return /^[A-Za-z0-9]{1,15}$/.test(query) ? { kind: 'mention', query, start } : null
-}
+export { tokenAtCaret }
 
 function formatTime(ts: number): string {
   return new Date(ts).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -1207,24 +1199,12 @@ export function Chat({
         </div>
       )}
 
-      {active && sug && (
-        <div className={`${styles.suggest} ${sug.kind === 'emoji' ? styles.suggestEmoji : styles.suggestPeople}`}>
+      {active && sug?.kind === 'emoji' && <EmojiSuggestList className={styles.suggestAt} suggestion={sug} onAccept={(i) => accept(sug, i)} />}
+
+      {active && sug?.kind === 'mention' && (
+        <div className={`${styles.suggest} ${styles.suggestAt} ${styles.suggestPeople}`}>
           <ul className={styles.suggestList} role="listbox">
-            {sug.kind === 'emoji'
-              ? sug.items.map((e, i) => (
-                  <li key={e.code} role="option" aria-selected={i === sug.sel}>
-                    <button
-                      type="button"
-                      className={`${styles.suggestItem} ${i === sug.sel ? styles.suggestActive : ''}`.trim()}
-                      onMouseDown={(ev) => ev.preventDefault()}
-                      onClick={() => accept(sug, i)}
-                    >
-                      <span className={styles.suggestGlyph}>{e.emoji}</span>
-                      <span className={styles.suggestName}>{e.expression}</span>
-                    </button>
-                  </li>
-                ))
-              : sug.items.map((m, i) => (
+            {sug.items.map((m, i) => (
                   <li key={m.address} role="option" aria-selected={i === sug.sel}>
                     <button
                       type="button"

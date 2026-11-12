@@ -766,12 +766,15 @@ button.autoTranslateOff:hover {
   z-index: 1;
 }
 
-/* Autocomplete: 340 wide, 4px above the input, growing upward; 7 emoji or 5 people rows before it scrolls. */
-.suggest {
+/* Autocomplete: 340 wide, 4px above the input, growing upward; 7 emoji (EmojiSuggestList) or 5
+   people rows before it scrolls. */
+.suggestAt {
   position: absolute;
   left: 5px;
   bottom: 50px;
   z-index: 1;
+}
+.suggest {
   width: 340px;
   border-radius: var(--r-md);
   background: var(--panel);
@@ -783,9 +786,6 @@ button.autoTranslateOff:hover {
   list-style: none;
   overflow-y: auto;
   scrollbar-width: thin;
-}
-.suggestEmoji .suggestList {
-  max-height: calc(7 * 34px + 16px);
 }
 .suggestPeople .suggestList {
   max-height: calc(5 * 40px + 16px);
@@ -802,12 +802,6 @@ button.autoTranslateOff:hover {
   text-align: left;
   cursor: pointer;
 }
-.suggestEmoji .suggestItem {
-  gap: 11px;
-  height: 34px;
-  padding: 0 11px;
-  border-radius: var(--r-button);
-}
 .suggestPeople .suggestItem {
   gap: 8px;
   height: 40px;
@@ -817,11 +811,6 @@ button.autoTranslateOff:hover {
 .suggestItem:hover,
 .suggestActive {
   background: var(--emoji-hover);
-}
-.suggestGlyph {
-  width: 20px;
-  font-size: 20px;
-  line-height: 1;
 }
 .suggestPeople .suggestName {
   font-weight: var(--fw-semibold);

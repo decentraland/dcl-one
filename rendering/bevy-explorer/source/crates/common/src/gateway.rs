@@ -326,6 +326,7 @@ mod gateway_tests {
             (Service::Notifications, "notifications"),
             (Service::AssetsCdn, "assets-cdn"),
             (Service::MarketplaceApi, "marketplace-api"),
+            (Service::FeatureFlags, "feature-flags"),
             (Service::Autotranslate, "autotranslate-server"),
         ] {
             let direct_path = match service {

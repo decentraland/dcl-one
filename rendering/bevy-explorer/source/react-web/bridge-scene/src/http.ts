@@ -17,6 +17,7 @@ export type ServiceName =
   | 'assetsCdn'
   | 'marketplaceApi'
   | 'places'
+  | 'featureFlags'
 
 let services: Promise<Record<string, string>> | null = null
 

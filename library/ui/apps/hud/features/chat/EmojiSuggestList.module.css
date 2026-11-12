@@ -1,0 +1,40 @@
+/* 340 wide; 7 rows before it scrolls. Its owner positions it (the chat: 4px above the input). */
+.panel {
+  width: 340px;
+  border-radius: var(--r-md);
+  background: var(--panel);
+  overflow: hidden;
+}
+.list {
+  margin: 0;
+  padding: 8px 7px;
+  list-style: none;
+  max-height: calc(7 * 34px + 16px);
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  height: 34px;
+  padding: 0 11px;
+  border: none;
+  border-radius: var(--r-button);
+  background: transparent;
+  color: var(--white);
+  font-family: inherit;
+  font-size: var(--type-14);
+  text-align: left;
+  cursor: pointer;
+}
+.item:hover,
+.active {
+  background: var(--emoji-hover);
+}
+.glyph {
+  width: 20px;
+  font-size: 20px;
+  line-height: 1;
+}
