@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+use bevy::ecs::system::RunSystemOnce;
+
 use common::structs::{OutOfWorld, PrimaryUser};
 use comms::profile::ProfileCache;
 use dcl_component::proto_components::{
@@ -9,12 +11,16 @@ use dcl_component::proto_components::{
 
 use super::*;
 use crate::{
-    scene_spawn_slice::{slice, tests::SIXTY_FPS, InstantiationCharges},
+    scene_spawn_slice::{slice, tests::SIXTY_FPS},
     update_world::mesh_renderer::{
-        tests::{a_box, fit, record_charges, scene_entity, test_app, Charged},
+        tests::{
+            a_box, charged, fit, marked, marker_written, preset_charges, record_charges,
+            scene_entity, test_app,
+        },
         PendingPrimitive, PRIMITIVE_COST,
     },
 };
+use scene_material::SceneMaterialExt;
 
 /// `mesh_renderer`'s test app with the material systems as `MaterialDefinitionPlugin` adds
 /// them, after `update_mesh`; the charges are recorded after both.
@@ -90,23 +96,6 @@ fn created(app: &App, entities: &[Entity]) -> usize {
         .count()
 }
 
-fn waiting(app: &App, entities: &[Entity]) -> usize {
-    entities
-        .iter()
-        .filter(|e| app.world().get::<PendingMaterial>(**e).is_some())
-        .count()
-}
-
-fn preset_charges(app: &mut App, charges: Duration) {
-    app.world_mut()
-        .resource_mut::<InstantiationCharges>()
-        .this_frame = charges;
-}
-
-fn charged(app: &App) -> Duration {
-    app.world().resource::<Charged>().0
-}
-
 #[test]
 fn new_materials_are_created_until_the_slice_is_charged() {
     let (mut app, root) = material_app();
@@ -116,7 +105,7 @@ fn new_materials_are_created_until_the_slice_is_charged() {
     app.update();
 
     assert_eq!(created(&app, &entities), fit);
-    assert_eq!(waiting(&app, &entities), 2);
+    assert_eq!(marked::<PendingMaterial>(&app, &entities), 2);
     let refused: Vec<_> = entities
         .iter()
         .filter(|e| app.world().get::<PendingMaterial>(**e).is_some())
@@ -152,7 +141,7 @@ fn waiting_materials_are_created_first_next_frame() {
     app.update();
 
     assert_eq!(created(&app, &left), 3);
-    assert_eq!(waiting(&app, &left), 0);
+    assert_eq!(marked::<PendingMaterial>(&app, &left), 0);
     assert_eq!(created(&app, &second), fit - 3);
 }
 
@@ -285,13 +274,6 @@ fn a_primitive_and_its_new_material_appear_in_the_same_frame() {
     assert!(material_handle(&app, primitives[2]).is_none());
 }
 
-fn marked(app: &App, entity: Entity) -> Option<bevy::ecs::component::Tick> {
-    app.world()
-        .entity(entity)
-        .get_ref::<PendingMaterial>()
-        .map(|marker| marker.last_changed())
-}
-
 #[test]
 fn waiting_materials_are_left_alone_once_the_slice_is_spent() {
     let (mut app, root) = material_app();
@@ -304,7 +286,10 @@ fn waiting_materials_are_left_alone_once_the_slice_is_spent() {
         .filter(|e| app.world().get::<PendingMaterial>(*e).is_some())
         .collect();
     assert_eq!(waiting_entities.len(), 2);
-    let before: Vec<_> = waiting_entities.iter().map(|e| marked(&app, *e)).collect();
+    let before: Vec<_> = waiting_entities
+        .iter()
+        .map(|e| marker_written::<PendingMaterial>(&app, *e))
+        .collect();
 
     preset_charges(&mut app, Duration::from_millis(10));
     app.update();
@@ -316,7 +301,7 @@ fn waiting_materials_are_left_alone_once_the_slice_is_spent() {
         .position(|e| material_handle(&app, *e).is_none())
         .unwrap();
     assert_eq!(
-        marked(&app, waiting_entities[still_waiting]),
+        marker_written::<PendingMaterial>(&app, waiting_entities[still_waiting]),
         before[still_waiting]
     );
 }
@@ -329,12 +314,12 @@ fn a_material_waiting_for_its_primitive_is_left_alone() {
         .spawn((container(root), material(1), PendingPrimitive))
         .id();
     app.update();
-    let before = marked(&app, entity);
+    let before = marker_written::<PendingMaterial>(&app, entity);
     assert!(before.is_some());
 
     app.update();
 
-    assert_eq!(marked(&app, entity), before);
+    assert_eq!(marker_written::<PendingMaterial>(&app, entity), before);
 }
 
 #[test]
@@ -399,4 +384,79 @@ fn a_prepaid_material_whose_source_is_not_ready_is_gated_again() {
     assert!(material_handle(&app, entity).is_none());
     assert!(app.world().get::<PendingMaterial>(entity).is_some());
     assert!(app.world().get::<MaterialPrepaid>(entity).is_none());
+}
+
+// the material cache
+fn material_id(materials: &mut Assets<SceneMaterial>) -> AssetId<SceneMaterial> {
+    materials
+        .add(SceneMaterial::new_unbounded(StandardMaterial::default()))
+        .id()
+}
+
+#[test]
+fn removed_materials_leave_the_cache() {
+    let mut app = App::new();
+    app.add_event::<AssetEvent<SceneMaterial>>()
+        .init_resource::<CachedMaterialOwners>();
+    let mut materials = Assets::<SceneMaterial>::default();
+    let (freed, live, stale, rebuilt) = (
+        material_id(&mut materials),
+        material_id(&mut materials),
+        material_id(&mut materials),
+        material_id(&mut materials),
+    );
+
+    // hash 3 was rebuilt with a new material before the stale one's removal was seen
+    let scene = app
+        .world_mut()
+        .spawn(CachedMaterials(HashMap::from_iter([
+            (1, (freed, true)),
+            (2, (live, false)),
+            (3, (rebuilt, true)),
+        ])))
+        .id();
+    app.world_mut()
+        .resource_mut::<CachedMaterialOwners>()
+        .0
+        .extend([
+            (freed, (scene, 1)),
+            (live, (scene, 2)),
+            (stale, (scene, 3)),
+            (rebuilt, (scene, 3)),
+        ]);
+
+    app.world_mut()
+        .send_event_batch([freed, stale].map(|id| AssetEvent::Removed { id }));
+    app.world_mut()
+        .run_system_once(remove_freed_cached_materials)
+        .unwrap();
+
+    let cache = app.world().get::<CachedMaterials>(scene).unwrap();
+    assert_eq!(cache.0.len(), 2);
+    assert_eq!(cache.0.get(&2), Some(&(live, false)));
+    assert_eq!(cache.0.get(&3), Some(&(rebuilt, true)));
+    let owners = app.world().resource::<CachedMaterialOwners>();
+    assert_eq!(owners.0.len(), 2);
+    assert!(owners.0.contains_key(&live) && owners.0.contains_key(&rebuilt));
+}
+
+#[test]
+fn removed_materials_of_despawned_scenes_leave_the_owners() {
+    let mut app = App::new();
+    app.add_event::<AssetEvent<SceneMaterial>>()
+        .init_resource::<CachedMaterialOwners>();
+    let id = material_id(&mut Assets::<SceneMaterial>::default());
+    let scene = app.world_mut().spawn(CachedMaterials::default()).id();
+    app.world_mut()
+        .resource_mut::<CachedMaterialOwners>()
+        .0
+        .insert(id, (scene, 1));
+    app.world_mut().despawn(scene);
+
+    app.world_mut().send_event(AssetEvent::Removed { id });
+    app.world_mut()
+        .run_system_once(remove_freed_cached_materials)
+        .unwrap();
+
+    assert!(app.world().resource::<CachedMaterialOwners>().0.is_empty());
 }

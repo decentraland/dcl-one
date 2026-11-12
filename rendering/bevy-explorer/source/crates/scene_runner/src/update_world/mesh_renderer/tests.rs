@@ -2,6 +2,7 @@ use std::{sync::Arc, time::Duration};
 
 use bevy::{
     asset::io::memory::{Dir, MemoryAssetReader},
+    ecs::component::Tick,
     gltf::{Gltf, GltfMesh},
     platform::collections::HashSet,
     scene::{scene_spawner_system, ScenePlugin},
@@ -139,11 +140,20 @@ fn attached(app: &App, entities: &[Entity]) -> usize {
         .count()
 }
 
-fn waiting(app: &App, entities: &[Entity]) -> usize {
+/// How many of `entities` carry the marker `M`.
+pub(crate) fn marked<M: Component>(app: &App, entities: &[Entity]) -> usize {
     entities
         .iter()
-        .filter(|e| app.world().get::<PendingPrimitive>(**e).is_some())
+        .filter(|e| app.world().get::<M>(**e).is_some())
         .count()
+}
+
+/// When `entity`'s marker `M` was last written: a waiting entity left alone keeps it.
+pub(crate) fn marker_written<M: Component>(app: &App, entity: Entity) -> Option<Tick> {
+    app.world()
+        .entity(entity)
+        .get_ref::<M>()
+        .map(|marker| marker.last_changed())
 }
 
 /// How many primitives with a shared mesh fit in one slice.
@@ -151,13 +161,13 @@ pub(crate) fn fit(cost: Duration) -> usize {
     (slice(Some(SIXTY_FPS)).as_nanos() / cost.as_nanos()) as usize
 }
 
-fn preset_charges(app: &mut App, charges: Duration) {
+pub(crate) fn preset_charges(app: &mut App, charges: Duration) {
     app.world_mut()
         .resource_mut::<InstantiationCharges>()
         .this_frame = charges;
 }
 
-fn charged(app: &App) -> Duration {
+pub(crate) fn charged(app: &App) -> Duration {
     app.world().resource::<Charged>().0
 }
 
@@ -170,7 +180,7 @@ fn primitives_are_attached_until_the_slice_is_charged() {
     app.update();
 
     assert_eq!(attached(&app, &boxes), fit);
-    assert_eq!(waiting(&app, &boxes), 3);
+    assert_eq!(marked::<PendingPrimitive>(&app, &boxes), 3);
 }
 
 #[test]
@@ -189,7 +199,7 @@ fn waiting_primitives_are_attached_first_next_frame() {
     app.update();
 
     assert_eq!(attached(&app, &left), 3);
-    assert_eq!(waiting(&app, &left), 0);
+    assert_eq!(marked::<PendingPrimitive>(&app, &left), 0);
     assert_eq!(attached(&app, &second), fit - 3);
 }
 
@@ -349,13 +359,10 @@ fn waiting_primitives_are_left_alone_once_the_slice_is_spent() {
         .filter(|e| app.world().get::<PendingPrimitive>(*e).is_some())
         .collect();
     assert_eq!(waiting_boxes.len(), 2);
-    let marked = |app: &App, entity: Entity| {
-        app.world()
-            .entity(entity)
-            .get_ref::<PendingPrimitive>()
-            .map(|marker| marker.last_changed())
-    };
-    let before: Vec<_> = waiting_boxes.iter().map(|e| marked(&app, *e)).collect();
+    let before: Vec<_> = waiting_boxes
+        .iter()
+        .map(|e| marker_written::<PendingPrimitive>(&app, *e))
+        .collect();
 
     preset_charges(&mut app, Duration::from_millis(10));
     app.update();
@@ -367,7 +374,7 @@ fn waiting_primitives_are_left_alone_once_the_slice_is_spent() {
         .position(|e| app.world().get::<Mesh3d>(*e).is_none())
         .unwrap();
     assert_eq!(
-        marked(&app, waiting_boxes[still_waiting]),
+        marker_written::<PendingPrimitive>(&app, waiting_boxes[still_waiting]),
         before[still_waiting]
     );
 }

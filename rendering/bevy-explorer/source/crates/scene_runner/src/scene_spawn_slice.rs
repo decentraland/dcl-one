@@ -150,6 +150,18 @@ impl Gate<'_> {
     }
 }
 
+/// Marks `entity` as waiting for the slice with `marker`, unless it already is (`marked`).
+pub fn mark_waiting<M: Component>(
+    commands: &mut Commands,
+    entity: Entity,
+    marker: M,
+    marked: bool,
+) {
+    if !marked {
+        commands.entity(entity).try_insert(marker);
+    }
+}
+
 /// Runs in `SpawnScene`, just before bevy's `scene_spawner_system`.
 pub fn slice_scene_spawning(
     mut spawner: ResMut<SceneSpawner>,
