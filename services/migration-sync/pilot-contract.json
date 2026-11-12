@@ -1,7 +1,7 @@
 {
-  "version": 2,
+  "version": 3,
   "source": "places",
-  "adapter": "places_outbox_v2",
+  "adapter": "places_outbox_v3",
   "direction": "production_to_dcl_one",
   "authority": {
     "writes": "production",
@@ -11,7 +11,7 @@
   "activation": "rehearsal_only",
   "scope": {
     "entity_ids": "Explicit immutable UUID allowlist supplied to install-source; gateway paths must match",
-    "catalogue": "Existing canonical Genesis places; no worlds or mirrored target identities",
+    "catalogue": "Explicitly scoped Genesis metadata; canonical Places ownership, no worlds or native moderation overlays",
     "command": {
       "method": "PATCH",
       "path": "/api/places/{uuid}/favorites",
@@ -30,10 +30,12 @@
     ],
     "derived_target_table": "explore.place_interaction_counts",
     "source_tables": [
+      "public.places",
       "public.user_favorites",
       "public.user_likes"
     ],
     "target_tables": [
+      "explore.place",
       "explore.user_favorites",
       "explore.user_likes"
     ],
@@ -59,17 +61,19 @@
     "ddl": "operator_change_requires_stop_and_compatibility_review"
   },
   "dependencies": [
-    "frozen_or_reviewed_catalogue"
+    "reviewed_source_schemas",
+    "inert_target_jobs_and_cleanup_intents"
   ],
   "excluded": [
     "shop",
     "credits",
     "marketplace_favorites",
     "worlds",
-    "social",
     "voice",
     "notifications",
-    "external_providers"
+    "external_providers",
+    "social_workflows_beyond_settings",
+    "event_workflows_beyond_schedules"
   ],
   "unverified_gates": [
     "deployed_source_writer_inventory_and_replica_configuration",
@@ -80,5 +84,22 @@
     "failover_restore_retention_and_multi_day_soak"
   ],
   "execution": "source_only_by_default_no_client_changes",
-  "optional_native_replay_gate": "stable_client_operation_identity_and_signed_gateway_aliases"
+  "optional_native_replay_gate": "stable_client_operation_identity_and_signed_gateway_aliases",
+  "additional_sources": {
+    "events": {
+      "adapter": "events_schedules_outbox_v1",
+      "source_table": "public.schedule",
+      "target_table": "explore.schedules_local",
+      "scope": "explicit immutable UUID allowlist",
+      "mode": "source_only"
+    },
+    "social-settings": {
+      "adapter": "social_settings_outbox_v1",
+      "source_table": "public.social_settings",
+      "target_table": "social.user_settings",
+      "scope": "explicit immutable canonical wallets",
+      "mode": "source_only",
+      "restriction": "facts only; no target privacy or provider authority"
+    }
+  }
 }

@@ -8,7 +8,7 @@ const USER: &str = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 const PLACE: &str = "11111111-1111-4111-8111-111111111111";
 
 async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
-    source.execute(sqlx::raw_sql("CREATE TABLE places(id uuid PRIMARY KEY,world boolean NOT NULL DEFAULT false,disabled boolean NOT NULL DEFAULT false,favorites integer NOT NULL DEFAULT 0); CREATE TABLE user_favorites(\"user\" text,entity_id uuid,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); CREATE TABLE user_likes(\"user\" text,entity_id uuid,\"like\" boolean NOT NULL,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); INSERT INTO places(id) VALUES('11111111-1111-4111-8111-111111111111');")).await?;
+    source.execute(sqlx::raw_sql("CREATE TABLE places(id uuid PRIMARY KEY,world boolean NOT NULL DEFAULT false,disabled boolean NOT NULL DEFAULT false,favorites integer NOT NULL DEFAULT 0,base_position text NOT NULL DEFAULT '0,0',title text,description text,owner text,creator_address text,content_rating text,categories text[] NOT NULL DEFAULT '{}',highlighted boolean NOT NULL DEFAULT false,world_name text,world_id text,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),deployed_at timestamptz NOT NULL DEFAULT now(),disabled_at timestamptz,disabled_reason text); CREATE TABLE user_favorites(\"user\" text,entity_id uuid,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); CREATE TABLE user_likes(\"user\" text,entity_id uuid,\"like\" boolean NOT NULL,user_activity integer NOT NULL,created_at timestamptz NOT NULL DEFAULT now(),updated_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(\"user\",entity_id)); INSERT INTO places(id) VALUES('11111111-1111-4111-8111-111111111111');")).await?;
     let mut files = std::fs::read_dir(Path::new(env!("DCL_ONE_ROOT")).join("schemas"))?
         .collect::<std::io::Result<Vec<_>>>()?;
     files.sort_by_key(|e| e.file_name());
@@ -31,6 +31,35 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
     capture::install(source, &[id]).await?;
     capture::install(source, &[id]).await?;
     assert!(capture::install(source, &[Uuid::new_v4()]).await.is_err());
+    // Unknown provenance must not be adopted just because the typed origin is local.
+    // Failed bootstrap leaves both catalogue and stream registration untouched.
+    assert!(
+        capture::bootstrap(source, target, "pilot")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("conflicting local ownership")
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM migration_sync.streams")
+            .fetch_one(target)
+            .await?,
+        0
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, serde_json::Value>("SELECT raw FROM explore.place WHERE id=$1")
+            .bind(PLACE)
+            .fetch_one(target)
+            .await?,
+        serde_json::json!({})
+    );
+    // Only explicit batch-import provenance permits catalogue replacement.
+    sqlx::query(
+        "UPDATE explore.place SET raw='{\"source\":\"places\",\"local\":true}' WHERE id=$1",
+    )
+    .bind(PLACE)
+    .execute(target)
+    .await?;
     // An uncommitted source writer holds the common fence: baseline must include
     // its eventual commit, never skip a late-committing allocated position.
     let mut first = source.begin().await?;
@@ -69,7 +98,7 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
             .to_string()
             .contains("adapters differ")
     );
-    sqlx::query("UPDATE migration_sync.capture_sources SET adapter='places_outbox_v2'")
+    sqlx::query("UPDATE migration_sync.capture_sources SET adapter='places_outbox_v3'")
         .execute(target)
         .await?;
     sqlx::query("UPDATE explore.place_interaction_counts SET favorites=99")
@@ -154,6 +183,144 @@ async fn assertions(source: &PgPool, target: &PgPool) -> Result<()> {
             .execute(source)
             .await
             .is_err()
+    );
+    // The real daily places_poi_category_update job ends each affected place
+    // with PlaceModel.overrideCategories: UPDATE places SET categories=... WHERE id.
+    // Reproduce that committed SQL, not a fake second copy of the scheduler.
+    sqlx::query("UPDATE places SET categories=ARRAY['poi','art'] WHERE id=$1")
+        .bind(id)
+        .execute(source)
+        .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Vec<String>>("SELECT categories FROM explore.place WHERE id=$1")
+            .bind(PLACE)
+            .fetch_one(target)
+            .await?,
+        vec!["poi".to_string(), "art".to_string()]
+    );
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["catalogue_match"],
+        true
+    );
+    // Projection divergence must be detected even when retained raw JSON agrees.
+    sqlx::query("UPDATE explore.place SET title='drift' WHERE id=$1")
+        .bind(PLACE)
+        .execute(target)
+        .await?;
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["catalogue_match"],
+        false
+    );
+    sqlx::query("UPDATE explore.place SET title=NULL WHERE id=$1")
+        .bind(PLACE)
+        .execute(target)
+        .await?;
+    // A local decision is never silently overwritten by a source projection.
+    sqlx::query("INSERT INTO explore.place_moderation(place_id,disabled,set_by) VALUES($1,false,'local-operator')").bind(PLACE).execute(target).await?;
+    sqlx::query("UPDATE places SET title='Source title' WHERE id=$1")
+        .bind(id)
+        .execute(source)
+        .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Blocked
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<String>>("SELECT title FROM explore.place WHERE id=$1")
+            .bind(PLACE)
+            .fetch_one(target)
+            .await?,
+        None
+    );
+    let blocked = store::status(target, "pilot").await?["head_lsn"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    sqlx::query("DELETE FROM explore.place_moderation WHERE place_id=$1")
+        .bind(PLACE)
+        .execute(target)
+        .await?;
+    store::pause(target, "pilot", true).await?;
+    dcl_migration_sync::ops::retry_blocked(target, "pilot", &blocked).await?;
+    store::pause(target, "pilot", false).await?;
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    // Disable and physical removal retain cleanup intent, but no consumer or
+    // provider is started by synchronization. Re-enabling clears lifecycle state.
+    sqlx::query("UPDATE places SET disabled=true,disabled_reason='moderation' WHERE id=$1")
+        .bind(id)
+        .execute(source)
+        .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM explore.place_removal_pending WHERE cleaned_at IS NULL"
+        )
+        .fetch_one(target)
+        .await?,
+        1
+    );
+    sqlx::query("UPDATE places SET disabled=false,disabled_reason=NULL WHERE id=$1")
+        .bind(id)
+        .execute(source)
+        .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    sqlx::query("DELETE FROM places WHERE id=$1")
+        .bind(id)
+        .execute(source)
+        .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT count(*) FROM explore.place WHERE id=$1")
+            .bind(PLACE)
+            .fetch_one(target)
+            .await?,
+        0
+    );
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["catalogue_match"],
+        true
+    );
+    assert!(
+        sqlx::query_scalar::<_, bool>(
+            "SELECT deleted FROM migration_sync.catalogue_versions WHERE entity_id=$1"
+        )
+        .bind(PLACE)
+        .fetch_one(target)
+        .await?
+    );
+    sqlx::query("INSERT INTO places(id) VALUES($1)")
+        .bind(id)
+        .execute(source)
+        .await?;
+    assert!(capture::pump_once(source, target, "pilot").await?);
+    assert_eq!(
+        store::process_next(target, "pilot").await?,
+        store::Outcome::Applied
+    );
+    assert_eq!(
+        capture::reconcile(source, target, "pilot").await?["matches"],
+        true
     );
     // A second writer cannot commit past an earlier open capture transaction.
     let mut earlier = source.begin().await?;

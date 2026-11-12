@@ -2,7 +2,7 @@
 
 Updated 2026-11-12. This directory records the selected migration strategy, its reasons, alternatives, implementation boundaries and required follow-up. It is the maintained decision record; passing local tests is not production activation approval.
 
-**Current choice:** migrate before activation, keep production authoritative, and expand one-way production → dcl-one database synchronization with unchanged clients. The Places pilot covers favorites, likes and dislikes. Native duplicate execution is optional and currently limited to favorite commands. Shop and credits remain excluded for security reasons.
+**Current choice:** migrate before activation, keep production authoritative, and expand one-way production → dcl-one database synchronization with unchanged clients. The bounded pilot covers Places catalogue metadata and interactions, selected Events schedules, and social settings facts. Native duplicate execution is optional and currently limited to favorite commands. Shop and credits remain excluded for security reasons.
 
 | Document | Contents |
 | --- | --- |
@@ -11,6 +11,10 @@ Updated 2026-11-12. This directory records the selected migration strategy, its 
 | [Repository changes and PR rationale](repository-changes.md) | Why dcl-one, Places or the gateway need changes; required versus optional work |
 | [Coverage and service constraints](coverage.md) | Implemented mappings, exclusions, schema differences and cross-service risks |
 | [Implementation and validation](implementation.md) | Local code, test evidence, commits and known limits |
+| [Multiple-source coordination](multiple-sources.md) | Separate source ownership, keys, cursors and integration rules |
+| [Places catalogue](places-catalogue.md) | Catalogue mapping, POI job outcome and cleanup restrictions |
+| [Events schedules](events-schedules.md) | Schedule mapping and source-database-only change rationale |
+| [Social settings](social-settings.md) | Settings mapping, absent-row defaults and privacy-effect limits |
 | [Rollout and backlog](rollout.md) | Remaining work, acceptance criteria, prolonged operation and cutover |
 
 The [service runbook](../services/migration-sync/README.md) owns executable commands and operational instructions. The [architecture ADR](../docs/adr/2026-11-12-removable-migration-sync-service.md) owns the standalone service boundary. Keep both aligned with these documents.

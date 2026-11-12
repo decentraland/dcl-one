@@ -1567,7 +1567,7 @@ version, command receipt and capture-progress tables. Its workload is a bounded,
 1,000 changes) applied to an isolated destination. One stream row lock serializes
 workers; facts, versions, receipt and position commit together. A predecessor gap
 waits; a failed domain transaction rolls back before its head is marked blocked.
-The unique Places source owner prevents overlapping streams mutating the same
+A unique owner per source prevents overlapping streams mutating the same
 scope. No throughput or production-load budget is claimed without measurement.
 
 The pilot changes Explore favorite and like/dislike facts and recomputes interaction counts from
@@ -1588,3 +1588,14 @@ Target vote counts derive from mapped local facts. Older favorites-only adapter
 rows retain their identity; adding likes requires a reviewed new baseline, not a
 relabelled cursor. This source-only path needs no client operation ID or source
 HTTP handler deployment.
+
+The current Places adapter (`places_outbox_v3`) adds scoped Genesis catalogue
+metadata to the same snapshot and transaction stream; v1/v2 history cannot be
+relabelled as v3. Catalogue versions preserve deletes independently. Events
+schedules and social settings use separate immutable text-key scopes, source
+owners, capture adapters and cursors. Domain facts and tombstones commit with
+their stream cursor. Cross-source transactions are not provided. Capture limits
+transactions to 1,000 changes and 1 MiB before decoding outbox rows. Events array
+preflight and fetch share a repeatable-read snapshot. Source remains the only
+job/provider authority; copied removal intents remain inert. See
+[sync decisions](sync-migration/multiple-sources.md) for mapping boundaries.

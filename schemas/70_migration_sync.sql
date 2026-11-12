@@ -5,7 +5,7 @@ CREATE SCHEMA migration_sync;
 
 CREATE TABLE migration_sync.streams (
     name text PRIMARY KEY CHECK (name ~ '^[A-Za-z0-9_-]{1,64}$'),
-    source text NOT NULL UNIQUE CHECK (source = 'places'),
+    source text NOT NULL UNIQUE CHECK (source IN ('places', 'events', 'social-settings')),
     generation uuid NOT NULL CHECK (generation <> '00000000-0000-0000-0000-000000000000'::uuid),
     baseline_lsn pg_lsn NOT NULL,
     applied_lsn pg_lsn NOT NULL,

@@ -65,3 +65,14 @@ Adapter v2 captures both interaction tables in one ordered stream and bootstraps
 them at one snapshot boundary. V1 history is retained under its original identity;
 it is not silently expanded. Vote facts and independent version history commit
 with derived counters and the applied cursor.
+
+## Scoped source-only expansion
+
+Places adapter v3 captures scoped Genesis catalogue metadata and interactions
+at one source boundary. Separate Events schedule and social-settings adapters
+share the worker infrastructure while retaining independent source owners, scopes
+and cursors. There is no atomic cross-source snapshot. All these mappings copy
+facts only; normal target jobs, provider calls and privacy enforcement remain
+disabled. Source DB capture installation is required; source application and
+client changes are not. See the [mapping decisions](../../sync-migration/multiple-sources.md)
+and [repository rationale](../../sync-migration/repository-changes.md).

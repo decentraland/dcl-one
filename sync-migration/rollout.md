@@ -13,14 +13,14 @@ Current priority: expand source-only coverage with unchanged clients, then run a
 | H5 | Selective, atomic transformation and ordered progress. Copying native mutations again causes divergence. | Favorites and likes/dislikes implemented with tombstones and counts. | Each new mapping proves identities, updates, deletes, mixed transactions, derived state and effect behavior. Unknown mappings block. |
 | H6 | Representative fault rehearsal. Unit success does not establish coexistence behavior. | Local PostgreSQL/HTTP pilot suites pass. | Test production-like volume, actual source job writes, outages and recovery; reconcile canonical state and any intended effects. |
 | H7 | Operate for the intended duration. Lag, storage and retained history accumulate. | Health/metrics, alerts, recovery, reconciliation and soak script implemented. | Run extended soak; wire alerts; set measured budgets; test restore/failover and retention boundaries; assign operators. |
-| H8 | Expand dependency-complete workflows. Independent tables can omit permissions or notifications. | Next workstreams: Places catalogue, event schedules, social settings. | Review each contract before claiming coverage; separately prove a real job-owned dataset and a coupled permission/notification workflow. |
+| H8 | Expand dependency-complete workflows. Independent tables can omit permissions or notifications. | Scoped Places catalogue, Events schedules and social settings implemented and locally tested. | Review each contract before claiming coverage; separately prove a real job-owned dataset and a coupled permission/notification workflow. |
 
 The next mappings are candidates, not blanket permission to synchronize an entire service. Financial exclusions remain unchanged. Each service workstream must extend [repository rationale](repository-changes.md) before an external PR is proposed.
 
 ## Staging order
 
 1. Pin revisions and approve the explicit nonfinancial scope. Inventory source writers, target dependencies, queues, providers and blobs. Confirm the source role/grant plan before installing triggers.
-2. Prepare a dedicated target with normal APIs/jobs/mirrors off. Install the normal schema and pre-migrate canonical catalogue dependencies. Leave the scoped interaction baseline empty for the consistent bootstrap.
+2. Prepare a dedicated target with normal APIs/jobs/mirrors off. Install the normal schema. Places bootstrap imports scoped catalogue and interaction facts together; any existing catalogue must have reviewed Places provenance. Leave scoped interaction, schedule and social-settings baselines empty for their consistent bootstraps.
 3. Install reviewed source capture and grants in a controlled change. Bootstrap both interaction fact sets at the same boundary. Existing v1 streams need a reviewed new v2 baseline rather than relabelling old progress.
 4. Start capture and apply separately, with the minimum roles. For unchanged-client source-only mode, no client ID, source HTTP feature flag or native replay URL/token is required.
 5. Compare canonical facts and derived counts, then test inserts, updates, deletes, mixed transactions, worker restarts, duplicate delivery, poison input, stale contact and history gaps. Test an actual job-owned dataset before claiming scheduled-job coverage.

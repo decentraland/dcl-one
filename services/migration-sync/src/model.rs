@@ -36,6 +36,28 @@ pub enum Mode {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FavoriteChange {
+    ScheduleUpsert {
+        schedule: crate::events_schedules::ScheduleRecord,
+    },
+    ScheduleDelete {
+        id: String,
+    },
+    SocialSettingsUpsert {
+        address: String,
+        private_messages_privacy: crate::social_settings::PrivateMessagesPrivacy,
+        blocked_users_messages_visibility: crate::social_settings::BlockedMessagesVisibility,
+        show_situation_reactions: crate::social_settings::SituationReactions,
+    },
+    SocialSettingsDelete {
+        address: String,
+    },
+    CatalogueUpsert {
+        entity_id: String,
+        document: serde_json::Value,
+    },
+    CatalogueDelete {
+        entity_id: String,
+    },
     Upsert {
         user: String,
         entity_id: String,
@@ -133,7 +155,11 @@ impl Envelope {
             self.version == SCHEMA_VERSION,
             "unsupported envelope version"
         );
-        ensure!(self.source == "places", "unsupported source");
+        validate_source(&self.source)?;
+        ensure!(
+            self.mode == Mode::SourceOnly || self.source == "places",
+            "native replay is only supported for Places"
+        );
         validate_stream(&self.stream)?;
         ensure!(!self.generation.is_nil(), "generation must not be nil");
         let previous = parse_lsn(&self.previous_lsn)?;
@@ -141,6 +167,10 @@ impl Envelope {
         ensure!(previous < committed, "commit LSN must follow previous LSN");
         ensure!(self.changes.len() <= MAX_CHANGES, "too many changes");
         for change in &self.changes {
+            ensure!(
+                change.source() == self.source,
+                "change does not belong to envelope source"
+            );
             change.validate()?;
         }
         if let Some(command) = &self.command {
@@ -199,8 +229,55 @@ impl Envelope {
 }
 
 impl FavoriteChange {
+    pub fn source(&self) -> &'static str {
+        match self {
+            Self::ScheduleUpsert { .. } | Self::ScheduleDelete { .. } => "events",
+            Self::SocialSettingsUpsert { .. } | Self::SocialSettingsDelete { .. } => {
+                "social-settings"
+            }
+            _ => "places",
+        }
+    }
+    pub fn event_change(&self) -> Option<crate::events_schedules::ScheduleChange> {
+        use crate::events_schedules::ScheduleChange;
+        match self {
+            Self::ScheduleUpsert { schedule } => Some(ScheduleChange::Upsert {
+                schedule: schedule.clone(),
+            }),
+            Self::ScheduleDelete { id } => Some(ScheduleChange::Delete { id: id.clone() }),
+            _ => None,
+        }
+    }
+    pub fn social_change(&self) -> Option<crate::social_settings::Change> {
+        use crate::social_settings::Change;
+        match self {
+            Self::SocialSettingsUpsert {
+                address,
+                private_messages_privacy,
+                blocked_users_messages_visibility,
+                show_situation_reactions,
+            } => Some(Change::SocialSettingsUpsert {
+                address: address.clone(),
+                private_messages_privacy: *private_messages_privacy,
+                blocked_users_messages_visibility: *blocked_users_messages_visibility,
+                show_situation_reactions: *show_situation_reactions,
+            }),
+            Self::SocialSettingsDelete { address } => Some(Change::SocialSettingsDelete {
+                address: address.clone(),
+            }),
+            _ => None,
+        }
+    }
     pub fn key(&self) -> (&str, &str) {
         match self {
+            Self::ScheduleUpsert { schedule } => ("", &schedule.id),
+            Self::ScheduleDelete { id } => ("", id),
+            Self::SocialSettingsUpsert { address, .. } | Self::SocialSettingsDelete { address } => {
+                (address, address)
+            }
+            Self::CatalogueUpsert { entity_id, .. } | Self::CatalogueDelete { entity_id } => {
+                ("", entity_id)
+            }
             Self::Upsert {
                 user, entity_id, ..
             }
@@ -213,6 +290,27 @@ impl FavoriteChange {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if let Some(change) = self.event_change() {
+            return change.validate();
+        }
+        if let Some(change) = self.social_change() {
+            return change.validate();
+        }
+        if let Self::CatalogueUpsert {
+            entity_id,
+            document,
+        } = self
+        {
+            return crate::catalogue::validate(entity_id, document);
+        }
+        if let Self::CatalogueDelete { entity_id } = self {
+            ensure!(
+                Uuid::parse_str(entity_id)
+                    .is_ok_and(|id| !id.is_nil() && id.to_string() == *entity_id),
+                "catalogue ID must be canonical UUID"
+            );
+            return Ok(());
+        }
         let (user, entity_id) = self.key();
         ensure!(
             user.len() == 42
@@ -266,6 +364,14 @@ pub fn parse_lsn(value: &str) -> Result<u64> {
         u32::from_str_radix(part, 16).map_err(|_| anyhow::anyhow!("LSN must be canonical HEX/HEX"))
     };
     Ok((u64::from(component(high)?) << 32) | u64::from(component(low)?))
+}
+
+pub fn validate_source(source: &str) -> Result<()> {
+    ensure!(
+        matches!(source, "places" | "events" | "social-settings"),
+        "unsupported source"
+    );
+    Ok(())
 }
 
 #[cfg(test)]

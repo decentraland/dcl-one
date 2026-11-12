@@ -74,3 +74,22 @@ Before opening another source-service PR, add a subsection here identifying:
 - Default/disabled behavior, compatibility, deployment order, rollback and acceptance tests.
 
 Do not add synchronization code to every application write by default. For a pure fact mapping, database capture can cover HTTP, jobs and internal writers. Application changes are justified when required behavior is not represented by copied rows—for example an authorization revocation callback or explicit notification delivery—or when a selected command needs a durable native replay contract. Shop and credits remain excluded; discovery of a dependency is not permission to modify them.
+
+## Newly included source-only mappings
+
+- **Places catalogue:** extend the source database adapter to v3 so existing row writers,
+  including the reviewed daily POI category job SQL, enter the same ordered stream as
+  interactions. No Places handler or client PR is required. Native moderation ownership
+  conflicts block; target cleanup intents remain inert. [Full rationale](places-catalogue.md).
+- **Events schedules:** install a local capture adapter for selected `schedule` UUIDs;
+  the dcl-one mapping handles rows/deletes. No Events application or client PR is needed.
+  Random future schedule IDs and event workflows are not implicitly included.
+  [Full rationale](events-schedules.md).
+- **Social settings:** install local capture for selected wallets and map all three
+  setting values plus row absence. No social-service handler or client PR is needed.
+  Source Gatekeeper effects are not replayed and target privacy authority stays off.
+  [Full rationale](social-settings.md).
+
+The [shared coordinator](../services/migration-sync/src/domain_capture.rs) adds separate
+source identities, scopes and positions. These are dcl-one changes; source installations
+still require explicit database grants and operational review even without application PRs.

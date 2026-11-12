@@ -3,7 +3,7 @@
 CREATE TABLE migration_sync.capture_sources (
     stream text PRIMARY KEY,
     generation uuid NOT NULL,
-    adapter text NOT NULL DEFAULT 'places_outbox_v1' CHECK (adapter IN ('places_outbox_v1','places_outbox_v2')),
+    adapter text NOT NULL DEFAULT 'places_outbox_v1' CHECK (adapter IN ('places_outbox_v1', 'places_outbox_v2', 'places_outbox_v3', 'events_schedules_outbox_v1', 'social_settings_outbox_v1')),
     captured_position bigint NOT NULL CHECK (captured_position >= 0),
     observed_position bigint NOT NULL CHECK (observed_position >= captured_position),
     last_contact_at timestamptz NOT NULL,

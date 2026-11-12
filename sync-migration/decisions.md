@@ -13,7 +13,7 @@ Status: accepted for local implementation/rehearsal as of 2026-11-12. Production
 | Retain the hybrid design, but expand its source-only lane first. | It can later exercise proven native target commands, while database sync covers changes that cannot safely be duplicated. Native command compatibility is not needed merely to copy production facts. |
 | Begin with scoped Genesis Places favorites, then likes/dislikes. | They have relatively direct canonical keys and bounded effects. Both fact sets now feed the same derived counters. This is evidence for these mappings, not for all Places or all services. |
 | Exclude shop and credits for security reasons. | Financial settlement, treasury, rewards and executable work need their own ownership/security review. Both marketplace imports target shop and therefore remain excluded, including marketplace favorites. Signatures/rentals remain deferred because of shop-derived dependencies. |
-| Treat catalogue ownership as a prerequisite. | Interaction IDs must identify existing canonical, non-mirrored Genesis places. Catalogue changes are not yet continuously mapped; reviewed identities must remain stable or the affected pilot must stop. |
+| Treat catalogue ownership as a prerequisite. | Interaction IDs must identify existing canonical, non-mirrored Genesis places. Adapter v3 captures scoped Genesis catalogue changes with interactions; conflicting provenance, worlds or native overlays stop application. Removal intents stay inert. See [catalogue decisions](places-catalogue.md). |
 
 ## Service architecture and capture
 
@@ -60,3 +60,7 @@ Status: accepted for local implementation/rehearsal as of 2026-11-12. Production
 | Do not promise simple rollback after independent target writes. | Production may no longer contain accepted target changes or effects. Recovery then needs a separately tested preservation process. |
 
 See [repository rationale](repository-changes.md) for which of these choices require code or database changes outside dcl-one.
+
+## Multiple-source expansion
+
+See [coordination decisions](multiple-sources.md), [Events schedules](events-schedules.md) and [social settings](social-settings.md). Each source retains its own baseline, immutable scope and cursor because independent databases have no shared commit order. All new mappings are source-only. Reconciliation holds repeatable-read snapshots across size preflight and row decoding to prevent concurrent changes bypassing allocation limits. Oversized transactions block without advancing capture; they are never split or skipped.

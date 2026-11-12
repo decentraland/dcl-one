@@ -12,9 +12,10 @@ for why this architecture and its optional service changes are needed.
 
 ## Supported pilot
 
-Favorites, likes and dislikes for explicitly selected Genesis Places UUIDs. Shop and credits are
-excluded for security reasons, including marketplace imports. Worlds, social/voice,
-notifications, other aggregates and arbitrary SQL replication are not implemented.
+Scoped Genesis Places catalogue metadata, favorites, likes and dislikes; selected
+Events schedules and social settings facts. See [domain contracts](../../sync-migration/multiple-sources.md). Shop and credits are
+excluded for security reasons, including marketplace imports. Worlds, social workflows beyond settings, voice,
+notifications, event workflows beyond schedules and arbitrary SQL replication are not implemented.
 The asset-bundle rewriter is unrelated and unchanged.
 
 The [executable scope contract](pilot-contract.json) lists mappings and activation gates.
@@ -50,9 +51,9 @@ For source-only operation, omit `MIGRATION_SYNC_FOLLOWER_URL` and
 `MIGRATION_FOLLOWER_TOKEN` from the apply worker. The private follower listener may
 still be used separately for verification reads.
 
-This coverage requires `places_outbox_v2` and a new consistent interaction baseline.
-A favorites-only v1 source/stream is not upgraded or expanded in place. Retain its
-history, stop the rehearsal and establish a reviewed clean v2 baseline. The target
+Catalogue-inclusive Places coverage requires `places_outbox_v3` and a new consistent catalogue/interaction baseline.
+A v1/v2 source/stream is not upgraded or expanded in place. Retain its
+history, stop the rehearsal and establish a reviewed clean v3 baseline. The target
 schema migration permits both adapter identities without relabeling old rows.
 
 ## Build and prerequisites
@@ -67,12 +68,13 @@ Use the normal schema migration procedure to install
 [worker state](../../schemas/70_migration_sync.sql) and
 [capture progress](../../schemas/71_migration_capture.sql) and
 [like version history](../../schemas/72_migration_like_versions.sql). Apply the normal
-additive schema migration for existing databases too. Migrate the canonical
-Genesis catalogue before bootstrap. Bootstrap imports a consistent scoped favorite/like
+additive schema migration for existing databases too. Bootstrap imports reviewed Genesis catalogue metadata and a consistent scoped favorite/like
 snapshot and rejects existing target interactions in that scope; omit that scoped
 interaction batch from the initial import or use a clean rehearsal destination.
-Catalogue changes are not continuously mapped by this pilot: freeze reviewed
-catalogue identities or stop the pilot when dependencies change.
+Catalogue capture covers only explicitly scoped Genesis IDs; arbitrary new IDs,
+worlds and normalized moderation/category histories remain outside this projection.
+Existing target catalogue rows must have Places migration provenance, and native
+ownership/overlays block application. Removal intents stay inert until reviewed cutover.
 
 Stop all normal destination API/job/mirror processes. New `serve` and `index`
 commands share a startup advisory guard with registration/bootstrap; old binaries,
@@ -169,9 +171,7 @@ thresholds are examples, not measured production budgets.
 Readiness requires current source contact, matching generation, fully caught-up
 capture/application, no blocked head and an unpaused stream. Idle capture polls
 refresh contact. Readiness is sampled, not linearizable cross-database consistency.
-Reconciliation compares scoped favorite/like rows and target interaction counts derived
-from source facts, and rejects a moving source or target boundary. It never repairs data; catalogue/effects/API equivalence still
-need separate verification.
+Reconciliation compares scoped catalogue and favorite/like facts plus derived interaction counts, and rejects a moving source or target boundary. Domain reconciliation compares scoped schedule/settings facts. It never repairs data; provider effects and public API equivalence need separate verification.
 
 For a repeatable stable-window soak, run `scripts/soak.sh places 1440 60` with
 the worker binary and read-only source credentials in the environment. It records
@@ -203,3 +203,37 @@ Those remain activation gates. Expand table mappings only after an actual job-ow
 and coupled permission/notification workflow passes equivalent fault tests.
 
 See the [deployment ADR](../../docs/adr/2026-11-12-removable-migration-sync-service.md).
+
+## Additional source-only domains
+
+Use separate processes and source credentials for each database. Their positions
+are independent, even though they share one target database. Keys below are examples;
+choose a reviewed UUID/wallet allowlist. No client or source application PR is required.
+
+```sh
+dcl-migration-sync install-domain-source --source events --key 11111111-1111-4111-8111-111111111111
+dcl-migration-sync bootstrap-domain --source events --stream event-schedules
+dcl-migration-sync capture-domain --source events --stream event-schedules
+# In a separately supervised process with the target credentials:
+dcl-migration-sync resume --stream event-schedules --rehearsal
+dcl-migration-sync run --stream event-schedules --rehearsal
+dcl-migration-sync reconcile-domain --source events --stream event-schedules
+```
+
+For social settings use `--source social-settings`, a distinct stream name, its source
+DB credentials and canonical wallet keys. Bootstrap requires an empty scoped target.
+Ordinary `pause`, `status`, `metrics`, `check` and `retry-blocked` accept any registered
+stream. A source cannot be owned by two streams. New source IDs and adapter constraints
+are installed by the normal additive schema procedure; existing rows are not relabelled.
+
+Read [Events schedules](../../sync-migration/events-schedules.md) and
+[social settings](../../sync-migration/social-settings.md) before installation.
+Settings facts do not reproduce Gatekeeper privacy effects. No public schedule or
+settings endpoints are enabled by the follower. Schedule allowlists do not include
+arbitrary future random IDs. Source functions need reviewed grants for actual writer
+roles before traffic resumes. No source write contacts the target.
+
+Retained transaction reads are limited to 1,000 changes and 1 MiB of JSON payload
+before client decoding. Oversized input stops capture without advancing its offset;
+it is not truncated or skipped. Snapshot field bounds and immutable key scopes are
+validated separately.

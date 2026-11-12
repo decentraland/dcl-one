@@ -33,6 +33,13 @@ No production deployment, source role installation, actual production traffic, m
 
 The follower's private favorite read is not the public Places API. Normal runtime startup guards are not complete fencing against old binaries, manual writers or lost guard sessions. Capture assumes enabled triggers and reviewed source schemas; bypassing them invalidates continuity.
 
-## New expansion work
+## Multi-source expansion
 
-Parallel work has been requested for missing Places catalogue coverage, event schedules and social settings. These are assessment/implementation workstreams, not accepted live coverage. Each must record its concrete contract, source writers, reasons for any external PR, migrations and tests before this table is expanded. See [rollout](rollout.md).
+The bounded implementation now adds [Places catalogue](places-catalogue.md), [Events schedules](events-schedules.md) and [social settings](social-settings.md), with [independent source coordination](multiple-sources.md). These are source-only facts, not complete service migrations or public activation.
+
+- **34 worker unit/CLI tests** passed.
+- **Five PostgreSQL integration suites** passed: Places snapshot/capture, independent domains sharing one target, Events schedules, ordered application/recovery, and social settings. Coverage includes catalogue provenance and POI-category SQL updates, deletes, immutable scopes, source binding, absent settings, paused capture/application and oversized payload rejection.
+- **Four schema checks, worker Clippy, formatting, ownership/protocol and document-link checks** passed.
+- Reconciliation holds repeatable-read snapshots across size preflight and decode. No source application or client change is needed; each source DB requires capture installation and reviewed grants.
+
+Tests: [shared domains](../services/migration-sync/tests/domains.rs), [Events](../services/migration-sync/tests/events_schedules.rs), [social settings](../services/migration-sync/tests/social_settings.rs), and the existing capture/apply suites linked above. Production schedulers, provider enforcement, future generated IDs and full service parity remain unverified or out of scope.

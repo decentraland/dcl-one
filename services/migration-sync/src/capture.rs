@@ -42,7 +42,7 @@ pub async fn source_info(source: &PgPool) -> Result<SourceInfo> {
     .fetch_one(source)
     .await?;
     ensure!(
-        row.try_get::<i32, _>("version")? == 2,
+        row.try_get::<i32, _>("version")? == 3,
         "unsupported capture adapter version"
     );
     let scope = sqlx::query_scalar::<_, Uuid>(
@@ -51,7 +51,7 @@ pub async fn source_info(source: &PgPool) -> Result<SourceInfo> {
     .fetch_all(source)
     .await?;
     Ok(SourceInfo {
-        adapter: "places_outbox_v2",
+        adapter: "places_outbox_v3",
         generation: row.try_get("generation")?,
         position: row.try_get("position")?,
         scope,
@@ -92,8 +92,8 @@ pub async fn install(source: &PgPool, scope: &[Uuid]) -> Result<SourceInfo> {
                 .fetch_one(&mut *tx)
                 .await?;
         ensure!(
-            version == 2,
-            "installed capture version lacks interaction coverage; stop and create a reviewed new baseline"
+            version == 3,
+            "installed capture version lacks catalogue coverage; stop and create a reviewed new baseline"
         );
         let actual: Vec<Uuid> =
             sqlx::query_scalar("SELECT entity_id FROM migration_capture.scope ORDER BY entity_id")
@@ -145,7 +145,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
     .fetch_one(&mut *snapshot)
     .await?;
     ensure!(
-        row.try_get::<i32, _>("version")? == 2,
+        row.try_get::<i32, _>("version")? == 3,
         "unsupported capture adapter version"
     );
     let generation: Uuid = row.try_get("generation")?;
@@ -205,6 +205,14 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         change.validate()?;
         baseline.push(change);
     }
+    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id=p.id ORDER BY p.id")
+        .fetch_all(&mut *snapshot).await?;
+    for document in &catalogue {
+        let id = document["id"]
+            .as_str()
+            .context("catalogue identity missing")?;
+        crate::catalogue::validate(id, document)?;
+    }
     snapshot.commit().await?;
     let boundary = position_cursor(position)?;
     let mut tx = target.begin().await?;
@@ -220,9 +228,12 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         "normal destination instance is active; stop it before bootstrap"
     );
     ensure!(!generation.is_nil(), "source generation cannot be nil");
-    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM migration_sync.streams)")
-        .fetch_one(&mut *tx)
-        .await?;
+    let occupied: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM migration_sync.streams WHERE source='places' OR name=$1)",
+    )
+    .bind(stream)
+    .fetch_one(&mut *tx)
+    .await?;
     ensure!(
         !occupied,
         "bootstrap requires an unregistered destination; never overwrite an active generation"
@@ -238,9 +249,9 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
         "bootstrap scope already contains target interaction facts; use a clean scoped baseline"
     );
     for entity in &scope {
-        let local: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM explore.place WHERE id=$1 AND NOT world AND origin='local')")
-            .bind(entity.to_string()).fetch_one(&mut *tx).await?;
-        ensure!(local, "bootstrap catalogue identity is missing or mirrored");
+        let id = entity.to_string();
+        let document = catalogue.iter().find(|document| document["id"] == id);
+        crate::catalogue::apply(&mut tx, &id, document).await?;
     }
     sqlx::query("INSERT INTO migration_sync.streams(name,source,generation,baseline_lsn,applied_lsn) VALUES($1,'places',$2,$3::text::pg_lsn,$3::text::pg_lsn)")
         .bind(stream).bind(generation).bind(&boundary).execute(&mut *tx).await?;
@@ -268,9 +279,7 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
                 sqlx::query("INSERT INTO explore.user_likes(\"user\",entity_id,\"like\",user_activity,created_at,updated_at,source) VALUES($1,$2,$3,$4,$5,$6,'local')")
                     .bind(user).bind(entity_id).bind(r#like).bind(user_activity).bind(created_at.naive_utc()).bind(updated_at.naive_utc()).execute(&mut *tx).await?;
             }
-            FavoriteChange::Delete { .. } | FavoriteChange::LikeDelete { .. } => {
-                unreachable!("snapshot has no deletes")
-            }
+            _ => anyhow::bail!("snapshot has unsupported change"),
         }
     }
     for entity in &scope {
@@ -281,11 +290,11 @@ pub async fn bootstrap(source: &PgPool, target: &PgPool, stream: &str) -> Result
             ON CONFLICT(entity_id) DO UPDATE SET favorites=EXCLUDED.favorites,likes=EXCLUDED.likes,dislikes=EXCLUDED.dislikes,updated_at=timezone('UTC',now())")
             .bind(entity.to_string()).execute(&mut *tx).await?;
     }
-    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,adapter,captured_position,observed_position,last_contact_at) VALUES($1,$2,'places_outbox_v2',$3,$3,clock_timestamp())")
+    sqlx::query("INSERT INTO migration_sync.capture_sources(stream,generation,adapter,captured_position,observed_position,last_contact_at) VALUES($1,$2,'places_outbox_v3',$3,$3,clock_timestamp())")
         .bind(stream).bind(generation).bind(position).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(SourceInfo {
-        adapter: "places_outbox_v2",
+        adapter: "places_outbox_v3",
         generation,
         position,
         scope,
@@ -320,6 +329,13 @@ pub async fn pump_once(source: &PgPool, target: &PgPool, stream: &str) -> Result
     if let Some(next) = next {
         let position: i64 = next.try_get("position")?;
         ensure!(position == captured + 1, "source capture history has a gap");
+        let size=sqlx::query("SELECT count(*) AS rows, COALESCE(sum(octet_length(payload::text)),0)::bigint AS bytes FROM migration_capture.changes WHERE position=$1")
+            .bind(position).fetch_one(source).await?;
+        ensure!(
+            size.try_get::<i64, _>("rows")? <= 1000
+                && size.try_get::<i64, _>("bytes")? <= 1024 * 1024,
+            "source transaction exceeds bounded capture size"
+        );
         let changes: Vec<Value> = sqlx::query_scalar(
             "SELECT payload FROM migration_capture.changes WHERE position=$1 ORDER BY ordinal LIMIT 1001",
         )
@@ -413,6 +429,32 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
         .fetch_all(source).await?;
     let target_counts: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_array(s.entity_id,c.favorites,c.likes,c.dislikes) FROM unnest($1::text[]) AS s(entity_id) LEFT JOIN explore.place_interaction_counts c USING(entity_id) ORDER BY s.entity_id")
         .bind(info.scope.iter().map(ToString::to_string).collect::<Vec<_>>()).fetch_all(target).await?;
+    let catalogue:Vec<Value>=sqlx::query_scalar("SELECT migration_capture.catalogue_document(p) FROM public.places p JOIN migration_capture.scope s ON s.entity_id=p.id ORDER BY p.id")
+        .fetch_all(source).await?;
+    let mut catalogue_matches = true;
+    let mut target_connection = target.acquire().await?;
+    for document in &catalogue {
+        catalogue_matches &= crate::catalogue::equivalent(
+            &mut target_connection,
+            document["id"]
+                .as_str()
+                .context("catalogue identity missing")?,
+            document,
+        )
+        .await?;
+    }
+    let target_catalogue_count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM explore.place WHERE id=ANY($1)")
+            .bind(
+                info.scope
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>(),
+            )
+            .fetch_one(&mut *target_connection)
+            .await?;
+    catalogue_matches &= target_catalogue_count == catalogue.len() as i64;
+    drop(target_connection);
     let after = source_info(source).await?;
     ensure!(
         after.position == info.position
@@ -440,6 +482,6 @@ pub async fn reconcile(source: &PgPool, target: &PgPool, stream: &str) -> Result
         "target capture contract changed during reconciliation"
     );
     Ok(
-        json!({"stream":stream,"generation":info.generation,"position":info.position,"matches":source_rows==target_rows && source_likes==target_likes && source_counts==target_counts,"rows_match":source_rows==target_rows,"likes_match":source_likes==target_likes,"source_likes":source_likes.len(),"target_likes":target_likes.len(),"counts_match":source_counts==target_counts,"source_rows":source_rows.len(),"target_rows":target_rows.len()}),
+        json!({"stream":stream,"generation":info.generation,"position":info.position,"matches":catalogue_matches && source_rows==target_rows && source_likes==target_likes && source_counts==target_counts,"catalogue_match":catalogue_matches,"rows_match":source_rows==target_rows,"likes_match":source_likes==target_likes,"source_likes":source_likes.len(),"target_likes":target_likes.len(),"counts_match":source_counts==target_counts,"source_rows":source_rows.len(),"target_rows":target_rows.len()}),
     )
 }

@@ -11,9 +11,9 @@ This is the boundary of the current implementation and the reasons broader cover
 | Favorite/like counts | `explore.place_interaction_counts` | Derive favorites, likes and dislikes from accepted facts; never apply source increments a second time. |
 | Source transaction order | `migration_sync` inbox, generations and separate favorite/like versions | Atomically account for all changes. Independent tombstones prevent one relation's deletion from replacing another's history. |
 
-See the [machine-readable scope](../services/migration-sync/pilot-contract.json), [capture](../services/migration-sync/src/capture.rs) and [apply implementation](../services/migration-sync/src/store.rs). Both tables share one snapshot and transaction stream. Installed source scope and persisted target scope must match. World interactions and catalogue synchronization are not included.
+See the [machine-readable scope](../services/migration-sync/pilot-contract.json), [capture](../services/migration-sync/src/capture.rs) and [apply implementation](../services/migration-sync/src/store.rs). Both tables share one snapshot and transaction stream. Installed source scope and persisted target scope must match. Catalogue metadata now shares that boundary through adapter v3. World interactions remain excluded. See [Places catalogue](places-catalogue.md).
 
-The source-local serialization lock also affects writes outside the selected row scope on those two tables. That cost must be measured. Capture covers any normal SQL writer of the scoped facts, but no actual production scheduled-job dataset has yet been validated. An orphan cleanup in dcl-one's mirror is not evidence of an equivalent production job.
+The source-local serialization lock also affects writes outside the selected row scope on the three captured Places tables. That cost must be measured. Capture covers any normal SQL writer of the scoped facts, but no actual production scheduled-job dataset has yet been validated. An orphan cleanup in dcl-one's mirror is not evidence of an equivalent production job.
 
 ## Why mappings are per dataset and writer
 
@@ -21,9 +21,9 @@ A request, internal call, job and operator script may modify the same table. A t
 
 | Area | Feasibility and reason for deferral |
 | --- | --- |
-| Places catalogue and schedules | Relatively direct candidates, but catalogue deletions/dependencies and schedule identity semantics still need a complete mapping and tests. Interaction coverage does not cover catalogue job updates. |
+| Places catalogue and Events schedules | Scoped catalogue and schedule mappings are implemented. Future IDs, worlds, event references and active cleanup remain excluded; see [catalogue](places-catalogue.md) and [schedules](events-schedules.md). |
 | Events and attendance | Deletion can mean cancellation rather than row removal; recurrence and mirror adoption can overwrite ownership. Community events also depend on social authorization and notification production. |
-| Social settings and notification read state | Bounded subsets look plausible. Event identity, global broadcasts, read semantics and privacy need explicit mapping. Copying notification rows does not deliver a notification. |
+| Social settings and notification read state | Three settings fields are implemented for scoped wallets; see [settings](social-settings.md). Provider privacy enforcement and notification read/delivery state remain excluded. |
 | Friendships and communities | Ordered pair/history merges, roles, bans and multi-table invariants make simple reverse mappings unsafe. Ranking is another independent writer. |
 | Worlds permissions/settings/storage | JSON-to-relational conversion, namespace collapse and merged keys require provenance. Membership revocation needs enforcement, not just a copied deletion. Environment values and assets require additional key/storage handling. |
 | Badges and referrals | Evaluator state, merged progress and reward ownership must agree. Some legacy referral state is in Redis and is not captured by PostgreSQL row replication. |
@@ -46,4 +46,4 @@ The [forward batch mappings](../tooling/migration/sources) are a starting point,
 
 ## Findings versus gates
 
-Concrete protocol and mapping behaviors justify restrictions above. Their production frequency, deployed routes, role grants, cloud schedules, retained history and provider guarantees remain unverified. The current implementation has local fault-test evidence for its scoped interactions; it does not demonstrate complete service parity, independent target authorization, real job coverage or safe financial migration.
+Concrete protocol and mapping behaviors justify restrictions above. Their production frequency, deployed routes, role grants, cloud schedules, retained history and provider guarantees remain unverified. The current implementation has local fault-test evidence for its scoped interactions, catalogue, schedules and settings; it does not demonstrate complete service parity, independent target authorization, real job coverage or safe financial migration.
