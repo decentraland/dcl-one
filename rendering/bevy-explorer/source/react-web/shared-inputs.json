@@ -859,6 +859,10 @@
           "kind": "directory"
         },
         {
+          "name": "donate",
+          "kind": "directory"
+        },
+        {
           "name": "loading",
           "kind": "directory"
         },
@@ -1280,6 +1284,15 @@
         },
         {
           "name": "symbols.png",
+          "kind": "regular"
+        }
+      ]
+    },
+    {
+      "path": "library/ui/apps/hud/assets/donate",
+      "entries": [
+        {
+          "name": "tip.png",
           "kind": "regular"
         }
       ]
@@ -5179,6 +5192,10 @@
       "sha256": "6c1d7ae4d8fdf33951ffe4cae923f029863c7f70095995e1aa51658dfaed4241"
     },
     {
+      "path": "library/ui/apps/hud/assets/donate/tip.png",
+      "sha256": "4892de91637563e8335c7b44a3e070e705178c842b70ea3f091c68d188d4eab6"
+    },
+    {
       "path": "library/ui/apps/hud/assets/loading-tips/add-friends.webp",
       "sha256": "8b83dec2200ad54ed79fe3487973891ff7e783f6ec37a8f723dfff00db72fd57"
     },
@@ -6452,11 +6469,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.module.css",
-      "sha256": "6b6c750747a18923e5f37868cfd3243c065fdb46b6d802b02623b15a335f4f3f"
+      "sha256": "24636b673472a8adffb013b49defda0481ca33551dbd4bc0b3e18d0253ec6e4a"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/Minimap.tsx",
-      "sha256": "85fb842f2ab9af28eaf4943bd69d5b77c3e6005ab58a0c126d3c19bddfbd90f0"
+      "sha256": "0bc96bfc0dd71cb8e43675a9dfcc67a34084acf806cb03391a2b3f8804353414"
     },
     {
       "path": "library/ui/apps/hud/features/minimap/MinimapSettings.module.css",
@@ -18421,6 +18438,21 @@
     {
       "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
       "to": "library/explorer-core/features/minimap/minimapPrefs.ts",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/minimap/Minimap.tsx",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
       "kind": "test:runtime"
     },
     {
@@ -31431,6 +31463,21 @@
     {
       "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
       "to": "library/ui/apps/hud/assets/chat/scroll-bottom-solid.png",
+      "kind": "test:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "native:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
+      "kind": "production:asset"
+    },
+    {
+      "from": "rendering/bevy-explorer/source/react-web/vite.config.ts",
+      "to": "library/ui/apps/hud/assets/donate/tip.png",
       "kind": "test:asset"
     },
     {

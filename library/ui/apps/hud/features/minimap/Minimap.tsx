@@ -12,7 +12,8 @@
 // boundary.
 
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, ChevronUp, Gear, ManaMark, Minus, Plus } from '../../design'
+import { ChevronDown, ChevronUp, Gear, Minus, Plus } from '../../design'
+import tipIcon from '../../assets/donate/tip.png'
 import { useDonate } from '../donate/useDonate'
 import { EngineViewport } from '../engine/EngineViewport'
 import { PARCEL_METERS, atlasPx, chunksInRect, isGenesisSatelliteView, parcelTileFor, type Chunk } from '@explorer-core/features/map/atlas'
@@ -255,7 +256,7 @@ export const Minimap = memo(function Minimap({
             aria-label="Tip this scene's creator"
             title="Tip this scene's creator"
           >
-            <ManaMark size={16} network="polygon" />
+            <img className={styles.tipIcon} src={tipIcon} alt="" />
           </button>
         )}
         <button

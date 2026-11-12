@@ -351,8 +351,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   answers in the same shape.
 - **The creator is the scene's deployer.** The places service's `creator_address`, which the tip
   goes to, is the deployer of the place's scene here.
-- **Donate's buttons.** The minimap's is a MANA mark beside the collapse button, and the map's
-  place panel has DONATE under JUMP IN; unity-explorer's art for both is not ported. The fourth
+- **Donate's buttons.** The minimap's uses unity-explorer's tip icon, beside the collapse button;
+  the map's place panel has a DONATE text button under JUMP IN, whose art is not ported. The fourth
   amount choice reads OTHER, and the minimum reads "Tips must be ≥ 1 MANA".
 
 ## Deliberate choices that look like mistakes
