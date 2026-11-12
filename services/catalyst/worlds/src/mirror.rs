@@ -21,11 +21,14 @@
 //!
 //! A read-through fill ([`mirror_one`]) takes the same path with [`Verify`]: it takes each
 //! scene's deployment auth chain from its row of that listing (the chain at most
-//! [`MAX_CHAIN_BYTES`]), and stores nothing until
-//! every scene is signed (ECDSA links only, as the upstream worlds server accepts) by an address
-//! the policy says may have published the world, or (`WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS`,
-//! on the upstream's word) one its `/permissions` lists as a deployer of a world whose owner it
-//! names as this node's NAME authority does; its rows carry that chain and signer. Of the
+//! [`MAX_CHAIN_BYTES`]) and stores only scenes signed (ECDSA links only, as the upstream worlds
+//! server accepts) by an address the policy says may have published the world, or
+//! (`WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS`, on the upstream's word) one its `/permissions`
+//! lists as a deployer of a world whose owner it names as this node's NAME authority does; its
+//! rows carry that chain and signer. The newest scene must pass, or nothing is stored. An older
+//! scene this node definitely refuses (a malformed, empty or over-size chain, or a signer without
+//! that right) is left out; an answer that could not be read, or a signature that does not match
+//! its entity, fails the whole fill. Of the
 //! files it stores only the scene host's (the main code file and `main.crdt`): the rest are read
 //! through, hash-checked, from the same source when first asked for. It also leaves alone a world
 //! this node keeps itself: a `worlds.worlds` row with no `mirror_source` (a local world, scenes or
@@ -938,17 +941,19 @@ async fn retire_beside_local(pool: &PgPool, name: &str) -> Result<u64> {
     Ok(retired)
 }
 
-/// What a read-through fill holds a mirrored world to beyond a pass's hash checks: every scene
-/// signed by an address [`Policy::may_have_published`] allows, every download under the bound
-/// the content read-through shares.
+/// What a read-through fill holds a mirrored world to beyond a pass's hash checks: the newest
+/// scene, and every older scene it keeps, signed by an address [`Policy::may_have_published`]
+/// allows (an older scene it definitely refuses is left out), every download under the bound the
+/// content read-through shares.
 pub struct Verify<'a> {
     pub policy: &'a Policy,
     pub downloads: &'a Downloads,
 }
 
 /// Read-through: one world this node holds no scene of, mirrored now through the single-world
-/// path a pass uses (every file hash-verified, a local publish never overwritten) with every
-/// scene's signature and signer checked before anything is stored. `true` when scenes landed.
+/// path a pass uses (every file hash-verified, a local publish never overwritten) with each
+/// kept scene's signature and signer checked before anything is stored. `true` when scenes
+/// landed.
 pub async fn mirror_one(
     client: &crate::http::Outbound,
     pool: &PgPool,
@@ -1051,10 +1056,11 @@ impl<'a> Signatures<'a> {
     /// owner's signed grant request is not published): it is trusted only under
     /// `WORLDS_READ_THROUGH_TRUST_UPSTREAM_GRANTS`, only for a read-through fill (a local
     /// deployment keeps the policy's own grants), and only when the owner the upstream names is
-    /// the one this node's own NAME authority names. Anything else refuses, an unreachable or
-    /// malformed permissions answer included. `Ok(Err(why))` is a refusal on the answers this
-    /// node has; `Err` means an answer could not be read (an unreachable permissions endpoint or
-    /// NAME authority).
+    /// the one this node's own NAME authority names. `Ok(Err(why))` is a refusal on the answers
+    /// this node has (grants untrusted, a signer off the allow-list, an owner the NAME authority
+    /// definitely does not name). `Err` is a fault that fails the whole fill: a `/permissions`
+    /// answer that is unreachable, not 2xx or unparsable, or a NAME authority that cannot
+    /// answer.
     async fn upstream_grant(
         &self,
         client: &crate::http::Outbound,
@@ -1320,7 +1326,7 @@ async fn mirror_world(
     };
     // `/about` lists the newest scene only; `/scenes` lists them all, under the same `baseUrl`.
     // The listing decides what is retired below, so any doubt about it stops this world's sync.
-    let listed = listed_scenes(client, source, name).await?;
+    let listed = listed_scenes(client, source, name, verify.is_some()).await?;
     if listed.is_empty() {
         return Ok(Outcome::NothingUpstream("upstream world has no scenes"));
     }
@@ -1593,9 +1599,10 @@ async fn mirror_world(
 /// One row of a world's `/scenes` listing, as much of it as a fill reads.
 struct ListedScene {
     id: String,
-    /// The `deploymentAuthChain`; `Null` when its JSON is over [`MAX_CHAIN_BYTES`].
+    /// The `deploymentAuthChain`; `Null` when its JSON is over [`MAX_CHAIN_BYTES`] or the
+    /// listing was read for a pass.
     chain: Value,
-    /// The size of the chain's JSON.
+    /// The size of the chain's JSON (0 for a pass).
     chain_bytes: usize,
     /// The scene's size as the upstream lists it (a string upstream; 0 when absent).
     size: i64,
@@ -1604,10 +1611,12 @@ struct ListedScene {
 /// Every scene `{source}/world/{name}/scenes` lists, newest first by publication (it pages
 /// oldest first; scenes a source wrote together come in entity-id order). Any refusal, a page
 /// without its `scenes`, a repeated id or a count other than the listing's `total` is an error.
+/// Only a fill (`with_chains`) keeps and measures each row's chain; a pass never reads it.
 async fn listed_scenes(
     client: &crate::http::Outbound,
     source: &str,
     name: &str,
+    with_chains: bool,
 ) -> Result<Vec<ListedScene>> {
     let listing = url::Url::parse(&world_url(source, name, "scenes")?)?;
     let mut ids: Vec<ListedScene> = Vec::new();
@@ -1647,8 +1656,11 @@ async fn listed_scenes(
             if ids.iter().any(|listed| listed.id == id) {
                 bail!("{url} lists scene {id} twice");
             }
-            let chain_bytes = serde_json::to_vec(&row["deploymentAuthChain"])?.len();
-            let chain = match chain_bytes <= MAX_CHAIN_BYTES {
+            let chain_bytes = match with_chains {
+                true => serde_json::to_vec(&row["deploymentAuthChain"])?.len(),
+                false => 0,
+            };
+            let chain = match with_chains && chain_bytes <= MAX_CHAIN_BYTES {
                 true => row["deploymentAuthChain"].clone(),
                 false => Value::Null,
             };

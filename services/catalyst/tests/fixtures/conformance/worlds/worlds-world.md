@@ -705,7 +705,7 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
     - Upstream `/about` lists the newest scene only (WW-01); `GET /world/:n/scenes` lists every deployed
       scene, paged oldest first (`scenes-handler.ts` `getScenesHandler`, `worlds-manager.ts` `getWorldScenes`).
     - dcl-one: the mirror reads a world's scene ids from the source's paged `/world/{name}/scenes`
-      (`listed_scenes`, `worlds/src/mirror.rs:1607`) and keeps `/about` for the world configuration and the
+      (`listed_scenes`, `worlds/src/mirror.rs:1615`) and keeps `/about` for the world configuration and the
       content `baseUrl`. The listing decides what is retired, so any doubt stops that world's sync until the
       next pass and retires nothing: a refusal (404 and 405 included), a page without `scenes`, a repeated id,
       a count other than `total`, or a held scene missing from the pages that `?entity_id=` still lists (the
@@ -717,8 +717,11 @@ tree, and orders by name (upstream: group order). `owner` is `null` for worlds w
       is fetched. A signature that does not match its entity, or an authority that cannot answer, still fails
       the whole fill. Pinned by `tests/worlds_mirror.rs:1062`
       `a_world_of_many_scenes_is_mirrored_whole_from_the_paged_listing`, `tests/worlds_read_through.rs:969`
-      `a_world_of_many_scenes_is_filled_whole_on_a_miss_from_its_listing_chains` and `:1022`
-      `an_older_scene_signed_by_one_who_may_not_publish_is_left_out_of_the_fill`; the fakes
+      `a_world_of_many_scenes_is_filled_whole_on_a_miss_from_its_listing_chains`, `:1022`
+      `an_older_scene_signed_by_one_who_may_not_publish_is_left_out_of_the_fill`, `:1067`
+      `older_scenes_with_an_over_size_malformed_or_empty_chain_are_left_out_of_the_fill`, `:1109`
+      `an_older_scene_whose_grant_cannot_be_read_fails_the_whole_fill` and `:1137`
+      `an_older_scene_whose_chain_does_not_sign_it_fails_the_whole_fill`; the fakes
       in `tests/worlds_mirror.rs` and `tests/worlds_read_through.rs` answer `/about` with the newest URN only.
     - Severity: none (closed).
 
