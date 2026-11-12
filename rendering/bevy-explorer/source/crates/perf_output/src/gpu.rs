@@ -62,8 +62,9 @@ use wgpu::{
 };
 
 /// Frames that can be measured at once: a frame holds its slot from the start of its render
-/// schedule until its readback has been read.
-const RING: usize = 4;
+/// schedule until its readback has been read. Also the most frames a measurement is behind the
+/// frame it belongs to while every frame gets a slot.
+pub const RING: usize = 4;
 
 /// The two timestamps of a slot, in bytes.
 const SLOT_BYTES: u64 = 2 * 8;

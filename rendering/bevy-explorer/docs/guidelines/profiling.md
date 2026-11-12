@@ -25,14 +25,20 @@ numbers.
   times (`Time<Real>` deltas, unclamped) and the GPU frame times (`gpu/frame_time`, where the
   adapter has timestamp queries) as a summary each: count, min, mean, p1 to p99, max, and the
   frames over the hiccup threshold with their time sum and their excess over the threshold.
-  `inProgressSample.sampledSeconds` counts up to the next one. The snapshot also carries the
+  `inProgressSample.sampledSeconds` counts up to the next one. The GPU readings of the first four
+  sampled frames after a resume are dropped too: a frame's GPU time is read back frames later,
+  so those can still be the pause's. The snapshot also carries the
   engine memory and its peak during the sample, the scenes' JavaScript heaps summed, the nearby
-  player count, the entity count and, with the profiler on, the top 30 scopes.
+  player count, the entity count and, with the profiler on, the top 30 scopes of the sample (its
+  sampled frames only; the Profiler section's table is untouched).
 - **HUD main thread (web).** The React HUD's cost on the page's main thread over the page's
-  last second: the HUD root's React commits (count and their time; the web HUD is React's
-  profiling build, which reports them) and, where the browser has Long Animation Frame timing
-  (Chromium), the page's frames over 50 ms: their count, the HUD bundle's script time in them and
-  their style and layout time. The commit time is part of the HUD script time, not additional to
+  last second: the HUD root's React commits (count and their time) and, where the browser has
+  Long Animation Frame timing (Chromium), the page's frames over 50 ms: their count, the HUD
+  bundle's script time in them and their style and layout time. The commits are reported only by
+  a HUD built with `HUD_REACT_PROFILING=1` in the environment (`react-web`, `npm run build`, or
+  `make web` in `apps/bevy-explorer`, which passes it through), which is React's
+  profiling build, slower on every commit than the production build the players load; otherwise
+  their two cells are `-`. The commit time is part of the HUD script time, not additional to
   it. `-` on native and before the first window. A snapshot carries the windows of its sampled
   time summed (`snapshot.hudMainThreadCost`, `null` when none arrived).
 - **Hiccup threshold.** The larger of 50 ms and two target frame times: 50 ms at 60 FPS and
@@ -48,10 +54,13 @@ numbers.
   `perf/scene_runtime_loop_ms`, `perf/frame_limiter_sleep_ms`, `perf/render_world_cpu_ms`,
   `perf/swapchain_present_wait_ms` and `gpu/frame_time`.
 - **Bottleneck.** Which stage bounds the frame rate, from the smoothed values with a 20 %
-  margin: `frame_rate_limiter` when the limiter sleeps a fifth of the frame or more;
+  margin: `frame_rate_limiter` when the frame's pacing wait is a fifth of the frame or more (the
+  limiter's sleep natively; on the web, where the scene loop never sleeps, the render worker's
+  wait for the browser's next animation frame, `pipelined/wait_frame`);
   `swapchain_present_wait` when the swapchain wait takes a fifth of the frame or more (vsync);
-  otherwise `main_thread_cpu` or `gpu`, whichever of CPU busy time (frame minus sleep) and GPU
-  time is the longer by the margin, or `cpu_and_gpu_balanced` when they are within it. Null until a GPU time exists.
+  otherwise `main_thread_cpu` or `gpu`, whichever of CPU busy time (frame minus the pacing wait)
+  and GPU time is the longer by the margin, or `cpu_and_gpu_balanced` when they are within it.
+  Null until a GPU time exists.
 - **System.** On Linux and Windows, Bevy's system information: system and process CPU usage, the OS, the CPU,
   its cores and the RAM.
 
@@ -65,25 +74,33 @@ adapter supports them. The GPU frame time of the whole frame is the explorer's o
 
 ### Profiler (`/profile_top [count] [sort]`, `/profile_enable on|off|reset`)
 
-The in-app scope profiler. Every build carries Bevy's tracing spans (the `trace` feature is on):
-one per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule
-run and per render-graph node, plus the explorer's own in-process spans (`av-thread`). Scene JavaScript runs in
-its own process on native (`dcl_deno_ipc`), so its `js startup` and `js update` spans are not
-recorded here. A `tracing` layer in every build times them, but records
-nothing until the table is enabled: **Enable profiler** in the section, `/profile_enable on` in
-the console, or the benchmark autopilot for its measured phase. Enabled, it costs two clock reads
-per span and a map update per exit, tens of microseconds a frame on native.
+The in-app scope profiler. A `profiler` build (the cargo feature, in `default`, so every native
+build; the web build is without it) carries Bevy's tracing spans (Bevy's `trace` feature): one
+per system run (named after the system, e.g. `scene_runner::run_scene_loop`), per schedule run
+and per render-graph node, plus the explorer's own in-process spans (`av-thread`), which every
+build has. Scene JavaScript runs in its own process on native (`dcl_deno_ipc`), so its
+`js startup` and `js update` spans are not recorded here. A `tracing` layer in every build times
+the spans there are, but records nothing until the table is enabled: **Enable profiler** in the
+section, `/profile_enable on` in the console, or the benchmark autopilot for its measured phase.
+Enabled, it costs two clock reads per span and a map update per exit, tens of microseconds a
+frame on native. `/profile_top` reports `profilerBuild`; without the feature the empty table says
+so. The web build leaves the feature off because the engine's tracing layer there
+(`tracing_wasm`) marks every span on the page's performance timeline, which nothing clears.
 
 A row is one scope since the last reset: its kind (`ecs_system`, `schedule`, `render_graph_node`,
 `bevy_internal`, `explorer_span`), call count, self time, inclusive time, longest call and the
-smoothed self time per frame (an exponential moving average over 60 frames). Self time excludes
+smoothed self time per frame (an exponential moving average over 60 frames). A snapshot's top
+scopes are kept apart from this table, so neither a snapshot nor the sampler's pauses touch it.
+Self time excludes
 the child scopes entered on the same thread: a schedule run on the main thread whose systems run
 on the task pool keeps their time, since the systems are not its children on that thread. Sort by
 `self-time` (default), `inclusive-time`, `max-single-call` or `call-count`.
 
-The section also shows the allocations per frame, count and bytes, from the counting allocator
-the binaries wrap theirs in (`perf/allocation_count_per_frame`, `perf/allocated_bytes_per_frame`): the
-first place to look for per-frame churn.
+The section also shows the allocations per frame, count and bytes, from the counting allocator a
+`profiler` build wraps its allocator in (`perf/allocation_count_per_frame`,
+`perf/allocated_bytes_per_frame`; a reallocation counts once, with the bytes it grew by): the
+first place to look for per-frame churn. The wrapper costs two shared atomic adds per
+allocation on every thread, which a build without the feature does not pay.
 
 ### Memory and limits (`/debug_memory`)
 

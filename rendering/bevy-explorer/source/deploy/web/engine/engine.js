@@ -516,9 +516,11 @@ export function start(options = {}) {
   setInterval(() => {
     const cost = window.__bevyTakeHudMainThreadCost?.();
     if (!cost) return;
+    const commits = cost.reactCommits;
     const frames = cost.longAnimationFrames;
     engine_set_hud_main_thread_cost(
-      cost.coveredSeconds, cost.reactCommitCount, cost.reactCommitTimeSumMs,
+      cost.coveredSeconds,
+      commits !== null, commits?.commitCount ?? 0, commits?.commitTimeSumMs ?? 0,
       frames !== null, frames?.frameCount ?? 0, frames?.hudScriptTimeSumMs ?? 0, frames?.styleAndLayoutTimeSumMs ?? 0,
     );
   }, 1000);

@@ -24,14 +24,18 @@ use perf_output::{
 };
 use system_ui::crash_report;
 use webgpu_build::{
-    perf::{allocation_counter::CountingAllocator, profiled_scopes},
-    DecentralandApp, DecentralandAppConfig, DecentralandArguments, CONFIG_READ_ATTEMPTS,
-    CONFIG_READ_RETRY_PAUSE,
+    perf::profiled_scopes, DecentralandApp, DecentralandAppConfig, DecentralandArguments,
+    CONFIG_READ_ATTEMPTS, CONFIG_READ_RETRY_PAUSE,
 };
 
-// mimalloc, wrapped to count every allocation and its bytes
+// mimalloc; with the profiler, wrapped to count every allocation and its bytes
+#[cfg(feature = "profiler")]
 #[global_allocator]
-static GLOBAL: CountingAllocator<MiMalloc> = CountingAllocator(MiMalloc);
+static GLOBAL: webgpu_build::perf::allocation_counter::CountingAllocator<MiMalloc> =
+    webgpu_build::perf::allocation_counter::CountingAllocator(MiMalloc);
+#[cfg(not(feature = "profiler"))]
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 static SESSION_LOG: OnceLock<String> = OnceLock::new();
 /// The benchmark log (`--log-file`). The command line is parsed after the logger starts, so the
 /// layer is installed with it and holds what is logged until [`open_benchmark_log`] knows

@@ -3,8 +3,8 @@
 //!
 //! While `Measuring`, every frame's `Time<Real>` delta and every new GPU frame time are kept, so
 //! the lines summarise the whole measured phase, not one sample. The profiler is enabled for the
-//! phase; the top scopes are the sum of every snapshot's top rows and what the table holds at the
-//! end.
+//! phase; the top scopes are the sum of every snapshot's top rows and those of the sample under
+//! way at the end. The lines are logged in `Last` of the frame the phase turns `Ending`.
 //!
 //! Line 1, `key=value` pairs in this order:
 //! `cpu_p99_ms cpu_frames_over_hiccup_threshold_count cpu_hiccup_threshold_ms gpu_p99_ms
@@ -115,7 +115,7 @@ pub fn accumulate_benchmark_measured_phase_system(
             }
             add_scope_self_times(
                 run,
-                &profiled_scopes.top_scope_summaries(
+                &profiled_scopes.take_sample_top_scope_summaries(
                     SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
                     ProfiledScopeSortMetric::SelfTime,
                 ),
@@ -222,5 +222,154 @@ mod tests {
             top_scopes_line,
             "top_scopes=x  y  z w:9.00,a::b:1.50".replace("a::b", "a  b")
         );
+    }
+}
+
+// This test signs its fixture account with the native-only local guest wallet.
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod log_order_tests {
+    use std::{cell::RefCell, sync::Once, time::Duration};
+
+    use bevy::{
+        diagnostic::{DiagnosticsPlugin, FrameCountPlugin},
+        ecs::schedule::ExecutorKind,
+        log::{
+            tracing::{
+                field::{Field, Visit},
+                subscriber::set_global_default,
+                Event, Subscriber,
+            },
+            tracing_subscriber::{layer::Context, prelude::*, registry, Layer},
+        },
+        time::{TimePlugin, TimeUpdateStrategy},
+    };
+    use common::{
+        autopilot::{Autopilot, AutopilotPhase, EXIT_MARKER, LOG_TARGET, MEASURE_SECONDS},
+        memory::MemoryStatus,
+        structs::{AppConfig, CurrentRealm, OutOfWorld, PrimaryUser},
+    };
+    use wallet::Wallet;
+
+    use super::*;
+    use crate::{autopilot::RunControlPlugin, perf::PerformanceMonitoringPlugin};
+
+    thread_local! {
+        /// The target and message of every event logged on this thread while capturing.
+        static CAPTURED_LOG_LINES: RefCell<Option<Vec<(String, String)>>> = const { RefCell::new(None) };
+    }
+
+    /// The process-wide subscriber: a thread-local default would miss a callsite another test's
+    /// thread, with no subscriber, registered first (tracing caches the callsite's interest from
+    /// the registering thread's default when one dispatcher exists).
+    struct CapturingLayer;
+
+    #[derive(Default)]
+    struct MessageVisitor(String);
+
+    impl Visit for MessageVisitor {
+        fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+            if field.name() == "message" {
+                self.0 = format!("{value:?}");
+            }
+        }
+    }
+
+    impl<S: Subscriber> Layer<S> for CapturingLayer {
+        fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+            CAPTURED_LOG_LINES.with(|lines| {
+                if let Some(lines) = lines.borrow_mut().as_mut() {
+                    let mut visitor = MessageVisitor::default();
+                    event.record(&mut visitor);
+                    lines.push((event.metadata().target().to_owned(), visitor.0));
+                }
+            });
+        }
+    }
+
+    /// The lines logged on this thread while `f` runs.
+    fn capture_log_lines(f: impl FnOnce()) -> Vec<(String, String)> {
+        static INSTALL: Once = Once::new();
+        INSTALL.call_once(|| {
+            set_global_default(registry().with(CapturingLayer))
+                .expect("no other test installs a global subscriber");
+        });
+        CAPTURED_LOG_LINES.with(|lines| *lines.borrow_mut() = Some(Vec::new()));
+        f();
+        CAPTURED_LOG_LINES.with(|lines| lines.borrow_mut().take().unwrap_or_default())
+    }
+
+    /// The summary lines are logged in the frame the measured phase ends, before the exit marker
+    /// of the next frame.
+    #[test]
+    fn the_summary_lines_precede_the_exit_marker() {
+        // this app records into the process-wide profiler state
+        let _shared = crate::perf::profiled_scopes::SHARED_PROFILER_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let mut app = App::new();
+        app.add_plugins((
+            TimePlugin,
+            FrameCountPlugin,
+            DiagnosticsPlugin,
+            crate::world_state::ArrivalsPlugin,
+            RunControlPlugin,
+            PerformanceMonitoringPlugin,
+        ))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs(1)))
+        .insert_resource(Autopilot { measure: true })
+        .init_resource::<AutopilotPhase>()
+        .init_resource::<Wallet>()
+        .init_resource::<CurrentRealm>()
+        .init_resource::<MemoryStatus>()
+        .insert_resource(AppConfig::default());
+        // every system on this thread, whose captured lines the test reads
+        for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
+            schedule.set_executor_kind(ExecutorKind::SingleThreaded);
+        }
+        let player = app
+            .world_mut()
+            .spawn((PrimaryUser::default(), OutOfWorld))
+            .id();
+        app.update();
+        let root = wallet::local_guest::new_root_key();
+        let (ephemeral, auth) = wallet::local_guest::sign_identity(&root, 0).unwrap();
+        app.world_mut()
+            .resource_mut::<Wallet>()
+            .finalize(root.address(), ephemeral, auth, true);
+        app.world_mut().resource_mut::<CurrentRealm>().connected = true;
+        app.world_mut().entity_mut(player).remove::<OutOfWorld>();
+
+        let lines = capture_log_lines(|| {
+            // arriving, the measured seconds, the `Ending` frame and the exit frame
+            for _ in 0..(MEASURE_SECONDS as u32 + 4) {
+                app.update();
+            }
+        });
+        assert!(
+            matches!(
+                *app.world().resource::<AutopilotPhase>(),
+                AutopilotPhase::Ending { exit_code: 0 }
+            ),
+            "{:?}",
+            *app.world().resource::<AutopilotPhase>()
+        );
+
+        let summary_indices: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, (target, _))| target == PERF_SUMMARY_LOG_TARGET)
+            .map(|(index, _)| index)
+            .collect();
+        let marker_index = lines
+            .iter()
+            .position(|(target, message)| target == LOG_TARGET && message.contains(EXIT_MARKER))
+            .unwrap_or_else(|| panic!("the exit marker is logged: {lines:?}"));
+        assert_eq!(summary_indices.len(), 2, "{lines:?}");
+        assert!(
+            summary_indices.iter().all(|&index| index < marker_index),
+            "{lines:?}"
+        );
+        assert!(lines[summary_indices[0]].1.starts_with("cpu_p99_ms="));
+        assert!(lines[summary_indices[1]].1.starts_with("top_scopes="));
     }
 }

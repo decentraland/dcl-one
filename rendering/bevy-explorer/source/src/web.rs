@@ -9,7 +9,9 @@ use bevy::{
 };
 use bevy_console::ConsoleConfiguration;
 use common::{
-    perf::{HudMainThreadCostDataPoint, LongAnimationFrameSums, SamplingPausedReason},
+    perf::{
+        HudMainThreadCostDataPoint, LongAnimationFrameSums, ReactCommitSums, SamplingPausedReason,
+    },
     rpc::RpcResultSender,
     structs::{
         AppConfig, CurrentRealm, EditorMode, PreviewMode, PrimaryUser, SessionGraphics,
@@ -65,10 +67,13 @@ pub fn engine_set_page_focus(has_focus: bool) {
 static HUD_MAIN_THREAD_COST_WINDOW: Mutex<Option<HudMainThreadCostDataPoint>> = Mutex::new(None);
 
 /// Stores the page's HUD cost window; a window arriving while the engine holds the lock is
-/// dropped (the page thread must not block).
+/// dropped (the page thread must not block). With `react_commits_reported` false, the window
+/// holds no React commits.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn engine_set_hud_main_thread_cost(
     covered_seconds: f32,
+    react_commits_reported: bool,
     react_commit_count: u32,
     react_commit_time_sum_ms: f32,
     long_animation_frames_supported: bool,
@@ -78,8 +83,10 @@ pub fn engine_set_hud_main_thread_cost(
 ) {
     let window = HudMainThreadCostDataPoint {
         covered_seconds,
-        react_commit_count,
-        react_commit_time_sum_ms,
+        react_commits: react_commits_reported.then_some(ReactCommitSums {
+            commit_count: react_commit_count,
+            commit_time_sum_ms: react_commit_time_sum_ms,
+        }),
         long_animation_frames: long_animation_frames_supported.then_some(LongAnimationFrameSums {
             frame_count: long_animation_frame_count,
             hud_script_time_sum_ms,

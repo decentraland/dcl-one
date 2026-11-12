@@ -23,12 +23,16 @@ required-features = ["headless"]
 # - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
+default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote", "profiler"]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
 gen-tests = []
-tracy = ["bevy/trace_tracy"]
+# The in-app profiler's inputs: Bevy's `trace` spans around every system, schedule and
+# render-graph node (`src/perf/profiled_scopes.rs`) and the counting allocator
+# (`src/perf/allocation_counter.rs`). In every native build; the web build leaves it off.
+profiler = ["bevy/trace"]
+tracy = ["profiler", "bevy/trace_tracy"]
 inspect = ["dcl_deno/inspect", "system_ui/inspect"]
 hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit"]
@@ -167,8 +171,6 @@ bevy = { version = "0.16.1", default-features = false, features = [
   "bevy_state",
   "pbr_light_textures",
   "reduce_image_sizes",
-  # the scope profiler's spans (src/perf/profiled_scopes.rs), in every build
-  "trace",
 ] }
 # leaf bevy crates for dcl_component, which has to build without the engine (system_api_types TS export)
 bevy_math = { version = "0.16.1", default-features = false, features = ["std"] }

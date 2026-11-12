@@ -1,6 +1,7 @@
 //! Allocations per frame: a `GlobalAlloc` wrapper that counts every allocation and its bytes,
 //! read once a frame into the `perf/allocation_count_per_frame` and `perf/allocated_bytes_per_frame`
-//! diagnostics.
+//! diagnostics. A reallocation counts once, with the bytes it grew by. The wrapper costs two
+//! shared atomic adds per allocation on every thread.
 
 use std::{
     alloc::{GlobalAlloc, Layout},
@@ -37,7 +38,7 @@ unsafe impl<A: GlobalAlloc> GlobalAlloc for CountingAllocator<A> {
     }
 
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        record_allocation(new_size);
+        record_allocation(new_size.saturating_sub(layout.size()));
         self.0.realloc(ptr, layout, new_size)
     }
 }

@@ -33,10 +33,19 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it('sums the React commits and reports the span since the last take', () => {
+    installHudMainThreadCostMeter(HUD_PREFIX, true)
+    discardHudMainThreadCostWindow(1000)
     commit(1.5)
     commit(2)
-    expect(takeHudMainThreadCostWindow(2000)).toMatchObject({ coveredSeconds: 1, reactCommitCount: 2, reactCommitTimeSumMs: 3.5 })
-    expect(takeHudMainThreadCostWindow(2500)).toMatchObject({ coveredSeconds: 0.5, reactCommitCount: 0, reactCommitTimeSumMs: 0 })
+    expect(takeHudMainThreadCostWindow(2000)).toMatchObject({ coveredSeconds: 1, reactCommits: { commitCount: 2, commitTimeSumMs: 3.5 } })
+    expect(takeHudMainThreadCostWindow(2500)).toMatchObject({ coveredSeconds: 0.5, reactCommits: { commitCount: 0, commitTimeSumMs: 0 } })
+  })
+
+  it('reports no React commits unless the build is the profiling build', () => {
+    installHudMainThreadCostMeter(HUD_PREFIX, false)
+    discardHudMainThreadCostWindow(1000)
+    commit(1.5)
+    expect(takeHudMainThreadCostWindow(2000)).toMatchObject({ coveredSeconds: 1, reactCommits: null })
   })
 
   it('splits the observed long animation frames into the HUD script time and the style and layout time', () => {
@@ -55,9 +64,10 @@ describe('the HUD main-thread cost meter (lib/hudMainThreadCost.ts)', () => {
   })
 
   it('discards what accumulated and restarts the span', () => {
+    installHudMainThreadCostMeter(HUD_PREFIX, true)
     commit(5)
     discardHudMainThreadCostWindow(4000)
-    expect(takeHudMainThreadCostWindow(4250)).toMatchObject({ coveredSeconds: 0.25, reactCommitCount: 0, reactCommitTimeSumMs: 0 })
+    expect(takeHudMainThreadCostWindow(4250)).toMatchObject({ coveredSeconds: 0.25, reactCommits: { commitCount: 0, commitTimeSumMs: 0 } })
   })
 
   it('installs the page hooks without the observer where the browser has no long animation frames', () => {

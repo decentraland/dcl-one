@@ -3,7 +3,9 @@
 //! Frames are sampled while the player is in world, the loading screen is hidden and the window
 //! is focused (`SamplingStatus::Sampling`). A sample collects `Time<Real>` frame deltas and GPU
 //! frame times for [`SAMPLE_DURATION_SECONDS`] of sampled time, then becomes a
-//! [`PerformanceSnapshot`]: the latest is a resource, and every one is sent as an event.
+//! [`PerformanceSnapshot`]: the latest is a resource, and every one is sent as an event. The
+//! frame sampling resumed on is left out, and so are the GPU readings of the next
+//! [`GPU_READINGS_SKIPPED_AFTER_RESUME`] frames, which can still be the pause's.
 
 use bevy::{
     diagnostic::{Diagnostic, DiagnosticsStore, EntityCountDiagnosticsPlugin},
@@ -21,10 +23,16 @@ use common::{
     structs::{AppConfig, CurrentRealm, OutOfWorld, PrimaryUser, SessionGraphics, WorldHold},
 };
 use comms::global_crdt::ForeignPlayer;
+use perf_output::gpu::RING as GPU_FRAME_TIME_RING;
 use scene_runner::renderer_context::RendererSceneContext;
 use wallet::Wallet;
 
 use super::profiled_scopes::{ProfiledScopeSortMetric, ProfiledScopesTable};
+
+/// Sampled frames after a resume whose GPU readings are left out: a frame's GPU time is read
+/// back up to [`GPU_FRAME_TIME_RING`] frames later, so a reading in these frames can belong to
+/// the pause.
+const GPU_READINGS_SKIPPED_AFTER_RESUME: u32 = GPU_FRAME_TIME_RING as u32;
 
 /// The frame times of the sample being accumulated, and the memory peak seen during it.
 #[derive(Resource)]
@@ -33,6 +41,8 @@ pub struct InProgressSampleMeasurements {
     gpu_frame_times_ms: Vec<f32>,
     pub used_peak_bytes_in_sample: u64,
     last_gpu_frame_time_measured_at: Option<Instant>,
+    /// Sampled frames since sampling resumed, the resumed frame itself excluded.
+    sampled_frames_since_resume: u32,
     /// The HUD cost windows that arrived while sampling, summed.
     #[cfg(target_arch = "wasm32")]
     hud_main_thread_cost_sum: Option<common::perf::HudMainThreadCostDataPoint>,
@@ -47,6 +57,7 @@ impl InProgressSampleMeasurements {
             gpu_frame_times_ms: Vec::new(),
             used_peak_bytes_in_sample: 0,
             last_gpu_frame_time_measured_at: None,
+            sampled_frames_since_resume: 0,
             #[cfg(target_arch = "wasm32")]
             hud_main_thread_cost_sum: None,
         }
@@ -161,14 +172,22 @@ pub fn sample_frame_times_system(
         &mut frame_times.last_gpu_frame_time_measured_at,
     );
     // `is_changed` on the frame the status was written: the transition into `Sampling`
-    if !status.is_sampling() || status.is_changed() {
+    let resumed = status.is_sampling() && status.is_changed();
+    if resumed {
+        frame_times.sampled_frames_since_resume = 0;
+    }
+    if !status.is_sampling() || resumed {
         return;
     }
+    frame_times.sampled_frames_since_resume =
+        frame_times.sampled_frames_since_resume.saturating_add(1);
     frame_times
         .cpu_frame_times_ms
         .push(time.delta_secs_f64() as f32 * 1000.0);
     if let Some(gpu_ms) = new_gpu_ms {
-        frame_times.gpu_frame_times_ms.push(gpu_ms);
+        if frame_times.sampled_frames_since_resume > GPU_READINGS_SKIPPED_AFTER_RESUME {
+            frame_times.gpu_frame_times_ms.push(gpu_ms);
+        }
     }
     // `is_changed` on the frame a window arrived
     #[cfg(target_arch = "wasm32")]
@@ -213,12 +232,10 @@ pub fn sample_frame_times_system(
         entity_count: latest_entity_count(&diagnostics).unwrap_or(0),
         target_fps,
         top_profiled_scope_summaries: profiled_scopes.recording_enabled().then(|| {
-            let top = profiled_scopes.top_scope_summaries(
+            profiled_scopes.take_sample_top_scope_summaries(
                 SNAPSHOT_TOP_PROFILED_SCOPE_COUNT,
                 ProfiledScopeSortMetric::SelfTime,
-            );
-            profiled_scopes.reset();
-            top
+            )
         }),
         #[cfg(target_arch = "wasm32")]
         hud_main_thread_cost: frame_times.hud_main_thread_cost_sum,

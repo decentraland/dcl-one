@@ -171,13 +171,20 @@ pub struct JsHeapDataPoint {
 pub struct HudMainThreadCostDataPoint {
     /// Page seconds the readings cover.
     pub covered_seconds: f32,
-    /// React commits of the HUD root.
-    pub react_commit_count: u32,
-    /// Sum of the commits' `actualDuration`. Part of the long frames' HUD script time, not
-    /// additional to it.
-    pub react_commit_time_sum_ms: f32,
+    /// `None` when the HUD reported no commits (not React's profiling build).
+    pub react_commits: Option<ReactCommitSums>,
     /// `None` when the browser has no Long Animation Frame timing.
     pub long_animation_frames: Option<LongAnimationFrameSums>,
+}
+
+/// Sums over the HUD root's React commits.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReactCommitSums {
+    pub commit_count: u32,
+    /// Sum of the commits' `actualDuration`. Part of the long frames' HUD script time, not
+    /// additional to it.
+    pub commit_time_sum_ms: f32,
 }
 
 /// Sums over the page's long animation frames (over 50 ms each).
@@ -193,11 +200,17 @@ pub struct LongAnimationFrameSums {
 }
 
 impl HudMainThreadCostDataPoint {
-    /// Field-wise sum; `long_animation_frames` is `None` when either side's is.
+    /// Field-wise sum; `react_commits` and `long_animation_frames` are `None` when either
+    /// side's is.
     pub fn add(&mut self, other: &HudMainThreadCostDataPoint) {
         self.covered_seconds += other.covered_seconds;
-        self.react_commit_count += other.react_commit_count;
-        self.react_commit_time_sum_ms += other.react_commit_time_sum_ms;
+        self.react_commits = match (self.react_commits, other.react_commits) {
+            (Some(mine), Some(theirs)) => Some(ReactCommitSums {
+                commit_count: mine.commit_count + theirs.commit_count,
+                commit_time_sum_ms: mine.commit_time_sum_ms + theirs.commit_time_sum_ms,
+            }),
+            _ => None,
+        };
         self.long_animation_frames = match (self.long_animation_frames, other.long_animation_frames)
         {
             (Some(mine), Some(theirs)) => Some(LongAnimationFrameSums {
@@ -273,7 +286,8 @@ pub enum FrameBottleneck {
     MainThreadCpu,
     Gpu,
     SwapchainPresentWait,
-    /// The frame limiter's sleep: the frame-rate cap holds the frame.
+    /// The frame-rate cap holds the frame: the frame limiter's sleep natively, the wait for the
+    /// browser's next animation frame on the web.
     FrameRateLimiter,
     /// CPU busy time and GPU time within 20 % of each other.
     CpuAndGpuBalanced,
@@ -284,20 +298,22 @@ const BOTTLENECK_MIN_RATIO: f32 = 1.2;
 /// A wait that takes this share of the frame bounds it.
 const BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME: f32 = 0.2;
 
-/// Compares CPU busy time (whole frame minus sleep), GPU time and present wait with a 20 %
-/// margin. A frame-limiter sleep or a present wait of a fifth of the frame or more bounds the
-/// frame (`FrameRateLimiter` for the limiter, `SwapchainPresentWait` for vsync); otherwise the longer of CPU busy
-/// and GPU time does, or `CpuAndGpuBalanced` when they are within the margin. `None` without a GPU time.
+/// Compares CPU busy time (whole frame minus the pacing wait), GPU time and present wait with a
+/// 20 % margin. `frame_pacing_wait_ms` is the time the frame-rate cap held the frame: the frame
+/// limiter's sleep natively, the wait for the next animation frame on the web. That wait or a
+/// present wait of a fifth of the frame or more bounds the frame (`FrameRateLimiter`,
+/// `SwapchainPresentWait` for vsync); otherwise the longer of CPU busy and GPU time does, or
+/// `CpuAndGpuBalanced` when they are within the margin. `None` without a GPU time.
 pub fn classify_frame_bottleneck(
     whole_frame_wall_ms: f32,
-    frame_limiter_sleep_ms: f32,
+    frame_pacing_wait_ms: f32,
     gpu_frame_time_ms: Option<f32>,
     swapchain_present_wait_ms: Option<f32>,
 ) -> Option<FrameBottleneck> {
     if whole_frame_wall_ms <= 0.0 {
         return None;
     }
-    if frame_limiter_sleep_ms >= BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME * whole_frame_wall_ms {
+    if frame_pacing_wait_ms >= BOTTLENECK_MIN_WAIT_SHARE_OF_FRAME * whole_frame_wall_ms {
         return Some(FrameBottleneck::FrameRateLimiter);
     }
     if swapchain_present_wait_ms
@@ -306,7 +322,7 @@ pub fn classify_frame_bottleneck(
         return Some(FrameBottleneck::SwapchainPresentWait);
     }
     let gpu = gpu_frame_time_ms?;
-    let cpu_busy = (whole_frame_wall_ms - frame_limiter_sleep_ms).max(0.0);
+    let cpu_busy = (whole_frame_wall_ms - frame_pacing_wait_ms).max(0.0);
     Some(if gpu > cpu_busy * BOTTLENECK_MIN_RATIO {
         FrameBottleneck::Gpu
     } else if cpu_busy > gpu * BOTTLENECK_MIN_RATIO {
@@ -455,28 +471,39 @@ mod tests {
                 style_and_layout_time_sum_ms,
             }
         };
-        let window = |react_commit_count, long_animation_frames| HudMainThreadCostDataPoint {
+        let commits = |commit_count| ReactCommitSums {
+            commit_count,
+            commit_time_sum_ms: 2.5,
+        };
+        let window = |react_commits, long_animation_frames| HudMainThreadCostDataPoint {
             covered_seconds: 1.0,
-            react_commit_count,
-            react_commit_time_sum_ms: 2.5,
+            react_commits,
             long_animation_frames,
         };
-        let mut sum = window(3, Some(frames(1, 60.0, 10.0)));
-        sum.add(&window(4, Some(frames(2, 30.0, 5.0))));
+        let mut sum = window(Some(commits(3)), Some(frames(1, 60.0, 10.0)));
+        sum.add(&window(Some(commits(4)), Some(frames(2, 30.0, 5.0))));
         assert_eq!(
             sum,
             HudMainThreadCostDataPoint {
                 covered_seconds: 2.0,
-                react_commit_count: 7,
-                react_commit_time_sum_ms: 5.0,
+                react_commits: Some(ReactCommitSums {
+                    commit_count: 7,
+                    commit_time_sum_ms: 5.0,
+                }),
                 long_animation_frames: Some(frames(3, 90.0, 15.0)),
             }
         );
-        sum.add(&window(1, None));
-        assert_eq!(sum.react_commit_count, 8);
+        sum.add(&window(Some(commits(1)), None));
+        assert_eq!(
+            sum.react_commits.map(|commits| commits.commit_count),
+            Some(8)
+        );
         assert_eq!(sum.long_animation_frames, None);
-        sum.add(&window(1, Some(frames(1, 1.0, 1.0))));
+        sum.add(&window(None, Some(frames(1, 1.0, 1.0))));
+        assert_eq!(sum.react_commits, None);
         assert_eq!(sum.long_animation_frames, None);
+        sum.add(&window(Some(commits(1)), Some(frames(1, 1.0, 1.0))));
+        assert_eq!(sum.react_commits, None);
     }
 
     #[test]

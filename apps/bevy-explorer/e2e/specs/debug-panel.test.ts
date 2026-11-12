@@ -84,12 +84,21 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
       timeoutMs: 10_000, what: 'the profiler to report itself enabled'
     })
-    const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
-      (reading) => reading.enabled && reading.scopeSummaries.length === 5,
-      { timeoutMs: 10_000, what: 'five profiled scopes' })
-    for (const row of top.scopeSummaries) {
-      assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
-      assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+    // Bevy's spans exist only in a `profiler` build (every native build; the web build is without)
+    const enabled = await until(() => explorer.json<ProfileTop>('/profile_top 5'), (reading) => reading.enabled,
+      { timeoutMs: 10_000, what: 'the profiler to report itself enabled' })
+    if (enabled.profilerBuild) {
+      const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
+        (reading) => reading.scopeSummaries.length === 5,
+        { timeoutMs: 10_000, what: 'five profiled scopes' })
+      for (const row of top.scopeSummaries) {
+        assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
+        assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
+      }
+    } else {
+      assert.equal(explorer.console.kind, 'web', 'only the web build is without the profiler feature')
+      for (const row of enabled.scopeSummaries) assert.equal(row.scopeKind, 'explorer_span', JSON.stringify(row))
+      if (enabled.scopeSummaries.length === 0) assert.match(String(enabled.unavailable.scopeSummary), /no Bevy spans/)
     }
     await explorer.hud.click(button('Disable profiler'))
     await explorer.hud.wait(button('Enable profiler'))
@@ -116,6 +125,8 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
 
 type ProfileTop = {
   enabled: boolean
+  /** The build has Bevy's spans and the allocation counter (the `profiler` cargo feature). */
+  profilerBuild: boolean
   scopeSummaries: { scopeName: string; scopeKind: string; callCount: number; selfTimeMs: number; inclusiveTimeMs: number }[]
   unavailable: Record<string, string>
 }
@@ -144,10 +155,14 @@ scenario('the performance sampler samples in world and scales the hiccup thresho
     assert.equal(state.hudMainThreadCost, null)
     assert.equal(state.unavailable.hudMainThreadCost, '-')
   } else {
+    // React commits (the first two cells) only from a HUD built with HUD_REACT_PROFILING=1
     const withHud = await until(() => explorer.json<PerformanceState>('/performance_state'),
-      (reading) => (reading.hudMainThreadCost?.[0] ?? 0) > 0,
-      { timeoutMs: 10_000, what: 'a HUD main-thread cost window with React commits' })
+      (reading) => reading.hudMainThreadCost != null,
+      { timeoutMs: 10_000, what: 'a HUD main-thread cost window' })
     assert.equal(withHud.hudMainThreadCost!.length, 5, JSON.stringify(withHud.hudMainThreadCost))
+    const [commitCount, commitMs] = withHud.hudMainThreadCost!
+    assert.equal(commitCount == null, commitMs == null, JSON.stringify(withHud.hudMainThreadCost))
+    if (commitCount != null) assert.ok(commitCount >= 0 && commitMs! >= 0, JSON.stringify(withHud.hudMainThreadCost))
   }
   if (state.cpuFrameTimes == null) assert.match(String(state.unavailable.cpuFrameTimes), /sampled time/)
   const before = await explorer.json<{ overrideFps: number | null }>('/performance_state')

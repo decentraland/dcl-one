@@ -8,7 +8,11 @@
 //! - [`performance_issue_log`]: the warn-level signal for a long frame or a slow sample;
 //! - [`benchmark_summary`]: the autopilot run's `perf_summary` log lines;
 //! - [`allocation_counter`]: allocations per frame.
+//!
+//! Bevy's spans and the allocation counter exist only under the `profiler` cargo feature (every
+//! native build); the rest measures in every build.
 
+#[cfg(feature = "profiler")]
 pub mod allocation_counter;
 pub mod benchmark_summary;
 pub mod frame_time_breakdown;
@@ -73,7 +77,6 @@ impl Plugin for PerformanceMonitoringPlugin {
                 (
                     in_progress_sample::sample_frame_times_system,
                     performance_issue_log::log_performance_issue_system,
-                    benchmark_summary::accumulate_benchmark_measured_phase_system,
                 )
                     .chain(),
             )
@@ -81,11 +84,18 @@ impl Plugin for PerformanceMonitoringPlugin {
                 Last,
                 (
                     profiled_scopes::fold_profiled_scopes_system,
-                    allocation_counter::publish_frame_allocations_system,
+                    // in `Last`, so a phase set in `Update` is seen in the same frame
+                    benchmark_summary::accumulate_benchmark_measured_phase_system,
                     frame_time_breakdown::mark_main_world_frame_end_system,
                 )
                     .chain(),
             );
+        #[cfg(feature = "profiler")]
+        app.add_systems(Last, allocation_counter::publish_frame_allocations_system);
+        // publishes the `pipelined/*` timings, among them the render worker's wait for the next
+        // animation frame
+        #[cfg(target_arch = "wasm32")]
+        app.add_plugins(bevy::render::pipelined_rendering::PipelinedRenderingDiagnosticsPlugin);
     }
 
     /// Adds the render-world timers to the render app.

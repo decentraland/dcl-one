@@ -125,7 +125,8 @@ well, or its writes land a frame late. `crates/avatar/src/point_at_marker.rs` is
 - **`First`**: pumps for the comms and social tokio runtimes, sysinfo counters.
 - **`PreUpdate`**: `UiActionSet` (system-UI actions; interact sounds before it, text links
   after), the web livekit page-event dispatch, media source serving, the headless supervisor.
-- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat.
+- **`Last`**: CEF command drain, livekit room close on app exit, the web engine heartbeat, the
+  profiler's frame fold and the benchmark summary.
 - **`OnEnter`/`OnExit`**: a few states (transmitter, receiver, microphone, parcel grass).
 
 Other named sets: `RealmLifecycle` for systems that react to a realm change, `TerrainSet` in

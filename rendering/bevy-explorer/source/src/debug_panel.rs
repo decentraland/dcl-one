@@ -209,10 +209,11 @@ fn performance_state(
     let hud_main_thread_cost: Option<common::perf::HudMainThreadCostDataPoint> = None;
     let hundredths = |ms: f32| (f64::from(ms) * 100.0).round() / 100.0;
     let hud_main_thread_cost_cells = hud_main_thread_cost.map(|window| {
+        let commits = window.react_commits;
         let frames = window.long_animation_frames;
         [
-            Some(f64::from(window.react_commit_count)),
-            Some(hundredths(window.react_commit_time_sum_ms)),
+            commits.map(|commits| f64::from(commits.commit_count)),
+            commits.map(|commits| hundredths(commits.commit_time_sum_ms)),
             frames.map(|frames| f64::from(frames.frame_count)),
             frames.map(|frames| hundredths(frames.hud_script_time_sum_ms)),
             frames.map(|frames| hundredths(frames.style_and_layout_time_sum_ms)),
@@ -439,9 +440,12 @@ fn profile_top(
                     .map(f64::round),
             ]
         });
+    let profiler_build = cfg!(feature = "profiler");
     input.reply_ok(
         json!({
             "enabled": table.recording_enabled(),
+            // Bevy's spans and the allocation counts exist only in a `profiler` build
+            "profilerBuild": profiler_build,
             "sort": format!("{sort:?}"),
             "scopeSummaries": rows.iter().map(|row| json!({
                 "scopeName": row.scope_name, "scopeKind": row.scope_kind, "callCount": row.call_count,
@@ -452,8 +456,18 @@ fn profile_top(
             "scopeSummary": (!scope_summary.is_empty()).then(|| scope_summary.join("\n")),
             "allocations": allocations,
             "unavailable": {
-                "scopeSummary": if table.recording_enabled() { "No scope has been recorded yet." } else { "Profiler disabled: enable it to record scopes." },
-                "allocations": "Waiting for the first frame's allocation counts.",
+                "scopeSummary": if !table.recording_enabled() {
+                    "Profiler disabled: enable it to record scopes."
+                } else if profiler_build {
+                    "No scope has been recorded yet."
+                } else {
+                    "This build has no Bevy spans (the `profiler` cargo feature is off): only the explorer's own spans are recorded."
+                },
+                "allocations": if profiler_build {
+                    "Waiting for the first frame's allocation counts."
+                } else {
+                    "This build has no allocation counter (the `profiler` cargo feature is off)."
+                },
             },
         })
         .to_string(),
@@ -545,6 +559,17 @@ fn debug_memory(
             }
             (SimulatedMemoryPressure::Full, Some(used)) => Some((used as f64 / 0.80).ceil() as u64),
         };
+        // a limit at or above the capacity is refused: it is no lower cap
+        if let Some((limit, reading)) = limit.zip(memory.reading()) {
+            if limit >= reading.capacity_mib {
+                cmd.reply_failed(format!(
+                    "Current use ({} MiB) is already past the tier's share of the capacity ({} MiB): a limit of {limit} MiB would not lower the cap",
+                    reading.used_bytes / BYTES_PER_MIB,
+                    reading.capacity_mib,
+                ));
+                return;
+            }
+        }
         memory.limit_mib = limit.and_then(std::num::NonZeroU64::new);
         cmd.reply_ok(
             json!({

@@ -218,8 +218,15 @@ pub fn publish_frame_time_breakdown_system(
     let gpu_frame_time_ms = smoothed(&GPU_FRAME_TIME).map(|ms| ms as f32);
     let smoothed_frame = smoothed(&FrameTimeDiagnosticsPlugin::FRAME_TIME)
         .map_or(whole_frame_wall_ms, |ms| ms as f32);
-    let smoothed_sleep =
+    // what paces the frame: the frame limiter's sleep natively; on the web, where the scene loop
+    // never sleeps, the render worker's wait for the browser's next animation frame
+    #[cfg(not(target_arch = "wasm32"))]
+    let frame_pacing_wait_ms =
         smoothed(&PERF_FRAME_LIMITER_SLEEP_MS).map_or(frame_limiter_sleep_ms, |ms| ms as f32);
+    #[cfg(target_arch = "wasm32")]
+    let frame_pacing_wait_ms =
+        smoothed(&bevy::render::pipelined_rendering::diagnostics::WAIT_FRAME)
+            .map_or(0.0, |ms| ms as f32);
     let smoothed_present = last_render_world_timings
         .map(|_| smoothed(&PERF_SWAPCHAIN_PRESENT_WAIT_MS).map_or(present_wait_ms, |ms| ms as f32));
     *breakdown = FrameTimeBreakdown {
@@ -234,7 +241,7 @@ pub fn publish_frame_time_breakdown_system(
         scene_jobs_left_count: scene_loop.map_or(0, |timing| timing.eligible_scene_jobs_left_count),
         bottleneck: classify_frame_bottleneck(
             smoothed_frame,
-            smoothed_sleep,
+            frame_pacing_wait_ms,
             gpu_frame_time_ms,
             smoothed_present,
         ),
