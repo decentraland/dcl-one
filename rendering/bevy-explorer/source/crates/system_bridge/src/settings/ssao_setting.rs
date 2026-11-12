@@ -3,9 +3,9 @@ use bevy::{
     pbr::ScreenSpaceAmbientOcclusion,
     prelude::*,
 };
-use common::structs::{AppConfig, SsaoSetting};
+use common::structs::{AppConfig, PrimaryCameraRes, SsaoSetting};
 
-use super::{sync_prepasses, AppSetting, EnumAppSetting};
+use super::{AppSetting, EnumAppSetting};
 
 impl EnumAppSetting for SsaoSetting {
     #[cfg(not(target_arch = "wasm32"))]
@@ -29,7 +29,7 @@ impl EnumAppSetting for SsaoSetting {
 }
 
 impl AppSetting for SsaoSetting {
-    type Param = SRes<AppConfig>;
+    type Param = SRes<PrimaryCameraRes>;
 
     fn title() -> String {
         "SSAO".to_owned()
@@ -58,7 +58,7 @@ impl AppSetting for SsaoSetting {
 
     fn apply_to_camera(
         &self,
-        config: &SystemParamItem<Self::Param>,
+        _: &SystemParamItem<Self::Param>,
         mut commands: Commands,
         camera_entity: Entity,
     ) {
@@ -77,6 +77,5 @@ impl AppSetting for SsaoSetting {
                 constant_object_thickness: 0.25,
             }),
         };
-        sync_prepasses(&mut cmds, &config.graphics);
     }
 }

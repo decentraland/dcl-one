@@ -22,7 +22,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the window with FSR EASU; bevy's CAS at 0.92 stands in for RCAS; the UI rides the compositor
   at full resolution; `/screenshot` captures the window. The primary camera always keeps the
   depth prepass (the jump marker reads it); the normal prepass, and both on texture cameras, only
-  while the avatar outline or SSAO is on.
+  while the avatar outline is on.
 - **Jump marker reads the depth prepass.** Like Unity's projector, the blob (`BlobShadow.mat`)
   is projected onto the surface below, so it follows slopes, steps and ledges; a flat quad
   cut into rising ground. A depth bias does not fix that: it offsets the quad's depth test,

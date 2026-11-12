@@ -131,8 +131,8 @@ mod test {
     /// The highlight pipelines compile on this machine's adapter, and the node draws with them, in
     /// a renderer with no window: a plain cube in the scene material, a skinned cube and a
     /// morph-target cube, each highlighted, in front of a camera with the depth and normal
-    /// prepasses the player's camera carries while the avatar outline or SSAO is on. Needs a GPU,
-    /// so `#[ignore]`d and skipped by CI:
+    /// prepasses the player's camera carries while the avatar outline is on. Needs a GPU, so
+    /// `#[ignore]`d and skipped by CI:
     ///
     /// ```text
     /// cargo test -p scene_material highlight_pipelines_compile -- --ignored --nocapture

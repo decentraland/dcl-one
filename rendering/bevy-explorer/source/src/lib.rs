@@ -785,7 +785,7 @@ fn setup(
             },
             default_camera_components(),
             // the jump marker projects onto the depth prepass; the graphics settings add the
-            // normal prepass when the avatar outline or SSAO needs it
+            // normal prepass while the avatar outline is on
             DepthPrepass,
             Projection::from(PerspectiveProjection {
                 far: 100000.0,

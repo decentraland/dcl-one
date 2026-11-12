@@ -26,6 +26,7 @@ use bevy::{
 use cache_size::CacheSizeSetting;
 use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
+#[cfg(not(target_arch = "wasm32"))]
 use common::structs::SsaoSetting;
 use common::{
     sets::SceneSets,
@@ -85,18 +86,12 @@ pub mod video_threads;
 pub mod volume_settings;
 pub mod window_settings;
 
-/// Both prepasses exist for the avatar outline (edge detection) and SSAO. Apart from them, only
-/// the jump marker reads the primary camera's depth prepass, so that camera always keeps it (DoF,
-/// stars and the fork's focus target use the main-pass depth; the hover glow follows whatever
-/// prepasses the view has).
-pub fn prepasses_needed(graphics: &GraphicsSettings) -> bool {
-    graphics.avatar_outline || graphics.ssao != SsaoSetting::Off
-}
-
-/// Inserts or removes the prepass components to match `prepasses_needed`, keeping the primary
-/// camera's depth prepass.
+/// Inserts both prepasses while the avatar outline (edge detection) is on and removes them while
+/// it is off, keeping the primary camera's depth prepass, which the jump marker reads. Nothing
+/// else needs them: DoF, stars and the fork's focus target use the main-pass depth, and the hover
+/// glow follows whatever prepasses the view has.
 pub fn sync_prepasses(cmds: &mut EntityCommands, graphics: &GraphicsSettings) {
-    if prepasses_needed(graphics) {
+    if graphics.avatar_outline {
         cmds.try_insert((DepthPrepass, NormalPrepass));
     } else {
         cmds.queue(|mut camera: EntityWorldMut| {
@@ -573,25 +568,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prepasses_follow_outline_and_ssao() {
-        let mut g = GraphicsSettings {
-            avatar_outline: false,
-            ssao: SsaoSetting::Off,
-            ..Default::default()
-        };
-        assert!(!prepasses_needed(&g));
-        g.avatar_outline = true;
-        assert!(prepasses_needed(&g));
-        g = GraphicsSettings {
-            avatar_outline: false,
-            ssao: SsaoSetting::Low,
-            ..Default::default()
-        };
-        assert!(prepasses_needed(&g));
-    }
-
-    #[test]
-    fn primary_camera_keeps_the_depth_prepass() {
+    fn prepasses_follow_the_avatar_outline() {
         let mut world = World::new();
         let primary = world
             .spawn((PrimaryCamera::default(), DepthPrepass, NormalPrepass))
@@ -599,7 +576,10 @@ mod tests {
         let texture = world.spawn((DepthPrepass, NormalPrepass)).id();
         let off = GraphicsSettings {
             avatar_outline: false,
-            ssao: SsaoSetting::Off,
+            ..Default::default()
+        };
+        let on = GraphicsSettings {
+            avatar_outline: true,
             ..Default::default()
         };
         let mut commands = world.commands();
@@ -610,5 +590,14 @@ mod tests {
         assert!(!world.entity(primary).contains::<NormalPrepass>());
         assert!(!world.entity(texture).contains::<DepthPrepass>());
         assert!(!world.entity(texture).contains::<NormalPrepass>());
+
+        let mut commands = world.commands();
+        sync_prepasses(&mut commands.entity(primary), &on);
+        sync_prepasses(&mut commands.entity(texture), &on);
+        world.flush();
+        for camera in [primary, texture] {
+            assert!(world.entity(camera).contains::<DepthPrepass>());
+            assert!(world.entity(camera).contains::<NormalPrepass>());
+        }
     }
 }
