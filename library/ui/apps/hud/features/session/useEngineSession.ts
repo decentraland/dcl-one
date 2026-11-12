@@ -3066,6 +3066,11 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   useEffect(() => {
     if (engineReady && urlDestination.current != null) setAvatarLoaded(true)
   }, [engineReady])
+  // Nor does a pick that leaves the lobby before its stage reported (a stored session's stage is
+  // only built after its sign-in): the stage goes unreported, and the scene's loader takes over.
+  useEffect(() => {
+    if (destinationPicked) setAvatarLoaded(true)
+  }, [destinationPicked])
 
   // A visitor with no session gets the engine the moment it is ready, holding the world, with no
   // sign-in: the guest start page's stage then shows the live avatar instead of a snapshot, and
