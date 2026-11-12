@@ -542,28 +542,31 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       configured. Size M. Depends on the asset-bundle pipeline (ops/abgen).
     - Left: no converter this tree configures can re-convert a world scene. abgen
       (`decentraland/abgen` v0.21.0, the release repo-root `apps/dcl-scene-cli/abgen-release.lock`
-      pins; same routes on its `main`; abgen paths below are at that tag) has two entry points
+      pins; same routes on its `main`; abgen paths and line numbers below are at that tag, and the
+      `lambda/src` ones differ on `main`) has two entry points
       keyed by entity id, and neither fits:
       - The server the console reaches (`ABGEN_ADMIN_URL`, loopback only,
-        `src/ops/admin/create.rs:306-339`) has `POST /queues/retry {entityIds}` behind its admin
+        `src/ops/admin/create.rs:306-335`) has `POST /queues/retry {entityIds}` behind its admin
         bearer (`src/ops/admin/create.rs:467-484`; abgen `crate/src/registry/mod.rs:85`). It takes an
         id only when `resolve_one` finds it in the Catalyst `deployments` table
         (`crate/src/registry/handlers/queues.rs:107-127`, `crate/dcl-contents/src/registry.rs:21-30`,
         `crate/dcl-contents/src/content.rs:25-60`). This tree keeps world scenes in
         `worlds.world_scenes` (repo-root `schemas/20_worlds.sql:118`, written by
         `worlds/src/core/store.rs:822`), so every world scene answers `Entity not found in
-        catalyst`. An accepted id gets a `pending`
-        `build_jobs` row and a manifest-cache invalidation
-        (`crate/src/registry/ports/registry.rs:142-172`), and no code in abgen reads `build_jobs`
-        back to convert. `POST /registry` re-reads manifests and converts nothing
+        catalyst`. An accepted id gets a `pending` `build_jobs` row per platform
+        (`enqueue_build`, `crate/src/registry/ports/registry.rs:142-172`) and a manifest-cache
+        invalidation (`state.manifests.invalidate`, `crate/src/registry/handlers/queues.rs:117`).
+        The only reader of `build_jobs` is `pending_jobs_for` (`registry.rs:174-188`), which counts
+        pending jobs for `GET /queues/status`; no code in abgen reads them back to convert. `POST /registry` re-reads manifests and converts nothing
         (`crate/src/registry/handlers/admin.rs:14-72`).
       - The Lambda takes upstream's `WorldDeploymentEvent` shape (`entity.entityId` and
         `contentServerUrls`, `lambda/src/event.rs:60-91`) from SQS, or from a Function URL POST
         with `x-abgen-secret` (`lambda/src/http.rs:3,53-77`). It skips platforms already converted
         unless the event carries `force: true` (`lambda/src/main.rs:290-291`), and upstream's event
-        has no `force`. It runs only under the AWS Lambda runtime (`lambda/src/runtime.rs:10`) and
-        only fetches from `https://` content servers (`lambda/src/event.rs:108-109`). This tree runs
-        no Lambda, SNS or SQS, and its `/ab-cdn` is a read-through cache of the public CDN
+        has no `force`. It runs as a long-lived handler only under the AWS Lambda runtime
+        (`lambda/src/runtime.rs:10`; `--once EVENT.json`, `lambda/src/main.rs:18`, handles a single
+        event file locally) and only fetches from `https://` content servers (`lambda/src/event.rs:108-109`). This tree ships
+        no Lambda binary or image and runs no SNS or SQS event source, and its `/ab-cdn` is a read-through cache of the public CDN
         (`explore/src/api/ab_cdn.rs:1-23`).
       A route with only the bearer and the schema bodies would answer 200 without converting
       anything. The smallest abgen-side contract that unblocks it: `POST /queues/retry` resolves
@@ -571,7 +574,11 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       the body, or `GET {ABGEN_WORLDS_CONTENT_URL}/contents/{entityId}`), and a worker converts
       each queued job without the already-converted check. The handler then posts the filtered ids
       through the console's `Abgen` client and maps `retried` to `successful` and `failures` to
-      `failed`.
+      `failed`. abgen already has the fetcher this needs: `ABGEN_WORLDS_CONTENT_URL`
+      (`crate/src/worlds.rs:8`, README.md:147) defaults to the public worlds server, is `off` to
+      disable it (`dcl-scene-cli` sets `off`, repo-root `apps/dcl-scene-cli/src/asset_bundles.rs:287`),
+      and abgen fetches a world scene's entity from `{url}/contents/` (`worlds.rs:87`,
+      `fetch_scene_entity` at `worlds.rs:195`). The contract asks `/queues/retry` to reuse it.
     - Severity: P1 (operator tooling that re-converts a world gets a 404).
 
 23. **WR-23 · mounts · the root collisions.** Status: intended (worlds-compatibility.md).
