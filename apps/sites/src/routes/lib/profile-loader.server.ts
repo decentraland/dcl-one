@@ -117,7 +117,7 @@ export async function profileLoader(
   try {
     profile = await profileRead;
     // The tab's own reads are optional: past the budget the page renders and the browser reads them.
-    await withinBudget(optional, OPTIONAL_READS_BUDGET_MS);
+    if (profile !== null || tab !== "overview") await withinBudget(optional, OPTIONAL_READS_BUDGET_MS);
   } catch (error) {
     // Nothing is dehydrated on a failure, so any read still running is cancelled here.
     client.clear();

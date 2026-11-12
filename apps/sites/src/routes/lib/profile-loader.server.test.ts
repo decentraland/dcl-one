@@ -145,15 +145,43 @@ describe("profile loader, dehydrated state", () => {
     expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
   });
 
-  it("renders without an optional read that outlasts the budget, leaving it to the browser", async () => {
-    net.fetchCreations.mockReturnValue(new Promise(() => {}));
-    const started = Date.now();
+  describe("when an optional read outlasts the budget", () => {
+    let settled: boolean;
+    let result: ReturnType<typeof run>;
+    beforeEach(async () => {
+      vi.useFakeTimers();
+      settled = false;
+      net.fetchCreations.mockReturnValue(new Promise(() => {}));
+      result = run(`/profile/${A}/creations`, { address: A, tab: "creations" });
+      void result.then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(OPTIONAL_READS_BUDGET_MS - 1);
+    });
+    afterEach(() => vi.useRealTimers());
+    it("should still wait before the deadline", () => {
+      expect(settled).toBe(false);
+    });
+    it("should render only the profile at the deadline", async () => {
+      await vi.advanceTimersByTimeAsync(1);
+      const out = await result;
+      expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
+    });
+  });
 
-    const out = await run(`/profile/${A}/creations`, { address: A, tab: "creations" });
-
-    expect(out.ok && keysOf(out.data)).toEqual([profileKeys.profile(A)]);
-    expect(Date.now() - started).toBeLessThan(OPTIONAL_READS_BUDGET_MS + 1000);
-  }, 10_000);
+  describe("when a wallet has no profile and badges never finish", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      net.fetchProfile.mockResolvedValue(null);
+      net.fetchUserBadges.mockReturnValue(new Promise(() => {}));
+    });
+    afterEach(() => vi.useRealTimers());
+    it("should return without consuming the optional budget", async () => {
+      let settled = false;
+      const result = run(`/profile/${A}`, { address: A }).then(() => { settled = true; });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).toBe(true);
+      await result;
+    });
+  });
 
   it("dehydrates the badges with the profile on Overview", async () => {
     net.fetchUserBadges.mockResolvedValue([]);

@@ -34,8 +34,8 @@ import { useProfileBadges } from "./hooks";
  * A NAME is bought in the Shop's NAMEs page; worlds are managed under Create. Both are the
  * canonical paths, not the redirects (`/shop/items?category=names`, the legacy `/builder/worlds`).
  */
-export const GET_A_NAME_HREF = "/shop/names";
-export const MANAGE_WORLD_HREF = "/create/worlds";
+const GET_A_NAME_HREF = "/shop/names";
+const MANAGE_WORLD_HREF = "/create/worlds";
 
 const INFO_ICONS: Record<string, ReactNode> = {
   country: <ProfileCountry size={20} />,

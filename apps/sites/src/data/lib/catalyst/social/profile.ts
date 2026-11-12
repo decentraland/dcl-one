@@ -89,7 +89,7 @@ export type ProfileVM = {
   hasClaimedName: boolean;
   nameColor: string;
   avatarUrl?: string;
-  /** The full-body snapshot, an http(s) URL or empty. */
+  /** The full-body snapshot URL, local/content-store path, data URL, or empty. */
   bodyUrl: string;
   mutualCount: number;
   bio: string;

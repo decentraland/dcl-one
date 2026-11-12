@@ -19,8 +19,10 @@ export function profileSnapshotUrl(
     try {
       const url = new URL(value);
       const path = url.pathname.match(/^\/(?:v1\/)?entities\/([a-zA-Z0-9]+)\/(face|body)\.png$/);
-      if (PROFILE_IMAGE_HOSTS.has(url.hostname) && path && `${path[2]}.png` === file) {
-        return `${base}/profile-images/entities/${path[1]}/${file}`;
+      if (PROFILE_IMAGE_HOSTS.has(url.hostname)) {
+        return path && `${path[2]}.png` === file
+          ? `${base}/profile-images/entities/${path[1]}/${file}`
+          : "";
       }
     } catch {
       return "";

@@ -54,11 +54,22 @@ function ProfileBadges({ badges, loading, emptyText, errorText }: ProfileBadgesP
       <h2 className={styles.title}>Badges</h2>
       {/* One live region, always mounted, so a screen reader hears how the loading ended. */}
       <p
-        className={loading ? styles.status : styles.empty}
+        className={
+          !loading && !errorText && badges.length > 0
+            ? styles.loaded
+            : loading
+              ? styles.status
+              : styles.empty
+        }
         role="status"
-        hidden={!loading && !errorText && badges.length > 0}
       >
-        {loading ? 'Loading badges…' : errorText ? errorText : badges.length > 0 ? '' : emptyText}
+        {loading
+          ? 'Loading badges…'
+          : errorText
+            ? errorText
+            : badges.length > 0
+              ? `${badges.length} ${badges.length === 1 ? 'badge' : 'badges'}`
+              : emptyText}
       </p>
       {!loading && !errorText && badges.length > 0 ? (
         <ul className={styles.row}>
