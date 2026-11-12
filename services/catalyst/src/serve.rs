@@ -2315,6 +2315,59 @@ mod registry_mount_tests {
                 "{method} {path}"
             );
         }
+        // The gateway half's status-check probes, and the Registry's own CORS
+        // preflight on a route of each half.
+        for (path, expected) in [
+            ("/asset-bundle-registry/health/live", "alive"),
+            (
+                "/asset-bundle-registry/health/ready",
+                crate::shared::health::PASS,
+            ),
+            (
+                "/asset-bundle-registry/health/startup",
+                crate::shared::health::PASS,
+            ),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            assert_eq!(body.as_ref(), expected.as_bytes(), "{path}");
+        }
+        for path in [
+            "/asset-bundle-registry/profiles/metadata",
+            "/asset-bundle-registry/entities/active",
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri(path)
+                        .header("origin", "https://example.org")
+                        .header("access-control-request-method", "POST")
+                        .header("access-control-request-headers", "content-type")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::NO_CONTENT, "{path}");
+            let headers = response.headers();
+            assert_eq!(headers["access-control-allow-origin"], "*", "{path}");
+            assert_eq!(
+                headers["access-control-allow-methods"], "GET,HEAD,OPTIONS,DELETE,POST,PUT",
+                "{path}"
+            );
+            assert_eq!(
+                headers["access-control-allow-headers"], "content-type",
+                "{path}"
+            );
+            assert_eq!(headers["access-control-max-age"], "86400", "{path}");
+        }
         let _ = std::fs::remove_dir_all(&files);
     }
 }
