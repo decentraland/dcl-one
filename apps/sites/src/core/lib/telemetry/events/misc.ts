@@ -36,10 +36,6 @@ export type MiscEvents = {
     count: number;
     search: null | string;
   };
-  profile_card_clicked: {
-    item_id: string;
-    tab: "assets" | "communities" | "creations" | "overview" | "photos" | "places" | "referral-rewards";
-  };
   profile_communities_load_failed: {
     address: string;
   };

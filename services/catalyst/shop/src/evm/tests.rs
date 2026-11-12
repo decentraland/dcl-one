@@ -2693,6 +2693,76 @@ fn trial_relay() -> Settings {
     }
 }
 
+/// Under CREDITS_TRIAL_MODE the relay is how the trial's buyers spend their credits, so its
+/// writes open with OPS_WRITES_ENABLED, not DATA_WRITES_ENABLED: with the data plane off and the
+/// operator plane on, a relayed meta-transaction passes the gate and reaches the relay's own
+/// checks.
+#[tokio::test]
+async fn a_trial_relay_opens_with_the_operator_plane_while_data_writes_stay_off() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..trial_relay()
+        },
+    ));
+    for path in ["/v1/transactions"] {
+        let (status, text) = send(&app, "POST", path, Some("{}".into()), &[]).await;
+        assert_ne!(status, 503, "{path} passes the gate: {text}");
+    }
+}
+
+/// With the operator plane off, a trial's relay answers the credits 503 (naming
+/// OPS_WRITES_ENABLED) even while DATA_WRITES_ENABLED is on, and the relayer controls still
+/// pass the gate and stop at the admin bearer.
+#[tokio::test]
+async fn a_trial_relay_is_held_by_the_operator_plane_even_with_data_writes_on() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: true,
+            ops_writes_enabled: false,
+            ..trial_relay()
+        },
+    ));
+    let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
+    assert_eq!(status, 503, "{text}");
+    let v: Value = serde_json::from_str(&text).unwrap();
+    assert_eq!(
+        v["message"],
+        crate::shared::writes::WRITES_DISABLED_MESSAGE,
+        "{text}"
+    );
+    for path in ["/v1/admin/relayer/toggle", "/v1/admin/relayer/signer"] {
+        let (status, text) = send(&app, "POST", path, Some("{}".into()), &[]).await;
+        assert_eq!(status, 403, "{path}: {text}");
+        assert!(
+            text.contains("CATALYRST_ECONOMY_ADMIN_TOKEN is unset"),
+            "{path}: {text}"
+        );
+    }
+    let (status, _) = send(&app, "GET", "/v1/admin/relayer", None, &[]).await;
+    assert_ne!(status, 503, "a read passes the gate");
+}
+
+/// Outside a trial the relay keeps the data plane's gate: OPS_WRITES_ENABLED alone does not
+/// open it.
+#[tokio::test]
+async fn outside_a_trial_the_relay_keeps_the_data_plane_gate() {
+    let app = super::router(state(
+        lazy_pool(),
+        Settings {
+            data_writes_enabled: false,
+            ops_writes_enabled: true,
+            ..Settings::for_tests()
+        },
+    ));
+    let (status, text) = send(&app, "POST", "/v1/transactions", Some("{}".into()), &[]).await;
+    assert_eq!(status, 503, "{text}");
+    assert!(text.contains("DATA_WRITES_ENABLED=false"), "{text}");
+}
+
 /// Under CREDITS_TRIAL_MODE the relay's one route is its own capped direct signer: any OZ or
 /// upstream setting, even an incomplete one, refuses the start, and so does a missing signer
 /// piece, an uncapped gas limit or a missing or zero fee cap. The refusal names variables only.

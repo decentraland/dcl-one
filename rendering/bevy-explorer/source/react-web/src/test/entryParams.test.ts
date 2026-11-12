@@ -2,7 +2,7 @@
 // what a link carried that nothing reads (features/gate/EntryParamsDialog.tsx).
 
 import { describe, expect, it } from 'vitest'
-import { WEB_PARAMS } from '../engine/generated'
+import { WEB_PARAMS } from '@explorer-core/engine/generated'
 import { BENCHMARK_PARAMS } from '../lib/bootMode'
 import { acceptedEntryParams, entryRealm, perfStreamPath, unrecognisedEntryParams } from '../lib/entryParams'
 

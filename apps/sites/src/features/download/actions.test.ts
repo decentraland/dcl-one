@@ -4,17 +4,16 @@ import { detectPlatform } from "./options";
 
 describe("download action links", () => {
   it.each([
-    ["Windows NT 10.0; Win64; x64", "windows", ".exe"],
-    ["Macintosh; Intel Mac OS X", "macos", ".dmg"],
-    ["", "windows", ".exe"],
-    ["Linux x86_64", "windows", ".exe"],
-  ])("should offer a direct pinned installer for %s", (ua, os, suffix) => {
+    ["Windows NT 10.0; Win64; x64", "windows"],
+    ["Macintosh; Intel Mac OS X", "macos"],
+    ["", "windows"],
+    ["Linux x86_64", "windows"],
+  ])("should offer installation guidance for %s", (ua, os) => {
     const { actions } = downloadActions(detectPlatform(ua), "+438K");
     expect(actions.primary?.os).toBe(os);
     expect(actions.primary?.href).toBe(
-      `https://explorer-artifacts.decentraland.org/launcher-rust/Decentraland_installer${suffix}`,
+      `/download_success?os=${os}&arch=${os === "windows" ? "amd64" : "arm64"}`,
     );
-    expect(actions.primary?.href).not.toContain("/download_success");
     expect(actions.downloads).toBe("Total Downloads: +438K");
   });
   it("should omit the Windows installer for a 32-bit Windows visitor", () => {
@@ -23,7 +22,9 @@ describe("download action links", () => {
       "+400K",
     );
     expect(actions.primary).toBeUndefined();
-    expect(actions.alternatives?.[0]?.href).toMatch(/\.dmg$/);
+    expect(actions.alternatives?.[0]?.href).toBe(
+      "/download_success?os=macos&arch=arm64",
+    );
   });
   it.each([
     ["Android", "google_play", "play.google.com"],
