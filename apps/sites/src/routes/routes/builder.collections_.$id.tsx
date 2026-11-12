@@ -2,6 +2,6 @@ import { builderRedirect } from "@/features/lib/creator/builder-redirect";
 
 import type { Route } from "./+types/builder.collections_.$id";
 
-export async function loader({ request, params }: Route.LoaderArgs) {
-  return builderRedirect("collection-detail", request, params);
+export async function loader({ request, params, context }: Route.LoaderArgs) {
+  return builderRedirect("collection-detail", request, context, params);
 }

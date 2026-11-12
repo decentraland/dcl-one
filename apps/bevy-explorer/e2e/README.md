@@ -161,10 +161,23 @@ same-origin Chrome page contexts, recreates those contexts to check recovery, an
 IndexedDB transaction. These checks do not substitute for running the debug panel against a built
 Explorer. The chat scenarios in `specs/chat.test.ts` also check that a slash keypress and Unicode text reach the composer.
 
+`specs/ban-block-state.test.ts` reads the engine's ban and block status (`/ban_block_state`), blocks
+and unblocks a second configured account through `/block_user` and `/unblock_user`, and checks the
+"Bans and blocks" debug section is registered. With one account key the blocking scenario is a todo.
+`specs/platform-ban.test.ts` reads the platform-ban check against zone, then, on the standalone only,
+boots a second client with `--comms-gatekeeper` pointed at `driver/gatekeeper-stub.ts` (a loopback
+gatekeeper answering as scripted, `DCL_E2E_GATEKEEPER_PORT`, 18745 by default, one shared by
+every spec and closed with the sessions) to see a banned answer and a failed check; a scenario's
+`session.nativeArgs` is what starts that client, on an automation port of its own. On the web
+a service override stops the boot at the launch gate, so those scenarios are todos there.
+`specs/scene-ban.test.ts` reads the scene room's admission and moderation lists at Genesis Plaza and
+their absence on an empty parcel, and, on the standalone against the same stub, a refused scene
+adapter reported as a scene ban.
+
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
+test is in the spec file's header. Port 43, Partial 33, Gap 11, Drop 2.
 
 | Fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -175,7 +188,7 @@ test is in the spec file's header. Port 43, Partial 32, Gap 12, Drop 2.
 | Navmap (1) | `navmap` | 1 | | | | `Sports`, not `Sport` |
 | Events (3) | `events` | | | 3 | | Two lists, no calendar, detail popup or Create button |
 | Places (5) | `places` | | 4 | 1 | | Tabs and dropdowns without counters; a card jumps in, so no detail popup |
-| Communities (4) | `communities` | | 3 | 1 | | No invites view, titles or counts; the detail is a modal |
+| Communities (4) | `communities` | | 4 | | | No titles or counts; the invites view's titles only with something pending; the detail is a modal |
 | Chat (6) | `chat` | 2 | 4 | | | Escape leaves the input but keeps the panel; history checked through `/chat_history` |
 | EmoteWheel (3) | `emote-wheel` | 2 | 1 | | | The emote playing is asserted through `/avatar_state` |
 | Camera (3) | `camera` | 3 | | | | The camera and the capture are the engine's (`/photo_mode`, `/take_photo`); the HUD opens and closes photo mode (the C key, the rail's Camera button) and shows the overlay's Shoot and Close |

@@ -28,7 +28,7 @@ function AnimatedBackground({ patternTiling = 1.66 }: { patternTiling?: number }
     // A fresh canvas per mount: cleanup gives the context back, and a canvas keeps returning its lost
     // context, so a remount (StrictMode, a re-keyed parent) on the same canvas could never draw again.
     const canvas = document.createElement('canvas')
-    canvas.className = styles.canvas
+    canvas.className = styles.canvas ?? ''
     const gl = canvas.getContext('webgl', { alpha: false, antialias: false })
     if (!gl) return // fallback image stays visible
     root.appendChild(canvas)

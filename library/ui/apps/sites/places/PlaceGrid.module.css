@@ -1,0 +1,80 @@
+/* Source's CardGrid: the 435px Figma card stays near its width, 4-up only on wide screens. The 4-up
+   step keeps source's 1200px breakpoint, where a 3-up card would grow past the design width. */
+.grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--dcl-space-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+@media (min-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1024px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (min-width: 1200px) {
+  .grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
+.message {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-16);
+  padding: var(--dcl-space-64) var(--dcl-space-16);
+}
+
+.messageText {
+  composes: text626f64792f736d from '../../../foundations/typography/text-styles.module.css';
+  margin: 0;
+  color: var(--dcl-text-secondary);
+  text-align: center;
+}
+
+.sentinel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--dcl-space-64);
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid var(--dcl-transparencies-white-20);
+  border-top-color: var(--dcl-action-primary);
+  border-radius: var(--dcl-radius-full);
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2.4s;
+  }
+}
+
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
