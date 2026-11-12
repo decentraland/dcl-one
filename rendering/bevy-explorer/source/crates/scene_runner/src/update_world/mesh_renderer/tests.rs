@@ -404,3 +404,25 @@ fn a_waiting_primitive_removed_and_added_in_one_tick_keeps_waiting() {
 
     assert_eq!(attached(&app, &waiting_boxes), 2);
 }
+
+// guard: what waits when the player goes behind the backdrop is attached at once
+#[test]
+fn waiting_primitives_are_attached_when_the_player_goes_behind_the_backdrop() {
+    let (mut app, root) = test_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let boxes = spawn_boxes(&mut app, root, 50);
+    app.update();
+    assert_eq!(marked::<PendingPrimitive>(&app, &boxes), 49);
+
+    let player = app
+        .world_mut()
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(app.world())
+        .unwrap();
+    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+
+    assert_eq!(attached(&app, &boxes), 50);
+    assert_eq!(marked::<PendingPrimitive>(&app, &boxes), 0);
+}

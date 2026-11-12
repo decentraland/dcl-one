@@ -460,3 +460,25 @@ fn removed_materials_of_despawned_scenes_leave_the_owners() {
 
     assert!(app.world().resource::<CachedMaterialOwners>().0.is_empty());
 }
+
+// guard: what waits when the player goes behind the backdrop is created at once
+#[test]
+fn waiting_materials_are_created_when_the_player_goes_behind_the_backdrop() {
+    let (mut app, root) = material_app();
+    preset_charges(&mut app, Duration::from_millis(10));
+    let entities = spawn_materials(&mut app, root, 0..50);
+    app.update();
+    assert_eq!(marked::<PendingMaterial>(&app, &entities), 49);
+
+    let player = app
+        .world_mut()
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(app.world())
+        .unwrap();
+    app.world_mut().entity_mut(player).insert(OutOfWorld);
+    preset_charges(&mut app, Duration::from_millis(10));
+    app.update();
+
+    assert_eq!(created(&app, &entities), 50);
+    assert_eq!(marked::<PendingMaterial>(&app, &entities), 0);
+}
