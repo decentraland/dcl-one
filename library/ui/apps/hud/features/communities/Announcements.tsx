@@ -4,7 +4,9 @@
 // unlikes. Pages of 10 load as the list's end comes into view; failures are toasted by the session.
 
 import { useRef, useState } from 'react'
-import { Avatar, Button, DclLogo, Spinner, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
+import { Avatar, Button, DclLogo, MaskIcon, Spinner, TextArea, Trash, VerifiedBadge, showConfirm } from '../../design'
+import heartOutline from '../../assets/communities/favourite-outline.png'
+import heartSolid from '../../assets/communities/favourite-solid.png'
 import { splitName } from '@explorer-core/lib/identity'
 import type { CommunityPost } from '@explorer-core/engine/protocol'
 import { EmojiPicker } from '../chat/EmojiPicker'
@@ -84,8 +86,13 @@ function AnnouncementCard({
               onLike(!post.likedByMe)
             }}
           >
-            <span className={styles.heart} aria-hidden="true">
-              {burst > 0 && <span key={burst} className={styles.burst} />}
+            <span className={styles.heart}>
+              <MaskIcon src={post.likedByMe ? heartSolid : heartOutline} size={16} />
+              {burst > 0 && (
+                <span key={burst} className={styles.burst}>
+                  <MaskIcon src={heartSolid} size={16} />
+                </span>
+              )}
             </span>
             {post.likes}
           </button>

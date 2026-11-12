@@ -97,24 +97,18 @@
 .delete {
   margin-left: auto;
 }
-/* The like's heart: white outline, pink on hover and once liked. */
+/* The like's heart: the favourite outline, and the solid one tinted in the brand red once liked
+   (MaskIcon takes the button's colour). */
 .heart {
   position: relative;
-  width: 16px;
-  height: 16px;
-  background: url('../../assets/communities/like-idle.png') center / contain no-repeat;
-}
-.like:not(:disabled):hover .heart {
-  background-image: url('../../assets/communities/like-hover.png');
-}
-.liked .heart {
-  background-image: url('../../assets/communities/like-selected.png');
+  display: inline-flex;
 }
 /* The like's mark: grows to twice its size and fades out, once. */
 .burst {
   position: absolute;
   inset: 0;
-  background: url('../../assets/communities/like-selected.png') center / contain no-repeat;
+  display: inline-flex;
+  color: var(--brand);
   pointer-events: none;
   animation: burst var(--dur-pop) var(--ease-outquad) forwards;
 }
