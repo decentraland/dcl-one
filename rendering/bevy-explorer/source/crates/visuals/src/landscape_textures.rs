@@ -41,8 +41,33 @@ impl Plugin for LandscapeTexturesPlugin {
     fn build(&self, app: &mut App) {
         // in Update, before the frame's asset events, so the first upload already has the mips
         app.init_resource::<LandscapeTextures>()
-            .add_systems(Update, resolve_textures);
+            .add_event::<LandscapeTexturesReplaced>()
+            .add_systems(Update, resolve_textures.in_set(ResolveLandscapeTextures));
     }
+}
+
+/// Sent in a frame in which a file replaced its stand-in.
+#[derive(Event)]
+pub(crate) struct LandscapeTexturesReplaced;
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+struct ResolveLandscapeTextures;
+
+/// A prepared material keeps the texture views it was prepared with, and a texture replaced
+/// under the same handle does not prepare it again. So every material of type `M`, which binds
+/// these textures, is touched in a frame in which one was replaced, which prepares it again.
+pub(crate) fn rebind_on_replace<M: Asset>(app: &mut App) {
+    app.add_systems(
+        Update,
+        touch_all::<M>
+            .run_if(on_event::<LandscapeTexturesReplaced>)
+            .after(ResolveLandscapeTextures),
+    );
+}
+
+fn touch_all<M: Asset>(mut materials: ResMut<Assets<M>>) {
+    // iter_mut marks each one modified
+    for _ in materials.iter_mut() {}
 }
 
 /// The flat ground colour, which the ground showed before it was textured.
@@ -180,6 +205,7 @@ fn resolve_textures(
     mut textures: ResMut<LandscapeTextures>,
     server: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
+    mut replaced: EventWriter<LandscapeTexturesReplaced>,
 ) {
     if !textures.states.contains(&TextureState::Loading) {
         return;
@@ -196,10 +222,12 @@ fn resolve_textures(
                 let Some(mut image) = images.remove(source) else {
                     continue;
                 };
-                add_mips(&mut image, kind);
-                // drawn only, never read back: no main-world copy once uploaded
-                image.asset_usage = RenderAssetUsages::RENDER_WORLD;
+                if add_mips(&mut image, kind) {
+                    // drawn only, never read back: no main-world copy once uploaded
+                    image.asset_usage = RenderAssetUsages::RENDER_WORLD;
+                }
                 images.insert(target, image);
+                replaced.write(LandscapeTexturesReplaced);
                 TextureState::Ready
             }
             LoadState::Failed(error) => {
@@ -212,10 +240,11 @@ fn resolve_textures(
     }
 }
 
-/// Appends a box-filtered mip chain, down to one texel, to an RGBA8 image.
-pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) {
+/// Appends a box-filtered mip chain, down to one texel, to an RGBA8 image. False, with the image
+/// untouched, if it already has mips, is not RGBA8 or has no data.
+pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) -> bool {
     if image.texture_descriptor.mip_level_count != 1 {
-        return;
+        return false;
     }
     let format = image.texture_descriptor.format;
     if !matches!(
@@ -223,10 +252,10 @@ pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) {
         TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb
     ) {
         warn!("no mips for a {format:?} landscape texture");
-        return;
+        return false;
     }
     let Some(top) = image.data.as_ref() else {
-        return;
+        return false;
     };
     let (mut width, mut height) = (image.width() as usize, image.height() as usize);
     let mut level: Vec<Vec4> = top
@@ -254,6 +283,7 @@ pub(crate) fn add_mips(image: &mut Image, kind: TexelKind) {
     }
     image.data = Some(bytes);
     image.texture_descriptor.mip_level_count = levels;
+    true
 }
 
 fn decode(texel: &[u8], kind: TexelKind) -> Vec4 {

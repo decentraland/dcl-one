@@ -1,5 +1,6 @@
 use bevy::{
     asset::io::embedded::EmbeddedAssetRegistry,
+    ecs::event::EventCursor,
     image::{ImageAddressMode, ImageFilterMode, ImageSampler},
     render::render_resource::{Extent3d, TextureDimension, TextureFormat},
 };
@@ -20,11 +21,12 @@ fn app() -> App {
     app
 }
 
-/// Updates until no texture is still loading.
+/// Updates until every texture has loaded or failed.
 fn settle(app: &mut App) -> LandscapeTextures {
     for _ in 0..200 {
         app.update();
-        if load_state(app.world().resource::<LandscapeTextures>()) != "loading" {
+        let states = app.world().resource::<LandscapeTextures>().states;
+        if !states.contains(&TextureState::Loading) {
             break;
         }
     }
@@ -262,4 +264,83 @@ fn splat_size_is_shared_with_the_shader() {
     assert!(shader.contains("#{GROUND_SPLAT_METRES}"));
     assert!(shader.contains("#ifdef GROUND_SPLAT_METRES"));
     assert!(!shader.contains(&GROUND_SPLAT_METRES.to_string()));
+}
+
+/// Frames since the last call in which `Events<E>` gained an event matching `keep`.
+fn read_new<E: Event>(app: &App, cursor: &mut EventCursor<E>, keep: impl Fn(&E) -> bool) -> bool {
+    let events = app.world().resource::<Events<E>>();
+    cursor.read(events).filter(|event| keep(event)).count() > 0
+}
+
+fn modified<M: Asset>(event: &AssetEvent<M>) -> bool {
+    matches!(event, AssetEvent::Modified { .. })
+}
+
+/// A prepared material keeps the texture views it was prepared with, so every material that binds
+/// the landscape textures is touched (modified) in each frame in which a texture replaced its
+/// stand-in, and in no other frame.
+#[test]
+fn materials_are_touched_when_a_texture_is_replaced() {
+    use crate::{
+        coast::{self, CliffMaterial},
+        shell_texturing::{self, ShellTexture},
+        terrain::{TerrainExtension, TerrainFlatMaterial, TerrainParams},
+    };
+    use common::structs::ParcelGrassSetting;
+
+    let mut app = app();
+    app.init_asset::<TerrainFlatMaterial>()
+        .init_asset::<ShellTexture>()
+        .init_asset::<CliffMaterial>();
+    shell_texturing::rebind_materials(&mut app);
+    coast::rebind_materials(&mut app);
+    let textures = app.world().resource::<LandscapeTextures>().clone();
+    let world = app.world_mut();
+    // held, so the materials stay alive
+    let _flat = world
+        .resource_mut::<Assets<TerrainFlatMaterial>>()
+        .add(TerrainFlatMaterial {
+            base: StandardMaterial::default(),
+            extension: TerrainExtension::new(&textures),
+        });
+    let _shell = world
+        .resource_mut::<Assets<ShellTexture>>()
+        .add(ShellTexture::new(
+            &ParcelGrassSetting::Low,
+            3,
+            TerrainParams::default(),
+            &textures,
+        ));
+    let _cliff = world
+        .resource_mut::<Assets<CliffMaterial>>()
+        .add(coast::cliff_material(&textures));
+
+    let mut replaced = EventCursor::<LandscapeTexturesReplaced>::default();
+    let mut flat = EventCursor::<AssetEvent<TerrainFlatMaterial>>::default();
+    let mut shell = EventCursor::<AssetEvent<ShellTexture>>::default();
+    let mut cliff = EventCursor::<AssetEvent<CliffMaterial>>::default();
+    let (mut frames_replaced, mut frames_quiet) = (0, 0);
+    for _ in 0..200 {
+        app.update();
+        let was_replaced = read_new(&app, &mut replaced, |_| true);
+        let touched = [
+            read_new(&app, &mut flat, modified),
+            read_new(&app, &mut shell, modified),
+            read_new(&app, &mut cliff, modified),
+        ];
+        assert_eq!(touched, [was_replaced; 3]);
+        if was_replaced {
+            frames_replaced += 1;
+        } else {
+            frames_quiet += 1;
+        }
+        if load_state(app.world().resource::<LandscapeTextures>()) == "loaded" && frames_quiet > 3 {
+            break;
+        }
+    }
+    assert_eq!(
+        load_state(app.world().resource::<LandscapeTextures>()),
+        "loaded"
+    );
+    assert!(frames_replaced > 0 && frames_quiet > 3);
 }

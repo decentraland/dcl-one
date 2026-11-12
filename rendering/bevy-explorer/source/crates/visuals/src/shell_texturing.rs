@@ -24,7 +24,7 @@ use scene_runner::{
     vec3_to_parcel,
 };
 
-use crate::landscape_textures::{ground_shader_defs, LandscapeTextures};
+use crate::landscape_textures::{ground_shader_defs, rebind_on_replace, LandscapeTextures};
 use crate::terrain::{
     ground_extent, ground_mesh, ground_origin, parcel_mesh, terrain_vertex_shader,
     TerrainExtension, TerrainFlatMaterial, TerrainParams, TerrainSet, TerrainSurface,
@@ -173,6 +173,13 @@ pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "shell_texturing.wgsl");
 }
 
+/// The ground and grass materials bind the landscape textures: prepare them again when one is
+/// replaced.
+pub(crate) fn rebind_materials(app: &mut App) {
+    rebind_on_replace::<ShellTexture>(app);
+    rebind_on_replace::<TerrainFlatMaterial>(app);
+}
+
 impl Material for ShellTexture {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Opaque
@@ -224,6 +231,7 @@ pub(crate) struct ShellTexturingPlugin;
 impl Plugin for ShellTexturingPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
+        rebind_materials(app);
 
         app.init_state::<ParcelGrassState>();
 

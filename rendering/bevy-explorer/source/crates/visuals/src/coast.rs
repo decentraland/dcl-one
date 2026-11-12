@@ -33,7 +33,7 @@ use scene_runner::{
 };
 
 use crate::{
-    landscape_textures::LandscapeTextures,
+    landscape_textures::{rebind_on_replace, LandscapeTextures},
     terrain::{TerrainSet, TerrainSurface, NO_COAST},
 };
 
@@ -69,6 +69,7 @@ pub(crate) struct CoastPlugin;
 impl Plugin for CoastPlugin {
     fn build(&self, app: &mut App) {
         embed_shaders(app);
+        rebind_materials(app);
 
         app.init_resource::<CoastState>()
             .add_plugins(MaterialPlugin::<CliffMaterial>::default())
@@ -89,16 +90,21 @@ pub(crate) fn embed_shaders(app: &mut App) {
     embedded_asset!(app, "coast_water.wgsl");
 }
 
+/// The cliff material binds the landscape textures: prepare it again when one is replaced.
+pub(crate) fn rebind_materials(app: &mut App) {
+    rebind_on_replace::<CliffMaterial>(app);
+}
+
 fn shader(path: &std::path::Path) -> ShaderRef {
     ShaderRef::Path(format!("embedded://{}", path.display()).into())
 }
 
-type CliffMaterial = ExtendedMaterial<CliffExtension>;
+pub(crate) type CliffMaterial = ExtendedMaterial<CliffExtension>;
 
 /// The rock takes its colour and normal from the reference cliff texture; the vertex colour's
 /// alpha marks the rock (1) from the sand and the hidden lid (0).
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
-struct CliffExtension {
+pub(crate) struct CliffExtension {
     #[uniform(100)]
     bounds: Vec4,
     #[texture(101)]
@@ -109,7 +115,7 @@ struct CliffExtension {
     rock_normal: Handle<Image>,
 }
 
-fn cliff_material(textures: &LandscapeTextures) -> CliffMaterial {
+pub(crate) fn cliff_material(textures: &LandscapeTextures) -> CliffMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
             perceptual_roughness: 0.95,
