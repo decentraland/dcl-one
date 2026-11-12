@@ -63,9 +63,17 @@ async function setAttending(eventId: string, attending: boolean): Promise<void> 
   await signed(url, attending ? 'POST' : 'DELETE')
 }
 
+// The places service refuses more ids than this in one request.
+const PLACES_PAGE = 100
+
 async function places(ids: string[]): Promise<EventPlace[]> {
-  const rows = await signed<PlaceRaw[]>(`${await serviceBase('places')}/api/destinations`, 'POST', ids)
-  if (!Array.isArray(rows)) throw new Error('places answer has no list')
+  const url = `${await serviceBase('places')}/api/destinations`
+  const rows: PlaceRaw[] = []
+  for (let i = 0; i < ids.length; i += PLACES_PAGE) {
+    const page = await signed<PlaceRaw[]>(url, 'POST', ids.slice(i, i + PLACES_PAGE))
+    if (!Array.isArray(page)) throw new Error('places answer has no list')
+    rows.push(...page)
+  }
   return rows.map((p) => ({ id: p.id, title: p.title ?? '', world_name: p.world_name ?? null, base_position: p.base_position ?? null }))
 }
 

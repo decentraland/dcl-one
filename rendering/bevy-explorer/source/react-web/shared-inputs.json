@@ -4103,7 +4103,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "9e8a700567b3e4f6ac8ca0fcf9c05736b58b6e8b17d3acd0842bd226a90d86e0"
+      "sha256": "aea88fbff7da33041d92592505934ca0068f40714b0de3ce78f56e155f28cfb2"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -4131,7 +4131,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/events.ts",
-      "sha256": "42692ce5ffe11b4b167ea1bbb125e4cbc9985ec67129c9f8ee0195a6e8308294"
+      "sha256": "84017fefa3e988ce0ea37716561fd726450cd20721a811aba24413e79e3ca19f"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/domains/friends.ts",
@@ -4195,7 +4195,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/package-lock.json",
-      "sha256": "fdc8e5c2c85df27b95e2dbdea7d531aef8b8edb11a553c0873772ca70270dac6"
+      "sha256": "d50868ea54d52577b3c7bcca5f13e78a1269d220668341760e28a1a3d2cb87ab"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/package.json",
@@ -6268,7 +6268,7 @@
     },
     {
       "path": "library/ui/apps/hud/design/TintButton.tsx",
-      "sha256": "9b222f9fcc655e2faabf21aa531d769ee40efb5825e0b455c62c4e6d451f876b"
+      "sha256": "67a300a69fc911ad86974bc1b741b80ff9f29c566517cba9c7eb38311f9a1421"
     },
     {
       "path": "library/ui/apps/hud/design/Toast.module.css",
@@ -6572,19 +6572,19 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.module.css",
-      "sha256": "cfa71722511f1ebdeabd523b12c55ef6a606978bc8d54dab2b81901efaadbb79"
+      "sha256": "cc8f3a776d6d97968e7b69c3eba631cef69ea4cccaecefbd6b1528cbeb0b883c"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventCard.tsx",
-      "sha256": "fa8c07ab6084d31dc40ba237adb99860ec473490d6628505e86d64984ea2e27f"
+      "sha256": "4f8368da548616d9f1bec8d15d557afc5cf48dbe876b411d10366baea22cafd0"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.module.css",
-      "sha256": "ac08553bffb987f9fda1d158d2fd3995d236ed7f8e8ff1d7006a27e557d6ac67"
+      "sha256": "d52cf18c0b491e194582507250de07951df5de538fd5dda82ff4e32acfe17382"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventDetail.tsx",
-      "sha256": "11154e353df0c02ee7987b55e9844a0208ef526e2160c81d5bf93328b1bd450d"
+      "sha256": "dc74de4bcdc734216f5d28c97311ba98ebb01c50f0f0cb6e1cbfb16aed5f56c6"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.module.css",
@@ -6592,27 +6592,27 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsByDay.tsx",
-      "sha256": "403a6da29612ca994bdb0a4439a61ee65f4ce14589e9fb5ed7c198eb39dc54f2"
+      "sha256": "96253c0c8fc89ee3957f8b4eba00576aa88f5d15ee901f8a4a8cc4b7523f2910"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.module.css",
-      "sha256": "d6e412570ab7d5f86175fdab7dd1d312d60e7621be1846f04a72ba271e82e2e0"
+      "sha256": "0d9326bfa56b5d59f8c2e3c990d8a43680cb45cf27e93ba09f6f5a312c0afc31"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsCalendar.tsx",
-      "sha256": "e06359af92ec4855e8a50c942bc5df1720601e2ffd698945c29811fc435d69f2"
+      "sha256": "ac51b8c97778252881a2e9687a12736933f2163819746eb0febbf7c48c14da0f"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.module.css",
-      "sha256": "bffe17a71a92fade558bf913ae759f6a2761177ffec85da4debb67b7f1574e21"
+      "sha256": "af0b2f276f7952b12e72274ccf6f66aa7af42c00e231867dcd136224377cb664"
     },
     {
       "path": "library/ui/apps/hud/features/events/EventsPage.tsx",
-      "sha256": "85f1c29a18c3ed144177bd29aeadc3377743fb2d32fd073cb92db98a5e7e56f1"
+      "sha256": "6b24458a0b8a0e9a6095827ec8cc581630b09b350f91719767ae6c99a056ebd0"
     },
     {
       "path": "library/ui/apps/hud/features/events/eventFormat.ts",
-      "sha256": "30c07ee6cff76afcc3c894f08ac4946e8a57d2d7e60dd06d972cf2098df970fc"
+      "sha256": "d5506d8c4c9e62a51d5485f83fba5c1bffd823a8dee06e65e7ddc968ca2990c7"
     },
     {
       "path": "library/ui/apps/hud/features/events/eventsStore.ts",
@@ -6620,11 +6620,11 @@
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventActions.ts",
-      "sha256": "6b63b55552b7b93705e93f722b5301b9b87ce6e21cb847e883b87b11bd342c83"
+      "sha256": "5447ba4121b4f0748694615f65991038c1df2d1fb6bb7434eb776febeba05d72"
     },
     {
       "path": "library/ui/apps/hud/features/events/useEventsData.ts",
-      "sha256": "bad9971fa194c03831092b87875f462c29389d8fff5e2d9a6af7d52430f9e8e7"
+      "sha256": "8010a17def06f4db8de92c9b4a092b13cae9991c9da74644ecd808769bd0e582"
     },
     {
       "path": "library/ui/apps/hud/features/events/useLiveEventCount.ts",
@@ -7268,11 +7268,11 @@
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventFormat.test.ts",
-      "sha256": "7be37f48332a288238de1e1673c5db6bbc1fdf2490f1fc1bea145b33a60008b5"
+      "sha256": "3f5f7ad0332d712180aaeff3beb7cb66e15a378b6e7c53df2a37478cc96b17ec"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/events.test.tsx",
-      "sha256": "6f331b89fa25f547a59eb89fd7339f4d17e7f2acb6a30d85028c8f63f9d3435b"
+      "sha256": "8aafc44610d3b3823647a85e4ed6dfba33217268536c88e6ec4a3239ae7b3525"
     },
     {
       "path": "library/ui/apps/hud/test/hosted/eventsStore.test.ts",

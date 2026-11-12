@@ -97,7 +97,7 @@
   position: absolute;
   inset: 0;
   border: 2px solid var(--text);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   pointer-events: none;
 }
 .create {

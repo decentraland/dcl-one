@@ -1,5 +1,5 @@
 .panel {
-  border-radius: 24px;
+  border-radius: var(--r-xl);
   position: relative;
   flex: none;
   width: 880px;
@@ -66,7 +66,7 @@
   gap: 2px;
 }
 .liveBadge {
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -151,7 +151,7 @@
   list-style: none;
 }
 .schedule {
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: flex;
   align-items: center;
   justify-content: space-between;

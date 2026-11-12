@@ -78,11 +78,14 @@ export function eventDayText(event: EventData): string {
   return start == null ? '' : shortDay(start).toUpperCase()
 }
 
-/** One occurrence of a recurrent event: "Wednesday, Aug 30 from 04:00pm to 05:00pm (UTC-3)". */
+/** One occurrence of a recurrent event: "Wednesday, Aug 30 from 04:00pm to 05:00pm (UTC-3)";
+ *  a zone off the hour reads "UTC+5:30". */
 export function scheduleText(start: Date, durationMs: number): string {
   const end = new Date(start.getTime() + durationMs)
-  const offsetHours = Math.trunc(-start.getTimezoneOffset() / 60)
-  return `${WEEKDAYS[start.getDay()]}, ${MONTHS[start.getMonth()]} ${two(start.getDate())} from ${paddedClock(start)} to ${paddedClock(end)} (UTC${offsetHours >= 0 ? '+' : ''}${offsetHours})`
+  const offset = -start.getTimezoneOffset()
+  const minutes = Math.abs(offset) % 60
+  const zone = `UTC${offset >= 0 ? '+' : '-'}${Math.trunc(Math.abs(offset) / 60)}${minutes > 0 ? `:${two(minutes)}` : ''}`
+  return `${WEEKDAYS[start.getDay()]}, ${MONTHS[start.getMonth()]} ${two(start.getDate())} from ${paddedClock(start)} to ${paddedClock(end)} (${zone})`
 }
 
 export function scheduleDates(event: EventData): Date[] {
@@ -135,15 +138,21 @@ export function createEventUrl(): string {
   return out(`https://${BASE_DOMAIN}/whats-on/new-event`)
 }
 
+/** The world a world event is held in: its `server` when that is a world's name. The events
+ *  service takes any text there, and the engine reads anything but a name as a realm's address. */
+export function eventWorldName(event: EventData): string | null {
+  return event.server != null && /^[a-z0-9-]+(\.dcl)?\.eth$/i.test(event.server) ? event.server : null
+}
+
 /** The link that drops a visitor at the event's place, crediting `referrer` (the sharer's address). */
 export function eventJumpLink(event: EventData, referrer: string | null): string {
-  const link = event.world ? `https://${BASE_DOMAIN}/jump/?realm=${event.server ?? ''}` : `https://${BASE_DOMAIN}/jump/?position=${event.x},${event.y}`
-  return referrer != null && referrer !== '' ? `${link}&referrer=${referrer}` : link
+  const link = event.world ? `https://${BASE_DOMAIN}/jump/?realm=${encodeURIComponent(event.server ?? '')}` : `https://${BASE_DOMAIN}/jump/?position=${event.x},${event.y}`
+  return referrer != null && referrer !== '' ? `${link}&referrer=${encodeURIComponent(referrer)}` : link
 }
 
 /** What "Copy link" copies: the jump link while the event is live, else its page. */
 export function eventCopyLink(event: EventData, referrer: string | null): string {
-  return event.live ? eventJumpLink(event, referrer) : `https://${BASE_DOMAIN}/whats-on/?id=${event.id}`
+  return event.live ? eventJumpLink(event, referrer) : `https://${BASE_DOMAIN}/whats-on/?id=${encodeURIComponent(event.id)}`
 }
 
 export function eventShareUrl(event: EventData, referrer: string | null): string {

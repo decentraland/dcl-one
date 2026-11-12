@@ -162,6 +162,19 @@ describe('events: the calendar', () => {
     expect(hud.driver.sentOf('getEvents').filter((m) => m.list == null).at(-1)).toMatchObject(calendarRange(today, 5))
   })
 
+  it('stops at today when the days shown grew since the step forward', async () => {
+    const hud = openWith([], { highlighted: [eventAt('h', at(2, 18), { name: 'Headliner', highlighted: true })] })
+    await userEvent.click(screen.getByRole('button', { name: 'Next days' }))
+    hud.answer('range', [])
+    await userEvent.click(screen.getByRole('button', { name: 'Sat, Sep 12' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Back to the calendar' }))
+    hud.answer('highlight', 'failed')
+    hud.answer('range', [])
+    await userEvent.click(screen.getByRole('button', { name: 'Previous days' }))
+    expect(hud.driver.sentOf('getEvents').filter((m) => m.list == null).at(-1)).toMatchObject(calendarRange(today, 5))
+    expect(screen.getByRole('button', { name: 'Previous days' })).toBeDisabled()
+  })
+
   it('shows an error with Retry when the read fails, and reads again', async () => {
     const hud = renderHud()
     hud.open()
@@ -312,6 +325,23 @@ describe('events: the reminder', () => {
     expect(screen.getByText('There was an error changing your interest on the event. Please try again.')).toBeInTheDocument()
     expect(within(card('Evening set')).getByRole('button', { name: 'Remind me' })).toHaveAttribute('aria-pressed', 'false')
   })
+
+  it('counts an unanswered change as failed, and still takes the service\'s late confirmation', () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    const hud = openWith([eventAt('a', at(1, 18), { name: 'Evening set' })])
+    const remind = (): HTMLElement => within(card('Evening set')).getByRole('button', { name: 'Remind me' })
+    fireEvent.click(remind())
+    act(() => void vi.advanceTimersByTime(EVENTS_REPLY_TIMEOUT_MS))
+    expect(screen.getAllByText('There was an error changing your interest on the event. Please try again.').length).toBeGreaterThan(0)
+    expect(remind()).toHaveAttribute('aria-pressed', 'false')
+    expect(remind()).toHaveAttribute('aria-busy', 'false')
+    hud.driver.emit({ kind: 'eventAttending', eventId: 'a', attending: true })
+    expect(remind()).toHaveAttribute('aria-pressed', 'true')
+    hud.driver.emit({ kind: 'eventAttending', eventId: 'a', attending: false })
+    expect(remind()).toHaveAttribute('aria-pressed', 'true')
+    expect(sentEvents(['event_set_as_interested'])).toHaveLength(1)
+  })
 })
 
 describe('events: the detail', () => {
@@ -353,6 +383,17 @@ describe('events: the detail', () => {
     expect(hud.session().events.open).toBe(false)
     expect(sentEvents(['event_card_clicked', 'event_jumped_in'])).toEqual(['event_card_clicked', 'event_jumped_in'])
   })
+
+  it('does not travel when the event\'s server is not a world name', async () => {
+    const hud = openWith([{ ...weekly, world: true, server: 'https://realm.example/about' }])
+    await userEvent.click(screen.getByRole('button', { name: 'Event: Weekly poker' }))
+    await userEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: /^Jump in to/ }))
+    expect(hud.driver.sentOf('changeRealm')).toHaveLength(0)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByText('This event’s world cannot be reached.')).toBeInTheDocument()
+    expect(hud.session().events.open).toBe(true)
+    expect(sentEvents(['event_jumped_in'])).toHaveLength(0)
+  })
 })
 
 describe('events: sharing', () => {
@@ -363,12 +404,25 @@ describe('events: sharing', () => {
     await userEvent.click(within(card('Evening set')).getByRole('button', { name: 'Share' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }))
     expect(writeText).toHaveBeenCalledWith(`https://${BASE_DOMAIN}/whats-on/?id=a`)
-    expect(screen.getByText('Link copied to clipboard!')).toBeInTheDocument()
+    expect(await screen.findByText('Link copied to clipboard!')).toBeInTheDocument()
     expect(screen.queryByRole('menu')).toBeNull()
     await userEvent.click(within(card('Evening set')).getByRole('button', { name: 'Share' }))
     fireEvent.click(screen.getByRole('menuitem', { name: 'Share on X' }))
     expect(String(vi.mocked(window.open).mock.calls.at(-1)![0])).toContain('https://twitter.com/intent/tweet?text=Evening%20set&hashtags=DCLPlace')
     expect(sentEvents(['event_link_copied', 'event_shared'])).toEqual(['event_link_copied', 'event_shared'])
+  })
+
+  it('says so when the link cannot be copied', async () => {
+    vi.stubGlobal('navigator', { ...navigator, clipboard: { writeText: vi.fn(() => Promise.reject(new Error('not focused'))) } })
+    openWith([eventAt('a', at(1, 18), { name: 'Evening set' })])
+    // toasts outlive a test
+    const copied = (): number => screen.queryAllByText('Link copied to clipboard!').length
+    const before = copied()
+    await userEvent.click(within(card('Evening set')).getByRole('button', { name: 'Share' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Copy link' }))
+    expect((await screen.findAllByText('Could not copy the link')).length).toBeGreaterThan(0)
+    expect(copied()).toBe(before)
+    expect(sentEvents(['event_link_copied'])).toHaveLength(0)
   })
 })
 

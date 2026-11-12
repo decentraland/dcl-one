@@ -294,10 +294,21 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Events page: its links carry the HUD's `utm_source`.** unity-explorer tags them
   `utm_source=explorer`; here they carry `bevy-web-client` or `bevy-desktop-client` like every
   other link out, and keep `utm_campaign=discover`. Event names and descriptions are URL-encoded
-  in the share and calendar links, which unity-explorer leaves raw.
+  in the share and calendar links, and so are the world, the referrer and the event id in the
+  jump and event links; unity-explorer leaves all of them raw.
+- **Events page: JUMP IN travels to a world only by its name.** The events service takes any
+  text as an event's `server`, and the engine reads anything but a world name as a realm's
+  address. unity-explorer builds the worlds server's address from it; here a `server` that is
+  not a `.eth` name does not travel, and a toast says the world cannot be reached.
+- **Events page: the calendar never steps before today.** unity-explorer steps back by the days
+  shown and locks the arrow only on today itself, so after the highlighted events come or go,
+  or past midnight, it reaches earlier days. Here a step back stops at today.
+- **Events page: a recurrent date's offset keeps its minutes.** unity-explorer writes whole
+  hours, `(UTC+5)` in a `+5:30` zone; here it reads `(UTC+5:30)`.
 - **Events page: a failed read shows an error with Retry.** unity-explorer shows a toast and
   leaves the loading placeholders up. A read the bridge has not answered in 10 seconds counts as
-  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows.
+  failed (the limit `library/explorer-core/lib/shell.ts` gives a request); an answer that arrives later still shows,
+  and so does a reminder the service confirms late.
 - **Events page: one copy of an event.** unity-explorer changes the reminder on the card's own
   copy, so a card scrolled out and back shows the old state; its day view's card buttons are not
   wired, and its banner is drawn before the friends list arrives. Here the calendar, the day

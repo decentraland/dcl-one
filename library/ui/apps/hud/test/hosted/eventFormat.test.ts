@@ -12,6 +12,7 @@ import {
   eventPlaceText,
   eventShareUrl,
   eventTimeText,
+  eventWorldName,
   rangeParam,
   scheduleDates,
   scheduleText,
@@ -47,10 +48,12 @@ describe('event labels', () => {
     expect(live(26 * 60)).toBe('Started 1 day ago')
   })
 
-  it('writes a recurrent date with its end and the whole hours from UTC', () => {
-    const start = new Date(2026, 7, 30, 16, 0)
-    const hours = Math.trunc(-start.getTimezoneOffset() / 60)
-    expect(scheduleText(start, 60 * 60_000)).toBe(`Sunday, Aug 30 from 04:00pm to 05:00pm (UTC${hours >= 0 ? '+' : ''}${hours})`)
+  it('writes a recurrent date with its end and the offset from UTC, with its minutes when it has any', () => {
+    const inZone = (offsetMinutes: number): Date => Object.assign(new Date(2026, 7, 30, 16, 0), { getTimezoneOffset: () => -offsetMinutes })
+    expect(scheduleText(inZone(-180), 60 * 60_000)).toBe('Sunday, Aug 30 from 04:00pm to 05:00pm (UTC-3)')
+    expect(scheduleText(inZone(0), 60 * 60_000)).toBe('Sunday, Aug 30 from 04:00pm to 05:00pm (UTC+0)')
+    expect(scheduleText(inZone(330), 60 * 60_000)).toBe('Sunday, Aug 30 from 04:00pm to 05:00pm (UTC+5:30)')
+    expect(scheduleText(inZone(-210), 60 * 60_000)).toBe('Sunday, Aug 30 from 04:00pm to 05:00pm (UTC-3:30)')
   })
 
   it('lists the recurrent dates from the next start on', () => {
@@ -113,6 +116,18 @@ describe('event links', () => {
     expect(eventCopyLink(upcoming, '0xme')).toBe(`https://${BASE_DOMAIN}/whats-on/?id=id-1`)
     expect(eventCopyLink({ ...upcoming, live: true }, '0xme')).toBe(`https://${BASE_DOMAIN}/jump/?position=10,-20&referrer=0xme`)
     expect(eventCopyLink({ ...upcoming, live: true, world: true, server: 'fest.dcl.eth' }, null)).toBe(`https://${BASE_DOMAIN}/jump/?realm=fest.dcl.eth`)
+  })
+
+  it('encodes the world, the referrer and the id, so none of them adds a parameter', () => {
+    const world = { ...upcoming, live: true, world: true, server: 'hello.dcl.eth&position=1,2' }
+    expect(eventCopyLink(world, '0xme&x=1')).toBe(`https://${BASE_DOMAIN}/jump/?realm=hello.dcl.eth%26position%3D1%2C2&referrer=0xme%26x%3D1`)
+    expect(eventCopyLink({ ...upcoming, id: 'a&b' }, null)).toBe(`https://${BASE_DOMAIN}/whats-on/?id=a%26b`)
+  })
+
+  it('takes a world event\'s server for its world only when it is a world name', () => {
+    expect(eventWorldName({ ...upcoming, world: true, server: 'Fest.dcl.eth' })).toBe('Fest.dcl.eth')
+    expect(eventWorldName({ ...upcoming, world: true, server: 'fest.eth' })).toBe('fest.eth')
+    for (const server of ['https://realm.example/about', 'fest.dcl.eth&position=1,2', 'fest.dcl.eth/about', '', null]) expect(eventWorldName({ ...upcoming, world: true, server })).toBeNull()
   })
 
   it('shares on X with the name, the hashtag and the link', () => {

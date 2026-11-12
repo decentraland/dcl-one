@@ -6,14 +6,15 @@ import { showToast } from '../../design'
 import type { EventData } from '@explorer-core/engine/protocol'
 import { track } from '@explorer-core/lib/analytics'
 import { useSession } from '../session/SessionContext'
-import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, createEventUrl } from './eventFormat'
+import { eventAnalytics, eventCalendarUrl, eventCopyLink, eventShareUrl, eventWorldName, createEventUrl } from './eventFormat'
 
 export interface EventActions {
   remind: (event: EventData) => void
   reminding: (event: EventData) => boolean
   addToCalendar: (event: EventData, start?: Date) => void
-  /** Travel to the event and close the Events page. */
-  jumpIn: (event: EventData) => void
+  /** Travel to the event and close the Events page. False when the event names no world to
+   *  travel to, and nothing happened. */
+  jumpIn: (event: EventData) => boolean
   shareOnX: (event: EventData) => void
   copyLink: (event: EventData) => void
   createEvent: (fromHeader: boolean) => void
@@ -41,20 +42,28 @@ export function useEventActions(): EventActions {
       },
       jumpIn: (event) => {
         if (event.world) {
-          if (event.server == null || event.server === '') return
-          changeRealm(event.server)
+          const world = eventWorldName(event)
+          if (world == null) {
+            showToast('This event’s world cannot be reached.', { tone: 'error' })
+            return false
+          }
+          changeRealm(world)
         } else teleportToPlace(event.x, event.y)
         track('event_jumped_in', eventAnalytics(event))
         if (open) toggle()
+        return true
       },
       shareOnX: (event) => {
         openUrl(eventShareUrl(event, referrer))
         track('event_shared', eventAnalytics(event))
       },
       copyLink: (event) => {
-        void navigator.clipboard?.writeText(eventCopyLink(event, referrer))
-        showToast('Link copied to clipboard!')
-        track('event_link_copied', eventAnalytics(event))
+        const failed = (): void => showToast('Could not copy the link', { tone: 'error' })
+        if (navigator.clipboard == null) return failed()
+        navigator.clipboard.writeText(eventCopyLink(event, referrer)).then(() => {
+          showToast('Link copied to clipboard!')
+          track('event_link_copied', eventAnalytics(event))
+        }, failed)
       },
       createEvent: (fromHeader) => {
         openUrl(createEventUrl())

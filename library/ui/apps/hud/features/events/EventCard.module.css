@@ -11,7 +11,7 @@
   font-family: var(--font-family);
 }
 .surface {
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   position: absolute;
   inset: 0;
   overflow: hidden;
@@ -129,7 +129,7 @@
   height: 26px;
 }
 .liveBadge {
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -140,7 +140,7 @@
   font-weight: 600;
 }
 .online {
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -261,7 +261,7 @@
   pointer-events: none;
 }
 .liveMark {
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -375,7 +375,7 @@
   transition: top var(--dur-mid) var(--ease-outquad);
 }
 .communityThumb {
-  border-radius: 9.6px;
+  border-radius: var(--r-button);
   display: block;
   width: 40px;
   height: 40px;
@@ -445,7 +445,7 @@
   height: 100%;
 }
 .bannerSurface {
-  border-radius: 24px;
+  border-radius: var(--r-xl);
   background: var(--events-banner);
 }
 .bannerImage {
@@ -490,7 +490,7 @@
   position: absolute;
   inset: 0;
   border: 1.6px solid var(--events-banner-pill-outline);
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 .bannerName {
   display: -webkit-box;
@@ -553,7 +553,7 @@
 }
 
 .skeletonCard {
-  border-radius: 16px;
+  border-radius: var(--r-lg);
   position: relative;
   display: block;
   flex: none;

@@ -97,7 +97,7 @@ export function EventsPage({
             <TintButton radius="pill" tone="glass" className={styles.today} aria-label="Go to today" onClick={() => showCalendar(startOfDay(new Date()))}>
               Today
             </TintButton>
-            <TintButton radius={12} tone="dark" className={styles.create} onClick={() => actions.createEvent(true)}>
+            <TintButton radius="md" tone="dark" className={styles.create} onClick={() => actions.createEvent(true)}>
               <MaskIcon src={addIcon} size={12} />
               CREATE EVENT
             </TintButton>

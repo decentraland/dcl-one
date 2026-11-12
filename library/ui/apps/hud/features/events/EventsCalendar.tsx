@@ -166,7 +166,10 @@ export function EventsCalendar({
   onRetry: () => void
 }): React.JSX.Element {
   const days = columns.length
-  const atToday = sameDay(startDay, startOfDay(new Date()))
+  const today = startOfDay(new Date())
+  const atToday = startDay.getTime() <= today.getTime()
+  // the day count changes with the highlighted events, so a step back can pass today
+  const previous = addDays(startDay, -days)
   return (
     <div className={styles.calendar}>
       <div className={styles.dayBar}>
@@ -180,7 +183,7 @@ export function EventsCalendar({
           className={`${styles.rangeArrow} ${styles.rangePrev}`}
           aria-label="Previous days"
           disabled={arrowsLocked || atToday}
-          onClick={() => onStartDay(addDays(startDay, -days))}
+          onClick={() => onStartDay(previous.getTime() < today.getTime() ? today : previous)}
         >
           <MaskIcon src={arrowLeftIcon} size={20} />
         </TintButton>

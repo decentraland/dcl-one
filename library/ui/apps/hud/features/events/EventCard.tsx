@@ -166,7 +166,7 @@ export function EventActionButtons({
   variant?: 'card' | 'detail'
   className?: string
 }): React.JSX.Element {
-  const radius = size === 'small' ? 9.6 : 12
+  const radius = size === 'small' ? 'button' : 'md'
   const icon = 24
   const tone = variant === 'detail' ? 'veil' : 'faint'
   const box = size === 'small' ? styles.actionSmall : styles.actionLarge

@@ -34,7 +34,7 @@ export function EventsByDay({
   return (
     <div className={styles.byDay}>
       <div className={styles.top}>
-        <TintButton radius={12} tone="dark" className={styles.back} aria-label="Back to the calendar" onClick={onBack}>
+        <TintButton radius="md" tone="dark" className={styles.back} aria-label="Back to the calendar" onClick={onBack}>
           <MaskIcon src={arrowLeftIcon} size={20} />
         </TintButton>
         <h2 className={styles.counter}>{loaded ? `${label} (${events.length})` : label}</h2>
@@ -55,7 +55,7 @@ export function EventsByDay({
             <img src={emptyArt} alt="" width={100} height={100} draggable={false} />
             <p className={styles.emptyTitle}>No plans here yet</p>
             <p className={styles.emptyText}>Skip ahead and see what’s coming up next.</p>
-            <TintButton radius={12} tone="brand" className={styles.nextDay} onClick={onNextDay}>
+            <TintButton radius="md" tone="brand" className={styles.nextDay} onClick={onNextDay}>
               GO TO NEXT DAY
             </TintButton>
           </div>

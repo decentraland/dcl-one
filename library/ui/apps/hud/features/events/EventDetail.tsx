@@ -26,9 +26,10 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
   }, [gone, onClose])
   if (event == null) return null
   const place = event.place_id != null ? store.places[event.place_id] : undefined
-  const jumpIn = (): void => {
-    onClose()
-    actions.jumpIn(event)
+  const jumpIn = (): boolean => {
+    const travelling = actions.jumpIn(event)
+    if (travelling) onClose()
+    return travelling
   }
   return (
     <div className={styles.panel} role="dialog" aria-modal="true" aria-label={event.name} onClick={(e) => e.stopPropagation()}>
@@ -68,14 +69,14 @@ function EventDetail({ eventId, onClose }: { eventId: string; onClose: () => voi
             <div className={styles.place}>
               <MaskIcon src={pinIcon} size={24} className={styles.icon} />
               <span className={styles.placeName}>{eventPlaceText(event, place)}</span>
-              <TintButton radius={9.6} tone="brand" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
+              <TintButton radius="button" tone="brand" className={styles.placeJump} aria-label={`Jump in to ${eventPlaceText(event, place)}`} onClick={jumpIn}>
                 <span>JUMP IN</span>
                 <MaskIcon src={jumpInIcon} size={20} />
               </TintButton>
             </div>
           </div>
         </div>
-        <TintButton radius={12} tone="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
+        <TintButton radius="md" tone="shade" className={styles.close} aria-label="Close event detail" onClick={onClose}>
           <MaskIcon src={closeIcon} size={14} />
         </TintButton>
     </div>

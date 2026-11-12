@@ -7,12 +7,12 @@ type Tone = 'dark' | 'faint' | 'veil' | 'glass' | 'shade' | 'brand' | 'clear'
 
 interface TintButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   tone?: Tone
-  /** In px; `pill` rounds the ends fully. */
-  radius?: number | 'pill'
+  /** The corner token: `--r-md`, `--r-button` or `--r-pill`. */
+  radius?: 'md' | 'button' | 'pill'
 }
 
-export function TintButton({ tone = 'dark', radius = 12, className = '', type = 'button', style, children, ...rest }: TintButtonProps): React.JSX.Element {
-  const vars = { '--tint-radius': radius === 'pill' ? 'var(--r-pill)' : `${radius}px` } as CSSProperties
+export function TintButton({ tone = 'dark', radius = 'md', className = '', type = 'button', style, children, ...rest }: TintButtonProps): React.JSX.Element {
+  const vars = { '--tint-radius': `var(--r-${radius})` } as CSSProperties
   return (
     <button type={type} className={`${styles.btn} ${styles[tone]} ${className}`.trim()} style={{ ...vars, ...style }} {...rest}>
       {children}
