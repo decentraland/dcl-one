@@ -726,26 +726,18 @@ mod test {
     #[test]
     #[ignore = "needs a GPU; run with --ignored"]
     fn soft_shadow_pipelines_compile() {
-        use std::{
-            path::Path,
-            time::{Duration, Instant},
-        };
+        use std::path::Path;
 
+        use assets::test_support::{
+            compile_pipelines, fragment_pipelines, headless_app, render_target,
+        };
         use bevy::{
             asset::{io::embedded::EmbeddedAssetRegistry, RenderAssetUsages},
             core_pipeline::prepass::{DepthPrepass, NormalPrepass},
-            log::LogPlugin,
             render::{
                 camera::RenderTarget,
-                pipelined_rendering::PipelinedRenderingPlugin,
-                render_resource::{
-                    CachedPipelineState, Extent3d, PipelineCache, PipelineDescriptor,
-                    TextureDimension, TextureFormat, TextureUsages,
-                },
-                RenderApp,
+                render_resource::{Extent3d, TextureDimension, TextureFormat},
             },
-            window::ExitCondition,
-            winit::WinitPlugin,
         };
 
         use crate::{
@@ -754,21 +746,7 @@ mod test {
             trees::{SoftShadowMaterial, SoftShadows},
         };
 
-        let mut app = App::new();
-        app.add_plugins(
-            DefaultPlugins
-                .build()
-                .disable::<LogPlugin>()
-                .disable::<WinitPlugin>()
-                // keeps the render app in this app, so the pipeline cache is readable
-                .disable::<PipelinedRenderingPlugin>()
-                .set(WindowPlugin {
-                    primary_window: None,
-                    exit_condition: ExitCondition::DontExit,
-                    close_when_requested: false,
-                }),
-        );
-        app.add_plugins(assets::EmbedAssetsPlugin);
+        let mut app = headless_app();
         // the shaders as `ShellTexturingPlugin`, `TreesPlugin`, `TerrainPlugin` and `CoastPlugin`
         // embed them; those plugins need the scene runner and the terrain
         let registry = app.world().resource::<EmbeddedAssetRegistry>();
@@ -797,6 +775,7 @@ mod test {
         app.cleanup();
         app.update();
 
+        let target = render_target(&mut app);
         let world = app.world_mut();
         let mut images = world.resource_mut::<Assets<Image>>();
         // flat terrain, as `TerrainSurface` uploads it before any bounds are known
@@ -810,19 +789,6 @@ mod test {
                 RenderAssetUsages::RENDER_WORLD,
             ),
         );
-        let mut target = Image::new_fill(
-            Extent3d {
-                width: 64,
-                height: 64,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            &[0, 0, 0, 0],
-            TextureFormat::Bgra8UnormSrgb,
-            RenderAssetUsages::all(),
-        );
-        target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-        let target = images.add(target);
         let ripples = images.add(Image::default());
         let mut meshes = world.resource_mut::<Assets<Mesh>>();
         let grass_mesh = meshes.add(parcel_mesh(grid_segments(HIGH_LOD)));
@@ -922,41 +888,9 @@ mod test {
             Transform::from_xyz(0.0, -0.1, 1.0),
         ));
 
-        // a few frames queue every pipeline; then they compile in the background
-        for _ in 0..10 {
-            app.update();
-        }
-        let started = Instant::now();
-        let mut errors = Vec::new();
-        loop {
-            app.update();
-            let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
-            errors.clear();
-            let mut pending = 0;
-            for pipeline in cache.pipelines() {
-                match &pipeline.state {
-                    CachedPipelineState::Ok(_) => {}
-                    CachedPipelineState::Err(error) => errors.push(error.to_string()),
-                    _ => pending += 1,
-                }
-            }
-            if pending == 0 {
-                break;
-            }
-            assert!(
-                started.elapsed() < Duration::from_secs(120),
-                "{pending} pipelines still compiling"
-            );
-        }
-        assert!(
-            errors.is_empty(),
-            "pipeline errors:\n{}",
-            errors.join("\n\n")
-        );
+        compile_pipelines(&mut app);
 
         // the compiled pipelines whose fragment stage is each shader
-        let asset_server = app.world().resource::<AssetServer>();
-        let cache = app.sub_app(RenderApp).world().resource::<PipelineCache>();
         for (name, at_least) in [
             // the main pass and the prepass
             ("shell_texturing.wgsl", 2),
@@ -968,21 +902,7 @@ mod test {
             ("coast_cliff.wgsl", 1),
             ("coast_water.wgsl", 1),
         ] {
-            let shader = asset_server
-                .get_handle::<Shader>(format!("embedded://visuals/{name}"))
-                .unwrap_or_else(|| panic!("{name} never loaded"))
-                .id();
-            let compiled = cache
-                .pipelines()
-                .filter(|pipeline| {
-                    matches!(
-                        &pipeline.descriptor,
-                        PipelineDescriptor::RenderPipelineDescriptor(descriptor)
-                            if descriptor.fragment.as_ref()
-                                .is_some_and(|fragment| fragment.shader.id() == shader)
-                    ) && matches!(pipeline.state, CachedPipelineState::Ok(_))
-                })
-                .count();
+            let compiled = fragment_pipelines(&app, &format!("embedded://visuals/{name}"));
             println!("{compiled} {name} pipelines compiled");
             assert!(compiled >= at_least, "only {compiled} {name} pipelines");
         }
