@@ -1615,7 +1615,9 @@ mod world_mint {
         let listed = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
         let (blocked, open) = (world(), world());
         let policy = Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
-            .with_blocked_world_names(&format!("{}, other.eth", blocked.display()));
+            .with_name_deny_list(Arc::new(catalyst::worlds::core::names::NameDenyList::new(
+                &format!("{}, other.eth", blocked.display()),
+            )));
         let state = Arc::new(CommsState::new(
             pool.clone(),
             Outbound::for_tests(),

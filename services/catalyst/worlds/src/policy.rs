@@ -314,8 +314,10 @@ pub struct Policy {
     admission_owners: TtlMap<String, Result<Option<Address>, String>>,
     /// The DAO name deny list and `BLOCKED_WORLD_NAMES`, which
     /// [`AccessPolicy::world_admission`](crate::comms::interfaces::AccessPolicy::world_admission)
-    /// applies (upstream `isWorldValid`'s `checkNameDenyList`).
-    names: crate::core::names::NameDenyList,
+    /// applies (upstream `isWorldValid`'s `checkNameDenyList`). ONE list, with ONE memo, shared
+    /// with the world reads and the deploy core ([`Policy::names`]), as upstream shares one
+    /// `nameDenyListChecker`.
+    names: Arc<crate::core::names::NameDenyList>,
 }
 
 impl Policy {
@@ -348,15 +350,20 @@ impl Policy {
             ens: None,
             ens_max_size_bytes: DEFAULT_ENS_MAX_SIZE_BYTES,
             admission_owners: TtlMap::bounded(ADMISSION_OWNER_MEMO, ADMISSION_OWNER_MAX_ENTRIES),
-            names: crate::core::names::NameDenyList::default(),
+            names: Arc::default(),
         }
     }
 
-    /// `BLOCKED_WORLD_NAMES` for the name deny list the comms mints apply
-    /// ([`crate::core::names::BlockedNames::parse`]).
-    pub fn with_blocked_world_names(mut self, raw: &str) -> Self {
-        self.names = crate::core::names::NameDenyList::new(raw);
+    /// The name deny list this policy and its other consumers share (an empty
+    /// `BLOCKED_WORLD_NAMES` until set).
+    pub fn with_name_deny_list(mut self, names: Arc<crate::core::names::NameDenyList>) -> Self {
+        self.names = names;
         self
+    }
+
+    /// The shared name deny list: `CoreState` reads this one instance.
+    pub fn names(&self) -> &Arc<crate::core::names::NameDenyList> {
+        &self.names
     }
 
     /// Turns on ENS worlds with their owner reader and size cap.
@@ -1884,7 +1891,10 @@ mod tests {
         let label = format!("d{}", &Uuid::new_v4().simple().to_string()[..10]);
         let listed = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
         let (blocked, open) = (world_name(), world_name());
-        let p = p.with_blocked_world_names(&format!(" {} ,", blocked.key().to_uppercase()));
+        let p = p.with_name_deny_list(Arc::new(crate::core::names::NameDenyList::new(&format!(
+            " {} ,",
+            blocked.key().to_uppercase()
+        ))));
         for world in [&listed, &blocked, &open] {
             seed_world(&p, world, None, AccessType::Unrestricted, None).await;
         }

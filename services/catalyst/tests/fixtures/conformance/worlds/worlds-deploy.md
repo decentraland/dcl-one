@@ -632,9 +632,10 @@ dcl-one (`scenes.rs` `delete_scene`): world name parsed first, the strict signed
       `createValidateBannedNames` turns the refusal into the deny-list 400 of section 1
       (`src/logic/validations/scene.ts:86-101`). Pinned by `test/unit/name-deny-list-checker.spec.ts:19-62`.
     - dcl-one: `WorldsConfig::blocked_world_names` reads `BLOCKED_WORLD_NAMES`
-      (`services/catalyst/config/src/worlds.rs:449-454`); `serve` passes it to the deploy core's
-      `Settings` and `CoreState::new` parses it once into `NameDenyList` (`worlds/src/core/mod.rs:330`,
-      `worlds/src/core/names.rs:31-39,92-97`). `deploy::validate` asks `check_name_deny_list` at
+      (`services/catalyst/config/src/worlds.rs:449-454`); `WorldsState::new` parses it once into
+      `NameDenyList` (`worlds/src/lib.rs:265`, `worlds/src/core/names.rs:31-39,92-97`), `serve`
+      hands that instance to the policy (`src/serve.rs:925`) and `CoreState::new` takes the
+      policy's (`worlds/src/core/mod.rs:322`). `deploy::validate` asks `check_name_deny_list` at
       upstream's position (`worlds/src/core/deploy.rs:777-784`), so a single-request publish and the
       first `partial=true` batch carrying the manifest answer the same 400 and store nothing. Pinned by
       `worlds/src/core/tests/partial_uploads.rs` `a_publish_to_a_blocked_world_name_answers_the_deny_list_400`

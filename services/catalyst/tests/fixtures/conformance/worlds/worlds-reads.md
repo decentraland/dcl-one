@@ -682,9 +682,10 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       `/entities/active`, `/index`, `/worlds`, `/about`, the manifest, limits and deploy validation
       (WD-28) apply it. `store::world_is_valid` asks `check_name_deny_list` before the row
       (`worlds/src/core/store.rs:459-467`; the permission routes, WP-11 and WP-20), and
-      `Policy::world_admission` refuses a name the list refuses (`worlds/src/policy.rs:1439-1468`;
-      the three comms mints, the scene-host admission and the room recheck, WC-28; `serve` gives
-      that policy `BLOCKED_WORLD_NAMES`). Pinned by `names.rs`
+      `Policy::world_admission` refuses a name the list refuses (`worlds/src/policy.rs:1446-1475`;
+      the three comms mints, the scene-host admission and the room recheck, WC-28). `serve` hands
+      the world reads' list to that policy and `CoreState` takes the policy's
+      (`src/serve.rs:925`, `worlds/src/core/mod.rs:322`), so every consumer reads one instance. Pinned by `names.rs`
       `configured_blocks_refuse_exact_names_and_lead_the_banned_names`,
       `configured_blocks_hold_while_the_list_cannot_be_read`, `configured_blocks_add_to_the_list`,
       `worlds/src/core/tests.rs` `active_entities_skip_a_blocked_world_name` and

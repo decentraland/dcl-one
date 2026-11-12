@@ -237,8 +237,10 @@ pub struct WorldsState {
     read_through: OnceLock<WorldReadThrough>,
     /// The permission core `/about` resolves a world's live holder through.
     policy: OnceLock<Arc<policy::Policy>>,
-    /// The DAO name deny list and `BLOCKED_WORLD_NAMES` `/about` and `/index` apply.
-    pub names: core::names::NameDenyList,
+    /// The DAO name deny list and `BLOCKED_WORLD_NAMES` `/about` and `/index` apply; `serve`
+    /// hands this instance to the policy ([`policy::Policy::with_name_deny_list`]), so every
+    /// consumer reads one memo.
+    pub names: Arc<core::names::NameDenyList>,
 }
 
 pub type SharedState = Arc<WorldsState>;
@@ -260,7 +262,9 @@ impl WorldsState {
         mirror: Option<MirrorSettings>,
         http: crate::http::Outbound,
     ) -> Self {
-        let names = core::names::NameDenyList::new(&settings.blocked_world_names);
+        let names = Arc::new(core::names::NameDenyList::new(
+            &settings.blocked_world_names,
+        ));
         Self {
             pool,
             storage,

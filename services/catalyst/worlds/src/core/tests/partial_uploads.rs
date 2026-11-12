@@ -434,7 +434,7 @@ async fn a_part_not_named_by_a_cidv1_is_refused() {
 async fn a_publish_to_a_blocked_world_name_answers_the_deny_list_400() {
     let world = world_name();
     let configured = format!(" , {} ,", world.display().to_uppercase());
-    let Some(f) = fixture_with_settings(|s| s.blocked_world_names = configured).await else {
+    let Some(f) = fixture_blocking(&configured).await else {
         return;
     };
     let owner = Wallet::random();

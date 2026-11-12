@@ -922,7 +922,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
             .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
-            .with_blocked_world_names(&config.worlds.blocked_world_names),
+            .with_name_deny_list(worlds.names.clone()),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
@@ -1827,7 +1827,6 @@ async fn worlds_states(
                     .with_scene_eviction_ttl_ms(config.worlds.scene_eviction_ttl_ms)
                     .with_public_url(&worlds::Settings::from_config(config).public_url)
                     .with_max_file_count(config.worlds.max_file_count)
-                    .with_blocked_world_names(&config.worlds.blocked_world_names)
                     .with_access_caps(
                         config.worlds.access_max_wallets,
                         config.worlds.access_max_communities,

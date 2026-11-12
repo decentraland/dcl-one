@@ -99,8 +99,11 @@ difference not listed here is a gap, not a decision.
   charges nothing. It runs only on a world the mint admits: an unknown,
   blocked or name-deny-listed world answers 404 first. Upstream's
   `/worlds/{name}/comms` and scene mints also run it for a blocked world and
-  for a `<label>.dcl.eth` whose label is on the DAO name list, so a caller
-  throttled on such a shared-secret world gets 429 there. If the counter
+  for every world the DAO name list refuses (`<label>.dcl.eth` and
+  `<label>.eth`, whatever the entry's case): the access read leaves out only
+  names equal to a `BLOCKED_WORLD_NAMES` entry or to a list entry without its
+  suffix, and no stored world name equals the latter. So a caller throttled on
+  such a shared-secret world gets 429 there. If the counter
   cannot be read or written the mint answers 503.
 - **Scene bans in the lobby.** A wallet banned from the world's active scene
   is refused the world lobby too (`/worlds/{name}/comms` and

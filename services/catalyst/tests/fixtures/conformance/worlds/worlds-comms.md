@@ -706,20 +706,33 @@ Both trees advertise
       `World "w" is invalid or blocked.`; route 3 answers 404 `{"error":"Not Found","message":"World \"w\" was not found."}`
       right after the room prefix (`src/controllers/handlers/comms-adapter-handler.ts:37-39`).
     - dcl-one: `Policy::world_admission` answers `WorldAdmission::Unknown` for an existing world the
-      policy's `NameDenyList` refuses (`worlds/src/policy.rs:1439-1468`; the list and its matching
-      are `worlds/src/core/names.rs:31-39,51-54,134-138`), and `serve` gives that list
-      `BLOCKED_WORLD_NAMES` (`src/serve.rs:925`). The three mints answer it as an invalid world
+      policy's `NameDenyList` refuses (`worlds/src/policy.rs:1446-1475`; the list and its matching
+      are `worlds/src/core/names.rs:31-39,51-54,134-138`). `serve` gives the policy the world
+      reads' list, `BLOCKED_WORLD_NAMES` included (`src/serve.rs:925`), and `CoreState` takes the
+      policy's (`worlds/src/core/mod.rs:322`), so the mints, `/about`, the manifest, the listings
+      and deploy validation read one instance and one hour memo, as upstream shares one
+      `nameDenyListChecker` (`src/components.ts:166`). The three mints answer it as an invalid world
       (`comms/src/gatekeeper/admission/world_mint.rs:494-503,548-550`), and the scene-host admission
       and the room recheck, which ask the same `world_admission`, refuse it too
       (`comms/src/gatekeeper/admission/scene.rs:387,1004`). Pinned by `worlds/src/policy.rs`
       `world_admission_refuses_a_deny_listed_name` and `tests/gatekeeper_policy.rs`
       `the_mints_answer_404_for_a_deny_listed_world_name` (a DAO-listed label and a configured
-      whole name: 404 with upstream's bodies on all three routes; a world on neither: 200).
+      whole name: 404 with upstream's bodies on all three routes; a world on neither: 200), and
+      `worlds/src/core/tests.rs` `the_core_and_the_comms_admission_share_one_name_deny_list` (an
+      entry seeded in the core's memo refuses `world_admission` and the manifest at once).
     - Intended edge (worlds-compatibility.md "Shared-secret throttle"): on routes 1–2, upstream's
-      throttle pre-check reads the access setting through `getRawWorldRecords`, which still returns
-      a blocked world or a `<label>.dcl.eth` whose label is DAO-listed (`getBannedNames` strips the
-      entry, `src/adapters/worlds-manager.ts:327-349`). A subject throttled on such a shared-secret
-      world in the last 60 s gets 429 there and 404 here. Route 3 checks `isWorldValid` before its
+      throttle pre-check reads the access setting through `getRawWorldRecords`
+      (`src/logic/access/component.ts:34-39`, before `isWorldValid` in
+      `src/controllers/handlers/world-comms-handler.ts:43-51`). That read still returns a blocked
+      world and every world the DAO list refuses: it filters by `worlds.name != ALL(getBannedNames())`
+      (`src/adapters/worlds-manager.ts:327-349`), and `getBannedNames` holds the
+      `BLOCKED_WORLD_NAMES` entries whole but each list entry only without its first `.eth` and
+      `.dcl`, case kept (`name-deny-list-checker.ts:61-65`), while `checkNameDenyList` lowercases and
+      strips the world name (`:52-53`). A stored name keeps its `.dcl.eth` or `.eth`, so it never
+      equals a stripped entry: a `<label>.dcl.eth` or `<label>.eth` refused through a listed label,
+      in any case, keeps its access setting there. A subject throttled on such a shared-secret world
+      in the last 60 s gets 429 there and 404 here; a `BLOCKED_WORLD_NAMES` world reads
+      `unrestricted`, runs no throttle and answers 404 in both. Route 3 checks `isWorldValid` before its
       throttle, as dcl-one does.
     - Severity: none (closed).
 

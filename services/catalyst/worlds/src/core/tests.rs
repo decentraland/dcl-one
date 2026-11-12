@@ -107,15 +107,35 @@ async fn fixture_full(
     settings: Settings,
 ) -> Option<Fixture> {
     let pool = crate::db::scratch::pool(8).await?;
-    Some(fixture_on_pool(pool, personal, forward_to, ens, settings).await)
+    Some(fixture_on_pool(pool, personal, forward_to, ens, settings, "").await)
 }
 
+/// A fixture on its own scratch database whose name deny list blocks
+/// `blocked_world_names` (`BLOCKED_WORLD_NAMES`).
+async fn fixture_blocking(blocked_world_names: &str) -> Option<Fixture> {
+    let pool = crate::db::scratch::pool(8).await?;
+    Some(
+        fixture_on_pool(
+            pool,
+            PersonalWorldsPolicy::disabled(),
+            None,
+            None,
+            test_settings(),
+            blocked_world_names,
+        )
+        .await,
+    )
+}
+
+/// `blocked_world_names`: `BLOCKED_WORLD_NAMES` of the one name deny list the
+/// policy and the core share.
 async fn fixture_on_pool(
     pool: PgPool,
     personal: PersonalWorldsPolicy,
     forward_to: Option<&str>,
     ens: Option<(Arc<crate::ens::EnsResolver>, i64)>,
     settings: Settings,
+    blocked_world_names: &str,
 ) -> Fixture {
     let (market, names) = index_with_names().await;
     let dir = std::env::temp_dir().join(format!(
@@ -124,7 +144,9 @@ async fn fixture_on_pool(
         Uuid::new_v4().simple()
     ));
     let storage = Arc::new(Storage::from_config(&dir).await.unwrap());
-    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone()));
+    let mut policy = Policy::new(pool.clone(), personal, Some(market.clone())).with_name_deny_list(
+        Arc::new(super::names::NameDenyList::new(blocked_world_names)),
+    );
     if let Some((resolver, cap)) = ens {
         policy = policy.with_ens(Some(resolver), cap);
     }
@@ -3335,6 +3357,7 @@ async fn a_community_closure_rechecks_livekit_when_its_queue_insert_fails() {
             None,
             None,
             test_settings(),
+            "",
         )
         .await;
         community_closure_with_failed_queue_insert(f).await;
@@ -6332,8 +6355,8 @@ async fn active_entities_skip_a_blocked_world_name() {
         PersonalWorldsPolicy::disabled(),
         None,
         None,
-        test_settings()
-            .with_blocked_world_names(&format!(" , {} ", blocked.display().to_uppercase())),
+        test_settings(),
+        &format!(" , {} ", blocked.display().to_uppercase()),
     )
     .await;
     let pointers = json!({ "pointers": [allowed.display(), blocked.display()] });
@@ -6383,7 +6406,8 @@ async fn configured_world_names_are_hidden_from_the_world_reads() {
         PersonalWorldsPolicy::disabled(),
         None,
         None,
-        test_settings().with_blocked_world_names(&configured),
+        test_settings(),
+        &configured,
     )
     .await;
     let (worlds, blobs) = served_states_with(
@@ -6438,6 +6462,34 @@ async fn configured_world_names_are_hidden_from_the_world_reads() {
     .await;
 }
 
+/// Upstream builds one `nameDenyListChecker` (`src/components.ts:166`) and hands it to
+/// `isWorldValid`, the world reads and deploy validation, so they answer from one memo. The core
+/// reads the policy's list, so an entry the core's memo holds refuses the comms admission at once
+/// (a second list would read the DAO table, which holds no such entry, and admit the world).
+#[tokio::test]
+async fn the_core_and_the_comms_admission_share_one_name_deny_list() {
+    use crate::comms::interfaces::AccessPolicy;
+    use crate::policy::{AccessType, WorldAdmission};
+    let Some(f) = fixture().await else { return };
+    assert!(Arc::ptr_eq(&f.state.names, f.state.policy.names()));
+    let owner = Wallet::random();
+    let world = owned_world(&f, &owner).await;
+    let manifest = || Case::new("get", format!("/world/{}/manifest", world.display()));
+    let now = chrono::Utc::now().naive_utc();
+    assert_eq!(
+        f.state.policy.world_admission(&world, now).await.unwrap(),
+        WorldAdmission::Open(AccessType::Unrestricted)
+    );
+    expect(&f.app, manifest(), 200).await;
+
+    let _denied = DenyListed::seed(&f.state.names, vec![world.label().to_string()]);
+    assert_eq!(
+        f.state.policy.world_admission(&world, now).await.unwrap(),
+        WorldAdmission::Unknown
+    );
+    expect(&f.app, manifest(), 404).await;
+}
+
 /// `BLOCKED_WORLD_NAMES` on the permission routes: `getAccessForWorld` reads
 /// a blocked world as the default `unrestricted` (`getBannedNames` keeps the
 /// whole configured name, `worlds-manager.ts:327,345-349`), and the owner's
@@ -6462,8 +6514,8 @@ async fn configured_world_names_are_invalid_on_the_permission_routes() {
         PersonalWorldsPolicy::disabled(),
         None,
         None,
-        test_settings()
-            .with_blocked_world_names(&format!(" , {} ", world.display().to_uppercase())),
+        test_settings(),
+        &format!(" , {} ", world.display().to_uppercase()),
     )
     .await;
     blocking.names.set(&owner.address, world.label());
