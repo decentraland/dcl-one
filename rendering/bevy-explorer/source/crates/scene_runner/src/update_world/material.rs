@@ -661,6 +661,10 @@ pub fn update_materials(
                                 if first && !pending {
                                     commands.entity(ent).try_insert(PendingMaterial);
                                 }
+                                // waiting for its source, it no longer comes with its primitive
+                                if prepaid {
+                                    commands.entity(ent).remove::<MaterialPrepaid>();
+                                }
                                 continue;
                             }
                             Ok(Some(mat)) => {
@@ -705,6 +709,9 @@ pub fn update_materials(
                             .try_insert(RetryMaterial(Vec::default()));
                         if first && !pending {
                             commands.entity(ent).try_insert(PendingMaterial);
+                        }
+                        if prepaid {
+                            commands.entity(ent).remove::<MaterialPrepaid>();
                         }
                         continue;
                     }

@@ -3,7 +3,7 @@ use std::time::Duration;
 use common::structs::{OutOfWorld, PrimaryUser};
 use comms::profile::ProfileCache;
 use dcl_component::proto_components::{
-    common::Color4,
+    common::{Color4, VideoTexture},
     sdk::components::pb_material::{self, PbrMaterial},
 };
 
@@ -360,4 +360,41 @@ fn a_waiting_material_removed_and_added_in_one_tick_keeps_waiting() {
     app.update();
 
     assert_eq!(created(&app, &waiting_entities), 2);
+}
+
+#[test]
+fn a_prepaid_material_whose_source_is_not_ready_is_gated_again() {
+    let (mut app, root) = material_app();
+    let video_id = SceneEntityId {
+        id: 600,
+        generation: 0,
+    };
+    let video = app.world_mut().spawn_empty().id();
+    app.world_mut()
+        .get_mut::<RendererSceneContext>(root)
+        .unwrap()
+        .associate_bevy_entity(video_id, video);
+    let video_material = PbMaterialComponent(PbMaterial {
+        material: Some(pb_material::Material::Pbr(PbrMaterial {
+            texture: Some(TextureUnion {
+                tex: Some(texture_union::Tex::VideoTexture(VideoTexture {
+                    video_player_entity: video_id.as_proto_u32().unwrap(),
+                    ..Default::default()
+                })),
+            }),
+            ..Default::default()
+        })),
+        gltf: None,
+    });
+    let entity = app
+        .world_mut()
+        .spawn((container(root), video_material, MaterialPrepaid))
+        .id();
+
+    app.update();
+
+    // it waits for the video, so the slice decides it again once the video is there
+    assert!(material_handle(&app, entity).is_none());
+    assert!(app.world().get::<PendingMaterial>(entity).is_some());
+    assert!(app.world().get::<MaterialPrepaid>(entity).is_none());
 }
