@@ -44,7 +44,7 @@ const FALLBACK: PageDefaults = {
   variant: "config_driven",
 };
 
-export async function loader({ request, params }: Route.LoaderArgs) {
+export async function loader({ request, context, params }: Route.LoaderArgs) {
   if ((params.slug ?? "") === "seasons") {
     throw redirect("/shop/credits");
   }
@@ -55,7 +55,7 @@ export async function loader({ request, params }: Route.LoaderArgs) {
 
   const { sid, wrap } = await pageLoader(
     request,
-    
+    context,
     FALLBACK,
   );
 

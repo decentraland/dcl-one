@@ -5,7 +5,7 @@ import { ShopPage, shopClientLoader, shopHeaders, shopMeta } from "../shop/page"
 
 import type { Route } from "./+types/shop.my-favorites";
 
-export const loader = ({ request, params }: Route.LoaderArgs) => shopLoader("myFavorites", request, params);
+export const loader = ({ request, params, context }: Route.LoaderArgs) => shopLoader("myFavorites", request, params, context);
 export const clientLoader = shopClientLoader;
 export const meta = shopMeta("myFavorites");
 export const headers = shopHeaders;
