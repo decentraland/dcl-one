@@ -22,7 +22,7 @@ describe('when a consumer bundles public foundations and shared components', () 
     expect(publicUi.NavBar).toBeTypeOf('function')
     expect(publicUi.Button).toBeTypeOf('function')
   })
-  it('should compile the public tuple contract and reject unsupported tuples, text props and deep imports', () => {
+  it('should compile the public props contract and reject malformed props and deep imports', () => {
     expect(
       execFileSync(
         process.execPath,
@@ -67,7 +67,7 @@ describe('when a consumer bundles public foundations and shared components', () 
       modules.some((module) =>
         module.replaceAll('\\', '/').endsWith('/components/runtime/figma-module-runtime.tsx')
       )
-    ).toBe(true)
+    ).toBe(false)
     expect(
       modules.filter(
         (module) =>
@@ -86,7 +86,7 @@ describe('when a consumer bundles public foundations and shared components', () 
         .join('\n')
     ).toMatch(/font-family:\s*'?Inter/)
   }, 60_000)
-  it('should execute the SSR bundle and pass selection errors to server route handling', async () => {
+  it('should server-render the signed-out, signed-in and empty-sections contracts through the SSR bundle', async () => {
     directory = await mkdtemp(path.join(root, '.consumer-ssr-'))
     await build({
       configFile: false,
@@ -108,24 +108,25 @@ describe('when a consumer bundles public foundations and shared components', () 
       import { renderNavigationRoute } from ${JSON.stringify(pathToFileURL(path.join(directory, 'entry.mjs')).href)};
       const errors = [];
       const onError = error => { errors.push(error); return '<main role="alert">Navigation unavailable</main>'; };
-      const valid = renderNavigationRoute({}, onError);
-      assert.equal(valid.status, 200);
-      assert.match(valid.html, /Sign In/);
+      const sections = [{ label: 'Shop', href: '/shop' }];
+      const signedOut = renderNavigationRoute({ sections, signIn: { href: '/sign-in' } }, onError);
+      assert.equal(signedOut.status, 200);
+      assert.ok(signedOut.html.includes('href="/sign-in"') && signedOut.html.includes('>Sign in</a>'));
+      const signedIn = renderNavigationRoute({ sections, account: { address: '0x0000000000000000000000000000000000000000' } }, onError);
+      assert.equal(signedIn.status, 200);
+      assert.match(signedIn.html, /aria-label="Account: 0x0000...0000"/);
+      assert.doesNotMatch(signedIn.html, />Sign in</);
+      const empty = renderNavigationRoute({ sections: [], signIn: { onSelect() {} } }, onError);
+      assert.equal(empty.status, 200);
+      assert.match(empty.html, /<nav[^>]*aria-label="Main"/);
       assert.equal(errors.length, 0);
-      const invalid = renderNavigationRoute({viewport:'mobile',signedIn:true,balances:'credits',theme:'light'}, onError);
-      assert.deepEqual(invalid, {status:500,html:'<main role="alert">Navigation unavailable</main>'});
-      assert.equal(errors.length, 1);
-      assert.match(errors[0].message, /NavBar has no captured view/);
-      const malformed = renderNavigationRoute({signedIn:'true'}, onError);
-      assert.equal(malformed.status, 500);
-      assert.equal(errors.length, 2);
-      console.log('SSR route: valid=200 uncaptured=500 malformed=500');
+      console.log('SSR route: signedOut=200 signedIn=200 empty=200');
     `
     )
     expect(
       execFileSync(process.execPath, [path.join(directory, 'check.mjs')], {
         encoding: 'utf8'
       })
-    ).toContain('valid=200 uncaptured=500 malformed=500')
+    ).toContain('signedOut=200 signedIn=200 empty=200')
   }, 60_000)
 })

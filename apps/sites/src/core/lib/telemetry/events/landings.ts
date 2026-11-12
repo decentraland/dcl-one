@@ -174,6 +174,10 @@ export type LandingsEvents = {
     approved?: boolean;
     event_id?: string;
   };
+  lp_help_creator_fund_clicked: {
+    button: string;
+  };
+  lp_help_viewed: Record<string, never>;
   lp_home_download_clicked: {
     placement: string;
     store: string;
