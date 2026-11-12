@@ -15,9 +15,15 @@ Relevant implementations: [worker](../services/migration-sync/README.md), [Place
 
 ## PR status
 
-Exact-branch GitHub lookup found no open or closed PR for `decentraland/dcl-one:feat/one-way-sync-service` or `decentraland/places:feat/hybrid-favorite-receipts`. Local removal does not imply any deployed change. Gateway GitLab MR status could not be verified because the configured token is expired; no MR was closed or remote branch changed. Older migration PRs are not evidence that these separate local branches were published.
+| Review | Scope/status |
+| --- | --- |
+| [dcl-one #195](https://github.com/decentraland/dcl-one/pull/195) | Existing initial migration PR; open. |
+| [dcl-one #706](https://github.com/decentraland/dcl-one/pull/706) | Draft hybrid worker/follower, stacked on #195. Retarget to main after that dependency merges. |
+| [Places #901](https://github.com/decentraland/places/pull/901) | Draft native favorite/vote receipts and selective POI producer. |
+| [Events #1032](https://github.com/decentraland/events/pull/1032) | Recurrence job completion fix; no Events sync installed. |
+| [Gateway !446](https://dcl.tools/ops/cloudflare-workers/-/merge_requests/446) | Draft alb-router routing, safe shadow comparison and Places command ingress. Created through SSH push options because the GitLab API token is expired. |
 
-The Places handler and existing gateway replay changes align with the selected design and are retained. Before opening or updating an external PR, state its operation contract, authentication, default-off behavior, required deployment order and rollback tests.
+Branches are published for review; nothing is deployed. The dcl-one branch was rebased onto the initial migration branch to exclude unrelated upstream commits; service, schema and sync-document trees remained unchanged. Source flags and route activation require matching protocol installation and rehearsal evidence.
 
 ## Separate source defects discovered
 

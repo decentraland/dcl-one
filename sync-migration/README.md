@@ -23,9 +23,14 @@
 
 Caller-supplied stable IDs remain the default. For these idempotent setters only, opt-in gateway `request-attempt` IDs allow unchanged clients: each actual production acceptance is replayed in order. Separate client retries are not deduplicated as one logical intent. Source/target receipts remain required. Initial migration may copy baseline rows; that is different from continuously copying compatible request outcomes.
 
+## Review requests
+
+[Hybrid worker #706](https://github.com/decentraland/dcl-one/pull/706) (depends on [initial migration #195](https://github.com/decentraland/dcl-one/pull/195)), [Places #901](https://github.com/decentraland/places/pull/901), [Events #1032](https://github.com/decentraland/events/pull/1032), and [gateway !446](https://dcl.tools/ops/cloudflare-workers/-/merge_requests/446). All are published; none is deployed.
+
 ## Evidence and follow-up
 
 - [Places command protocol](places-hybrid-commands.md) and [POI residual justification](places-poi-residual.md): exact implemented boundaries and source-change reasons.
+- [Notifications gateway contract](notifications-gateway-contract.md): read-only paths, mutating GET endpoints, native command candidates and queue reliability blockers.
 - [Next Events command contract](events-command-contract.md): schedule edits first, creation/RSVP blockers, and the local recurrence completion fix. Events replay is not enabled.
 - [Operation classification and backlog](operation-classification.md): duplicate candidates, residual candidates and acceptance requirements.
 - [Gateway feasibility](gateway-feasibility.md): routing, signed requests, WebSockets and public-read blockers.

@@ -6,7 +6,7 @@ Reviewed 2026-11-12 from local source revisions pinned in the links below. This 
 
 ## Inventory boundary
 
-The [batch source catalog](../tooling/migration/sources) contains 16 sources: badges, builder-server, camera-reel-service, comms-gatekeeper, credits-server, events, marketplace-favorites-server, marketplace-server, notifications-workers, places, referral-server, shop-server, signatures-server, social-service-ea, world-storage-service and worlds-content-server. The retained pilot executes accepted favorite commands; the broader source-only adapters were removed. No residual continuous DB mapping is approved yet. A batch mapping is not a continuous delete/order/recovery contract.
+The [batch source catalog](../tooling/migration/sources) contains 16 sources: badges, builder-server, camera-reel-service, comms-gatekeeper, credits-server, events, marketplace-favorites-server, marketplace-server, notifications-workers, places, referral-server, shop-server, signatures-server, social-service-ea, world-storage-service and worlds-content-server. The retained pilot executes accepted favorite/vote commands and maps only the justified POI membership outcome; broader source-only adapters remain removed. A batch mapping is not a continuous delete/order/recovery contract.
 
 Shop, credits, treasury and both marketplace sources remain excluded for security reasons. Signatures/rentals are deferred because their target status depends on excluded shop chain data. Source names outside this catalog must be classified as deliberately retained dependencies or missing migration scope; absence is not evidence they are stateless.
 
@@ -30,6 +30,8 @@ Shop, credits, treasury and both marketplace sources remain excluded for securit
 | **Feature/config distribution** | [Feature-server Unleash](https://dcl.tools/ops/feature-server/-/blob/b94856c9951ef02d95904cd908717a92379f31ea/src/components/unleash-server/index.ts) uses a separate database; [Cloudflare KV](https://dcl.tools/ops/feature-server/-/blob/b94856c9951ef02d95904cd908717a92379f31ea/src/components/cloudflare/index.ts) and [global-config deployment](https://dcl.tools/ops/global-config/-/blob/7422e58a440d2749cdcec7a52e322a4f62837a0b/index.ts) distribute policy/configuration outside service requests. Keep existing distribution authoritative or define explicit export/version/rollback parity. Database equality does not guarantee the same feature gates, denylist or client endpoint configuration. |
 
 Retaining these dependencies is compatible with testing dcl-one backend datasets; it must be explicit in the scope. It is not the rejected UI-only soft-launch alternative, and does not imply moving their traffic to unimplemented target routes.
+
+See the [refreshed Notifications endpoint assessment](notifications-gateway-contract.md) for current upstream evidence and gateway restrictions.
 
 ## Concrete reliability finding
 

@@ -2,7 +2,7 @@
 
 The gateway is **`cloudflare-workers/workers/alb-router`**. The asset-bundle rewriter is outside this work. Follow the [decision summary](README.md): reproduce compatible operations, then synchronize only demonstrated residual outcomes.
 
-The current gateway implementation is local `25e4193`, adding native vote ingress and optional per-attempt identity to the durable production-receipt flow. Generic read activation remains excluded. These changes were not pushed or deployed by this work. Links to local commits become remotely available only when published; published baseline routing is at `487a8f2dfa9bba7e5d607cb3b291d7c38e0aead2`.
+The current gateway implementation is local `25e4193`, adding native vote ingress and optional per-attempt identity to the durable production-receipt flow. Generic read activation remains excluded. The branch is published in [MR !446](https://dcl.tools/ops/cloudflare-workers/-/merge_requests/446), with no deployment; published baseline routing is at `487a8f2dfa9bba7e5d607cb3b291d7c38e0aead2`.
 
 ## What exists
 
@@ -30,6 +30,10 @@ The gateway does not provide generic durable command delivery by itself. A respo
 Rehearse the integrated favorite/vote flow and POI ordering before adding more routes. For each next command record exact public path/method, authentication, source/target body/response compatibility, generated IDs, retry identity, native target receipt and side effects. Test production rejection, lost responses after either commit, later deletes and ordering with any approved residual mutation.
 
 No generic “send all requests twice” mode is approved. No newly added read-activation mode remains. The existing gateway/Places receipt changes are retained because they support native duplicate execution; see [PR rationale](repository-changes.md). Live DNS/route attachments, real signatures, Worker chains, session draining and readiness integration remain unverified.
+
+## Additional service ingress
+
+The gateway now has production-only Events/Notifications routing templates and a reviewed shadow-read path restriction. Notifications unsubscribe GETs mutate state and emit analytics, so they are rejected from shadow configuration. Eligible reads still need explicit sampling, target API/data parity and signature compatibility; the templates enable no shadow or replay traffic. See the [Notifications contract](notifications-gateway-contract.md).
 
 ## Current setter extension
 
