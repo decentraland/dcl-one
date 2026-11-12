@@ -6,7 +6,7 @@
 import { BevyApi } from '../bevy-api'
 import { relay } from '../system-helpers'
 import type { Ctx } from '../bridge'
-import type { PortableInfo } from '../../../src/engine/generated'
+import type { PortableInfo } from '@explorer-core/engine/generated'
 
 export function registerPortables(ctx: Ctx): void {
   let last: PortableInfo[] = []
