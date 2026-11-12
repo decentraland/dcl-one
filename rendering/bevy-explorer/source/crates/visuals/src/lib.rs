@@ -13,6 +13,8 @@ mod sky_envmap;
 mod solids;
 mod stars;
 pub mod terrain;
+#[cfg(test)]
+mod test_wait;
 mod trees;
 
 use bevy::{

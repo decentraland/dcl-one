@@ -1,8 +1,7 @@
-use std::time::{Duration, Instant};
-
 use bevy::{asset::LoadState, render::mesh::VertexAttributeValues};
 
 use super::*;
+use crate::test_wait::update_until;
 
 fn layers() -> LandscapeLayers {
     LandscapeLayers {
@@ -81,12 +80,8 @@ fn satellite_assets_load_embedded() {
     let handles: Vec<Handle<Image>> = ["0,0", "7,7"]
         .map(|tile| server.load(format!("embedded://landscape/satellite/{tile}.jpg")))
         .into();
-    // The images decode on the IO task pool, which every test in the process shares: wait on the
-    // clock, not on a count of frames, and let the pool run between frames.
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        app.update();
-        let pending: Vec<_> = handles
+    update_until(&mut app, |_| {
+        handles
             .iter()
             .filter(|handle| {
                 !matches!(
@@ -95,16 +90,8 @@ fn satellite_assets_load_embedded() {
                 )
             })
             .map(Handle::path)
-            .collect();
-        if pending.is_empty() {
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "still loading after 30 s: {pending:?}"
-        );
-        std::thread::sleep(Duration::from_millis(1));
-    }
+            .collect()
+    });
     for handle in &handles {
         assert!(
             matches!(server.load_state(handle), LoadState::Loaded),

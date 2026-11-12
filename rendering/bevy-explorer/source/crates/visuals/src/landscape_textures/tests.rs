@@ -6,6 +6,7 @@ use bevy::{
 };
 
 use super::*;
+use crate::test_wait::update_until;
 
 fn app() -> App {
     let mut app = App::new();
@@ -21,15 +22,21 @@ fn app() -> App {
     app
 }
 
+/// The files of the textures still loading.
+fn loading(app: &App) -> Vec<String> {
+    let textures = app.world().resource::<LandscapeTextures>();
+    textures
+        .states
+        .iter()
+        .zip(&textures.sources)
+        .filter(|(state, _)| **state == TextureState::Loading)
+        .map(|(_, source)| format!("{:?}", source.as_ref().and_then(Handle::path)))
+        .collect()
+}
+
 /// Updates until every texture has loaded or failed.
 fn settle(app: &mut App) -> LandscapeTextures {
-    for _ in 0..200 {
-        app.update();
-        let states = app.world().resource::<LandscapeTextures>().states;
-        if !states.contains(&TextureState::Loading) {
-            break;
-        }
-    }
+    update_until(app, |app| loading(app));
     app.world().resource::<LandscapeTextures>().clone()
 }
 
@@ -319,25 +326,28 @@ fn materials_are_touched_when_a_texture_is_replaced() {
     let mut flat = EventCursor::<AssetEvent<TerrainFlatMaterial>>::default();
     let mut shell = EventCursor::<AssetEvent<ShellTexture>>::default();
     let mut cliff = EventCursor::<AssetEvent<CliffMaterial>>::default();
+    // quiet frames are counted once every texture has loaded, when nothing is left to replace
     let (mut frames_replaced, mut frames_quiet) = (0, 0);
-    for _ in 0..200 {
-        app.update();
-        let was_replaced = read_new(&app, &mut replaced, |_| true);
+    update_until(&mut app, |app| {
+        let was_replaced = read_new(app, &mut replaced, |_| true);
         let touched = [
-            read_new(&app, &mut flat, modified),
-            read_new(&app, &mut shell, modified),
-            read_new(&app, &mut cliff, modified),
+            read_new(app, &mut flat, modified),
+            read_new(app, &mut shell, modified),
+            read_new(app, &mut cliff, modified),
         ];
         assert_eq!(touched, [was_replaced; 3]);
+        let still_loading = loading(app);
         if was_replaced {
             frames_replaced += 1;
-        } else {
+        } else if still_loading.is_empty() {
             frames_quiet += 1;
         }
-        if load_state(app.world().resource::<LandscapeTextures>()) == "loaded" && frames_quiet > 3 {
-            break;
+        if still_loading.is_empty() && frames_quiet <= 3 {
+            vec![format!("quiet frames after loading: {frames_quiet} of 4")]
+        } else {
+            still_loading
         }
-    }
+    });
     assert_eq!(
         load_state(app.world().resource::<LandscapeTextures>()),
         "loaded"
