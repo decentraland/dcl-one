@@ -1,11 +1,10 @@
 import { redirect } from "react-router";
-import { legalPath, resolveLegalKey } from "@/data/legal";
+import { legalPath, resolveLegalKey } from "@/data/legal/nav";
 
 import type { Route } from "./+types/legal.$doc";
 
 export async function loader({ params }: Route.LoaderArgs) {
-  const doc = params.doc ?? "";
-  const key = doc === "credits" ? "credits" : resolveLegalKey(doc);
+  const key = resolveLegalKey(params.doc ?? "");
   throw redirect(key ? legalPath(key) : "/", 301);
 }
 

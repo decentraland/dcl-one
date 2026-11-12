@@ -71,7 +71,7 @@ export const BRAND: LegalDocument = {
             "Users shall comply with these terms as well as Decentraland's ",
             {
               type: "link",
-              href: "https://decentraland.org/terms/",
+              href: "https://decentraland.org/terms",
               target: "_blank",
               rel: "noopener noreferrer",
               children: ["Terms of Use"],
@@ -79,7 +79,7 @@ export const BRAND: LegalDocument = {
             " and ",
             {
               type: "link",
-              href: "https://decentraland.org/content/",
+              href: "https://decentraland.org/content",
               target: "_blank",
               rel: "noopener noreferrer",
               children: ["Content Policy"],

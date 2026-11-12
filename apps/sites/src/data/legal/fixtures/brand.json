@@ -272,7 +272,7 @@
         },
         {
           "tag": "a",
-          "href": "https://decentraland.org/terms/",
+          "href": "https://decentraland.org/terms",
           "target": "_blank",
           "rel": "noopener noreferrer",
           "children": [
@@ -286,7 +286,7 @@
         },
         {
           "tag": "a",
-          "href": "https://decentraland.org/content/",
+          "href": "https://decentraland.org/content",
           "target": "_blank",
           "rel": "noopener noreferrer",
           "children": [

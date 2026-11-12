@@ -1,16 +1,10 @@
-import "@dcl/one-ui/foundations.css";
+import "@dcl/one-ui/foundations/foundations.css";
 import { useEffect, useRef, type MouseEvent } from "react";
 import { redirect, useNavigate } from "react-router";
 import SitesChrome from "@ui/web/frames/SitesChrome";
 import { LegalPageLayout } from "@dcl/one-ui/apps/sites/legal/LegalPageLayout";
-import type { LegalIconName } from "@dcl/one-ui/apps/sites/legal/LegalIcon";
-import {
-  LEGAL_DOCS,
-  LEGAL_SIDEBAR,
-  legalPath,
-  resolveLegalKey,
-  type LegalKey,
-} from "@/data/legal";
+import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
+import { LEGAL_SIDEBAR, legalPath, resolveLegalKey } from "@/data/legal/nav";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import {
   pageLoader,
@@ -24,49 +18,45 @@ const STORY: StoryId = "misc/legal";
 export const handle = {
   agentMarkdown: "legalDoc",
 } satisfies AgentMarkdownHandle;
-const ICONS: Record<LegalKey, LegalIconName> = {
-  brand: "favorite",
-  content: "park",
-  ethics: "balance",
-  rewards: "cardGiftcard",
-  credits: "token",
-  security: "shield",
-  privacy: "vpnKey",
-  referral: "redeem",
-  terms: "explore",
-};
 const FALLBACK: PageDefaults = { variant: "config_driven" };
 
 export async function loader({ request, context, params }: Route.LoaderArgs) {
-  if ((params.slug ?? "") === "seasons") {
+  const slug = params.slug ?? "";
+  if (slug === "seasons") {
     throw redirect("/shop/credits");
   }
-  const key = resolveLegalKey(params.slug ?? "");
+  // The exact /credits path is the Credits API; its terms are served at /credits-terms.
+  const key = slug === "credits" ? null : resolveLegalKey(slug);
   if (!key) {
     throw new Response(null, { status: 404, statusText: "Not Found" });
   }
 
   const { sid, wrap } = await pageLoader(request, context, FALLBACK);
 
-  const payload = { doc: key, sid };
+  // Only the requested document reaches the client, not all nine.
+  const payload = { doc: key, legal: LEGAL_DOCS[key], sid };
   return wrap(payload);
 }
 
 export function meta({ loaderData }: Route.MetaArgs) {
-  const document = loaderData?.doc ? LEGAL_DOCS[loaderData.doc] : undefined;
+  const legal = loaderData?.legal;
   return [
-    { title: document?.pageTitle ?? "Legal | Decentraland" },
+    { title: legal?.pageTitle ?? "Legal | Decentraland" },
     {
       name: "description",
-      content: document
-        ? `Read Decentraland’s ${document.title}, including the policies and conditions that apply to the community.`
+      content: legal
+        ? `Read Decentraland’s ${legal.title}, including the policies and conditions that apply to the community.`
         : "Decentraland policies and legal documents.",
     },
+    // An alias (/rewards, /content-policy, ...) serves the same document as its slug.
+    ...(loaderData?.doc
+      ? [{ tagName: "link", rel: "canonical", href: legalPath(loaderData.doc) }]
+      : []),
   ];
 }
 
 export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
-  const { doc, sid } = loaderData;
+  const { doc, legal, sid } = loaderData;
   const navigate = useNavigate();
   const viewed = useRef<LegalKey | null>(null);
   useEffect(() => {
@@ -74,7 +64,6 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
     viewed.current = doc;
     track("lp_legal_viewed", { doc }, { sid, story: STORY });
   }, [doc, sid]);
-  const document = LEGAL_DOCS[doc];
   const onSectionClick = (event: MouseEvent<HTMLDivElement>) => {
     const anchor = (event.target as HTMLElement).closest("a");
     const href = anchor?.getAttribute("href");
@@ -89,15 +78,15 @@ export default function LegalSlugRoute({ loaderData }: Route.ComponentProps) {
     <SitesChrome active="legal" overlayNav>
       <main onClickCapture={onSectionClick}>
         <LegalPageLayout
-          title={document.title}
-          toc={document.toc}
-          intro={document.intro}
-          sections={document.sections}
-          cta={document.cta}
-          sidebar={LEGAL_SIDEBAR.map(({ key, label }) => ({
+          title={legal.title}
+          toc={legal.toc}
+          intro={legal.intro}
+          sections={legal.sections}
+          cta={legal.cta}
+          sidebar={LEGAL_SIDEBAR.map(({ key, label, icon }) => ({
             href: legalPath(key),
             label,
-            icon: ICONS[key],
+            icon,
             active: key === doc,
           }))}
           sidebarLabel="Legal documents"

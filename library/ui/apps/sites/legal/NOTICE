@@ -2,7 +2,7 @@ The legal page layout in this directory follows decentraland/sites
 (https://github.com/decentraland/sites) at revision
 cfdfa1a51216f9dc90c5b148686a95e7ee9c2862, src/components/LegalPage (LegalPageLayout.tsx,
 LegalPage.styled.ts): its structure, sidebar order and style values. That source is
-licensed under the Apache License 2.0 (LICENSE).
+licensed under the Apache License 2.0; the license is included at ../assets/LICENSE.
 
 The sidebar icon paths in LegalIcon.tsx are the Material icons Favorite, Park, Balance,
 CardGiftcard, Token, Shield, VpnKey, Redeem and Explore as @mui/icons-material 5.16.0

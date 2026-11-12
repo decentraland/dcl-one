@@ -2,13 +2,13 @@ import { RouterContextProvider } from "react-router";
 import { describe, expect, it } from "vitest";
 
 import { requestSessionContext } from "@/core/lib/telemetry/session";
-import { LEGAL_DOCS, type LegalKey } from "@/data/legal";
+import { LEGAL_DOCS, type LegalDocument, type LegalKey } from "@/data/legal";
 
 import { loader, meta } from "./$slug";
 import type { Route } from "./+types/$slug";
 
 type Wrapped = {
-  data: { doc: LegalKey; sid: string };
+  data: { doc: LegalKey; legal: LegalDocument; sid: string };
   init?: { headers?: HeadersInit };
 };
 
@@ -40,13 +40,48 @@ describe("when resolving canonical legal routes", () => {
 
       const result = (await loader(args(doc.slug, context))) as unknown as Wrapped;
 
-      expect(result.data).toEqual({ doc: doc.key, sid: "legal-test" });
+      expect(result.data).toEqual({
+        doc: doc.key,
+        legal: doc,
+        sid: "legal-test",
+      });
       expect(setCookies(result)).toEqual([]);
       expect(
-        meta({ loaderData: result.data } as unknown as Route.MetaArgs)[0],
-      ).toEqual({ title: doc.pageTitle });
+        meta({ loaderData: result.data } as unknown as Route.MetaArgs),
+      ).toEqual([
+        { title: doc.pageTitle },
+        {
+          name: "description",
+          content: `Read Decentraland’s ${doc.title}, including the policies and conditions that apply to the community.`,
+        },
+        { tagName: "link", rel: "canonical", href: `/${doc.slug}` },
+      ]);
     },
   );
+
+  it.each([
+    ["rewards", "/rewards-terms"],
+    ["referral", "/referral-terms"],
+    ["content-policy", "/content"],
+  ])("should point the alias %s at its canonical path", async (slug, href) => {
+    const result = (await loader(args(slug))) as unknown as Wrapped;
+
+    expect(
+      meta({ loaderData: result.data } as unknown as Route.MetaArgs),
+    ).toContainEqual({ tagName: "link", rel: "canonical", href });
+  });
+
+  it("should describe the legal section when there is no document", () => {
+    expect(
+      meta({ loaderData: undefined } as unknown as Route.MetaArgs),
+    ).toEqual([
+      { title: "Legal | Decentraland" },
+      {
+        name: "description",
+        content: "Decentraland policies and legal documents.",
+      },
+    ]);
+  });
 
   it("should leave /credits to the Credits API", async () => {
     await expect(loader(args("credits"))).rejects.toMatchObject({

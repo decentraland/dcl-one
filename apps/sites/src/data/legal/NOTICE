@@ -5,5 +5,8 @@ fixtures/ are ported verbatim from decentraland/sites
 cfdfa1a51216f9dc90c5b148686a95e7ee9c2862, src/pages/{brand,content,ethics,
 rewards-terms,credits-terms,security,privacy,referral-terms,terms}, as that revision
 renders them (production @dcl/sites 0.76.0 served the same text on 2026-11-03). That
-source is licensed under the Apache License 2.0; the license applies to these files.
-The text is legal content: change it only from a new source revision, never by hand.
+source is licensed under the Apache License 2.0; the license is included at
+library/ui/apps/sites/assets/LICENSE and applies to these files.
+The text is legal content: change it only from a new source revision, never by hand. The
+one exception is a link to this site's own pages, which is written as the gateway serves it:
+brand.ts links /terms and /content without the source's trailing slash.

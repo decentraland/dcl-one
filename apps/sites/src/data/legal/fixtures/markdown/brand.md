@@ -4,7 +4,7 @@ Decentraland is a decentralized virtual world governed by its users and as such 
 
 ## 1. Allowable Usage
 
-Users shall comply with these terms as well as Decentraland's Terms of Use and Content Policy in order to be allowed to use the Decentraland name and logo within Decentraland.
+Users shall comply with these terms as well as Decentraland's [Terms of Use](https://decentraland.org/terms) and [Content Policy](https://decentraland.org/content) in order to be allowed to use the Decentraland name and logo within Decentraland.
 
 ## 2. Logo and name ownership
 
@@ -38,7 +38,7 @@ Subject to these terms you can use the name "Decentraland" to promote your game(
 
 ## 9. The Logo "Decentraland"
 
-Subject to these terms, you are only allowed to use the logo design that is available at the following link https://decentraland.org/press/. The Decentraland Foundation or the DAO may alter the form of this design from time to time. You are allowed to resize the logo as long as you do not modify the proportions. But otherwise, you cannot modify the logo design in any way and must abide by these terms.
+Subject to these terms, you are only allowed to use the logo design that is available at the following link [https://decentraland.org/press/](https://decentraland.org/press/). The Decentraland Foundation or the DAO may alter the form of this design from time to time. You are allowed to resize the logo as long as you do not modify the proportions. But otherwise, you cannot modify the logo design in any way and must abide by these terms.
 
 ## 10. Additional Rules
 

@@ -1,4 +1,5 @@
 import type { CSSProperties, MouseEvent, ReactNode } from 'react'
+import { blogHref } from '../blog/blogLinks'
 import { LegalIcon, type LegalIconName } from './LegalIcon'
 import styles from './LegalPageLayout.module.css'
 
@@ -44,12 +45,16 @@ type LegalPageLayoutProps = {
 function Inline({ node }: { node: LegalInline }): ReactNode {
   if (typeof node === 'string') return node
   const children = node.children.map((child, i) => <Inline key={i} node={child} />)
-  if (node.type === 'link')
+  if (node.type === 'link') {
+    // Only #anchors, site paths, http(s) and mailto are links; anything else renders as its text.
+    const href = blogHref(node.href)?.href
+    if (!href) return <>{children}</>
     return (
-      <a className={styles.link} href={node.href} target={node.target} rel={node.rel}>
+      <a className={styles.link} href={href} target={node.target} rel={node.rel}>
         {children}
       </a>
     )
+  }
   return node.type === 'strong' ? <strong>{children}</strong> : <em>{children}</em>
 }
 
@@ -156,8 +161,8 @@ function LegalPageLayout({
               ))}
             </section>
           ))}
-          {cta ? (
-            <a className={styles.cta} href={cta.href} target={cta.target} rel={cta.rel}>
+          {cta && blogHref(cta.href) ? (
+            <a className={styles.cta} href={blogHref(cta.href)?.href} target={cta.target} rel={cta.rel}>
               {cta.label}
             </a>
           ) : null}

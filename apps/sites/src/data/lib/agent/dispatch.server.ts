@@ -2,7 +2,7 @@ import type { EntryContext } from "react-router";
 
 import type { DehydratedState } from "@tanstack/react-query";
 
-import { LEGAL_DOCS, type LegalKey } from "../../legal";
+import { LEGAL_DOCS, isLegalKey } from "../../legal";
 import { toAgentLegalDoc } from "../../legal/agent";
 
 import { placesFromDehydrated } from "../catalyst/places/discover";
@@ -36,10 +36,9 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
   },
   legalDoc: (data) => {
     const d = data as { doc?: string } | undefined;
-    const doc = d?.doc && Object.hasOwn(LEGAL_DOCS, d.doc)
-      ? toAgentLegalDoc(LEGAL_DOCS[d.doc as LegalKey])
-      : undefined;
-    return doc ? legalDocToMarkdown(doc) : null;
+    return d?.doc && isLegalKey(d.doc)
+      ? legalDocToMarkdown(toAgentLegalDoc(LEGAL_DOCS[d.doc]))
+      : null;
   },
   placesIndex: (data) => {
     const d = data as { dehydratedState?: DehydratedState } | undefined;

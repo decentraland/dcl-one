@@ -55,11 +55,10 @@ const plain = (md: string) =>
     .replace(/\s+/g, " ");
 
 describe("agent markdown of the legal documents", () => {
-  // Their text equals the previous dcl-one content, so their markdown must not change at all.
   describe.each(["brand", "content", "ethics"] as const)(
-    "when the document is unchanged (%s)",
+    "when the document has a markdown fixture (%s)",
     (key) => {
-      it("should be byte-identical to the markdown served before the migration", () => {
+      it("should be byte-identical to it", () => {
         const baseline = fs.readFileSync(
           path.join(FIXTURES, "markdown", `${key}.md`),
           "utf8",
@@ -92,27 +91,22 @@ describe("agent markdown of the legal documents", () => {
     });
   });
 
-  // The previous content's Ext-wrapped links lost their href (terms 5, brand 3); only they still do.
-  describe("when a link was wrapped by the previous content", () => {
-    it("should reach the converter as text only, as before the migration", () => {
-      const md = markdownOf("terms");
+  describe("when a document links to another page", () => {
+    it("should keep every href", () => {
+      const terms = markdownOf("terms");
+      const brand = markdownOf("brand");
 
-      expect(md).not.toContain("](https://dao.decentraland.org)");
-      expect(md).toContain("https://dao.decentraland.org");
+      expect(terms).toContain("](https://dao.decentraland.org)");
+      expect(terms).toContain("](https://decentraland.org/privacy)");
+      expect(terms).toContain("](https://market.decentraland.org)");
+      expect(terms).toContain("](https://github.com/ethereum/EIPs/issues/20)");
+      expect(terms).toContain("](https://decentraland.org/brand)");
+      expect(brand).toContain("[Terms of Use](https://decentraland.org/terms)");
+      expect(brand).toContain("[Content Policy](https://decentraland.org/content)");
     });
   });
 
-  describe("when a new-tab link was not wrapped before", () => {
-    it("should keep its href", () => {
-      const md = markdownOf("terms");
-
-      expect(md).toContain("](https://market.decentraland.org)");
-      expect(md).toContain("](https://github.com/ethereum/EIPs/issues/20)");
-      expect(md).toContain("](https://decentraland.org/brand)");
-    });
-  });
-
-  describe("when a plain link has the wrapper's attributes but is not one of the measured links", () => {
+  describe("when a link opens in a new tab", () => {
     it("should keep its href", () => {
       const link = {
         type: "link" as const,

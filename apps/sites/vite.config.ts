@@ -9,12 +9,6 @@ const ui = fileURLToPath(new URL("../ui3/src", import.meta.url));
 const src = fileURLToPath(new URL("./src", import.meta.url));
 const catalystApi = fileURLToPath(new URL("../../library/catalyst-api", import.meta.url));
 const shopCore = fileURLToPath(new URL("../../library/shop", import.meta.url));
-const uiFoundationsCss = fileURLToPath(
-  new URL("../../library/ui/foundations/foundations.css", import.meta.url),
-);
-const uiTextStylesCss = fileURLToPath(
-  new URL("../../library/ui/foundations/typography/text-styles.module.css", import.meta.url),
-);
 // The Explorer HUD UI /play compiles, and the behaviours /play supplies to it (hostContract.ts there).
 const hud = fileURLToPath(new URL("../../library/ui/apps/hud", import.meta.url));
 const explorerCore = fileURLToPath(new URL("../../library/explorer-core", import.meta.url));
@@ -263,8 +257,6 @@ export default defineConfig({
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
-      "@dcl/one-ui/foundations.css": uiFoundationsCss,
-      "@dcl/one-ui/text-styles.module.css": uiTextStylesCss,
       "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@catalyst-api": catalystApi,
       "@shop": shopCore,
