@@ -4103,7 +4103,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/package.json",
-      "sha256": "aea88fbff7da33041d92592505934ca0068f40714b0de3ce78f56e155f28cfb2"
+      "sha256": "9e8a700567b3e4f6ac8ca0fcf9c05736b58b6e8b17d3acd0842bd226a90d86e0"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/bridge-scene/src/bevy-api.ts",
@@ -4195,7 +4195,7 @@
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/package-lock.json",
-      "sha256": "d50868ea54d52577b3c7bcca5f13e78a1269d220668341760e28a1a3d2cb87ab"
+      "sha256": "fdc8e5c2c85df27b95e2dbdea7d531aef8b8edb11a553c0873772ca70270dac6"
     },
     {
       "path": "rendering/bevy-explorer/source/react-web/package.json",
