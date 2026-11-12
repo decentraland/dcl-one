@@ -309,6 +309,17 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   unity-explorer scales the scroll delta by 50 everywhere but macOS, per frame; here a wheel line
   (16 pixels of a trackpad's scroll, on every platform including web) zooms as Unity's 60 fps frame
   would, and a held bumper zooms at Unity's per-second rate, so neither depends on the frame rate.
+- **The satellite floor** keeps unity-explorer's layout, height (y -0.205) and 2400 m cut-off,
+  and differs in three ways.
+  - It is unlit and shows the map at every distance. Unity's material is lit and fades to a tiled
+    grass texture within 100 to 500 m of the camera. The floor lies under the ground everywhere
+    the ground draws, so the near-camera grass is rarely seen; the ground's own textures come with
+    the landscape texture work.
+  - The images are uploaded uncompressed (RGBA8, 64 MiB of GPU memory for the 64 tiles), where
+    Unity's import compresses them. They load only the first time the floor is wanted, so a
+    session that never enters Genesis City does not pay for them.
+  - Each tile appears once its own image has loaded, and a tile that fails to load is simply
+    missing. Unity waits for all 64 and shows nothing if one fails.
 
 ## Deliberate choices that look like mistakes
 
