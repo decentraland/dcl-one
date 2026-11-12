@@ -84,23 +84,17 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
     await until(() => explorer.hud.get(panel), (read) => read.text.includes('Disable profiler'), {
       timeoutMs: 10_000, what: 'the profiler to report itself enabled'
     })
-    // Bevy's spans exist only in a `profiler` build (every native build; the web build is without)
+    // Bevy's spans exist in a `profiler` build: every native build, and the web build as CI
+    // builds it
     const enabled = await until(() => explorer.json<ProfileTop>('/profile_top 5'), (reading) => reading.enabled,
       { timeoutMs: 10_000, what: 'the profiler to report itself enabled' })
-    if (enabled.profilerBuild) {
-      const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
-        (reading) => reading.scopeSummaries.length === 5,
-        { timeoutMs: 10_000, what: 'five profiled scopes' })
-      for (const row of top.scopeSummaries) {
-        assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
-        assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
-      }
-    } else {
-      assert.equal(explorer.console.kind, 'web', 'only the web build is without the profiler feature')
-      // without Bevy's `trace` feature there are no system, schedule or render-node spans; Bevy's
-      // unconditional spans (`present_frames`, `entity_sync`) and the explorer's own remain
-      for (const row of enabled.scopeSummaries) assert.ok(['explorer_span', 'bevy_internal'].includes(row.scopeKind), JSON.stringify(row))
-      if (enabled.scopeSummaries.length === 0) assert.match(String(enabled.unavailable.scopeSummary), /no system, schedule or render-node spans/)
+    assert.ok(enabled.profilerBuild, 'the build carries the profiler feature')
+    const top = await until(() => explorer.json<ProfileTop>('/profile_top 5'),
+      (reading) => reading.scopeSummaries.length === 5,
+      { timeoutMs: 10_000, what: 'five profiled scopes' })
+    for (const row of top.scopeSummaries) {
+      assert.ok(['ecs_system', 'schedule', 'render_graph_node', 'bevy_internal', 'explorer_span'].includes(row.scopeKind), row.scopeKind)
+      assert.ok(row.callCount > 0 && row.selfTimeMs >= 0 && row.inclusiveTimeMs >= row.selfTimeMs, JSON.stringify(row))
     }
     await explorer.hud.click(button('Disable profiler'))
     await explorer.hud.wait(button('Enable profiler'))
