@@ -17,6 +17,11 @@
     color: var(--dcl-text-primary);
   }
 
+  /* Keep the foreground band readable over bright artwork; positioning belongs to the app. */
+  .root[data-surface='overlay'] {
+    background: linear-gradient(180deg, var(--dcl-neutrals-black) 70%, transparent 100%);
+  }
+
   .root *,
   .root *::before,
   .root *::after {

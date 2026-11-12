@@ -371,4 +371,24 @@ describe('when NavBar accepts app-owned composition controls', () => {
     expect(within(drawer).queryByText('0')).not.toBeInTheDocument()
     expect(document.querySelectorAll('#iap-status')).toHaveLength(1)
   })
+  it('should default to the standard surface and expose an explicit overlay surface without changing content', () => {
+    const { rerender } = render(<NavBar {...props} />)
+    expect(screen.getByRole('navigation', { name: 'Main' })).toHaveAttribute(
+      'data-surface',
+      'solid'
+    )
+    rerender(<NavBar {...props} surface="overlay" />)
+    expect(screen.getByRole('navigation', { name: 'Main' })).toHaveAttribute(
+      'data-surface',
+      'overlay'
+    )
+    expect(screen.getByRole('button', { name: 'Connect wallet' })).toBeInTheDocument()
+  })
+
+  it('should server-render the owner-selected overlay surface', () => {
+    const container = document.createElement('div')
+    container.innerHTML = renderToString(<NavBar {...props} surface="overlay" />)
+    expect(container.querySelector('nav')).toHaveAttribute('data-surface', 'overlay')
+    expect(container.querySelectorAll('#wallet-control')).toHaveLength(1)
+  })
 })

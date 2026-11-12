@@ -91,6 +91,8 @@ type NavBarCommonProps = {
   /** Defaults to `/`. */
   logoHref?: string
   balances?: NavBarBalances
+  /** Standard foundation surface or black-to-transparent overlay. The app owns layout positioning. */
+  surface?: 'solid' | 'overlay'
   /** App-owned balance action beside numeric balances, rendered in the header or open drawer, never both. */
   balanceAction?: ReactNode
   /** Replaces the standard account/sign-in UI. null/undefined retain defaults; false hides them. Rendered once in the desktop header or open drawer. */
@@ -523,6 +525,7 @@ export function NavBar({
   account,
   signIn: signInAction,
   balances,
+  surface = 'solid',
   balanceAction,
   accountControl,
   mobileSecondaryNavigation,
@@ -590,6 +593,7 @@ export function NavBar({
       ref={navRef}
       className={className ? `${styles.root} ${className}` : styles.root}
       aria-label={labels.navigation}
+      data-surface={surface}
     >
       <div className={styles.start}>
         {renderLink({

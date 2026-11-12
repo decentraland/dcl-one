@@ -49,7 +49,7 @@ beforeAll(async () => {
     server: { host: '127.0.0.1', port: 0 }
   })
   server.middlewares.use(async (request, response, next) => {
-    if (request.url !== '/') return next()
+    if (new URL(request.url ?? '/', 'http://fixture.local').pathname !== '/') return next()
     response.setHeader('Content-Type', 'text/html')
     response.end(
       await server.transformIndexHtml(
@@ -163,5 +163,66 @@ describe('when a public NavBar composes app-owned controls in Chromium', () => {
       expect(await evaluate('!!document.querySelector("[role=dialog]")')).toBe(false)
       expect(await evaluate('document.activeElement.getAttribute("aria-label")')).toBe('Open menu')
     }, 30_000)
+  }
+  for (const width of [390, 1440]) {
+    it(`should keep overlay geometry, foreground contrast and opaque popups at ${width}px`, async () => {
+      await session.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height: 900,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      const measure = `(() => { const nav=document.querySelector('nav[aria-label="Main"]'); const rect=nav.getBoundingClientRect(); return { width:rect.width,height:rect.height,image:getComputedStyle(nav).backgroundImage,position:getComputedStyle(nav).position }; })()`
+      await session.navigate(server.resolvedUrls!.local[0]!)
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('#balance-action');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready})()`
+      )
+      const standard = await evaluate<{
+        width: number
+        height: number
+        image: string
+        position: string
+      }>(measure)
+      expect(standard.image).toBe('none')
+      await session.navigate(server.resolvedUrls!.local[0]! + '?surface=overlay')
+      await evaluate(
+        `(async()=>{for(let n=0;n<100&&!document.querySelector('#balance-action');n++)await new Promise(r=>setTimeout(r,50));await document.fonts.ready;document.body.style.background='white'})()`
+      )
+      const overlay = await evaluate<{
+        width: number
+        height: number
+        image: string
+        position: string
+      }>(measure)
+      expect(overlay).toMatchObject({
+        width: standard.width,
+        height: standard.height,
+        position: standard.position
+      })
+      expect(overlay.image).toContain('linear-gradient')
+      const foreground = await evaluate<{ inBlackBand: boolean; contrast: number }>(`(() => {
+        const nav=document.querySelector('nav[aria-label="Main"]');const r=nav.getBoundingClientRect();
+        const control=innerWidth>=1024?nav.querySelector('a[href="/discover"]'):nav.querySelector('button[aria-label="Open menu"]');const c=control.getBoundingClientRect();
+        const rgb=getComputedStyle(control).color.match(/[0-9.]+/g).slice(0,3).map(Number).map(v=>{v/=255;return v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4});
+        return {inBlackBand:c.y+c.height/2-r.y<=r.height*0.7,contrast:(0.2126*rgb[0]+0.7152*rgb[1]+0.0722*rgb[2]+0.05)/0.05};
+      })()`)
+      expect(foreground.inBlackBand).toBe(true)
+      expect(foreground.contrast).toBeGreaterThanOrEqual(4.5)
+      if (width < 1024) {
+        await click('button[aria-label="Open menu"]')
+        const popup = await evaluate<{ image: string; color: string }>(
+          `(() => {const style=getComputedStyle(document.querySelector('[role=dialog]'));return {image:style.backgroundImage,color:style.backgroundColor}})()`
+        )
+        expect(popup.image).toBe('none')
+        expect(popup.color).toMatch(/^rgb\(/)
+      } else {
+        await click('button[aria-controls]:not([aria-label])')
+        const popup = await evaluate<{ image: string; color: string }>(
+          `(() => {const trigger=document.querySelector('button[aria-controls]:not([aria-label])');const style=getComputedStyle(document.getElementById(trigger.getAttribute('aria-controls')));return {image:style.backgroundImage,color:style.backgroundColor}})()`
+        )
+        expect(popup.image).toBe('none')
+        expect(popup.color).toMatch(/^rgb\(/)
+      }
+    }, 30000)
   }
 })
