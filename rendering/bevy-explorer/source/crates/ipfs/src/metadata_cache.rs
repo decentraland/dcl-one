@@ -172,10 +172,17 @@ async fn reload_definition(ipfs: &Arc<IpfsIo>, hash: &str) -> Option<(IpfsEntity
         let path = PathBuf::from(&path);
         let loaded = async {
             let mut reader = ipfs.read(&path).await?;
-            let entity = EntityDefinitionLoader
-                .load_internal(&mut reader, &(), || hash.to_owned())
-                .await?;
-            Ok::<_, anyhow::Error>(entity.metadata.map(|metadata| metadata.to_string()))
+            match reload_metadata(reader.as_mut(), hash).await {
+                Ok(metadata) => Ok(metadata),
+                Err(error) => {
+                    // A rejected disk or service-worker entry must not prevent recovery.
+                    // Keep the entity path so the normal download queue retains its owner.
+                    warn!("reloading rejected entity metadata for {hash} without cache: {error}");
+                    drop(reader);
+                    let mut reader = ipfs.read_with_cache(&path, false).await?;
+                    reload_metadata(reader.as_mut(), hash).await
+                }
+            }
         }
         .await;
 
@@ -196,15 +203,27 @@ async fn reload_definition(ipfs: &Arc<IpfsIo>, hash: &str) -> Option<(IpfsEntity
                     return context.definition(hash);
                 }
             };
-            let resident = metadata.is_some();
-            entry.metadata = metadata;
+            entry.metadata = Some(metadata);
             entry.metadata_evicted = false;
             entry.metadata_accessed.touch();
-            context.metadata_retention.resident += usize::from(resident);
+            context.metadata_retention.resident += 1;
         }
         // Read the current routing and metadata together, including concurrent reloads.
         return context.definition(hash);
     }
+}
+
+async fn reload_metadata(reader: &mut dyn Reader, hash: &str) -> anyhow::Result<String> {
+    let entity = EntityDefinitionLoader
+        .load_internal(reader, &(), || hash.to_owned())
+        .await?;
+    if entity.id != hash {
+        return Err(anyhow!("reloaded entity identity does not match {hash}"));
+    }
+    let metadata = entity
+        .metadata
+        .ok_or_else(|| anyhow!("reloaded entity has no previously evicted metadata"))?;
+    Ok(metadata.to_string())
 }
 
 #[cfg(test)]

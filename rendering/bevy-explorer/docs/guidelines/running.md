@@ -401,8 +401,10 @@ mode clears simulation and restores the default allowance before that frame's cl
 `/debug_memory` remains readable in every mode. Setting its RAM cap in MiB, or
 restoring platform capacity with `/debug_memory 0`, requires preview mode. Its
 `controlsAvailable` field and the **Memory and limits** section reflect that gate.
-Leaving preview clears the cap before cleanup; restoring capacity discards pressure
-history caused by that cap while retaining actual warning/full pressure.
+Leaving preview clears the cap before cleanup. RAM pressure history is retained when
+the effective cap stays the same or falls. Raising the effective cap or changing
+reading availability discards that history; current warning/full pressure still
+enables cleanup.
 
 Each domain starts cleanup above 70% and continues until below 65%. Native GPU
 pools are evaluated independently; a healthy pool cannot offset an over-budget

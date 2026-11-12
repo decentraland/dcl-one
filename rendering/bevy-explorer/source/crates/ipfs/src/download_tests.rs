@@ -72,6 +72,7 @@ fn asset(
         server.url(path),
         None,
         owner.map(str::to_owned),
+        false,
     ))
 }
 

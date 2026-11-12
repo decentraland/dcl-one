@@ -296,6 +296,68 @@ fn changing_preview_limits_discards_the_previous_pressure_latch() {
 }
 
 #[test]
+fn lowering_ram_cap_preserves_a_latched_hold_band() {
+    use bevy::ecs::schedule::common_conditions::run_once;
+
+    for changes_after_snapshot in [false, true] {
+        let mut app = app();
+        app.insert_resource(PreviewMode {
+            is_preview: true,
+            ..default()
+        });
+        ready(&mut app);
+        ram(&mut app, Some(800));
+        app.update();
+        ram(&mut app, Some(660));
+        app.update();
+        assert!(app.world().resource::<MemoryReclaimState>().ram_active);
+
+        if changes_after_snapshot {
+            app.add_systems(
+                PostUpdate,
+                (|memory: ResMut<MemoryStatus>, mut preview: ResMut<PreviewMode>| {
+                    MemoryStatus::record(
+                        memory.into(),
+                        Some(MemorySample {
+                            used_bytes: 660 * MIB,
+                            capacity_bytes: 990 * MIB,
+                        }),
+                    );
+                    preview.is_preview = false;
+                })
+                .run_if(run_once),
+            );
+        } else {
+            app.world_mut().resource_mut::<MemoryStatus>().limit_mib = NonZeroU64::new(990);
+        }
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .resource::<MemoryStatus>()
+                .reading()
+                .unwrap()
+                .cap_mib,
+            990
+        );
+        let state = app.world().resource::<MemoryReclaimState>();
+        assert_eq!(state.ram, Some(MemoryPressure::Normal));
+        assert!(state.ram_active);
+        assert!(app.world().resource::<ReclaimBudget>().ram);
+
+        MemoryStatus::record(
+            app.world_mut().resource_mut::<MemoryStatus>(),
+            Some(MemorySample {
+                used_bytes: 640 * MIB,
+                capacity_bytes: 990 * MIB,
+            }),
+        );
+        app.update();
+        assert!(!app.world().resource::<MemoryReclaimState>().ram_active);
+    }
+}
+
+#[test]
 fn ineffective_preview_limits_preserve_real_pressure_until_abundance() {
     use bevy::ecs::schedule::common_conditions::run_once;
 

@@ -139,31 +139,188 @@ fn both_metadata_readers_reload_evicted_json_without_replacing_content_maps() {
     assert!(bevy::tasks::block_on(ipfs.scene_metadata("unknown")).is_none());
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn failed_metadata_reload_remains_retryable() {
+    rejected_payload_remains_retryable("invalid-json".to_owned()).await;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+async fn rejected_payload_remains_retryable(payload: String) {
+    use tokio::{
+        io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+        net::TcpListener,
+        time::timeout,
+    };
+
+    timeout(Duration::from_secs(10), async {
+        IoTaskPool::get_or_init(bevy::tasks::TaskPool::new);
+        let (ipfs, dir) = fixture();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let public_url = format!("http://{}", listener.local_addr().unwrap());
+        let base_url = format!("{public_url}/contents/");
+        let about = ServerAbout {
+            content: Some(EndpointConfig {
+                healthy: true,
+                public_url: public_url.clone(),
+            }),
+            ..Default::default()
+        };
+        {
+            let mut context = ipfs.context.write().await;
+            context.about = Some(about.clone());
+            context.register_entity(
+                "scene".to_owned(),
+                IpfsEntity {
+                    collection: ContentMap::new_single(
+                        "model.glb".to_owned(),
+                        "model-content".to_owned(),
+                    ),
+                    metadata: Some("{\"name\":\"original\"}".to_owned()),
+                },
+            );
+            context.modifiers.insert(
+                "scene".to_owned(),
+                IpfsModifier {
+                    base_url: Some(base_url.clone()),
+                },
+            );
+            context.entities.get_mut("scene").unwrap().metadata_accessed =
+                MetadataAccess::new(Instant::now() - IDLE_GRACE - Duration::from_secs(1));
+            context.reclaim_metadata(Instant::now(), &mut ReclaimTurn::bounded(10, 64));
+        }
+        ipfs.realm_config_sender.send_replace(Some(RealmConfig {
+            about_url: format!("{public_url}/about"),
+            address: public_url,
+            about,
+            connected: true,
+            secret: None,
+            spawn_parcel: None,
+        }));
+        dir.insert_asset_text(
+            &PathBuf::from("metadata-fixture-cache").join("scene"),
+            &payload,
+        );
+        let rejected = payload.clone();
+        let server = tokio::spawn(async move {
+            let recovered = serde_json::json!({
+                "id": "scene", "pointers": [], "content": [],
+                "metadata": {"name": "recovered"}
+            })
+            .to_string();
+            for response in [rejected, recovered] {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut request = BufReader::new(stream);
+                let mut line = String::new();
+                request.read_line(&mut line).await.unwrap();
+                assert_eq!(line, "GET /contents/scene HTTP/1.1\r\n");
+                let mut bypass_cache = false;
+                loop {
+                    line.clear();
+                    assert!(request.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("cache-control") {
+                            bypass_cache = value.trim() == "no-cache";
+                        }
+                    }
+                }
+                assert!(bypass_cache, "rejected metadata must bypass HTTP caches");
+                request
+                    .into_inner()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                            response.len()
+                        )
+                        .as_bytes(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        });
+
+        let (definition, base) = ipfs.entity_definition("scene").await.unwrap();
+        assert!(definition.metadata.is_none());
+        assert_eq!(definition.collection.0.len(), 1);
+        assert_eq!(definition.collection.0["model.glb"], "model-content");
+        assert_eq!(base, base_url);
+        {
+            let context = ipfs.context.read().await;
+            assert!(context.entities["scene"].metadata_evicted);
+            assert_eq!(context.metadata_retention.resident, 0);
+        }
+
+        let metadata = ipfs.scene_metadata("scene").await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&metadata).unwrap(),
+            serde_json::json!({"name": "recovered"})
+        );
+        server.await.unwrap();
+        // Recovery must not depend on rewriting or deleting rejected cached bytes.
+        assert_eq!(
+            ipfs.read_disk_cache(&ipfs_path::CacheKey::Content("scene".to_owned()))
+                .await
+                .unwrap()
+                .unwrap(),
+            payload.as_bytes()
+        );
+        assert_eq!(ipfs.request_metrics.attempts.load(Ordering::Relaxed), 2);
+        let context = ipfs.context.read().await;
+        assert!(!context.entities["scene"].metadata_evicted);
+        assert_eq!(context.metadata_retention.resident, 1);
+        assert_eq!(context.entities["scene"].collection.0["model.glb"], "model-content");
+    })
+    .await
+    .unwrap();
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn metadata_reload_rejects_another_entity_and_accepts_a_matching_retry() {
+    let other = serde_json::json!({
+        "id": "another-scene",
+        "pointers": [],
+        "content": [{"file": "other.glb", "hash": "other-content"}],
+        "metadata": {"name": "wrong scene"}
+    });
+    for payload in [other.clone(), serde_json::json!([other])] {
+        rejected_payload_remains_retryable(payload.to_string()).await;
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn metadata_reload_keeps_empty_null_and_missing_payloads_retryable() {
+    for payload in [
+        serde_json::json!([]),
+        serde_json::json!({"id": "scene", "pointers": [], "content": [], "metadata": null}),
+        serde_json::json!({"id": "scene", "pointers": [], "content": []}),
+    ] {
+        rejected_payload_remains_retryable(payload.to_string()).await;
+    }
+}
+
 #[test]
-fn failed_metadata_reload_remains_retryable() {
+fn metadata_reload_accepts_a_hash_addressed_payload_without_an_embedded_id() {
     let (ipfs, dir) = fixture();
-    register(&ipfs, "scene", Some("{\"name\":\"original\"}"));
+    register(&ipfs, "scene", Some("{}"));
+    expire(&ipfs);
     dir.insert_asset_text(
         &PathBuf::from("metadata-fixture-cache").join("scene"),
-        "invalid-json",
+        &serde_json::json!({
+            "pointers": [], "content": [], "metadata": {"name": "hash addressed"}
+        })
+        .to_string(),
     );
-    expire(&ipfs);
-    let (definition, base) = bevy::tasks::block_on(ipfs.entity_definition("scene"))
-        .expect("a failed payload reload must preserve the known entity's routing");
-    assert!(definition.metadata.is_none());
+    let metadata = bevy::tasks::block_on(ipfs.scene_metadata("scene")).unwrap();
     assert_eq!(
-        definition.collection.hash("model.glb").as_deref(),
-        Some("model-content")
+        serde_json::from_str::<serde_json::Value>(&metadata).unwrap()["name"],
+        "hash addressed"
     );
-    assert_eq!(base, "https://metadata.invalid/contents/");
-    assert!(bevy::tasks::block_on(ipfs.scene_metadata("scene")).is_none());
-    assert!(ipfs.context.blocking_read().entities["scene"].metadata_evicted);
-    store(&dir, "scene", serde_json::json!({ "name": "retry" }));
-    let recovered = bevy::tasks::block_on(ipfs.scene_metadata("scene")).unwrap();
-    assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&recovered).unwrap()["name"],
-        "retry"
-    );
+    assert!(!ipfs.context.blocking_read().entities["scene"].metadata_evicted);
 }
 
 #[test]

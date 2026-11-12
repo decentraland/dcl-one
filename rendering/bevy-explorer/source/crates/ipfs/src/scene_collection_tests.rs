@@ -74,31 +74,7 @@ async fn live_content_refresh_uses_owned_metadata_after_registry_eviction() {
             spawn_parcel: None,
         }));
         let server = tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut request = BufReader::new(stream);
-            let mut line = String::new();
-            request.read_line(&mut line).await.unwrap();
-            assert_eq!(line, "POST /entities/active HTTP/1.1\r\n");
-            let mut length = None;
-            loop {
-                line.clear();
-                assert!(request.read_line(&mut line).await.unwrap() > 0);
-                if line == "\r\n" {
-                    break;
-                }
-                if let Some((name, value)) = line.split_once(':') {
-                    if name.eq_ignore_ascii_case("content-length") {
-                        length = Some(value.trim().parse::<usize>().unwrap());
-                    }
-                }
-            }
-            let mut body = vec![0; length.unwrap()];
-            request.read_exact(&mut body).await.unwrap();
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
-                json!({"pointers": ["-7,13"]})
-            );
-            let response = json!([{
+            let matching = json!([{
                 "id": "scene",
                 "pointers": ["-7,13"],
                 "content": [
@@ -107,21 +83,61 @@ async fn live_content_refresh_uses_owned_metadata_after_registry_eviction() {
                     {"file": "new.glb", "hash": "new-model"}
                 ],
                 "metadata": null
-            }])
-            .to_string();
-            request
-                .into_inner()
-                .write_all(
-                    format!(
-                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
-                        response.len()
+            }]);
+            let mut unrelated = matching.clone();
+            unrelated[0]["id"] = json!("another-scene");
+            for response in [unrelated, json!([]), matching] {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut request = BufReader::new(stream);
+                let mut line = String::new();
+                request.read_line(&mut line).await.unwrap();
+                assert_eq!(line, "POST /entities/active HTTP/1.1\r\n");
+                let mut length = None;
+                loop {
+                    line.clear();
+                    assert!(request.read_line(&mut line).await.unwrap() > 0);
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some((name, value)) = line.split_once(':') {
+                        if name.eq_ignore_ascii_case("content-length") {
+                            length = Some(value.trim().parse::<usize>().unwrap());
+                        }
+                    }
+                }
+                let mut body = vec![0; length.unwrap()];
+                request.read_exact(&mut body).await.unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                    json!({"pointers": ["-7,13"]})
+                );
+                let response = response.to_string();
+                request
+                    .into_inner()
+                    .write_all(
+                        format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+                            response.len()
+                        )
+                        .as_bytes(),
                     )
-                    .as_bytes(),
-                )
-                .await
-                .unwrap();
+                    .await
+                    .unwrap();
+            }
         });
         let metadata = json!({"scene": {"base": "-7,13", "parcels": ["-6,13", "-7,13"]}});
+        let previous = io.context.read().await.entities["scene"].collection.0.clone();
+        for _ in 0..2 {
+            let error = io
+                .refresh_scene_collection("scene", Some(&metadata))
+                .await
+                .unwrap_err();
+            assert!(error.contains("no matching active scene"));
+            let context = io.context.read().await;
+            assert_eq!(context.entities["scene"].collection.0, previous);
+            assert!(context.entities["scene"].metadata.is_none());
+            assert!(context.entities["scene"].metadata_evicted);
+        }
         assert!(io
             .refresh_scene_collection("scene", Some(&metadata))
             .await

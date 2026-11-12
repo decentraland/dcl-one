@@ -1726,13 +1726,8 @@ impl IpfsIo {
             )
             .await
             .map_err(|error| format!("could not refresh scene content: {error}"))?;
-        // exactly one scene at the base parcel; match by id when present, else take the first
-        let Some(def) = defs
-            .iter()
-            .find(|d| d.id == scene_hash)
-            .or_else(|| defs.first())
-        else {
-            return Err("content server returned no active scene".to_owned());
+        let Some(def) = defs.iter().find(|d| d.id == scene_hash) else {
+            return Err("content server returned no matching active scene".to_owned());
         };
         let collection = def.content.clone();
         let mut write = self.context.write().await;
@@ -1893,6 +1888,14 @@ impl IpfsIo {
         self: &'a Arc<Self>,
         path: &'a Path,
     ) -> Result<Box<dyn Reader + 'a>, AssetReaderError> {
+        self.read_with_cache(path, true).await
+    }
+
+    async fn read_with_cache<'a>(
+        self: &'a Arc<Self>,
+        path: &'a Path,
+        use_cache: bool,
+    ) -> Result<Box<dyn Reader + 'a>, AssetReaderError> {
         platform::compat(async move {
             let wrap_err = |e: anyhow::Error| {
                 if e.to_string().contains("file not found") {
@@ -1939,7 +1942,11 @@ impl IpfsIo {
                 return Ok(Box::new(VecReader::new(daft_buffer)));
             }
 
-            let cache_key = ipfs_path.cache_key(&*self.context.read().await);
+            let cache_key = if use_cache {
+                ipfs_path.cache_key(&*self.context.read().await)
+            } else {
+                None
+            };
 
             if let Some(key) = &cache_key {
                 debug!("hash: {}", key.name());
@@ -2066,7 +2073,7 @@ impl IpfsIo {
             let Some(key) = cache_key else {
                 let data = self
                     .clone()
-                    .download(token, path.to_owned(), remote, None, scene)
+                    .download(token, path.to_owned(), remote, None, scene, !use_cache)
                     .await?;
                 return Ok(Box::new(AsyncCursor::new(data)));
             };
@@ -2397,7 +2404,8 @@ mod tests {
                 "first".into(),
                 format!("http://{address}/first"),
                 None,
-                None
+                None,
+                false
             )
             .await
             .is_err());

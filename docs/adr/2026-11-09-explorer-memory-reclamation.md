@@ -67,9 +67,10 @@ registration or request has not replaced them. A raw-JSON reload has a 30-second
 deadline, including admission waits; failure returns the known content routing
 with unavailable metadata and leaves the payload retryable. Live scene RPCs use
 the entity definition already owned by that scene, so signed fetch and scene
-information do not require a metadata reload. Resident metadata reads share the
-context read lock and atomically record access. Cleanup skips contended locks and
-takes a write lock only for an eligible cleanup turn.
+information do not require a metadata reload. Editor commands also snapshot
+scene-owned metadata for target identity and local content refresh. Resident
+metadata reads share the context read lock and atomically record access. Cleanup
+skips contended locks and takes a write lock only for an eligible cleanup turn.
 
 Content maps and URN/hash routing indexes remain for the session after payload
 eviction, including entries for departed scenes. They can grow with visited scenes

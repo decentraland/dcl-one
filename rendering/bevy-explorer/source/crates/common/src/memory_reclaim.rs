@@ -327,6 +327,19 @@ fn latch(active: bool, pressure: Option<MemoryPressure>) -> bool {
     }
 }
 
+fn ram_latch(
+    active: bool,
+    pressure: Option<MemoryPressure>,
+    previous_cap_mib: Option<u64>,
+    cap_mib: Option<u64>,
+) -> bool {
+    // A lower cap cannot clear pressure; a higher cap or a missing reading resets its history.
+    let preserve = previous_cap_mib
+        .zip(cap_mib)
+        .is_some_and(|(previous, current)| current <= previous);
+    latch(active && preserve, pressure)
+}
+
 fn gpu_pressure(budget: &GpuMemoryBudget) -> Option<MemoryPressure> {
     let GpuMemoryBudget::Available(pools) = budget else {
         return None;
@@ -366,12 +379,8 @@ fn snapshot_pressure(
     let cap_mib = reading.map(|reading| reading.cap_mib);
     state.ram = reading.map(|reading| reading.pressure());
     state.gpu = gpu.as_deref().and_then(gpu_pressure);
-    // Pressure history belongs to the effective cap, including when a preview limit exceeds it.
-    if state.ram_cap_mib != cap_mib {
-        state.ram_latched = false;
-    }
+    state.ram_latched = ram_latch(state.ram_latched, state.ram, state.ram_cap_mib, cap_mib);
     state.ram_cap_mib = cap_mib;
-    state.ram_latched = latch(state.ram_latched, state.ram);
     state.gpu_latched = latch(state.gpu_latched, state.gpu);
     state.ram_active = state.ram_latched;
     state.gpu_active = state.gpu_latched;
@@ -408,7 +417,7 @@ fn begin_frame(
         let cap_mib = reading.map(|reading| reading.cap_mib);
         if state.ram_cap_mib != cap_mib {
             state.ram = reading.map(|reading| reading.pressure());
-            state.ram_latched = latch(false, state.ram);
+            state.ram_latched = ram_latch(state.ram_latched, state.ram, state.ram_cap_mib, cap_mib);
             state.ram_cap_mib = cap_mib;
         }
         state.ram_active = state.ram_latched;

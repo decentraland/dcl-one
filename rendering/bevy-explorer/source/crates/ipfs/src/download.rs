@@ -70,7 +70,7 @@ impl IpfsIo {
                 biased;
                 _ = cancelled => None,
                 result = io.request_metrics.measure(io.clone().download_inner(
-                    token, path, remote.clone(), Some(key), attempts,
+                    token, path, remote.clone(), Some(key), attempts, false,
                 )) => Some(result),
             };
             // Another reader may already have started a new generation for the same URL.
@@ -102,6 +102,7 @@ impl IpfsIo {
         remote: String,
         cache_key: Option<CacheKey>,
         scene: Option<String>,
+        bypass_cache: bool,
     ) -> Result<SharedBytes, AssetReaderError> {
         let (_reader, attempts) = DownloadReaders::first(
             &self.request_slots,
@@ -110,10 +111,14 @@ impl IpfsIo {
             self.preview_request_delay(),
         );
         self.request_metrics
-            .measure(
-                self.clone()
-                    .download_inner(token, path, remote, cache_key, attempts),
-            )
+            .measure(self.clone().download_inner(
+                token,
+                path,
+                remote,
+                cache_key,
+                attempts,
+                bypass_cache,
+            ))
             .await
     }
 
@@ -241,6 +246,7 @@ impl IpfsIo {
         remote: String,
         cache_key: Option<CacheKey>,
         attempts: DownloadAttempts,
+        bypass_cache: bool,
     ) -> Result<SharedBytes, AssetReaderError> {
         let start = web_time::Instant::now();
         let ipfs_io_read_state = IpfsIoReadState {
@@ -263,6 +269,21 @@ impl IpfsIo {
         let sw_cached;
         let client = &self.client;
         let request = client.get(&remote);
+
+        // The rejected-metadata retry must also bypass the browser's HTTP cache.
+        // Ordinary uncacheable downloads keep their existing request policy.
+        #[cfg(target_arch = "wasm32")]
+        let request = if bypass_cache {
+            request.fetch_cache_no_store()
+        } else {
+            request
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let request = if bypass_cache {
+            request.header("Cache-Control", "no-cache")
+        } else {
+            request
+        };
 
         #[cfg(target_arch = "wasm32")]
         let request = if sw_caches {
