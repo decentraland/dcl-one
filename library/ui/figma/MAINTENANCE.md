@@ -130,4 +130,4 @@ A component is flagged when the mapper cannot reproduce it confidently. Reasons 
 
 ## Preview output and local review
 
-New generated previews use custom React/browser primitives and co-located CSS Modules through `figma-module-runtime`. Existing snapshots and legacy previews are not automatically promoted. Keep pilot capture and output paths explicit with `--config`; paths resolve relative to that configuration. A forced state is a visual preview, not an implementation of keyboard, focus, click, validation or animation behavior. Real library components must implement those behaviors accessibly.
+New generated previews use custom React/browser primitives and co-located CSS Modules through `figma-module-runtime`. Previews, existing snapshots and legacy previews are not public components. Keep pilot capture and output paths explicit with `--config`; paths resolve relative to that configuration. A forced state is a visual preview, not an implementation of keyboard, focus, click, validation or animation behavior. Real library components must implement those behaviors accessibly.

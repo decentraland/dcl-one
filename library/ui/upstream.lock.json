@@ -605,7 +605,7 @@
       },
       "files": {
         "library/ui/figma/MAINTENANCE.md": {
-          "sha256": "5d9fcf606a23dfd67a9d327c1e8c4a816a51c39aaf8aa1641dbfb96dbad84075",
+          "sha256": "1f3bad8f83f5b2d8b4a996d9e2b97fd59e22edb1212c7214379bf264c59f32fc",
           "fds": null,
           "deviation": [
             "live-access-removed",
@@ -623,6 +623,7 @@
             "port-command-followups",
             "port-safe-restore",
             "generation-import-closure",
+            "hand-written-public-components",
             "install-file-ownership",
             "promotion-include-scope"
           ]
@@ -681,7 +682,7 @@
           ]
         },
         "library/ui/figma/agent-kit/skills/implement-figma-design/SKILL.md": {
-          "sha256": "6a73bad4dffdd030260367d84a44466dc674607d2383a4ae83aff50bbff453a8",
+          "sha256": "5a0c362ac450066e4236dce71ab1c5b1c9cf6ae45a90e0b8790dfef1c69d69ce",
           "fds": {
             "path": "component-library/agent-kit/skills/implement-figma-design/SKILL.md",
             "sha256": "d817e30d4343b12e02dba7597879696382176eba05d8b21f51911e47b02a25d2"
@@ -693,17 +694,19 @@
             "name-identity",
             "accepted-limits",
             "skill-kit-followups",
-            "resolver-followups"
+            "resolver-followups",
+            "hand-written-public-components"
           ]
         },
         "library/ui/figma/agent-kit/skills/maintain-figma-library/SKILL.md": {
-          "sha256": "673761cba539f24af40be188337e59971e1b9b055090e1c4251e49a3ec6efc18",
+          "sha256": "9aa01c78fbc1be6f822ca33329119561278d3cce8b6e3c2fdb88b676797347f3",
           "fds": null,
           "deviation": [
             "port-command",
             "skill-kit-followups",
             "port-command-followups",
             "port-safe-restore",
+            "hand-written-public-components",
             "install-file-ownership"
           ]
         },
@@ -4419,6 +4422,7 @@
         "generated": "Generated Review output (figma/review/src/generated and figma/review/src/review/catalog.json) is regenerated here by this tree's generator and figma.config.json from the pinned capture: it differs from figma-design-system's committed output wherever the ports above, the keyless context or the imageFills placeholder differ. figma diff against the fetched cache reports no change.",
         "generation-import-closure": "components/generation.json binds the import closure of the install process instead of every tooling module (docs/adr/2026-11-11-generation-binds-installer-import-closure.md). module-graph.mjs computes the closure without dependencies and fails closed on any import it cannot resolve to one tracked file or a sanctioned package; componentModulePaths selects the fixed inputs, that closure and non-code files under figma/src from lock-verified bytes, and the generation record is schema 2. dcl-figma install runs in its own process (src/install-main.ts), so the modules it loads are the closure; createApp moves to src/app-context.ts so that process does not load the sync tooling. The install and offline inventories still require every candidate module to be tracked and pinned.",
         "hand-written-components": "Hand-written public components are plain tracked source in library/ui/components: a top-level directory the public component table does not name. The installer carries them into the published tree byte for byte and refuses a plan that writes into one; the common inspector checks them as tracked, materialized TypeScript and CSS with no Figma URL or key-shaped value, LFS pointer or known generator marker (a mapping header is not one), and the lock never pins them. lock-digests --write regenerates the public foundation and component tables from the staged manifests, keeps a table whose manifest does not validate and then exits 1.",
+        "hand-written-public-components": "Public library components are written by hand from templates/component/ per docs/ui-standards.md; generation backs the Review previews only. The maintainer skill covers the Figma pipeline (port and Review) and sends a new public component to the template instead of components/promotion.json or promotion.include, the consumer skill attributes a difference to the capture the mappings follow, and MAINTENANCE.md describes components/ as hand-written components and previews as not public components.",
         "install-file-ownership": "The component install owns files, not directories: it removes or overwrites only generation.json, promotion.json and an output the lock's public component table or the installed generation record pins, while its bytes match that pin. Every other file in a component directory, including a committed edit over a generated file, is carried over byte for byte; a plan that would write over such a file or into a component directory holding one is refused with the file's name, and so is an unowned top-level file. A dirty target is reported before an ownership refusal. The maintenance notes and the maintain-figma-library skill describe moving a generated component to hand-written in that order.",
         "internal-components": "Keep incomplete generated components internal, omit their public mappings, and derive CSS declarations from selectors only. Public export waits for source controls and semantic data props.",
         "key-download-identity": "Key jobs download each artifact under its one name and from its one run: the scan inputs only from the run itself, the Review build only from the triggering run. The root checkout key step template, not yet used by a workflow, runs against the real guard.",

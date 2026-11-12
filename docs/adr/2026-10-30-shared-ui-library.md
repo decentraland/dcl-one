@@ -2,6 +2,7 @@
 
 - Status: Accepted
 - Date: 2026-10-30
+- Updated: 2026-11-12
 
 ## Context
 
@@ -15,6 +16,8 @@ Place shared UI foundations, components and their Figma tooling in `library/ui`.
 Place UI used by a single app in `library/ui/apps/<app>/`; the app keeps its
 pages, routes and data wiring. The shared component styling standard is CSS
 Modules. The Figma tooling is separate from browser imports.
+
+Public components are written by hand from the component template described in [`docs/ui-standards.md`](../ui-standards.md): the React component with its native semantics, its CSS Module on foundation tokens, behavior and accessibility tests, and a `Component.figma.ts` mapping that only the Figma tooling reads. Generated Figma views back the Review previews and are not a production rendering model. Hand-written public components are absent from `promotion.include` in `library/ui/figma/figma.config.json`.
 
 ### Layout
 
