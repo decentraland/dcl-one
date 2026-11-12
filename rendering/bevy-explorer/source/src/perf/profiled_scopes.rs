@@ -1,9 +1,9 @@
 //! The in-app scope profiler: a `tracing` layer that times Bevy's spans (`system`, `schedule`,
 //! `node`) and the explorer's own, folded once a frame into [`ProfiledScopesTable`].
 //!
-//! The layer records nothing while the table is disabled: `on_new_span` keys a system span (one
-//! allocation) and nothing else, `on_enter` returns on one atomic load, `on_exit` after popping
-//! the scope from this thread's stack if it is there.
+//! The layer records nothing while the table is disabled: `on_new_span` keys a system span (two
+//! allocations: the shared name and the span's extension) and nothing else, `on_enter` returns
+//! on one atomic load, `on_exit` after popping the scope from this thread's stack if it is there.
 //!
 //! Self time excludes the child scopes entered on the same thread: each thread keeps a stack of
 //! the scopes it has entered, and a scope's inclusive time is added to the one below it when it
@@ -251,21 +251,21 @@ fn classify_profiled_scope_kind(metadata: &Metadata<'_>) -> ProfiledScopeKind {
     }
 }
 
-/// The span's `name` field, as Bevy records it: a string for systems and nodes, a `Debug` of
-/// the label for schedules.
+/// The span's `name` field, as Bevy records it: a string for systems and nodes, copied once
+/// into the shared name; a `Debug` of the label for schedules.
 #[derive(Default)]
-struct SpanNameFieldVisitor(Option<String>);
+struct SpanNameFieldVisitor(Option<Arc<str>>);
 
 impl Visit for SpanNameFieldVisitor {
     fn record_str(&mut self, field: &Field, value: &str) {
         if field.name() == "name" {
-            self.0 = Some(value.to_owned());
+            self.0 = Some(value.into());
         }
     }
 
     fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
         if field.name() == "name" {
-            self.0 = Some(format!("{value:?}"));
+            self.0 = Some(format!("{value:?}").into());
         }
     }
 }
@@ -298,9 +298,7 @@ where
         attrs.record(&mut visitor);
         let name = visitor
             .0
-            .map_or(ScopeName::Static(metadata.name()), |name| {
-                ScopeName::Shared(name.into())
-            });
+            .map_or(ScopeName::Static(metadata.name()), ScopeName::Shared);
         span.extensions_mut()
             .insert(ProfiledScopeKey { kind, name });
     }
