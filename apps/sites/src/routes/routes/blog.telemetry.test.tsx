@@ -142,6 +142,7 @@ describe("blog list telemetry", () => {
     renderAt("/blog");
     const nav = await screen.findByRole("navigation", { name: "Blog categories" });
     await user.click(within(nav).getByRole("link", { name: "Platform" }));
+    await screen.findByRole("heading", { level: 1, name: "Platform" });
     await user.click(await screen.findByRole("link", { name: "Second Post" }));
     await screen.findByRole("heading", { level: 1, name: "Second Post" });
     expect(calls("lp_blog_post_clicked")).toEqual([{ slug: "second-post" }]);
