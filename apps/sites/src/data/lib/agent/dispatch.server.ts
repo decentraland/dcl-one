@@ -1,8 +1,11 @@
 import type { EntryContext } from "react-router";
 
+import type { DehydratedState } from "@tanstack/react-query";
+
 import { LEGAL_DOCS, type LegalKey } from "../../legal";
 import { toAgentLegalDoc } from "../../legal/agent";
 
+import { placesFromDehydrated } from "../catalyst/places/discover";
 import { emptyProfile, type ProfileVM } from "../catalyst/social/profile";
 import { profileKeys } from "../profile/queries";
 
@@ -39,8 +42,8 @@ const SERIALIZERS: Record<AgentMarkdownKey, (data: unknown) => string | null> = 
     return doc ? legalDocToMarkdown(doc) : null;
   },
   placesIndex: (data) => {
-    const d = data as { places?: Parameters<typeof placesIndexToMarkdown>[0] } | undefined;
-    return placesIndexToMarkdown(d?.places ?? []);
+    const d = data as { dehydratedState?: DehydratedState } | undefined;
+    return placesIndexToMarkdown(placesFromDehydrated(d?.dehydratedState));
   },
   placeDetail: (data) => {
     const d = data as { place?: Parameters<typeof placeToMarkdown>[0] | null } | undefined;

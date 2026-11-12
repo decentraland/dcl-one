@@ -33,6 +33,14 @@ Inter variable normal faces (weights 100–900) come from `@fontsource-variable/
 
 Monochrome icons inherit `currentColor`, and active-state pairs expose `active`. Icons preserve their captured intrinsic dimensions unless `size` is supplied. Give informative icons an accessible name with SVG attributes such as `role="img"` and `aria-label`; mark decorative icons `aria-hidden="true"`. Skipped source records are listed in `skippedIcons` rather than silently substituted.
 
+## Button
+
+Import `Button` and `ButtonProps` from `@dcl/one-ui`. Without `href` it renders a native button (`type="button"` by default); with `href` it renders an anchor and forwards cancellable native events. Links targeting a new or named browsing context retain the supplied `rel` tokens and add `noopener noreferrer`, including case-insensitive special targets.
+
+Use `children` or `label` for content, `leadingIcon` and `trailingIcon` (also `startIcon` and `endIcon`) for decorative icons, and `className` for consumer geometry. `variant="iconOnly"` or `iconOnly` requires `aria-label` or `aria-labelledby` in the public type. Supply content or an accessible name explicitly; the public control never supplies specimen text. Native button and anchor refs are typed. Native `disabled` prevents focus and activation; `aria-disabled` keeps the control focusable with disabled visuals while suppressing click and auxiliary activation. `loading` retains the content and accessible name with a decorative busy indicator, marks the control busy, retains keyboard focus and prevents repeated activation. Both button and link controls accept these states.
+
+Captured variants remain `primary`, `secondary`, `outline`, `dark`, `text` and `outlineOnLight`. Public aliases `tertiary` and `quaternary` select `outline` and `dark`. The white `inverse` appearance and the neutral `iconOnly` appearance are explicit library additions. Desktop heights are `xl` 56px, `lg` 48px, `md` 40px and `sm` 32px; mobile heights are 56px, 52px, 48px and 44px respectively. The defaults are `xl` and `viewport="desktop"`. Icon-only controls have a 48px minimum target.
+
 ## Work on it
 
 Node 24 and pnpm (`corepack enable`). The Figma capture is not in this repository: it lives in [figma-design-system](https://github.com/decentraland/figma-design-system) (FDS). `upstream.lock.json` pins two FDS commits: `revision`, the code base every ported file is compared against, and `snapshot.revision`, the capture `fetch-source` reads, with its digest table.

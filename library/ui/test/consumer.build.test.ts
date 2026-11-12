@@ -7,7 +7,7 @@ import { build } from 'vite'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import * as publicUi from '../index'
 
-describe('when a consumer bundles public foundations and the NavBar component', () => {
+describe('when a consumer bundles public foundations and shared components', () => {
   let root: string
   let directory: string | undefined
   beforeEach(() => {
@@ -17,9 +17,10 @@ describe('when a consumer bundles public foundations and the NavBar component', 
   afterEach(async () => {
     if (directory) await rm(directory, { recursive: true, force: true })
   })
-  it('should expose NavBar alongside the preserved foundations', () => {
+  it('should expose Button and NavBar alongside the preserved foundations', () => {
     expect(publicUi).toHaveProperty('theme')
     expect(publicUi.NavBar).toBeTypeOf('function')
+    expect(publicUi.Button).toBeTypeOf('function')
   })
   it('should compile the public props contract and reject malformed props and deep imports', () => {
     expect(
@@ -35,8 +36,20 @@ describe('when a consumer bundles public foundations and the NavBar component', 
     ).toBe('')
   }, 60_000)
   it('should bundle the public component with its composed foundation CSS', async () => {
+    const modules: string[] = []
+    let buttonImports: string[] = []
     const result = await build({
       configFile: false,
+      plugins: [
+        {
+          name: 'public-runtime-boundary',
+          generateBundle() {
+            modules.push(...this.getModuleIds())
+            const button = modules.find((id) => id.endsWith('/components/Button/Button.tsx'))
+            if (button) buttonImports = this.getModuleInfo(button)?.importedIds ?? []
+          }
+        }
+      ],
       root,
       logLevel: 'silent',
       build: {
@@ -48,6 +61,21 @@ describe('when a consumer bundles public foundations and the NavBar component', 
         rolldownOptions: { external: ['react', 'react/jsx-runtime'] }
       }
     })
+    expect(buttonImports.length).toBeGreaterThan(0)
+    expect(buttonImports.filter((id) => /\/(?:runtime|figma)\//.test(id))).toEqual([])
+    expect(
+      modules.some((module) =>
+        module.replaceAll('\\', '/').endsWith('/components/runtime/figma-module-runtime.tsx')
+      )
+    ).toBe(false)
+    expect(
+      modules.filter(
+        (module) =>
+          module.replaceAll('\\', '/').startsWith(root.replaceAll('\\', '/') + '/figma/') ||
+          /^node:/.test(module) ||
+          /__vite-browser-external|@modelcontextprotocol/.test(module)
+      )
+    ).toEqual([])
     const outputs = (Array.isArray(result) ? result : [result]).flatMap((item) =>
       'output' in item ? item.output : []
     )
