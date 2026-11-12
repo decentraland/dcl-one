@@ -11,15 +11,19 @@ export const TIP_EMOTE = 'urn:decentraland:off-chain:base-emotes:money'
 /** Whether Donate shows for `place`, and how to open it. Hidden while either answer is pending, or on any failure. */
 export function useDonate(place: DonatePlace | null): { visible: boolean; open: (input?: 'pointer' | 'keyboard') => void } {
   const key = place ? JSON.stringify(place) : null
-  const [visibleFor, setVisibleFor] = useState<string | null>(null)
+  // The last answer stays shown while the next place is asked about, so walking across parcels doesn't flicker.
+  const [shown, setShown] = useState(false)
   useEffect(() => {
-    if (!donations || !key) return
+    if (!donations || !key) {
+      setShown(false)
+      return
+    }
     let alive = true
     const target = JSON.parse(key) as DonatePlace
     // The place is looked up only for a session that may tip at all.
     void (async () => {
-      const shown = (await donations.available()) && (await donations.tippable(target))
-      if (alive) setVisibleFor(shown ? key : null)
+      const visible = (await donations.available()) && (await donations.tippable(target))
+      if (alive) setShown(visible)
     })()
     return () => {
       alive = false
@@ -32,7 +36,7 @@ export function useDonate(place: DonatePlace | null): { visible: boolean; open: 
     },
     [key]
   )
-  return { visible: donations != null && key != null && visibleFor === key, open }
+  return { visible: donations != null && key != null && shown, open }
 }
 
 /** Plays the tip emote each time the host says a tip was sent. */

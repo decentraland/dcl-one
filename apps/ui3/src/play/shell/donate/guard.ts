@@ -12,6 +12,8 @@
 // one that confirmed. Anything else is refused before it reaches the wallet.
 
 import { decodeFunctionData, parseAbi, type Hex } from 'viem'
+import { chainSalt } from '../../../shop/market/lib/tx'
+import type { ChainId } from '@shop/model/chain'
 import type { Eip1193Provider } from '../../../data/auth/wallet'
 import { AMOY_ADD_PARAMS } from '../../../shop/wallet/chain'
 import { assertWalletAccount, sameFields, sameKeys, WalletRefusal } from '../shop/walletGuard'
@@ -30,7 +32,8 @@ export interface DonationIntent {
   current(): boolean
 }
 
-const TRANSFER_ABI = parseAbi(['function transfer(address to, uint256 amount) returns (bool)'])
+/** The MANA token's transfer, the one call a tip makes. */
+export const TRANSFER_ABI = parseAbi(['function transfer(address to, uint256 amount) returns (bool)'])
 const DOMAIN_FIELDS = [
   { name: 'name', type: 'string' },
   { name: 'version', type: 'string' },
@@ -50,13 +53,8 @@ function refuse(why: string): never {
   throw new WalletRefusal(why, 4100)
 }
 
-/** The chain id as the Decentraland contracts' EIP-712 salt. */
-export function chainSalt(chainId: number): string {
-  return `0x${chainId.toString(16).padStart(64, '0')}`
-}
-
 /** `transfer(creator, amount)` as confirmed, and nothing else. */
-export function checkTransfer(data: unknown, intent: DonationIntent): void {
+function checkTransfer(data: unknown, intent: DonationIntent): void {
   if (typeof data !== 'string' || !/^0x[0-9a-fA-F]*$/.test(data)) refuse('Donate only sends the tip you confirmed.')
   let decoded
   try {
@@ -73,7 +71,7 @@ export function checkTransfer(data: unknown, intent: DonationIntent): void {
  * The MANA token's meta-transaction for the tipper, exactly as the sender builds it, and nothing more.
  * Returns the typed data as checked, for the wallet to sign that and not the text it was read from.
  */
-export function checkMetaTransaction(from: unknown, data: unknown, intent: DonationIntent): unknown {
+function checkMetaTransaction(from: unknown, data: unknown, intent: DonationIntent): unknown {
   if (lower(from) !== intent.from) refuse('Donate signs only for the account you signed in with.')
   let typed: unknown
   try {
@@ -91,7 +89,7 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Donat
     domain.name === intent.token.name &&
     domain.version === intent.token.version &&
     lower(domain.verifyingContract) === intent.token.address &&
-    lower(domain.salt) === chainSalt(intent.chainId) &&
+    lower(domain.salt) === chainSalt(intent.chainId as ChainId) &&
     (primaryType as unknown) === 'MetaTransaction' &&
     sameKeys(message, ['nonce', 'from', 'functionSignature']) &&
     /^\d{1,78}$/.test(String(message.nonce)) &&
@@ -102,7 +100,7 @@ export function checkMetaTransaction(from: unknown, data: unknown, intent: Donat
 }
 
 /** The same call sent from the tipper's wallet: to the token, with no value and no unknown fields. */
-export function checkTransaction(tx: unknown, intent: DonationIntent): void {
+function checkTransaction(tx: unknown, intent: DonationIntent): void {
   if (tx == null || typeof tx !== 'object' || Array.isArray(tx) || Object.keys(tx).some((k) => !TX_FIELDS.has(k))) refuse('Donate only sends the tip you confirmed.')
   const t = tx as { from?: unknown; to?: unknown; data?: unknown; value?: unknown }
   const value = typeof t.value === 'string' || typeof t.value === 'number' || typeof t.value === 'bigint' ? BigInt(t.value) : 0n

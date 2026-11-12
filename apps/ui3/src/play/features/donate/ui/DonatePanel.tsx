@@ -44,9 +44,13 @@ function Creator({ creator }: { creator: DonateCreator }): React.JSX.Element {
 }
 
 function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>; handlers: DonateHandlers }): React.JSX.Element {
-  const [choice, setChoice] = useState(0)
-  const [mana, setMana] = useState(formatAmount(view.presets[0] ?? 0))
-  const [usd, setUsd] = useState(view.usdRate ? formatAmount((view.presets[0] ?? 0) * view.usdRate) : '')
+  // The amount the player last chose (after a refused send or TRY AGAIN), else the first suggestion.
+  const start = view.amount ?? formatAmount(view.presets[0] ?? 0)
+  const startPreset = view.amount == null ? 0 : view.presets.findIndex((v) => formatAmount(v) === view.amount)
+  const [choice, setChoice] = useState(startPreset >= 0 ? startPreset : OTHER)
+  const [mana, setMana] = useState(start)
+  const startNumber = parseAmount(start)
+  const [usd, setUsd] = useState(view.usdRate && startNumber != null ? formatAmount(startNumber * view.usdRate) : '')
   const amount = parseAmount(mana)
   const tooLittle = amount == null || amount < MIN_TIP
   const tooMuch = amount != null && amount > view.balance
@@ -131,7 +135,7 @@ function Form({ view, handlers }: { view: Extract<DonateView, { step: 'form' }>;
             </label>
           )}
         </div>
-        {tooLittle && <span className={styles.tip}>Tips must be ≥ 1 MANA</span>}
+        {tooLittle && <span className={styles.tip}>Tips must be ≥ {MIN_TIP} MANA</span>}
         {view.error && !tooLittle && (
           <span className={styles.tip} role="alert">
             {view.error}
@@ -184,13 +188,12 @@ export function DonatePanel({ view, handlers }: { view: DonateView; handlers: Do
                   : 'Your tip is being processed. You can close this window.'}
             </span>
           </div>
-          {view.step === 'processing' && (
-            <ModalActions>
-              <Button variant="secondary" onClick={handlers.onClose}>
-                CLOSE
-              </Button>
-            </ModalActions>
-          )}
+          {/* Closing while sending cancels before the wallet signs; after, the tip goes on and is watched. */}
+          <ModalActions>
+            <Button variant="secondary" onClick={handlers.onClose}>
+              CLOSE
+            </Button>
+          </ModalActions>
         </Modal>
       )
     case 'sent':

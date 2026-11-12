@@ -2,6 +2,9 @@
 // outcome means. Reads, the relay and the chain are fakes here; the guard is the real one, so a send that reaches
 // the fake wallet is one the guard let through.
 import { describe, expect, it, vi } from 'vitest'
+
+// The relay POST the shell makes through its timed fetch: answered here, never sent.
+vi.stubGlobal('fetch', vi.fn(async () => new Response('{}')))
 import { parseUnits } from 'viem'
 import type { Eip1193Provider } from '../../data/auth/wallet'
 import { MANA_TOKEN } from '@shop/market/lib/contracts'
@@ -55,13 +58,35 @@ function wallet(provider: Eip1193Provider, kind: 'web3' | 'managed' = 'web3', we
   return { kind: () => kind, provider: () => provider, marketplace: () => web3 }
 }
 
-/** The gasless send as the Shop's sender makes it: the token meta-transaction signed through the wallet given. */
-const signThen = (after: () => Promise<string>) => async (p: Eip1193Provider, token: typeof TOKEN, data: `0x${string}`) => {
-  await signTypedData(p, TIPPER, metaTransactionTypedData(token, 'collection', TIPPER, 1n, data))
-  return after()
+/**
+ * The gasless send as the Shop's sender makes it: the token meta-transaction signed through the wallet given, then
+ * the relay POST through the shell's fetch (unless `relay` is false: something failed before it was made).
+ */
+const signThen =
+  (after: () => Promise<string>, relay = true) =>
+  async (p: Eip1193Provider, token: typeof TOKEN, data: `0x${string}`, f: typeof fetch) => {
+    await signTypedData(p, TIPPER, metaTransactionTypedData(token, 'collection', TIPPER, 1n, data))
+    if (relay) await f('https://relay.test/transactions', { method: 'POST' })
+    return after()
+  }
+
+/** A Storage in memory, shared between two shells to stand for a reload or another tab. */
+function memoryStorage(): Storage {
+  const map = new Map<string, string>()
+  return {
+    get length() {
+      return map.size
+    },
+    clear: () => map.clear(),
+    getItem: (k) => map.get(k) ?? null,
+    key: (i) => [...map.keys()][i] ?? null,
+    removeItem: (k) => void map.delete(k),
+    setItem: (k, v) => void map.set(k, v)
+  }
 }
 
-function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 'managed'; web3?: boolean; other?: boolean } = {}) {
+function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 'managed'; web3?: boolean; other?: boolean; storage?: Storage } = {}) {
+  const storage = opts.storage ?? memoryStorage()
   const w = fakeProvider()
   const views: DonateView[] = []
   let handlers: DonateHandlers = { onClose: () => {} }
@@ -84,6 +109,7 @@ function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 
     now: clock(),
     accountUrl: () => 'https://example.org/account',
     supportUrl: () => 'https://example.org/help',
+    storage: () => storage,
     ...over
   }
   const donate = createShellDonate({
@@ -101,7 +127,7 @@ function setup(over: Partial<ShellDonateServices> = {}, opts: { kind?: 'web3' | 
     otherDialogOpen: () => opts.other === true,
     services
   })
-  return { donate, views, last: () => views[views.length - 1], handlers: () => handlers, hidden: () => hidden, posted, w, services }
+  return { donate, views, last: () => views[views.length - 1], handlers: () => handlers, hidden: () => hidden, posted, w, services, storage }
 }
 
 const open = (d: ReturnType<typeof setup>['donate']) => d.request('donate.open', { v: 1, place: { parcel: { x: 0, y: 0 } } })
@@ -184,7 +210,7 @@ describe('sending a tip', () => {
     for (const [amount, error] of [['0.5', /1 MANA/], ['10.', /1 MANA/], ['166', /Insufficient MANA/]] as const) {
       s.handlers().onSend?.(amount)
       await flush()
-      expect(s.last()).toMatchObject({ step: 'form', error: expect.stringMatching(error) })
+      expect(s.last()).toMatchObject({ step: 'form', error: expect.stringMatching(error), amount })
     }
     expect(s.w.calls).not.toContain('eth_signTypedData_v4')
   })
@@ -307,4 +333,49 @@ describe('sending a tip', () => {
     await flush()
     expect(reverted.last().step).toBe('failed')
   })
+
+  it('keeps an unsettled tip across a reload or another tab, and shows it instead of a new form', async () => {
+    const storage = memoryStorage()
+    const never = { wait: async (_c: number, h: string, timeout: number) => (timeout > 200_000 ? new Promise<string>(() => {}) : Promise.reject(new TxPendingError(h, 'The tip'))), sleep: () => new Promise<void>(() => {}) }
+    const first = setup(never, { storage })
+    await open(first.donate)
+    first.handlers().onSend?.('166')
+    await flush()
+    expect(first.last().step).toBe('processing')
+    // The page reloads (or another tab opens): a new shell over the same storage.
+    const second = setup({ ...never, now: () => 0 }, { storage })
+    await open(second.donate)
+    expect(second.last()).toMatchObject({ step: 'processing', amount: '166' })
+    expect(second.views.some((v) => v.step === 'form')).toBe(false)
+  })
+
+  it('cancels when closed before the wallet signs, and signs nothing afterwards', async () => {
+    let answer: (v: string) => void = () => {}
+    const s = setup()
+    s.w.provider.request = vi.fn(async ({ method }: { method: string }) => {
+      if (method === 'eth_accounts') return [TIPPER]
+      if (method === 'eth_signTypedData_v4') return new Promise((r) => (answer = r))
+      return null
+    }) as Eip1193Provider['request']
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('sending')
+    s.handlers().onClose()
+    expect(s.donate.dialogOpen()).toBe(false)
+    answer('0x' + '11'.repeat(65))
+    await flush()
+    expect(s.storage.length).toBe(0)
+    expect(fetch).not.toHaveBeenCalledWith('https://relay.test/transactions', expect.anything())
+  })
+
+  it('fails, with nothing sent, when the signed tip never reached the relay', async () => {
+    const s = setup({ sendGasless: signThen(() => Promise.reject(new Error('Expected a 65-byte signature')), false) })
+    await open(s.donate)
+    s.handlers().onSend?.('166')
+    await flush()
+    expect(s.last().step).toBe('failed')
+    expect(s.storage.length).toBe(0)
+  })
 })
+

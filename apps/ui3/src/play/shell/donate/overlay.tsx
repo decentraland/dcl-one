@@ -1,7 +1,7 @@
 // The Donate panel over the app, drawn by the web shell (its own document, above the app's iframe), at the HUD's
 // scale: the player's amount is taken here, where the wallet is, not in the app. While it shows, the rest of the
 // page takes no focus or input, keyboard focus stays in it (Tab cycles through its buttons and fields) and Escape
-// closes it unless a tip is being sent; closing gives the focus back to the app.
+// closes it, as its CLOSE does (a tip already signed goes on and is watched); closing gives the focus back to the app.
 
 import '@fontsource-variable/inter/index.css'
 import '@hud/styles/tokens.css'
@@ -16,7 +16,6 @@ const FOCUSABLE = 'button:not([disabled]), input:not([disabled]), [href], [tabin
 
 function Overlay({ view, handlers, quiet }: { view: DonateView; handlers: DonateHandlers; quiet: boolean }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
-  const busy = view.step === 'sending'
   const first = useRef(true)
   const shownStep = useRef<string | null>(null)
   // Each step's first focus goes to its first button: the one that sends nothing (Cancel, CLOSE).
@@ -31,7 +30,7 @@ function Overlay({ view, handlers, quiet }: { view: DonateView; handlers: Donate
   const onKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Escape') {
       e.preventDefault()
-      if (!busy) handlers.onClose()
+      handlers.onClose()
       return
     }
     if (e.key !== 'Tab') return

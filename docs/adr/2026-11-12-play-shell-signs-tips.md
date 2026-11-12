@@ -52,7 +52,9 @@ the player owns.
   MANA token (its nonce is unused). Only the relay that refused it holds that signature, so a second payment would
   need it to submit a signature it just refused. The risk is accepted rather than spending the nonce, which would
   take a second wallet prompt.
-- A tip whose outcome is unknown is the account's pending tip: opening Donate again shows it, not a new form,
-  until it settles or its watch ends.
+- A tip whose outcome is unknown is the account's pending tip, kept in the browser's storage until it settles or
+  its watch ends: opening Donate again, after a reload or in another tab, shows it, not a new form.
+- The balance watch confirms by effect: any other MANA the account spends during the watch can count as the tip
+  (and play the emote), and MANA arriving can hide it until the watch ends. It confirms; it is not a receipt.
 - A tip confirmed only by its effect on the balance (when the relay's answer was lost) has no transaction hash to
   forward, so its creator is not notified.

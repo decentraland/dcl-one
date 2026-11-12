@@ -6225,7 +6225,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/donate/useDonate.ts",
-      "sha256": "bd77e134db1e9d921b4bc2fdf717cef6fc0a85b15d914914c9484f6d9347c99a"
+      "sha256": "861e77799e6d7e20618aa6110fd987a4c413ea388d78a1a59f811c8173137271"
     },
     {
       "path": "library/ui/apps/hud/features/editorHost/CreatePage.module.css",
@@ -6505,7 +6505,7 @@
     },
     {
       "path": "library/ui/apps/hud/features/notifications/summary.ts",
-      "sha256": "4ba956b5c076a4d2a0ff808f448e84d666b350df0e32c0946fe3897a13060633"
+      "sha256": "7f3f53810d36d0bfc7ed223bebd7dbcd63003ee6b150c03cfb34e484fd35845b"
     },
     {
       "path": "library/ui/apps/hud/features/permissions/PermissionDialog.module.css",
@@ -6809,7 +6809,7 @@
     },
     {
       "path": "library/ui/apps/hud/test/donate.test.tsx",
-      "sha256": "ad343b779cb90c63d13fc7b8f87142a28e202a520ecb5b16da5631546e892498"
+      "sha256": "8a20d4dc3d0db752344422d2fb15732297b5acb199d4b6e47d78781c42197f56"
     },
     {
       "path": "library/ui/apps/hud/test/error.test.tsx",
@@ -18828,6 +18828,21 @@
     {
       "from": "library/ui/apps/hud/features/notifications/summary.ts",
       "to": "library/ui/apps/hud/features/profile/Passport.tsx",
+      "kind": "test:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "native:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
+      "kind": "production:runtime"
+    },
+    {
+      "from": "library/ui/apps/hud/features/notifications/summary.ts",
+      "to": "library/ui/apps/hud/features/session/profileStore.ts",
       "kind": "test:runtime"
     },
     {

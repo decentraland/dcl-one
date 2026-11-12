@@ -86,9 +86,15 @@ describe('Donate', () => {
     open?.()
     expect(passport).toHaveBeenCalledWith('0xabc')
     expect(tipTarget({ id: '2', type: 'badge_granted', address: '0x', timestamp: '0', read: false, metadata: {} } as never)).toBeUndefined()
-    expect(summarize({ id: '3', type: 'tip_received', address: '0x', timestamp: '0', read: false, metadata: { senderAddress: '0xabc', senderUsername: 'Aurora', amount: '166.456' } } as never)).toMatchObject({
+    // The notification carries the tipper's address only: their name when the HUD already has their profile, else
+    // the short address.
+    const sender = '0x' + 'ab'.repeat(20)
+    expect(summarize({ id: '3', type: 'tip_received', address: '0x', timestamp: '0', read: false, metadata: { senderAddress: sender, amount: '166.456' } } as never)).toMatchObject({
       title: 'New Tip received!',
-      body: 'Aurora sent you a 166.46 MANA tip for one of your scenes!'
+      body: '0xabab…abab sent you a 166.46 MANA tip for one of your scenes!'
     })
+    expect(summarize({ id: '4', type: 'tip_received', address: '0x', timestamp: '0', read: false, metadata: { senderAddress: sender } } as never).body).toBe(
+      '0xabab…abab sent you a MANA tip for one of your scenes!'
+    )
   })
 })
