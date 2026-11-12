@@ -65,9 +65,15 @@ export default function SitesNotificationsDialog({
         <Button onClick={onClose}>Close</Button>
       </div>
       {state === 'loading' ? <p role="status">Loading notifications…</p> : null}
-      {state === 'error' ? <p role="alert">Couldn’t load notifications.</p> : null}
+      {state === 'error' ? (
+        <p role="alert">
+          {rows.length > 0
+            ? 'Couldn’t refresh notifications. Showing previous notifications.'
+            : 'Couldn’t load notifications.'}
+        </p>
+      ) : null}
       {state === 'ready' && rows.length === 0 ? <p>No notifications yet</p> : null}
-      {state === 'ready' && rows.length > 0 ? (
+      {state !== 'loading' && rows.length > 0 ? (
         <ul className={styles.list}>
           {rows.map((row) => {
             const body = (

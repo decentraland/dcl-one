@@ -1,5 +1,4 @@
-import { useMemo, useState } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useMemo } from "react";
 import {
   Outlet,
   redirect,
@@ -71,12 +70,6 @@ function nativeWalletHost(
 }
 
 function NativeLayout({ host }: { host: ShopHost }) {
-  const [queryClient] = useState(
-    () =>
-      new QueryClient({
-        defaultOptions: { queries: { retry: false, staleTime: 30_000 } },
-      }),
-  );
   const { identity } = useAuth();
   const walletHost = useMemo(
     () => nativeWalletHost(host, identity as AuthIdentity | null),
@@ -89,17 +82,15 @@ function NativeLayout({ host }: { host: ShopHost }) {
   );
   return (
     <NativeShopContext.Provider value={true}>
-      <QueryClientProvider client={queryClient}>
-        <ChromeNavBridge>
-          <ShopProviders host={walletHost} services={services}>
-            <ShopChrome>
-              <div className="mk-native__view">
-                <Outlet />
-              </div>
-            </ShopChrome>
-          </ShopProviders>
-        </ChromeNavBridge>
-      </QueryClientProvider>
+      <ChromeNavBridge>
+        <ShopProviders host={walletHost} services={services}>
+          <ShopChrome>
+            <div className="mk-native__view">
+              <Outlet />
+            </div>
+          </ShopChrome>
+        </ShopProviders>
+      </ChromeNavBridge>
     </NativeShopContext.Provider>
   );
 }

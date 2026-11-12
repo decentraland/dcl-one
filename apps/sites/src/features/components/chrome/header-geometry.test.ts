@@ -45,7 +45,7 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
         const html = `<style>body{margin:0}${css}</style><div class="site-layout ui2" data-header-layout="native"><div class="site-layout__navigation"></div><div class="site-layout__content"><div class="${child} ui2 ${host === "shop" ? "shop-chrome" : ""} ${host === "social" ? "social-web" : ""}"><div class="soc"></div></div></div></div>`;
         await session.navigate(`data:text/html,${encodeURIComponent(html)}`);
         const response = await session.send("Runtime.evaluate", {
-          expression: `(() => {const root=document.querySelector('.site-layout'), child=document.querySelector('.site-layout__content>div');return {root:getComputedStyle(root).getPropertyValue('--site-header-h').trim(), child:getComputedStyle(child).getPropertyValue('--site-header-h').trim(), height:child.getBoundingClientRect().height, social:document.querySelector('.soc').getBoundingClientRect().height}})()`,
+          expression: `(() => {const root=document.querySelector('.site-layout'), child=document.querySelector('.site-layout__content>div');return {root:getComputedStyle(root).getPropertyValue('--site-header-h').trim(), child:getComputedStyle(child).getPropertyValue('--site-header-h').trim(), shop:getComputedStyle(child).getPropertyValue('--shop-nav-h').trim(), height:child.getBoundingClientRect().height, social:document.querySelector('.soc').getBoundingClientRect().height}})()`,
           returnByValue: true,
         });
         const actual = (
@@ -54,6 +54,7 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
               value: {
                 root: string;
                 child: string;
+                shop: string;
                 height: number;
                 social: number;
               };
@@ -63,6 +64,7 @@ describe("when native and legacy chrome hosts resolve their header offsets", () 
         const height = width < 1024 ? 64 : 80;
         expect(actual.root).toBe(`${height}px`);
         expect(actual.child).toBe(`${height}px`);
+        if (host === "shop") expect(actual.shop).toBe(`${height}px`);
         expect(actual.height).toBe(900 - height);
         if (host === "social") expect(actual.social).toBe(900 - height);
       });

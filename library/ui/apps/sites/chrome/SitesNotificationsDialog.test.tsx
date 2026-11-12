@@ -151,3 +151,11 @@ describe('Sites notifications presentation', () => {
     expect(close).toHaveBeenCalledOnce()
   })
 })
+
+it('keeps cached notification rows visible with an inline refresh error', () => {
+  render(<SitesNotificationsDialog {...props} state="error" rows={[row]} />)
+  expect(screen.getByRole('alert')).toHaveTextContent(
+    'Couldn’t refresh notifications. Showing previous notifications.'
+  )
+  expect(screen.getByRole('link', { name: /Notification title/ })).toHaveAttribute('href', '/shop')
+})

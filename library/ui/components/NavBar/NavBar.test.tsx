@@ -1079,3 +1079,21 @@ describe('when a native popup link owns Escape before its parent', () => {
     })
   }
 })
+
+it('should focus the notification opener before a pointer activation callback', () => {
+  let opener: Element | null = null
+  render(
+    <NavBar
+      sections={sections}
+      account={account}
+      notifications={{
+        onSelect: () => {
+          opener = document.activeElement
+        }
+      }}
+    />
+  )
+  const bell = notifications()
+  fireEvent.click(bell)
+  expect(opener).toBe(bell)
+})

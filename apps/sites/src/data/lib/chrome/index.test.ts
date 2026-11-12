@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { QueryClient } from "@tanstack/react-query";
-import { chromeKeys, chromeNotificationsQuery } from "./chrome";
+import { chromeKeys, chromeNotificationsQuery } from "./index";
 
 describe("chrome notification queries", () => {
   it("normalizes identity and forwards the query cancellation signal", async () => {

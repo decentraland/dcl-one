@@ -330,7 +330,10 @@ function NotificationsButton({
       type="button"
       className={styles.iconButton}
       aria-label={count > 0 ? labels.unreadNotifications(count) : labels.notifications}
-      onClick={onClick}
+      onClick={(event) => {
+        event.currentTarget.focus({ preventScroll: true })
+        onClick()
+      }}
     >
       <GeneralBell size={24} aria-hidden="true" />
       {count > 0 ? (

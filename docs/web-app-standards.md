@@ -35,7 +35,7 @@ Current practice per app, verified on `origin/main` when this was written. It is
 
 | Area | Current practice | Rules triggered |
 | --- | --- | --- |
-| `apps/sites` | TanStack Query only for the `@ui/*` components (`src/routes/root.tsx`); its own data through route loaders; client state in `useSyncExternalStore` stores; Vitest runs in node by default, with jsdom set per test file | Server state, server rendering and navigation, client state, server module state, web3 and auth, testing |
+| `apps/sites` | TanStack Query for chrome notifications and the `@ui/*` components (`src/routes/root.tsx`); other Sites data through route loaders; client state in `useSyncExternalStore` stores; Vitest runs in node by default, with jsdom set per test file | Server state, server rendering and navigation, client state, server module state, web3 and auth, testing |
 | `apps/dcl-scene-cli` browser pages | Plain JavaScript served by the CLI's own HTTP server (`apps/dcl-scene-cli/src/start/*.js`), no React and no TanStack. The pages do read server data: they `fetch` the CLI server's own pages and endpoints (`location.href`, form actions, progress and health URLs) and update the DOM | The TanStack and server rendering rules apply to React code that reads server data, so they do not apply to this plain JavaScript; they would apply if the pages moved to React. The server module state rules concern JavaScript or TypeScript server code and the CLI's server is Rust, so they are not triggered. The testing rules apply to any Vitest or Testing Library test it adds; none exists for these pages today |
 | `rendering/bevy-explorer/source/react-web` | React with Vitest (jsdom) and Testing Library. TanStack Query only for the in-world Shop's own client, scoped to the Shop page (`src/features/shop/ShopQueries.tsx`, an [exception](#exceptions-and-migration-gates)); the shared HUD it imports (`library/ui/apps/hud`, `library/explorer-core`) reads server data without TanStack: `library/ui/apps/hud/components/WorldVisitModal.tsx` fetches world data into React state, `library/explorer-core/features/login/storedProfile.ts` fetches Catalyst profiles, and `features/events/eventsApi.ts`, `features/places/placesApi.ts` and `features/lobby/lobbyApi.ts` in `library/explorer-core` fetch events, places and lobby data | Server state (the reads above are an [exception](#exceptions-and-migration-gates)), client state and testing |
 | `apps/bevy-explorer` | End-to-end driver in TypeScript run with `node --test` (`apps/bevy-explorer/e2e`); no web UI code of its own. Its `fetch` calls (`driver/native.ts`) are test-driver calls to the Explorer, not UI reads | None |
@@ -50,7 +50,7 @@ Current practice per app, verified on `origin/main` when this was written. It is
 
 ### QueryClient
 
-- **One client per host, provided by the host.** The host is the entry point of each app that renders the pages: the root route of a server-rendered app, or the component that renders the router of a client-only app. A page or component does not create a client of its own. Current hosts: the `apps/sites` root (`apps/sites/src/routes/root.tsx`), and the native Shop mount (`NativeLayout` in `apps/sites/src/routes/shop/native-routes.tsx`), each with its own provider.
+- **One client per host, provided by the host.** The host is the entry point of each app that renders the pages: the root route of a server-rendered app, or the component that renders the router of a client-only app. A page or component does not create a client of its own. Current hosts: the `apps/sites` root (`apps/sites/src/routes/root.tsx`), and the native Shop mount (`NativeRoot` in `apps/sites/src/routes/shop/native.client.tsx`), each with its own provider.
 - **Lifetimes (required):**
   - Browser client: one per page lifetime, created with `useState` in the host component. In an app that renders on the server, also: render client, one per server request, created the same way; loader client, one per loader call (see [Server rendering](#server-rendering-and-navigation)).
   - No module-level `QueryClient`, on the server or in the browser. The Shop fallback in `apps/ui3/src/shop/market/components/kit.tsx` (`fallbackClient`) is one today; see the [exceptions](#exceptions-and-migration-gates).
@@ -80,7 +80,7 @@ Current practice per app, verified on `origin/main` when this was written. It is
 
 Sites layers are `core`, `data`, `features` and `routes`, and a layer imports only the layers `apps/sites/src/boundaries.json` lists for it; `apps/sites/scripts/boundaries.test.ts` enforces this. No decision yet on enforcing layers in other apps.
 
-Current practice, as evidence only: `apps/sites` has no query hooks or key factories.
+Current practice: Sites chrome uses `chromeKeys` and `chromeNotificationsQuery` in `apps/sites/src/data/lib/chrome/index.ts`, and `useChromeNotifications` in `apps/sites/src/features/components/chrome/`.
 
 ### Mutations and invalidation
 

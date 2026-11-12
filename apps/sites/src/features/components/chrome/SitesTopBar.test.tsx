@@ -235,3 +235,49 @@ describe("when native navigation uses the shared Sites link definitions", () => 
     ).toBe(true);
   });
 });
+
+it("restores the actual bell opener after pointer activation and dialog dismissal", async () => {
+  render(
+    <Host
+      auth={{
+        ...baseAuth,
+        signedIn: true,
+        account: "0xa",
+        fetchNotifications: async () => ({ notifications: [] }),
+      }}
+    />,
+  );
+  const bell = screen.getByRole("button", { name: "Notifications" });
+  fireEvent.click(bell);
+  await screen.findByText("No notifications yet");
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  expect(document.activeElement).toBe(bell);
+});
+
+it("keeps cached notifications alongside a background refresh error", async () => {
+  const fetchNotifications = vi
+    .fn()
+    .mockResolvedValueOnce({
+      notifications: [
+        {
+          id: "cached",
+          type: "broadcast",
+          timestamp: Date.now(),
+          metadata: { title: "Cached notice", link: "/shop" },
+        },
+      ],
+    })
+    .mockRejectedValueOnce(new Error("offline"));
+  render(
+    <Host
+      auth={{ ...baseAuth, signedIn: true, account: "0xa", fetchNotifications }}
+    />,
+  );
+  fireEvent.click(screen.getByRole("button", { name: "Notifications" }));
+  await screen.findByRole("link", { name: /Cached notice/ });
+  fireEvent.click(screen.getByRole("button", { name: "Close" }));
+  fireEvent.click(screen.getByRole("button", { name: /^Notifications/ }));
+  await screen.findByRole("alert");
+  expect(screen.getByRole("link", { name: /Cached notice/ })).toBeTruthy();
+  expect(fetchNotifications).toHaveBeenCalledTimes(2);
+});
