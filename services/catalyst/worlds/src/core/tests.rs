@@ -8626,6 +8626,7 @@ async fn a_quota_block_follows_the_live_name_holder() {
 }
 
 mod partial_uploads;
+mod reprocess_ab;
 
 /// Every signed worlds route answers a refused signed fetch as upstream's
 /// `onError` does (`undeploy-entity-handler.spec.ts:39-55`,

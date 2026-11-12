@@ -133,10 +133,10 @@ Files read:
 | 6 | POST | `/entities/active` | `/worlds-content-server/entities/active` → `worlds/src/core/active.rs:21` (route `core/mod.rs:645-648`); root is the catalyst handler | DIVERGENT |
 | 7 | GET | `/index` | `/index` and `/worlds-content-server/index` → `worlds/src/index.rs:87` | DIVERGENT |
 | 8 | GET | `/status` | `/worlds-content-server/status` and root `/worlds/status` → `worlds/src/status.rs:146`; root `/status` is the catalyst status | DIVERGENT |
-| 9 | POST | `/reprocess-ab` | none | MISSING |
+| 9 | POST | `/reprocess-ab` | `/worlds-content-server/reprocess-ab` → `worlds/src/core/reprocess.rs` (`reprocess_ab`); no root route | DIVERGENT |
 | 10 | POST | `/gc` | `/worlds-content-server/gc` and `/worlds-content-server/admin/gc` → `worlds/src/core/admin.rs:90`; no root route | DIVERGENT |
 
-Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 9, MISSING 1. Every remaining difference on the
+Counts: 10 endpoints. MATCH 0, GAP 0, DIVERGENT 10, MISSING 0. Every remaining difference on the
 DIVERGENT rows is listed in `docs/worlds-compatibility.md` except WR-04's rarer formats, the
 recovery after a failed deny-list read (WR-35) and the gateway's read rate limits (WR-37). The
 cross-cutting rules (404/405, error envelope, CORS, mounts) are in "Common notes" and the backlog.
@@ -296,9 +296,16 @@ validator, `reprocessABHandler` (`src/controllers/handlers/reprocess-ab-handler.
   authChain}, contentServerUrls: [baseUrl]}], successful, failed}` with `baseUrl` from `HTTP_BASE_URL`
   or the request origin (`reprocess-ab-handler.spec.ts:38-62`).
 
-dcl-one: no route at the root or under the prefix; the request falls to the 404 `Not found`. This
-tree publishes no SNS events (`docs/worlds-compatibility.md` "Delivery"); its asset-bundle tooling is
-reached through the operator console (`ABGEN_ADMIN_URL`, `src/serve.rs:1214-1223`) (WR-22).
+dcl-one: `/worlds-content-server/reprocess-ab`, no root route (`worlds/src/core/reprocess.rs`,
+`reprocess_ab`; route in `core/mod.rs` `router`). The bearer, the schema bodies, the scene selection
+(the named worlds' scenes, `entityIds`, the worlds `getRawWorldRecords` leaves out), the 400
+`No scenes found for reprocessing` and the 200 body's shape and `baseUrl` match upstream. The
+hand-off differs: this tree publishes no SNS events (`docs/worlds-compatibility.md` "Delivery"),
+so each scene goes to the local abgen (`ABGEN_ADMIN_URL`). The route asks abgen for the scene's
+manifest on `windows` and `mac`, and abgen converts a manifest it does not hold. `successful` and
+`failed` count the scenes abgen took or refused, and with no `ABGEN_ADMIN_URL` the route answers
+upstream's 500. Pinned by `worlds/src/core/tests/reprocess_ab.rs` and the schema unit tests in
+`reprocess.rs` (WR-22).
 
 ---
 
@@ -333,7 +340,7 @@ Upstream: `bearerTokenMiddleware(AUTH_SECRET)` then `garbageCollectionHandler`
 | `POST /entities/active` | world names | world names | catalyst pointers (`[]` for a world name) |
 | `GET /index` | worlds index | worlds index | worlds index |
 | `GET /status` | worlds status | worlds status | catalyst status; worlds status at `/worlds/status` |
-| `POST /reprocess-ab` | admin | 404 | 404 |
+| `POST /reprocess-ab` | admin | admin | 404 |
 | `POST /gc` | admin | admin | 404 |
 
 The links `/about` and `/index` build point at the middle column (WR-12). The root column is
@@ -537,23 +544,23 @@ documented in `docs/worlds-compatibility.md` "Mounts" (WR-23).
       and `mirror` (`worlds/src/status.rs:88-96,119-144`). Listed under "`/status`".
     - Severity: none (closed).
 
-22. **WR-22 · `POST /reprocess-ab` · missing.** Status: open.
+22. **WR-22 · `POST /reprocess-ab` · the converter hand-off.** Status: intended
+    (worlds-compatibility.md "`/reprocess-ab`").
     - Upstream: section 9: bearer, schema validator (415 / 400 `{ok:false,…}`), 400
-      `No scenes found for reprocessing`, 500 without SNS, 200 `{baseUrl, batch, successful, failed}`.
-    - dcl-one: no route; 404 `Not found`.
-    - Proposed fix: add `POST /reprocess-ab` to `worlds/src/core/mod.rs` (`router`, and `root_router`
-      since the root has no such path) with a handler in `worlds/src/core/admin.rs`: the admin bearer,
-      the schema with the validator's 415/400 bodies, scenes from `worlds.world_scenes` filtered by
-      `entityIds` and the deny list, the 400 above, and a hand-off to this tree's asset-bundle
-      converter (the `ABGEN_ADMIN_URL` client in `src/ops/admin/console.rs`), answering upstream's
-      200 body with `successful`/`failed` from that hand-off and a 500 when no converter is
-      configured. Size M. Depends on the asset-bundle pipeline (ops/abgen).
-    - Left: no in-tree call can re-convert a world scene. abgen is a prebuilt runtime with no source
-      here; the console reaches only its registry controls (`src/ops/admin/create.rs`: `/registry`,
-      queues, cache, denylist), and none takes a world scene's entity id and auth chain. A route with
-      only the bearer and the schema bodies would answer 200 without converting anything, so it
-      waits for an abgen world-reprocess contract.
-    - Severity: P1 (operator tooling that re-converts a world gets a 404).
+      `No scenes found for reprocessing`, 500 without SNS, 200 `{baseUrl, batch, successful, failed}`
+      after one `WorldDeploymentEvent` per scene is published to SNS.
+    - dcl-one: `worlds/src/core/reprocess.rs` answers the same bearer, validator, 400, 500 and 200
+      shapes. Each scene goes to the local abgen (`ABGEN_ADMIN_URL`) as a manifest request per
+      platform (`windows`, `mac`), not as an SNS event. abgen converts only a manifest it does not
+      hold, so a scene it already converted is not built again. `successful` counts the scenes abgen
+      took on every platform (2xx, or still converting when the 10 s hand-off timed out); `failed`
+      counts the ones it refused or could not be reached for. 500 without `ABGEN_ADMIN_URL`. Under the
+      prefix only, like `/gc` (WR-27), and open while `WORLDS_WRITES_ENABLED` is off.
+    - Tests: `worlds/src/core/tests/reprocess_ab.rs` (bearer and validator order, 500 without a
+      converter, scene selection with `entityIds` and the deny list, the hand-offs abgen receives,
+      an unreachable converter, the writes switch) and `reprocess.rs`'s schema tests (AJV's first
+      error per keyword).
+    - Severity: none (intended).
 
 23. **WR-23 · mounts · the root collisions.** Status: intended (worlds-compatibility.md).
     - dcl-one: at the root, `/contents`, `/available-content`, `POST /entities`,

@@ -1765,6 +1765,24 @@ fn forwarder(
     Ok(Some(forwarder))
 }
 
+/// The asset-bundle converter `POST /reprocess-ab` hands world scenes to: the
+/// abgen runtime at `ABGEN_ADMIN_URL`, which must be a loopback address (the
+/// operator console's rule). Unset, the route answers 500.
+fn reprocess_converter(
+    config: &Config,
+    http_client: &http::Outbound,
+) -> anyhow::Result<Option<worlds::core::reprocess::Converter>> {
+    let Some(url) = Config::non_empty(&config.admin.abgen_admin_url) else {
+        return Ok(None);
+    };
+    let abgen =
+        ops::admin::console::Abgen::parse(&url, None, http_client).context("ABGEN_ADMIN_URL")?;
+    Ok(Some(worlds::core::reprocess::Converter::new(
+        abgen.base(),
+        http_client.raw().clone(),
+    )))
+}
+
 /// The stage-5 worlds states: the product surface (publish, permissions,
 /// settings, presence, operator routes), the world/player/env storage, the
 /// authoritative scene host (behind `SCENE_HOST_ENABLED`) and the worlds
@@ -1873,6 +1891,7 @@ async fn worlds_states(
             ))),
             &config.worlds.builder_url,
         ))
+        .with_converter(reprocess_converter(config, http_client)?)
         .with_forwarder(forwarder(
             "WORLDS_FORWARD_UPSTREAM_URL",
             config.worlds.worlds_forward_upstream_url.as_deref(),

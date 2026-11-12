@@ -307,6 +307,20 @@ difference not listed here is a gap, not a decision.
   value answers 400), refuses an empty reference set without
   `allow_empty_active_set=true`, and answers 503 `A garbage collection run
   is already in progress.` to a second concurrent run.
+- **`/reprocess-ab`** takes the same bearer as `/gc` and answers the same
+  validator, `No scenes found for reprocessing` and 200 bodies as upstream,
+  but it hands the scenes to the local abgen (`ABGEN_ADMIN_URL`) instead of
+  publishing `WorldDeploymentEvent`s to SNS. For each scene it asks abgen for
+  the `windows` and `mac` manifests, and abgen converts a manifest it does not
+  hold. A scene abgen already converted is not built again. `successful`
+  counts the scenes abgen took on every platform, including one still
+  converting when the 10 s hand-off times out; `failed` counts the ones it
+  refused or could not be reached for. Without `ABGEN_ADMIN_URL` the route
+  answers 500, as upstream does without `AWS_SNS_ARN`. abgen fetches the
+  scene's files from its own content source, so it needs its worlds content
+  URL (`ABGEN_WORLDS_CONTENT_URL`) set to this node's
+  `<PUBLIC_URL>/worlds-content-server`. The route stays open while
+  `WORLDS_WRITES_ENABLED` is off, since it writes nothing here.
 - **Partial uploads** follow the upstream contract and limits, with these
   differences:
   - A stored file is free of staging charges when any domain of the shared
@@ -349,9 +363,10 @@ difference not listed here is a gap, not a decision.
   prefix itself. At the node root, `GET /contents/{hash}`,
   `GET /available-content`, `POST /entities`, `POST /entities/active` and
   `GET /status` are the catalyst content server's; `DELETE
-  /entities/{name}`, `/ipfs/{hash}` and `/gc` answer only under the prefix,
-  and the worlds status is also at `/worlds/status`. `/about` and `/index`
-  link files under `<PUBLIC_URL>/worlds-content-server/contents/`.
+  /entities/{name}`, `/ipfs/{hash}`, `/gc` and `/reprocess-ab` answer only
+  under the prefix, and the worlds status is also at `/worlds/status`.
+  `/about` and `/index` link files under
+  `<PUBLIC_URL>/worlds-content-server/contents/`.
 - **CORS.** The worlds routes answer a preflight with 204 and reflect
   the request's `Origin` with `Access-Control-Allow-Credentials: true` and
   `Vary: Origin`, allows `PATCH` as well, exposes `*` when the handler

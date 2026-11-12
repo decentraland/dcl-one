@@ -39,26 +39,23 @@ Upstream's `src/controllers/routes.ts` registers 39 routes (`/reprocess-ab` and 
 | file | area | endpoints | MATCH | GAP | DIVERGENT | MISSING | backlog |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | [worlds-deploy.md](worlds-deploy.md) | `POST /entities` (single and `partial=true`), `DELETE /entities/:world_name`, `DELETE /world/:world_name/scenes/:coordinate` | 4 | 0 | 0 | 4 | 0 | WD-01..28 |
-| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 0 | 9 | 1 | WR-01..37 |
+| [worlds-reads.md](worlds-reads.md) | `/contents/:hashId`, `/ipfs/:hashId` (GET/HEAD), `/available-content`, `POST /entities/active`, `/index`, `/status`, `/reprocess-ab`, `/gc`; mounts, 404/405, CORS | 10 | 0 | 0 | 10 | 0 | WR-01..37 |
 | [worlds-world.md](worlds-world.md) | `/world/:n/{about,scenes,settings,manifest,limits}`, `/worlds`, `/wallet/:w/stats`, `/wallet/contribute` | 10 | 1 | 0 | 9 | 0 | WW-01..42 |
 | [worlds-permissions.md](worlds-permissions.md) | the ten `/world/:n/permissions*` routes | 10 | 1 | 1 | 8 | 0 | WP-01..21 |
 | [worlds-comms.md](worlds-comms.md) | `/worlds/:w/comms`, `/worlds/:w/scenes/:id/comms`, `/get-comms-adapter/:roomId`, `/livekit-webhook`, `/live-data`, `/wallet/:w/connected-world` | 6 | 0 | 0 | 6 | 0 | WC-01..28 |
-| **total** | | **40** | **2** | **1** | **36** | **1** | **156** |
+| **total** | | **40** | **2** | **1** | **37** | **0** | **156** |
 
-Every upstream route has a route at the same method and path in this tree except `POST /reprocess-ab`
-(WR-22). At the root host, eight worlds handlers answer only under `/worlds-content-server`. At the root,
+Every upstream route has a route at the same method and path in this tree. At the root host, nine
+worlds handlers answer only under `/worlds-content-server`. At the root,
 `POST /entities`, `DELETE /entities/:world_name`, `POST /entities/active`, `/contents/:hashId`,
-`/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId` and `POST /gc`
-have no root route (`worlds/src/core/mod.rs` `router`, `root_router`; `worlds/src/lib.rs` `app_router`). The gateway maps the
+`/available-content` and `/status` are the catalyst content server's; `/ipfs/:hashId`, `POST /gc` and
+`POST /reprocess-ab` have no root route (`worlds/src/core/mod.rs` `router`, `root_router`; `worlds/src/lib.rs` `app_router`). The gateway maps the
 worlds host onto the prefix (WD, WR-12, WR-23, WR-27).
 
 ## P0 and P1
 
-No item is P0. The P1 items:
-
-| id | endpoint | what differs |
-| --- | --- | --- |
-| WR-22 | `POST /reprocess-ab` | Missing: no in-tree hand-off re-converts a world scene (abgen exposes no world-reprocess call). |
+No item is P0 or P1. `POST /reprocess-ab` (WR-22) hands scenes to the local abgen instead of SNS,
+an intended difference.
 
 ## Themes that cut across files
 

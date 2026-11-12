@@ -45,6 +45,7 @@ pub mod owners;
 pub mod partial;
 pub mod permissions;
 pub mod quota;
+pub mod reprocess;
 pub mod scenes;
 pub mod settings;
 pub mod settings_policy;
@@ -306,6 +307,9 @@ pub struct CoreState {
     pub allowance: Arc<dyn quota::SpaceAllowance>,
     /// The user notices (permission grants, storage quota) and their links.
     pub notices: Arc<notices::Notices>,
+    /// The local asset-bundle converter `POST /reprocess-ab` hands scenes to
+    /// (`ABGEN_ADMIN_URL`); `None` answers that route 500.
+    pub converter: Option<reprocess::Converter>,
 }
 
 pub type SharedState = Arc<CoreState>;
@@ -334,7 +338,14 @@ impl CoreState {
             forwarder: None,
             allowance: Arc::new(quota::Unlimited),
             notices: Arc::new(notices::Notices::default()),
+            converter: None,
         }
+    }
+
+    /// The asset-bundle converter `POST /reprocess-ab` hands scenes to.
+    pub fn with_converter(mut self, converter: Option<reprocess::Converter>) -> Self {
+        self.converter = converter;
+        self
     }
 
     /// The storage allowance source ([`holdings::configured`]).
@@ -604,6 +615,7 @@ pub fn router(state: SharedState) -> Router {
         .merge(non_colliding_routes())
         .route("/gc", post(admin::garbage_collect))
         .route("/admin/gc", post(admin::garbage_collect))
+        .route("/reprocess-ab", post(reprocess::reprocess_ab))
         .layer(axum::middleware::from_fn(nul_guard::nul_guard_middleware))
         .layer(axum::middleware::from_fn(cors::cors_middleware))
         .with_state(state)
