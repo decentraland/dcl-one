@@ -350,8 +350,5 @@
         "reason": "Owner-authorized web-modal background review"
       }
     ]
-  },
-  "promotion": {
-    "include": ["NavBar"]
   }
 }

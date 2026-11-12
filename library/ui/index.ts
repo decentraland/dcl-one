@@ -1,4 +1,16 @@
 export * from './foundations'
 
 export { NavBar } from './components/NavBar/NavBar'
-export type { NavBarProps } from './components/NavBar/NavBar'
+export type {
+  NavBarAccount,
+  NavBarAccountAction,
+  NavBarBalances,
+  NavBarLabels,
+  NavBarLink,
+  NavBarLinkComponent,
+  NavBarLinkProps,
+  NavBarNotifications,
+  NavBarProps,
+  NavBarSection,
+  NavBarSignIn
+} from './components/NavBar/NavBar'
