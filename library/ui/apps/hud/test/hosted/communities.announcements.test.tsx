@@ -4,12 +4,13 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { CommunityModal } from '../../features/communities/CommunityModal'
+import { CommunityModal, openCommunityModal } from '../../features/communities/CommunityModal'
+import { SessionProvider } from '../../features/session/SessionContext'
 import { NO_ANNOUNCEMENTS, postAge } from '../../features/communities/Announcements'
 import { PopupHost, ToastHost, resetPopups } from '../../design'
 import type { Community, CommunityPost } from '@explorer-core/engine/protocol'
 import type { CommunityPosts } from '../../features/session/useEngineSession'
-import { enterAsGuest, renderSession } from '../harness'
+import { enterAsGuest, fakeSession, renderSession } from '../harness'
 
 afterEach(resetPopups)
 
@@ -28,14 +29,14 @@ const post = (n: number, over: Partial<CommunityPost> = {}): CommunityPost => ({
   ...over
 })
 const posts = (list: CommunityPost[], over: Partial<CommunityPosts> = {}): CommunityPosts => ({ id: 'c1', posts: list, total: list.length, loading: false, loadingMore: false, posting: false, posted: 0, liking: [], deleting: [], ...over })
-const community = (role: string): Community => ({ id: 'c1', name: 'Builders', description: '', membersCount: 3, role, ownerName: 'Owner', privacy: 'public' })
+const community = (role: string, privacy = 'public'): Community => ({ id: 'c1', name: 'Builders', description: '', membersCount: 3, role, ownerName: 'Owner', privacy })
 
-function renderCard(role: string, state: CommunityPosts | null) {
+function renderCard(role: string, state: CommunityPosts | null, privacy = 'public') {
   const props = { onPost: vi.fn(), onDeletePost: vi.fn(), onLikePost: vi.fn(), onLoadMorePosts: vi.fn() }
   const view = render(
     <>
       <CommunityModal
-        community={community(role)}
+        community={community(role, privacy)}
         detail={{ kind: 'communityDetail', id: 'c1', members: [], places: [], events: [], photos: [] }}
         me={{ address: ME, name: 'Me' }}
         posts={state}
@@ -53,7 +54,7 @@ function renderCard(role: string, state: CommunityPosts | null) {
   return { ...props, rerender: (next: CommunityPosts) => view.rerender(
     <>
       <CommunityModal
-        community={community(role)}
+        community={community(role, privacy)}
         detail={{ kind: 'communityDetail', id: 'c1', members: [], places: [], events: [], photos: [] }}
         me={{ address: ME, name: 'Me' }}
         posts={next}
@@ -205,6 +206,18 @@ describe('announcements tab', () => {
     expect(screen.getByRole('textbox', { name: 'New announcement' })).toHaveValue('')
   })
 
+  it('keeps POST off for a draft of only spaces and newlines', async () => {
+    renderCard('owner', posts([]))
+    await userEvent.type(screen.getByRole('textbox', { name: 'New announcement' }), '   {Enter}  ')
+    expect(screen.getByRole('button', { name: 'Post announcement' })).toBeDisabled()
+  })
+
+  it('counts an emoji as two characters, as the field limit does', async () => {
+    renderCard('owner', posts([]))
+    await userEvent.type(screen.getByRole('textbox', { name: 'New announcement' }), 'hi 😀')
+    expect(screen.getByText('5/500')).toBeInTheDocument()
+  })
+
   it('suggests emojis for a ":word", as the chat does', async () => {
     renderCard('owner', posts([]))
     const field = screen.getByRole('textbox', { name: 'New announcement' })
@@ -229,5 +242,39 @@ describe('announcements tab', () => {
     expect(postAge(now - 3 * 3_600_000, now)).toBe('3h')
     expect(postAge(Date.parse('2026-03-04T10:00:00Z'), now)).toBe('Mar 4')
     expect(postAge(Date.parse('2025-03-04T10:00:00Z'), now)).toBe('Mar 4, 2025')
+  })
+})
+
+describe('a private community', () => {
+  const open = (role: string, privacy: string) => {
+    const session = fakeSession()
+    const loadPosts = vi.fn()
+    session.communities = { ...session.communities, cards: { c1: community(role, privacy) }, fetch: vi.fn(), loadPosts }
+    render(
+      <SessionProvider value={session}>
+        <PopupHost />
+      </SessionProvider>
+    )
+    act(() => {
+      openCommunityModal('c1', () => undefined)
+    })
+    return loadPosts
+  }
+
+  it("reads no announcements for someone who isn't a member", () => {
+    expect(open('none', 'private')).not.toHaveBeenCalled()
+  })
+
+  it('reads them for a member, and for anyone on a public one', () => {
+    expect(open('member', 'private')).toHaveBeenCalledWith('c1')
+    resetPopups()
+    document.body.innerHTML = ''
+    expect(open('none', 'public')).toHaveBeenCalledWith('c1')
+  })
+
+  it("shows a non-member no announcements, no composer and no loading", () => {
+    renderCard('none', null, 'private')
+    expect(screen.queryByText('Loading…')).toBeNull()
+    expect(screen.queryByText(NO_ANNOUNCEMENTS)).toBeNull()
   })
 })

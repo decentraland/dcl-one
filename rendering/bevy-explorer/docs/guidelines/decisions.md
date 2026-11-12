@@ -255,8 +255,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   buttons are disabled, with no spinner, while its answer runs.
 - **Community announcements.** As unity-explorer: the card's ANNOUNCEMENTS tab reads 10 a page,
   the next as the list's end comes into view, newest first. Owners and moderators get the composer
-  first ("Any Announcement to share with your Community?", 500 characters with a counter shown once
-  there is text, the chat's emoji panel and `:` suggestions, a POST button held with a spinner
+  first ("Any Announcement to share with your Community?", 500 characters counted as UTF-16 units,
+  so most emoji take two, with a counter shown once there is text, the chat's emoji panel and `:` suggestions, a POST button held with a spinner
   while it posts), then a separator. The owner deletes any announcement and an author their own,
   asked first ("Are you sure you want to delete this Announcement?", DELETE and CANCEL); a
   moderator cannot delete another member's. Anyone who sees the list likes and unlikes, one
@@ -266,7 +266,10 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   the deployment's feature-flags service (`--feature-flags` / `featureFlags`, default
   `https://feature-flags.<base>`). A post or a delete reads the first page again. Every failure is
   toasted with unity-explorer's four texts. A member who sees no announcements reads "No
-  Announcements here yet!". Differences: a failed post stops the button's spinner (unity-explorer
+  Announcements here yet!". A private community's announcements are not read for someone who
+  isn't a member (the service refuses them); their tab stays empty. Differences: POST stays off
+  for a draft of only whitespace (unity-explorer enables it for any text, and the service refuses
+  it); a failed post stops the button's spinner (unity-explorer
   leaves it spinning); and the official wallets are read once, with a failed read tried again
   after a minute. On the web build, against the Foundation's feature-flags host, no announcement
   is expected to carry the official mark: that host's preflight allows neither `Content-Type` nor

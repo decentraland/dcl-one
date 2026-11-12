@@ -130,8 +130,11 @@ function Composer({
     setDraft('')
     setSug(null)
   }
+  // The limit counts UTF-16 units, as the field's own maxLength does: most emoji take two. An
+  // emoji that doesn't fit is dropped rather than cut in half.
   const replaceRange = (start: number, end: number, text: string): void => {
-    const next = [...(draft.slice(0, start) + text + draft.slice(end))].slice(0, ANNOUNCEMENT_MAX).join('')
+    const next = draft.slice(0, start) + text + draft.slice(end)
+    if (next.length > ANNOUNCEMENT_MAX) return
     const caret = Math.min(start + text.length, next.length)
     setDraft(next)
     setSug(null)
@@ -146,8 +149,6 @@ function Composer({
     const el = field.current
     const start = el?.selectionStart ?? draft.length
     const end = el?.selectionEnd ?? draft.length
-    // a glyph that doesn't fit is dropped
-    if ([...draft].length - (end - start) + [...glyph].length > ANNOUNCEMENT_MAX) return
     replaceRange(start, end, glyph)
   }
   const accept = (s: EmojiSuggestion, i: number): void => replaceRange(s.start, s.end, s.items[i].emoji)
@@ -213,10 +214,10 @@ function Composer({
           />
           {draft.length > 0 && (
             <span className={styles.count}>
-              {[...draft].length}/{ANNOUNCEMENT_MAX}
+              {draft.length}/{ANNOUNCEMENT_MAX}
             </span>
           )}
-          <Button size="sm" disabled={draft === '' || posting} onClick={() => onPost(draft)} aria-label="Post announcement">
+          <Button size="sm" disabled={draft.trim() === '' || posting} onClick={() => onPost(draft)} aria-label="Post announcement">
             {posting ? <Spinner size={14} /> : 'POST'}
           </Button>
         </div>
@@ -232,7 +233,8 @@ export function Announcements({
   onLoadMore,
   onPost,
   onDelete,
-  onLike
+  onLike,
+  locked = false
 }: {
   posts: CommunityPosts | null
   /** The user's role in the community: owners and moderators post, the owner deletes any. */
@@ -242,7 +244,10 @@ export function Announcements({
   onPost: (content: string) => void
   onDelete: (postId: string) => void
   onLike: (postId: string, like: boolean) => void
-}): React.JSX.Element {
+  /** A private community the user isn't a member of: its announcements aren't theirs to read. */
+  locked?: boolean
+}): React.JSX.Element | null {
+  if (locked) return null
   if (posts == null || posts.loading) return <div className={styles.empty}>Loading…</div>
   const canPost = role === 'owner' || role === 'moderator'
   const mine = (address: string): boolean => me != null && me.address.toLowerCase() === address.toLowerCase()

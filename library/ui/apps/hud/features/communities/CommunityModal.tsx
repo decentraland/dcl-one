@@ -605,6 +605,7 @@ export function CommunityModal({
             <Announcements
               posts={posts}
               role={community.role}
+              locked={isPrivate && !member}
               me={me}
               onLoadMore={() => onLoadMorePosts?.()}
               onPost={(content) => onPost?.(content)}
@@ -745,10 +746,12 @@ function CommunityModalContainer({ communityId, onClose }: { communityId: string
   useEffect(() => {
     loadDetail(communityId)
   }, [loadDetail, communityId])
+  // a private community's announcements are read only by its members (the service refuses anyone else)
   const { loadPosts } = communities
+  const readsPosts = community != null && (community.privacy !== 'private' || isMemberRole(community.role))
   useEffect(() => {
-    loadPosts(communityId)
-  }, [loadPosts, communityId])
+    if (readsPosts) loadPosts(communityId)
+  }, [loadPosts, communityId, readsPosts])
 
   const error = communities.error?.id === communityId ? communities.error.message : null
   // deleted: the card goes with it
