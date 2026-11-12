@@ -12,7 +12,7 @@ import {
   type Notification,
 } from "../../data/catalyst/notificationsView";
 import { useChromeAuth } from "./chrome-auth";
-import type { ChromeNavigate } from "./chrome-nav";
+import { useChromeNav, type ChromeNavigate } from "./chrome-nav";
 import ChromeLink from "./ChromeLink";
 import AccountMenu from "./AccountMenu";
 import { docsUrl } from "../../data/docs";
@@ -65,7 +65,7 @@ type NotifState =
   | { phase: "error" }
   | { phase: "ready"; rows: Notification[] };
 
-type DclTopBarProps = {
+export type DclTopBarProps = {
   variant?: DclTopBarVariant;
   active?: DclTopBarNavId | "";
   signedIn?: boolean;
@@ -74,7 +74,7 @@ type DclTopBarProps = {
   onSignIn?: () => void;
   onSignOut?: () => void;
   signInHref?: string;
-  fetchNotifications?: () => Promise<unknown>;
+  fetchNotifications?: (signal?: AbortSignal) => Promise<unknown>;
   onNavigate?: ChromeNavigate;
   mobileNavigation?: (closeMenu: () => void) => ReactNode;
   accountControl?: ReactNode;
@@ -87,7 +87,7 @@ const accountLinks = (account: string) => [
   { label: "My assets", href: "/shop/my-items" },
 ];
 
-export default function DclTopBar({
+function LegacyDclTopBar({
   active = "shop",
   signedIn = undefined,
   account = undefined,
@@ -429,4 +429,9 @@ export default function DclTopBar({
       </div>
     </header>
   );
+}
+
+export default function DclTopBar(props: DclTopBarProps) {
+  const { TopBar } = useChromeNav();
+  return TopBar && TopBar !== DclTopBar ? <TopBar {...props} /> : <LegacyDclTopBar {...props} />;
 }

@@ -38,3 +38,12 @@
   .site-layout__sidebar { display: none; }
   .site-layout__content { flex: 1 1 auto; }
 }
+
+.site-layout[data-header-layout="native"] { --site-header-h: 80px; }
+
+@media (max-width: 1023px) {
+  .site-layout[data-header-layout="native"] { --site-header-h: 64px; display: flex; flex-direction: column; align-items: stretch; }
+  .site-layout[data-header-layout="native"] > .site-layout__navigation { height: 64px; flex: 0 0 64px; }
+  .site-layout[data-header-layout="native"] > .site-layout__sidebar { display: none; }
+  .site-layout[data-header-layout="native"] > .site-layout__content { flex: 1 1 auto; }
+}

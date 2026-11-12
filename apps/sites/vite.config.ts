@@ -257,6 +257,8 @@ export default defineConfig({
     alias: {
       ...validateAliasObject(),
       "@ui": ui,
+      "@dcl/one-ui/foundations.css": fileURLToPath(new URL("../../library/ui/foundations/foundations.css", import.meta.url)),
+      "@dcl/one-ui/text-styles.module.css": fileURLToPath(new URL("../../library/ui/foundations/typography/text-styles.module.css", import.meta.url)),
       "@dcl/one-ui": fileURLToPath(new URL("../../library/ui", import.meta.url)),
       "@catalyst-api": catalystApi,
       "@shop": shopCore,

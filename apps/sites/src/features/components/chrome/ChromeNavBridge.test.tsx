@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { renderToString } from "react-dom/server";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
 
 import DclTopBar from "@ui/web/frames/DclTopBar";
@@ -79,10 +80,10 @@ describe("ChromeNavBridge", () => {
   it("provides the chrome navigator so the top bar renders discoverable in-app links", () => {
     const html = renderToString(
       <MemoryRouter initialEntries={["/blog"]}>
-        <ChromeNavBridge>
+        <QueryClientProvider client={new QueryClient()}><ChromeNavBridge>
           <Probe />
           <DclTopBar variant="sites" active="learn" signedIn={false} />
-        </ChromeNavBridge>
+        </ChromeNavBridge></QueryClientProvider>
       </MemoryRouter>,
     );
     expect(html).toContain("bridged");
