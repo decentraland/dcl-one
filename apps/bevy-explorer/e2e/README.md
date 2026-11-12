@@ -67,6 +67,7 @@ second one on its own realm.
 | `CHROME_PATH`, `CHROME_EXTRA_ARGS` | The browser, and more flags | the installed Chrome |
 | `DCL_E2E_HEADLESS` | `1` runs Chrome headless (the engine then has no GPU: for the driver's tests only) | headed |
 | `DCL_E2E_WINDOW` | The window size, `<width>x<height>` | `1600x900` (the Visual suite uses 960x540) |
+| `DCL_E2E_WORLD` | The world the Teleport scenarios visit with `/world`; it needs a parcel 2,3 | `33.dcl.eth` |
 | `DCL_E2E_RECORD` | `1` records a missing visual reference instead of failing | unset |
 | `DCL_E2E_TRANSPORT` | `native` drives the standalone through `dcl/console` instead of a browser | `web` |
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
@@ -209,10 +210,61 @@ counts in `/community_state` and lands in `/dm_history community:<id>`. It needs
 account that is a member of a community, whose card it finds under My Communities (VIEW ALL), and
 fails saying so otherwise.
 
+### The QA Automation Suite
+
+QA's Automation Suite (the release checklist's automation tab: 47 cases in Chat, Backpack
+wearables, outfits and emotes, Profile, Communities, Map and Teleport) is covered by the specs
+above and by eight more, written for it: `teleport`, `chat-composer`, `backpack-catalog`,
+`backpack-randomize`, `backpack-outfit-slots`, `emote-slots`, `passport-links` and `map-panels`.
+Each new file's header classes its cases as above. The chat helpers the chat specs share are in
+`specs/chat.ts`. Where a case lands, by section:
+
+| Section | Case | Spec | Class |
+| --- | --- | --- | --- |
+| Chat | Open/Close chat | `chat` (rail, Enter), `chat-composer` (T) | Port |
+| Chat | Chat Functionalities | `chat` (link), `teleport` (coordinates), `chat-composer` (emoji) | Partial |
+| Chat | Chat Functionalities: mentions, bold and italic | `chat-composer` | Gap |
+| Chat | In-chat navbar | `chat` (Nearby); a DM tab in `chat-composer` | Partial, Gap |
+| Chat | Direct Message | `chat-composer` | Gap |
+| Chat | Chat Reactions on Input | `chat-composer` | Gap |
+| Chat | Chat reactions on message | `chat` | Partial |
+| Wearables | Customize Avatar | `backpack-wearables` | Partial |
+| Wearables | Smart Wearables | `backpack-catalog` | Gap |
+| Wearables | Avatar Updates for Other Users | `backpack-catalog` | Gap |
+| Wearables | Filters | `backpack-catalog` | Partial |
+| Wearables | Category Selection | `backpack-catalog` | Port |
+| Wearables | Search | `backpack-wearables` (a match), `backpack-catalog` (none, Marketplace link) | Port |
+| Wearables | Pagination | `backpack-wearables` | Port |
+| Wearables | Wearable Details Panel | `backpack-catalog` | Gap |
+| Outfits | Outfits Panel, Equip outfit, Save outfit | `backpack-outfits` | Port, Partial |
+| Outfits | Delete outfit | `backpack-outfits` (delete); the prompt's cancel in `backpack-outfit-slots` | Partial, Gap |
+| Outfits | Check outfits | `backpack-outfit-slots` | Partial |
+| Outfits | Outfits shop | `backpack-outfit-slots` | Partial |
+| Outfits | Randomize outfit, Randomize undo / redo | `backpack-randomize` | Partial |
+| Emotes | Equip, Replace equipped, Pagination | `backpack-emotes` | Partial |
+| Emotes | Animations | `emote-slots` | Partial |
+| Emotes | Wheel | `emote-wheel`, `emote-slots` | Port |
+| Emotes | Play | `emote-wheel` (a click), `emote-slots` (the numpad) | Partial |
+| Profile | Passport, Overview, Edit name, Equipped items | `passport` | Port, Partial |
+| Profile | Edit name color | `passport-links` | Gap |
+| Profile | Edit about me | `passport` (bio), `passport-links` (links) | Partial |
+| Communities | NavBar, Content, View a Community, Search | `explore-panel`, `communities` | Port, Partial |
+| Map | View | `shortcuts` (M), `minimap`, `map-panels` (Tab) | Port |
+| Map | Layers | `map-panels` | Gap |
+| Map | Filters | `navmap`, `map-panels` | Partial |
+| Map | Search | `teleport` (the card, JUMP IN), `map-panels` (no match; the card's other controls a Gap) | Partial |
+| Teleport | Coordinates on chat, Coordinates via command, Coordinates in world | `teleport` | Port |
+| Teleport | Worlds, Via Map | `teleport` | Partial |
+
+The world the Teleport cases visit is `DCL_E2E_WORLD`, `33.dcl.eth` by default: the checklist's
+`olavra` is not a world on decentraland.zone. The Gaps that need a second user in the world (DMs,
+mentions, another user seeing a new look) wait for a second client in a run.
+
 What the HUD would need for more Ports, found while porting: roles or labels on the minimap's
 name and coordinates, the chat message text, the communities titles and counts, the passport
-header and bio, the skybox slider and switch; `aria-selected` and `aria-pressed` readable through
-`/hud_read`; implicit roles for `section` and `header` in `hudAutomation.ts`.
+header and bio, the skybox slider and switch, the Backpack's detail panel; `aria-selected` and
+`aria-pressed` readable through `/hud_read`; implicit roles for `section` and `header` in
+`hudAutomation.ts`.
 
 ## Visual suite
 
