@@ -45,7 +45,15 @@ function CompositionExample() {
   return (
     <>
       <NavBar
-        sections={[{ label: 'Discover', href: '/discover' }]}
+        surface={
+          new URLSearchParams(window.location.search).get('surface') === 'overlay'
+            ? 'overlay'
+            : 'solid'
+        }
+        sections={[
+          { label: 'Discover', href: '/discover' },
+          { label: 'Learn', items: [{ label: 'Docs', href: '/docs' }] }
+        ]}
         account={{ address: '0x1234', name: 'Ada' }}
         balances={{ credits: 8, mana: 2 }}
         balanceAction={

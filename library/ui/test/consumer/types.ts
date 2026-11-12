@@ -34,6 +34,17 @@ const callbackSlot: NavBarProps = {
 }
 // @ts-expect-error The generic balance action does not introduce a credits-only alias.
 const creditsAlias: NavBarProps = { sections, signIn: { href: '/sign-in' }, creditsAction: null }
+const overlayNavigation: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  surface: 'overlay'
+}
+const invalidSurface: NavBarProps = {
+  sections,
+  signIn: { href: '/sign-in' },
+  // @ts-expect-error Only the documented solid and overlay surfaces are supported.
+  surface: 'transparent'
+}
 // @ts-expect-error Sections are required: the library holds no navigation data of its own.
 const missingSections: NavBarProps = { signIn: { href: '/sign-in' } }
 // @ts-expect-error Signed out, the bar needs a Sign in action.
@@ -62,6 +73,8 @@ const inertAction: NavBarProps = {
 }
 
 void [
+  overlayNavigation,
+  invalidSurface,
   composition,
   callbackSlot,
   creditsAlias,
