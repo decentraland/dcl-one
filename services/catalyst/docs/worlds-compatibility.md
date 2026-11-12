@@ -96,8 +96,12 @@ difference not listed here is a gap, not a decision.
   the secret is checked and the count is cleared by a right secret
   (upstream also clears it when the owner joins). A caller already out of
   attempts gets 429 before any ban or access check, as upstream; that check
-  charges nothing. If the counter cannot be read or written the mint answers
-  503.
+  charges nothing. It runs only on a world the mint admits: an unknown,
+  blocked or name-deny-listed world answers 404 first. Upstream's
+  `/worlds/{name}/comms` and scene mints also run it for a blocked world and
+  for a `<label>.dcl.eth` whose label is on the DAO name list, so a caller
+  throttled on such a shared-secret world gets 429 there. If the counter
+  cannot be read or written the mint answers 503.
 - **Scene bans in the lobby.** A wallet banned from the world's active scene
   is refused the world lobby too (`/worlds/{name}/comms` and
   `/get-comms-adapter`, 401 `You are banned from world "<name>".`);
@@ -456,9 +460,9 @@ difference not listed here is a gap, not a decision.
   and is compared case-sensitively with the stored name, so only a bare
   name equal to a stripped entry is hidden. A `<name>.dcl.eth` on the DAO
   list stays listed, with its title, description and thumbnail, while
-  `/about` and the manifest answer 404 for it. This is a moderation gap
-  both services have, kept for parity; `BLOCKED_WORLD_NAMES` is the way to
-  hide a full name.
+  `/about`, the manifest and the comms mints answer 404 for it. This is a
+  moderation gap both services have, kept for parity; `BLOCKED_WORLD_NAMES`
+  is the way to hide a full name.
 - **World listings.** In `GET /worlds`, `blocked_since` is set only for a
   storage-quota block of a DCL NAME or ENS world published here (upstream:
   any block of the stored owner), and `owner` is `null` for a world with no

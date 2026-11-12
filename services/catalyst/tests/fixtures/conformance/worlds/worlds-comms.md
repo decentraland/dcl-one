@@ -7,8 +7,9 @@ presence reads: `POST /worlds/:worldName/comms`, `POST /worlds/:worldName/scenes
 
 Pinned revisions:
 
-- Upstream: `decentraland/worlds-content-server` @ `10af5255bb04a1a28e0c26bd190317c26a6015a9` (2026-10-21).
-- dcl-one: origin/main `2da8b8aea` (2026-11-07), Rust workspace `services/catalyst`.
+- Upstream: `decentraland/worlds-content-server` @ `ebbf8d41d07973e317892067c765107d3512938e` (2026-11-12).
+- dcl-one: origin/main `2da8b8aea` (2026-11-07), Rust workspace `services/catalyst`; WC-28 and the
+  name deny-list rows: the revision that contains this file.
 
 Everything below is from reading the code; a backlog item that a dcl-one test pins names the
 test. Nothing was captured from a live server. Three upstream packages
@@ -53,6 +54,7 @@ Files read:
   - `comms/src/rooms.rs`, `worlds/src/rooms.rs` (`classify_room`, `resolve`, `world_scene`)
   - `comms/src/world_identity.rs` (`WorldName`)
   - `comms/src/access.rs`, `worlds/src/policy.rs` (`readmit`, `setting_access`, `world_admission`)
+  - `worlds/src/core/names.rs` (`NameDenyList`, `BannedNames::allows`)
   - `comms/src/gatekeeper/admission/functions.rs` (`world_secret_refund`)
   - `comms/src/deny_list.rs`
   - `shared/src/livekit.rs`, `../../library/dcl-livekit-token/src/lib.rs`
@@ -163,10 +165,10 @@ MISSING 0. The three mints follow upstream's decision order (WC-09).
 
 | step | upstream (`logic/comms/component.ts:68-108`, handler) | dcl-one (`world_mint.rs` `mint`) |
 |---|---|---|
-| 1 | shared-secret world and subject throttled → 429 (`handler:46-52`) | after the signed fetch, the same non-charging check (`SecretThrottle::is_limited`, `world_mint.rs:521`) → 429 |
+| 1 | shared-secret world and subject throttled → 429 (`handler:43-52`; the access setting comes from `getRawWorldRecords`, so a blocked or DAO-listed world still has it) | after the signed fetch, the same non-charging check (`SecretThrottle::is_limited`, `world_mint.rs:521`) → 429, on a world `world_admission` admits (WC-28) |
 | 2 | platform ban (comms-gatekeeper `/users/:a/bans`, fail-open) → 401 | operator block list / platform ban (`admission_ban`) → 401 |
 | 3 | deny list (`DENYLIST_JSON_URL`, 5 min cache, fail-open) → 401 | external deny list → 401 |
-| 4 | `isWorldValid`: a row exists and the owner is not blocked for more than 2 days → else 404 | a name that is not a world key, or an unknown or blocked world → 404 |
+| 4 | `isWorldValid` (`logic/worlds/component.ts:71-89`): the name passes `checkNameDenyList`, a row exists and the owner is not blocked for more than 2 days → else 404 | a name that is not a world key, or a deny-listed, unknown or blocked world (`world_admission`) → 404 (WC-28) |
 | 5 | name owner or `checkAccess` → else 401 (403 on a shared-secret world) | `decide_access` (`can_access`: platform/device and scene bans, setting, then owner; the throttle reservation only for an invalid or failed secret) → 401/403/429 |
 | 6 | scene: `getWorldSceneBaseParcelIncludingUndeployed` → else 404 | scene: `SceneId::parse` + `resolve(WorldScene)` (retired scenes included, `worlds/src/rooms.rs:125-143`); a missing scene answers the world's access (step 5 without the scene) first, then 404 |
 | 7 | scene: comms-gatekeeper scene ban by base parcel (fail-open) → 401 | `decide_access` with the scene: its bans (lobby too, WC-10) → 401 |
@@ -174,10 +176,11 @@ MISSING 0. The three mints follow upstream's decision order (WC-09).
 | 9 | token | token + `dcl.worldAuthorization` attribute |
 | 10 | clear the throttle on success | clear the throttle when the secret admitted the caller (WC-11) |
 
-The name deny list: upstream `getRawWorldRecords` excludes banned names, but `getBannedNames`
-strips `.dcl.eth` before comparing with full world names (`name-deny-list-checker.ts:51-54`,
-`worlds-manager.ts:344-349`), so it does not refuse `.dcl.eth` worlds on these routes. dcl-one does
-not consult it here either. MATCH in effect.
+The name deny list: `isWorldValid` asks `checkNameDenyList` before the row
+(`logic/worlds/component.ts:71-74`). It refuses a name whose whole lowercased form is in
+`BLOCKED_WORLD_NAMES`, or whose lowercased form without its first `.eth` and `.dcl` is on the DAO
+`banned-names` list (`name-deny-list-checker.ts:45-59`). dcl-one's `world_admission` asks the same
+`NameDenyList` and answers an unknown world (WC-28).
 
 ### Responses
 
@@ -192,7 +195,7 @@ not consult it here either. MATCH in effect.
 | legacy payload, re-spelled declared key | 400 `error` `Invalid chain metadata: expected "secret", got "Secret"` | the same | MATCH (WC-01) |
 | legacy payload, canonical keys; non-canonical `intent` in 6.x | 200 | 200 | MATCH |
 | EIP-1654 chain | lambdas `validate-signature`; 503 `Error connecting to catalyst "<origin>": …` if it cannot be reached | `state.eip1654()` validator; 503 `Error connecting to catalyst: …` | DIVERGENT, intended (worlds-compatibility.md "Signed-fetch refusals") |
-| unknown or blocked world | 404 `{"error":"World \"w\" is invalid or blocked."}` | 404 same text in `error` and `message` | MATCH (+`message`, intended) |
+| unknown, blocked or deny-listed world | 404 `{"error":"World \"w\" is invalid or blocked."}` | 404 same text in `error` and `message` | MATCH (+`message`, intended; deny list WC-28) |
 | world row without scenes | 200 | 200 (lobby canonical when the row exists, `worlds/src/rooms.rs:284-290`) | MATCH |
 | neither owner nor access | 401 `{"error":"You are not allowed to access world \"w\"."}` | 401 same text | MATCH (+`message`) |
 | shared secret wrong or missing | 403 `{"error":"You are not allowed to access world \"w\"."}` | the same (+`message`) | MATCH (WC-06) |
@@ -256,7 +259,7 @@ not consult it here either. MATCH in effect.
 | unsigned | 400 ADR-44 body (exact test) | the same, whatever the room id | MATCH (WC-01, WC-03) |
 | bad metadata | 400 `{"error":"Bad request","message":"Access denied, invalid metadata"}` | the same | MATCH |
 | bad room prefix | 400 `{"error":"Bad request","message":"Invalid room id requested."}` | the same body, after the metadata check | MATCH (WC-03) |
-| unknown world | 404 `{"error":"Not Found","message":"World \"w\" was not found."}` (test) | the same | MATCH (WC-04) |
+| unknown or deny-listed world | 404 `{"error":"Not Found","message":"World \"w\" was not found."}` (test) | the same | MATCH (WC-04, WC-28) |
 | not allowed | 401 `{"error":"Not Authorized","message":"You are not allowed to access world \"w\"."}` | the same | MATCH |
 | shared secret wrong | 401 Not Authorized (test `should use the IP as the rate limit subject` expects 401) | 401 `{"error":"Not Authorized","message":"You are not allowed to access world \"w\"."}` | MATCH (WC-05) |
 | throttled | 429 `{"error":"Too many shared-secret attempts. Try again later."}`, `Retry-After: 60` | the same (+`message`) | MATCH |
@@ -692,6 +695,33 @@ Both trees advertise
     - Both trees: `fixed-adapter:signed-login:<baseUrl>/worlds/<lower>/comms`; dcl-one adds the
       SFU-down offline answer (intended).
     - Severity: none (closed). The world area owns `/about`.
+
+28. **WC-28 · routes 1–3 · the name deny list and `BLOCKED_WORLD_NAMES`.** Status: MATCH, intended edge on routes 1–2.
+    - Upstream: `isWorldValid` returns false when `checkNameDenyList` refuses the name
+      (`src/logic/worlds/component.ts:71-74`). That check refuses a name whose whole lowercased form
+      is in `BLOCKED_WORLD_NAMES` (`.env.default:97`, empty; `src/adapters/name-deny-list-checker.ts:8-13,46-49`),
+      then one whose lowercased form without its first `.eth` and `.dcl` is on the DAO
+      `banned-names` list (one-hour cache, an empty list on a fetch failure, `:21-43,50-58`). Routes
+      1–2 reach it through `assertWorldAccess` (`src/logic/comms/component.ts:54-56`) and answer 404
+      `World "w" is invalid or blocked.`; route 3 answers 404 `{"error":"Not Found","message":"World \"w\" was not found."}`
+      right after the room prefix (`src/controllers/handlers/comms-adapter-handler.ts:37-39`).
+    - dcl-one: `Policy::world_admission` answers `WorldAdmission::Unknown` for an existing world the
+      policy's `NameDenyList` refuses (`worlds/src/policy.rs:1439-1468`; the list and its matching
+      are `worlds/src/core/names.rs:31-39,51-54,134-138`), and `serve` gives that list
+      `BLOCKED_WORLD_NAMES` (`src/serve.rs:925`). The three mints answer it as an invalid world
+      (`comms/src/gatekeeper/admission/world_mint.rs:494-503,548-550`), and the scene-host admission
+      and the room recheck, which ask the same `world_admission`, refuse it too
+      (`comms/src/gatekeeper/admission/scene.rs:387,1004`). Pinned by `worlds/src/policy.rs`
+      `world_admission_refuses_a_deny_listed_name` and `tests/gatekeeper_policy.rs`
+      `the_mints_answer_404_for_a_deny_listed_world_name` (a DAO-listed label and a configured
+      whole name: 404 with upstream's bodies on all three routes; a world on neither: 200).
+    - Intended edge (worlds-compatibility.md "Shared-secret throttle"): on routes 1–2, upstream's
+      throttle pre-check reads the access setting through `getRawWorldRecords`, which still returns
+      a blocked world or a `<label>.dcl.eth` whose label is DAO-listed (`getBannedNames` strips the
+      entry, `src/adapters/worlds-manager.ts:327-349`). A subject throttled on such a shared-secret
+      world in the last 60 s gets 429 there and 404 here. Route 3 checks `isWorldValid` before its
+      throttle, as dcl-one does.
+    - Severity: none (closed).
 
 ## Endpoints dcl-one serves in this area that upstream does not
 

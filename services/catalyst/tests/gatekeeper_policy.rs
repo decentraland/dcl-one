@@ -1602,6 +1602,103 @@ mod world_mint {
         assert_eq!(body["message"], adr44["message"]);
     }
 
+    /// Upstream `isWorldValid` asks `checkNameDenyList` first (`logic/worlds/component.ts:71-74`):
+    /// a world whose label is on the DAO `banned-names` list, or whose whole name is in
+    /// `BLOCKED_WORLD_NAMES`, is an invalid world on all three mints, while a world on neither
+    /// is admitted.
+    #[tokio::test]
+    async fn the_mints_answer_404_for_a_deny_listed_world_name() {
+        let Some(pool) = catalyst::db::scratch::pool(4).await else {
+            return;
+        };
+        let label = format!("d{}", &Uuid::new_v4().simple().to_string()[..10]);
+        let listed = WorldName::parse(&format!("{label}.dcl.eth")).unwrap();
+        let (blocked, open) = (world(), world());
+        let policy = Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
+            .with_blocked_world_names(&format!("{}, other.eth", blocked.display()));
+        let state = Arc::new(CommsState::new(
+            pool.clone(),
+            Outbound::for_tests(),
+            Settings::for_tests(),
+            None,
+            None,
+            Arc::new(policy),
+            Arc::new(SceneResolver::new(pool.clone())),
+            Arc::new(Presence::new()),
+            Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
+        ));
+        let app = Router::new().merge(router(state.clone()));
+        for world in [&listed, &blocked, &open] {
+            sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+                .bind(world.key())
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query(
+                "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+                 VALUES ($1, 'bafydeny', '[]'::json, '{}'::jsonb, $2, ARRAY['0,0'], 1)",
+            )
+            .bind(world.key())
+            .bind(catalyst::shared::identity::ZERO_ADDRESS)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        catalyst::explore::api::lists::set_local(&pool, "banned-names", &label, true)
+            .await
+            .unwrap();
+        let visitor = random_key();
+        let handshake = r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake"}"#;
+        for world in [&listed, &blocked] {
+            let name = world.display();
+            let invalid = format!("World \"{name}\" is invalid or blocked.");
+            for path in [
+                format!("/worlds/{name}/comms"),
+                format!("/worlds/{name}/scenes/bafydeny/comms"),
+            ] {
+                state.presence.complete_empty_fixture();
+                let (status, body, _) = post(&app, &visitor, &path, "{}").await;
+                assert_eq!(
+                    (status, body),
+                    (
+                        StatusCode::NOT_FOUND,
+                        serde_json::json!({"error": invalid, "message": invalid})
+                    ),
+                    "{path}"
+                );
+            }
+            state.presence.complete_empty_fixture();
+            let (status, body, _) = post(
+                &app,
+                &visitor,
+                &format!("/get-comms-adapter/world-{name}"),
+                handshake,
+            )
+            .await;
+            assert_eq!(
+                (status, body),
+                (
+                    StatusCode::NOT_FOUND,
+                    serde_json::json!({
+                        "error": "Not Found",
+                        "message": format!("World \"{name}\" was not found.")
+                    })
+                ),
+                "{name}"
+            );
+        }
+        let name = open.display();
+        for (path, metadata) in [
+            (format!("/worlds/{name}/comms"), "{}"),
+            (format!("/worlds/{name}/scenes/bafydeny/comms"), "{}"),
+            (format!("/get-comms-adapter/world-{name}"), handshake),
+        ] {
+            state.presence.complete_empty_fixture();
+            let (status, body, _) = post(&app, &visitor, &path, metadata).await;
+            assert_eq!(status, StatusCode::OK, "{path}: {body}");
+        }
+    }
+
     /// A browser explorer preflights the handshake (it carries `x-identity-*`
     /// headers); upstream's server answers it with its CORS.
     #[tokio::test]

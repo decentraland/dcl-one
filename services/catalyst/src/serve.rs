@@ -921,7 +921,8 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .with_land_operators(land_operators)
             .with_land_authz(Some(land.clone()))
             .with_max_parcels(config.worlds.max_parcels)
-            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024),
+            .with_ens(ens, i64::from(config.worlds.ens_max_size) * 1024 * 1024)
+            .with_blocked_world_names(&config.worlds.blocked_world_names),
     );
     worlds.attach_policy(policy.clone());
     // A world read-through holds each mirrored scene's signer to this policy and shares the
