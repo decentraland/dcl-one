@@ -145,12 +145,19 @@ fn full_memory_keeps_an_avatar_that_had_started_and_admits_the_players_own_and_p
         .get_mut::<AvatarSelection>(started)
         .unwrap()
         .set_changed();
-    // the player's own avatar or a preview: neither another player's nor a scene's
+    // the player's own avatar or a photo booth's: neither another player's nor a scene's
     let own = world.spawn(selection()).id();
+    // a preview a system scene places, as the Backpack's
+    let system_scene_entity = scene_entity(world);
+    world
+        .entity_mut(system_scene_entity.root)
+        .insert(SuperUserScene);
+    let preview = world.spawn((selection(), system_scene_entity)).id();
 
     world.run_system_once(update_render_avatar).unwrap();
 
     assert!(world.get::<PartitionedDownloads>(own).is_some());
+    assert!(world.get::<PartitionedDownloads>(preview).is_some());
     assert!(world.get::<PartitionedDownloads>(started).is_some());
     assert_eq!(world.resource::<RefusedAvatars>().0, 0);
 }

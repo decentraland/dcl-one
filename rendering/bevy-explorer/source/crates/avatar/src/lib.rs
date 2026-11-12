@@ -84,6 +84,7 @@ use ipfs::{
 };
 use scene_runner::scene_partition::{PartitionedDownloads, PlayerDownloads};
 use scene_runner::{
+    initialize_scene::SuperUserScene,
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
     util::ConsoleRelay,
@@ -553,7 +554,7 @@ pub struct AvatarRenderDefinition {
 #[derive(Component)]
 pub struct RetryRenderAvatar;
 
-/// How many avatars (other players' and scene-placed ones) were not started this frame because
+/// How many avatars (other players' and world scenes' ones) were not started this frame because
 /// engine memory is full ([`LoadRefusal`]); zero while loads are admitted.
 #[derive(Resource, Default)]
 pub struct RefusedAvatars(pub usize);
@@ -638,6 +639,7 @@ fn update_render_avatar(
             Option<&PreviousAvatar>,
             Option<&PartitionedDownloads>,
             Has<ForeignPlayer>,
+            Has<RetryRenderAvatar>,
         ),
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
@@ -651,6 +653,7 @@ fn update_render_avatar(
     config: Res<AppConfig>,
     load_refusal: Option<Res<LoadRefusal>>,
     mut refused_avatars: ResMut<RefusedAvatars>,
+    super_user_scenes: Query<(), With<SuperUserScene>>,
 ) {
     // remove renderable entities when avatar selection is removed
     for entity in removed_selections.read() {
@@ -682,17 +685,22 @@ fn update_render_avatar(
         maybe_prev,
         maybe_downloads,
         is_foreign_player,
+        marked_for_retry,
     ) in &query
     {
-        // while engine memory is full no other player's avatar and no scene-placed avatar
-        // starts: nothing of it is resolved, read from a cache or built, and it is looked at
-        // again every frame until the refusal ends. The request slots alone would not stop it,
-        // since cached files ask for no slot. One that has started (its downloads are filed)
-        // is not sent back; the player's own avatar and previews are not refused.
-        let refusable = is_foreign_player || maybe_scene_ent.is_some();
+        // while engine memory is full no other player's avatar and no avatar a world scene
+        // places starts: nothing of it is resolved, read from a cache or built, and it is
+        // looked at again every frame until the refusal ends. The request slots alone would
+        // not stop it, since cached files ask for no slot. One that has started (its downloads
+        // are filed) is not sent back. The player's own avatar and previews (a photo booth's,
+        // or one a system scene places, as the Backpack's) are not refused.
+        let refusable = is_foreign_player
+            || maybe_scene_ent.is_some_and(|scene_ent| !super_user_scenes.contains(scene_ent.root));
         if refusing && refusable && maybe_downloads.is_none() {
             refused += 1;
-            commands.entity(entity).try_insert(RetryRenderAvatar);
+            if !marked_for_retry {
+                commands.entity(entity).try_insert(RetryRenderAvatar);
+            }
             continue;
         }
 

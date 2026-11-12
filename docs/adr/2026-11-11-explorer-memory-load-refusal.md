@@ -22,12 +22,14 @@ download, however close the engine was to running out. On the web that ends in a
   player stands in, portables and system scenes are still admitted. Scenes already spawned are
   kept; how many were held back is published as `RefusedScenes`. An imposter bake's scene is
   refused too, so a bake waits for the refusal to end.
-- **Avatars.** While refusing, no other player's avatar and no avatar a scene places starts
-  (`update_render_avatar`): its wearables are not resolved, read from a cache or built, and
-  nothing is shown for it; how many were held back is published as `RefusedAvatars`. An avatar
-  that had started is kept with what it has loaded. The player's own avatar and avatar previews
-  are still admitted. Avatar levels of detail will be implemented, so that a refused avatar is
-  shown by a cheap stand-in; until then it is not shown.
+- **Avatars.** While refusing, no other player's avatar and no avatar a world scene places
+  starts (`update_render_avatar`): its wearables are not resolved, read from a cache or built;
+  how many were held back is published as `RefusedAvatars`. An avatar that had started is kept
+  with what it has loaded. The player's own avatar and avatar previews (a photo booth's, or one
+  a system scene places, as the Backpack's) are still admitted. A refused player keeps the ghost
+  that stands in for a loading avatar, with its name tag above it; a refused scene avatar, and a
+  player when ghosts are switched off, shows nothing. Avatar levels of detail will be
+  implemented, so that every refused avatar is shown by a cheap stand-in.
 - **Downloads.** While refusing, the request slots grant only the `Active` tier: the scenes the
   player stands in, portables and global scenes, the player's own body, wearables and emotes, and
   files every scene runtime needs (the SDK6 adaption layer, queued under a fixed owner registered
@@ -70,8 +72,10 @@ download, however close the engine was to running out. On the web that ends in a
   threshold.
 - The player's own scene can still load a URL file it needs (an NFT image, a URL font) only once
   the refusal ends.
-- A player who arrives, or an avatar a scene places, while memory is full is not shown until the
-  refusal ends. Avatar levels of detail will replace that gap with a stand-in.
+- A player who arrives while memory is full stays a ghost until the refusal ends. With ghosts
+  switched off nothing is shown and the name tag sits at the player's feet. An avatar a world
+  scene places in that time is not shown. Avatar levels of detail will replace both gaps with a
+  stand-in.
 - The refusal slows growth; it does not stop it. Still unaffected: the player's own loads, reads
   that hit a cache (the disk cache, the web service-worker cache, locally stored imposters),
   which never ask for a request slot; instantiating models and textures from data already

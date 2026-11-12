@@ -49,10 +49,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
 - **Load refusal at full memory**: while engine memory is Full (and until it is back under the
   warning threshold) no new world scene spawns, except the player's own, portables and system
-  scenes, no other player's or scene-placed avatar starts, and the request slots grant only the
-  player's loads: the player's scenes, its own avatar and emotes, and the SDK6 adaption layer.
-  Other avatars, other scenes (spawned ones included) and requests made by URL wait; entity
-  resolution is never held. A refused avatar is not shown until avatar levels of detail exist.
+  scenes, no other player's avatar and no avatar a world scene places starts, and the request
+  slots grant only the player's loads: the player's scenes, its own avatar and emotes, and the
+  SDK6 adaption layer. Other avatars, other scenes (spawned ones included) and requests made by
+  URL wait; entity resolution is never held. A refused player stays a ghost and a refused scene
+  avatar is not shown, until avatar levels of detail exist.
   Nothing is unloaded by it. See the
   [ADR](../../../../docs/adr/2026-11-11-explorer-memory-load-refusal.md).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
