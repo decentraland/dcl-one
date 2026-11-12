@@ -341,6 +341,7 @@
       ],
       "paths": [
         "/services/migration-sync/",
+        "/sync-migration/",
         "/schemas/70_migration_sync.sql",
         "/schemas/71_migration_capture.sql",
         "/schemas/72_migration_like_versions.sql",

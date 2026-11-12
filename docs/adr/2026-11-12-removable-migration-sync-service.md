@@ -3,6 +3,9 @@
 - Status: Accepted
 - Date: 2026-11-12
 
+See [migration decisions and reasons](../../sync-migration/README.md) for the
+strategy, alternatives and repository change requirements.
+
 ## Decision
 
 `services/migration-sync` is a separately deployed migration worker in the

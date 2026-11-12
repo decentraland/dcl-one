@@ -7,6 +7,9 @@ like/dislike changes and applies them to dcl-one in source order. An optional
 receipt-bearing favorite command can exercise native target execution instead;
 its captured favorite rows are then verified rather than applied twice.
 
+See the [decision record and repository PR rationale](../../sync-migration/README.md)
+for why this architecture and its optional service changes are needed.
+
 ## Supported pilot
 
 Favorites, likes and dislikes for explicitly selected Genesis Places UUIDs. Shop and credits are
