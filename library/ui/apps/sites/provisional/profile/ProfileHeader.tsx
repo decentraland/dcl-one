@@ -1,5 +1,5 @@
 // TODO(figma-ds): replace with the Figma-generated profile header from library/ui/components.
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
+import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import {
   GeneralCheck,
   GeneralCopy,
@@ -32,10 +32,12 @@ type CopyState = 'idle' | 'copied' | 'failed'
  */
 function CopyAddress({ address }: { address: string }) {
   const [state, setState] = useState<CopyState>('idle')
+  const [announcement, setAnnouncement] = useState(0)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
   const show = (next: CopyState) => {
     setState(next)
+    setAnnouncement((current) => current + 1)
     clearTimeout(timer.current)
     timer.current = setTimeout(() => setState('idle'), 2000)
   }
@@ -53,13 +55,15 @@ function CopyAddress({ address }: { address: string }) {
         <GeneralCopy size={16} aria-hidden="true" />
       </button>
       <span className={state === 'idle' ? styles.copiedHidden : styles.copied} role="status">
-        {state === 'copied' ? (
-          <>
-            <GeneralCheck size={14} aria-hidden="true" /> Address copied!
-          </>
-        ) : state === 'failed' ? (
-          "Couldn't copy the address"
-        ) : null}
+        <Fragment key={announcement}>
+          {state === 'copied' ? (
+            <>
+              <GeneralCheck size={14} aria-hidden="true" /> Address copied!
+            </>
+          ) : state === 'failed' ? (
+            "Couldn't copy the address"
+          ) : null}
+        </Fragment>
       </span>
     </span>
   )

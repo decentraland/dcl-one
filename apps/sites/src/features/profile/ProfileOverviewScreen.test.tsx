@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.hoisted(() => {
   Object.assign(window, {
@@ -101,6 +101,22 @@ describe("profile overview screen, header", () => {
     expect(writeText).toHaveBeenCalledWith(A);
     expect(copyStatus()).toBe(status);
     expect(status.textContent).toContain("Address copied!");
+  });
+
+  describe.each([true, false])("when copying the same address twice and clipboard success is %s", (succeeds) => {
+    let first: ChildNode | null;
+    beforeEach(async () => {
+      stubClipboard({ writeText: succeeds
+        ? vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined)
+        : vi.fn().mockRejectedValueOnce(new Error("denied")).mockRejectedValueOnce(new Error("denied")) });
+      show(profile());
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Copy address" })); });
+      first = copyStatus().firstChild;
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Copy address" })); });
+    });
+    it("should update the live region contents for the repeated result", () => {
+      expect(copyStatus().firstChild).not.toBe(first);
+    });
   });
 
   it("says so when the clipboard refuses the address, or there is none", async () => {
@@ -277,6 +293,16 @@ describe("profile overview screen, badges", () => {
     expect(region?.getAttribute("role")).toBe("status");
   });
 
+  describe.each([[1, "1 badge"], [2, "2 badges"]] as const)("when %s badges finish loading", (count, label) => {
+    beforeEach(() => {
+      net.fetchUserBadges.mockResolvedValueOnce(Array.from({ length: count }, (_, i) => ({ id: `badge-${i}`, name: "Explorer" })));
+      show(profile(), false, vi.fn(), true);
+    });
+    it("should keep the loaded count in an accessible status region", async () => {
+      await waitFor(() => expect(screen.getAllByRole("status").some(region => region.textContent === label)).toBe(true));
+    });
+  });
+
   it("keeps the badges on screen when a background re-read fails", async () => {
     net.fetchUserBadges.mockResolvedValueOnce([{ id: "explorer", name: "Explorer", imageUrl: "https://example.com/e.png" }]);
     show(profile(), false, vi.fn(), true);
@@ -288,11 +314,7 @@ describe("profile overview screen, badges", () => {
     });
 
     expect(client.getQueryCache().findAll({ queryKey: ["profile", "badges"] })[0]?.state.status).toBe("error");
-    // Let the failed re-read reach the screen before checking what it shows.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-    expect(screen.getByAltText("Explorer")).toBeTruthy();
+    await waitFor(() => expect(screen.getByAltText("Explorer")).toBeTruthy());
     expect(screen.queryByText("Badges are unavailable right now.")).toBeNull();
   });
 
@@ -315,7 +337,7 @@ describe("provisional Sites UI inventory", () => {
       for (const entry of readdirSync(dir)) {
         const path = join(dir, entry);
         if (statSync(path).isDirectory()) walk(path);
-        else if (/\.(tsx|module\.css)$/.test(entry)) files.push(path);
+        else if (/\.(tsx?|module\.css)$/.test(entry)) files.push(path);
       }
     };
     walk(root);
@@ -326,13 +348,13 @@ describe("provisional Sites UI inventory", () => {
     expect(files.length).toBeGreaterThan(0);
     for (const file of files) {
       expect(readFileSync(file, "utf8"), file).toContain("TODO(figma-ds)");
-      if (file.endsWith(".tsx")) {
-        const name = relative(root, file).replace(/\.tsx$/, "");
+      if (/\.tsx?$/.test(file)) {
+        const name = relative(root, file).replace(/\.tsx?$/, "");
         expect(rows, `${name} is missing from the inventory`).toContain(name);
       }
     }
     for (const row of rows) {
-      expect(statSync(join(root, `${row}.tsx`), { throwIfNoEntry: false }), `${row} is listed but has no file`).toBeDefined();
+      expect(statSync(join(root, `${row}.tsx`), { throwIfNoEntry: false }) ?? statSync(join(root, `${row}.ts`), { throwIfNoEntry: false }), `${row} is listed but has no file`).toBeDefined();
     }
   });
 });
