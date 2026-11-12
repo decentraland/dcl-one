@@ -1,0 +1,67 @@
+/* TODO(figma-ds): replace with the Figma-generated empty message's styles. The source's 20px and
+ * 10px gaps and its 80px vertical padding on wide screens have no tokens; the nearest spacing
+ * tokens (24px, 8px, 64px) are used. Its 100px frame with a 4px border keeps its size. */
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--dcl-space-24);
+  padding: var(--dcl-space-48) var(--dcl-space-16);
+  text-align: center;
+}
+
+.icon {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100px;
+  height: 100px;
+  border: 4px solid var(--dcl-neutrals-snow);
+  border-radius: var(--dcl-radius-xl);
+  color: var(--dcl-neutrals-snow);
+}
+
+.icon svg {
+  width: 56px;
+  height: 56px;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--dcl-space-8);
+}
+
+.title {
+  max-width: 452px;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-heading-4);
+  font-weight: 500;
+  line-height: 1.6;
+}
+
+.subtitle {
+  max-width: 436px;
+  margin: 0;
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-md);
+  font-weight: 400;
+  line-height: 1.5;
+}
+
+.action {
+  margin-top: var(--dcl-space-4);
+}
+
+@media (min-width: 1024px) {
+  .root {
+    padding: var(--dcl-space-64) var(--dcl-space-16);
+  }
+}

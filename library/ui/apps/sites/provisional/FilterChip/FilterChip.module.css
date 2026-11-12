@@ -1,0 +1,67 @@
+/* TODO(figma-ds): replace with the Figma-generated filter chip's styles. The source's fills
+ * (6% white at rest, 12% on hover) and its 25% white border have no tokens; the nearest
+ * transparencies (10%, 20%, 20%) stand in for them. */
+.group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--dcl-space-8);
+  margin-bottom: var(--dcl-space-16);
+}
+
+.chip {
+  display: inline-flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--dcl-space-4);
+  height: 32px;
+  padding: 0 var(--dcl-space-12) 0 var(--dcl-space-8);
+  border: 1px solid var(--dcl-transparencies-white-20);
+  border-radius: var(--dcl-radius-full);
+  background: var(--dcl-transparencies-white-10);
+  color: var(--dcl-text-primary);
+  cursor: pointer;
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-button-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  text-transform: uppercase;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.chip:hover {
+  border-color: var(--dcl-transparencies-white-40);
+  background: var(--dcl-transparencies-white-20);
+}
+
+.chip:focus-visible {
+  outline: 2px solid var(--dcl-transparencies-white-60);
+  outline-offset: 2px;
+}
+
+.active,
+.active:hover {
+  border-color: var(--dcl-neutrals-snow);
+  background: var(--dcl-neutrals-snow);
+  color: var(--dcl-neutrals-charcoal);
+}
+
+.icon {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+}
+
+.icon svg {
+  width: 100%;
+  height: 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip {
+    transition: none;
+  }
+}

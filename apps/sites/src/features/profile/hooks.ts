@@ -3,15 +3,16 @@ import { skipToken, useQuery } from "@tanstack/react-query";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { withCreatorName, type Creations } from "@/data/lib/catalyst/marketplace/index";
-import { withContactName, type ProfilePlace } from "@/data/lib/catalyst/places/index";
 import {
   canReadProfile,
   badgesQuery,
   creationsQuery,
   myCommunitiesQuery,
+  myFavoritePlacesQuery,
   ownedNamesQuery,
   ownedWearablesQuery,
   photosQuery,
+  placeOwnersQuery,
   placesQuery,
   PROFILE_STALE_MS,
   profileKeys,
@@ -45,12 +46,22 @@ export function useProfileCreations(address: string, creatorName?: string) {
   return useQuery({ ...creationsQuery(address), enabled: canReadProfile(address), select });
 }
 
-export function useProfilePlaces(address: string, contactName?: string) {
-  const select = useCallback(
-    (places: ProfilePlace[]) => withContactName(places, contactName),
-    [contactName],
-  );
-  return useQuery({ ...placesQuery(address), enabled: canReadProfile(address), select });
+export function useProfilePlaces(address: string) {
+  return useQuery({ ...placesQuery(address), enabled: canReadProfile(address) });
+}
+
+/** The signed-in member's saved places; nothing is requested without an identity or while hidden. */
+export function useMyFavoritePlaces(identity: AuthIdentity | null, enabled: boolean) {
+  return useQuery({
+    queryKey: profileKeys.myFavoritePlaces(identity?.signer ?? ""),
+    queryFn: identity && enabled ? myFavoritePlacesQuery(identity).queryFn : skipToken,
+    staleTime: PROFILE_STALE_MS,
+  });
+}
+
+/** Display names and faces of the wallets behind other people's places, read in one batch. */
+export function usePlaceOwners(addresses: readonly string[]) {
+  return useQuery({ ...placeOwnersQuery(addresses), enabled: addresses.length > 0 });
 }
 
 /** A profile's badges; only read for a wallet that has a profile, so a bare address shows none. */

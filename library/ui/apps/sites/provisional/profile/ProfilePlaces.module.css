@@ -1,0 +1,87 @@
+/* TODO(figma-ds): replace with the Figma-generated profile places panel's styles. The grid's
+ * 260px and 220px column floors and the 600px breakpoint (MUI `sm`) follow the source and have no
+ * tokens. */
+.root {
+  width: 100%;
+}
+
+.status,
+.count {
+  margin: 0 0 var(--dcl-space-16);
+  font-family: 'Inter', sans-serif;
+  font-size: var(--dcl-font-size-body-sm);
+  line-height: 1.43;
+}
+
+.status {
+  color: var(--dcl-text-primary);
+}
+
+.count {
+  color: var(--dcl-text-secondary);
+}
+
+.note {
+  color: var(--dcl-text-disabled);
+  font-style: italic;
+  line-height: 1.5;
+}
+
+.errorAction {
+  margin-bottom: var(--dcl-space-16);
+}
+
+.spinner {
+  display: block;
+  box-sizing: border-box;
+  width: 28px;
+  height: 28px;
+  margin: var(--dcl-space-24) 0;
+  border: 3px solid var(--dcl-transparencies-white-20);
+  border-top-color: var(--dcl-primary-primary);
+  border-radius: var(--dcl-radius-full);
+  animation: spin 800ms linear infinite;
+}
+
+.visuallyHidden {
+  position: absolute;
+  overflow: hidden;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--dcl-space-16);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.item {
+  min-width: 0;
+}
+
+@media (min-width: 600px) {
+  .grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation-duration: 2400ms;
+  }
+}
