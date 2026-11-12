@@ -578,3 +578,50 @@ fn overhead_of_publishing_at_a_busy_plaza() {
         "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, keys written in place); {idle:?} with none (partitions only)"
     );
 }
+
+#[test]
+fn the_players_own_downloads_rank_with_the_players_scenes() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let player = world
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(&world)
+        .unwrap();
+    // registered at the top as soon as they are filed, before any publish
+    world.entity_mut(player).insert((
+        PartitionedDownloads(vec!["own-wearable".to_owned()]),
+        Partition(near),
+    ));
+    world.spawn((
+        PlayerDownloads,
+        PartitionedDownloads(vec!["own-emote".to_owned()]),
+    ));
+    world.spawn((
+        PartitionedDownloads(vec!["other-wearable".to_owned()]),
+        Partition(near),
+    ));
+    {
+        let ipfs = world.resource::<IpfsResource>();
+        assert_eq!(ipfs.scene_priority("own-wearable"), Some(LoadPriority::TOP));
+        assert_eq!(ipfs.scene_priority("own-emote"), Some(LoadPriority::TOP));
+    }
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(ipfs.scene_priority("own-wearable"), Some(LoadPriority::TOP));
+    assert_eq!(ipfs.scene_priority("own-emote"), Some(LoadPriority::TOP));
+    assert_eq!(
+        ipfs.scene_priority("other-wearable"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+}

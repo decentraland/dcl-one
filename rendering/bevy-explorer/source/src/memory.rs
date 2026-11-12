@@ -8,8 +8,12 @@ use std::time::Duration;
 
 const SAMPLE_INTERVAL: Duration = Duration::from_millis(250);
 
+/// The first tier the request slots hold while engine memory is full: only the player's scenes
+/// and the player's own avatar and emotes (`Tier::Active`) keep downloading.
+const HELD_FROM: Tier = Tier::Avatar;
+
 /// Refuse new loads while engine memory is full; see [`LoadRefusal::next`]. The request slots
-/// hold the downloads of departed scenes for as long as the refusal lasts.
+/// hold every download but the player's for as long as the refusal lasts.
 fn update_load_refusal(
     status: Res<MemoryStatus>,
     mut refusal: ResMut<LoadRefusal>,
@@ -21,14 +25,15 @@ fn update_load_refusal(
     }
     match status.reading() {
         Some(reading) if next.refusing => warn!(
-            "engine memory full ({} of {} MiB): refusing new scenes and departed scenes' downloads",
+            "engine memory full ({} of {} MiB): refusing new scenes and every download but the player's",
             reading.used_bytes >> 20,
             reading.cap_mib
         ),
-        _ => info!("engine memory below the warning threshold: admitting loads again"),
+        Some(_) => info!("engine memory below the warning threshold: admitting loads again"),
+        None => info!("engine memory reading unavailable: admitting loads again"),
     }
     if let Some(ipfs) = ipfs {
-        ipfs.hold_downloads_from(next.refusing.then_some(Tier::Departed));
+        ipfs.hold_downloads_from(next.refusing.then_some(HELD_FROM));
     }
     *refusal = next;
 }

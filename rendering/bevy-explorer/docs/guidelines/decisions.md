@@ -49,8 +49,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
 - **Load refusal at full memory**: while engine memory is Full (and until it is back under the
   warning threshold) no new world scene spawns, except the player's own, portables and system
-  scenes, and the request slots hold the requests of departed scenes; live scenes and requests
-  made by URL keep downloading. Nothing is unloaded by it. See the
+  scenes, and the request slots grant only the player's loads: the player's scenes, its own
+  avatar and emotes, and the SDK6 adaption layer. Other avatars, other scenes (spawned ones
+  included) and requests made by URL wait. Nothing is unloaded by it. See the
   [ADR](../../../../docs/adr/2026-11-11-explorer-memory-load-refusal.md).
 - **Voice chat (private calls and community streams)** keeps the call statuses and guards, the
   3 × 2000 ms re-dial budget, the 1 s hang-up-before-join delay and the server's 60 s ring.

@@ -108,6 +108,15 @@ pub struct Collectibles<T: CollectibleType> {
 }
 
 impl<T: CollectibleType> Collectibles<T> {
+    /// The content hash `urn` resolved to, if its pointer has resolved already. Unlike
+    /// [`CollectibleManager::get_hash`] it requests nothing.
+    pub fn resolved_hash(&self, urn: &CollectibleUrn<T>) -> Option<&str> {
+        match self.pointers.get(urn) {
+            Some(PointerResult::Hash(hash)) => Some(hash),
+            _ => None,
+        }
+    }
+
     /// The urn to name a collectible by outside the manager (on the wire): the source-collection
     /// urn it resolved to, else the bare name it was requested by, else the urn as given.
     pub fn source_urn<'a>(&'a self, urn: &'a CollectibleUrn<T>) -> &'a str {

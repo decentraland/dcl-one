@@ -20,7 +20,7 @@ use bevy_console::ConsoleCommand;
 use collectibles::{
     base_wearables,
     wearables::{UsedWearables, Wearable, WearableCategory, WearableModel, WearableUrn},
-    CollectibleError, CollectibleManager, Emote, EmoteUrn,
+    CollectibleError, CollectibleManager, Collectibles, Emote, EmoteUrn,
 };
 use colliders::AvatarColliderPlugin;
 use console::DoAddConsoleCommand;
@@ -81,7 +81,7 @@ use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     EntityDefinition, IpfsAssetServer,
 };
-use scene_runner::scene_partition::PartitionedDownloads;
+use scene_runner::scene_partition::{PartitionedDownloads, PlayerDownloads};
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
@@ -157,6 +157,7 @@ impl Plugin for AvatarPlugin {
                 update_base_avatar_shape,
                 select_avatar,
                 update_render_avatar,
+                register_player_emote_downloads,
                 spawn_scenes,
                 process_avatar.after(update_render_avatar),
                 set_avatar_visibility,
@@ -567,6 +568,52 @@ fn retag_avatars_on_style_change(
             }
         }
         *prev = Some(cur);
+    }
+}
+
+/// The holder of the player's emote hashes in the request-slot queue.
+#[derive(Component)]
+struct PlayerEmoteDownloads;
+
+/// File the player's emotes, once their pointers have resolved, under a [`PlayerDownloads`]
+/// holder so they download with the player's scenes, and are not held while engine memory is
+/// full. Other avatars' emotes stay unregistered and rank after every scene. Requests nothing:
+/// an emote's pointer resolves when it is first played.
+fn register_player_emote_downloads(
+    player: Query<&AvatarSelection, With<PrimaryUser>>,
+    emotes: Option<Res<Collectibles<Emote>>>,
+    holder: Query<(Entity, &PartitionedDownloads), With<PlayerEmoteDownloads>>,
+    mut commands: Commands,
+) {
+    let Some(emotes) = emotes else { return };
+    let hashes: Vec<String> = player
+        .single()
+        .map(|selection| {
+            common::partition::resolved_hashes(
+                selection.shape.0.emotes.iter().map(String::as_str),
+                |urn| {
+                    EmoteUrn::new(urn)
+                        .ok()
+                        .and_then(|urn| emotes.resolved_hash(&urn).map(str::to_owned))
+                },
+            )
+        })
+        .unwrap_or_default();
+    match holder.single() {
+        Ok((entity, current)) if current.0 != hashes => {
+            commands
+                .entity(entity)
+                .try_insert(PartitionedDownloads(hashes));
+        }
+        Ok(_) => (),
+        Err(_) if !hashes.is_empty() => {
+            commands.spawn((
+                PlayerEmoteDownloads,
+                PlayerDownloads,
+                PartitionedDownloads(hashes),
+            ));
+        }
+        Err(_) => (),
     }
 }
 

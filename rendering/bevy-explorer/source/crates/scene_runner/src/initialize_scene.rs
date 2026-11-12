@@ -377,7 +377,9 @@ pub(crate) fn load_scene_javascript(
         } else {
             // deliberately not base_domain-derived: renderer-artifacts is only deployed
             // on decentraland.org (no zone or custom-domain equivalents)
-            ipfas.load_url_uncached(
+            // queued with the player's scenes, so the player's own SDK6 scene can start while
+            // engine memory is full
+            ipfas.load_scene_runtime_url(
                 "https://renderer-artifacts.decentraland.org/sdk6-adaption-layer/main/index.min.js",
             )
         };
@@ -1582,8 +1584,9 @@ pub struct CurrentImposterScene(pub Option<(PointerResult, bool)>);
 #[derive(Resource, Default)]
 pub struct CurrentSceneLoading(pub bool);
 
-/// How many scenes in range the lifecycle did not spawn this frame because engine memory is full
-/// ([`LoadRefusal`]); zero while loads are admitted.
+/// How many scenes the lifecycle did not spawn this frame because engine memory is full
+/// ([`LoadRefusal`]): scenes in range and an imposter bake's scene; zero while loads are
+/// admitted.
 #[derive(Resource, Default)]
 pub struct RefusedScenes(pub usize);
 
@@ -1614,6 +1617,8 @@ pub fn process_scene_lifecycle(
     mut refused_scenes: ResMut<RefusedScenes>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
+    // counted afresh each frame, also on a frame that returns early
+    refused_scenes.0 = 0;
 
     // add nearby scenes to requirements
     let Ok(focus) = focus.single() else {
@@ -1780,8 +1785,9 @@ pub fn process_scene_lifecycle(
     }
 
     // while engine memory is full, admit no new world scene: the player's own scene, portables
-    // and system scenes still spawn. Scenes already spawned are kept and keep loading.
-    refused_scenes.0 = 0;
+    // and system scenes still spawn. Scenes already spawned are kept, but only the player's
+    // keep downloading (the request slots hold the rest). An imposter bake's scene is refused
+    // too, so a bake waits for the refusal to end.
     if load_refusal.is_some_and(|refusal| refusal.refusing) {
         required_scene_ids.retain(|scene, super_user| {
             let admitted = *super_user
