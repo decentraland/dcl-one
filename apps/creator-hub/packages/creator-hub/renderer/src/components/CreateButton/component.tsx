@@ -7,6 +7,7 @@ import arrowDown from '/assets/images/arrow-down.svg';
 import { useMatchMedia } from '/@/hooks/useMatchMedia';
 import { useWorkspace } from '/@/hooks/useWorkspace';
 import { t } from '/@/modules/store/translation/utils';
+import { Plus } from '../Icons/figma';
 import { CreateProject } from '../Modals/CreateProject';
 
 import { ICON_ONLY_QUERY } from './breakpoints';
@@ -66,7 +67,7 @@ export function CreateButton() {
             variant="contained"
             disableRipple
             data-testid="create-button"
-            startIcon={<AddIcon sx={{ fontSize: 18 }} />}
+            startIcon={<Plus sx={{ fontSize: 18 }} />}
             onClick={handleClickNewScene}
           >
             <StyledLabelText>{t('navbar.create.label')}</StyledLabelText>
