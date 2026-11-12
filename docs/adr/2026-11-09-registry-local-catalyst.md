@@ -50,7 +50,8 @@ fragment, and startup refuses any other value, naming the variable.
   `https://asset-bundle-registry.decentraland.org`. It passes the same SSRF and
   own-host checks as the other explorer sources, at startup and on each request,
   and receives no identity or path headers. Signed `GET /entities/status` calls
-  therefore fail with 401 in this mode; signed reads need the local runtime.
+  therefore fail in this mode with the Registry's 400 `Invalid Auth Chain`;
+  signed reads need the local runtime.
 - Empty, the island posture, answers `/entities/active` and `/entities/versions`
   with `200 []` and the other reads with 503.
 
