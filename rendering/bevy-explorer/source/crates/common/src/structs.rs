@@ -1017,8 +1017,6 @@ pub enum ShadowSetting {
 
 /// The far bounds of High's first three cascades, as fractions of the shadow distance.
 pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
-/// The sun's shadow map size in texels, per cascade (see decisions.md).
-pub const SUN_SHADOW_MAP_SIZE: usize = 4096;
 /// How far from the player a spot light can cast shadows, in metres.
 pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
 pub const MIN_CASCADE: f32 = 0.1;
@@ -1051,18 +1049,6 @@ pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShad
         overlap_proportion: 0.2,
         minimum_distance: MIN_CASCADE,
     })
-}
-
-/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels) for a quality:
-/// bevy's defaults on Low and High (see decisions.md).
-pub fn sun_shadow_bias(setting: ShadowSetting) -> (f32, f32) {
-    match setting {
-        ShadowSetting::Off => (0.0, 0.0),
-        ShadowSetting::Low | ShadowSetting::High => (
-            DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS,
-            DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS,
-        ),
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]

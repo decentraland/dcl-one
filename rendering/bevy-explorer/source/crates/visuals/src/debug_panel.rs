@@ -8,14 +8,14 @@ use bevy::{
     },
 };
 use bevy_console::ConsoleCommand;
-use common::structs::{sun_shadow_bias, AppConfig, PrimaryCamera, SceneLoadDistance, TimeOfDay};
+use common::structs::{AppConfig, PrimaryCamera, SceneLoadDistance, TimeOfDay};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use serde_json::json;
 
 use crate::{
     shell_texturing::{Ground, ParcelGrass},
     trees::Tree,
-    CloudCover, ShadowBiasOverride,
+    CloudCover, ShadowBiasOverride, SUN_SHADOW_BIAS,
 };
 
 const fn toggle(
@@ -81,12 +81,9 @@ pub(super) fn register(app: &mut App) {
             ("Shadow distance (m)", "distance"),
             ("Cascade far bounds (m)", "cascades"),
             ("Bias overridden", "overridden"),
-            (
-                "Shadow quality bias (depth m / normal texels)",
-                "presetBias",
-            ),
+            ("Default bias (depth m / normal texels)", "presetBias"),
         ],
-        actions: &[("Restore quality bias", "/shadowbias --reset")],
+        actions: &[("Restore default bias", "/shadowbias --reset")],
         inputs: &[
             DebugInput {
                 label: "Shadow map size (texels)",
@@ -283,7 +280,7 @@ fn sun_shadows(
     sun: Query<(&DirectionalLight, &CascadeShadowConfig)>,
 ) {
     if let Some(Ok(_)) = cmd.take() {
-        let preset = sun_shadow_bias(config.graphics.shadow_settings);
+        let preset = SUN_SHADOW_BIAS;
         let (depth, normal) = bias.0.unwrap_or(preset);
         // every sun layer shares one config; read the first that casts shadows
         let cascades = sun

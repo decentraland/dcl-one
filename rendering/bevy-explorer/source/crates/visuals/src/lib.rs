@@ -31,9 +31,8 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        sun_cascades, sun_shadow_bias, AppConfig, DofConfig, FogSetting, PrimaryCamera,
-        PrimaryCameraRes, PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay,
-        PRIMARY_AVATAR_LIGHT_LAYER, SUN_SHADOW_MAP_SIZE,
+        sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
+        PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
     },
 };
 use console::DoAddConsoleCommand;
@@ -57,30 +56,28 @@ pub struct VisualsPlugin {
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
         debug_panel::register(app);
-        app.insert_resource(DirectionalLightShadowMap {
-            size: SUN_SHADOW_MAP_SIZE,
-        })
-        .init_resource::<SceneGlobalLight>()
-        .insert_resource(CloudCover {
-            cover: 0.375,
-            speed: 5.0,
-            density_cap: 0.8,
-            shadow: 0.05,
-            scale: 1.5,
-            steps: 44,
-            lacunarity: 2.0,
-            sharpness: 50.0,
-            sharp_mid: 0.1,
-        })
-        .add_plugins(WireframePlugin::default())
-        .add_plugins(DayNightPlugin)
-        .add_plugins(ShellTexturingPlugin)
-        .add_plugins(TerrainPlugin)
-        .add_plugins(CoastPlugin)
-        .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
-        .add_systems(Update, apply_global_light)
-        .add_systems(Update, update_dof)
-        .add_systems(Startup, setup.in_set(SetupSets::Main));
+        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
+            .init_resource::<SceneGlobalLight>()
+            .insert_resource(CloudCover {
+                cover: 0.375,
+                speed: 5.0,
+                density_cap: 0.8,
+                shadow: 0.05,
+                scale: 1.5,
+                steps: 44,
+                lacunarity: 2.0,
+                sharpness: 50.0,
+                sharp_mid: 0.1,
+            })
+            .add_plugins(WireframePlugin::default())
+            .add_plugins(DayNightPlugin)
+            .add_plugins(ShellTexturingPlugin)
+            .add_plugins(TerrainPlugin)
+            .add_plugins(CoastPlugin)
+            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
+            .add_systems(Update, apply_global_light)
+            .add_systems(Update, update_dof)
+            .add_systems(Startup, setup.in_set(SetupSets::Main));
 
         app.insert_resource(AtmosphereSettings {
             resolution: 1024,
@@ -306,9 +303,7 @@ fn apply_global_light(
         return;
     }
 
-    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias
-        .0
-        .unwrap_or_else(|| sun_shadow_bias(setting.graphics.shadow_settings));
+    let (shadow_depth_bias, shadow_normal_bias) = shadow_bias.0.unwrap_or(SUN_SHADOW_BIAS);
     let mut directional_layers = RenderLayers::none();
     for (entity, layer, mut light_trans, mut directional) in sun.iter_mut() {
         if !next_light.layers.intersects(&RenderLayers::layer(layer.0)) {
@@ -452,12 +447,19 @@ fn shadow_console_command(
     }
 }
 
-/// The sun shadow biases set live by `/shadowbias`, in place of the preset's.
+/// The sun's shadow depth bias (a world length) and normal bias (shadow map texels): bevy's
+/// defaults (see decisions.md).
+pub(crate) const SUN_SHADOW_BIAS: (f32, f32) = (
+    DirectionalLight::DEFAULT_SHADOW_DEPTH_BIAS,
+    DirectionalLight::DEFAULT_SHADOW_NORMAL_BIAS,
+);
+
+/// The sun shadow biases set live by `/shadowbias`, in place of `SUN_SHADOW_BIAS`.
 #[derive(Resource, Default)]
 pub struct ShadowBiasOverride(pub Option<(f32, f32)>);
 
 /// Set the sun shadow depth bias (world length) or normal bias (shadow map texels), keeping the
-/// other at its current value; `--reset` restores the shadow quality's biases.
+/// other at its current value; `--reset` restores the default biases.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/shadowbias")]
 struct ShadowBiasConsoleCommand {
@@ -493,10 +495,9 @@ fn next_shadow_bias(
 fn shadow_bias_console_command(
     mut input: ConsoleCommand<ShadowBiasConsoleCommand>,
     mut bias: ResMut<ShadowBiasOverride>,
-    setting: Res<AppConfig>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        let preset = sun_shadow_bias(setting.graphics.shadow_settings);
+        let preset = SUN_SHADOW_BIAS;
         match next_shadow_bias(bias.0, preset, command.depth, command.normal, command.reset) {
             Ok(next) => {
                 // only write when it changes, so a query does not rewrite the lights
