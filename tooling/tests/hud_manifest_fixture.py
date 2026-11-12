@@ -27,7 +27,6 @@ def seal(root, shared=SHARED):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('fixture resolver control')
     roots = sorted(p.relative_to(root).as_posix() for p in (root / WEB).rglob('*') if p.is_file()
-                   and not p.relative_to(root).as_posix().startswith(WEB + 'src/engine/generated/')
                    and 'node_modules' not in p.relative_to(root).parts
                    and (p.relative_to(root).as_posix().startswith(WEB + 'src/')
                         or p.relative_to(root).as_posix() in (WEB + 'app.html', WEB + 'index.html')))

@@ -386,27 +386,31 @@ describe('when extracting CSS Module declarations through the in-memory styleshe
     config = await resolveConfig({ configFile: false, css: { transformer: 'postcss' } }, 'build')
   })
 
-  describe.each(['NavBar/NavBar.module.css', 'runtime/figma-module-runtime.module.css'])(
-    'and reading the committed %s stylesheet',
-    (file) => {
-      let absolute: string
-      let content: string
-      beforeEach(async () => {
-        absolute = fileURLToPath(new URL('../../components/' + file, import.meta.url))
-        content = await readFile(absolute, 'utf8')
-        files.set(file, Buffer.from(content))
-        foundations = await readFile(
-          new URL('../../foundations/typography/text-styles.module.css', import.meta.url),
-          'utf8'
-        )
-      })
-      it('should declare exactly the keys Vite exports', async () => {
-        expect(keys((await cssDeclarations(files, foundations)).get(file + '.d.ts')!)).toEqual(
-          Object.keys((await preprocessCSS(content, absolute, config)).modules ?? {}).sort()
-        )
-      })
-    }
-  )
+  // The hand-written NavBar module and the generated runtime module, which now ships only with the Review.
+  describe.each([
+    ['NavBar/NavBar.module.css', '../../components/NavBar/NavBar.module.css'],
+    [
+      'runtime/figma-module-runtime.module.css',
+      '../review/src/components/figma-module-runtime.module.css'
+    ]
+  ])('and reading the committed %s stylesheet from %s', (file, source) => {
+    let absolute: string
+    let content: string
+    beforeEach(async () => {
+      absolute = fileURLToPath(new URL(source, import.meta.url))
+      content = await readFile(absolute, 'utf8')
+      files.set(file, Buffer.from(content))
+      foundations = await readFile(
+        new URL('../../foundations/typography/text-styles.module.css', import.meta.url),
+        'utf8'
+      )
+    })
+    it('should declare exactly the keys Vite exports', async () => {
+      expect(keys((await cssDeclarations(files, foundations)).get(file + '.d.ts')!)).toEqual(
+        Object.keys((await preprocessCSS(content, absolute, config)).modules ?? {}).sort()
+      )
+    })
+  })
 
   describe.each([
     ':global(.global) {} .local :global .outside {} :local(.explicit) {}',

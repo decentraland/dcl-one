@@ -1,0 +1,6 @@
+The flag images in this directory are copied byte for byte from twitter/twemoji
+(https://github.com/twitter/twemoji) at tag v14.0.2 (commit
+7a3dad4a4da30497093dab22eafba135f02308e1), assets/svg/<code>.svg: the same
+files source Sites loads from that repository at runtime. Twemoji graphics are
+Copyright 2020 Twitter, Inc and other contributors, licensed under CC-BY 4.0
+(LICENSE in this directory, from LICENSE-GRAPHICS).

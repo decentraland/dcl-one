@@ -1,0 +1,25 @@
+.shell {
+  position: relative;
+  isolation: isolate;
+  min-height: 100%;
+  padding-bottom: var(--dcl-space-64);
+  background: var(--dcl-bg-page);
+  color: var(--dcl-text-primary);
+  font-family: 'Inter', sans-serif;
+}
+
+.shell::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0 0 auto;
+  height: 506px;
+  background: linear-gradient(180deg, var(--dcl-brand-purple) 0%, transparent 100%);
+  pointer-events: none;
+}
+
+@media (max-width: 767px) {
+  .shell::before {
+    height: 404px;
+  }
+}

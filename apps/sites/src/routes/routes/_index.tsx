@@ -11,7 +11,11 @@ import { ComeHangOut } from "@dcl/one-ui/apps/sites/home/ComeHangOut";
 import { homeEventHref } from "@/features/home/links";
 import { downloadActions } from "@/features/download/actions";
 import { detectPlatform } from "@/features/download/options";
-import { VIBE_CLIPS, WEEKLY_RITUALS } from "@/features/home/content";
+import {
+  homeAgentContent,
+  VIBE_CLIPS,
+  WEEKLY_RITUALS,
+} from "@/features/home/content";
 
 import { heroEventCards } from "@/data/lib/catalyst/landings/home";
 import { loadDownloadsLabel } from "@/data/lib/catalyst/landings/download-counts.server";
@@ -32,12 +36,13 @@ export function meta() {
   return [{ title: "Decentraland" }];
 }
 
-export async function loader({ request }: Route.LoaderArgs) {
-  const { sid, wrap } = sidLoader(request);
-  const [{ content }, downloads] = await Promise.all([
+export async function loader({ request, context }: Route.LoaderArgs) {
+  const { sid, wrap } = sidLoader(request, context);
+  const [{ content: loadedContent }, downloads] = await Promise.all([
     loadHomeEvents(),
     loadDownloadsLabel(),
   ]);
+  const content = homeAgentContent(loadedContent);
   const payload = {
     sid,
     content,
@@ -118,8 +123,8 @@ export default function Home({ loaderData }: Route.ComponentProps) {
         <ComeHangOut
           title="Come Hang Out"
           background={<AnimatedBackground />}
-          actions={platform.kind === "mobile" ? undefined : actions}
-          store={platform.kind === "mobile" ? store : undefined}
+          actions={actions}
+          store={store}
         />
       </main>
     </SitesChrome>

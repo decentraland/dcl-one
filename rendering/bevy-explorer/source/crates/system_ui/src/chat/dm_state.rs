@@ -4,6 +4,7 @@
 //! private chat room is joined and the server's message router is in it).
 
 use alloy_core::primitives::Address;
+use ban_block::{BanBlock, BlockDirection};
 use bevy::{ecs::system::SystemParam, prelude::*};
 use bevy_console::ConsoleCommand;
 use common::{rpc::RpcStreamSender, structs::DmPrivacy, util::AsH160};
@@ -67,6 +68,7 @@ pub struct DmUserStatus {
 #[derive(SystemParam)]
 pub struct DmUserStates<'w, 's> {
     social: Res<'w, SocialClient>,
+    ban_block: BanBlock<'w, 's>,
     rooms: Query<'w, 's, &'static ParticipantIndex, With<PrivateChatRoom>>,
     connected_rooms: Query<'w, 's, (), (With<PrivateChatRoom>, With<Connected>)>,
     participants: Query<'w, 's, &'static PrivateChatPrivacy>,
@@ -94,15 +96,22 @@ impl DmUserStates<'_, '_> {
                 state: DmUserState::NotConnected,
             };
         }
-        let (friend, blocked, blocked_by, own_privacy) = match self.social.0.as_ref() {
+        let (friend, own_privacy) = match self.social.0.as_ref() {
             Some(client) => (
                 self.social.get_state(address) == FriendshipState::Friends,
-                client.blocked.contains(&address),
-                client.blocked_by.contains(&address),
                 client.dm_privacy,
             ),
-            None => (false, false, false, DmPrivacy::All),
+            None => (false, DmPrivacy::All),
         };
+        let direction = self.ban_block.block_direction(address);
+        let blocked = matches!(
+            direction,
+            BlockDirection::LocalUserBlockedThem | BlockDirection::Mutual
+        );
+        let blocked_by = matches!(
+            direction,
+            BlockDirection::TheyBlockedLocalUser | BlockDirection::Mutual
+        );
         let in_room = self.in_private_chat_room(address);
         let online = in_room.is_some() && !blocked;
 
@@ -279,20 +288,22 @@ pub fn dm_state(mut input: ConsoleCommand<DmStateCommand>, states: DmUserStates)
         return;
     };
     let status = states.resolve(address);
-    let (friendship, blocked, blocked_by, own_privacy) = match states.social.0.as_ref() {
+    let (friendship, own_privacy) = match states.social.0.as_ref() {
         Some(client) => (
             format!("{:?}", states.social.get_state(address)),
-            client.blocked.contains(&address),
-            client.blocked_by.contains(&address),
             format!("{:?}", client.dm_privacy),
         ),
-        None => (
-            "no social client".to_owned(),
-            false,
-            false,
-            "unknown".to_owned(),
-        ),
+        None => ("no social client".to_owned(), "unknown".to_owned()),
     };
+    let direction = states.ban_block.block_direction(address);
+    let blocked = matches!(
+        direction,
+        BlockDirection::LocalUserBlockedThem | BlockDirection::Mutual
+    );
+    let blocked_by = matches!(
+        direction,
+        BlockDirection::TheyBlockedLocalUser | BlockDirection::Mutual
+    );
     input.reply_ok(format!(
         "{address:#x}: {:?} (online: {})\n  own room connected: {}\n  friendship: {friendship}\n  blocked: {blocked}, blocked by: {blocked_by}\n  in private chat room: {:?}\n  in world: {}\n  own privacy: {own_privacy}",
         status.state,
@@ -301,48 +312,4 @@ pub fn dm_state(mut input: ConsoleCommand<DmStateCommand>, states: DmUserStates)
         states.in_private_chat_room(address),
         states.in_world(address),
     ));
-}
-
-/// True if either side has blocked the other. Their chat and reactions are not shown, on any
-/// channel.
-pub fn blocked_either_way(social: &SocialClient, address: Address) -> bool {
-    social
-        .0
-        .as_ref()
-        .is_some_and(|client| blocks_hide_chat(&client.blocked, &client.blocked_by, address))
-}
-
-fn blocks_hide_chat(
-    blocked: &bevy::platform::collections::HashSet<Address>,
-    blocked_by: &bevy::platform::collections::HashSet<Address>,
-    address: Address,
-) -> bool {
-    blocked.contains(&address) || blocked_by.contains(&address)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use bevy::platform::collections::HashSet;
-
-    #[test]
-    fn nearby_chat_is_hidden_in_both_block_directions() {
-        let i_blocked = Address::repeat_byte(1);
-        let blocked_me = Address::repeat_byte(2);
-        let stranger = Address::repeat_byte(3);
-        let blocked = HashSet::from([i_blocked]);
-        let blocked_by = HashSet::from([blocked_me]);
-
-        assert!(blocks_hide_chat(&blocked, &blocked_by, i_blocked));
-        assert!(blocks_hide_chat(&blocked, &blocked_by, blocked_me));
-        assert!(!blocks_hide_chat(&blocked, &blocked_by, stranger));
-    }
-
-    #[test]
-    fn nothing_is_hidden_without_a_social_client() {
-        assert!(!blocked_either_way(
-            &SocialClient(None),
-            Address::repeat_byte(1)
-        ));
-    }
 }

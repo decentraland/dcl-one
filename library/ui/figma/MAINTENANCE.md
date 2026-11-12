@@ -8,7 +8,7 @@ Maintenance notes for the Figma pipeline in `library/ui/figma` (mapping rules, g
 | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `library/ui/figma/`                                 | Reads Figma data (snapshots), maps it, generates code. CLI `dcl-figma` (`pnpm figma <command>`) and MCP server (`pnpm figma:mcp`, `figma_*` tools).                                         |
 | `library/ui/figma/review/`                          | A gallery of the generated components, rendered live. It publishes no Figma imagery and does no visual comparison. Generated styling is changed through templates, never by editing output. |
-| `library/ui/components/`, `library/ui/foundations/` | The shared library: hand-written components (Button, Modal), promoted previews (`components/<Name>/`), their `*.figma.ts` mappings and the foundations.                                     |
+| `library/ui/components/`, `library/ui/foundations/` | The shared library: hand-written components (NavBar), their `*.figma.ts` mappings and the foundations.                                                                                      |
 | `library/ui/figma/agent-kit/`                       | The consumer skill kit (`implement-figma-design`).                                                                                                                                          |
 
 Figma file: PRUEBA-SKILL. Its key is private and never in a file; set `FIGMA_FILE_KEY` only to run the key guard's `key` check; mappings name it through the `<DCL_FIGMA_FILE>` placeholder. Page to category mapping lives in `library/ui/figma/figma.config.json`.
@@ -76,6 +76,8 @@ The capture is refreshed in figma-design-system, which owns it and documents how
 4. A new public Figma URL lands in two pull requests: its `figma/key-guard-allow.json` entry merged to main first, then the URL. When a URL fails, the key guard prints this as a hint for a public URL; a private file URL is removed instead.
 5. Checks (format, lint, typecheck, tests, build, lock digests, key guard) run in GitHub Actions (`.github/workflows/ui-library.yml`); push and read the CI result instead of running the full suite locally. Run locally only what is needed to debug a failure.
 6. `pnpm review:build` and `pnpm review:check-build` prove the gallery builds, navigates and renders. They do not prove visual parity: comparing a variant with Figma happens in figma-design-system. Never say a component "matches" Figma from this tree.
+
+A tooling edit outside a capture refresh needs less. Every edit under `library/ui/figma` reseals the lock digests (`node figma/lock-digests.mjs --write` after staging, with a deviation code per changed file). A new `pnpm figma install components` is needed only when the edit changes the installer's read-set, which is what `components/generation.json` lists under `modules`: the fixed inputs, the modules the install process loads and any non-code file under `figma/src`. `node figma/lock-digests.mjs` fails with `Incomplete component module identities` or a changed module digest when it is needed. A port input change (any file here that is not a test, a fixture or Markdown) still needs a new `port-verification.json`.
 
 ## Mapper rules (variants to props)
 

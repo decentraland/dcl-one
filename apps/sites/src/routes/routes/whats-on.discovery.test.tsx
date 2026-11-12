@@ -1,5 +1,5 @@
 import { renderToString } from "react-dom/server";
-import { createMemoryRouter, RouterProvider } from "react-router";
+import { createMemoryRouter, RouterProvider, RouterContextProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchEvents, fetchEventPage, toLiveNowCard, type Event } from "@/data/lib/catalyst/places/events";
 import { fetchEventCalendar } from "@/data/lib/catalyst/places/event-calendar.server";
@@ -32,7 +32,7 @@ describe("when the public hangout catalogue is paginated", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 
   it("should request the selected page and apply recurrence and search before pagination", async () => {
-    response = await loader({ request } as never) as typeof response;
+    response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
     data = response.data;
     expect(fetchEventPage).toHaveBeenCalledWith(expect.objectContaining({ list: "active", offset: 120, limit: 24, search: "music", recurrent: true }), expect.objectContaining({ signal: request.signal }));
     expect(fetchEvents).toHaveBeenCalledWith(expect.objectContaining({ list: "live", recurrent: true, with_connected_users: true }), expect.anything());
@@ -41,7 +41,7 @@ describe("when the public hangout catalogue is paginated", () => {
   });
 
   it("should expose search and next/previous links retaining filters", async () => {
-    response = await loader({ request } as never) as typeof response;
+    response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
     data = response.data;
     html = renderPage();
     expect(html).toContain('role="search"');
@@ -54,7 +54,7 @@ describe("when the public hangout catalogue is paginated", () => {
   describe("and Today is selected", () => {
     beforeEach(() => { request = new Request("https://example.test/whats-on?filter=today"); });
     it("should keep cross-midnight live events while date-filtering upcoming events", async () => {
-      response = await loader({ request } as never) as typeof response;
+      response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
       data = response.data;
       expect(vi.mocked(fetchEvents).mock.calls[0][0]).not.toHaveProperty("from");
       expect(Date.parse(vi.mocked(fetchEventPage).mock.calls[0][0]?.to ?? "") - Date.parse(vi.mocked(fetchEventPage).mock.calls[0][0]?.from ?? "")).toBe(86_400_000);
@@ -64,7 +64,7 @@ describe("when the public hangout catalogue is paginated", () => {
   describe("and the API is unavailable", () => {
     beforeEach(() => { vi.mocked(fetchEvents).mockRejectedValue(new Error("offline")); vi.mocked(fetchEventPage).mockRejectedValue(new Error("offline")); vi.mocked(fetchEventCalendar).mockRejectedValue(new Error("offline")); });
     it("should show a retryable failure instead of an empty catalogue", async () => {
-      response = await loader({ request } as never) as typeof response;
+      response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
       data = response.data;
       html = renderPage();
       expect(html).toContain("Hangouts are temporarily unavailable");
@@ -83,7 +83,7 @@ describe("when the public hangout catalogue is paginated", () => {
       });
     });
     it("should keep the successful page and offer a retry for the missing feed", async () => {
-      response = await loader({ request } as never) as typeof response;
+      response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
       data = response.data;
       expect(data.upcoming).toHaveLength(24);
       expect(renderPage()).toContain("Live hangouts are temporarily unavailable");
@@ -100,7 +100,7 @@ describe("when the public hangout catalogue is paginated", () => {
     });
     afterEach(() => { vi.useRealTimers(); });
     it("should keep its calendar entry independent of catalogue pagination", async () => {
-      response = await loader({ request } as never) as typeof response;
+      response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
       data = response.data;
       expect(data.allDays[19].map((event) => event.id)).toContain("later");
       expect(fetchEventCalendar).toHaveBeenCalledWith(expect.objectContaining({ from: "2099-06-01T00:00:00.000Z", to: "2099-06-29T00:00:00.000Z" }), expect.anything());
@@ -111,7 +111,7 @@ describe("when the public hangout catalogue is paginated", () => {
   describe("and malformed data is the only problem", () => {
     beforeEach(() => { vi.mocked(fetchEventPage).mockResolvedValue({ data: events.slice(0, 24), hasMore: true, invalidCount: 1 }); });
     it("should show the data warning without offering a service retry", async () => {
-      response = await loader({ request } as never) as typeof response;
+      response = await loader({ request, context: new RouterContextProvider() } as never) as typeof response;
       data = response.data;
       html = renderPage();
       expect(html).toContain("Some hangouts could not be displayed");
